@@ -1,0 +1,40 @@
+export function buildSystemInstruction(chatRequest) {
+  const parts = [
+    "You are the assistant inside a branching chat interface.",
+    "Answer clearly and concretely, and stay grounded in the current conversation state.",
+  ];
+
+  if (chatRequest.conversation.branchAnchor) {
+    parts.push(
+      "This conversation is a branch created from highlighted text in a parent conversation.",
+      `Anchor quote: "${chatRequest.conversation.branchAnchor.quote}"`,
+      `Branch prompt: "${chatRequest.conversation.branchAnchor.prompt}"`,
+      "Keep the answer tightly connected to that anchor while still addressing the latest user request.",
+    );
+  } else {
+    parts.push(
+      "This is the root conversation, so you can stay broader and more compositional than a branch.",
+    );
+  }
+
+  const systemMessages = chatRequest.messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content.trim())
+    .filter(Boolean);
+
+  if (systemMessages.length) {
+    parts.push(`Existing system context:\n${systemMessages.join("\n\n")}`);
+  }
+
+  return parts.join("\n\n");
+}
+
+export function extractConversationMessages(messages) {
+  return messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      content: message.content.trim(),
+      role: message.role,
+    }))
+    .filter((message) => message.content.length > 0);
+}
