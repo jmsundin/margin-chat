@@ -1,9 +1,11 @@
 export type Role = "system" | "user" | "assistant";
+export type UserRole = "member" | "admin";
 export type BackendServiceId =
   | "backend-services"
   | "openai-api"
   | "gemini-api"
-  | "huggingface-api";
+  | "huggingface-api"
+  | "xai-api";
 export type ThreadCategoryId =
   | "coding"
   | "research"
@@ -37,6 +39,7 @@ export interface Conversation {
   title: string;
   parentId: string | null;
   serviceId: BackendServiceId;
+  modelId: string;
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   messages: Message[];
@@ -47,9 +50,18 @@ export interface Conversation {
 export interface AppState {
   rootId: string;
   activeConversationId: string;
+  defaultServiceId: BackendServiceId;
+  defaultModelId: string;
   railOpen: boolean;
   pinnedThreadIds: string[];
   conversations: Record<string, Conversation>;
+}
+
+export interface AuthenticatedUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
 }
 
 export interface ThreadSummary {
@@ -90,6 +102,15 @@ export interface ConnectionLine {
   };
   active: boolean;
   variant?: "curve" | "straight";
+}
+
+export interface ConnectorOcclusionRect {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  radius?: number;
 }
 
 export interface MessageAnchorLink {

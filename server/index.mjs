@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createAuthService } from "./auth/index.mjs";
 import { createChatService } from "./chat/index.mjs";
 import { loadProjectEnv } from "./config/env.mjs";
 import { createRuntimeConfig } from "./config/runtime.mjs";
@@ -14,6 +15,10 @@ loadProjectEnv(projectRoot, process.env);
 
 const runtimeConfig = createRuntimeConfig(process.env);
 const database = createAppDatabase(process.env);
+const authService = createAuthService({
+  database,
+  runtimeConfig,
+});
 const chatService = createChatService({
   env: process.env,
   runtimeConfig,
@@ -21,6 +26,7 @@ const chatService = createChatService({
 
 createServer(
   createApiHandler({
+    authService,
     chatService,
     database,
     runtimeConfig,

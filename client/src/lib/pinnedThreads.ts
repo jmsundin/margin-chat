@@ -64,6 +64,12 @@ export function getMainThreadDragData(
   return threadId || null;
 }
 
+export function hasMainThreadDragData(dataTransfer: DataTransfer): boolean {
+  return Array.from(dataTransfer.types).some(
+    (type) => type === MAIN_THREAD_DRAG_MIME || type === "text/plain",
+  );
+}
+
 export function upsertPinnedThreadIdAtIndex(
   pinnedThreadIds: string[],
   threadId: string,

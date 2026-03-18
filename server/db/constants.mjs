@@ -1,5 +1,3 @@
-export const DEFAULT_SESSION_ID = "default-session";
-
 export const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
 
 export const VALID_SERVICE_IDS = new Set([
@@ -7,4 +5,9 @@ export const VALID_SERVICE_IDS = new Set([
   "gemini-api",
   "huggingface-api",
   "openai-api",
+  "xai-api",
 ]);
+
+export function getWorkspaceSessionId(userId) {
+  return `workspace-${userId}`;
+}

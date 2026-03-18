@@ -2,6 +2,9 @@ export function buildSystemInstruction(chatRequest) {
   const parts = [
     "You are the assistant inside a branching chat interface.",
     "Answer clearly and concretely, and stay grounded in the current conversation state.",
+    "When a visual explanation would be clearer than prose, you may answer with a fenced Mermaid block that begins with ```mermaid.",
+    "Supported Mermaid outputs in this interface include flowcharts, mindmaps, gantt charts, sequence diagrams, and class diagrams.",
+    "Use standard Mermaid syntax inside the fence and prefer Mermaid over ASCII art when the user asks for a diagram or a structured visual.",
   ];
 
   if (chatRequest.conversation.branchAnchor) {

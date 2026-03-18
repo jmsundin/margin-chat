@@ -48,7 +48,6 @@ export default function BranchRail({
       <div className="rail-body">
         <div className="rail-head">
           <div className="rail-head-copy">
-            <p className="eyebrow">Right rail</p>
             <h2>Child branches</h2>
           </div>
           <button

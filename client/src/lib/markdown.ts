@@ -25,8 +25,18 @@ function escapeAttribute(value: string) {
   return escapeHtml(value);
 }
 
+function extractLanguageId(language: string | undefined) {
+  return language?.trim().toLowerCase().split(/\s+/, 1)[0] ?? "";
+}
+
+function isMermaidLanguage(language: string | undefined) {
+  const normalized = extractLanguageId(language);
+
+  return normalized === "mermaid" || normalized === "mmd";
+}
+
 function normalizeLanguage(language: string | undefined) {
-  const normalized = language?.trim().toLowerCase() ?? "";
+  const normalized = extractLanguageId(language);
 
   if (!normalized || !hljs.getLanguage(normalized)) {
     return null;
@@ -55,6 +65,17 @@ hljs.registerAliases(["yml"], { languageName: "yaml" });
 
 const renderer: RendererObject = {
   code(token: Tokens.Code) {
+    if (isMermaidLanguage(token.lang)) {
+      return [
+        '<div class="message-mermaid-block" data-language="mermaid">',
+        '<pre class="message-code-block is-mermaid-source" data-language="mermaid">',
+        `<code class="language-mermaid">${escapeHtml(token.text)}</code>`,
+        "</pre>",
+        '<div class="message-mermaid-diagram"></div>',
+        "</div>",
+      ].join("");
+    }
+
     const language = normalizeLanguage(token.lang);
     const highlighted = language
       ? hljs.highlight(token.text, { language }).value

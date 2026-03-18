@@ -12,6 +12,7 @@
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
     "marked": "^17.0.4",
+    "mermaid": "^11.13.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

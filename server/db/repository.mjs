@@ -1,19 +1,26 @@
-import { DEFAULT_SESSION_ID } from "./constants.mjs";
+import {
+  getDefaultModelIdForService,
+  isBackendModelIdForService,
+} from "../lib/backendModels.mjs";
+import { getWorkspaceSessionId, VALID_SERVICE_IDS } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
 
-export async function readState(client) {
+export async function readState(client, userId) {
   const sessionResult = await client.query(
     `
       select
         id,
+        user_id,
         root_conversation_id,
         active_conversation_id,
+        default_service_id,
+        default_model_id,
         rail_open,
         pinned_thread_ids
       from app_sessions
-      where id = $1
+      where user_id = $1
     `,
-    [DEFAULT_SESSION_ID],
+    [userId],
   );
 
   if (!sessionResult.rowCount) {
@@ -27,6 +34,7 @@ export async function readState(client) {
         id,
         title,
         parent_id,
+        model_id,
         service_id,
         created_at,
         updated_at
@@ -34,7 +42,7 @@ export async function readState(client) {
       where session_id = $1
       order by created_at asc, id asc
     `,
-    [DEFAULT_SESSION_ID],
+    [session.id],
   );
 
   if (!conversationResult.rowCount) {
@@ -83,6 +91,7 @@ export async function readState(client) {
       createdAt: toIsoString(row.created_at),
       id: row.id,
       messages: [],
+      modelId: row.model_id,
       parentId: row.parent_id,
       serviceId: row.service_id,
       title: row.title,
@@ -145,10 +154,20 @@ export async function readState(client) {
     getRootConversationId(conversations, session.root_conversation_id) ??
     conversationResult.rows.find((row) => row.parent_id === null)?.id ??
     conversationResult.rows[0]?.id;
+  const { modelId: defaultModelId, serviceId: defaultServiceId } =
+    normalizeDefaultSelection({
+      activeConversationId,
+      conversations,
+      modelId: session.default_model_id,
+      rootConversationId,
+      serviceId: session.default_service_id,
+    });
 
   return {
     activeConversationId,
     conversations,
+    defaultModelId,
+    defaultServiceId,
     pinnedThreadIds: (session.pinned_thread_ids ?? []).filter(
       (conversationId) => conversations[conversationId]?.parentId === null,
     ),
@@ -157,24 +176,33 @@ export async function readState(client) {
   };
 }
 
-export async function writeState(client, normalizedState) {
+export async function writeState(client, userId, normalizedState) {
+  const sessionId = getWorkspaceSessionId(userId);
+
   await client.query("begin");
 
   try {
-    await client.query("delete from app_sessions where id = $1", [
-      DEFAULT_SESSION_ID,
-    ]);
+    await client.query(
+      "delete from app_sessions where user_id = $1 or id = $2",
+      [userId, sessionId],
+    );
     await client.query(
       `
         insert into app_sessions (
           id,
+          user_id,
+          default_service_id,
+          default_model_id,
           rail_open,
           pinned_thread_ids
         )
-        values ($1, $2, $3)
+        values ($1, $2, $3, $4, $5, $6)
       `,
       [
-        DEFAULT_SESSION_ID,
+        sessionId,
+        userId,
+        normalizedState.defaultServiceId,
+        normalizedState.defaultModelId,
         normalizedState.railOpen,
         normalizedState.pinnedThreadIds,
       ],
@@ -192,17 +220,19 @@ export async function writeState(client, normalizedState) {
             session_id,
             title,
             parent_id,
+            model_id,
             service_id,
             created_at,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7)
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
         `,
         [
           conversation.id,
-          DEFAULT_SESSION_ID,
+          sessionId,
           conversation.title,
           conversation.parentId,
+          conversation.modelId,
           conversation.serviceId,
           conversation.createdAt,
           conversation.updatedAt,
@@ -272,13 +302,15 @@ export async function writeState(client, normalizedState) {
       `
         update app_sessions
         set
-          active_conversation_id = $2,
-          root_conversation_id = $3,
+          active_conversation_id = $3,
+          root_conversation_id = $4,
           updated_at = now()
         where id = $1
+          and user_id = $2
       `,
       [
-        DEFAULT_SESSION_ID,
+        sessionId,
+        userId,
         normalizedState.activeConversationId,
         normalizedState.rootId,
       ],
@@ -332,6 +364,37 @@ function orderConversationsForInsert(conversations) {
 
 function toIsoString(value) {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function normalizeDefaultSelection({
+  activeConversationId,
+  conversations,
+  modelId,
+  rootConversationId,
+  serviceId,
+}) {
+  const fallbackConversation =
+    conversations[activeConversationId] ??
+    conversations[rootConversationId] ??
+    Object.values(conversations).find(
+      (conversation) => conversation.parentId === null,
+    ) ??
+    Object.values(conversations)[0] ??
+    null;
+  const nextServiceId = VALID_SERVICE_IDS.has(serviceId)
+    ? serviceId
+    : fallbackConversation?.serviceId ?? "backend-services";
+  const fallbackModelId =
+    fallbackConversation?.serviceId === nextServiceId
+      ? fallbackConversation.modelId
+      : getDefaultModelIdForService(nextServiceId);
+
+  return {
+    modelId: isBackendModelIdForService(nextServiceId, modelId)
+      ? modelId
+      : fallbackModelId,
+    serviceId: nextServiceId,
+  };
 }
 
 function getRootConversationId(conversations, conversationId) {

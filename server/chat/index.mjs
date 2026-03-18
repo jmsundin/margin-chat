@@ -1,8 +1,10 @@
 import { HttpError } from "../lib/errors.mjs";
+import { getRuntimeDefaultModelForService } from "../lib/backendModels.mjs";
 import {
   requestGeminiResponse,
   requestHuggingFaceResponse,
   requestOpenAIResponse,
+  requestXAIResponse,
 } from "./providers.mjs";
 import { buildSystemInstruction } from "./systemPrompt.mjs";
 import { validateChatRequest } from "./validation.mjs";
@@ -10,6 +12,10 @@ import { validateChatRequest } from "./validation.mjs";
 export function createChatService({ env, runtimeConfig }) {
   function getHuggingFaceApiKey() {
     return env.HUGGINGFACE_API_KEY ?? env.HF_TOKEN ?? null;
+  }
+
+  function getXaiApiKey() {
+    return env.XAI_API_KEY ?? null;
   }
 
   function resolveServiceId(requestedServiceId) {
@@ -46,6 +52,17 @@ export function createChatService({ env, runtimeConfig }) {
       return requestedServiceId;
     }
 
+    if (requestedServiceId === "xai-api") {
+      if (!getXaiApiKey()) {
+        throw new HttpError(
+          503,
+          "xAI API is selected but XAI_API_KEY is missing.",
+        );
+      }
+
+      return requestedServiceId;
+    }
+
     if (
       runtimeConfig.defaultBackendProvider === "gemini-api" &&
       env.GEMINI_API_KEY
@@ -67,6 +84,13 @@ export function createChatService({ env, runtimeConfig }) {
       return "huggingface-api";
     }
 
+    if (
+      runtimeConfig.defaultBackendProvider === "xai-api" &&
+      getXaiApiKey()
+    ) {
+      return "xai-api";
+    }
+
     if (env.OPENAI_API_KEY) {
       return "openai-api";
     }
@@ -79,15 +103,23 @@ export function createChatService({ env, runtimeConfig }) {
       return "huggingface-api";
     }
 
+    if (getXaiApiKey()) {
+      return "xai-api";
+    }
+
     throw new HttpError(
       503,
-      "No backend provider is configured. Add OPENAI_API_KEY, GEMINI_API_KEY, or HUGGINGFACE_API_KEY (or HF_TOKEN).",
+      "No backend provider is configured. Add OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY, or HUGGINGFACE_API_KEY (or HF_TOKEN).",
     );
   }
 
   async function requestReply(payload) {
     const chatRequest = validateChatRequest(payload);
     const resolvedServiceId = resolveServiceId(chatRequest.serviceId);
+    const resolvedModel =
+      chatRequest.serviceId === resolvedServiceId
+        ? chatRequest.modelId
+        : getRuntimeDefaultModelForService(runtimeConfig, resolvedServiceId);
     const systemInstruction = buildSystemInstruction(chatRequest);
     let result;
 
@@ -95,21 +127,28 @@ export function createChatService({ env, runtimeConfig }) {
       result = await requestOpenAIResponse({
         apiKey: env.OPENAI_API_KEY,
         chatRequest,
-        model: runtimeConfig.openaiModel,
+        model: resolvedModel,
         systemInstruction,
       });
     } else if (resolvedServiceId === "gemini-api") {
       result = await requestGeminiResponse({
         apiKey: env.GEMINI_API_KEY,
         chatRequest,
-        model: runtimeConfig.geminiModel,
+        model: resolvedModel,
+        systemInstruction,
+      });
+    } else if (resolvedServiceId === "xai-api") {
+      result = await requestXAIResponse({
+        apiKey: getXaiApiKey(),
+        chatRequest,
+        model: resolvedModel,
         systemInstruction,
       });
     } else {
       result = await requestHuggingFaceResponse({
         apiKey: getHuggingFaceApiKey(),
         chatRequest,
-        model: runtimeConfig.huggingFaceModel,
+        model: resolvedModel,
         systemInstruction,
       });
     }
@@ -117,6 +156,7 @@ export function createChatService({ env, runtimeConfig }) {
     return {
       metadata: {
         model: result.model,
+        requestedModelId: chatRequest.modelId,
         requestedServiceId: chatRequest.serviceId,
         resolvedServiceId,
       },
@@ -128,7 +168,10 @@ export function createChatService({ env, runtimeConfig }) {
     const services = {
       "backend-services": {
         configured: Boolean(
-          env.OPENAI_API_KEY || env.GEMINI_API_KEY || getHuggingFaceApiKey(),
+          env.OPENAI_API_KEY ||
+            env.GEMINI_API_KEY ||
+            getXaiApiKey() ||
+            getHuggingFaceApiKey(),
         ),
       },
       "gemini-api": {
@@ -142,6 +185,10 @@ export function createChatService({ env, runtimeConfig }) {
       "openai-api": {
         configured: Boolean(env.OPENAI_API_KEY),
         model: runtimeConfig.openaiModel,
+      },
+      "xai-api": {
+        configured: Boolean(getXaiApiKey()),
+        model: runtimeConfig.xaiModel,
       },
     };
     const aiConfigured = services["backend-services"].configured;

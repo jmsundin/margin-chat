@@ -54,6 +54,67 @@ export async function requestOpenAIResponse({
   };
 }
 
+export async function requestXAIResponse({
+  apiKey,
+  chatRequest,
+  model,
+  systemInstruction,
+}) {
+  if (!apiKey) {
+    throw new HttpError(
+      503,
+      "xAI API is not configured. Add XAI_API_KEY to your environment.",
+    );
+  }
+
+  const response = await fetch("https://api.x.ai/v1/responses", {
+    body: JSON.stringify({
+      input: [
+        {
+          content: systemInstruction,
+          role: "system",
+        },
+        ...extractConversationMessages(chatRequest.messages).map((message) => ({
+          content: message.content,
+          role: message.role,
+        })),
+      ],
+      model,
+    }),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new HttpError(
+      response.status,
+      extractApiErrorMessage(payload) ?? "xAI request failed.",
+    );
+  }
+
+  const reply = extractOpenAIReply(payload);
+
+  if (!reply) {
+    throw new HttpError(
+      502,
+      "xAI returned a response without assistant text.",
+    );
+  }
+
+  return {
+    model:
+      typeof payload?.model === "string" && payload.model.trim()
+        ? payload.model
+        : model,
+    reply,
+  };
+}
+
 export async function requestGeminiResponse({
   apiKey,
   chatRequest,

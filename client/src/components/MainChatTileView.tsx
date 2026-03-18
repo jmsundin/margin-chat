@@ -59,6 +59,8 @@ function normalizeThreads(threads: ThreadSummary[]): ThreadSummary[] {
 
 interface MainChatTileViewProps {
   activeThreadId: string;
+  onMainThreadDragEnd: () => void;
+  onMainThreadDragStart: () => void;
   onOpenThread: (conversationId: string) => void;
   threads: ThreadSummary[];
 }
@@ -126,12 +128,16 @@ function sortThreads(threads: ThreadSummary[], sortMode: ThreadSortMode) {
 
 interface ThreadTileCardProps {
   activeThreadId: string;
+  onMainThreadDragEnd: () => void;
+  onMainThreadDragStart: () => void;
   onOpenThread: (conversationId: string) => void;
   thread: ThreadSummary;
 }
 
 function ThreadTileCard({
   activeThreadId,
+  onMainThreadDragEnd,
+  onMainThreadDragStart,
   onOpenThread,
   thread,
 }: ThreadTileCardProps) {
@@ -144,7 +150,11 @@ function ThreadTileCard({
       }
       draggable
       onClick={() => onOpenThread(thread.id)}
-      onDragStart={(event) => setMainThreadDragData(event.dataTransfer, thread.id)}
+      onDragEnd={onMainThreadDragEnd}
+      onDragStart={(event) => {
+        onMainThreadDragStart();
+        setMainThreadDragData(event.dataTransfer, thread.id);
+      }}
       type="button"
     >
       <div className="thread-tile-card-head">
@@ -176,6 +186,8 @@ function ThreadTileCard({
 
 export default function MainChatTileView({
   activeThreadId,
+  onMainThreadDragEnd,
+  onMainThreadDragStart,
   onOpenThread,
   threads,
 }: MainChatTileViewProps) {
@@ -358,6 +370,8 @@ export default function MainChatTileView({
             <ThreadTileCard
               key={thread.id}
               activeThreadId={activeThreadId}
+              onMainThreadDragEnd={onMainThreadDragEnd}
+              onMainThreadDragStart={onMainThreadDragStart}
               onOpenThread={onOpenThread}
               thread={thread}
             />

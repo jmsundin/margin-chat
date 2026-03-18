@@ -3,6 +3,7 @@ import { setMainThreadDragData } from "../lib/pinnedThreads";
 import type { ThreadSummary } from "../types";
 
 type MainViewMode = "chat" | "tiles";
+type ThemeMode = "light" | "dark";
 type ThreadActionTarget = Pick<ThreadSummary, "id" | "title">;
 
 const THREAD_MENU_WIDTH = 176;
@@ -12,13 +13,20 @@ const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
 interface ThreadSidebarProps {
   activeThreadId: string;
+  collapsed: boolean;
   mainViewMode: MainViewMode;
   onDeleteThread: (conversationId: string) => void;
+  onMainThreadDragEnd: () => void;
+  onMainThreadDragStart: () => void;
   onNewChat: () => void;
+  onOpenSettings: () => void;
   onOpenSearch: () => void;
   onRenameThread: (conversationId: string, title: string) => void;
   onSelectThread: (conversationId: string) => void;
+  onToggleCollapse: () => void;
   onToggleMainViewMode: () => void;
+  onToggleTheme: () => void;
+  theme: ThemeMode;
   threads: ThreadSummary[];
 }
 
@@ -131,6 +139,66 @@ function ChatViewIcon() {
   );
 }
 
+function SettingsIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-utility-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.9"
+    >
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1.9 1.9 0 0 1-2.7 2.7l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a1.9 1.9 0 0 1-3.8 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1.9 1.9 0 1 1-2.7-2.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a1.9 1.9 0 0 1 0-3.8h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1.9 1.9 0 1 1 2.7-2.7l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a1.9 1.9 0 0 1 3.8 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.9 1.9 0 1 1 2.7 2.7l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.2a1.9 1.9 0 1 1 0 3.8h-.2a1 1 0 0 0-.9.6Z" />
+    </svg>
+  );
+}
+
+function ThemeToggleIcon({ theme }: { theme: ThemeMode }) {
+  if (theme === "dark") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="theme-toggle-glyph"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="1.8"
+      >
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2.5v2.5" />
+        <path d="M12 19v2.5" />
+        <path d="m4.9 4.9 1.8 1.8" />
+        <path d="m17.3 17.3 1.8 1.8" />
+        <path d="M2.5 12H5" />
+        <path d="M19 12h2.5" />
+        <path d="m4.9 19.1 1.8-1.8" />
+        <path d="m17.3 6.7 1.8-1.8" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="theme-toggle-glyph"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+    </svg>
+  );
+}
+
 function MoreIcon() {
   return (
     <svg
@@ -163,15 +231,40 @@ function ExpandIcon() {
   );
 }
 
+function SidebarCollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-collapse-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="M18 5v14" />
+      <path d={collapsed ? "m11 6 5 6-5 6" : "m13 6-5 6 5 6"} />
+    </svg>
+  );
+}
+
 export default function ThreadSidebar({
   activeThreadId,
+  collapsed,
   mainViewMode,
   onDeleteThread,
+  onMainThreadDragEnd,
+  onMainThreadDragStart,
   onNewChat,
+  onOpenSettings,
   onOpenSearch,
   onRenameThread,
   onSelectThread,
+  onToggleCollapse,
   onToggleMainViewMode,
+  onToggleTheme,
+  theme,
   threads,
 }: ThreadSidebarProps) {
   const [openMenuState, setOpenMenuState] = useState<{
@@ -254,6 +347,14 @@ export default function ThreadSidebar({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [deleteTarget, renameTarget]);
+
+  useEffect(() => {
+    if (!collapsed) {
+      return;
+    }
+
+    setOpenMenuState(null);
+  }, [collapsed]);
 
   useEffect(() => {
     const threadIds = new Set(threads.map((thread) => thread.id));
@@ -354,13 +455,13 @@ export default function ThreadSidebar({
     event: React.DragEvent<HTMLButtonElement>,
     threadId: string,
   ) {
+    onMainThreadDragStart();
     setMainThreadDragData(event.dataTransfer, threadId);
   }
 
   return (
-    <aside className="thread-sidebar">
+    <aside className={collapsed ? "thread-sidebar is-collapsed" : "thread-sidebar"}>
       <div className="thread-sidebar-head">
-        <p className="eyebrow">Main chats</p>
         <div className="thread-sidebar-title-row">
           <button
             aria-label={
@@ -370,99 +471,142 @@ export default function ThreadSidebar({
             }
             className="thread-view-toggle"
             onClick={onToggleMainViewMode}
+            title={mainViewMode === "tiles" ? "Switch to chat view" : "Switch to tile view"}
             type="button"
           >
             {mainViewMode === "tiles" ? <ChatViewIcon /> : <TileViewIcon />}
           </button>
-          <h2>Threads</h2>
+          <h2>Margin Chat</h2>
         </div>
-        <p className="thread-sidebar-copy">
-          Start fresh chats on the left, drag main chats into the pinned tab
-          strip, and keep branching inside the selected one on the right.
-        </p>
+        <button
+          aria-label={collapsed ? "Expand left sidebar" : "Minimize left sidebar"}
+          className="sidebar-utility-button sidebar-collapse-button"
+          onClick={onToggleCollapse}
+          title={collapsed ? "Expand left sidebar" : "Minimize left sidebar"}
+          type="button"
+        >
+          <SidebarCollapseIcon collapsed={collapsed} />
+        </button>
       </div>
 
       <div className="thread-sidebar-actions">
-        <button className="sidebar-action is-primary" onClick={onNewChat} type="button">
+        <button
+          aria-label="New chat"
+          className="sidebar-action is-primary"
+          onClick={onNewChat}
+          title="New chat"
+          type="button"
+        >
           <PlusIcon />
           <span>New chat</span>
         </button>
 
-        <button className="sidebar-action" onClick={onOpenSearch} type="button">
+        <button
+          aria-label="Search chats"
+          className="sidebar-action"
+          onClick={onOpenSearch}
+          title="Search chats"
+          type="button"
+        >
           <SearchIcon />
           <span>Search chats</span>
         </button>
       </div>
 
-      <div className="thread-list">
-        {threads.map((thread) => {
-          const branchCount = Math.max(thread.conversationCount - 1, 0);
-          const isExpanded = Boolean(expandedThreadIds[thread.id]);
+      {!collapsed ? (
+        <div className="thread-list">
+          {threads.map((thread) => {
+            const branchCount = Math.max(thread.conversationCount - 1, 0);
+            const isExpanded = Boolean(expandedThreadIds[thread.id]);
 
-          return (
-            <div
-              key={thread.id}
-              className={
-                thread.id === activeThreadId ? "thread-item is-active" : "thread-item"
-              }
-            >
-              <button
-                className="thread-item-main"
-                draggable
-                onClick={() => {
-                  setOpenMenuState(null);
-                  onSelectThread(thread.id);
-                }}
-                onDragStart={(event) => handleThreadDragStart(event, thread.id)}
-                type="button"
-              >
-                <span className="thread-item-title">{thread.title}</span>
-                <span className="thread-item-meta">
-                  {branchCount === 1 ? "1 branch" : `${branchCount} branches`}
-                  <span aria-hidden="true">•</span>
-                  {thread.updatedLabel}
-                </span>
-                {isExpanded ? (
-                  <span className="thread-item-preview" id={`thread-preview-${thread.id}`}>
-                    {thread.preview}
-                  </span>
-                ) : null}
-              </button>
-
-              <button
-                aria-controls={`thread-preview-${thread.id}`}
-                aria-expanded={isExpanded}
-                aria-label={`${isExpanded ? "Collapse" : "Expand"} preview for ${thread.title}`}
+            return (
+              <div
+                key={thread.id}
                 className={
-                  isExpanded
-                    ? "thread-item-expand-trigger is-expanded"
-                    : "thread-item-expand-trigger"
+                  thread.id === activeThreadId ? "thread-item is-active" : "thread-item"
                 }
-                onClick={() => handleToggleExpanded(thread.id)}
-                type="button"
               >
-                <ExpandIcon />
-              </button>
+                <button
+                  className="thread-item-main"
+                  draggable
+                  onClick={() => {
+                    setOpenMenuState(null);
+                    onSelectThread(thread.id);
+                  }}
+                  onDragEnd={onMainThreadDragEnd}
+                  onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+                  type="button"
+                >
+                  <span className="thread-item-title">{thread.title}</span>
+                  <span className="thread-item-meta">
+                    {branchCount === 1 ? "1 branch" : `${branchCount} branches`}
+                    <span aria-hidden="true">•</span>
+                    {thread.updatedLabel}
+                  </span>
+                  {isExpanded ? (
+                    <span className="thread-item-preview" id={`thread-preview-${thread.id}`}>
+                      {thread.preview}
+                    </span>
+                  ) : null}
+                </button>
 
-              <button
-                aria-controls={
-                  openMenuState?.threadId === thread.id
-                    ? `thread-menu-${thread.id}`
-                    : undefined
-                }
-                aria-expanded={openMenuState?.threadId === thread.id}
-                aria-haspopup="menu"
-                aria-label={`Open actions for ${thread.title}`}
-                className="thread-item-menu-trigger"
-                data-thread-menu-trigger="true"
-                onClick={(event) => handleOpenMenu(event, thread)}
-                type="button"
-              >
-                <MoreIcon />
-              </button>
-            </div>
-          );
-        })}
+                <button
+                  aria-controls={`thread-preview-${thread.id}`}
+                  aria-expanded={isExpanded}
+                  aria-label={`${isExpanded ? "Collapse" : "Expand"} preview for ${thread.title}`}
+                  className={
+                    isExpanded
+                      ? "thread-item-expand-trigger is-expanded"
+                      : "thread-item-expand-trigger"
+                  }
+                  onClick={() => handleToggleExpanded(thread.id)}
+                  type="button"
+                >
+                  <ExpandIcon />
+                </button>
+
+                <button
+                  aria-controls={
+                    openMenuState?.threadId === thread.id
+                      ? `thread-menu-${thread.id}`
+                      : undefined
+                  }
+                  aria-expanded={openMenuState?.threadId === thread.id}
+                  aria-haspopup="menu"
+                  aria-label={`Open actions for ${thread.title}`}
+                  className="thread-item-menu-trigger"
+                  data-thread-menu-trigger="true"
+                  onClick={(event) => handleOpenMenu(event, thread)}
+                  type="button"
+                >
+                  <MoreIcon />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div className="thread-sidebar-footer">
+        <button
+          aria-label="Open settings"
+          className="sidebar-utility-button"
+          onClick={onOpenSettings}
+          title="Settings"
+          type="button"
+        >
+          <SettingsIcon />
+        </button>
+
+        <button
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          className="sidebar-utility-button is-theme-toggle"
+          onClick={onToggleTheme}
+          title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+          type="button"
+        >
+          <ThemeToggleIcon theme={theme} />
+        </button>
       </div>
 
       {openMenuState ? (

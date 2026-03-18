@@ -1,5 +1,9 @@
 import {
   startTransition,
+  type Dispatch,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type SetStateAction,
   useDeferredValue,
   useEffect,
   useLayoutEffect,
@@ -7,14 +11,27 @@ import {
   useState,
   type CSSProperties,
 } from "react";
+import AppSettingsModal from "./components/AppSettingsModal";
+import AuthLanding from "./components/AuthLanding";
 import BranchRail from "./components/BranchRail";
 import ChatPanel from "./components/ChatPanel";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import MainChatTileView from "./components/MainChatTileView";
 import PinnedThreadTabs from "./components/PinnedThreadTabs";
+import ProfileModal from "./components/ProfileModal";
 import SearchModal, { type ChatSearchResult } from "./components/SearchModal";
 import ThreadSidebar from "./components/ThreadSidebar";
-import { persistStoredState, requestChatReply, requestStoredState } from "./lib/api";
+import {
+  ApiError,
+  persistStoredState,
+  requestAuthSession,
+  requestChatReply,
+  requestLogin,
+  requestLogout,
+  requestSignup,
+  requestStoredState,
+  requestUpdateProfile,
+} from "./lib/api";
 import {
   sanitizePinnedThreadIds,
   upsertPinnedThreadIdAtIndex,
@@ -22,7 +39,9 @@ import {
 import {
   DEFAULT_BACKEND_SERVICE_ID,
   getBackendServiceLabel,
+  getDefaultModelIdForService,
   isBackendServiceId,
+  resolveBackendServiceModelId,
 } from "./lib/services";
 import {
   buildConversationTitle,
@@ -39,8 +58,10 @@ import {
 } from "./initialState";
 import type {
   AppState,
+  AuthenticatedUser,
   BackendServiceId,
   ConnectionLine,
+  ConnectorOcclusionRect,
   Conversation,
   Message,
   MessageAnchorLink,
@@ -50,17 +71,32 @@ import type {
 
 const STORAGE_KEY = "margin-chat-state";
 const THEME_STORAGE_KEY = "margin-chat-theme";
+const PINNED_TABS_LAYOUT_STORAGE_KEY = "margin-chat-pinned-tabs-layout";
+const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
+const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
 const EXPLAIN_SELECTION_PROMPT = "Explain the selected text.";
 const TOOLTIP_VIEWPORT_MARGIN = 16;
+const CHAT_PANEL_DEFAULT_WIDTH_PX = 830;
+const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
+const CHAT_PANEL_MAX_WIDTH_PX = 980;
+const CHAT_PANEL_MIN_WIDTH_PX = 320;
+const CHAT_PANEL_VIEWPORT_MARGIN_PX = 180;
+const MOBILE_PANEL_RESIZE_BREAKPOINT_PX = 900;
 const FALLBACK_TOOLTIP_SIZE = {
   height: 208,
   width: 360,
 };
 const CONNECTOR_CONTENT_GUTTER_PX = 8;
 type ThemeMode = "light" | "dark";
+type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 type StorageMode = "loading" | "fallback" | "server";
 type MainViewMode = "chat" | "tiles";
+type MainThreadDragMode =
+  | "idle"
+  | "pinning-main-thread"
+  | "reordering-pinned-tab";
+type PinnedTabsLayoutMode = "strip" | "tray";
 
 function SendIcon() {
   return (
@@ -80,28 +116,11 @@ function SendIcon() {
   );
 }
 
-function ThemeIcon({ theme }: { theme: ThemeMode }) {
-  if (theme === "dark") {
-    return (
-      <svg
-        aria-hidden="true"
-        className="theme-toggle-glyph"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      >
-        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
-      </svg>
-    );
-  }
-
+function ProfileIcon() {
   return (
     <svg
       aria-hidden="true"
-      className="theme-toggle-glyph"
+      className="workspace-profile-icon"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -109,17 +128,50 @@ function ThemeIcon({ theme }: { theme: ThemeMode }) {
       strokeLinejoin="round"
       strokeWidth="1.8"
     >
-      <circle cx="12" cy="12" r="4" />
-      <path d="M12 2.5v2.5" />
-      <path d="M12 19v2.5" />
-      <path d="m4.9 4.9 1.8 1.8" />
-      <path d="m17.3 17.3 1.8 1.8" />
-      <path d="M2.5 12H5" />
-      <path d="M19 12h2.5" />
-      <path d="m4.9 19.1 1.8-1.8" />
-      <path d="m17.3 6.7 1.8-1.8" />
+      <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+      <path d="M5 20a7 7 0 0 1 14 0" />
     </svg>
   );
+}
+
+function getNextTheme(theme: ThemeMode): ThemeMode {
+  return theme === "dark" ? "light" : "dark";
+}
+
+function resolvePersistedDefaultSelection(args: {
+  activeConversationId?: string;
+  conversations: Record<string, Conversation>;
+  defaultModelId?: unknown;
+  defaultServiceId?: unknown;
+  rootId?: string;
+}): Pick<AppState, "defaultModelId" | "defaultServiceId"> {
+  const fallbackConversation =
+    (typeof args.activeConversationId === "string"
+      ? args.conversations[args.activeConversationId]
+      : null) ??
+    (typeof args.rootId === "string" ? args.conversations[args.rootId] : null) ??
+    getRootConversations(args.conversations)[0] ??
+    Object.values(args.conversations)[0] ??
+    null;
+  const defaultServiceId = isBackendServiceId(args.defaultServiceId)
+    ? args.defaultServiceId
+    : fallbackConversation?.serviceId ?? DEFAULT_BACKEND_SERVICE_ID;
+  const fallbackModelId =
+    fallbackConversation?.serviceId === defaultServiceId
+      ? fallbackConversation.modelId
+      : getDefaultModelIdForService(defaultServiceId);
+  const requestedModelId =
+    typeof args.defaultModelId === "string" && args.defaultModelId.trim()
+      ? args.defaultModelId
+      : fallbackModelId;
+
+  return {
+    defaultModelId: resolveBackendServiceModelId(
+      defaultServiceId,
+      requestedModelId,
+    ),
+    defaultServiceId,
+  };
 }
 
 function hydratePersistedState(input: unknown): AppState | null {
@@ -145,12 +197,20 @@ function hydratePersistedState(input: unknown): AppState | null {
         Object.entries(parsed.conversations).map(
           ([conversationId, conversation]) => [
             conversationId,
-            {
-              ...conversation,
-              serviceId: isBackendServiceId(conversation.serviceId)
+            (() => {
+              const serviceId = isBackendServiceId(conversation.serviceId)
                 ? conversation.serviceId
-                : DEFAULT_BACKEND_SERVICE_ID,
-            },
+                : DEFAULT_BACKEND_SERVICE_ID;
+
+              return {
+                ...conversation,
+                modelId: resolveBackendServiceModelId(
+                  serviceId,
+                  conversation.modelId,
+                ),
+                serviceId,
+              };
+            })(),
           ],
         ),
       ),
@@ -169,10 +229,20 @@ function hydratePersistedState(input: unknown): AppState | null {
     const nextRootId =
       getConversationRootId(conversations, nextActiveConversationId) ??
       rootConversations[0].id;
+    const { defaultModelId, defaultServiceId } =
+      resolvePersistedDefaultSelection({
+        activeConversationId: nextActiveConversationId,
+        conversations,
+        defaultModelId: parsed.defaultModelId,
+        defaultServiceId: parsed.defaultServiceId,
+        rootId: nextRootId,
+      });
 
     return {
       activeConversationId: nextActiveConversationId,
       conversations,
+      defaultModelId,
+      defaultServiceId,
       pinnedThreadIds: sanitizePinnedThreadIds(
         parsed.pinnedThreadIds,
         conversations,
@@ -185,7 +255,11 @@ function hydratePersistedState(input: unknown): AppState | null {
   }
 }
 
-function loadInitialState(): AppState {
+function getStateStorageKey(userId: string) {
+  return `${STORAGE_KEY}:${userId}`;
+}
+
+function loadStoredState(storageKey: string): AppState {
   const fallback = createEmptyState();
 
   if (typeof window === "undefined") {
@@ -193,7 +267,7 @@ function loadInitialState(): AppState {
   }
 
   try {
-    const storedValue = window.localStorage.getItem(STORAGE_KEY);
+    const storedValue = window.localStorage.getItem(storageKey);
 
     if (!storedValue) {
       return fallback;
@@ -223,6 +297,100 @@ function loadInitialTheme(): ThemeMode {
   return "dark";
 }
 
+function loadInitialPinnedTabsLayoutMode(): PinnedTabsLayoutMode {
+  if (typeof window === "undefined") {
+    return "tray";
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(
+      PINNED_TABS_LAYOUT_STORAGE_KEY,
+    );
+
+    if (storedValue === "strip" || storedValue === "tray") {
+      return storedValue;
+    }
+  } catch {
+    return "tray";
+  }
+
+  return "tray";
+}
+
+function loadInitialLeftSidebarOpen(): boolean {
+  if (typeof window === "undefined") {
+    return true;
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(LEFT_SIDEBAR_STORAGE_KEY);
+
+    if (storedValue === "true") {
+      return true;
+    }
+
+    if (storedValue === "false") {
+      return false;
+    }
+  } catch {
+    return true;
+  }
+
+  return true;
+}
+
+function getChatPanelWidthBounds() {
+  if (typeof window === "undefined") {
+    return {
+      max: CHAT_PANEL_MAX_WIDTH_PX,
+      min: CHAT_PANEL_MIN_WIDTH_PX,
+    };
+  }
+
+  return {
+    max: clamp(
+      window.innerWidth - CHAT_PANEL_VIEWPORT_MARGIN_PX,
+      CHAT_PANEL_MIN_WIDTH_PX,
+      CHAT_PANEL_MAX_WIDTH_PX,
+    ),
+    min: CHAT_PANEL_MIN_WIDTH_PX,
+  };
+}
+
+function loadInitialChatPanelWidth() {
+  const bounds = getChatPanelWidthBounds();
+
+  if (typeof window === "undefined") {
+    return clamp(
+      CHAT_PANEL_DEFAULT_WIDTH_PX,
+      bounds.min,
+      bounds.max,
+    );
+  }
+
+  try {
+    const storedValue = Number(
+      window.localStorage.getItem(CHAT_PANEL_WIDTH_STORAGE_KEY),
+    );
+
+    if (Number.isFinite(storedValue)) {
+      return clamp(storedValue, bounds.min, bounds.max);
+    }
+  } catch {
+    return clamp(
+      CHAT_PANEL_DEFAULT_WIDTH_PX,
+      bounds.min,
+      bounds.max,
+    );
+  }
+
+  return clamp(
+    CHAT_PANEL_DEFAULT_WIDTH_PX,
+    bounds.min,
+    bounds.max,
+  );
+}
+
 function syncTheme(theme: ThemeMode) {
   if (typeof document === "undefined") {
     return;
@@ -231,10 +399,33 @@ function syncTheme(theme: ThemeMode) {
   document.documentElement.dataset.theme = theme;
 }
 
+function isApiErrorStatus(error: unknown, statusCode: number) {
+  return error instanceof ApiError && error.statusCode === statusCode;
+}
+
+function getErrorText(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 const INITIAL_THEME = loadInitialTheme();
+const INITIAL_PINNED_TABS_LAYOUT_MODE = loadInitialPinnedTabsLayoutMode();
+const INITIAL_LEFT_SIDEBAR_OPEN = loadInitialLeftSidebarOpen();
+const INITIAL_CHAT_PANEL_WIDTH = loadInitialChatPanelWidth();
 
 if (typeof document !== "undefined") {
   syncTheme(INITIAL_THEME);
+}
+
+interface WorkspaceAppProps {
+  onAuthExpired: (message?: string) => void;
+  onLogout: () => void;
+  onSetTheme: Dispatch<SetStateAction<ThemeMode>>;
+  onUpdateProfile: (args: {
+    displayName: string;
+    email: string;
+  }) => Promise<AuthenticatedUser>;
+  theme: ThemeMode;
+  user: AuthenticatedUser;
 }
 
 function createId(prefix: string): string {
@@ -726,11 +917,26 @@ function buildSearchResults(
     .map(({ updatedAt: _updatedAt, ...result }) => result);
 }
 
-export default function App() {
-  const [state, setState] = useState<AppState>(() => loadInitialState());
-  const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
+function WorkspaceApp({
+  onAuthExpired,
+  onLogout,
+  onSetTheme,
+  onUpdateProfile,
+  theme,
+  user,
+}: WorkspaceAppProps) {
+  const stateStorageKey = getStateStorageKey(user.id);
+  const [state, setState] = useState<AppState>(() => loadStoredState(stateStorageKey));
   const [storageMode, setStorageMode] = useState<StorageMode>("loading");
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
+  const [leftSidebarOpen, setLeftSidebarOpen] =
+    useState(INITIAL_LEFT_SIDEBAR_OPEN);
+  const [chatPanelWidth, setChatPanelWidth] = useState(INITIAL_CHAT_PANEL_WIDTH);
+  const [isResizingChatPanel, setIsResizingChatPanel] = useState(false);
+  const [resizingChatPanelConversationId, setResizingChatPanelConversationId] =
+    useState<string | null>(null);
+  const [pinnedTabsLayoutMode, setPinnedTabsLayoutMode] =
+    useState<PinnedTabsLayoutMode>(INITIAL_PINNED_TABS_LAYOUT_MODE);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pendingConversationIds, setPendingConversationIds] = useState<
     Record<string, boolean>
@@ -741,17 +947,32 @@ export default function App() {
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
     null,
   );
+  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
+  const [profileSaving, setProfileSaving] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [toolbarSize, setToolbarSize] = useState(FALLBACK_TOOLTIP_SIZE);
   const [connections, setConnections] = useState<ConnectionLine[]>([]);
+  const [connectorOcclusionRects, setConnectorOcclusionRects] = useState<
+    ConnectorOcclusionRect[]
+  >([]);
+  const [mainThreadDragMode, setMainThreadDragMode] =
+    useState<MainThreadDragMode>("idle");
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLFormElement>(null);
   const panelRefs = useRef<Record<string, HTMLElement | null>>({});
   const anchorRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const composerSurfaceRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const typingProgressByMessageIdRef = useRef<Record<string, number>>({});
   const selectionSyncFrameRef = useRef(0);
+  const panelResizeStateRef = useRef<{
+    conversationId: string;
+    originWidth: number;
+    startClientX: number;
+  } | null>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
 
   const activeConversation =
@@ -778,8 +999,8 @@ export default function App() {
   );
 
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+    window.localStorage.setItem(stateStorageKey, JSON.stringify(state));
+  }, [state, stateStorageKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -802,6 +1023,11 @@ export default function App() {
 
         setStorageMode("server");
       } catch (error) {
+        if (isApiErrorStatus(error, 401)) {
+          onAuthExpired();
+          return;
+        }
+
         console.warn("Falling back to local state storage.", error);
 
         if (!cancelled) {
@@ -818,14 +1044,120 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    syncTheme(theme);
-
     try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+      window.localStorage.setItem(
+        PINNED_TABS_LAYOUT_STORAGE_KEY,
+        pinnedTabsLayoutMode,
+      );
     } catch {
       return;
     }
-  }, [theme]);
+  }, [pinnedTabsLayoutMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        LEFT_SIDEBAR_STORAGE_KEY,
+        leftSidebarOpen ? "true" : "false",
+      );
+    } catch {
+      return;
+    }
+  }, [leftSidebarOpen]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        CHAT_PANEL_WIDTH_STORAGE_KEY,
+        String(chatPanelWidth),
+      );
+    } catch {
+      return;
+    }
+  }, [chatPanelWidth]);
+
+  useEffect(() => {
+    function syncChatPanelWidthToViewport() {
+      setChatPanelWidth((current) => {
+        const bounds = getChatPanelWidthBounds();
+        const nextWidth = clamp(current, bounds.min, bounds.max);
+        return nextWidth === current ? current : nextWidth;
+      });
+    }
+
+    syncChatPanelWidthToViewport();
+    window.addEventListener("resize", syncChatPanelWidthToViewport);
+
+    return () => {
+      window.removeEventListener("resize", syncChatPanelWidthToViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    function stopChatPanelResize() {
+      const resizeState = panelResizeStateRef.current;
+
+      if (!resizeState) {
+        return;
+      }
+
+      panelResizeStateRef.current = null;
+      setIsResizingChatPanel(false);
+      setResizingChatPanelConversationId(null);
+      document.body.style.removeProperty("cursor");
+      document.body.style.removeProperty("user-select");
+
+      panelRefs.current[resizeState.conversationId]?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "nearest",
+      });
+    }
+
+    function handleChatPanelResizePointerMove(event: PointerEvent) {
+      const resizeState = panelResizeStateRef.current;
+
+      if (!resizeState) {
+        return;
+      }
+
+      event.preventDefault();
+      const bounds = getChatPanelWidthBounds();
+      const nextWidth = clamp(
+        resizeState.originWidth + (event.clientX - resizeState.startClientX),
+        bounds.min,
+        bounds.max,
+      );
+
+      setChatPanelWidth((current) =>
+        current === nextWidth ? current : nextWidth,
+      );
+    }
+
+    window.addEventListener("pointermove", handleChatPanelResizePointerMove);
+    window.addEventListener("pointerup", stopChatPanelResize);
+    window.addEventListener("pointercancel", stopChatPanelResize);
+    window.addEventListener("blur", stopChatPanelResize);
+
+    return () => {
+      window.removeEventListener("pointermove", handleChatPanelResizePointerMove);
+      window.removeEventListener("pointerup", stopChatPanelResize);
+      window.removeEventListener("pointercancel", stopChatPanelResize);
+      window.removeEventListener("blur", stopChatPanelResize);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTileView || !panelResizeStateRef.current) {
+      return;
+    }
+
+    panelResizeStateRef.current = null;
+    setIsResizingChatPanel(false);
+    setResizingChatPanelConversationId(null);
+    document.body.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+  }, [isTileView]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -849,6 +1181,11 @@ export default function App() {
 
     const timeoutId = window.setTimeout(() => {
       void persistStoredState(state).catch((error) => {
+        if (isApiErrorStatus(error, 401)) {
+          onAuthExpired();
+          return;
+        }
+
         console.warn("Unable to persist app state to Postgres.", error);
         setStorageMode("fallback");
       });
@@ -858,6 +1195,32 @@ export default function App() {
       window.clearTimeout(timeoutId);
     };
   }, [state, storageMode]);
+
+  useEffect(() => {
+    if (mainThreadDragMode === "idle") {
+      return undefined;
+    }
+
+    function resetDragMode() {
+      setMainThreadDragMode("idle");
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        resetDragMode();
+      }
+    }
+
+    document.addEventListener("dragend", resetDragMode);
+    document.addEventListener("drop", resetDragMode);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("dragend", resetDragMode);
+      document.removeEventListener("drop", resetDragMode);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [mainThreadDragMode]);
 
   useEffect(() => {
     if (mainViewMode !== "chat") {
@@ -927,6 +1290,7 @@ export default function App() {
   useEffect(() => {
     if (mainViewMode !== "chat") {
       setConnections([]);
+      setConnectorOcclusionRects([]);
       return;
     }
 
@@ -936,12 +1300,27 @@ export default function App() {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         const nextConnections: ConnectionLine[] = [];
+        const nextOcclusionRects: ConnectorOcclusionRect[] = [];
         const focusedConversation =
           state.conversations[state.activeConversationId];
 
         if (!focusedConversation) {
           setConnections(nextConnections);
+          setConnectorOcclusionRects(nextOcclusionRects);
           return;
+        }
+
+        const canvasRect = getElementRect(canvasRef.current);
+
+        if (canvasRect && canvasRect.top > 0) {
+          nextOcclusionRects.push({
+            id: "canvas-top-band",
+            x: 0,
+            y: 0,
+            width: window.innerWidth,
+            height: canvasRect.top,
+            radius: 0,
+          });
         }
 
         for (const conversation of getConversationPath(
@@ -994,6 +1373,27 @@ export default function App() {
           });
         }
 
+        for (const conversation of getConversationPath(
+          state.conversations,
+          focusedConversation.id,
+        )) {
+          const composerSurface = composerSurfaceRefs.current[conversation.id];
+          const composerRect = getElementRect(composerSurface);
+
+          if (!composerRect) {
+            continue;
+          }
+
+          nextOcclusionRects.push({
+            id: `composer-${conversation.id}`,
+            x: composerRect.left - 2,
+            y: composerRect.top - 2,
+            width: composerRect.width + 4,
+            height: composerRect.height + 4,
+            radius: 30,
+          });
+        }
+
         for (const childConversationId of focusedConversation.childIds) {
           const conversation = state.conversations[childConversationId];
 
@@ -1042,6 +1442,7 @@ export default function App() {
         }
 
         setConnections(nextConnections);
+        setConnectorOcclusionRects(nextOcclusionRects);
       });
     };
 
@@ -1056,7 +1457,87 @@ export default function App() {
       window.removeEventListener("scroll", requestUpdate, true);
       canvasRef.current?.removeEventListener("scroll", requestUpdate);
     };
-  }, [mainViewMode, state.activeConversationId, state.conversations, state.railOpen]);
+  }, [
+    chatPanelWidth,
+    leftSidebarOpen,
+    mainViewMode,
+    state.activeConversationId,
+    state.conversations,
+    state.railOpen,
+  ]);
+
+  function handleSetChatPanelWidth(nextWidth: number) {
+    const bounds = getChatPanelWidthBounds();
+
+    setChatPanelWidth((current) => {
+      const clampedWidth = clamp(nextWidth, bounds.min, bounds.max);
+      return current === clampedWidth ? current : clampedWidth;
+    });
+  }
+
+  function handleResetChatPanelWidth() {
+    const bounds = getChatPanelWidthBounds();
+
+    handleSetChatPanelWidth(
+      clamp(CHAT_PANEL_DEFAULT_WIDTH_PX, bounds.min, bounds.max),
+    );
+  }
+
+  function handleChatPanelResizePointerDown(
+    conversationId: string,
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) {
+    if (
+      event.button !== 0 ||
+      window.matchMedia(
+        `(max-width: ${MOBILE_PANEL_RESIZE_BREAKPOINT_PX}px)`,
+      ).matches
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    panelResizeStateRef.current = {
+      conversationId,
+      originWidth: chatPanelWidth,
+      startClientX: event.clientX,
+    };
+    setIsResizingChatPanel(true);
+    setResizingChatPanelConversationId(conversationId);
+    document.body.style.setProperty("cursor", "col-resize");
+    document.body.style.setProperty("user-select", "none");
+  }
+
+  function handleChatPanelResizeKeyDown(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) {
+    const bounds = getChatPanelWidthBounds();
+
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      handleSetChatPanelWidth(chatPanelWidth - CHAT_PANEL_KEYBOARD_STEP_PX);
+      return;
+    }
+
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      handleSetChatPanelWidth(chatPanelWidth + CHAT_PANEL_KEYBOARD_STEP_PX);
+      return;
+    }
+
+    if (event.key === "Home") {
+      event.preventDefault();
+      handleSetChatPanelWidth(bounds.min);
+      return;
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      handleSetChatPanelWidth(bounds.max);
+    }
+  }
 
   function handleDraftChange(conversationId: string, value: string) {
     setDrafts((current) => ({
@@ -1229,11 +1710,17 @@ export default function App() {
           title: nextConversationTitle,
         }),
         messages: [...conversation.messages, userMessage],
+        modelId: conversation.modelId,
         serviceId: conversation.serviceId,
       });
 
       appendAssistantMessage(conversationId, response.reply);
     } catch (error) {
+      if (isApiErrorStatus(error, 401)) {
+        onAuthExpired();
+        return;
+      }
+
       appendAssistantMessage(
         conversationId,
         buildBackendErrorReply(conversation.serviceId, error),
@@ -1246,26 +1733,44 @@ export default function App() {
     }
   }
 
-  function handleServiceChange(
+  function handleModelChange(
     conversationId: string,
     serviceId: BackendServiceId,
+    modelId: string,
   ) {
     setState((current) => {
       const conversation = current.conversations[conversationId];
+      const nextModelId = resolveBackendServiceModelId(serviceId, modelId);
 
-      if (!conversation || conversation.serviceId === serviceId) {
+      if (!conversation) {
+        return current;
+      }
+
+      const conversationUnchanged =
+        conversation.serviceId === serviceId &&
+        conversation.modelId === nextModelId;
+      const defaultsUnchanged =
+        current.defaultServiceId === serviceId &&
+        current.defaultModelId === nextModelId;
+
+      if (conversationUnchanged && defaultsUnchanged) {
         return current;
       }
 
       return {
         ...current,
-        conversations: {
-          ...current.conversations,
-          [conversationId]: {
-            ...conversation,
-            serviceId,
-          },
-        },
+        defaultModelId: nextModelId,
+        defaultServiceId: serviceId,
+        conversations: conversationUnchanged
+          ? current.conversations
+          : {
+              ...current.conversations,
+              [conversationId]: {
+                ...conversation,
+                modelId: nextModelId,
+                serviceId,
+              },
+            },
       };
     });
   }
@@ -1422,6 +1927,7 @@ export default function App() {
       id: branchId,
       title: buildConversationTitle(draft.quote, prompt),
       parentId: parentConversation.id,
+      modelId: parentConversation.modelId,
       serviceId: parentConversation.serviceId,
       branchAnchor: {
         id: createId("anchor"),
@@ -1481,11 +1987,17 @@ export default function App() {
       const response = await requestChatReply({
         conversation: getConversationRequestPayload(branchConversation),
         messages: branchConversation.messages,
+        modelId: branchConversation.modelId,
         serviceId: branchConversation.serviceId,
       });
 
       appendAssistantMessage(branchId, response.reply);
     } catch (error) {
+      if (isApiErrorStatus(error, 401)) {
+        onAuthExpired();
+        return;
+      }
+
       appendAssistantMessage(
         branchId,
         buildBackendErrorReply(branchConversation.serviceId, error),
@@ -1508,6 +2020,8 @@ export default function App() {
     const mainConversation = createMainConversation({
       createdAt: now,
       id: conversationId,
+      modelId: state.defaultModelId,
+      serviceId: state.defaultServiceId,
     });
 
     setSelectionDraft(null);
@@ -1672,6 +2186,8 @@ export default function App() {
       ? createMainConversation({
           createdAt: new Date().toISOString(),
           id: createId("conversation"),
+          modelId: state.defaultModelId,
+          serviceId: state.defaultServiceId,
         })
       : null;
 
@@ -1686,6 +2202,7 @@ export default function App() {
     for (const deletedConversationId of deletedConversationIds) {
       delete panelRefs.current[deletedConversationId];
       delete anchorRefs.current[deletedConversationId];
+      delete composerSurfaceRefs.current[deletedConversationId];
       delete tabRefs.current[deletedConversationId];
     }
 
@@ -1794,12 +2311,22 @@ export default function App() {
     });
   }
 
-  function handleToggleMainViewMode() {
+  function handleSetMainViewMode(nextViewMode: MainViewMode) {
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
     setSearchQuery("");
-    setMainViewMode((current) => (current === "chat" ? "tiles" : "chat"));
+    setMainViewMode(nextViewMode);
+  }
+
+  function handleToggleMainViewMode() {
+    handleSetMainViewMode(mainViewMode === "chat" ? "tiles" : "chat");
+  }
+
+  function handleToggleLeftSidebar() {
+    startTransition(() => {
+      setLeftSidebarOpen((current) => !current);
+    });
   }
 
   function handleToggleRail() {
@@ -1809,6 +2336,28 @@ export default function App() {
         railOpen: !current.railOpen,
       }));
     });
+  }
+
+  async function handleSaveProfile(args: {
+    displayName: string;
+    email: string;
+  }) {
+    setProfileSaving(true);
+    setProfileSaveError(null);
+
+    try {
+      await onUpdateProfile(args);
+      setProfileModalOpen(false);
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 401) {
+        onAuthExpired();
+        return;
+      }
+
+      setProfileSaveError(getErrorText(error, "Unable to update your profile."));
+    } finally {
+      setProfileSaving(false);
+    }
   }
 
   const toolbarCenterX =
@@ -1831,100 +2380,111 @@ export default function App() {
     left: `${toolbarCenterX}px`,
     top: `${toolbarTop}px`,
   } as CSSProperties;
+  const conversationCanvasStyle = {
+    "--chat-panel-width": `${chatPanelWidth}px`,
+  } as CSSProperties;
+  const chatPanelWidthBounds = getChatPanelWidthBounds();
 
   return (
     <div className="app-shell">
       <div className="app-chrome">
-        <main className="workspace">
-          <ThreadSidebar
-            activeThreadId={activeRootConversation.id}
-            mainViewMode={mainViewMode}
-            onDeleteThread={handleDeleteThread}
-            onNewChat={handleCreateMainConversation}
-            onOpenSearch={handleOpenSearch}
-            onRenameThread={handleRenameThread}
-            onSelectThread={handleSelectConversation}
-            onToggleMainViewMode={handleToggleMainViewMode}
-            threads={threadSummaries}
-          />
-
-          <section
-            className={
-              isTileView ? "canvas-section is-thread-tile-view" : "canvas-section"
-            }
-          >
-            <div className="canvas-head">
-              {isTileView ? (
-                <div className="canvas-view-intro">
-                  <p className="eyebrow">Main chats</p>
-                  <h2>Thread tile view</h2>
-                  <p className="canvas-hint">
-                    Browse threads by auto-detected category, then search, sort,
-                    and jump back into the conversation.
-                  </p>
-                </div>
-              ) : (
-                <nav aria-label="Conversation path" className="canvas-breadcrumb">
-                  {path.map((conversation, index) => (
-                    <span
-                      key={conversation.id}
-                      className={
-                        conversation.id === activeConversation.id
-                          ? "breadcrumb-item is-active"
-                          : "breadcrumb-item"
-                      }
-                    >
-                      {index > 0 ? (
-                        <span aria-hidden="true" className="breadcrumb-separator">
-                          &gt;
-                        </span>
-                      ) : null}
-                      <button
-                        className="breadcrumb-button"
-                        onClick={() => handleSelectConversation(conversation.id)}
-                        type="button"
-                      >
-                        {conversation.title}
-                      </button>
-                    </span>
-                  ))}
-                </nav>
-              )}
-
-              <div className="canvas-tools">
-                <button
-                  aria-label={`Switch to ${
-                    theme === "dark" ? "light" : "dark"
-                  } theme`}
-                  className="theme-toggle"
-                  onClick={() =>
-                    setTheme((current) =>
-                      current === "dark" ? "light" : "dark",
-                    )
-                  }
-                  type="button"
-                >
-                  <span aria-hidden="true" className="theme-toggle-icon">
-                    <ThemeIcon theme={theme} />
-                  </span>
-                  <span className="theme-toggle-label">
-                    {theme === "dark" ? "Dark theme" : "Light theme"}
-                  </span>
-                </button>
-              </div>
+        <div className="workspace-shell">
+          <header className="workspace-session-bar">
+            <div className="workspace-session-profile">
+              <button
+                aria-label="Open profile"
+                className="workspace-profile-trigger"
+                onClick={() => {
+                  setProfileSaveError(null);
+                  setProfileModalOpen(true);
+                }}
+                title="Open profile"
+                type="button"
+              >
+                <ProfileIcon />
+              </button>
             </div>
 
-            <PinnedThreadTabs
+            <div className="workspace-session-pins">
+              <PinnedThreadTabs
+                activeThreadId={activeRootConversation.id}
+                layoutMode={pinnedTabsLayoutMode}
+                onLayoutModeChange={setPinnedTabsLayoutMode}
+                onOpenThread={handleSelectConversation}
+                onPinThread={handlePinThread}
+                onReorderDragEnd={() => setMainThreadDragMode("idle")}
+                onReorderDragStart={() =>
+                  setMainThreadDragMode("reordering-pinned-tab")
+                }
+                onUnpinThread={handleUnpinThread}
+                pinnedThreads={pinnedThreadSummaries}
+                showHint={mainThreadDragMode === "pinning-main-thread"}
+              />
+            </div>
+
+            <div className="workspace-session-actions">
+              <span className="workspace-session-status">
+                {storageMode === "loading"
+                  ? "Syncing workspace"
+                  : storageMode === "server"
+                    ? "Server-backed"
+                    : "Local fallback"}
+              </span>
+              <button className="ghost-button" onClick={onLogout} type="button">
+                Log out
+              </button>
+            </div>
+          </header>
+
+          <main className="workspace">
+            <ThreadSidebar
               activeThreadId={activeRootConversation.id}
-              onOpenThread={handleSelectConversation}
-              onPinThread={handlePinThread}
-              onUnpinThread={handleUnpinThread}
-              pinnedThreads={pinnedThreadSummaries}
+              collapsed={!leftSidebarOpen}
+              mainViewMode={mainViewMode}
+              onDeleteThread={handleDeleteThread}
+              onMainThreadDragEnd={() => setMainThreadDragMode("idle")}
+              onMainThreadDragStart={() =>
+                setMainThreadDragMode("pinning-main-thread")
+              }
+              onNewChat={handleCreateMainConversation}
+              onOpenSettings={() => setAppSettingsOpen(true)}
+              onOpenSearch={handleOpenSearch}
+              onRenameThread={handleRenameThread}
+              onSelectThread={handleSelectConversation}
+              onToggleCollapse={handleToggleLeftSidebar}
+              onToggleMainViewMode={handleToggleMainViewMode}
+              onToggleTheme={() =>
+                onSetTheme((current) => getNextTheme(current))
+              }
+              theme={theme}
+              threads={threadSummaries}
             />
+
+            <section
+              className={
+                isTileView ? "canvas-section is-thread-tile-view" : "canvas-section"
+              }
+            >
+              {isTileView ? (
+                <div className="canvas-head">
+                  <div className="canvas-view-intro">
+                    <p className="eyebrow">Main chats</p>
+                    <h2>Thread tile view</h2>
+                    <p className="canvas-hint">
+                      Browse threads by auto-detected category, then search, sort,
+                      and jump back into the conversation.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
 
             {isTileView ? (
               <MainChatTileView
                 activeThreadId={activeRootConversation.id}
+                onMainThreadDragEnd={() => setMainThreadDragMode("idle")}
+                onMainThreadDragStart={() =>
+                  setMainThreadDragMode("pinning-main-thread")
+                }
                 onOpenThread={handleSelectConversation}
                 threads={threadSummaries}
               />
@@ -1932,16 +2492,29 @@ export default function App() {
               <div
                 className={
                   isMainView
-                    ? "conversation-canvas is-main-view"
-                    : "conversation-canvas"
+                    ? isResizingChatPanel
+                      ? "conversation-canvas is-main-view is-resizing-panel"
+                      : "conversation-canvas is-main-view"
+                    : isResizingChatPanel
+                      ? "conversation-canvas is-resizing-panel"
+                      : "conversation-canvas"
                 }
                 ref={canvasRef}
+                style={conversationCanvasStyle}
               >
                 {path.map((conversation) => (
                   <div
                     key={conversation.id}
                     className={
-                      isMainView ? "panel-slot is-main-view" : "panel-slot"
+                      isMainView
+                        ? conversation.id === resizingChatPanelConversationId &&
+                          isResizingChatPanel
+                          ? "panel-slot is-main-view is-resizable is-resizing"
+                          : "panel-slot is-main-view is-resizable"
+                        : conversation.id === resizingChatPanelConversationId &&
+                            isResizingChatPanel
+                          ? "panel-slot is-resizable is-resizing"
+                          : "panel-slot is-resizable"
                     }
                   >
                     <ChatPanel
@@ -1955,6 +2528,7 @@ export default function App() {
                       isSubmitting={Boolean(
                         pendingConversationIds[conversation.id],
                       )}
+                      theme={theme}
                       typingProgressByMessageId={
                         typingProgressByMessageIdRef.current
                       }
@@ -1968,7 +2542,7 @@ export default function App() {
                       onDraftChange={(value) =>
                         handleDraftChange(conversation.id, value)
                       }
-                      onServiceChange={handleServiceChange}
+                      onModelChange={handleModelChange}
                       onStopTypewriter={handleStopTypewriter}
                       onSubmit={handleSubmit}
                       onTypewriterProgress={handleTypewriterProgress}
@@ -1976,10 +2550,31 @@ export default function App() {
                       registerPanelRef={(conversationId, element) => {
                         panelRefs.current[conversationId] = element;
                       }}
+                      registerComposerSurfaceRef={(conversationId, element) => {
+                        composerSurfaceRefs.current[conversationId] = element;
+                      }}
                       registerAnchorRef={(branchConversationId, element) => {
                         anchorRefs.current[branchConversationId] = element;
                       }}
                     />
+                    <div
+                      aria-label="Resize chat panel width"
+                      aria-orientation="vertical"
+                      aria-valuemax={chatPanelWidthBounds.max}
+                      aria-valuemin={chatPanelWidthBounds.min}
+                      aria-valuenow={Math.round(chatPanelWidth)}
+                      aria-valuetext={`${Math.round(chatPanelWidth)} pixels wide`}
+                      className="panel-resize-handle"
+                      onDoubleClick={handleResetChatPanelWidth}
+                      onKeyDown={handleChatPanelResizeKeyDown}
+                      onPointerDown={(event) =>
+                        handleChatPanelResizePointerDown(conversation.id, event)
+                      }
+                      role="separator"
+                      tabIndex={0}
+                    >
+                      <span className="panel-resize-handle-grip" />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -2001,7 +2596,12 @@ export default function App() {
             />
           ) : null}
 
-          {!isTileView ? <ConnectorOverlay connections={connections} /> : null}
+          {!isTileView ? (
+            <ConnectorOverlay
+              connections={connections}
+              occlusionRects={connectorOcclusionRects}
+            />
+          ) : null}
 
           {!isTileView && selectionDraft ? (
             <form
@@ -2061,8 +2661,198 @@ export default function App() {
             query={searchQuery}
             results={searchResults}
           />
-        </main>
+
+          <ProfileModal
+            errorMessage={profileSaveError}
+            isOpen={profileModalOpen}
+            isSaving={profileSaving}
+            onClose={() => {
+              if (profileSaving) {
+                return;
+              }
+
+              setProfileSaveError(null);
+              setProfileModalOpen(false);
+            }}
+            onSave={handleSaveProfile}
+            user={user}
+          />
+
+          <AppSettingsModal
+            isOpen={appSettingsOpen}
+            mainViewMode={mainViewMode}
+            onClose={() => setAppSettingsOpen(false)}
+            onSetMainViewMode={handleSetMainViewMode}
+            onSetTheme={onSetTheme}
+            theme={theme}
+          />
+          </main>
+        </div>
       </div>
     </div>
+  );
+}
+
+export default function App() {
+  const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
+  const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
+
+  useEffect(() => {
+    syncTheme(theme);
+
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      return;
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateAuthSession() {
+      try {
+        const user = await requestAuthSession();
+
+        if (cancelled) {
+          return;
+        }
+
+        setAuthUser(user);
+        setAuthStatus(user ? "authenticated" : "unauthenticated");
+        setAuthError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setAuthUser(null);
+        setAuthStatus("unauthenticated");
+        setAuthError(getErrorText(error, "Unable to verify your session."));
+      }
+    }
+
+    void hydrateAuthSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function handleAuthExpired(
+    message = "Your session expired. Sign in again to continue.",
+  ) {
+    setAuthUser(null);
+    setAuthStatus("unauthenticated");
+    setAuthSubmitting(false);
+    setAuthError(message);
+  }
+
+  async function handleLogin(args: { email: string; password: string }) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+
+    try {
+      const user = await requestLogin(args);
+      setAuthUser(user);
+      setAuthStatus("authenticated");
+    } catch (error) {
+      setAuthError(getErrorText(error, "Login failed."));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleSignup(args: {
+    displayName: string;
+    email: string;
+    password: string;
+  }) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+
+    try {
+      const user = await requestSignup(args);
+      setAuthUser(user);
+      setAuthStatus("authenticated");
+    } catch (error) {
+      setAuthError(getErrorText(error, "Signup failed."));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await requestLogout();
+    } catch (error) {
+      console.warn("Unable to clear the server session.", error);
+    } finally {
+      setAuthUser(null);
+      setAuthStatus("unauthenticated");
+      setAuthError(null);
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleUpdateProfile(args: {
+    displayName: string;
+    email: string;
+  }) {
+    const user = await requestUpdateProfile(args);
+    setAuthUser(user);
+    setAuthStatus("authenticated");
+    return user;
+  }
+
+  if (authStatus === "checking") {
+    return (
+      <div className="app-shell">
+        <div className="app-chrome auth-chrome">
+          <div className="auth-loading-card">
+            <p className="eyebrow">Margin Chat</p>
+            <h1>Checking your session...</h1>
+            <p className="auth-copy">
+              We&apos;re loading your workspace and verifying whether there&apos;s
+              an active sign-in cookie.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authStatus !== "authenticated" || !authUser) {
+    return (
+      <div className="app-shell">
+        <div className="app-chrome auth-chrome">
+          <AuthLanding
+            errorMessage={authError}
+            isSubmitting={authSubmitting}
+            onLogin={handleLogin}
+            onSignup={handleSignup}
+            onToggleTheme={() => setTheme((current) => getNextTheme(current))}
+            theme={theme}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <WorkspaceApp
+      key={authUser.id}
+      onAuthExpired={handleAuthExpired}
+      onLogout={() => {
+        void handleLogout();
+      }}
+      onSetTheme={setTheme}
+      onUpdateProfile={handleUpdateProfile}
+      theme={theme}
+      user={authUser}
+    />
   );
 }

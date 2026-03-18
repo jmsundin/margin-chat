@@ -25,7 +25,10 @@ export async function readJsonBody(request) {
   }
 }
 
-export function sendJson(response, statusCode, payload) {
-  response.writeHead(statusCode, jsonHeaders);
+export function sendJson(response, statusCode, payload, extraHeaders = {}) {
+  response.writeHead(statusCode, {
+    ...jsonHeaders,
+    ...extraHeaders,
+  });
   response.end(JSON.stringify(payload));
 }

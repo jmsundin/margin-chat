@@ -1,8 +1,14 @@
 import {
+  getDefaultModelIdForService,
+  isBackendModelIdForService,
+} from "../lib/backendModels.mjs";
+import {
   VALID_MESSAGE_ROLES,
   VALID_SERVICE_IDS,
 } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
+
+const DEFAULT_SERVICE_ID = "backend-services";
 
 export function normalizeAppState(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
@@ -138,12 +144,86 @@ export function normalizeAppState(input) {
     );
   }
 
+  const { defaultModelId, defaultServiceId } = normalizeDefaultSelection(
+    input.defaultServiceId,
+    input.defaultModelId,
+    conversationsById,
+    input.activeConversationId,
+    input.rootId,
+  );
+
   return {
     activeConversationId: input.activeConversationId,
     conversations: normalizedConversations,
+    defaultModelId,
+    defaultServiceId,
     pinnedThreadIds: normalizedPinnedThreadIds,
     railOpen: input.railOpen,
     rootId: input.rootId,
+  };
+}
+
+function normalizeDefaultSelection(
+  inputServiceId,
+  inputModelId,
+  conversationsById,
+  activeConversationId,
+  rootId,
+) {
+  if (
+    inputServiceId !== undefined &&
+    inputServiceId !== null &&
+    inputServiceId !== "" &&
+    !VALID_SERVICE_IDS.has(inputServiceId)
+  ) {
+    throw createStateError("defaultServiceId must use a supported serviceId.");
+  }
+
+  const fallbackConversation =
+    conversationsById[activeConversationId] ??
+    conversationsById[rootId] ??
+    Object.values(conversationsById).find(
+      (conversation) => conversation.parentId === null,
+    ) ??
+    Object.values(conversationsById)[0] ??
+    null;
+  const defaultServiceId = VALID_SERVICE_IDS.has(inputServiceId)
+    ? inputServiceId
+    : fallbackConversation?.serviceId ?? DEFAULT_SERVICE_ID;
+  const fallbackModelId =
+    fallbackConversation?.serviceId === defaultServiceId
+      ? fallbackConversation.modelId
+      : getDefaultModelIdForService(defaultServiceId);
+
+  if (inputModelId === undefined || inputModelId === null || inputModelId === "") {
+    return {
+      defaultModelId: fallbackModelId,
+      defaultServiceId,
+    };
+  }
+
+  if (typeof inputModelId !== "string") {
+    throw createStateError("defaultModelId must be a string.");
+  }
+
+  const defaultModelId = inputModelId.trim();
+
+  if (!defaultModelId) {
+    return {
+      defaultModelId: fallbackModelId,
+      defaultServiceId,
+    };
+  }
+
+  if (!isBackendModelIdForService(defaultServiceId, defaultModelId)) {
+    throw createStateError(
+      `defaultModelId must use a supported modelId for "${defaultServiceId}".`,
+    );
+  }
+
+  return {
+    defaultModelId,
+    defaultServiceId,
   };
 }
 
@@ -228,6 +308,12 @@ function normalizeConversation(expectedId, input) {
     );
   }
 
+  const modelId = normalizeConversationModelId(
+    expectedId,
+    input.serviceId,
+    input.modelId,
+  );
+
   if (!Array.isArray(input.messages)) {
     throw createStateError(
       `Conversation "${expectedId}" must include a messages array.`,
@@ -247,6 +333,7 @@ function normalizeConversation(expectedId, input) {
     messages: input.messages.map((message, index) =>
       normalizeMessage(expectedId, index, message),
     ),
+    modelId,
     parentId:
       input.parentId === null || input.parentId === undefined
         ? null
@@ -258,6 +345,32 @@ function normalizeConversation(expectedId, input) {
       `Conversation "${expectedId}" updatedAt`,
     ),
   };
+}
+
+function normalizeConversationModelId(expectedId, serviceId, input) {
+  if (input === undefined || input === null || input === "") {
+    return getDefaultModelIdForService(serviceId);
+  }
+
+  if (typeof input !== "string") {
+    throw createStateError(
+      `Conversation "${expectedId}" must include a string modelId.`,
+    );
+  }
+
+  const modelId = input.trim();
+
+  if (!modelId) {
+    return getDefaultModelIdForService(serviceId);
+  }
+
+  if (!isBackendModelIdForService(serviceId, modelId)) {
+    throw createStateError(
+      `Conversation "${expectedId}" must use a supported modelId for "${serviceId}".`,
+    );
+  }
+
+  return modelId;
 }
 
 function normalizeMessage(conversationId, index, input) {

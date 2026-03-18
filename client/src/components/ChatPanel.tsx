@@ -10,7 +10,11 @@ import {
 } from "react";
 import MarkdownMessage from "./MarkdownMessage";
 import ServicePickerModal from "./ServicePickerModal";
-import { getBackendServiceOption } from "../lib/services";
+import {
+  getBackendServiceModel,
+  getBackendServiceOption,
+  getBackendServiceSelectionLabel,
+} from "../lib/services";
 import type {
   BackendServiceId,
   Conversation,
@@ -145,14 +149,16 @@ interface ChatPanelProps {
   draft: string;
   isActive: boolean;
   isSubmitting: boolean;
+  theme: "light" | "dark";
   typingProgressByMessageId: Record<string, number>;
   typingMessageIds: Record<string, boolean>;
   selectionPreview: SelectionDraft | null;
   onActivate: () => void;
   onDraftChange: (value: string) => void;
-  onServiceChange: (
+  onModelChange: (
     conversationId: string,
     serviceId: BackendServiceId,
+    modelId: string,
   ) => void;
   onStopTypewriter: (conversationId: string) => void;
   onSubmit: (conversationId: string, value: string) => void;
@@ -161,6 +167,10 @@ interface ChatPanelProps {
   registerPanelRef: (
     conversationId: string,
     element: HTMLElement | null,
+  ) => void;
+  registerComposerSurfaceRef: (
+    conversationId: string,
+    element: HTMLDivElement | null,
   ) => void;
   registerAnchorRef: (
     branchConversationId: string,
@@ -328,6 +338,7 @@ interface MessageContentProps {
     branchConversationId: string,
     element: HTMLSpanElement | null,
   ) => void;
+  theme: "light" | "dark";
   typingProgressByMessageId: Record<string, number>;
 }
 
@@ -340,6 +351,7 @@ function MessageContent({
   onTypewriterComplete,
   pendingSelection,
   registerAnchorRef,
+  theme,
   typingProgressByMessageId,
 }: MessageContentProps) {
   const [typewriterChunks, setTypewriterChunks] = useState(() =>
@@ -448,9 +460,13 @@ function MessageContent({
         }
         content={renderedMessage.content}
         conversationId={conversationId}
+        enableMermaidRendering={
+          !isTypewriting && visibleLength >= typewriterChunks.length
+        }
         messageId={message.id}
         pendingSelection={pendingSelection}
         registerAnchorRef={registerAnchorRef}
+        theme={theme}
       />
     ) : (
       <div
@@ -478,17 +494,19 @@ export default function ChatPanel({
   draft,
   isActive,
   isSubmitting,
+  theme,
   typingProgressByMessageId,
   typingMessageIds,
   selectionPreview,
   onActivate,
   onDraftChange,
-  onServiceChange,
+  onModelChange,
   onStopTypewriter,
   onSubmit,
   onTypewriterProgress,
   onTypewriterComplete,
   registerPanelRef,
+  registerComposerSurfaceRef,
   registerAnchorRef,
 }: ChatPanelProps) {
   const [isServicePickerOpen, setServicePickerOpen] = useState(false);
@@ -503,6 +521,12 @@ export default function ChatPanel({
   const currentService =
     getBackendServiceOption(conversation.serviceId) ??
     getBackendServiceOption("backend-services");
+  const currentModel =
+    getBackendServiceModel(conversation.serviceId, conversation.modelId);
+  const currentSelectionLabel = getBackendServiceSelectionLabel(
+    conversation.serviceId,
+    conversation.modelId,
+  );
 
   const scrollToBottom = useEffectEvent(() => {
     const panelBody = panelBodyRef.current;
@@ -720,6 +744,7 @@ export default function ChatPanel({
                       onTypewriterComplete={onTypewriterComplete}
                       pendingSelection={pendingSelection}
                       registerAnchorRef={registerAnchorRef}
+                      theme={theme}
                       typingProgressByMessageId={typingProgressByMessageId}
                     />
                   </div>
@@ -744,9 +769,13 @@ export default function ChatPanel({
         </div>
 
         <div
-          ref={composerSurfaceRef}
           className="composer-surface"
           data-composer-surface="true"
+          data-conversation-id={conversation.id}
+          ref={(element) => {
+            composerSurfaceRef.current = element;
+            registerComposerSurfaceRef(conversation.id, element);
+          }}
         >
           <div ref={composerPrimaryRef} className="composer-primary">
             <div className="composer-primary-scroll">
@@ -811,7 +840,7 @@ export default function ChatPanel({
               <button
                 aria-expanded={isServicePickerOpen}
                 aria-haspopup="dialog"
-                aria-label={`Choose AI service. Current service: ${currentService?.label ?? "Backend services"}`}
+                aria-label={`Choose AI model. Current selection: ${currentSelectionLabel}`}
                 className={
                   isActive ? "composer-service-pill" : "composer-service-pill is-disabled"
                 }
@@ -819,9 +848,9 @@ export default function ChatPanel({
                 onClick={() => setServicePickerOpen(true)}
                 type="button"
               >
-                <span className="composer-service-label">AI Service</span>
+                <span className="composer-service-label">AI Model</span>
                 <span className="composer-service-value">
-                  {currentService?.label ?? "Backend services"}
+                  {currentModel?.label ?? currentService?.label ?? "Automatic"}
                 </span>
               </button>
             </div>
@@ -848,10 +877,13 @@ export default function ChatPanel({
       </form>
 
       <ServicePickerModal
+        currentModelId={conversation.modelId}
         currentServiceId={conversation.serviceId}
         isOpen={isServicePickerOpen}
         onClose={() => setServicePickerOpen(false)}
-        onSelectService={(serviceId) => onServiceChange(conversation.id, serviceId)}
+        onSelectModel={(serviceId, modelId) =>
+          onModelChange(conversation.id, serviceId, modelId)
+        }
       />
     </article>
   );

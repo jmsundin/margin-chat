@@ -3,15 +3,17 @@ import {
   BACKEND_SERVICE_OPTIONS,
   type BackendServiceModel,
   type BackendServiceOption,
-  getBackendServiceLabel,
+  getBackendServiceModelLabel,
+  getBackendServiceSelectionLabel,
 } from "../lib/services";
 import type { BackendServiceId } from "../types";
 
 interface ServicePickerModalProps {
+  currentModelId: string;
   currentServiceId: BackendServiceId;
   isOpen: boolean;
   onClose: () => void;
-  onSelectService: (serviceId: BackendServiceId) => void;
+  onSelectModel: (serviceId: BackendServiceId, modelId: string) => void;
 }
 
 function SearchIcon() {
@@ -74,14 +76,15 @@ function matchesModel(
 }
 
 export default function ServicePickerModal({
+  currentModelId,
   currentServiceId,
   isOpen,
   onClose,
-  onSelectService,
+  onSelectModel,
 }: ServicePickerModalProps) {
   const [query, setQuery] = useState("");
   const [expandedProviderId, setExpandedProviderId] =
-    useState<BackendServiceId>("openai-api");
+    useState<BackendServiceId | null>(currentServiceId);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -90,6 +93,7 @@ export default function ServicePickerModal({
       return undefined;
     }
 
+    setExpandedProviderId(currentServiceId);
     inputRef.current?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -103,37 +107,33 @@ export default function ServicePickerModal({
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose]);
-
-  useEffect(() => {
-    if (currentServiceId === "backend-services") {
-      return;
-    }
-
-    setExpandedProviderId(currentServiceId);
-  }, [currentServiceId]);
+  }, [currentServiceId, isOpen, onClose]);
 
   if (!isOpen) {
     return null;
   }
 
   const normalizedQuery = query.trim().toLowerCase();
+  const currentSelectionLabel = getBackendServiceSelectionLabel(
+    currentServiceId,
+    currentModelId,
+  );
   const featuredModels: Array<{
     model: BackendServiceModel;
     service: BackendServiceOption;
   }> = [];
-  const providerSections = BACKEND_SERVICE_OPTIONS.filter(
-    (service) => service.id !== "backend-services",
-  )
-    .map((service) => ({
-      ...service,
-      visibleModels: service.models.filter((model) =>
-        matchesModel(normalizedQuery, service, model),
-      ),
-    }))
-    .filter((service) => service.visibleModels.length > 0 || !normalizedQuery);
+  const providerSections = BACKEND_SERVICE_OPTIONS.map((service) => ({
+    ...service,
+    visibleModels: service.models.filter((model) =>
+      matchesModel(normalizedQuery, service, model),
+    ),
+  })).filter((service) => service.visibleModels.length > 0 || !normalizedQuery);
 
   for (const service of BACKEND_SERVICE_OPTIONS) {
+    if (service.id === "backend-services") {
+      continue;
+    }
+
     for (const model of service.models) {
       if (!model.featured || !matchesModel(normalizedQuery, service, model)) {
         continue;
@@ -158,7 +158,7 @@ export default function ServicePickerModal({
       role="presentation"
     >
       <section
-        aria-label="Choose AI service"
+        aria-label="Choose AI model"
         aria-modal="true"
         className="service-picker-modal"
         onClick={(event) => event.stopPropagation()}
@@ -168,7 +168,7 @@ export default function ServicePickerModal({
           <SearchIcon />
           <input
             ref={inputRef}
-            aria-label="Search AI services"
+            aria-label="Search AI models"
             className="service-picker-search-input"
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search models or providers..."
@@ -178,8 +178,8 @@ export default function ServicePickerModal({
         </label>
 
         <div className="service-picker-context">
-          <span className="service-picker-context-label">Current service</span>
-          <strong>{getBackendServiceLabel(currentServiceId)}</strong>
+          <span className="service-picker-context-label">Current selection</span>
+          <strong>{currentSelectionLabel}</strong>
         </div>
 
         <div className="service-picker-groups">
@@ -188,57 +188,62 @@ export default function ServicePickerModal({
               <div className="service-picker-section-head">
                 <div>
                   <h2>New & Popular</h2>
-                  <p>Jump straight into the most-used model picks.</p>
+                  <p>Pick one of the strongest current model recommendations right away.</p>
                 </div>
               </div>
 
               <div className="service-picker-model-list">
-                {featuredModels.map(({ model, service }) => (
-                  <button
-                    key={`${service.id}-${model.id}`}
-                    className={
-                      currentServiceId === service.id
-                        ? "service-picker-model-card is-featured is-current"
-                        : "service-picker-model-card is-featured"
-                    }
-                    onClick={() => {
-                      onSelectService(service.id);
-                      onClose();
-                    }}
-                    type="button"
-                  >
-                    <span
-                      className={`service-picker-card-icon is-${service.id}`}
-                      aria-hidden="true"
-                    >
-                      {service.iconLabel}
-                    </span>
+                {featuredModels.map(({ model, service }) => {
+                  const isCurrent =
+                    currentServiceId === service.id && currentModelId === model.id;
 
-                    <span className="service-picker-model-copy">
-                      <span className="service-picker-model-title-row">
-                        <span className="service-picker-model-title">
-                          {model.label}
-                        </span>
-                        <span className="service-picker-model-provider">
-                          {service.provider}
-                        </span>
-                        {model.badgeLabel ? (
-                          <span className="service-picker-model-badge">
-                            {model.badgeLabel}
-                          </span>
-                        ) : null}
-                        {currentServiceId === service.id ? (
-                          <span className="service-picker-provider-current">
-                            Current
-                          </span>
-                        ) : null}
+                  return (
+                    <button
+                      key={`${service.id}-${model.id}`}
+                      className={
+                        isCurrent
+                          ? "service-picker-model-card is-featured is-current"
+                          : "service-picker-model-card is-featured"
+                      }
+                      onClick={() => {
+                        onSelectModel(service.id, model.id);
+                        onClose();
+                      }}
+                      type="button"
+                    >
+                      <span
+                        className={`service-picker-card-icon is-${service.id}`}
+                        aria-hidden="true"
+                      >
+                        {service.iconLabel}
                       </span>
-                      <span className="service-picker-model-description">
-                        {model.description}
+
+                      <span className="service-picker-model-copy">
+                        <span className="service-picker-model-title-row">
+                          <span className="service-picker-model-title">
+                            {model.label}
+                          </span>
+                          <span className="service-picker-model-provider">
+                            {service.provider}
+                          </span>
+                          {model.badgeLabel ? (
+                            <span className="service-picker-model-badge">
+                              {model.badgeLabel}
+                            </span>
+                          ) : null}
+                          {isCurrent ? (
+                            <span className="service-picker-provider-current">
+                              Selected
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="service-picker-model-description">
+                          {model.description}
+                        </span>
                       </span>
-                    </span>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -247,8 +252,8 @@ export default function ServicePickerModal({
             <section className="service-picker-section">
               <div className="service-picker-section-head">
                 <div>
-                  <h2>Providers</h2>
-                  <p>Open a provider to see the strongest model choices behind it.</p>
+                  <h2>Providers & Modes</h2>
+                  <p>Open a provider to reveal the best model options supported here.</p>
                 </div>
               </div>
 
@@ -256,7 +261,10 @@ export default function ServicePickerModal({
                 {providerSections.map((service) => {
                   const isExpanded =
                     Boolean(normalizedQuery) || expandedProviderId === service.id;
-                  const isCurrent = currentServiceId === service.id;
+                  const isCurrentProvider = currentServiceId === service.id;
+                  const currentProviderModelLabel = isCurrentProvider
+                    ? getBackendServiceModelLabel(currentServiceId, currentModelId)
+                    : null;
 
                   return (
                     <section
@@ -270,13 +278,13 @@ export default function ServicePickerModal({
                       <button
                         aria-expanded={isExpanded}
                         className={
-                          isCurrent
+                          isCurrentProvider
                             ? "service-picker-provider-button is-current"
                             : "service-picker-provider-button"
                         }
                         onClick={() =>
                           setExpandedProviderId((current) =>
-                            current === service.id ? "backend-services" : service.id,
+                            current === service.id ? null : service.id,
                           )
                         }
                         type="button"
@@ -298,9 +306,9 @@ export default function ServicePickerModal({
                         </span>
 
                         <span className="service-picker-provider-meta">
-                          {isCurrent ? (
+                          {currentProviderModelLabel ? (
                             <span className="service-picker-provider-current">
-                              Current
+                              {currentProviderModelLabel}
                             </span>
                           ) : null}
                           <ChevronDownIcon isExpanded={isExpanded} />
@@ -309,33 +317,48 @@ export default function ServicePickerModal({
 
                       {isExpanded ? (
                         <div className="service-picker-model-list is-provider-list">
-                          {service.visibleModels.map((model) => (
-                            <button
-                              key={model.id}
-                              className="service-picker-model-card"
-                              onClick={() => {
-                                onSelectService(service.id);
-                                onClose();
-                              }}
-                              type="button"
-                            >
-                              <span className="service-picker-model-copy">
-                                <span className="service-picker-model-title-row">
-                                  <span className="service-picker-model-title">
-                                    {model.label}
-                                  </span>
-                                  {model.badgeLabel ? (
-                                    <span className="service-picker-model-badge">
-                                      {model.badgeLabel}
+                          {service.visibleModels.map((model) => {
+                            const isCurrent =
+                              currentServiceId === service.id &&
+                              currentModelId === model.id;
+
+                            return (
+                              <button
+                                key={model.id}
+                                className={
+                                  isCurrent
+                                    ? "service-picker-model-card is-current"
+                                    : "service-picker-model-card"
+                                }
+                                onClick={() => {
+                                  onSelectModel(service.id, model.id);
+                                  onClose();
+                                }}
+                                type="button"
+                              >
+                                <span className="service-picker-model-copy">
+                                  <span className="service-picker-model-title-row">
+                                    <span className="service-picker-model-title">
+                                      {model.label}
                                     </span>
-                                  ) : null}
+                                    {model.badgeLabel ? (
+                                      <span className="service-picker-model-badge">
+                                        {model.badgeLabel}
+                                      </span>
+                                    ) : null}
+                                    {isCurrent ? (
+                                      <span className="service-picker-provider-current">
+                                        Selected
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                  <span className="service-picker-model-description">
+                                    {model.description}
+                                  </span>
                                 </span>
-                                <span className="service-picker-model-description">
-                                  {model.description}
-                                </span>
-                              </span>
-                            </button>
-                          ))}
+                              </button>
+                            );
+                          })}
                         </div>
                       ) : null}
                     </section>
@@ -348,7 +371,7 @@ export default function ServicePickerModal({
           {!hasVisibleContent ? (
             <div className="service-picker-empty">
               <strong>No models matched.</strong>
-              <p>Try OpenAI, Gemini, Hugging Face, or a model name like GPT or Qwen.</p>
+              <p>Try GPT, Gemini, DeepSeek, Qwen, or the provider name.</p>
             </div>
           ) : null}
         </div>

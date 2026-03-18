@@ -1,3 +1,7 @@
+import {
+  getDefaultModelIdForService,
+  isBackendModelIdForService,
+} from "../lib/backendModels.mjs";
 import { HttpError } from "../lib/errors.mjs";
 
 const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
@@ -6,6 +10,7 @@ const VALID_SERVICE_IDS = new Set([
   "gemini-api",
   "huggingface-api",
   "openai-api",
+  "xai-api",
 ]);
 
 export function validateChatRequest(body) {
@@ -15,6 +20,26 @@ export function validateChatRequest(body) {
 
   if (!isBackendServiceId(body.serviceId)) {
     throw new HttpError(400, "serviceId must be a supported backend service.");
+  }
+
+  if (
+    body.modelId !== undefined &&
+    body.modelId !== null &&
+    typeof body.modelId !== "string"
+  ) {
+    throw new HttpError(400, "modelId must be a string when provided.");
+  }
+
+  const modelId =
+    typeof body.modelId === "string" && body.modelId.trim()
+      ? body.modelId.trim()
+      : getDefaultModelIdForService(body.serviceId);
+
+  if (!isBackendModelIdForService(body.serviceId, modelId)) {
+    throw new HttpError(
+      400,
+      "modelId must be a supported model for the selected backend service.",
+    );
   }
 
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
@@ -76,6 +101,7 @@ export function validateChatRequest(body) {
       content: message.content,
       role: message.role,
     })),
+    modelId,
     serviceId: body.serviceId,
   };
 }

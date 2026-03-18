@@ -2,6 +2,14 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
+import {
+  createAuthSession,
+  createUser,
+  deleteAuthSession,
+  findUserForLogin,
+  getUserByAuthSession,
+  updateUserProfile,
+} from "./authRepository.mjs";
 import { buildConnectionOptions } from "./config.mjs";
 import { wrapStorageError } from "./errors.mjs";
 import { readState, writeState } from "./repository.mjs";
@@ -61,16 +69,40 @@ export function createAppDatabase(env) {
     }
   }
 
-  async function loadState() {
-    return withClient((client) => readState(client));
+  async function createAuthSessionRecord(args) {
+    return withClient((client) => createAuthSession(client, args));
   }
 
-  async function saveState(payload) {
+  async function createUserRecord(args) {
+    return withClient((client) => createUser(client, args));
+  }
+
+  async function deleteAuthSessionRecord(sessionId) {
+    return withClient((client) => deleteAuthSession(client, sessionId));
+  }
+
+  async function findUserForLoginRecord(email) {
+    return withClient((client) => findUserForLogin(client, email));
+  }
+
+  async function getUserByAuthSessionRecord(sessionId) {
+    return withClient((client) => getUserByAuthSession(client, sessionId));
+  }
+
+  async function updateUserProfileRecord(args) {
+    return withClient((client) => updateUserProfile(client, args));
+  }
+
+  async function loadState(userId) {
+    return withClient((client) => readState(client, userId));
+  }
+
+  async function saveState(userId, payload) {
     const normalizedState = normalizeAppState(payload);
 
     return withClient(async (client) => {
-      await writeState(client, normalizedState);
-      return readState(client);
+      await writeState(client, userId, normalizedState);
+      return readState(client, userId);
     });
   }
 
@@ -90,9 +122,15 @@ export function createAppDatabase(env) {
 
   return {
     close,
+    createAuthSession: createAuthSessionRecord,
+    createUser: createUserRecord,
+    deleteAuthSession: deleteAuthSessionRecord,
+    findUserForLogin: findUserForLoginRecord,
     getHealth,
+    getUserByAuthSession: getUserByAuthSessionRecord,
     loadState,
     ready,
     saveState,
+    updateUserProfile: updateUserProfileRecord,
   };
 }
