@@ -2059,6 +2059,7 @@ button {
 }
 
 .graph-node-shell.is-active .graph-node-drag-handle,
+.graph-node-shell.is-scroll-focused .graph-node-drag-handle,
 .graph-node-shell.is-resizing .graph-node-drag-handle,
 .graph-node-shell.is-dragging .graph-node-drag-handle {
   border-color: var(--panel-active-border);
@@ -2103,6 +2104,11 @@ button {
   height: 100%;
   margin-top: -1px;
   transform: none;
+}
+
+.graph-node-shell.is-scroll-focused .graph-node-panel .chat-panel {
+  border-color: var(--panel-active-border);
+  box-shadow: var(--panel-active-shadow);
 }
 
 .graph-node-resize-handle {
@@ -3871,7 +3877,7 @@ button {
   justify-content: center;
   padding: min(10vh, 76px) 18px 18px;
   position: fixed;
-  z-index: 19;
+  z-index: 32;
 }
 
 .service-picker-modal {
@@ -3886,6 +3892,7 @@ button {
   flex-direction: column;
   gap: 14px;
   max-height: min(78vh, 760px);
+  overflow: hidden;
   padding: 18px;
   width: min(100%, 430px);
 }
@@ -3952,6 +3959,7 @@ button {
   gap: 18px;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
   padding-right: 4px;
   scrollbar-width: thin;
 }

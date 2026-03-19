@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   BACKEND_SERVICE_OPTIONS,
   type BackendServiceModel,
@@ -109,6 +110,19 @@ export default function ServicePickerModal({
     };
   }, [currentServiceId, isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen || typeof document === "undefined") {
+      return undefined;
+    }
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isOpen]);
+
   if (!isOpen) {
     return null;
   }
@@ -148,13 +162,14 @@ export default function ServicePickerModal({
 
   const hasVisibleContent = featuredModels.length || providerSections.length;
 
-  return (
+  const modal = (
     <div
       className="service-picker-backdrop"
       onClick={(event) => {
         event.stopPropagation();
         onClose();
       }}
+      onWheel={(event) => event.stopPropagation()}
       role="presentation"
     >
       <section
@@ -162,6 +177,7 @@ export default function ServicePickerModal({
         aria-modal="true"
         className="service-picker-modal"
         onClick={(event) => event.stopPropagation()}
+        onWheel={(event) => event.stopPropagation()}
         role="dialog"
       >
         <label className="service-picker-search-shell">
@@ -378,4 +394,8 @@ export default function ServicePickerModal({
       </section>
     </div>
   );
+
+  return typeof document !== "undefined"
+    ? createPortal(modal, document.body)
+    : modal;
 }
