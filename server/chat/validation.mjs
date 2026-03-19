@@ -10,10 +10,13 @@ const VALID_SERVICE_IDS = new Set([
   "gemini-api",
   "huggingface-api",
   "openai-api",
+  "openai-agent",
   "xai-api",
 ]);
 
 export function validateChatRequest(body) {
+  const requestReceivedAt = new Date().toISOString();
+
   if (!body || typeof body !== "object") {
     throw new HttpError(400, "Request body must be a JSON object.");
   }
@@ -97,8 +100,16 @@ export function validateChatRequest(body) {
           : String(body.conversation.parentId),
       title: String(body.conversation.title ?? ""),
     },
-    messages: body.messages.map((message) => ({
+    messages: body.messages.map((message, index) => ({
       content: message.content,
+      createdAt:
+        typeof message.createdAt === "string" && message.createdAt.trim()
+          ? message.createdAt
+          : requestReceivedAt,
+      id:
+        typeof message.id === "string" && message.id.trim()
+          ? message.id
+          : `message-${index}`,
       role: message.role,
     })),
     modelId,

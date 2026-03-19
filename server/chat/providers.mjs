@@ -14,30 +14,17 @@ export async function requestOpenAIResponse({
     );
   }
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    body: JSON.stringify({
+  const payload = await requestOpenAIResponsesPayload({
+    apiKey,
+    body: {
       input: extractConversationMessages(chatRequest.messages).map((message) => ({
         content: message.content,
         role: message.role,
       })),
       instructions: systemInstruction,
       model,
-    }),
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
     },
-    method: "POST",
   });
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new HttpError(
-      response.status,
-      extractApiErrorMessage(payload) ?? "OpenAI request failed.",
-    );
-  }
 
   const reply = extractOpenAIReply(payload);
 
@@ -52,6 +39,27 @@ export async function requestOpenAIResponse({
     model,
     reply,
   };
+}
+
+export async function requestOpenAIResponsesPayload({ apiKey, body }) {
+  const response = await fetch("https://api.openai.com/v1/responses", {
+    body: JSON.stringify(body),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new HttpError(
+      response.status,
+      extractApiErrorMessage(payload) ?? "OpenAI request failed.",
+    );
+  }
+
+  return payload;
 }
 
 export async function requestXAIResponse({
@@ -236,7 +244,7 @@ export async function requestHuggingFaceResponse({
   };
 }
 
-function extractOpenAIReply(payload) {
+export function extractOpenAIReply(payload) {
   if (
     payload &&
     typeof payload.output_text === "string" &&
@@ -303,7 +311,7 @@ function extractHuggingFaceReply(payload) {
     .trim();
 }
 
-function extractApiErrorMessage(payload) {
+export function extractApiErrorMessage(payload) {
   if (typeof payload?.error === "string" && payload.error) {
     return payload.error;
   }

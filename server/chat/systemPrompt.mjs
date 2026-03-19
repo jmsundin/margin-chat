@@ -32,6 +32,17 @@ export function buildSystemInstruction(chatRequest) {
   return parts.join("\n\n");
 }
 
+export function buildOpenAIAgentInstruction(chatRequest) {
+  return [
+    buildSystemInstruction(chatRequest),
+    "You are operating in OpenAI Agent mode for Margin Chat.",
+    "You can use workspace tools to inspect the signed-in user's saved conversations and branches before answering.",
+    "Use the tools when the user asks about prior threads, branch history, saved context, or anything that depends on workspace memory.",
+    "Do not claim you inspected saved conversations unless you actually used a workspace tool in this turn.",
+    "After using tools, answer directly and synthesize the findings instead of dumping raw tool output.",
+  ].join("\n\n");
+}
+
 export function extractConversationMessages(messages) {
   return messages
     .filter((message) => message.role !== "system")

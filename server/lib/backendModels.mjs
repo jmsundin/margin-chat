@@ -3,6 +3,7 @@ const DEFAULT_MODEL_IDS = {
   "gemini-api": "gemini-3.1-pro-preview",
   "huggingface-api": "openai/gpt-oss-120b",
   "openai-api": "gpt-5.4",
+  "openai-agent": "gpt-5.4",
   "xai-api": "grok-4.20-beta-latest-non-reasoning",
 };
 
@@ -19,6 +20,13 @@ const MODEL_IDS_BY_SERVICE = {
     "Qwen/Qwen3-Coder-480B-A35B-Instruct",
   ]),
   "openai-api": new Set([
+    "gpt-5.4",
+    "gpt-5.4-pro",
+    "gpt-5-chat-latest",
+    "gpt-5.4-mini",
+    "gpt-5.4-nano",
+  ]),
+  "openai-agent": new Set([
     "gpt-5.4",
     "gpt-5.4-pro",
     "gpt-5-chat-latest",
@@ -53,7 +61,7 @@ export function normalizeBackendModelId(serviceId, modelId) {
 }
 
 export function getRuntimeDefaultModelForService(runtimeConfig, serviceId) {
-  if (serviceId === "openai-api") {
+  if (serviceId === "openai-api" || serviceId === "openai-agent") {
     return runtimeConfig.openaiModel || getDefaultModelIdForService(serviceId);
   }
 

@@ -61,6 +61,7 @@ where
     or default_service_id not in (
       'backend-services',
       'openai-api',
+      'openai-agent',
       'gemini-api',
       'huggingface-api',
       'xai-api'
@@ -75,6 +76,7 @@ update app_sessions
 set default_model_id = case default_service_id
   when 'backend-services' then 'smart-routing'
   when 'openai-api' then 'gpt-5.4'
+  when 'openai-agent' then 'gpt-5.4'
   when 'gemini-api' then 'gemini-3.1-pro-preview'
   when 'huggingface-api' then 'openai/gpt-oss-120b'
   when 'xai-api' then 'grok-4.20-beta-latest-non-reasoning'
@@ -88,6 +90,16 @@ where
     or (default_service_id = 'backend-services' and default_model_id not in ('smart-routing'))
     or (
       default_service_id = 'openai-api'
+      and default_model_id not in (
+        'gpt-5.4',
+        'gpt-5.4-pro',
+        'gpt-5-chat-latest',
+        'gpt-5.4-mini',
+        'gpt-5.4-nano'
+      )
+    )
+    or (
+      default_service_id = 'openai-agent'
       and default_model_id not in (
         'gpt-5.4',
         'gpt-5.4-pro',
@@ -140,6 +152,7 @@ alter table app_sessions
     or default_service_id in (
       'backend-services',
       'openai-api',
+      'openai-agent',
       'gemini-api',
       'huggingface-api',
       'xai-api'
@@ -155,6 +168,16 @@ alter table app_sessions
     or (default_service_id = 'backend-services' and default_model_id in ('smart-routing'))
     or (
       default_service_id = 'openai-api'
+      and default_model_id in (
+        'gpt-5.4',
+        'gpt-5.4-pro',
+        'gpt-5-chat-latest',
+        'gpt-5.4-mini',
+        'gpt-5.4-nano'
+      )
+    )
+    or (
+      default_service_id = 'openai-agent'
       and default_model_id in (
         'gpt-5.4',
         'gpt-5.4-pro',
@@ -218,6 +241,7 @@ alter table conversations
     service_id in (
       'backend-services',
       'openai-api',
+      'openai-agent',
       'gemini-api',
       'huggingface-api',
       'xai-api'
@@ -245,6 +269,8 @@ set model_id = case
     then 'smart-routing'
   when service_id = 'openai-api' and model_id in ('gpt-5.4', 'gpt-5.4-pro', 'gpt-5-chat-latest', 'gpt-5.4-mini', 'gpt-5.4-nano')
     then model_id
+  when service_id = 'openai-agent' and model_id in ('gpt-5.4', 'gpt-5.4-pro', 'gpt-5-chat-latest', 'gpt-5.4-mini', 'gpt-5.4-nano')
+    then model_id
   when service_id = 'gemini-api' and model_id in ('gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview')
     then model_id
   when service_id = 'huggingface-api' and model_id in ('openai/gpt-oss-120b', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen3-Coder-480B-A35B-Instruct')
@@ -261,6 +287,7 @@ set model_id = case
   else case service_id
   when 'backend-services' then 'smart-routing'
   when 'openai-api' then 'gpt-5.4'
+  when 'openai-agent' then 'gpt-5.4'
   when 'gemini-api' then 'gemini-3.1-pro-preview'
   when 'huggingface-api' then 'openai/gpt-oss-120b'
   when 'xai-api' then 'grok-4.20-beta-latest-non-reasoning'
@@ -273,6 +300,16 @@ where
   or (service_id = 'backend-services' and model_id not in ('smart-routing'))
   or (
     service_id = 'openai-api'
+    and model_id not in (
+      'gpt-5.4',
+      'gpt-5.4-pro',
+      'gpt-5-chat-latest',
+      'gpt-5.4-mini',
+      'gpt-5.4-nano'
+    )
+  )
+  or (
+    service_id = 'openai-agent'
     and model_id not in (
       'gpt-5.4',
       'gpt-5.4-pro',
@@ -320,6 +357,16 @@ alter table conversations
     (service_id = 'backend-services' and model_id in ('smart-routing'))
     or (
       service_id = 'openai-api'
+      and model_id in (
+        'gpt-5.4',
+        'gpt-5.4-pro',
+        'gpt-5-chat-latest',
+        'gpt-5.4-mini',
+        'gpt-5.4-nano'
+      )
+    )
+    or (
+      service_id = 'openai-agent'
       and model_id in (
         'gpt-5.4',
         'gpt-5.4-pro',

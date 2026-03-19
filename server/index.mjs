@@ -20,6 +20,7 @@ const authService = createAuthService({
   runtimeConfig,
 });
 const chatService = createChatService({
+  database,
   env: process.env,
   runtimeConfig,
 });

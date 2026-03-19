@@ -4,6 +4,7 @@ export type MainViewMode = "chat" | "tiles" | "graph";
 export type BackendServiceId =
   | "backend-services"
   | "openai-api"
+  | "openai-agent"
   | "gemini-api"
   | "huggingface-api"
   | "xai-api";

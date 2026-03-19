@@ -43,6 +43,9 @@ import {
   getDefaultModelIdForService,
   isBackendServiceId,
   resolveBackendServiceModelId,
+  sanitizeRecentBackendServiceSelections,
+  type RecentBackendServiceSelection,
+  upsertRecentBackendServiceSelection,
 } from "./lib/services";
 import {
   buildBranchGraphNodeLayout,
@@ -79,6 +82,7 @@ import type {
 } from "./types";
 
 const STORAGE_KEY = "margin-chat-state";
+const RECENT_MODEL_SELECTIONS_STORAGE_KEY = "margin-chat-recent-model-selections";
 const THEME_STORAGE_KEY = "margin-chat-theme";
 const PINNED_TABS_LAYOUT_STORAGE_KEY = "margin-chat-pinned-tabs-layout";
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
@@ -253,6 +257,10 @@ function getStateStorageKey(userId: string) {
   return `${STORAGE_KEY}:${userId}`;
 }
 
+function getRecentModelSelectionsStorageKey(userId: string) {
+  return `${RECENT_MODEL_SELECTIONS_STORAGE_KEY}:${userId}`;
+}
+
 function loadStoredState(storageKey: string): AppState {
   const fallback = createEmptyState();
 
@@ -270,6 +278,26 @@ function loadStoredState(storageKey: string): AppState {
     return hydratePersistedState(JSON.parse(storedValue)) ?? fallback;
   } catch {
     return fallback;
+  }
+}
+
+function loadRecentModelSelections(
+  storageKey: string,
+): RecentBackendServiceSelection[] {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(storageKey);
+
+    if (!storedValue) {
+      return [];
+    }
+
+    return sanitizeRecentBackendServiceSelections(JSON.parse(storedValue));
+  } catch {
+    return [];
   }
 }
 
@@ -456,6 +484,37 @@ function areGraphLayoutsEqual(
       leftLayout.height === rightLayout.height
     );
   });
+}
+
+function mergeGraphLayouts(
+  currentLayouts: Record<string, GraphNodeLayout>,
+  nextLayouts: Record<string, GraphNodeLayout>,
+) {
+  let didChange = false;
+  const mergedLayouts = { ...currentLayouts };
+
+  for (const [conversationId, nextLayout] of Object.entries(nextLayouts)) {
+    const currentLayout =
+      currentLayouts[conversationId] ?? createDefaultGraphNodeLayout();
+    const normalizedLayout = createDefaultGraphNodeLayout({
+      ...currentLayout,
+      ...nextLayout,
+    });
+
+    if (
+      currentLayout.x === normalizedLayout.x &&
+      currentLayout.y === normalizedLayout.y &&
+      currentLayout.width === normalizedLayout.width &&
+      currentLayout.height === normalizedLayout.height
+    ) {
+      continue;
+    }
+
+    mergedLayouts[conversationId] = normalizedLayout;
+    didChange = true;
+  }
+
+  return didChange ? mergedLayouts : null;
 }
 
 function buildBackendErrorReply(
@@ -945,7 +1004,13 @@ function WorkspaceApp({
   user,
 }: WorkspaceAppProps) {
   const stateStorageKey = getStateStorageKey(user.id);
+  const recentModelSelectionsStorageKey = getRecentModelSelectionsStorageKey(
+    user.id,
+  );
   const [state, setState] = useState<AppState>(() => loadStoredState(stateStorageKey));
+  const [recentModelSelections, setRecentModelSelections] = useState<
+    RecentBackendServiceSelection[]
+  >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
   const [storageMode, setStorageMode] = useState<StorageMode>("loading");
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
   const [leftSidebarOpen, setLeftSidebarOpen] =
@@ -1019,8 +1084,21 @@ function WorkspaceApp({
   );
 
   useEffect(() => {
+    setRecentModelSelections(
+      loadRecentModelSelections(recentModelSelectionsStorageKey),
+    );
+  }, [recentModelSelectionsStorageKey]);
+
+  useEffect(() => {
     window.localStorage.setItem(stateStorageKey, JSON.stringify(state));
   }, [state, stateStorageKey]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      recentModelSelectionsStorageKey,
+      JSON.stringify(recentModelSelections),
+    );
+  }, [recentModelSelections, recentModelSelectionsStorageKey]);
 
   useEffect(() => {
     const normalizedGraphLayouts = normalizeGraphLayouts(
@@ -1630,6 +1708,7 @@ function WorkspaceApp({
         },
       };
     });
+
   }
 
   function handleTypewriterProgress(messageId: string, visibleCount: number) {
@@ -1789,9 +1868,10 @@ function WorkspaceApp({
     serviceId: BackendServiceId,
     modelId: string,
   ) {
+    const nextModelId = resolveBackendServiceModelId(serviceId, modelId);
+
     setState((current) => {
       const conversation = current.conversations[conversationId];
-      const nextModelId = resolveBackendServiceModelId(serviceId, modelId);
 
       if (!conversation) {
         return current;
@@ -1824,6 +1904,13 @@ function WorkspaceApp({
             },
       };
     });
+
+    setRecentModelSelections((current) =>
+      upsertRecentBackendServiceSelection(current, {
+        modelId: nextModelId,
+        serviceId,
+      }),
+    );
   }
 
   function syncSelectionDraft() {
@@ -1971,6 +2058,29 @@ function WorkspaceApp({
           ...current.graphLayouts,
           [conversationId]: mergedLayout,
         },
+      };
+    });
+  }
+
+  function handleApplyGraphLayouts(nextLayouts: Record<string, GraphNodeLayout>) {
+    setState((current) => {
+      const scopedLayouts = Object.fromEntries(
+        Object.entries(nextLayouts).filter(([conversationId]) =>
+          Boolean(current.conversations[conversationId]),
+        ),
+      );
+      const mergedLayouts = mergeGraphLayouts(
+        current.graphLayouts,
+        scopedLayouts,
+      );
+
+      if (!mergedLayouts) {
+        return current;
+      }
+
+      return {
+        ...current,
+        graphLayouts: mergedLayouts,
       };
     });
   }
@@ -2271,6 +2381,7 @@ function WorkspaceApp({
         },
       };
     });
+
   }
 
   function handleDeleteThread(conversationId: string) {
@@ -2614,10 +2725,13 @@ function WorkspaceApp({
                   }
                   graphLayouts={state.graphLayouts}
                   pendingConversationIds={pendingConversationIds}
+                  recentModelSelections={recentModelSelections}
                   selectionPreview={selectionDraft}
                   theme={theme}
+                  threads={threadSummaries}
                   typingMessageIds={typingMessageIds}
                   typingProgressByMessageId={typingProgressByMessageIdRef.current}
+                  onApplyGraphLayouts={handleApplyGraphLayouts}
                   onActivateConversation={handleSelectConversation}
                   onDraftChange={handleDraftChange}
                   onModelChange={handleModelChange}
@@ -2667,6 +2781,7 @@ function WorkspaceApp({
                         isSubmitting={Boolean(
                           pendingConversationIds[conversation.id],
                         )}
+                        recentModelSelections={recentModelSelections}
                         theme={theme}
                         typingProgressByMessageId={
                           typingProgressByMessageIdRef.current

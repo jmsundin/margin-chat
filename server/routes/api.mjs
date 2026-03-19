@@ -142,7 +142,9 @@ export function createApiHandler({
 
       if (request.method === "POST" && url.pathname === "/api/chat") {
         const body = await readJsonBody(request);
-        const chatResponse = await chatService.requestReply(body);
+        const chatResponse = await chatService.requestReply(body, {
+          userId: authContext.user.id,
+        });
 
         sendJson(response, 200, chatResponse);
         return;

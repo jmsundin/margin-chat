@@ -19,7 +19,53 @@ export interface BackendServiceOption {
   provider: string;
 }
 
+export interface RecentBackendServiceSelection {
+  modelId: string;
+  serviceId: BackendServiceId;
+}
+
 export const DEFAULT_BACKEND_SERVICE_ID: BackendServiceId = "backend-services";
+export const MAX_RECENT_BACKEND_SERVICE_SELECTIONS = 5;
+
+const OPENAI_MODELS: BackendServiceModel[] = [
+  {
+    badgeLabel: "NEW",
+    description:
+      "Current default OpenAI flagship for general-purpose work, coding, and tool-heavy tasks.",
+    featured: true,
+    id: "gpt-5.4",
+    label: "GPT-5.4",
+  },
+  {
+    badgeLabel: "BEST",
+    description:
+      "Higher-compute GPT-5.4 variant for the hardest problems and deeper reasoning.",
+    id: "gpt-5.4-pro",
+    label: "GPT-5.4 Pro",
+  },
+  {
+    badgeLabel: "CHATGPT",
+    description:
+      "Alias for the model currently powering ChatGPT when you want the freshest ChatGPT behavior.",
+    featured: true,
+    id: "gpt-5-chat-latest",
+    label: "GPT-5 Chat Latest",
+  },
+  {
+    badgeLabel: "FAST",
+    description:
+      "Smaller faster GPT-5.4 variant for high-volume coding and agent workflows.",
+    featured: true,
+    id: "gpt-5.4-mini",
+    label: "GPT-5.4 mini",
+  },
+  {
+    badgeLabel: "NANO",
+    description: "Fastest low-cost GPT-5.4 variant for simple high-throughput tasks.",
+    id: "gpt-5.4-nano",
+    label: "GPT-5.4 nano",
+  },
+];
 
 export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
   {
@@ -46,42 +92,29 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
     iconLabel: "OA",
     keywords: ["openai", "gpt", "responses", "reasoning", "chatgpt"],
     modeLabel: "Direct",
-    models: [
-      {
-        badgeLabel: "NEW",
-        description: "Current default OpenAI flagship for general-purpose work, coding, and tool-heavy tasks.",
-        featured: true,
-        id: "gpt-5.4",
-        label: "GPT-5.4",
-      },
-      {
-        badgeLabel: "BEST",
-        description: "Higher-compute GPT-5.4 variant for the hardest problems and deeper reasoning.",
-        id: "gpt-5.4-pro",
-        label: "GPT-5.4 Pro",
-      },
-      {
-        badgeLabel: "CHATGPT",
-        description: "Alias for the model currently powering ChatGPT when you want the freshest ChatGPT behavior.",
-        featured: true,
-        id: "gpt-5-chat-latest",
-        label: "GPT-5 Chat Latest",
-      },
-      {
-        badgeLabel: "FAST",
-        description: "Smaller faster GPT-5.4 variant for high-volume coding and agent workflows.",
-        featured: true,
-        id: "gpt-5.4-mini",
-        label: "GPT-5.4 mini",
-      },
-      {
-        badgeLabel: "NANO",
-        description: "Fastest low-cost GPT-5.4 variant for simple high-throughput tasks.",
-        id: "gpt-5.4-nano",
-        label: "GPT-5.4 nano",
-      },
-    ],
+    models: OPENAI_MODELS,
     provider: "OpenAI",
+  },
+  {
+    id: "openai-agent",
+    label: "OpenAI Agent",
+    description:
+      "Use OpenAI with Margin Chat's workspace tools so the model can inspect your saved threads and branches before answering.",
+    iconLabel: "AG",
+    keywords: [
+      "openai",
+      "agent",
+      "tools",
+      "workspace memory",
+      "threads",
+      "branches",
+    ],
+    modeLabel: "Agent",
+    models: OPENAI_MODELS.map((model) => ({
+      ...model,
+      featured: false,
+    })),
+    provider: "OpenAI Agent",
   },
   {
     id: "gemini-api",
@@ -255,6 +288,75 @@ export function resolveBackendServiceModelId(
     : getDefaultModelIdForService(serviceId);
 }
 
+export function sanitizeRecentBackendServiceSelections(
+  input: unknown,
+): RecentBackendServiceSelection[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const recentSelections: RecentBackendServiceSelection[] = [];
+  const seen = new Set<string>();
+
+  for (const selection of input) {
+    if (!selection || typeof selection !== "object" || Array.isArray(selection)) {
+      continue;
+    }
+
+    const { modelId, serviceId } = selection as {
+      modelId?: unknown;
+      serviceId?: unknown;
+    };
+
+    if (
+      !isBackendServiceId(serviceId) ||
+      typeof modelId !== "string" ||
+      !isBackendServiceModelId(serviceId, modelId)
+    ) {
+      continue;
+    }
+
+    const selectionKey = `${serviceId}:${modelId}`;
+
+    if (seen.has(selectionKey)) {
+      continue;
+    }
+
+    seen.add(selectionKey);
+    recentSelections.push({
+      modelId,
+      serviceId,
+    });
+
+    if (recentSelections.length >= MAX_RECENT_BACKEND_SERVICE_SELECTIONS) {
+      break;
+    }
+  }
+
+  return recentSelections;
+}
+
+export function upsertRecentBackendServiceSelection(
+  selections: RecentBackendServiceSelection[],
+  selection: RecentBackendServiceSelection,
+): RecentBackendServiceSelection[] {
+  const normalizedSelection = {
+    modelId: resolveBackendServiceModelId(selection.serviceId, selection.modelId),
+    serviceId: selection.serviceId,
+  };
+
+  return [
+    normalizedSelection,
+    ...selections.filter(
+      (currentSelection) =>
+        !(
+          currentSelection.serviceId === normalizedSelection.serviceId &&
+          currentSelection.modelId === normalizedSelection.modelId
+        ),
+    ),
+  ].slice(0, MAX_RECENT_BACKEND_SERVICE_SELECTIONS);
+}
+
 export function getBackendServiceModelLabel(
   serviceId: BackendServiceId,
   modelId: string,
@@ -280,5 +382,5 @@ export function getBackendServiceSelectionLabel(
     return modelLabel;
   }
 
-  return `${service.provider} / ${modelLabel}`;
+  return `${service.label} / ${modelLabel}`;
 }

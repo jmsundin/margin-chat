@@ -4,8 +4,10 @@ import {
   BACKEND_SERVICE_OPTIONS,
   type BackendServiceModel,
   type BackendServiceOption,
+  getBackendServiceModel,
   getBackendServiceModelLabel,
   getBackendServiceSelectionLabel,
+  type RecentBackendServiceSelection,
 } from "../lib/services";
 import type { BackendServiceId } from "../types";
 
@@ -15,6 +17,7 @@ interface ServicePickerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectModel: (serviceId: BackendServiceId, modelId: string) => void;
+  recentSelections: RecentBackendServiceSelection[];
 }
 
 function SearchIcon() {
@@ -82,6 +85,7 @@ export default function ServicePickerModal({
   isOpen,
   onClose,
   onSelectModel,
+  recentSelections,
 }: ServicePickerModalProps) {
   const [query, setQuery] = useState("");
   const [expandedProviderId, setExpandedProviderId] =
@@ -132,6 +136,26 @@ export default function ServicePickerModal({
     currentServiceId,
     currentModelId,
   );
+  const recentSelectionSource = recentSelections.length
+    ? recentSelections
+    : [{ modelId: currentModelId, serviceId: currentServiceId }];
+  const recentModels = recentSelectionSource.flatMap((selection) => {
+    const service = BACKEND_SERVICE_OPTIONS.find(
+      (option) => option.id === selection.serviceId,
+    );
+    const model = getBackendServiceModel(selection.serviceId, selection.modelId);
+
+    if (!service || !model || !matchesModel(normalizedQuery, service, model)) {
+      return [];
+    }
+
+    return [
+      {
+        model,
+        service,
+      },
+    ];
+  });
   const featuredModels: Array<{
     model: BackendServiceModel;
     service: BackendServiceOption;
@@ -160,7 +184,8 @@ export default function ServicePickerModal({
     }
   }
 
-  const hasVisibleContent = featuredModels.length || providerSections.length;
+  const hasVisibleContent =
+    recentModels.length || featuredModels.length || providerSections.length;
 
   const modal = (
     <div
@@ -199,6 +224,66 @@ export default function ServicePickerModal({
         </div>
 
         <div className="service-picker-groups">
+          {recentModels.length ? (
+            <section className="service-picker-section">
+              <div className="service-picker-section-head">
+                <div>
+                  <h2>Most Recently Used</h2>
+                  <p>Jump back into the models you picked most recently.</p>
+                </div>
+              </div>
+
+              <div className="service-picker-model-list">
+                {recentModels.map(({ model, service }) => {
+                  const isCurrent =
+                    currentServiceId === service.id && currentModelId === model.id;
+
+                  return (
+                    <button
+                      key={`recent-${service.id}-${model.id}`}
+                      className={
+                        isCurrent
+                          ? "service-picker-model-card is-current"
+                          : "service-picker-model-card"
+                      }
+                      onClick={() => {
+                        onSelectModel(service.id, model.id);
+                        onClose();
+                      }}
+                      type="button"
+                    >
+                      <span
+                        className={`service-picker-card-icon is-${service.id}`}
+                        aria-hidden="true"
+                      >
+                        {service.iconLabel}
+                      </span>
+
+                      <span className="service-picker-model-copy">
+                        <span className="service-picker-model-title-row">
+                          <span className="service-picker-model-title">
+                            {model.label}
+                          </span>
+                          <span className="service-picker-model-provider">
+                            {service.provider}
+                          </span>
+                          {isCurrent ? (
+                            <span className="service-picker-provider-current">
+                              Selected
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="service-picker-model-description">
+                          {model.description}
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+
           {featuredModels.length ? (
             <section className="service-picker-section">
               <div className="service-picker-section-head">

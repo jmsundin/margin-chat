@@ -14,6 +14,7 @@ import {
   getBackendServiceModel,
   getBackendServiceOption,
   getBackendServiceSelectionLabel,
+  type RecentBackendServiceSelection,
 } from "../lib/services";
 import type {
   BackendServiceId,
@@ -29,6 +30,32 @@ const TYPEWRITER_WORDS_PER_STEP = 3;
 const COMPOSER_MIN_HEIGHT_PX = 102;
 const COMPOSER_MAX_HEIGHT_PX = 250;
 const COMPOSER_MIN_TEXTAREA_HEIGHT_PX = 44;
+const PANEL_AUTO_SCROLL_THRESHOLD_PX = 48;
+const PANEL_SCROLL_EDGE_TOLERANCE_PX = 1;
+const AGENT_STATUS_STAGE_INTERVAL_MS = 1800;
+
+const AGENT_PENDING_STAGES = [
+  {
+    description:
+      "Deciding whether this request needs workspace tools or a direct answer.",
+    label: "Planning the run",
+  },
+  {
+    description:
+      "Looking through saved threads, branches, and anchor text for relevant context.",
+    label: "Searching your workspace",
+  },
+  {
+    description:
+      "Opening the strongest matching conversation context before answering.",
+    label: "Reading the best match",
+  },
+  {
+    description:
+      "Composing the final reply from the context it found.",
+    label: "Writing the response",
+  },
+] as const;
 
 function PlusIcon() {
   return (
@@ -143,12 +170,75 @@ function CloseIcon() {
   );
 }
 
+function TypingIndicator() {
+  return (
+    <div
+      aria-atomic="true"
+      aria-label="Assistant is typing"
+      aria-live="polite"
+      className="message-content is-typing-indicator"
+      role="status"
+    >
+      <span aria-hidden="true" className="typing-indicator">
+        <span className="typing-indicator-dot" />
+        <span className="typing-indicator-dot" />
+        <span className="typing-indicator-dot" />
+      </span>
+    </div>
+  );
+}
+
+function AgentStatusIndicator() {
+  const [stageIndex, setStageIndex] = useState(0);
+  const stage = AGENT_PENDING_STAGES[stageIndex];
+
+  useEffect(() => {
+    setStageIndex(0);
+
+    const intervalId = window.setInterval(() => {
+      setStageIndex((current) =>
+        Math.min(current + 1, AGENT_PENDING_STAGES.length - 1),
+      );
+    }, AGENT_STATUS_STAGE_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, []);
+
+  return (
+    <div
+      aria-atomic="true"
+      aria-label={`Agent is working: ${stage.label}`}
+      aria-live="polite"
+      className="message-content is-agent-status"
+      role="status"
+    >
+      <div className="agent-status-card">
+        <div className="agent-status-head">
+          <span className="agent-status-badge">
+            Stage {stageIndex + 1} of {AGENT_PENDING_STAGES.length}
+          </span>
+          <span aria-hidden="true" className="typing-indicator">
+            <span className="typing-indicator-dot" />
+            <span className="typing-indicator-dot" />
+            <span className="typing-indicator-dot" />
+          </span>
+        </div>
+        <strong className="agent-status-title">{stage.label}</strong>
+        <p className="agent-status-description">{stage.description}</p>
+      </div>
+    </div>
+  );
+}
+
 interface ChatPanelProps {
   anchorsByMessageId: Record<string, MessageAnchorLink[]>;
   conversation: Conversation;
   draft: string;
   isActive: boolean;
   isSubmitting: boolean;
+  recentModelSelections: RecentBackendServiceSelection[];
   theme: "light" | "dark";
   typingProgressByMessageId: Record<string, number>;
   typingMessageIds: Record<string, boolean>;
@@ -183,6 +273,75 @@ function getTypewriterDurationMs(contentLength: number) {
     TYPEWRITER_MAX_DURATION_MS,
     Math.max(TYPEWRITER_MIN_DURATION_MS, contentLength * 110),
   );
+}
+
+function normalizeWheelDelta(
+  delta: number,
+  deltaMode: number,
+  viewportSize: number,
+) {
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return delta * 16;
+  }
+
+  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return delta * Math.max(viewportSize, 800);
+  }
+
+  return delta;
+}
+
+function canScrollElement(element: HTMLElement, deltaY: number) {
+  if (Math.abs(deltaY) < 0.5) {
+    return false;
+  }
+
+  const maxScrollTop = element.scrollHeight - element.clientHeight;
+
+  if (maxScrollTop <= PANEL_SCROLL_EDGE_TOLERANCE_PX) {
+    return false;
+  }
+
+  if (deltaY < 0) {
+    return element.scrollTop > PANEL_SCROLL_EDGE_TOLERANCE_PX;
+  }
+
+  return element.scrollTop < maxScrollTop - PANEL_SCROLL_EDGE_TOLERANCE_PX;
+}
+
+function isScrollPositionNearBottom(args: {
+  clientHeight: number;
+  scrollHeight: number;
+  scrollTop: number;
+}) {
+  return (
+    args.scrollHeight - args.clientHeight - args.scrollTop <=
+    PANEL_AUTO_SCROLL_THRESHOLD_PX
+  );
+}
+
+function isElementNearBottom(element: HTMLElement) {
+  return isScrollPositionNearBottom({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+    scrollTop: element.scrollTop,
+  });
+}
+
+function getServicePillValue(args: {
+  currentModelLabel: string | null;
+  currentSelectionLabel: string;
+  serviceId: BackendServiceId;
+}) {
+  if (args.serviceId === "openai-agent" && args.currentModelLabel) {
+    return `Agent · ${args.currentModelLabel}`;
+  }
+
+  if (args.serviceId === "backend-services") {
+    return args.currentModelLabel ?? args.currentSelectionLabel;
+  }
+
+  return args.currentModelLabel ?? args.currentSelectionLabel;
 }
 
 function splitTypewriterChunks(value: string) {
@@ -494,6 +653,7 @@ export default function ChatPanel({
   draft,
   isActive,
   isSubmitting,
+  recentModelSelections,
   theme,
   typingProgressByMessageId,
   typingMessageIds,
@@ -514,7 +674,11 @@ export default function ChatPanel({
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerPrimaryRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const hasInitializedScrollPositionRef = useRef(false);
+  const previousMessageCountRef = useRef(conversation.messages.length);
+  const previousPendingAssistantRef = useRef(false);
   const shouldFocusComposerOnActivateRef = useRef(false);
+  const shouldStickToBottomRef = useRef(true);
   const hasActiveTypewriter = conversation.messages.some(
     (message) => typingMessageIds[message.id],
   );
@@ -527,20 +691,48 @@ export default function ChatPanel({
     conversation.serviceId,
     conversation.modelId,
   );
+  const servicePillValue = getServicePillValue({
+    currentModelLabel: currentModel?.label ?? null,
+    currentSelectionLabel,
+    serviceId: conversation.serviceId,
+  });
+  const showPendingAssistant = isSubmitting && !hasActiveTypewriter;
+  const showAgentStatus =
+    showPendingAssistant && conversation.serviceId === "openai-agent";
 
-  const scrollToBottom = useEffectEvent(() => {
+  useLayoutEffect(() => {
     const panelBody = panelBodyRef.current;
 
     if (!panelBody) {
       return;
     }
 
-    panelBody.scrollTop = panelBody.scrollHeight;
-  });
+    const messageCountChanged =
+      previousMessageCountRef.current !== conversation.messages.length;
+    const pendingAssistantChanged =
+      previousPendingAssistantRef.current !== showPendingAssistant;
 
-  useEffect(() => {
-    scrollToBottom();
-  }, [conversation.messages.length]);
+    previousMessageCountRef.current = conversation.messages.length;
+    previousPendingAssistantRef.current = showPendingAssistant;
+
+    if (!hasInitializedScrollPositionRef.current) {
+      hasInitializedScrollPositionRef.current = true;
+      panelBody.scrollTop = panelBody.scrollHeight;
+      shouldStickToBottomRef.current = true;
+      return;
+    }
+
+    if (!messageCountChanged && !pendingAssistantChanged) {
+      return;
+    }
+
+    if (!shouldStickToBottomRef.current) {
+      return;
+    }
+
+    panelBody.scrollTop = panelBody.scrollHeight;
+    shouldStickToBottomRef.current = true;
+  }, [conversation.messages.length, showPendingAssistant]);
 
   const syncComposerTextareaHeight = useEffectEvent(() => {
     const surface = composerSurfaceRef.current;
@@ -703,6 +895,108 @@ export default function ChatPanel({
     onActivate();
   }
 
+  const handlePanelBodyWheel = useEffectEvent((event: WheelEvent) => {
+    const panelBody = panelBodyRef.current;
+
+    if (!panelBody || event.ctrlKey) {
+      return;
+    }
+
+    if (event.target instanceof Element) {
+      const nestedScrollable = event.target.closest<HTMLElement>(
+        "pre, .message-mermaid-diagram",
+      );
+
+      if (nestedScrollable && nestedScrollable !== panelBody) {
+        return;
+      }
+    }
+
+    const normalizedDeltaX = normalizeWheelDelta(
+      event.deltaX,
+      event.deltaMode,
+      panelBody.clientWidth,
+    );
+    const normalizedDeltaY = normalizeWheelDelta(
+      event.deltaY,
+      event.deltaMode,
+      panelBody.clientHeight,
+    );
+
+    if (Math.abs(normalizedDeltaY) < Math.abs(normalizedDeltaX)) {
+      return;
+    }
+
+    if (!canScrollElement(panelBody, normalizedDeltaY)) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const maxScrollTop = Math.max(
+      panelBody.scrollHeight - panelBody.clientHeight,
+      0,
+    );
+    const nextScrollTop = Math.min(
+      Math.max(panelBody.scrollTop + normalizedDeltaY, 0),
+      maxScrollTop,
+    );
+
+    panelBody.scrollTop = nextScrollTop;
+    shouldStickToBottomRef.current = isScrollPositionNearBottom({
+      clientHeight: panelBody.clientHeight,
+      scrollHeight: panelBody.scrollHeight,
+      scrollTop: nextScrollTop,
+    });
+  });
+
+  useEffect(() => {
+    const panelBody = panelBodyRef.current;
+
+    if (!panelBody) {
+      return;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      handlePanelBodyWheel(event);
+    };
+
+    panelBody.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      panelBody.removeEventListener("wheel", handleWheel);
+    };
+  }, [handlePanelBodyWheel]);
+
+  const syncStickToBottomState = useEffectEvent(() => {
+    const panelBody = panelBodyRef.current;
+
+    if (!panelBody) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = isElementNearBottom(panelBody);
+  });
+
+  useEffect(() => {
+    const panelBody = panelBodyRef.current;
+
+    if (!panelBody) {
+      return;
+    }
+
+    const handleScroll = () => {
+      syncStickToBottomState();
+    };
+
+    handleScroll();
+    panelBody.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      panelBody.removeEventListener("scroll", handleScroll);
+    };
+  }, [syncStickToBottomState]);
+
   return (
     <article
       className={isActive ? "chat-panel is-active" : "chat-panel"}
@@ -720,37 +1014,49 @@ export default function ChatPanel({
 
         <div className="message-list">
           {conversation.messages.length ? (
-            conversation.messages.map((message) => {
-              const anchors = anchorsByMessageId[message.id] ?? [];
-              const pendingSelection =
-                selectionPreview?.messageId === message.id
-                  ? selectionPreview
-                  : null;
-              return (
-                <section
-                  key={message.id}
-                  className={`message-row is-${message.role}`}
-                >
-                  <div className={`message-bubble is-${message.role}`}>
-                    <div className="message-meta">
-                      <span>{message.role}</span>
+            <>
+              {conversation.messages.map((message) => {
+                const anchors = anchorsByMessageId[message.id] ?? [];
+                const pendingSelection =
+                  selectionPreview?.messageId === message.id
+                    ? selectionPreview
+                    : null;
+                return (
+                  <section
+                    key={message.id}
+                    className={`message-row is-${message.role}`}
+                  >
+                    <div className={`message-bubble is-${message.role}`}>
+                      <div className="message-meta">
+                        <span>{message.role}</span>
+                      </div>
+                      <MessageContent
+                        anchors={anchors}
+                        conversationId={conversation.id}
+                        isTypewriting={Boolean(typingMessageIds[message.id])}
+                        message={message}
+                        onTypewriterProgress={onTypewriterProgress}
+                        onTypewriterComplete={onTypewriterComplete}
+                        pendingSelection={pendingSelection}
+                        registerAnchorRef={registerAnchorRef}
+                        theme={theme}
+                        typingProgressByMessageId={typingProgressByMessageId}
+                      />
                     </div>
-                    <MessageContent
-                      anchors={anchors}
-                      conversationId={conversation.id}
-                      isTypewriting={Boolean(typingMessageIds[message.id])}
-                      message={message}
-                      onTypewriterProgress={onTypewriterProgress}
-                      onTypewriterComplete={onTypewriterComplete}
-                      pendingSelection={pendingSelection}
-                      registerAnchorRef={registerAnchorRef}
-                      theme={theme}
-                      typingProgressByMessageId={typingProgressByMessageId}
-                    />
+                  </section>
+                );
+              })}
+              {showPendingAssistant ? (
+                <section className="message-row is-assistant">
+                  <div className="message-bubble is-assistant is-pending">
+                    <div className="message-meta">
+                      <span>assistant</span>
+                    </div>
+                    {showAgentStatus ? <AgentStatusIndicator /> : <TypingIndicator />}
                   </div>
                 </section>
-              );
-            })
+              ) : null}
+            </>
           ) : (
             <section className="message-empty-state">
               <strong>No messages yet.</strong>
@@ -850,7 +1156,7 @@ export default function ChatPanel({
               >
                 <span className="composer-service-label">AI Model</span>
                 <span className="composer-service-value">
-                  {currentModel?.label ?? currentService?.label ?? "Automatic"}
+                  {servicePillValue}
                 </span>
               </button>
             </div>
@@ -881,6 +1187,7 @@ export default function ChatPanel({
         currentServiceId={conversation.serviceId}
         isOpen={isServicePickerOpen}
         onClose={() => setServicePickerOpen(false)}
+        recentSelections={recentModelSelections}
         onSelectModel={(serviceId, modelId) =>
           onModelChange(conversation.id, serviceId, modelId)
         }

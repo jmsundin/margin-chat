@@ -1,15 +1,19 @@
 import { HttpError } from "../lib/errors.mjs";
 import { getRuntimeDefaultModelForService } from "../lib/backendModels.mjs";
+import { requestOpenAIAgentResponse } from "./openaiAgent.mjs";
 import {
   requestGeminiResponse,
   requestHuggingFaceResponse,
   requestOpenAIResponse,
   requestXAIResponse,
 } from "./providers.mjs";
-import { buildSystemInstruction } from "./systemPrompt.mjs";
+import {
+  buildOpenAIAgentInstruction,
+  buildSystemInstruction,
+} from "./systemPrompt.mjs";
 import { validateChatRequest } from "./validation.mjs";
 
-export function createChatService({ env, runtimeConfig }) {
+export function createChatService({ database, env, runtimeConfig }) {
   function getHuggingFaceApiKey() {
     return env.HUGGINGFACE_API_KEY ?? env.HF_TOKEN ?? null;
   }
@@ -24,6 +28,17 @@ export function createChatService({ env, runtimeConfig }) {
         throw new HttpError(
           503,
           "OpenAI API is selected but OPENAI_API_KEY is missing.",
+        );
+      }
+
+      return requestedServiceId;
+    }
+
+    if (requestedServiceId === "openai-agent") {
+      if (!env.OPENAI_API_KEY) {
+        throw new HttpError(
+          503,
+          "OpenAI Agent is selected but OPENAI_API_KEY is missing.",
         );
       }
 
@@ -113,17 +128,29 @@ export function createChatService({ env, runtimeConfig }) {
     );
   }
 
-  async function requestReply(payload) {
+  async function requestReply(payload, context = {}) {
     const chatRequest = validateChatRequest(payload);
     const resolvedServiceId = resolveServiceId(chatRequest.serviceId);
     const resolvedModel =
       chatRequest.serviceId === resolvedServiceId
         ? chatRequest.modelId
         : getRuntimeDefaultModelForService(runtimeConfig, resolvedServiceId);
-    const systemInstruction = buildSystemInstruction(chatRequest);
+    const systemInstruction =
+      resolvedServiceId === "openai-agent"
+        ? buildOpenAIAgentInstruction(chatRequest)
+        : buildSystemInstruction(chatRequest);
     let result;
 
-    if (resolvedServiceId === "openai-api") {
+    if (resolvedServiceId === "openai-agent") {
+      result = await requestOpenAIAgentResponse({
+        apiKey: env.OPENAI_API_KEY,
+        chatRequest,
+        database,
+        model: resolvedModel,
+        systemInstruction,
+        userId: context.userId,
+      });
+    } else if (resolvedServiceId === "openai-api") {
       result = await requestOpenAIResponse({
         apiKey: env.OPENAI_API_KEY,
         chatRequest,
@@ -183,6 +210,10 @@ export function createChatService({ env, runtimeConfig }) {
         model: runtimeConfig.huggingFaceModel,
       },
       "openai-api": {
+        configured: Boolean(env.OPENAI_API_KEY),
+        model: runtimeConfig.openaiModel,
+      },
+      "openai-agent": {
         configured: Boolean(env.OPENAI_API_KEY),
         model: runtimeConfig.openaiModel,
       },
