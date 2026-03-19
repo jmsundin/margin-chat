@@ -1,12 +1,12 @@
 import {
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 import ChatPanel from "./ChatPanel";
 import {
@@ -29,6 +29,8 @@ import type {
 const GRAPH_STAGE_PADDING = 240;
 const GRAPH_VIEWPORT_MARGIN = 96;
 const GRAPH_RESIZE_KEYBOARD_STEP = 24;
+const GRAPH_SCALE_MAX = 2.2;
+const GRAPH_SCALE_MIN = 0.55;
 
 type ViewportPosition = {
   x: number;
@@ -53,6 +55,7 @@ type ActiveInteraction =
     }
   | {
       conversationId: string;
+      handle: "corner" | "edge";
       originHeight: number;
       originWidth: number;
       startClientX: number;
@@ -116,6 +119,9 @@ function buildConnectorPath(args: {
 function getViewportPositionForConversation(args: {
   conversationId: string;
   graphLayouts: Record<string, GraphNodeLayout>;
+  stageOriginX: number;
+  stageOriginY: number;
+  scale: number;
   viewportHeight: number;
   viewportWidth: number;
 }) {
@@ -131,10 +137,11 @@ function getViewportPositionForConversation(args: {
   return {
     x:
       args.viewportWidth * 0.32 -
-      (layout.x + GRAPH_STAGE_PADDING + layout.width / 2),
+      (layout.x + args.stageOriginX + layout.width / 2) * args.scale,
     y:
       args.viewportHeight * 0.24 -
-      (layout.y + GRAPH_STAGE_PADDING + Math.min(layout.height / 2, 240)),
+      (layout.y + args.stageOriginY + Math.min(layout.height / 2, 240)) *
+        args.scale,
   };
 }
 
@@ -172,6 +179,7 @@ export default function ConversationGraphView({
     x: GRAPH_VIEWPORT_MARGIN,
     y: GRAPH_VIEWPORT_MARGIN,
   });
+  const [scale, setScale] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
   const [draggingConversationId, setDraggingConversationId] = useState<
     string | null
@@ -204,6 +212,25 @@ export default function ConversationGraphView({
     [activeConversationId, conversations],
   );
   const stageSize = useMemo(() => {
+    const layouts = Object.values(graphLayouts);
+
+    if (!layouts.length) {
+      return {
+        height: 1600,
+        originX: GRAPH_STAGE_PADDING,
+        originY: GRAPH_STAGE_PADDING,
+        width: 2200,
+      };
+    }
+
+    const minX = layouts.reduce(
+      (currentMin, layout) => Math.min(currentMin, layout.x),
+      Number.POSITIVE_INFINITY,
+    );
+    const minY = layouts.reduce(
+      (currentMin, layout) => Math.min(currentMin, layout.y),
+      Number.POSITIVE_INFINITY,
+    );
     const maxRight = Object.values(graphLayouts).reduce(
       (currentMax, layout) => Math.max(currentMax, layout.x + layout.width),
       0,
@@ -214,18 +241,24 @@ export default function ConversationGraphView({
     );
 
     return {
-      height: Math.max(1600, maxBottom + GRAPH_STAGE_PADDING * 2),
-      width: Math.max(2200, maxRight + GRAPH_STAGE_PADDING * 2),
+      height: Math.max(1600, maxBottom - minY + GRAPH_STAGE_PADDING * 2),
+      originX: GRAPH_STAGE_PADDING - minX,
+      originY: GRAPH_STAGE_PADDING - minY,
+      width: Math.max(2200, maxRight - minX + GRAPH_STAGE_PADDING * 2),
     };
   }, [graphLayouts]);
   const stageStyle = {
     height: `${stageSize.height}px`,
-    transform: `translate(${Math.round(viewport.x)}px, ${Math.round(viewport.y)}px)`,
+    transform: `translate(${Math.round(viewport.x)}px, ${Math.round(
+      viewport.y,
+    )}px) scale(${scale})`,
     width: `${stageSize.width}px`,
   } as CSSProperties;
-  const gridOffsetX = ((viewport.x % 36) + 36) % 36;
-  const gridOffsetY = ((viewport.y % 36) + 36) % 36;
+  const gridSize = 36 * scale;
+  const gridOffsetX = ((viewport.x % gridSize) + gridSize) % gridSize;
+  const gridOffsetY = ((viewport.y % gridSize) + gridSize) % gridSize;
   const viewportStyle = {
+    backgroundSize: `auto, auto, ${gridSize}px ${gridSize}px, ${gridSize}px ${gridSize}px, auto`,
     backgroundPosition: `${gridOffsetX}px ${gridOffsetY}px, ${
       gridOffsetX / 2
     }px ${gridOffsetY / 2}px, center`,
@@ -241,6 +274,9 @@ export default function ConversationGraphView({
     const nextViewport = getViewportPositionForConversation({
       conversationId: activeConversationId,
       graphLayouts,
+      scale,
+      stageOriginX: stageSize.originX,
+      stageOriginY: stageSize.originY,
       viewportHeight: viewportElement.clientHeight,
       viewportWidth: viewportElement.clientWidth,
     });
@@ -262,10 +298,10 @@ export default function ConversationGraphView({
       return;
     }
 
-    const left = viewport.x + activeLayout.x + GRAPH_STAGE_PADDING;
-    const right = left + activeLayout.width;
-    const top = viewport.y + activeLayout.y + GRAPH_STAGE_PADDING;
-    const bottom = top + activeLayout.height;
+    const left = viewport.x + (activeLayout.x + stageSize.originX) * scale;
+    const right = left + activeLayout.width * scale;
+    const top = viewport.y + (activeLayout.y + stageSize.originY) * scale;
+    const bottom = top + activeLayout.height * scale;
     const withinHorizontalBounds =
       left >= GRAPH_VIEWPORT_MARGIN &&
       right <= viewportElement.clientWidth - GRAPH_VIEWPORT_MARGIN;
@@ -280,7 +316,7 @@ export default function ConversationGraphView({
 
     centeredConversationIdRef.current = activeConversationId;
     setViewport(nextViewport);
-  }, [activeConversationId]);
+  }, [activeConversationId, scale, stageSize.originX, stageSize.originY]);
 
   useEffect(() => {
     function clearInteraction() {
@@ -315,30 +351,32 @@ export default function ConversationGraphView({
 
       if (interaction.type === "move") {
         onUpdateGraphNodeLayout(interaction.conversationId, {
-          x: Math.max(
-            0,
-            Math.round(
-              interaction.originX + (event.clientX - interaction.startClientX),
-            ),
+          x: Math.round(
+            interaction.originX +
+              (event.clientX - interaction.startClientX) / scale,
           ),
-          y: Math.max(
-            0,
-            Math.round(
-              interaction.originY + (event.clientY - interaction.startClientY),
-            ),
+          y: Math.round(
+            interaction.originY +
+              (event.clientY - interaction.startClientY) / scale,
           ),
         });
         return;
       }
 
       onUpdateGraphNodeLayout(interaction.conversationId, {
-        height: clamp(
-          interaction.originHeight + (event.clientY - interaction.startClientY),
-          GRAPH_NODE_MIN_HEIGHT,
-          GRAPH_NODE_MAX_HEIGHT,
-        ),
+        ...(interaction.handle === "corner"
+          ? {
+              height: clamp(
+                interaction.originHeight +
+                  (event.clientY - interaction.startClientY) / scale,
+                GRAPH_NODE_MIN_HEIGHT,
+                GRAPH_NODE_MAX_HEIGHT,
+              ),
+            }
+          : {}),
         width: clamp(
-          interaction.originWidth + (event.clientX - interaction.startClientX),
+          interaction.originWidth +
+            (event.clientX - interaction.startClientX) / scale,
           GRAPH_NODE_MIN_WIDTH,
           GRAPH_NODE_MAX_WIDTH,
         ),
@@ -356,7 +394,7 @@ export default function ConversationGraphView({
       window.removeEventListener("pointercancel", clearInteraction);
       window.removeEventListener("blur", clearInteraction);
     };
-  }, [onUpdateGraphNodeLayout]);
+  }, [onUpdateGraphNodeLayout, scale]);
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0) {
@@ -414,7 +452,8 @@ export default function ConversationGraphView({
 
   function startNodeResize(
     conversationId: string,
-    event: ReactPointerEvent<HTMLButtonElement>,
+    handle: "corner" | "edge",
+    event: ReactPointerEvent<HTMLElement>,
   ) {
     if (event.button !== 0) {
       return;
@@ -431,6 +470,7 @@ export default function ConversationGraphView({
     onActivateConversation(conversationId);
     interactionRef.current = {
       conversationId,
+      handle,
       originHeight: layout.height,
       originWidth: layout.width,
       startClientX: event.clientX,
@@ -438,31 +478,93 @@ export default function ConversationGraphView({
       type: "resize",
     };
     setResizingConversationId(conversationId);
-    document.body.style.setProperty("cursor", "nwse-resize");
+    document.body.style.setProperty(
+      "cursor",
+      handle === "corner" ? "nwse-resize" : "col-resize",
+    );
     document.body.style.setProperty("user-select", "none");
   }
 
-  function handleViewportWheel(event: ReactWheelEvent<HTMLDivElement>) {
+  const handleViewportWheel = useEffectEvent((event: WheelEvent) => {
     const target = event.target as HTMLElement;
+    const hoveredNode = target.closest<HTMLElement>("[data-graph-node='true']");
+    const hoveredConversationId = hoveredNode?.dataset.conversationId ?? null;
+    const allowNodeScroll =
+      hoveredConversationId === activeConversationId &&
+      Boolean(
+        target.closest(".panel-body") ||
+          target.closest(".composer-primary-scroll") ||
+          target.closest(".composer-textarea"),
+      );
 
-    if (
-      target.closest(".panel-body") ||
-      target.closest(".composer-primary-scroll") ||
-      target.closest(".composer-textarea")
-    ) {
+    if (!event.ctrlKey && allowNodeScroll) {
       return;
     }
 
     event.preventDefault();
+
+    if (event.ctrlKey) {
+      const viewportElement = viewportRef.current;
+
+      if (!viewportElement) {
+        return;
+      }
+
+      const rect = viewportElement.getBoundingClientRect();
+      const localX = event.clientX - rect.left;
+      const localY = event.clientY - rect.top;
+
+      setScale((currentScale) => {
+        const nextScale = clamp(
+          currentScale * Math.exp(-event.deltaY * 0.0024),
+          GRAPH_SCALE_MIN,
+          GRAPH_SCALE_MAX,
+        );
+
+        setViewport((currentViewport) => {
+          const worldX = (localX - currentViewport.x) / currentScale;
+          const worldY = (localY - currentViewport.y) / currentScale;
+
+          return {
+            x: localX - worldX * nextScale,
+            y: localY - worldY * nextScale,
+          };
+        });
+
+        return nextScale;
+      });
+      return;
+    }
+
     setViewport((current) => ({
       x: current.x - event.deltaX,
       y: current.y - event.deltaY,
     }));
-  }
+  });
+
+  useEffect(() => {
+    const viewportElement = viewportRef.current;
+
+    if (!viewportElement) {
+      return;
+    }
+
+    function handleNativeWheel(event: WheelEvent) {
+      handleViewportWheel(event);
+    }
+
+    viewportElement.addEventListener("wheel", handleNativeWheel, {
+      passive: false,
+    });
+
+    return () => {
+      viewportElement.removeEventListener("wheel", handleNativeWheel);
+    };
+  }, [handleViewportWheel]);
 
   function handleResizeKeyDown(
     conversationId: string,
-    event: ReactKeyboardEvent<HTMLButtonElement>,
+    event: ReactKeyboardEvent<HTMLElement>,
   ) {
     const layout = graphLayouts[conversationId];
 
@@ -498,35 +600,18 @@ export default function ConversationGraphView({
       return;
     }
 
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      onUpdateGraphNodeLayout(conversationId, {
-        height: clamp(
-          layout.height - step,
-          GRAPH_NODE_MIN_HEIGHT,
-          GRAPH_NODE_MAX_HEIGHT,
-        ),
-      });
-      return;
-    }
-
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      onUpdateGraphNodeLayout(conversationId, {
-        height: clamp(
-          layout.height + step,
-          GRAPH_NODE_MIN_HEIGHT,
-          GRAPH_NODE_MAX_HEIGHT,
-        ),
-      });
-      return;
-    }
-
     if (event.key === "Home") {
       event.preventDefault();
       onUpdateGraphNodeLayout(conversationId, {
-        height: GRAPH_NODE_DEFAULT_HEIGHT,
-        width: GRAPH_NODE_DEFAULT_WIDTH,
+        width: GRAPH_NODE_MIN_WIDTH,
+      });
+      return;
+    }
+
+    if (event.key === "End") {
+      event.preventDefault();
+      onUpdateGraphNodeLayout(conversationId, {
+        width: GRAPH_NODE_MAX_WIDTH,
       });
     }
   }
@@ -535,7 +620,6 @@ export default function ConversationGraphView({
     <div
       className={isPanning ? "graph-canvas-viewport is-panning" : "graph-canvas-viewport"}
       onPointerDown={startPan}
-      onWheel={handleViewportWheel}
       ref={viewportRef}
       style={viewportStyle}
     >
@@ -567,12 +651,12 @@ export default function ConversationGraphView({
             }
 
             const startX =
-              GRAPH_STAGE_PADDING + parentLayout.x + parentLayout.width;
+              stageSize.originX + parentLayout.x + parentLayout.width;
             const startY =
-              GRAPH_STAGE_PADDING + parentLayout.y + parentLayout.height / 2;
-            const endX = GRAPH_STAGE_PADDING + childLayout.x;
+              stageSize.originY + parentLayout.y + parentLayout.height / 2;
+            const endX = stageSize.originX + childLayout.x;
             const endY =
-              GRAPH_STAGE_PADDING + childLayout.y + childLayout.height / 2;
+              stageSize.originY + childLayout.y + childLayout.height / 2;
             const isActivePath = activePathIds.has(conversation.id);
 
             return (
@@ -625,8 +709,8 @@ export default function ConversationGraphView({
           const isActive = conversation.id === activeConversationId;
           const nodeStyle = {
             height: `${layout.height}px`,
-            left: `${GRAPH_STAGE_PADDING + layout.x}px`,
-            top: `${GRAPH_STAGE_PADDING + layout.y}px`,
+            left: `${stageSize.originX + layout.x}px`,
+            top: `${stageSize.originY + layout.y}px`,
             width: `${layout.width}px`,
             zIndex: isActive ? 8 : 3,
           } as CSSProperties;
@@ -643,6 +727,7 @@ export default function ConversationGraphView({
                 .filter(Boolean)
                 .join(" ")}
               data-graph-node="true"
+              data-conversation-id={conversation.id}
               style={nodeStyle}
             >
               <div className="graph-node-toolbar" data-graph-node-toolbar="true">
@@ -700,15 +785,74 @@ export default function ConversationGraphView({
                 />
               </div>
 
-              <button
-                aria-label={`Resize ${conversation.title}`}
-                className="graph-node-resize-handle"
-                onKeyDown={(event) => handleResizeKeyDown(conversation.id, event)}
-                onPointerDown={(event) => startNodeResize(conversation.id, event)}
-                type="button"
-              >
-                <span className="graph-node-resize-grip" />
-              </button>
+              {isActive || resizingConversationId === conversation.id ? (
+                <>
+                  <div
+                    aria-label="Resize graph node width"
+                    aria-orientation="vertical"
+                    aria-valuemax={GRAPH_NODE_MAX_WIDTH}
+                    aria-valuemin={GRAPH_NODE_MIN_WIDTH}
+                    aria-valuenow={Math.round(layout.width)}
+                    aria-valuetext={`${Math.round(layout.width)} pixels wide`}
+                    className="graph-node-resize-handle"
+                    onDoubleClick={() =>
+                      onUpdateGraphNodeLayout(conversation.id, {
+                        width: GRAPH_NODE_DEFAULT_WIDTH,
+                      })
+                    }
+                    onKeyDown={(event) =>
+                      handleResizeKeyDown(conversation.id, event)
+                    }
+                    onPointerDown={(event) =>
+                      startNodeResize(conversation.id, "edge", event)
+                    }
+                    role="separator"
+                    tabIndex={0}
+                  >
+                    <span className="graph-node-resize-grip" />
+                  </div>
+
+                  <button
+                    aria-label={`Resize ${conversation.title} from top right`}
+                    className="graph-node-corner-knob is-top-right"
+                    onDoubleClick={() =>
+                      onUpdateGraphNodeLayout(conversation.id, {
+                        height: GRAPH_NODE_DEFAULT_HEIGHT,
+                        width: GRAPH_NODE_DEFAULT_WIDTH,
+                      })
+                    }
+                    onKeyDown={(event) =>
+                      handleResizeKeyDown(conversation.id, event)
+                    }
+                    onPointerDown={(event) =>
+                      startNodeResize(conversation.id, "corner", event)
+                    }
+                    type="button"
+                  >
+                    <span className="graph-node-corner-knob-dot is-diagonal-top" />
+                  </button>
+
+                  <button
+                    aria-label={`Resize ${conversation.title} from bottom right`}
+                    className="graph-node-corner-knob is-bottom-right"
+                    onDoubleClick={() =>
+                      onUpdateGraphNodeLayout(conversation.id, {
+                        height: GRAPH_NODE_DEFAULT_HEIGHT,
+                        width: GRAPH_NODE_DEFAULT_WIDTH,
+                      })
+                    }
+                    onKeyDown={(event) =>
+                      handleResizeKeyDown(conversation.id, event)
+                    }
+                    onPointerDown={(event) =>
+                      startNodeResize(conversation.id, "corner", event)
+                    }
+                    type="button"
+                  >
+                    <span className="graph-node-corner-knob-dot is-diagonal" />
+                  </button>
+                </>
+              ) : null}
             </div>
           );
         })}

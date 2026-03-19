@@ -1306,6 +1306,10 @@ button {
   padding-right: 0;
 }
 
+.canvas-section.is-graph-view {
+  overflow: hidden;
+}
+
 .canvas-view-intro {
   display: flex;
   flex-direction: column;
@@ -1968,6 +1972,7 @@ button {
   min-height: 0;
   overflow: hidden;
   position: relative;
+  touch-action: none;
 }
 
 .graph-canvas-viewport.is-panning {
@@ -1991,16 +1996,16 @@ button {
 
 .graph-connection-path {
   fill: none;
-  opacity: 0.34;
+  opacity: 0.7;
   stroke: url(#graph-connector-gradient);
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-width: 2.6;
+  stroke-width: 3;
 }
 
 .graph-connection-path.is-active {
-  opacity: 0.9;
-  stroke-width: 3.2;
+  opacity: 0.96;
+  stroke-width: 3.8;
 }
 
 .graph-connection-node {
@@ -2016,40 +2021,36 @@ button {
 .graph-node-shell {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 0;
   min-height: 0;
   min-width: 0;
+  overflow: visible;
   position: absolute;
 }
 
 .graph-node-toolbar {
   position: relative;
-  z-index: 1;
+  z-index: 2;
 }
 
 .graph-node-drag-handle {
   align-items: flex-start;
   background: var(--panel-head-bg);
   border: 1px solid var(--panel-border);
-  border-radius: 22px;
-  box-shadow: var(--status-shadow);
+  border-bottom: 0;
+  border-radius: 28px 28px 0 0;
   color: var(--ink);
   cursor: grab;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 14px 16px;
+  padding: 14px 18px 12px;
   text-align: left;
   transition:
-    transform 160ms ease,
     border-color 160ms ease,
     box-shadow 160ms ease,
     background-color 160ms ease;
   width: 100%;
-}
-
-.graph-node-drag-handle:hover {
-  transform: translateY(-1px);
 }
 
 .graph-node-drag-handle:focus-visible {
@@ -2097,7 +2098,10 @@ button {
 
 .graph-node-panel .chat-panel,
 .graph-node-panel .chat-panel.is-active {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
   height: 100%;
+  margin-top: -1px;
   transform: none;
 }
 
@@ -2105,25 +2109,25 @@ button {
   align-items: center;
   background: var(--panel-head-bg);
   border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  bottom: 18px;
+  border-radius: 999px;
   box-shadow: var(--status-shadow);
+  cursor: col-resize;
   color: var(--ink);
-  display: inline-flex;
-  height: 38px;
+  display: flex;
+  height: 84px;
   justify-content: center;
   position: absolute;
-  right: 18px;
+  right: -13px;
+  top: 50%;
+  touch-action: none;
+  transform: translateY(-50%);
   transition:
-    transform 160ms ease,
+    opacity 180ms ease,
     border-color 160ms ease,
     box-shadow 160ms ease;
-  width: 38px;
+  user-select: none;
+  width: 18px;
   z-index: 3;
-}
-
-.graph-node-resize-handle:hover {
-  transform: translateY(-1px);
 }
 
 .graph-node-resize-handle:focus-visible {
@@ -2139,18 +2143,93 @@ button {
 }
 
 .graph-node-resize-grip {
-  border-bottom: 2px solid var(--sage);
-  border-right: 2px solid var(--accent);
-  height: 14px;
-  transform: translate(-1px, -1px);
-  width: 14px;
+  background:
+    linear-gradient(180deg, var(--accent), var(--sage)),
+    rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  height: 42px;
+  width: 4px;
+}
+
+.graph-node-corner-knob {
+  align-items: center;
+  background: var(--panel-head-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  box-shadow: var(--status-shadow);
+  color: var(--ink);
+  display: inline-flex;
+  height: 22px;
+  justify-content: center;
+  position: absolute;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+  width: 22px;
+  z-index: 4;
+}
+
+.graph-node-corner-knob.is-top-right {
+  cursor: nesw-resize;
+  right: -11px;
+  top: -11px;
+}
+
+.graph-node-corner-knob.is-bottom-right {
+  cursor: nwse-resize;
+  bottom: -11px;
+  right: -11px;
+}
+
+.graph-node-corner-knob:hover {
+  transform: scale(1.04);
+}
+
+.graph-node-corner-knob:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.graph-node-shell.is-resizing .graph-node-corner-knob,
+.graph-node-corner-knob:hover,
+.graph-node-corner-knob:focus-visible {
+  border-color: var(--panel-active-border);
+  box-shadow: var(--panel-active-shadow);
+}
+
+.graph-node-corner-knob-dot {
+  background:
+    linear-gradient(180deg, var(--accent), var(--sage)),
+    rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  height: 8px;
+  width: 8px;
+}
+
+.graph-node-corner-knob-dot.is-diagonal {
+  border-bottom: 2px solid rgba(255, 255, 255, 0.36);
+  border-right: 2px solid rgba(255, 255, 255, 0.36);
+  border-radius: 2px;
+  height: 9px;
+  transform: rotate(0deg);
+  width: 9px;
+}
+
+.graph-node-corner-knob-dot.is-diagonal-top {
+  border-radius: 2px;
+  border-right: 2px solid rgba(255, 255, 255, 0.36);
+  border-top: 2px solid rgba(255, 255, 255, 0.36);
+  height: 9px;
+  width: 9px;
 }
 
 .conversation-canvas {
   align-items: stretch;
   display: flex;
   flex: 1;
-  gap: 26px;
+  gap: 64px;
   overflow-x: auto;
   min-height: 0;
   padding: 8px 18px 8px 0;
@@ -4562,40 +4641,16 @@ button {
   padding: 6px 4px 0;
 }
 
-.workspace-session-profile {
-  display: flex;
-}
-
-.workspace-profile-trigger {
+.workspace-session-brand {
   align-items: center;
-  background: var(--button-surface);
-  border: 1px solid var(--button-border);
-  border-radius: 18px;
-  box-shadow: var(--toggle-shadow);
-  color: var(--ink);
-  display: inline-flex;
-  height: 48px;
-  justify-content: center;
-  transition:
-    transform 160ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease;
-  width: 48px;
+  display: flex;
+  min-height: 48px;
 }
 
-.workspace-profile-trigger:hover {
-  transform: translateY(-1px);
-}
-
-.workspace-profile-trigger:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 4px;
-}
-
-.workspace-profile-icon {
-  height: 20px;
-  width: 20px;
+.workspace-session-brand h1 {
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: 1.5rem;
+  margin: 0;
 }
 
 .workspace-session-pins {
@@ -4613,18 +4668,6 @@ button {
   gap: 12px;
   justify-content: flex-end;
   justify-self: end;
-}
-
-.workspace-session-status {
-  background: var(--status-bg);
-  border: 1px solid var(--status-border);
-  border-radius: 999px;
-  box-shadow: var(--status-shadow);
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  padding: 0.62rem 0.9rem;
 }
 
 .profile-dialog {
@@ -4727,9 +4770,5 @@ button {
   .workspace-session-actions {
     justify-content: flex-start;
     justify-self: start;
-  }
-
-  .workspace-session-status {
-    text-align: center;
   }
 }

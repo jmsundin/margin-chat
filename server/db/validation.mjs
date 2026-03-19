@@ -311,8 +311,8 @@ function normalizeGraphLayout(conversationId, input) {
       360,
       960,
     ),
-    x: normalizeInteger(input.x, `graphLayouts["${conversationId}"].x`),
-    y: normalizeInteger(input.y, `graphLayouts["${conversationId}"].y`),
+    x: normalizeSignedInteger(input.x, `graphLayouts["${conversationId}"].x`),
+    y: normalizeSignedInteger(input.y, `graphLayouts["${conversationId}"].y`),
   };
 }
 
@@ -323,6 +323,16 @@ function normalizeGraphDimension(value, label, minimum, maximum) {
     throw createStateError(
       `${label} must be between ${minimum} and ${maximum}.`,
     );
+  }
+
+  return parsed;
+}
+
+function normalizeSignedInteger(value, label) {
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed)) {
+    throw createStateError(`${label} must be an integer.`);
   }
 
   return parsed;

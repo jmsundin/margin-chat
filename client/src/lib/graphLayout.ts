@@ -20,10 +20,10 @@ function normalizeCoordinate(value: unknown, fallback: number) {
   const parsed = Number(value);
 
   if (!Number.isFinite(parsed)) {
-    return Math.max(0, Math.round(fallback));
+    return Math.round(fallback);
   }
 
-  return Math.max(0, Math.round(parsed));
+  return Math.round(parsed);
 }
 
 function normalizeDimension(

@@ -124,24 +124,6 @@ function SendIcon() {
   );
 }
 
-function ProfileIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="workspace-profile-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-    >
-      <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
-      <path d="M5 20a7 7 0 0 1 14 0" />
-    </svg>
-  );
-}
-
 function getNextTheme(theme: ThemeMode): ThemeMode {
   return theme === "dark" ? "light" : "dark";
 }
@@ -1395,6 +1377,7 @@ function WorkspaceApp({
           }
 
           const childPanelRect = childPanel.getBoundingClientRect();
+          const parentPanelRect = parentPanel.getBoundingClientRect();
           const sourceContentRect = getElementRect(
             getMessageBubbleElement(anchorElement),
           );
@@ -1411,6 +1394,20 @@ function WorkspaceApp({
                 (sourceContentRect?.right ?? anchorRect.right) +
                   CONNECTOR_CONTENT_GUTTER_PX,
               );
+
+          nextConnections.push({
+            id: `panel-link-${conversation.id}`,
+            start: {
+              x: parentPanelRect.right,
+              y: parentPanelRect.top + parentPanelRect.height / 2,
+            },
+            end: {
+              x: childPanelRect.left,
+              y: childPanelRect.top + childPanelRect.height / 2,
+            },
+            active: true,
+            variant: "curve",
+          });
 
           nextConnections.push({
             id: `path-${conversation.id}`,
@@ -2519,19 +2516,8 @@ function WorkspaceApp({
       <div className="app-chrome">
         <div className="workspace-shell">
           <header className="workspace-session-bar">
-            <div className="workspace-session-profile">
-              <button
-                aria-label="Open profile"
-                className="workspace-profile-trigger"
-                onClick={() => {
-                  setProfileSaveError(null);
-                  setProfileModalOpen(true);
-                }}
-                title="Open profile"
-                type="button"
-              >
-                <ProfileIcon />
-              </button>
+            <div className="workspace-session-brand">
+              <h1>Margin Chat</h1>
             </div>
 
             <div className="workspace-session-pins">
@@ -2552,13 +2538,6 @@ function WorkspaceApp({
             </div>
 
             <div className="workspace-session-actions">
-              <span className="workspace-session-status">
-                {storageMode === "loading"
-                  ? "Syncing workspace"
-                  : storageMode === "server"
-                    ? "Server-backed"
-                    : "Local fallback"}
-              </span>
               <button className="ghost-button" onClick={onLogout} type="button">
                 Log out
               </button>
@@ -2576,6 +2555,10 @@ function WorkspaceApp({
                 setMainThreadDragMode("pinning-main-thread")
               }
               onNewChat={handleCreateMainConversation}
+              onOpenProfile={() => {
+                setProfileSaveError(null);
+                setProfileModalOpen(true);
+              }}
               onOpenSettings={() => setAppSettingsOpen(true)}
               onOpenSearch={handleOpenSearch}
               onRenameThread={handleRenameThread}
@@ -2606,20 +2589,6 @@ function WorkspaceApp({
                     <p className="canvas-hint">
                       Browse threads by auto-detected category, then search, sort,
                       and jump back into the conversation.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              {isGraphView ? (
-                <div className="canvas-head">
-                  <div className="canvas-view-intro">
-                    <p className="eyebrow">Conversation graph</p>
-                    <h2>Infinite chat canvas</h2>
-                    <p className="canvas-hint">
-                      Pan across the full workspace, drag nodes into place, and
-                      resize each chat panel while keeping every thread and branch
-                      connected on one surface.
                     </p>
                   </div>
                 </div>

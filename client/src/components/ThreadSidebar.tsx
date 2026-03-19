@@ -18,6 +18,7 @@ interface ThreadSidebarProps {
   onMainThreadDragEnd: () => void;
   onMainThreadDragStart: () => void;
   onNewChat: () => void;
+  onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
   onRenameThread: (conversationId: string, title: string) => void;
@@ -195,6 +196,24 @@ function SettingsIcon() {
   );
 }
 
+function ProfileIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-utility-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.9"
+    >
+      <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+      <path d="M5 20a7 7 0 0 1 14 0" />
+    </svg>
+  );
+}
+
 function ThemeToggleIcon({ theme }: { theme: ThemeMode }) {
   if (theme === "dark") {
     return (
@@ -295,6 +314,7 @@ export default function ThreadSidebar({
   onMainThreadDragEnd,
   onMainThreadDragStart,
   onNewChat,
+  onOpenProfile,
   onOpenSettings,
   onOpenSearch,
   onRenameThread,
@@ -545,7 +565,6 @@ export default function ThreadSidebar({
               <GraphViewIcon />
             </button>
           </div>
-          <h2>Margin Chat</h2>
         </div>
         <button
           aria-label={collapsed ? "Expand left sidebar" : "Minimize left sidebar"}
@@ -694,6 +713,16 @@ export default function ThreadSidebar({
       )}
 
       <div className="thread-sidebar-footer">
+        <button
+          aria-label="Open profile"
+          className="sidebar-utility-button"
+          onClick={onOpenProfile}
+          title="Profile"
+          type="button"
+        >
+          <ProfileIcon />
+        </button>
+
         <button
           aria-label="Open settings"
           className="sidebar-utility-button"
