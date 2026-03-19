@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import type { MermaidConfig } from "mermaid";
 import { renderMarkdownToHtml } from "../lib/markdown";
 import type { MessageAnchorLink, SelectionDraft } from "../types";
@@ -43,7 +44,7 @@ interface MarkdownMessageProps {
 const MERMAID_BLOCK_SELECTOR = ".message-mermaid-block";
 const INTERACTIVE_MERMAID_SELECTOR =
   '.message-mermaid-diagram[data-mermaid-interactive="true"]';
-const MERMAID_VIEWER_PADDING_PX = 56;
+const MERMAID_VIEWER_PADDING_PX = 24;
 const MERMAID_VIEWER_MAX_SCALE = 4;
 const MERMAID_VIEWER_MIN_SCALE = 0.35;
 
@@ -740,6 +741,106 @@ export default function MarkdownMessage({
     };
   }, [activeViewer]);
 
+  const viewerOverlay =
+    activeViewer && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            className="mermaid-viewer-backdrop"
+            onClick={closeViewer}
+            role="presentation"
+          >
+            <div
+              aria-label="Mermaid diagram viewer"
+              aria-modal="true"
+              className="mermaid-viewer"
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+            >
+              <div className="mermaid-viewer-head">
+                <div className="mermaid-viewer-copy">
+                  <strong>Mermaid Diagram</strong>
+                  <span>Drag to move. Use the wheel or controls to zoom.</span>
+                </div>
+
+                <div className="mermaid-viewer-actions">
+                  <span className="mermaid-viewer-zoom-label">
+                    {Math.round(viewerTransform.scale * 100)}%
+                  </span>
+                  <button
+                    className="mermaid-viewer-button"
+                    onClick={() => updateViewerScale(viewerTransform.scale / 1.18)}
+                    type="button"
+                  >
+                    -
+                  </button>
+                  <button
+                    className="mermaid-viewer-button"
+                    onClick={() => resetViewerTransform()}
+                    type="button"
+                  >
+                    Fit
+                  </button>
+                  <button
+                    className="mermaid-viewer-button"
+                    onClick={() => updateViewerScale(viewerTransform.scale * 1.18)}
+                    type="button"
+                  >
+                    +
+                  </button>
+                  <button
+                    className="mermaid-viewer-button is-primary"
+                    onClick={closeViewer}
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              <div className="mermaid-viewer-stage">
+                <div
+                  ref={viewerViewportRef}
+                  className={
+                    isViewerDragging
+                      ? "mermaid-viewer-viewport is-dragging"
+                      : "mermaid-viewer-viewport"
+                  }
+                  onLostPointerCapture={(event) => finishViewerDrag(event.pointerId)}
+                  onPointerCancel={(event) => finishViewerDrag(event.pointerId)}
+                  onPointerDown={handleViewerPointerDown}
+                  onPointerMove={handleViewerPointerMove}
+                  onPointerUp={(event) => finishViewerDrag(event.pointerId)}
+                  onWheel={handleViewerWheel}
+                >
+                  {viewerError ? (
+                    <div className="mermaid-viewer-state is-error" role="alert">
+                      {viewerError}
+                    </div>
+                  ) : viewerSvgMarkup ? (
+                    <div
+                      className="mermaid-viewer-canvas"
+                      style={{
+                        height: `${activeViewer.height}px`,
+                        transform: `translate(${viewerTransform.x}px, ${viewerTransform.y}px) scale(${viewerTransform.scale})`,
+                        width: `${activeViewer.width}px`,
+                      }}
+                    >
+                      <div
+                        className="mermaid-viewer-diagram"
+                        dangerouslySetInnerHTML={{ __html: viewerSvgMarkup }}
+                      />
+                    </div>
+                  ) : (
+                    <div className="mermaid-viewer-state">Rendering diagram…</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )
+      : null;
+
   return (
     <>
       <div
@@ -751,102 +852,7 @@ export default function MarkdownMessage({
         onClick={handleMarkdownClick}
         onKeyDown={handleMarkdownKeyDown}
       />
-
-      {activeViewer ? (
-        <div
-          className="mermaid-viewer-backdrop"
-          onClick={closeViewer}
-          role="presentation"
-        >
-          <div
-            aria-label="Mermaid diagram viewer"
-            aria-modal="true"
-            className="mermaid-viewer"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-          >
-            <div className="mermaid-viewer-head">
-              <div className="mermaid-viewer-copy">
-                <strong>Mermaid Diagram</strong>
-                <span>Drag to move. Use the wheel or controls to zoom.</span>
-              </div>
-
-              <div className="mermaid-viewer-actions">
-                <span className="mermaid-viewer-zoom-label">
-                  {Math.round(viewerTransform.scale * 100)}%
-                </span>
-                <button
-                  className="mermaid-viewer-button"
-                  onClick={() => updateViewerScale(viewerTransform.scale / 1.18)}
-                  type="button"
-                >
-                  -
-                </button>
-                <button
-                  className="mermaid-viewer-button"
-                  onClick={() => resetViewerTransform()}
-                  type="button"
-                >
-                  Fit
-                </button>
-                <button
-                  className="mermaid-viewer-button"
-                  onClick={() => updateViewerScale(viewerTransform.scale * 1.18)}
-                  type="button"
-                >
-                  +
-                </button>
-                <button
-                  className="mermaid-viewer-button is-primary"
-                  onClick={closeViewer}
-                  type="button"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-
-            <div className="mermaid-viewer-stage">
-              <div
-                ref={viewerViewportRef}
-                className={
-                  isViewerDragging
-                    ? "mermaid-viewer-viewport is-dragging"
-                    : "mermaid-viewer-viewport"
-                }
-                onLostPointerCapture={(event) => finishViewerDrag(event.pointerId)}
-                onPointerCancel={(event) => finishViewerDrag(event.pointerId)}
-                onPointerDown={handleViewerPointerDown}
-                onPointerMove={handleViewerPointerMove}
-                onPointerUp={(event) => finishViewerDrag(event.pointerId)}
-                onWheel={handleViewerWheel}
-              >
-                {viewerError ? (
-                  <div className="mermaid-viewer-state is-error" role="alert">
-                    {viewerError}
-                  </div>
-                ) : viewerSvgMarkup ? (
-                  <div
-                    className="mermaid-viewer-canvas"
-                    style={{
-                      height: `${activeViewer.height}px`,
-                      transform: `translate(${viewerTransform.x}px, ${viewerTransform.y}px) scale(${viewerTransform.scale})`,
-                      width: `${activeViewer.width}px`,
-                    }}
-                  >
-                    <div
-                      className="mermaid-viewer-diagram"
-                      dangerouslySetInnerHTML={{ __html: viewerSvgMarkup }}
-                    />
-                  </div>
-                ) : (
-                  <div className="mermaid-viewer-state">Rendering diagram…</div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {viewerOverlay}
     </>
   );
 }

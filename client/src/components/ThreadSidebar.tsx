@@ -64,6 +64,23 @@ function getThreadMenuPosition(triggerRect: DOMRect) {
   };
 }
 
+function getCompactLabel(title: string) {
+  const words = title.match(/[A-Za-z0-9]+/g) ?? [];
+
+  if (words.length >= 2) {
+    const first = words[0] ?? "";
+    const second = words[1] ?? "";
+
+    return `${first.charAt(0)}${second.charAt(0)}`.toUpperCase();
+  }
+
+  if (words.length === 1) {
+    return (words[0] ?? "").slice(0, 2).toUpperCase();
+  }
+
+  return title.trim().slice(0, 2).toUpperCase() || "?";
+}
+
 function PlusIcon() {
   return (
     <svg
@@ -513,7 +530,44 @@ export default function ThreadSidebar({
         </button>
       </div>
 
-      {!collapsed ? (
+      {collapsed ? (
+        <div className="thread-sidebar-mini-list">
+          {threads.map((thread) => {
+            const branchCount = Math.max(thread.conversationCount - 1, 0);
+
+            return (
+              <button
+                key={thread.id}
+                aria-label={`Open chat ${thread.title}`}
+                className={
+                  thread.id === activeThreadId
+                    ? "thread-sidebar-mini-item is-active"
+                    : "thread-sidebar-mini-item"
+                }
+                onClick={() => {
+                  setOpenMenuState(null);
+                  onSelectThread(thread.id);
+                }}
+                title={thread.title}
+                type="button"
+              >
+                <span className="thread-sidebar-mini-badge" aria-hidden="true">
+                  {getCompactLabel(thread.title)}
+                </span>
+                <span className="thread-sidebar-mini-card" aria-hidden="true">
+                  <span className="thread-sidebar-mini-title">{thread.title}</span>
+                  <span className="thread-sidebar-mini-meta">
+                    {branchCount === 1 ? "1 branch" : `${branchCount} branches`}
+                    <span aria-hidden="true">•</span>
+                    {thread.updatedLabel}
+                  </span>
+                  <span className="thread-sidebar-mini-preview">{thread.preview}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
         <div className="thread-list">
           {threads.map((thread) => {
             const branchCount = Math.max(thread.conversationCount - 1, 0);
@@ -585,7 +639,7 @@ export default function ThreadSidebar({
             );
           })}
         </div>
-      ) : null}
+      )}
 
       <div className="thread-sidebar-footer">
         <button

@@ -33,6 +33,23 @@ function RailToggleIcon({ open }: { open: boolean }) {
   );
 }
 
+function getCompactLabel(title: string) {
+  const words = title.match(/[A-Za-z0-9]+/g) ?? [];
+
+  if (words.length >= 2) {
+    const first = words[0] ?? "";
+    const second = words[1] ?? "";
+
+    return `${first.charAt(0)}${second.charAt(0)}`.toUpperCase();
+  }
+
+  if (words.length === 1) {
+    return (words[0] ?? "").slice(0, 2).toUpperCase();
+  }
+
+  return title.trim().slice(0, 2).toUpperCase() || "?";
+}
+
 export default function BranchRail({
   branches,
   isRootActive,
@@ -73,9 +90,47 @@ export default function BranchRail({
           </button>
         ) : null}
 
-        <div className="rail-list">
-          {branches.length ? (
-            branches.map((branch) => {
+        {open ? (
+          <div className="rail-list">
+            {branches.length ? (
+              branches.map((branch) => {
+                const quote = branch.branchAnchor?.quote ?? "";
+                const prompt = branch.branchAnchor?.prompt ?? "";
+
+                return (
+                  <button
+                    key={branch.id}
+                    ref={(element) => registerTabRef(branch.id, element)}
+                    className="rail-tab"
+                    onClick={() => onSelectConversation(branch.id)}
+                    title={branch.title}
+                    type="button"
+                  >
+                    <span className="rail-tab-dot" aria-hidden="true">
+                      {getCompactLabel(branch.title)}
+                    </span>
+                    <span className="rail-tab-card">
+                      <span className="rail-tab-title">{branch.title}</span>
+                      {quote ? (
+                        <span className="rail-tab-quote">“{excerpt(quote, 72)}”</span>
+                      ) : null}
+                      {prompt ? (
+                        <span className="rail-tab-prompt">{excerpt(prompt, 78)}</span>
+                      ) : null}
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <p className="rail-empty">
+                This chat does not have child branches yet. Highlight text in the
+                focused chat to create one.
+              </p>
+            )}
+          </div>
+        ) : (
+          <div className="rail-mini-list">
+            {branches.map((branch) => {
               const quote = branch.branchAnchor?.quote ?? "";
               const prompt = branch.branchAnchor?.prompt ?? "";
 
@@ -83,30 +138,31 @@ export default function BranchRail({
                 <button
                   key={branch.id}
                   ref={(element) => registerTabRef(branch.id, element)}
-                  className="rail-tab"
+                  aria-label={`Open branch ${branch.title}`}
+                  className="rail-mini-item"
                   onClick={() => onSelectConversation(branch.id)}
+                  title={branch.title}
                   type="button"
                 >
-                  <span className="rail-tab-dot" aria-hidden="true" />
-                  <span className="rail-tab-card">
-                    <span className="rail-tab-title">{branch.title}</span>
+                  <span className="rail-mini-badge" aria-hidden="true">
+                    {getCompactLabel(branch.title)}
+                  </span>
+                  <span className="rail-mini-card" aria-hidden="true">
+                    <span className="rail-mini-title">{branch.title}</span>
                     {quote ? (
-                      <span className="rail-tab-quote">“{excerpt(quote, 72)}”</span>
+                      <span className="rail-mini-quote">“{excerpt(quote, 72)}”</span>
                     ) : null}
                     {prompt ? (
-                      <span className="rail-tab-prompt">{excerpt(prompt, 78)}</span>
-                    ) : null}
+                      <span className="rail-mini-prompt">{excerpt(prompt, 78)}</span>
+                    ) : (
+                      <span className="rail-mini-prompt">Branch conversation</span>
+                    )}
                   </span>
                 </button>
               );
-            })
-          ) : open ? (
-            <p className="rail-empty">
-              This chat does not have child branches yet. Highlight text in the
-              focused chat to create one.
-            </p>
-          ) : null}
-        </div>
+            })}
+          </div>
+        )}
       </div>
     </aside>
   );
