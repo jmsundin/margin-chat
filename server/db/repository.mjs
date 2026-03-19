@@ -16,7 +16,8 @@ export async function readState(client, userId) {
         default_service_id,
         default_model_id,
         rail_open,
-        pinned_thread_ids
+        pinned_thread_ids,
+        graph_layouts
       from app_sessions
       where user_id = $1
     `,
@@ -168,6 +169,16 @@ export async function readState(client, userId) {
     conversations,
     defaultModelId,
     defaultServiceId,
+    graphLayouts:
+      session.graph_layouts &&
+      typeof session.graph_layouts === "object" &&
+      !Array.isArray(session.graph_layouts)
+        ? Object.fromEntries(
+            Object.entries(session.graph_layouts).filter(([conversationId]) =>
+              Boolean(conversations[conversationId]),
+            ),
+          )
+        : {},
     pinnedThreadIds: (session.pinned_thread_ids ?? []).filter(
       (conversationId) => conversations[conversationId]?.parentId === null,
     ),
@@ -194,9 +205,10 @@ export async function writeState(client, userId, normalizedState) {
           default_service_id,
           default_model_id,
           rail_open,
-          pinned_thread_ids
+          pinned_thread_ids,
+          graph_layouts
         )
-        values ($1, $2, $3, $4, $5, $6)
+        values ($1, $2, $3, $4, $5, $6, $7)
       `,
       [
         sessionId,
@@ -205,6 +217,7 @@ export async function writeState(client, userId, normalizedState) {
         normalizedState.defaultModelId,
         normalizedState.railOpen,
         normalizedState.pinnedThreadIds,
+        normalizedState.graphLayouts,
       ],
     );
 

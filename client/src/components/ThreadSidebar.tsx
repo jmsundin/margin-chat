@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { setMainThreadDragData } from "../lib/pinnedThreads";
-import type { ThreadSummary } from "../types";
+import type { MainViewMode, ThreadSummary } from "../types";
 
-type MainViewMode = "chat" | "tiles";
 type ThemeMode = "light" | "dark";
 type ThreadActionTarget = Pick<ThreadSummary, "id" | "title">;
 
@@ -22,9 +21,9 @@ interface ThreadSidebarProps {
   onOpenSettings: () => void;
   onOpenSearch: () => void;
   onRenameThread: (conversationId: string, title: string) => void;
+  onSetMainViewMode: (viewMode: MainViewMode) => void;
   onSelectThread: (conversationId: string) => void;
   onToggleCollapse: () => void;
-  onToggleMainViewMode: () => void;
   onToggleTheme: () => void;
   theme: ThemeMode;
   threads: ThreadSummary[];
@@ -156,6 +155,28 @@ function ChatViewIcon() {
   );
 }
 
+function GraphViewIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+    >
+      <circle cx="5.5" cy="7" r="2.2" />
+      <circle cx="18.5" cy="6" r="2.2" />
+      <circle cx="10" cy="18" r="2.2" />
+      <path d="M7.5 7.8 16.4 6.2" />
+      <path d="M6.9 8.9 8.9 16" />
+      <path d="m16.9 7.8-5.3 8.4" />
+    </svg>
+  );
+}
+
 function SettingsIcon() {
   return (
     <svg
@@ -277,9 +298,9 @@ export default function ThreadSidebar({
   onOpenSettings,
   onOpenSearch,
   onRenameThread,
+  onSetMainViewMode,
   onSelectThread,
   onToggleCollapse,
-  onToggleMainViewMode,
   onToggleTheme,
   theme,
   threads,
@@ -480,19 +501,50 @@ export default function ThreadSidebar({
     <aside className={collapsed ? "thread-sidebar is-collapsed" : "thread-sidebar"}>
       <div className="thread-sidebar-head">
         <div className="thread-sidebar-title-row">
-          <button
-            aria-label={
-              mainViewMode === "tiles"
-                ? "Switch back to chat view"
-                : "Switch to tile view"
-            }
-            className="thread-view-toggle"
-            onClick={onToggleMainViewMode}
-            title={mainViewMode === "tiles" ? "Switch to chat view" : "Switch to tile view"}
-            type="button"
-          >
-            {mainViewMode === "tiles" ? <ChatViewIcon /> : <TileViewIcon />}
-          </button>
+          <div aria-label="Main workspace view" className="thread-view-switcher" role="group">
+            <button
+              aria-label="Open chat panel view"
+              aria-pressed={mainViewMode === "chat"}
+              className={
+                mainViewMode === "chat"
+                  ? "thread-view-button is-active"
+                  : "thread-view-button"
+              }
+              onClick={() => onSetMainViewMode("chat")}
+              title="Open chat panel view"
+              type="button"
+            >
+              <ChatViewIcon />
+            </button>
+            <button
+              aria-label="Open tile view"
+              aria-pressed={mainViewMode === "tiles"}
+              className={
+                mainViewMode === "tiles"
+                  ? "thread-view-button is-active"
+                  : "thread-view-button"
+              }
+              onClick={() => onSetMainViewMode("tiles")}
+              title="Open tile view"
+              type="button"
+            >
+              <TileViewIcon />
+            </button>
+            <button
+              aria-label="Open graph view"
+              aria-pressed={mainViewMode === "graph"}
+              className={
+                mainViewMode === "graph"
+                  ? "thread-view-button is-active"
+                  : "thread-view-button"
+              }
+              onClick={() => onSetMainViewMode("graph")}
+              title="Open graph view"
+              type="button"
+            >
+              <GraphViewIcon />
+            </button>
+          </div>
           <h2>Margin Chat</h2>
         </div>
         <button

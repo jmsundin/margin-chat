@@ -15,6 +15,7 @@ import AppSettingsModal from "./components/AppSettingsModal";
 import AuthLanding from "./components/AuthLanding";
 import BranchRail from "./components/BranchRail";
 import ChatPanel from "./components/ChatPanel";
+import ConversationGraphView from "./components/ConversationGraphView";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import MainChatTileView from "./components/MainChatTileView";
 import PinnedThreadTabs from "./components/PinnedThreadTabs";
@@ -44,6 +45,12 @@ import {
   resolveBackendServiceModelId,
 } from "./lib/services";
 import {
+  buildBranchGraphNodeLayout,
+  buildRootGraphNodeLayout,
+  createDefaultGraphNodeLayout,
+  normalizeGraphLayouts,
+} from "./lib/graphLayout";
+import {
   buildConversationTitle,
   excerpt,
   getConversationPath,
@@ -63,6 +70,8 @@ import type {
   ConnectionLine,
   ConnectorOcclusionRect,
   Conversation,
+  GraphNodeLayout,
+  MainViewMode,
   Message,
   MessageAnchorLink,
   SelectionDraft,
@@ -91,7 +100,6 @@ const CONNECTOR_CONTENT_GUTTER_PX = 8;
 type ThemeMode = "light" | "dark";
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 type StorageMode = "loading" | "fallback" | "server";
-type MainViewMode = "chat" | "tiles";
 type MainThreadDragMode =
   | "idle"
   | "pinning-main-thread"
@@ -243,6 +251,10 @@ function hydratePersistedState(input: unknown): AppState | null {
       conversations,
       defaultModelId,
       defaultServiceId,
+      graphLayouts: normalizeGraphLayouts(
+        conversations,
+        parsed.graphLayouts,
+      ),
       pinnedThreadIds: sanitizePinnedThreadIds(
         parsed.pinnedThreadIds,
         conversations,
@@ -437,6 +449,31 @@ function areThreadIdListsEqual(left: string[], right: string[]) {
     left.length === right.length &&
     left.every((threadId, index) => threadId === right[index])
   );
+}
+
+function areGraphLayoutsEqual(
+  left: Record<string, GraphNodeLayout>,
+  right: Record<string, GraphNodeLayout>,
+) {
+  const leftIds = Object.keys(left);
+  const rightIds = Object.keys(right);
+
+  if (leftIds.length !== rightIds.length) {
+    return false;
+  }
+
+  return leftIds.every((conversationId) => {
+    const leftLayout = left[conversationId];
+    const rightLayout = right[conversationId];
+
+    return (
+      Boolean(rightLayout) &&
+      leftLayout.x === rightLayout.x &&
+      leftLayout.y === rightLayout.y &&
+      leftLayout.width === rightLayout.width &&
+      leftLayout.height === rightLayout.height
+    );
+  });
 }
 
 function buildBackendErrorReply(
@@ -986,6 +1023,7 @@ function WorkspaceApp({
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   const isMainView = activeConversation.parentId === null;
   const isTileView = mainViewMode === "tiles";
+  const isGraphView = mainViewMode === "graph";
   const threadSummaries = buildThreadSummaries(state.conversations);
   const threadSummaryById = new Map(
     threadSummaries.map((thread) => [thread.id, thread] as const),
@@ -1001,6 +1039,22 @@ function WorkspaceApp({
   useEffect(() => {
     window.localStorage.setItem(stateStorageKey, JSON.stringify(state));
   }, [state, stateStorageKey]);
+
+  useEffect(() => {
+    const normalizedGraphLayouts = normalizeGraphLayouts(
+      state.conversations,
+      state.graphLayouts,
+    );
+
+    if (areGraphLayoutsEqual(state.graphLayouts, normalizedGraphLayouts)) {
+      return;
+    }
+
+    setState((current) => ({
+      ...current,
+      graphLayouts: normalizedGraphLayouts,
+    }));
+  }, [state.conversations, state.graphLayouts]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1148,7 +1202,7 @@ function WorkspaceApp({
   }, []);
 
   useEffect(() => {
-    if (!isTileView || !panelResizeStateRef.current) {
+    if (mainViewMode === "chat" || !panelResizeStateRef.current) {
       return;
     }
 
@@ -1157,7 +1211,7 @@ function WorkspaceApp({
     setResizingChatPanelConversationId(null);
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
-  }, [isTileView]);
+  }, [mainViewMode]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -1889,6 +1943,41 @@ function WorkspaceApp({
     };
   }, [state.conversations]);
 
+  function handleUpdateGraphNodeLayout(
+    conversationId: string,
+    nextLayout: Partial<GraphNodeLayout>,
+  ) {
+    setState((current) => {
+      if (!current.conversations[conversationId]) {
+        return current;
+      }
+
+      const currentLayout =
+        current.graphLayouts[conversationId] ?? createDefaultGraphNodeLayout();
+      const mergedLayout = createDefaultGraphNodeLayout({
+        ...currentLayout,
+        ...nextLayout,
+      });
+
+      if (
+        currentLayout.x === mergedLayout.x &&
+        currentLayout.y === mergedLayout.y &&
+        currentLayout.width === mergedLayout.width &&
+        currentLayout.height === mergedLayout.height
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        graphLayouts: {
+          ...current.graphLayouts,
+          [conversationId]: mergedLayout,
+        },
+      };
+    });
+  }
+
   async function handleCreateBranch(promptOverride?: string) {
     const draft = selectionDraft;
 
@@ -1947,6 +2036,14 @@ function WorkspaceApp({
     const rootConversationId =
       getConversationRootId(state.conversations, parentConversation.id) ??
       parentConversation.id;
+    const branchGraphLayout = buildBranchGraphNodeLayout({
+      conversations: state.conversations,
+      graphLayouts: normalizeGraphLayouts(
+        state.conversations,
+        state.graphLayouts,
+      ),
+      parentConversationId: parentConversation.id,
+    });
 
     setState((current) => {
       const currentParent = current.conversations[draft.conversationId];
@@ -1968,6 +2065,10 @@ function WorkspaceApp({
             updatedAt: now,
           },
           [branchId]: branchConversation,
+        },
+        graphLayouts: {
+          ...current.graphLayouts,
+          [branchId]: branchGraphLayout,
         },
       };
     });
@@ -2023,12 +2124,20 @@ function WorkspaceApp({
       modelId: state.defaultModelId,
       serviceId: state.defaultServiceId,
     });
+    const nextGraphLayout = buildRootGraphNodeLayout(
+      state.conversations,
+      normalizeGraphLayouts(state.conversations, state.graphLayouts),
+    );
 
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
     setSearchQuery("");
-    setMainViewMode("chat");
+
+    if (mainViewMode === "tiles") {
+      setMainViewMode("chat");
+    }
+
     startTransition(() => {
       setState((current) => ({
         ...current,
@@ -2037,6 +2146,10 @@ function WorkspaceApp({
         conversations: {
           ...current.conversations,
           [conversationId]: mainConversation,
+        },
+        graphLayouts: {
+          ...current.graphLayouts,
+          [conversationId]: nextGraphLayout,
         },
       }));
     });
@@ -2060,10 +2173,15 @@ function WorkspaceApp({
     handleSelectConversation(conversationId);
   }
 
-  function handleSelectConversation(conversationId: string) {
+  function handleSelectConversation(
+    conversationId: string,
+    options: {
+      nextViewMode?: MainViewMode;
+    } = {},
+  ) {
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
-    setMainViewMode("chat");
+    setMainViewMode(options.nextViewMode ?? (mainViewMode === "tiles" ? "chat" : mainViewMode));
 
     startTransition(() => {
       setState((current) => {
@@ -2280,6 +2398,20 @@ function WorkspaceApp({
           nextConversations[replacementConversation.id] = replacementConversation;
         }
 
+        const nextGraphLayouts = Object.fromEntries(
+          Object.entries(current.graphLayouts).filter(
+            ([currentConversationId]) =>
+              !deletedConversationIdSet.has(currentConversationId),
+          ),
+        ) as Record<string, GraphNodeLayout>;
+
+        if (replacementConversation) {
+          nextGraphLayouts[replacementConversation.id] = buildRootGraphNodeLayout(
+            nextConversations,
+            nextGraphLayouts,
+          );
+        }
+
         const fallbackRootId =
           buildThreadSummaries(nextConversations)[0]?.id ??
           replacementConversation?.id ??
@@ -2306,6 +2438,7 @@ function WorkspaceApp({
           ),
           rootId: nextRootId,
           conversations: nextConversations,
+          graphLayouts: nextGraphLayouts,
         };
       });
     });
@@ -2317,10 +2450,6 @@ function WorkspaceApp({
     setSearchModalOpen(false);
     setSearchQuery("");
     setMainViewMode(nextViewMode);
-  }
-
-  function handleToggleMainViewMode() {
-    handleSetMainViewMode(mainViewMode === "chat" ? "tiles" : "chat");
   }
 
   function handleToggleLeftSidebar() {
@@ -2450,9 +2579,9 @@ function WorkspaceApp({
               onOpenSettings={() => setAppSettingsOpen(true)}
               onOpenSearch={handleOpenSearch}
               onRenameThread={handleRenameThread}
+              onSetMainViewMode={handleSetMainViewMode}
               onSelectThread={handleSelectConversation}
               onToggleCollapse={handleToggleLeftSidebar}
-              onToggleMainViewMode={handleToggleMainViewMode}
               onToggleTheme={() =>
                 onSetTheme((current) => getNextTheme(current))
               }
@@ -2462,7 +2591,11 @@ function WorkspaceApp({
 
             <section
               className={
-                isTileView ? "canvas-section is-thread-tile-view" : "canvas-section"
+                isTileView
+                  ? "canvas-section is-thread-tile-view"
+                  : isGraphView
+                    ? "canvas-section is-graph-view"
+                    : "canvas-section"
               }
             >
               {isTileView ? (
@@ -2478,110 +2611,147 @@ function WorkspaceApp({
                 </div>
               ) : null}
 
-            {isTileView ? (
-              <MainChatTileView
-                activeThreadId={activeRootConversation.id}
-                onMainThreadDragEnd={() => setMainThreadDragMode("idle")}
-                onMainThreadDragStart={() =>
-                  setMainThreadDragMode("pinning-main-thread")
-                }
-                onOpenThread={handleSelectConversation}
-                threads={threadSummaries}
-              />
-            ) : (
-              <div
-                className={
-                  isMainView
-                    ? isResizingChatPanel
-                      ? "conversation-canvas is-main-view is-resizing-panel"
-                      : "conversation-canvas is-main-view"
-                    : isResizingChatPanel
-                      ? "conversation-canvas is-resizing-panel"
-                      : "conversation-canvas"
-                }
-                ref={canvasRef}
-                style={conversationCanvasStyle}
-              >
-                {path.map((conversation) => (
-                  <div
-                    key={conversation.id}
-                    className={
-                      isMainView
-                        ? conversation.id === resizingChatPanelConversationId &&
-                          isResizingChatPanel
-                          ? "panel-slot is-main-view is-resizable is-resizing"
-                          : "panel-slot is-main-view is-resizable"
-                        : conversation.id === resizingChatPanelConversationId &&
-                            isResizingChatPanel
-                          ? "panel-slot is-resizable is-resizing"
-                          : "panel-slot is-resizable"
-                    }
-                  >
-                    <ChatPanel
-                      anchorsByMessageId={getAnchorsByMessageId(
-                        state.conversations,
-                        conversation.id,
-                      )}
-                      conversation={conversation}
-                      draft={drafts[conversation.id] ?? ""}
-                      isActive={conversation.id === activeConversation.id}
-                      isSubmitting={Boolean(
-                        pendingConversationIds[conversation.id],
-                      )}
-                      theme={theme}
-                      typingProgressByMessageId={
-                        typingProgressByMessageIdRef.current
-                      }
-                      typingMessageIds={typingMessageIds}
-                      selectionPreview={
-                        selectionDraft?.conversationId === conversation.id
-                          ? selectionDraft
-                          : null
-                      }
-                      onActivate={() => handleSelectConversation(conversation.id)}
-                      onDraftChange={(value) =>
-                        handleDraftChange(conversation.id, value)
-                      }
-                      onModelChange={handleModelChange}
-                      onStopTypewriter={handleStopTypewriter}
-                      onSubmit={handleSubmit}
-                      onTypewriterProgress={handleTypewriterProgress}
-                      onTypewriterComplete={handleTypewriterComplete}
-                      registerPanelRef={(conversationId, element) => {
-                        panelRefs.current[conversationId] = element;
-                      }}
-                      registerComposerSurfaceRef={(conversationId, element) => {
-                        composerSurfaceRefs.current[conversationId] = element;
-                      }}
-                      registerAnchorRef={(branchConversationId, element) => {
-                        anchorRefs.current[branchConversationId] = element;
-                      }}
-                    />
-                    <div
-                      aria-label="Resize chat panel width"
-                      aria-orientation="vertical"
-                      aria-valuemax={chatPanelWidthBounds.max}
-                      aria-valuemin={chatPanelWidthBounds.min}
-                      aria-valuenow={Math.round(chatPanelWidth)}
-                      aria-valuetext={`${Math.round(chatPanelWidth)} pixels wide`}
-                      className="panel-resize-handle"
-                      onDoubleClick={handleResetChatPanelWidth}
-                      onKeyDown={handleChatPanelResizeKeyDown}
-                      onPointerDown={(event) =>
-                        handleChatPanelResizePointerDown(conversation.id, event)
-                      }
-                      role="separator"
-                      tabIndex={0}
-                    >
-                      <span className="panel-resize-handle-grip" />
-                    </div>
+              {isGraphView ? (
+                <div className="canvas-head">
+                  <div className="canvas-view-intro">
+                    <p className="eyebrow">Conversation graph</p>
+                    <h2>Infinite chat canvas</h2>
+                    <p className="canvas-hint">
+                      Pan across the full workspace, drag nodes into place, and
+                      resize each chat panel while keeping every thread and branch
+                      connected on one surface.
+                    </p>
                   </div>
-                ))}
-              </div>
-            )}
-          </section>
+                </div>
+              ) : null}
 
-          {!isTileView ? (
+              {isTileView ? (
+                <MainChatTileView
+                  activeThreadId={activeRootConversation.id}
+                  onMainThreadDragEnd={() => setMainThreadDragMode("idle")}
+                  onMainThreadDragStart={() =>
+                    setMainThreadDragMode("pinning-main-thread")
+                  }
+                  onOpenThread={handleSelectConversation}
+                  threads={threadSummaries}
+                />
+              ) : isGraphView ? (
+                <ConversationGraphView
+                  activeConversationId={activeConversation.id}
+                  conversations={state.conversations}
+                  drafts={drafts}
+                  getAnchorsByMessageId={(conversationId) =>
+                    getAnchorsByMessageId(state.conversations, conversationId)
+                  }
+                  graphLayouts={state.graphLayouts}
+                  pendingConversationIds={pendingConversationIds}
+                  selectionPreview={selectionDraft}
+                  theme={theme}
+                  typingMessageIds={typingMessageIds}
+                  typingProgressByMessageId={typingProgressByMessageIdRef.current}
+                  onActivateConversation={handleSelectConversation}
+                  onDraftChange={handleDraftChange}
+                  onModelChange={handleModelChange}
+                  onStopTypewriter={handleStopTypewriter}
+                  onSubmit={handleSubmit}
+                  onTypewriterComplete={handleTypewriterComplete}
+                  onTypewriterProgress={handleTypewriterProgress}
+                  onUpdateGraphNodeLayout={handleUpdateGraphNodeLayout}
+                />
+              ) : (
+                <div
+                  className={
+                    isMainView
+                      ? isResizingChatPanel
+                        ? "conversation-canvas is-main-view is-resizing-panel"
+                        : "conversation-canvas is-main-view"
+                      : isResizingChatPanel
+                        ? "conversation-canvas is-resizing-panel"
+                        : "conversation-canvas"
+                  }
+                  ref={canvasRef}
+                  style={conversationCanvasStyle}
+                >
+                  {path.map((conversation) => (
+                    <div
+                      key={conversation.id}
+                      className={
+                        isMainView
+                          ? conversation.id === resizingChatPanelConversationId &&
+                            isResizingChatPanel
+                            ? "panel-slot is-main-view is-resizable is-resizing"
+                            : "panel-slot is-main-view is-resizable"
+                          : conversation.id === resizingChatPanelConversationId &&
+                              isResizingChatPanel
+                            ? "panel-slot is-resizable is-resizing"
+                            : "panel-slot is-resizable"
+                      }
+                    >
+                      <ChatPanel
+                        anchorsByMessageId={getAnchorsByMessageId(
+                          state.conversations,
+                          conversation.id,
+                        )}
+                        conversation={conversation}
+                        draft={drafts[conversation.id] ?? ""}
+                        isActive={conversation.id === activeConversation.id}
+                        isSubmitting={Boolean(
+                          pendingConversationIds[conversation.id],
+                        )}
+                        theme={theme}
+                        typingProgressByMessageId={
+                          typingProgressByMessageIdRef.current
+                        }
+                        typingMessageIds={typingMessageIds}
+                        selectionPreview={
+                          selectionDraft?.conversationId === conversation.id
+                            ? selectionDraft
+                            : null
+                        }
+                        onActivate={() => handleSelectConversation(conversation.id)}
+                        onDraftChange={(value) =>
+                          handleDraftChange(conversation.id, value)
+                        }
+                        onModelChange={handleModelChange}
+                        onStopTypewriter={handleStopTypewriter}
+                        onSubmit={handleSubmit}
+                        onTypewriterProgress={handleTypewriterProgress}
+                        onTypewriterComplete={handleTypewriterComplete}
+                        registerPanelRef={(conversationId, element) => {
+                          panelRefs.current[conversationId] = element;
+                        }}
+                        registerComposerSurfaceRef={(conversationId, element) => {
+                          composerSurfaceRefs.current[conversationId] = element;
+                        }}
+                        registerAnchorRef={(branchConversationId, element) => {
+                          anchorRefs.current[branchConversationId] = element;
+                        }}
+                      />
+                      <div
+                        aria-label="Resize chat panel width"
+                        aria-orientation="vertical"
+                        aria-valuemax={chatPanelWidthBounds.max}
+                        aria-valuemin={chatPanelWidthBounds.min}
+                        aria-valuenow={Math.round(chatPanelWidth)}
+                        aria-valuetext={`${Math.round(chatPanelWidth)} pixels wide`}
+                        className="panel-resize-handle"
+                        onDoubleClick={handleResetChatPanelWidth}
+                        onKeyDown={handleChatPanelResizeKeyDown}
+                        onPointerDown={(event) =>
+                          handleChatPanelResizePointerDown(conversation.id, event)
+                        }
+                        role="separator"
+                        tabIndex={0}
+                      >
+                        <span className="panel-resize-handle-grip" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+          {!isTileView && !isGraphView ? (
             <BranchRail
               branches={focusedBranches}
               isRootActive={isMainView}
@@ -2596,7 +2766,7 @@ function WorkspaceApp({
             />
           ) : null}
 
-          {!isTileView ? (
+          {!isTileView && !isGraphView ? (
             <ConnectorOverlay
               connections={connections}
               occlusionRects={connectorOcclusionRects}

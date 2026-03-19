@@ -501,30 +501,48 @@ button {
   margin: 0;
 }
 
-.thread-view-toggle {
+.thread-view-switcher {
   align-items: center;
   background: var(--button-surface);
   border: 1px solid var(--button-border);
-  border-radius: 18px;
+  border-radius: 20px;
   box-shadow: var(--toggle-shadow);
-  color: var(--ink);
   display: inline-flex;
   flex: 0 0 auto;
-  height: 44px;
+  gap: 4px;
+  padding: 4px;
+}
+
+.thread-view-button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 16px;
+  color: var(--muted);
+  display: inline-flex;
+  height: 36px;
   justify-content: center;
   transition:
     transform 160ms ease,
+    color 160ms ease,
     background-color 160ms ease,
     border-color 160ms ease,
     box-shadow 160ms ease;
-  width: 44px;
+  width: 36px;
 }
 
-.thread-view-toggle:hover {
+.thread-view-button:hover {
   transform: translateY(-1px);
+  color: var(--ink);
 }
 
-.thread-view-toggle:focus-visible {
+.thread-view-button.is-active {
+  background: var(--thread-button-active-bg);
+  box-shadow: inset 0 0 0 1px var(--thread-button-active-border);
+  color: var(--ink);
+}
+
+.thread-view-button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 4px;
 }
@@ -649,8 +667,8 @@ button {
 
 .thread-sidebar.is-collapsed .thread-sidebar-head {
   align-items: center;
-  flex-direction: row;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   justify-content: center;
   width: 100%;
 }
@@ -659,6 +677,8 @@ button {
   flex-direction: row;
   flex: 0 0 auto;
   gap: 8px;
+  justify-content: center;
+  width: 100%;
 }
 
 .thread-sidebar.is-collapsed .thread-sidebar-title-row h2 {
@@ -676,8 +696,7 @@ button {
 }
 
 .thread-sidebar.is-collapsed .sidebar-action,
-.thread-sidebar.is-collapsed .sidebar-utility-button,
-.thread-sidebar.is-collapsed .thread-view-toggle {
+.thread-sidebar.is-collapsed .sidebar-utility-button {
   min-height: 44px;
   padding: 0;
   width: 44px;
@@ -687,7 +706,19 @@ button {
   display: none;
 }
 
-.thread-sidebar.is-collapsed .thread-view-toggle,
+.thread-sidebar.is-collapsed .thread-view-switcher {
+  border-radius: 20px;
+  gap: 2px;
+  padding: 3px;
+}
+
+.thread-sidebar.is-collapsed .thread-view-button {
+  border-radius: 14px;
+  height: 28px;
+  width: 28px;
+}
+
+.thread-sidebar.is-collapsed .thread-view-switcher,
 .thread-sidebar.is-collapsed .sidebar-collapse-button {
   border-radius: 20px;
 }
@@ -1914,6 +1945,205 @@ button {
 
 .thread-tile-empty p {
   margin: 0;
+}
+
+.graph-canvas-viewport {
+  background:
+    radial-gradient(circle at top left, rgba(122, 202, 164, 0.12), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(255, 141, 109, 0.12), transparent 24%),
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(8, 13, 16, 0.84), rgba(10, 17, 22, 0.96));
+  background-size:
+    auto,
+    auto,
+    36px 36px,
+    36px 36px,
+    auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 30px;
+  box-shadow: var(--shadow);
+  cursor: grab;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.graph-canvas-viewport.is-panning {
+  cursor: grabbing;
+}
+
+.graph-canvas-stage {
+  left: 0;
+  position: absolute;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.graph-canvas-connections {
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+}
+
+.graph-connection-path {
+  fill: none;
+  opacity: 0.34;
+  stroke: url(#graph-connector-gradient);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.6;
+}
+
+.graph-connection-path.is-active {
+  opacity: 0.9;
+  stroke-width: 3.2;
+}
+
+.graph-connection-node {
+  fill: var(--connector-node);
+  opacity: 0.52;
+}
+
+.graph-connection-node.is-active {
+  fill: var(--connector-node-active);
+  opacity: 1;
+}
+
+.graph-node-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  min-width: 0;
+  position: absolute;
+}
+
+.graph-node-toolbar {
+  position: relative;
+  z-index: 1;
+}
+
+.graph-node-drag-handle {
+  align-items: flex-start;
+  background: var(--panel-head-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 22px;
+  box-shadow: var(--status-shadow);
+  color: var(--ink);
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  text-align: left;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    background-color 160ms ease;
+  width: 100%;
+}
+
+.graph-node-drag-handle:hover {
+  transform: translateY(-1px);
+}
+
+.graph-node-drag-handle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.graph-node-shell.is-active .graph-node-drag-handle,
+.graph-node-shell.is-resizing .graph-node-drag-handle,
+.graph-node-shell.is-dragging .graph-node-drag-handle {
+  border-color: var(--panel-active-border);
+  box-shadow: var(--panel-active-shadow);
+}
+
+.graph-node-shell.is-dragging .graph-node-drag-handle {
+  cursor: grabbing;
+}
+
+.graph-node-type {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.graph-node-drag-handle strong {
+  font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+  font-size: 1.08rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.graph-node-context {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.graph-node-panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.graph-node-panel .chat-panel,
+.graph-node-panel .chat-panel.is-active {
+  height: 100%;
+  transform: none;
+}
+
+.graph-node-resize-handle {
+  align-items: center;
+  background: var(--panel-head-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  bottom: 18px;
+  box-shadow: var(--status-shadow);
+  color: var(--ink);
+  display: inline-flex;
+  height: 38px;
+  justify-content: center;
+  position: absolute;
+  right: 18px;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+  width: 38px;
+  z-index: 3;
+}
+
+.graph-node-resize-handle:hover {
+  transform: translateY(-1px);
+}
+
+.graph-node-resize-handle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.graph-node-shell.is-resizing .graph-node-resize-handle,
+.graph-node-resize-handle:hover,
+.graph-node-resize-handle:focus-visible {
+  border-color: var(--panel-active-border);
+  box-shadow: var(--panel-active-shadow);
+}
+
+.graph-node-resize-grip {
+  border-bottom: 2px solid var(--sage);
+  border-right: 2px solid var(--accent);
+  height: 14px;
+  transform: translate(-1px, -1px);
+  width: 14px;
 }
 
 .conversation-canvas {
@@ -3271,7 +3501,7 @@ button {
 .rail-tab:focus-visible,
 .thread-tile-card:focus-visible,
 .thread-tile-filter:focus-visible,
-.thread-view-toggle:focus-visible {
+.thread-view-button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 4px;
 }
@@ -3920,7 +4150,14 @@ button {
   }
 
   .thread-sidebar.is-collapsed .thread-sidebar-head {
+    flex-direction: column;
     gap: 10px;
+    width: 100%;
+  }
+
+  .thread-sidebar.is-collapsed .thread-sidebar-title-row {
+    justify-content: center;
+    width: 100%;
   }
 
   .thread-sidebar.is-collapsed .thread-sidebar-footer {
@@ -3929,9 +4166,12 @@ button {
   }
 
   .thread-sidebar.is-collapsed .sidebar-action,
-  .thread-sidebar.is-collapsed .sidebar-utility-button,
-  .thread-sidebar.is-collapsed .thread-view-toggle {
+  .thread-sidebar.is-collapsed .sidebar-utility-button {
     width: 44px;
+  }
+
+  .thread-sidebar.is-collapsed .thread-view-switcher {
+    width: auto;
   }
 
   .thread-sidebar-actions {

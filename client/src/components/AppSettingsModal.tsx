@@ -1,7 +1,7 @@
 import { useEffect } from "react";
+import type { MainViewMode } from "../types";
 
 type ThemeMode = "light" | "dark";
-type MainViewMode = "chat" | "tiles";
 
 interface AppSettingsModalProps {
   isOpen: boolean;
@@ -103,8 +103,8 @@ export default function AppSettingsModal({
           <div className="app-settings-copy">
             <span className="app-settings-label">Main chat view</span>
             <p className="app-settings-description">
-              Pick whether the main workspace opens in chat panels or tile
-              view.
+              Pick whether the main workspace opens in focused chat panels, a
+              thread gallery, or the full graph canvas.
             </p>
           </div>
 
@@ -136,6 +136,18 @@ export default function AppSettingsModal({
               type="button"
             >
               Tiles
+            </button>
+            <button
+              aria-pressed={mainViewMode === "graph"}
+              className={
+                mainViewMode === "graph"
+                  ? "app-settings-option is-active"
+                  : "app-settings-option"
+              }
+              onClick={() => onSetMainViewMode("graph")}
+              type="button"
+            >
+              Graph
             </button>
           </div>
         </div>

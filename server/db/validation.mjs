@@ -54,6 +54,10 @@ export function normalizeAppState(input) {
     input.pinnedThreadIds,
     conversationsById,
   );
+  const normalizedGraphLayouts = normalizeGraphLayouts(
+    input.graphLayouts,
+    conversationsById,
+  );
 
   if (!conversationsById[input.rootId]) {
     throw createStateError("rootId must reference an existing conversation.");
@@ -157,6 +161,7 @@ export function normalizeAppState(input) {
     conversations: normalizedConversations,
     defaultModelId,
     defaultServiceId,
+    graphLayouts: normalizedGraphLayouts,
     pinnedThreadIds: normalizedPinnedThreadIds,
     railOpen: input.railOpen,
     rootId: input.rootId,
@@ -265,6 +270,62 @@ function normalizePinnedThreadIds(input, conversationsById) {
   }
 
   return pinnedThreadIds;
+}
+
+function normalizeGraphLayouts(input, conversationsById) {
+  if (input === undefined || input === null) {
+    return {};
+  }
+
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw createStateError("graphLayouts must be a keyed object.");
+  }
+
+  return Object.fromEntries(
+    Object.entries(input)
+      .filter(([conversationId]) => Boolean(conversationsById[conversationId]))
+      .map(([conversationId, layout]) => [
+        conversationId,
+        normalizeGraphLayout(conversationId, layout),
+      ]),
+  );
+}
+
+function normalizeGraphLayout(conversationId, input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw createStateError(
+      `graphLayouts["${conversationId}"] must be an object.`,
+    );
+  }
+
+  return {
+    height: normalizeGraphDimension(
+      input.height,
+      `graphLayouts["${conversationId}"].height`,
+      320,
+      1200,
+    ),
+    width: normalizeGraphDimension(
+      input.width,
+      `graphLayouts["${conversationId}"].width`,
+      360,
+      960,
+    ),
+    x: normalizeInteger(input.x, `graphLayouts["${conversationId}"].x`),
+    y: normalizeInteger(input.y, `graphLayouts["${conversationId}"].y`),
+  };
+}
+
+function normalizeGraphDimension(value, label, minimum, maximum) {
+  const parsed = normalizeInteger(value, label);
+
+  if (parsed < minimum || parsed > maximum) {
+    throw createStateError(
+      `${label} must be between ${minimum} and ${maximum}.`,
+    );
+  }
+
+  return parsed;
 }
 
 function getRootConversationId(conversationsById, conversationId) {

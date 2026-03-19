@@ -3,6 +3,7 @@ import {
   getDefaultModelIdForService,
   resolveBackendServiceModelId,
 } from "./lib/services";
+import { createDefaultGraphNodeLayout } from "./lib/graphLayout";
 import type { AppState, BackendServiceId, Conversation } from "./types";
 
 export const DEFAULT_MAIN_CHAT_TITLE = "New chat";
@@ -45,6 +46,9 @@ export function createEmptyState(): AppState {
     activeConversationId: rootConversation.id,
     defaultServiceId,
     defaultModelId,
+    graphLayouts: {
+      [rootConversation.id]: createDefaultGraphNodeLayout(),
+    },
     railOpen: false,
     pinnedThreadIds: [],
     conversations: {

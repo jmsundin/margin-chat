@@ -1,5 +1,6 @@
 export type Role = "system" | "user" | "assistant";
 export type UserRole = "member" | "admin";
+export type MainViewMode = "chat" | "tiles" | "graph";
 export type BackendServiceId =
   | "backend-services"
   | "openai-api"
@@ -47,6 +48,13 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export interface GraphNodeLayout {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface AppState {
   rootId: string;
   activeConversationId: string;
@@ -54,6 +62,7 @@ export interface AppState {
   defaultModelId: string;
   railOpen: boolean;
   pinnedThreadIds: string[];
+  graphLayouts: Record<string, GraphNodeLayout>;
   conversations: Record<string, Conversation>;
 }
 

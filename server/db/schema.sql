@@ -32,6 +32,7 @@ create table if not exists app_sessions (
   active_conversation_id text,
   rail_open boolean not null default true,
   pinned_thread_ids text[] not null default '{}'::text[],
+  graph_layouts jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -41,6 +42,9 @@ alter table app_sessions
 
 alter table app_sessions
   add column if not exists user_id text references users(id) on delete cascade;
+
+alter table app_sessions
+  add column if not exists graph_layouts jsonb not null default '{}'::jsonb;
 
 alter table app_sessions
   add column if not exists default_service_id text;
