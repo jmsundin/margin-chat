@@ -2,6 +2,9 @@
   "name": "chatgpt-v2-workspace",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "client"
+  ],
   "scripts": {
     "dev": "bun run --cwd client dev",
     "dev:client": "bun run --cwd client dev",
