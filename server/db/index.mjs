@@ -10,6 +10,13 @@ import {
   getUserByAuthSession,
   updateUserProfile,
 } from "./authRepository.mjs";
+import {
+  getUserBillingAccount,
+  incrementTrialApiCallsUsed,
+  syncUserBillingByCustomerId,
+  syncUserBillingById,
+  updateStripeCustomerId,
+} from "./billingRepository.mjs";
 import { buildConnectionOptions } from "./config.mjs";
 import { wrapStorageError } from "./errors.mjs";
 import { readState, writeState } from "./repository.mjs";
@@ -97,6 +104,26 @@ export function createAppDatabase(env) {
     return withClient((client) => readState(client, userId));
   }
 
+  async function getUserBillingAccountRecord(userId) {
+    return withClient((client) => getUserBillingAccount(client, userId));
+  }
+
+  async function updateStripeCustomerIdRecord(args) {
+    return withClient((client) => updateStripeCustomerId(client, args));
+  }
+
+  async function incrementTrialApiCallsUsedRecord(userId) {
+    return withClient((client) => incrementTrialApiCallsUsed(client, userId));
+  }
+
+  async function syncUserBillingByCustomerIdRecord(args) {
+    return withClient((client) => syncUserBillingByCustomerId(client, args));
+  }
+
+  async function syncUserBillingByIdRecord(args) {
+    return withClient((client) => syncUserBillingById(client, args));
+  }
+
   async function saveState(userId, payload) {
     const normalizedState = normalizeAppState(payload);
 
@@ -126,11 +153,16 @@ export function createAppDatabase(env) {
     createUser: createUserRecord,
     deleteAuthSession: deleteAuthSessionRecord,
     findUserForLogin: findUserForLoginRecord,
+    getUserBillingAccount: getUserBillingAccountRecord,
     getHealth,
     getUserByAuthSession: getUserByAuthSessionRecord,
+    incrementTrialApiCallsUsed: incrementTrialApiCallsUsedRecord,
     loadState,
     ready,
     saveState,
+    syncUserBillingByCustomerId: syncUserBillingByCustomerIdRecord,
+    syncUserBillingById: syncUserBillingByIdRecord,
     updateUserProfile: updateUserProfileRecord,
+    updateStripeCustomerId: updateStripeCustomerIdRecord,
   };
 }

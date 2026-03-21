@@ -1,8 +1,14 @@
-import { jsonHeaders, readJsonBody, sendJson } from "../http/json.mjs";
+import {
+  jsonHeaders,
+  readJsonBody,
+  readRawBody,
+  sendJson,
+} from "../http/json.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 
 export function createApiHandler({
   authService,
+  billingService,
   chatService,
   database,
   runtimeConfig,
@@ -24,6 +30,20 @@ export function createApiHandler({
 
       if (request.method === "GET" && url.pathname === "/api/health") {
         sendJson(response, 200, chatService.buildHealthPayload(database.getHealth()));
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/billing/webhook") {
+        const stripeSignature = request.headers["stripe-signature"];
+        const signature = Array.isArray(stripeSignature)
+          ? stripeSignature[0]
+          : stripeSignature;
+        const result = await billingService.handleWebhook({
+          rawBody: await readRawBody(request),
+          signature,
+        });
+
+        sendJson(response, 200, result);
         return;
       }
 
@@ -108,6 +128,26 @@ export function createApiHandler({
         return;
       }
 
+      if (request.method === "POST" && url.pathname === "/api/billing/checkout") {
+        const result = await billingService.createCheckoutSession({
+          request,
+          user: authContext.user,
+        });
+
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/billing/portal") {
+        const result = await billingService.createBillingPortalSession({
+          request,
+          user: authContext.user,
+        });
+
+        sendJson(response, 200, result);
+        return;
+      }
+
       if (request.method === "PUT" && url.pathname === "/api/auth/profile") {
         const body = await readJsonBody(request);
         const user = await authService.updateProfile(authContext.user.id, body);
@@ -141,10 +181,21 @@ export function createApiHandler({
       }
 
       if (request.method === "POST" && url.pathname === "/api/chat") {
+        if (!authContext.user.billing.hasAccess) {
+          throw new HttpError(
+            402,
+            `You have used all ${authContext.user.billing.trialCallsLimit} free model calls. Start a paid plan to keep chatting.`,
+          );
+        }
+
         const body = await readJsonBody(request);
         const chatResponse = await chatService.requestReply(body, {
           userId: authContext.user.id,
         });
+
+        if (authContext.user.billing.accessKind === "trial") {
+          await database.incrementTrialApiCallsUsed(authContext.user.id);
+        }
 
         sendJson(response, 200, chatResponse);
         return;

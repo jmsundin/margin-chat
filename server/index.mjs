@@ -1,37 +1,10 @@
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createAuthService } from "./auth/index.mjs";
-import { createChatService } from "./chat/index.mjs";
-import { loadProjectEnv } from "./config/env.mjs";
-import { createRuntimeConfig } from "./config/runtime.mjs";
-import { createAppDatabase } from "./db/index.mjs";
-import { createApiHandler } from "./routes/api.mjs";
+import { getAppContext } from "./app.mjs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const projectRoot = resolve(__dirname, "..");
-
-loadProjectEnv(projectRoot, process.env);
-
-const runtimeConfig = createRuntimeConfig(process.env);
-const database = createAppDatabase(process.env);
-const authService = createAuthService({
-  database,
-  runtimeConfig,
-});
-const chatService = createChatService({
-  database,
-  env: process.env,
-  runtimeConfig,
-});
+const { apiHandler, database, runtimeConfig } = getAppContext();
 
 createServer(
-  createApiHandler({
-    authService,
-    chatService,
-    database,
-    runtimeConfig,
-  }),
+  apiHandler,
 ).listen(runtimeConfig.port, runtimeConfig.host, () => {
   const huggingFaceConfigured = Boolean(
     process.env.HUGGINGFACE_API_KEY ?? process.env.HF_TOKEN,

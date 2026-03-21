@@ -1,4 +1,5 @@
 import { createStatusError } from "../lib/errors.mjs";
+import { mapBillingRow } from "../billing/status.mjs";
 
 export async function createUser(
   client,
@@ -19,7 +20,14 @@ export async function createUser(
           id,
           email,
           display_name,
-          role
+          role,
+          stripe_customer_id,
+          billing_status,
+          billing_price_id,
+          billing_current_period_end,
+          billing_cancel_at_period_end,
+          trial_api_calls_used,
+          trial_api_calls_limit
       `,
       [id, email, passwordHash, displayName, role],
     );
@@ -68,7 +76,14 @@ export async function updateUserProfile(
           id,
           email,
           display_name,
-          role
+          role,
+          stripe_customer_id,
+          billing_status,
+          billing_price_id,
+          billing_current_period_end,
+          billing_cancel_at_period_end,
+          trial_api_calls_used,
+          trial_api_calls_limit
       `,
       [displayName, email, userId],
     );
@@ -95,7 +110,14 @@ export async function findUserForLogin(client, email) {
         email,
         password_hash,
         display_name,
-        role
+        role,
+        stripe_customer_id,
+        billing_status,
+        billing_price_id,
+        billing_current_period_end,
+        billing_cancel_at_period_end,
+        trial_api_calls_used,
+        trial_api_calls_limit
       from users
       where email = $1
     `,
@@ -124,7 +146,14 @@ export async function getUserByAuthSession(client, sessionId) {
         users.id,
         users.email,
         users.display_name,
-        users.role
+        users.role,
+        users.stripe_customer_id,
+        users.billing_status,
+        users.billing_price_id,
+        users.billing_current_period_end,
+        users.billing_cancel_at_period_end,
+        users.trial_api_calls_used,
+        users.trial_api_calls_limit
       from auth_sessions
       join users on users.id = auth_sessions.user_id
       where auth_sessions.id = $1
@@ -154,6 +183,7 @@ export async function getUserByAuthSession(client, sessionId) {
 
 function mapUserRow(row) {
   return {
+    billing: mapBillingRow(row),
     displayName: row.display_name,
     email: row.email,
     id: row.id,

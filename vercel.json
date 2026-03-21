@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "bun install",
+  "buildCommand": "bun run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/**/*.mjs": {
+      "includeFiles": "server/db/schema.sql",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "^/(?!api(?:/|$))(.*)$",
+      "destination": "/index.html"
+    }
+  ]
+}

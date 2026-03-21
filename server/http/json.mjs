@@ -8,21 +8,27 @@ export const jsonHeaders = Object.freeze({
 });
 
 export async function readJsonBody(request) {
+  const body = await readRawBody(request);
+
+  if (!body.length) {
+    throw new HttpError(400, "Request body is required.");
+  }
+
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    throw new HttpError(400, "Request body must contain valid JSON.");
+  }
+}
+
+export async function readRawBody(request) {
   const chunks = [];
 
   for await (const chunk of request) {
     chunks.push(chunk);
   }
 
-  if (chunks.length === 0) {
-    throw new HttpError(400, "Request body is required.");
-  }
-
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-  } catch {
-    throw new HttpError(400, "Request body must contain valid JSON.");
-  }
+  return Buffer.concat(chunks);
 }
 
 export function sendJson(response, statusCode, payload, extraHeaders = {}) {

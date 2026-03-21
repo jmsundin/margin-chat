@@ -1,5 +1,16 @@
 export type Role = "system" | "user" | "assistant";
 export type UserRole = "member" | "admin";
+export type BillingStatus =
+  | "active"
+  | "canceled"
+  | "inactive"
+  | "incomplete"
+  | "incomplete_expired"
+  | "past_due"
+  | "paused"
+  | "trialing"
+  | "unpaid";
+export type BillingAccessKind = "admin" | "subscription" | "trial" | "none";
 export type MainViewMode = "chat" | "tiles" | "graph";
 export type BackendServiceId =
   | "backend-services"
@@ -68,10 +79,24 @@ export interface AppState {
 }
 
 export interface AuthenticatedUser {
+  billing: UserBilling;
   id: string;
   email: string;
   displayName: string;
   role: UserRole;
+}
+
+export interface UserBilling {
+  accessKind: BillingAccessKind;
+  cancelAtPeriodEnd: boolean;
+  currentPeriodEnd: string | null;
+  hasAccess: boolean;
+  hasCustomer: boolean;
+  priceId: string | null;
+  status: BillingStatus;
+  trialCallsLimit: number;
+  trialCallsRemaining: number;
+  trialCallsUsed: number;
 }
 
 export interface ThreadSummary {

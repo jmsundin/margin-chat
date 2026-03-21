@@ -34,6 +34,10 @@ interface AuthSuccessResponse {
   user: AuthenticatedUser;
 }
 
+interface RedirectSessionResponse {
+  url: string;
+}
+
 export class ApiError extends Error {
   statusCode: number;
 
@@ -78,6 +82,16 @@ function isAuthSuccessResponse(
     payload &&
       typeof (payload as AuthSuccessResponse).user?.id === "string" &&
       typeof (payload as AuthSuccessResponse).user?.email === "string",
+  );
+}
+
+function isRedirectSessionResponse(
+  payload: RedirectSessionResponse | ErrorPayload | null,
+): payload is RedirectSessionResponse {
+  return Boolean(
+    payload &&
+      typeof (payload as RedirectSessionResponse).url === "string" &&
+      (payload as RedirectSessionResponse).url,
   );
 }
 
@@ -252,4 +266,36 @@ export async function requestUpdateProfile(args: {
   }
 
   return payload.user;
+}
+
+export async function requestCreateCheckoutSession(): Promise<string> {
+  const response = await fetch("/api/billing/checkout", {
+    credentials: "same-origin",
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as RedirectSessionResponse | ErrorPayload | null;
+
+  ensureOk(response, payload, "Unable to create the Stripe checkout session.");
+
+  if (!isRedirectSessionResponse(payload)) {
+    throw new Error("Backend returned an invalid Stripe checkout response.");
+  }
+
+  return payload.url;
+}
+
+export async function requestCreateBillingPortalSession(): Promise<string> {
+  const response = await fetch("/api/billing/portal", {
+    credentials: "same-origin",
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as RedirectSessionResponse | ErrorPayload | null;
+
+  ensureOk(response, payload, "Unable to create the Stripe billing portal session.");
+
+  if (!isRedirectSessionResponse(payload)) {
+    throw new Error("Backend returned an invalid Stripe billing portal response.");
+  }
+
+  return payload.url;
 }

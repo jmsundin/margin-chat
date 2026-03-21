@@ -13,6 +13,7 @@ import {
 } from "react";
 import AppSettingsModal from "./components/AppSettingsModal";
 import AuthLanding from "./components/AuthLanding";
+import BillingGate from "./components/BillingGate";
 import BranchRail from "./components/BranchRail";
 import ChatPanel from "./components/ChatPanel";
 import ConversationGraphView from "./components/ConversationGraphView";
@@ -24,6 +25,8 @@ import SearchModal, { type ChatSearchResult } from "./components/SearchModal";
 import ThreadSidebar from "./components/ThreadSidebar";
 import {
   ApiError,
+  requestCreateBillingPortalSession,
+  requestCreateCheckoutSession,
   persistStoredState,
   requestAuthSession,
   requestChatReply,
@@ -440,7 +443,12 @@ if (typeof document !== "undefined") {
 
 interface WorkspaceAppProps {
   onAuthExpired: (message?: string) => void;
+  onBillingRequired: (message?: string) => void;
+  billingErrorMessage: string | null;
+  billingSubmitting: boolean;
   onLogout: () => void;
+  onManageBilling: () => void | Promise<void>;
+  onStartSubscription: () => void | Promise<void>;
   onSetTheme: Dispatch<SetStateAction<ThemeMode>>;
   onUpdateProfile: (args: {
     displayName: string;
@@ -997,7 +1005,12 @@ function buildSearchResults(
 
 function WorkspaceApp({
   onAuthExpired,
+  onBillingRequired,
+  billingErrorMessage,
+  billingSubmitting,
   onLogout,
+  onManageBilling,
+  onStartSubscription,
   onSetTheme,
   onUpdateProfile,
   theme,
@@ -1851,6 +1864,14 @@ function WorkspaceApp({
         return;
       }
 
+      if (isApiErrorStatus(error, 402)) {
+        onBillingRequired(getErrorText(
+          error,
+          "An active paid plan is required before you can chat with the models.",
+        ));
+        return;
+      }
+
       appendAssistantMessage(
         conversationId,
         buildBackendErrorReply(conversation.serviceId, error),
@@ -2203,6 +2224,14 @@ function WorkspaceApp({
     } catch (error) {
       if (isApiErrorStatus(error, 401)) {
         onAuthExpired();
+        return;
+      }
+
+      if (isApiErrorStatus(error, 402)) {
+        onBillingRequired(getErrorText(
+          error,
+          "An active paid plan is required before you can chat with the models.",
+        ));
         return;
       }
 
@@ -2917,6 +2946,8 @@ function WorkspaceApp({
           />
 
           <ProfileModal
+            billingErrorMessage={billingErrorMessage}
+            billingSubmitting={billingSubmitting}
             errorMessage={profileSaveError}
             isOpen={profileModalOpen}
             isSaving={profileSaving}
@@ -2928,6 +2959,8 @@ function WorkspaceApp({
               setProfileSaveError(null);
               setProfileModalOpen(false);
             }}
+            onManageBilling={onManageBilling}
+            onStartSubscription={onStartSubscription}
             onSave={handleSaveProfile}
             user={user}
           />
@@ -2953,6 +2986,8 @@ export default function App() {
   const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [billingSubmitting, setBillingSubmitting] = useState(false);
 
   useEffect(() => {
     syncTheme(theme);
@@ -3003,11 +3038,28 @@ export default function App() {
     setAuthStatus("unauthenticated");
     setAuthSubmitting(false);
     setAuthError(message);
+    setBillingError(null);
+  }
+
+  async function handleBillingRequired(
+    message = "An active paid plan is required before this account can use the hosted models.",
+  ) {
+    try {
+      const user = await requestAuthSession();
+
+      setAuthUser(user);
+      setAuthStatus(user ? "authenticated" : "unauthenticated");
+      setAuthError(null);
+      setBillingError(message);
+    } catch {
+      handleAuthExpired(message);
+    }
   }
 
   async function handleLogin(args: { email: string; password: string }) {
     setAuthSubmitting(true);
     setAuthError(null);
+    setBillingError(null);
 
     try {
       const user = await requestLogin(args);
@@ -3027,6 +3079,7 @@ export default function App() {
   }) {
     setAuthSubmitting(true);
     setAuthError(null);
+    setBillingError(null);
 
     try {
       const user = await requestSignup(args);
@@ -3049,6 +3102,8 @@ export default function App() {
       setAuthStatus("unauthenticated");
       setAuthError(null);
       setAuthSubmitting(false);
+      setBillingError(null);
+      setBillingSubmitting(false);
     }
   }
 
@@ -3060,6 +3115,37 @@ export default function App() {
     setAuthUser(user);
     setAuthStatus("authenticated");
     return user;
+  }
+
+  async function redirectToStripe(
+    callback: () => Promise<string>,
+    fallbackMessage: string,
+  ) {
+    setBillingSubmitting(true);
+    setBillingError(null);
+
+    try {
+      const url = await callback();
+      window.location.assign(url);
+    } catch (error) {
+      setBillingError(getErrorText(error, fallbackMessage));
+    } finally {
+      setBillingSubmitting(false);
+    }
+  }
+
+  async function handleStartSubscription() {
+    await redirectToStripe(
+      requestCreateCheckoutSession,
+      "Unable to start the Stripe checkout flow.",
+    );
+  }
+
+  async function handleManageBilling() {
+    await redirectToStripe(
+      requestCreateBillingPortalSession,
+      "Unable to open the Stripe billing portal.",
+    );
   }
 
   if (authStatus === "checking") {
@@ -3096,13 +3182,39 @@ export default function App() {
     );
   }
 
+  if (!authUser.billing.hasAccess) {
+    return (
+      <div className="app-shell">
+        <div className="app-chrome auth-chrome">
+          <BillingGate
+            errorMessage={billingError}
+            isSubmitting={billingSubmitting}
+            onLogout={() => {
+              void handleLogout();
+            }}
+            onManageBilling={handleManageBilling}
+            onStartSubscription={handleStartSubscription}
+            onToggleTheme={() => setTheme((current) => getNextTheme(current))}
+            theme={theme}
+            user={authUser}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <WorkspaceApp
+      billingErrorMessage={billingError}
+      billingSubmitting={billingSubmitting}
       key={authUser.id}
       onAuthExpired={handleAuthExpired}
+      onBillingRequired={handleBillingRequired}
       onLogout={() => {
         void handleLogout();
       }}
+      onManageBilling={handleManageBilling}
+      onStartSubscription={handleStartSubscription}
       onSetTheme={setTheme}
       onUpdateProfile={handleUpdateProfile}
       theme={theme}

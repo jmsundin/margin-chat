@@ -11,6 +11,96 @@ create table if not exists users (
 create unique index if not exists users_email_idx
   on users (email);
 
+alter table users
+  add column if not exists stripe_customer_id text;
+
+alter table users
+  add column if not exists stripe_subscription_id text;
+
+alter table users
+  add column if not exists billing_status text not null default 'inactive';
+
+alter table users
+  add column if not exists billing_price_id text;
+
+alter table users
+  add column if not exists billing_current_period_end timestamptz;
+
+alter table users
+  add column if not exists billing_cancel_at_period_end boolean not null default false;
+
+alter table users
+  add column if not exists trial_api_calls_used integer not null default 0;
+
+alter table users
+  add column if not exists trial_api_calls_limit integer not null default 100;
+
+update users
+set trial_api_calls_used = greatest(coalesce(trial_api_calls_used, 0), 0);
+
+update users
+set trial_api_calls_limit = greatest(coalesce(trial_api_calls_limit, 100), 1);
+
+update users
+set billing_status = 'inactive'
+where billing_status not in (
+  'active',
+  'canceled',
+  'inactive',
+  'incomplete',
+  'incomplete_expired',
+  'past_due',
+  'paused',
+  'trialing',
+  'unpaid'
+);
+
+alter table users
+  drop constraint if exists users_billing_status_check;
+
+alter table users
+  add constraint users_billing_status_check check (
+    billing_status in (
+      'active',
+      'canceled',
+      'inactive',
+      'incomplete',
+      'incomplete_expired',
+      'past_due',
+      'paused',
+      'trialing',
+      'unpaid'
+    )
+  );
+
+alter table users
+  drop constraint if exists users_trial_api_calls_used_check;
+
+alter table users
+  add constraint users_trial_api_calls_used_check check (
+    trial_api_calls_used >= 0
+  );
+
+alter table users
+  drop constraint if exists users_trial_api_calls_limit_check;
+
+alter table users
+  add constraint users_trial_api_calls_limit_check check (
+    trial_api_calls_limit > 0
+  );
+
+update users
+set role = 'admin'
+where lower(email) = 'sundinjon@gmail.com';
+
+create unique index if not exists users_stripe_customer_id_idx
+  on users (stripe_customer_id)
+  where stripe_customer_id is not null;
+
+create unique index if not exists users_stripe_subscription_id_idx
+  on users (stripe_subscription_id)
+  where stripe_subscription_id is not null;
+
 create table if not exists auth_sessions (
   id text primary key,
   user_id text not null references users(id) on delete cascade,

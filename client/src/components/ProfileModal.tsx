@@ -1,11 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import type { AuthenticatedUser } from "../types";
+import {
+  getBillingDisplayLabel,
+  getBillingStatusCopy,
+} from "../lib/billing";
 
 interface ProfileModalProps {
+  billingErrorMessage: string | null;
+  billingSubmitting: boolean;
   errorMessage: string | null;
   isOpen: boolean;
   isSaving: boolean;
   onClose: () => void;
+  onManageBilling: () => void | Promise<void>;
+  onStartSubscription: () => void | Promise<void>;
   onSave: (args: { displayName: string; email: string }) => void | Promise<void>;
   user: AuthenticatedUser;
 }
@@ -40,10 +48,14 @@ function getInitials(displayName: string) {
 }
 
 export default function ProfileModal({
+  billingErrorMessage,
+  billingSubmitting,
   errorMessage,
   isOpen,
   isSaving,
   onClose,
+  onManageBilling,
+  onStartSubscription,
   onSave,
   user,
 }: ProfileModalProps) {
@@ -81,6 +93,9 @@ export default function ProfileModal({
   const trimmedEmail = email.trim().toLowerCase();
   const hasChanges =
     trimmedDisplayName !== user.displayName || trimmedEmail !== user.email;
+  const showBillingAction = user.role !== "admin";
+  const useManageBillingAction =
+    user.billing.hasCustomer && user.billing.status !== "inactive";
 
   return (
     <div
@@ -126,6 +141,33 @@ export default function ProfileModal({
           Update the profile details shown for this workspace account.
         </p>
 
+        <section className="profile-billing-section" aria-label="Billing summary">
+          <div className="profile-billing-copy">
+            <p className="eyebrow">Plan access</p>
+            <strong>{getBillingDisplayLabel(user.billing)}</strong>
+            <span>{getBillingStatusCopy(user.billing)}</span>
+          </div>
+
+          {showBillingAction ? (
+            <button
+              className="thread-dialog-button is-primary"
+              disabled={billingSubmitting}
+              onClick={() => {
+                void (useManageBillingAction
+                  ? onManageBilling()
+                  : onStartSubscription());
+              }}
+              type="button"
+            >
+              {billingSubmitting
+                ? "Opening Stripe..."
+                : useManageBillingAction
+                  ? "Manage billing"
+                  : "Start paid plan"}
+            </button>
+          ) : null}
+        </section>
+
         <form
           className="thread-dialog-form"
           onSubmit={(event) => {
@@ -164,6 +206,12 @@ export default function ProfileModal({
           {errorMessage ? (
             <p className="profile-dialog-error" role="alert">
               {errorMessage}
+            </p>
+          ) : null}
+
+          {billingErrorMessage ? (
+            <p className="profile-dialog-error" role="alert">
+              {billingErrorMessage}
             </p>
           ) : null}
 

@@ -12,6 +12,14 @@ import {
   normalizeSignupPayload,
 } from "./validation.mjs";
 
+const ADMIN_EMAILS = new Set(["sundinjon@gmail.com"]);
+
+function resolveUserRole(email) {
+  return ADMIN_EMAILS.has(String(email).trim().toLowerCase())
+    ? "admin"
+    : "member";
+}
+
 export function createAuthService({ database, runtimeConfig }) {
   function getSessionExpiryDate() {
     return new Date(Date.now() + runtimeConfig.authSessionTtlMs);
@@ -37,7 +45,7 @@ export function createAuthService({ database, runtimeConfig }) {
       email: input.email,
       id: `user-${randomUUID()}`,
       passwordHash,
-      role: "member",
+      role: resolveUserRole(input.email),
     });
     const cookie = await createSessionForUser(user.id);
 
@@ -60,6 +68,7 @@ export function createAuthService({ database, runtimeConfig }) {
     return {
       cookie,
       user: {
+        billing: user.billing,
         displayName: user.displayName,
         email: user.email,
         id: user.id,

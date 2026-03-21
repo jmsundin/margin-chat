@@ -5335,6 +5335,63 @@ button {
   font-size: 0.9rem;
 }
 
+.billing-card {
+  gap: 20px;
+}
+
+.billing-summary-card,
+.profile-billing-section {
+  align-items: center;
+  background: var(--rail-empty-bg);
+  border: 1px solid var(--button-border);
+  border-radius: 22px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 16px 18px;
+}
+
+.billing-summary-copy,
+.profile-billing-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.billing-summary-copy strong,
+.profile-billing-copy strong {
+  font-size: 1rem;
+}
+
+.billing-summary-copy span,
+.profile-billing-copy span {
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.billing-status-pill {
+  background: color-mix(in srgb, var(--panel-active-border) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-active-border) 45%, transparent);
+  border-radius: 999px;
+  color: var(--primary-ink);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 0.48rem 0.8rem;
+  text-transform: uppercase;
+}
+
+.billing-action-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.profile-billing-section {
+  margin-bottom: 8px;
+}
+
 .profile-dialog-error {
   background: var(--danger-soft);
   border: 1px solid var(--danger-border);
@@ -5351,6 +5408,12 @@ button {
 
   .auth-feature-grid {
     grid-template-columns: 1fr;
+  }
+
+  .billing-summary-card,
+  .profile-billing-section {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .workspace-session-bar {
