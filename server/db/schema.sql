@@ -1,4 +1,38 @@
-create table if not exists users (
+do $$
+begin
+  if to_regclass('marginchat_users') is null
+    and to_regclass('users') is not null then
+    alter table users rename to marginchat_users;
+  end if;
+
+  if to_regclass('marginchat_auth_sessions') is null
+    and to_regclass('auth_sessions') is not null then
+    alter table auth_sessions rename to marginchat_auth_sessions;
+  end if;
+
+  if to_regclass('marginchat_app_sessions') is null
+    and to_regclass('app_sessions') is not null then
+    alter table app_sessions rename to marginchat_app_sessions;
+  end if;
+
+  if to_regclass('marginchat_conversations') is null
+    and to_regclass('conversations') is not null then
+    alter table conversations rename to marginchat_conversations;
+  end if;
+
+  if to_regclass('marginchat_messages') is null
+    and to_regclass('messages') is not null then
+    alter table messages rename to marginchat_messages;
+  end if;
+
+  if to_regclass('marginchat_branch_anchors') is null
+    and to_regclass('branch_anchors') is not null then
+    alter table branch_anchors rename to marginchat_branch_anchors;
+  end if;
+end
+$$;
+
+create table if not exists marginchat_users (
   id text primary key,
   email text not null unique,
   password_hash text not null,
@@ -9,39 +43,39 @@ create table if not exists users (
 );
 
 create unique index if not exists users_email_idx
-  on users (email);
+  on marginchat_users (email);
 
-alter table users
+alter table marginchat_users
   add column if not exists stripe_customer_id text;
 
-alter table users
+alter table marginchat_users
   add column if not exists stripe_subscription_id text;
 
-alter table users
+alter table marginchat_users
   add column if not exists billing_status text not null default 'inactive';
 
-alter table users
+alter table marginchat_users
   add column if not exists billing_price_id text;
 
-alter table users
+alter table marginchat_users
   add column if not exists billing_current_period_end timestamptz;
 
-alter table users
+alter table marginchat_users
   add column if not exists billing_cancel_at_period_end boolean not null default false;
 
-alter table users
+alter table marginchat_users
   add column if not exists trial_api_calls_used integer not null default 0;
 
-alter table users
+alter table marginchat_users
   add column if not exists trial_api_calls_limit integer not null default 100;
 
-update users
+update marginchat_users
 set trial_api_calls_used = greatest(coalesce(trial_api_calls_used, 0), 0);
 
-update users
+update marginchat_users
 set trial_api_calls_limit = greatest(coalesce(trial_api_calls_limit, 100), 1);
 
-update users
+update marginchat_users
 set billing_status = 'inactive'
 where billing_status not in (
   'active',
@@ -55,10 +89,10 @@ where billing_status not in (
   'unpaid'
 );
 
-alter table users
+alter table marginchat_users
   drop constraint if exists users_billing_status_check;
 
-alter table users
+alter table marginchat_users
   add constraint users_billing_status_check check (
     billing_status in (
       'active',
@@ -73,51 +107,51 @@ alter table users
     )
   );
 
-alter table users
+alter table marginchat_users
   drop constraint if exists users_trial_api_calls_used_check;
 
-alter table users
+alter table marginchat_users
   add constraint users_trial_api_calls_used_check check (
     trial_api_calls_used >= 0
   );
 
-alter table users
+alter table marginchat_users
   drop constraint if exists users_trial_api_calls_limit_check;
 
-alter table users
+alter table marginchat_users
   add constraint users_trial_api_calls_limit_check check (
     trial_api_calls_limit > 0
   );
 
-update users
+update marginchat_users
 set role = 'admin'
 where lower(email) = 'sundinjon@gmail.com';
 
 create unique index if not exists users_stripe_customer_id_idx
-  on users (stripe_customer_id)
+  on marginchat_users (stripe_customer_id)
   where stripe_customer_id is not null;
 
 create unique index if not exists users_stripe_subscription_id_idx
-  on users (stripe_subscription_id)
+  on marginchat_users (stripe_subscription_id)
   where stripe_subscription_id is not null;
 
-create table if not exists auth_sessions (
+create table if not exists marginchat_auth_sessions (
   id text primary key,
-  user_id text not null references users(id) on delete cascade,
+  user_id text not null references marginchat_users(id) on delete cascade,
   expires_at timestamptz not null,
   created_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now()
 );
 
 create index if not exists auth_sessions_user_id_idx
-  on auth_sessions (user_id);
+  on marginchat_auth_sessions (user_id);
 
 create index if not exists auth_sessions_expires_at_idx
-  on auth_sessions (expires_at);
+  on marginchat_auth_sessions (expires_at);
 
-create table if not exists app_sessions (
+create table if not exists marginchat_app_sessions (
   id text primary key,
-  user_id text references users(id) on delete cascade,
+  user_id text references marginchat_users(id) on delete cascade,
   root_conversation_id text,
   active_conversation_id text,
   rail_open boolean not null default true,
@@ -127,22 +161,22 @@ create table if not exists app_sessions (
   updated_at timestamptz not null default now()
 );
 
-alter table app_sessions
+alter table marginchat_app_sessions
   add column if not exists pinned_thread_ids text[] not null default '{}'::text[];
 
-alter table app_sessions
-  add column if not exists user_id text references users(id) on delete cascade;
+alter table marginchat_app_sessions
+  add column if not exists user_id text references marginchat_users(id) on delete cascade;
 
-alter table app_sessions
+alter table marginchat_app_sessions
   add column if not exists graph_layouts jsonb not null default '{}'::jsonb;
 
-alter table app_sessions
+alter table marginchat_app_sessions
   add column if not exists default_service_id text;
 
-alter table app_sessions
+alter table marginchat_app_sessions
   add column if not exists default_model_id text;
 
-update app_sessions
+update marginchat_app_sessions
 set default_service_id = null
 where
   default_service_id is not null
@@ -158,11 +192,11 @@ where
     )
   );
 
-update app_sessions
+update marginchat_app_sessions
 set default_model_id = null
 where default_service_id is null and default_model_id is not null;
 
-update app_sessions
+update marginchat_app_sessions
 set default_model_id = case default_service_id
   when 'backend-services' then 'smart-routing'
   when 'openai-api' then 'gpt-5.4'
@@ -227,16 +261,16 @@ where
     )
   );
 
-alter table app_sessions
+alter table marginchat_app_sessions
   alter column default_service_id set default 'backend-services';
 
-alter table app_sessions
+alter table marginchat_app_sessions
   alter column default_model_id set default 'smart-routing';
 
-alter table app_sessions
+alter table marginchat_app_sessions
   drop constraint if exists app_sessions_default_service_id_check;
 
-alter table app_sessions
+alter table marginchat_app_sessions
   add constraint app_sessions_default_service_id_check check (
     default_service_id is null
     or default_service_id in (
@@ -249,10 +283,10 @@ alter table app_sessions
     )
   );
 
-alter table app_sessions
+alter table marginchat_app_sessions
   drop constraint if exists app_sessions_default_model_id_check;
 
-alter table app_sessions
+alter table marginchat_app_sessions
   add constraint app_sessions_default_model_id_check check (
     (default_service_id is null and default_model_id is null)
     or (default_service_id = 'backend-services' and default_model_id in ('smart-routing'))
@@ -306,27 +340,27 @@ alter table app_sessions
   );
 
 create unique index if not exists app_sessions_user_id_idx
-  on app_sessions (user_id)
+  on marginchat_app_sessions (user_id)
   where user_id is not null;
 
-create table if not exists conversations (
+create table if not exists marginchat_conversations (
   id text primary key,
-  session_id text not null references app_sessions(id) on delete cascade,
+  session_id text not null references marginchat_app_sessions(id) on delete cascade,
   title text not null,
-  parent_id text references conversations(id) on delete cascade,
+  parent_id text references marginchat_conversations(id) on delete cascade,
   service_id text not null,
   model_id text not null,
   created_at timestamptz not null,
   updated_at timestamptz not null
 );
 
-alter table conversations
+alter table marginchat_conversations
   add column if not exists model_id text;
 
-alter table conversations
+alter table marginchat_conversations
   drop constraint if exists conversations_service_id_check;
 
-alter table conversations
+alter table marginchat_conversations
   add constraint conversations_service_id_check check (
     service_id in (
       'backend-services',
@@ -338,10 +372,10 @@ alter table conversations
     )
   );
 
-alter table conversations
+alter table marginchat_conversations
   drop constraint if exists conversations_model_id_check;
 
-update conversations
+update marginchat_conversations
 set model_id = case
   when service_id = 'gemini-api' and model_id = 'gemini-3.1-pro-preview-03-25'
     then 'gemini-3.1-pro-preview'
@@ -436,13 +470,13 @@ where
     )
   );
 
-alter table conversations
+alter table marginchat_conversations
   alter column model_id set default 'smart-routing';
 
-alter table conversations
+alter table marginchat_conversations
   alter column model_id set not null;
 
-alter table conversations
+alter table marginchat_conversations
   add constraint conversations_model_id_check check (
     (service_id = 'backend-services' and model_id in ('smart-routing'))
     or (
@@ -494,19 +528,19 @@ alter table conversations
     )
   );
 
-create table if not exists messages (
+create table if not exists marginchat_messages (
   id text primary key,
-  conversation_id text not null references conversations(id) on delete cascade,
+  conversation_id text not null references marginchat_conversations(id) on delete cascade,
   role text not null check (role in ('system', 'user', 'assistant')),
   content text not null,
   created_at timestamptz not null
 );
 
-create table if not exists branch_anchors (
+create table if not exists marginchat_branch_anchors (
   id text primary key,
-  conversation_id text not null unique references conversations(id) on delete cascade,
-  source_conversation_id text not null references conversations(id) on delete cascade,
-  source_message_id text not null references messages(id) on delete cascade,
+  conversation_id text not null unique references marginchat_conversations(id) on delete cascade,
+  source_conversation_id text not null references marginchat_conversations(id) on delete cascade,
+  source_message_id text not null references marginchat_messages(id) on delete cascade,
   start_offset integer not null check (start_offset >= 0),
   end_offset integer not null check (end_offset > start_offset),
   quote text not null,
@@ -515,10 +549,10 @@ create table if not exists branch_anchors (
 );
 
 create index if not exists conversations_session_parent_created_idx
-  on conversations (session_id, parent_id, created_at);
+  on marginchat_conversations (session_id, parent_id, created_at);
 
 create index if not exists messages_conversation_created_idx
-  on messages (conversation_id, created_at);
+  on marginchat_messages (conversation_id, created_at);
 
 create index if not exists branch_anchors_source_message_idx
-  on branch_anchors (source_conversation_id, source_message_id);
+  on marginchat_branch_anchors (source_conversation_id, source_message_id);

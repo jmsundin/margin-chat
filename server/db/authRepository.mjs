@@ -8,7 +8,7 @@ export async function createUser(
   try {
     const result = await client.query(
       `
-        insert into users (
+        insert into marginchat_users (
           id,
           email,
           password_hash,
@@ -45,7 +45,7 @@ export async function createUser(
 export async function createAuthSession(client, { expiresAt, id, userId }) {
   await client.query(
     `
-      insert into auth_sessions (
+      insert into marginchat_auth_sessions (
         id,
         user_id,
         expires_at
@@ -57,7 +57,7 @@ export async function createAuthSession(client, { expiresAt, id, userId }) {
 }
 
 export async function deleteAuthSession(client, sessionId) {
-  await client.query("delete from auth_sessions where id = $1", [sessionId]);
+  await client.query("delete from marginchat_auth_sessions where id = $1", [sessionId]);
 }
 
 export async function updateUserProfile(
@@ -67,7 +67,7 @@ export async function updateUserProfile(
   try {
     const result = await client.query(
       `
-        update users
+        update marginchat_users
         set
           display_name = $1,
           email = $2
@@ -118,7 +118,7 @@ export async function findUserForLogin(client, email) {
         billing_cancel_at_period_end,
         trial_api_calls_used,
         trial_api_calls_limit
-      from users
+      from marginchat_users
       where email = $1
     `,
     [email],
@@ -137,27 +137,27 @@ export async function findUserForLogin(client, email) {
 }
 
 export async function getUserByAuthSession(client, sessionId) {
-  await client.query("delete from auth_sessions where expires_at <= now()");
+  await client.query("delete from marginchat_auth_sessions where expires_at <= now()");
 
   const result = await client.query(
     `
       select
-        auth_sessions.id as session_id,
-        users.id,
-        users.email,
-        users.display_name,
-        users.role,
-        users.stripe_customer_id,
-        users.billing_status,
-        users.billing_price_id,
-        users.billing_current_period_end,
-        users.billing_cancel_at_period_end,
-        users.trial_api_calls_used,
-        users.trial_api_calls_limit
-      from auth_sessions
-      join users on users.id = auth_sessions.user_id
-      where auth_sessions.id = $1
-        and auth_sessions.expires_at > now()
+        marginchat_auth_sessions.id as session_id,
+        marginchat_users.id,
+        marginchat_users.email,
+        marginchat_users.display_name,
+        marginchat_users.role,
+        marginchat_users.stripe_customer_id,
+        marginchat_users.billing_status,
+        marginchat_users.billing_price_id,
+        marginchat_users.billing_current_period_end,
+        marginchat_users.billing_cancel_at_period_end,
+        marginchat_users.trial_api_calls_used,
+        marginchat_users.trial_api_calls_limit
+      from marginchat_auth_sessions
+      join marginchat_users on marginchat_users.id = marginchat_auth_sessions.user_id
+      where marginchat_auth_sessions.id = $1
+        and marginchat_auth_sessions.expires_at > now()
     `,
     [sessionId],
   );
@@ -168,7 +168,7 @@ export async function getUserByAuthSession(client, sessionId) {
 
   await client.query(
     `
-      update auth_sessions
+      update marginchat_auth_sessions
       set last_seen_at = now()
       where id = $1
     `,

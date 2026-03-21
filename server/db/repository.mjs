@@ -18,7 +18,7 @@ export async function readState(client, userId) {
         rail_open,
         pinned_thread_ids,
         graph_layouts
-      from app_sessions
+      from marginchat_app_sessions
       where user_id = $1
     `,
     [userId],
@@ -39,7 +39,7 @@ export async function readState(client, userId) {
         service_id,
         created_at,
         updated_at
-      from conversations
+      from marginchat_conversations
       where session_id = $1
       order by created_at asc, id asc
     `,
@@ -59,7 +59,7 @@ export async function readState(client, userId) {
         role,
         content,
         created_at
-      from messages
+      from marginchat_messages
       where conversation_id = any($1::text[])
       order by created_at asc, id asc
     `,
@@ -77,7 +77,7 @@ export async function readState(client, userId) {
         quote,
         prompt,
         created_at
-      from branch_anchors
+      from marginchat_branch_anchors
       where conversation_id = any($1::text[])
     `,
     [conversationIds],
@@ -194,12 +194,12 @@ export async function writeState(client, userId, normalizedState) {
 
   try {
     await client.query(
-      "delete from app_sessions where user_id = $1 or id = $2",
+      "delete from marginchat_app_sessions where user_id = $1 or id = $2",
       [userId, sessionId],
     );
     await client.query(
       `
-        insert into app_sessions (
+        insert into marginchat_app_sessions (
           id,
           user_id,
           default_service_id,
@@ -228,7 +228,7 @@ export async function writeState(client, userId, normalizedState) {
     for (const conversation of orderedConversations) {
       await client.query(
         `
-          insert into conversations (
+          insert into marginchat_conversations (
             id,
             session_id,
             title,
@@ -257,7 +257,7 @@ export async function writeState(client, userId, normalizedState) {
       for (const message of conversation.messages) {
         await client.query(
           `
-            insert into messages (
+            insert into marginchat_messages (
               id,
               conversation_id,
               role,
@@ -284,7 +284,7 @@ export async function writeState(client, userId, normalizedState) {
 
       await client.query(
         `
-          insert into branch_anchors (
+          insert into marginchat_branch_anchors (
             id,
             conversation_id,
             source_conversation_id,
@@ -313,7 +313,7 @@ export async function writeState(client, userId, normalizedState) {
 
     await client.query(
       `
-        update app_sessions
+        update marginchat_app_sessions
         set
           active_conversation_id = $3,
           root_conversation_id = $4,
