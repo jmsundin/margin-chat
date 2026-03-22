@@ -11,7 +11,7 @@ export async function getUserBillingAccount(client, userId) {
         billing_price_id,
         billing_current_period_end,
         billing_cancel_at_period_end
-      from marginchat_users
+      from marginchat_user_accounts
       where id = $1
     `,
     [userId],
@@ -30,7 +30,7 @@ export async function updateStripeCustomerId(
 ) {
   const result = await client.query(
     `
-      update marginchat_users
+      update marginchat_user_accounts
       set
         stripe_customer_id = $1,
         updated_at = now()
@@ -65,7 +65,7 @@ export async function syncUserBillingByCustomerId(
 ) {
   const result = await client.query(
     `
-      update marginchat_users
+      update marginchat_user_accounts
       set
         stripe_customer_id = $1,
         stripe_subscription_id = $2,
@@ -113,7 +113,7 @@ export async function syncUserBillingById(
 ) {
   const result = await client.query(
     `
-      update marginchat_users
+      update marginchat_user_accounts
       set
         stripe_customer_id = $1,
         stripe_subscription_id = $2,
@@ -151,7 +151,7 @@ export async function syncUserBillingById(
 export async function incrementTrialApiCallsUsed(client, userId) {
   const result = await client.query(
     `
-      update marginchat_users
+      update marginchat_user_accounts
       set
         trial_api_calls_used = least(trial_api_calls_used + 1, trial_api_calls_limit),
         updated_at = now()
