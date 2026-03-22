@@ -8,7 +8,7 @@ export async function createUser(
   try {
     const result = await client.query(
       `
-        insert into marginchat_user_accounts (
+        insert into marginchat_users (
           id,
           email,
           password_hash,
@@ -67,7 +67,7 @@ export async function updateUserProfile(
   try {
     const result = await client.query(
       `
-        update marginchat_user_accounts
+        update marginchat_users
         set
           display_name = $1,
           email = $2
@@ -118,7 +118,7 @@ export async function findUserForLogin(client, email) {
         billing_cancel_at_period_end,
         trial_api_calls_used,
         trial_api_calls_limit
-      from marginchat_user_accounts
+      from marginchat_users
       where email = $1
     `,
     [email],
@@ -143,19 +143,19 @@ export async function getUserByAuthSession(client, sessionId) {
     `
       select
         marginchat_user_sessions.id as session_id,
-        marginchat_user_accounts.id,
-        marginchat_user_accounts.email,
-        marginchat_user_accounts.display_name,
-        marginchat_user_accounts.role,
-        marginchat_user_accounts.stripe_customer_id,
-        marginchat_user_accounts.billing_status,
-        marginchat_user_accounts.billing_price_id,
-        marginchat_user_accounts.billing_current_period_end,
-        marginchat_user_accounts.billing_cancel_at_period_end,
-        marginchat_user_accounts.trial_api_calls_used,
-        marginchat_user_accounts.trial_api_calls_limit
+        marginchat_users.id,
+        marginchat_users.email,
+        marginchat_users.display_name,
+        marginchat_users.role,
+        marginchat_users.stripe_customer_id,
+        marginchat_users.billing_status,
+        marginchat_users.billing_price_id,
+        marginchat_users.billing_current_period_end,
+        marginchat_users.billing_cancel_at_period_end,
+        marginchat_users.trial_api_calls_used,
+        marginchat_users.trial_api_calls_limit
       from marginchat_user_sessions
-      join marginchat_user_accounts on marginchat_user_accounts.id = marginchat_user_sessions.user_id
+      join marginchat_users on marginchat_users.id = marginchat_user_sessions.user_id
       where marginchat_user_sessions.id = $1
         and marginchat_user_sessions.expires_at > now()
     `,

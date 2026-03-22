@@ -1,5 +1,10 @@
 do $$
 begin
+  if to_regclass('marginchat_users') is null
+    and to_regclass('marginchat_user_accounts') is not null then
+    alter table marginchat_user_accounts rename to marginchat_users;
+  end if;
+
   if to_regclass('marginchat_app_sessions') is null
     and to_regclass('app_sessions') is not null then
     alter table app_sessions rename to marginchat_app_sessions;
@@ -22,7 +27,7 @@ begin
 end
 $$;
 
-create table if not exists marginchat_user_accounts (
+create table if not exists marginchat_users (
   id text primary key,
   email text not null unique,
   password_hash text not null,
@@ -33,60 +38,60 @@ create table if not exists marginchat_user_accounts (
 );
 
 create unique index if not exists marginchat_user_accounts_email_idx
-  on marginchat_user_accounts (email);
+  on marginchat_users (email);
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists role text;
 
-update marginchat_user_accounts
+update marginchat_users
 set role = 'member'
 where role is null or role not in ('member', 'admin');
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   alter column role set default 'member';
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   alter column role set not null;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   drop constraint if exists marginchat_user_accounts_role_check;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add constraint marginchat_user_accounts_role_check check (
     role in ('member', 'admin')
   );
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists stripe_customer_id text;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists stripe_subscription_id text;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists billing_status text not null default 'inactive';
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists billing_price_id text;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists billing_current_period_end timestamptz;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists billing_cancel_at_period_end boolean not null default false;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists trial_api_calls_used integer not null default 0;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add column if not exists trial_api_calls_limit integer not null default 100;
 
-update marginchat_user_accounts
+update marginchat_users
 set trial_api_calls_used = greatest(coalesce(trial_api_calls_used, 0), 0);
 
-update marginchat_user_accounts
+update marginchat_users
 set trial_api_calls_limit = greatest(coalesce(trial_api_calls_limit, 100), 1);
 
-update marginchat_user_accounts
+update marginchat_users
 set billing_status = 'inactive'
 where billing_status not in (
   'active',
@@ -100,10 +105,10 @@ where billing_status not in (
   'unpaid'
 );
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   drop constraint if exists marginchat_user_accounts_billing_status_check;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add constraint marginchat_user_accounts_billing_status_check check (
     billing_status in (
       'active',
@@ -118,32 +123,32 @@ alter table marginchat_user_accounts
     )
   );
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   drop constraint if exists marginchat_user_accounts_trial_api_calls_used_check;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add constraint marginchat_user_accounts_trial_api_calls_used_check check (
     trial_api_calls_used >= 0
   );
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   drop constraint if exists marginchat_user_accounts_trial_api_calls_limit_check;
 
-alter table marginchat_user_accounts
+alter table marginchat_users
   add constraint marginchat_user_accounts_trial_api_calls_limit_check check (
     trial_api_calls_limit > 0
   );
 
-update marginchat_user_accounts
+update marginchat_users
 set role = 'admin'
 where lower(email) = 'sundinjon@gmail.com';
 
 create unique index if not exists marginchat_user_accounts_stripe_customer_id_idx
-  on marginchat_user_accounts (stripe_customer_id)
+  on marginchat_users (stripe_customer_id)
   where stripe_customer_id is not null;
 
 create unique index if not exists marginchat_user_accounts_stripe_subscription_id_idx
-  on marginchat_user_accounts (stripe_subscription_id)
+  on marginchat_users (stripe_subscription_id)
   where stripe_subscription_id is not null;
 
 create table if not exists marginchat_user_sessions (
