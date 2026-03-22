@@ -8,6 +8,10 @@
     "api/*.mjs": {
       "includeFiles": "server/db/schema.sql",
       "maxDuration": 60
+    },
+    "api/**/*.mjs": {
+      "includeFiles": "server/db/schema.sql",
+      "maxDuration": 60
     }
   },
   "rewrites": [
