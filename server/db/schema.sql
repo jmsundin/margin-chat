@@ -37,13 +37,34 @@ create table if not exists marginchat_users (
   email text not null unique,
   password_hash text not null,
   display_name text not null,
-  role text not null default 'member' check (role in ('member', 'admin')),
+  role text not null default 'member',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create unique index if not exists users_email_idx
   on marginchat_users (email);
+
+alter table marginchat_users
+  add column if not exists role text;
+
+update marginchat_users
+set role = 'member'
+where role is null or role not in ('member', 'admin');
+
+alter table marginchat_users
+  alter column role set default 'member';
+
+alter table marginchat_users
+  alter column role set not null;
+
+alter table marginchat_users
+  drop constraint if exists users_role_check;
+
+alter table marginchat_users
+  add constraint users_role_check check (
+    role in ('member', 'admin')
+  );
 
 alter table marginchat_users
   add column if not exists stripe_customer_id text;
