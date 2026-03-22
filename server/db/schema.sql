@@ -46,6 +46,9 @@ create unique index if not exists users_email_idx
   on marginchat_users (email);
 
 alter table marginchat_users
+  alter column id type text using id::text;
+
+alter table marginchat_users
   add column if not exists role text;
 
 update marginchat_users
@@ -158,11 +161,20 @@ create unique index if not exists users_stripe_subscription_id_idx
 
 create table if not exists marginchat_auth_sessions (
   id text primary key,
-  user_id text not null references marginchat_users(id) on delete cascade,
+  user_id text not null,
   expires_at timestamptz not null,
   created_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now()
 );
+
+alter table marginchat_auth_sessions
+  drop constraint if exists auth_sessions_user_id_fkey;
+
+alter table marginchat_auth_sessions
+  drop constraint if exists marginchat_auth_sessions_user_id_fkey;
+
+alter table marginchat_auth_sessions
+  alter column user_id type text using user_id::text;
 
 create index if not exists auth_sessions_user_id_idx
   on marginchat_auth_sessions (user_id);
@@ -172,7 +184,7 @@ create index if not exists auth_sessions_expires_at_idx
 
 create table if not exists marginchat_app_sessions (
   id text primary key,
-  user_id text references marginchat_users(id) on delete cascade,
+  user_id text,
   root_conversation_id text,
   active_conversation_id text,
   rail_open boolean not null default true,
@@ -186,7 +198,16 @@ alter table marginchat_app_sessions
   add column if not exists pinned_thread_ids text[] not null default '{}'::text[];
 
 alter table marginchat_app_sessions
-  add column if not exists user_id text references marginchat_users(id) on delete cascade;
+  add column if not exists user_id text;
+
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_user_id_fkey;
+
+alter table marginchat_app_sessions
+  drop constraint if exists marginchat_app_sessions_user_id_fkey;
+
+alter table marginchat_app_sessions
+  alter column user_id type text using user_id::text;
 
 alter table marginchat_app_sessions
   add column if not exists graph_layouts jsonb not null default '{}'::jsonb;
