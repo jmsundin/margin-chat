@@ -296,7 +296,9 @@ button {
 
 .app-shell {
   height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
+  min-height: 100dvh;
   position: relative;
   overflow: hidden;
 }
@@ -312,7 +314,10 @@ button {
 .app-chrome {
   display: flex;
   height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
   position: relative;
   margin: 5px;
 }
@@ -4788,15 +4793,23 @@ button {
 
 @media (max-width: 900px) {
   .app-chrome {
-    padding: 22px 16px 24px;
+    margin: 0;
+    padding:
+      calc(16px + env(safe-area-inset-top, 0px))
+      calc(14px + env(safe-area-inset-right, 0px))
+      calc(18px + env(safe-area-inset-bottom, 0px))
+      calc(14px + env(safe-area-inset-left, 0px));
   }
 
   .workspace {
     flex-direction: column;
+    gap: 14px;
   }
 
   .thread-sidebar {
     flex-basis: auto;
+    gap: 14px;
+    padding: 18px 16px 16px;
     width: 100%;
   }
 
@@ -4822,19 +4835,34 @@ button {
   }
 
   .thread-sidebar.is-collapsed .thread-sidebar-head {
-    flex-direction: column;
-    gap: 10px;
+    flex-direction: row;
+    gap: 12px;
+    justify-content: space-between;
     width: 100%;
   }
 
   .thread-sidebar.is-collapsed .thread-sidebar-title-row {
-    justify-content: center;
-    width: 100%;
+    justify-content: flex-start;
+    width: auto;
   }
 
   .thread-sidebar.is-collapsed .thread-sidebar-footer {
     margin-left: auto;
     margin-top: 0;
+  }
+
+  .thread-sidebar.is-collapsed .thread-sidebar-mini-list {
+    align-items: stretch;
+    flex-basis: 100%;
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 4px;
+    width: 100%;
+  }
+
+  .thread-sidebar.is-collapsed .thread-sidebar-mini-item {
+    flex: 0 0 auto;
   }
 
   .thread-sidebar.is-collapsed .sidebar-action,
@@ -4858,7 +4886,7 @@ button {
   .thread-list {
     display: grid;
     gap: 10px;
-    grid-auto-columns: minmax(220px, 1fr);
+    grid-auto-columns: minmax(min(260px, 82vw), 1fr);
     grid-auto-flow: column;
     overflow-x: auto;
     overflow-y: hidden;
@@ -4977,20 +5005,40 @@ button {
   }
 
   .app-rail {
-    bottom: 0;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     flex-basis: auto;
+    left: auto;
     position: fixed;
-    right: 0;
+    right: calc(12px + env(safe-area-inset-right, 0px));
     top: auto;
+    width: auto;
+  }
+
+  .app-rail.is-open {
+    flex-basis: min(88vw, 320px);
     width: min(88vw, 320px);
   }
 
+  .app-rail:not(.is-open) {
+    flex-basis: 72px;
+    width: 72px;
+  }
+
   .rail-body {
-    border-radius: 24px 0 0 0;
+    border-radius: 24px;
+  }
+
+  .app-rail.is-open .rail-body {
     height: min(72vh, 620px);
   }
 
+  .app-rail:not(.is-open) .rail-body {
+    height: 60px;
+    padding: 8px;
+  }
+
   .conversation-canvas {
+    gap: 24px;
     padding-right: 0;
   }
 
@@ -4999,15 +5047,30 @@ button {
   }
 
   .panel-slot {
-    flex-basis: min(90vw, 620px);
-    width: min(90vw, 620px);
+    flex-basis: min(100%, 620px);
+    min-width: min(100%, 320px);
+    width: min(100%, 620px);
   }
 
   .panel-resize-handle {
     display: none;
   }
 
+  .branch-context-card {
+    padding: 16px 20px 18px;
+  }
+
+  .message-list {
+    gap: 14px;
+    padding: 18px 20px 24px;
+  }
+
+  .message-bubble {
+    max-width: min(92%, 560px);
+  }
+
   .composer-surface {
+    border-radius: 24px;
     gap: 8px;
   }
 
@@ -5427,7 +5490,11 @@ button {
 
 @media (max-width: 780px) {
   .auth-chrome {
+    align-items: stretch;
+    justify-content: flex-start;
+    overflow-y: auto;
     padding: 18px;
+    -webkit-overflow-scrolling: touch;
   }
 
   .auth-hero,
@@ -5453,5 +5520,126 @@ button {
   .workspace-session-actions {
     justify-content: flex-start;
     justify-self: start;
+  }
+}
+
+@media (max-width: 640px) {
+  .thread-sidebar {
+    border-radius: 24px;
+    padding: 16px 14px 14px;
+  }
+
+  .thread-sidebar-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .thread-list {
+    grid-auto-columns: minmax(min(240px, 84vw), 1fr);
+  }
+
+  .canvas-head {
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .thread-tile-view,
+  .conversation-canvas {
+    padding: 4px 0 8px;
+  }
+
+  .thread-tile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pinned-thread-layout-toggle {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .pinned-thread-layout-button {
+    flex: 1 1 0;
+  }
+
+  .workspace-session-brand h1 {
+    font-size: 1.28rem;
+  }
+
+  .branch-context-card,
+  .service-picker-modal,
+  .search-modal,
+  .thread-dialog {
+    padding: 16px;
+  }
+
+  .branch-context-card blockquote {
+    font-size: 1rem;
+    margin: 8px 0;
+  }
+
+  .message-list {
+    gap: 12px;
+    padding: 16px 16px 20px;
+  }
+
+  .message-bubble {
+    max-width: min(96%, 560px);
+    padding: 14px 15px;
+  }
+
+  .message-content.is-markdown table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .composer {
+    padding: 0 4px 6px;
+  }
+
+  .composer-surface {
+    padding: 4px 6px;
+  }
+
+  .composer-service-value {
+    max-width: min(48vw, 10rem);
+  }
+
+  .selection-input-row {
+    grid-template-columns: 1fr;
+  }
+
+  .selection-send {
+    width: 100%;
+  }
+
+  .app-rail.is-open {
+    flex-basis: min(calc(100vw - 24px), 360px);
+    width: min(calc(100vw - 24px), 360px);
+  }
+
+  .app-rail.is-open .rail-body {
+    height: min(64vh, 560px);
+  }
+
+  .auth-hero,
+  .auth-card,
+  .auth-loading-card {
+    border-radius: 24px;
+    padding: 20px;
+  }
+
+  .auth-hero h1,
+  .auth-loading-card h1 {
+    font-size: clamp(2rem, 12vw, 3rem);
+    max-width: 8ch;
+  }
+
+  .auth-feature-card {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .auth-card-head {
+    gap: 12px;
   }
 }

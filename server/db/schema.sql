@@ -46,9 +46,6 @@ create unique index if not exists users_email_idx
   on marginchat_users (email);
 
 alter table marginchat_users
-  alter column id type text using id::text;
-
-alter table marginchat_users
   add column if not exists role text;
 
 update marginchat_users
