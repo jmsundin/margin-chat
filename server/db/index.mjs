@@ -17,7 +17,7 @@ import {
   syncUserBillingById,
   updateStripeCustomerId,
 } from "./billingRepository.mjs";
-import { buildConnectionOptions } from "./config.mjs";
+import { buildConnectionOptions, getConnectionMetadata } from "./config.mjs";
 import { wrapStorageError } from "./errors.mjs";
 import { readState, writeState } from "./repository.mjs";
 import { normalizeAppState } from "./validation.mjs";
@@ -28,8 +28,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const schemaSql = readFileSync(resolve(__dirname, "schema.sql"), "utf8");
 
 export function createAppDatabase(env) {
+  const connectionOptions = buildConnectionOptions(env);
+  const connectionMetadata = getConnectionMetadata(env);
   const pool = new Pool({
-    ...buildConnectionOptions(env),
+    ...connectionOptions,
     max: 10,
   });
 
@@ -72,6 +74,7 @@ export function createAppDatabase(env) {
         client.release();
       }
     } catch (error) {
+      console.error("Postgres storage error", error);
       throw wrapStorageError(error);
     }
   }
@@ -139,13 +142,17 @@ export function createAppDatabase(env) {
 
   function getHealth() {
     return {
-      configured: true,
+      configured: connectionMetadata.configured,
       error: initializationError?.message ?? null,
-      host: env.PGHOST ?? "127.0.0.1",
-      port: Number(env.PGPORT ?? 5432),
+      host: connectionMetadata.host,
+      port: connectionMetadata.port,
       ready: initializationState === "ready",
     };
   }
+
+  void ready().catch((error) => {
+    console.error("Postgres initialization failed", error);
+  });
 
   return {
     close,

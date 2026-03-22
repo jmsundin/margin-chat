@@ -16,3 +16,5 @@ client/dist/
 .codex-artifacts/
 .DS_Store
 *.log
+.vercel
+.env*.local

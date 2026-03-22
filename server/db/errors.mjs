@@ -11,6 +11,6 @@ export function wrapStorageError(error) {
 
   return createStatusError(
     503,
-    "Postgres storage is unavailable. Start the local database and try again.",
+    "Postgres storage is unavailable. Check your production database connection settings and SSL configuration, then redeploy.",
   );
 }

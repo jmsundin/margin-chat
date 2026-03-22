@@ -29,6 +29,12 @@ export function createApiHandler({
       );
 
       if (request.method === "GET" && url.pathname === "/api/health") {
+        try {
+          await database.ready();
+        } catch {
+          // Health responses should still return the degraded payload.
+        }
+
         sendJson(response, 200, chatService.buildHealthPayload(database.getHealth()));
         return;
       }
