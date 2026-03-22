@@ -43,7 +43,7 @@ export function createAuthService({ database, runtimeConfig }) {
     const user = await database.createUser({
       displayName: input.displayName,
       email: input.email,
-      id: `user-${randomUUID()}`,
+      id: randomUUID(),
       passwordHash,
       role: resolveUserRole(input.email),
     });
