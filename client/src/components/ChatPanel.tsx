@@ -4,11 +4,16 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
 import MarkdownMessage from "./MarkdownMessage";
+import {
+  buildChatOutline,
+  getMessageOutlineId,
+} from "../lib/chatOutline";
 import ServicePickerModal from "./ServicePickerModal";
 import {
   getBackendServiceModel,
@@ -16,6 +21,7 @@ import {
   getBackendServiceSelectionLabel,
   type RecentBackendServiceSelection,
 } from "../lib/services";
+import { excerpt } from "../lib/tree";
 import type {
   BackendServiceId,
   Conversation,
@@ -232,6 +238,83 @@ function AgentStatusIndicator() {
   );
 }
 
+type BranchMarginPosition = {
+  anchorX: number;
+  cardX: number;
+  top: number;
+};
+
+function BranchMarginThreads({
+  links,
+  onOpenBranch,
+  positions,
+}: {
+  links: MessageAnchorLink[];
+  onOpenBranch: (conversationId: string) => void;
+  positions: Record<string, BranchMarginPosition>;
+}) {
+  if (!links.length) {
+    return null;
+  }
+
+  return (
+    <aside aria-label="Branches from this message" className="branch-margin-layer">
+      {links.map((link) => {
+        const position = positions[link.branchConversationId];
+        const connectorWidth = position
+          ? Math.max(position.cardX - position.anchorX, 12)
+          : 0;
+
+        return (
+          <div className="branch-margin-item" key={link.branchConversationId}>
+            <span
+              aria-hidden="true"
+              className={
+                position
+                  ? "branch-margin-connector is-positioned"
+                  : "branch-margin-connector"
+              }
+              style={
+                position
+                  ? ({
+                      left: `${position.anchorX}px`,
+                      top: `${position.top}px`,
+                      width: `${connectorWidth}px`,
+                    } as CSSProperties)
+                  : undefined
+              }
+            />
+            <button
+              className={
+                position
+                  ? "margin-thread-card is-positioned"
+                  : "margin-thread-card"
+              }
+              onClick={() => onOpenBranch(link.branchConversationId)}
+              style={
+                position
+                  ? ({
+                      left: `${position.cardX}px`,
+                      top: `${position.top - 18}px`,
+                    } as CSSProperties)
+                  : undefined
+              }
+              type="button"
+            >
+              <span className="margin-thread-label">Branch</span>
+              <strong>{link.title}</strong>
+              <span className="margin-thread-prompt">
+                {excerpt(link.anchor.prompt || link.anchor.quote, 78)}
+              </span>
+              <span className="margin-thread-open">Open branch →</span>
+            </button>
+          </div>
+        );
+      })}
+    </aside>
+  );
+}
+
 interface ChatPanelProps {
   anchorsByMessageId: Record<string, MessageAnchorLink[]>;
   conversation: Conversation;
@@ -243,6 +326,7 @@ interface ChatPanelProps {
   typingProgressByMessageId: Record<string, number>;
   typingMessageIds: Record<string, boolean>;
   selectionPreview: SelectionDraft | null;
+  initialScrollTop?: number;
   onActivate: () => void;
   onDraftChange: (value: string) => void;
   onModelChange: (
@@ -250,10 +334,19 @@ interface ChatPanelProps {
     serviceId: BackendServiceId,
     modelId: string,
   ) => void;
+  onOpenBranch: (conversationId: string) => void;
   onStopTypewriter: (conversationId: string) => void;
   onSubmit: (conversationId: string, value: string) => void;
   onTypewriterProgress: (messageId: string, visibleCount: number) => void;
   onTypewriterComplete: (messageId: string) => void;
+  onScrollPositionChange?: (
+    conversationId: string,
+    scrollTop: number,
+  ) => void;
+  onVisibleOutlineChange?: (
+    conversationId: string,
+    outlineItemId: string,
+  ) => void;
   registerPanelRef: (
     conversationId: string,
     element: HTMLElement | null,
@@ -266,6 +359,11 @@ interface ChatPanelProps {
     branchConversationId: string,
     element: HTMLSpanElement | null,
   ) => void;
+  registerBranchOriginRef?: (
+    conversationId: string,
+    element: HTMLElement | null,
+  ) => void;
+  showBranchMargin?: boolean;
 }
 
 function getTypewriterDurationMs(contentLength: number) {
@@ -379,6 +477,7 @@ function renderMessageContent(
     element: HTMLSpanElement | null,
   ) => void,
   pendingSelection: SelectionDraft | null,
+  onOpenBranch: (conversationId: string) => void,
 ) {
   const canRenderPendingSelection =
     pendingSelection &&
@@ -470,8 +569,32 @@ function renderMessageContent(
 
     return (
       <mark
+        aria-label={`Open branch ${
+          anchors.find(
+            (link) => link.branchConversationId === segment.branchConversationId,
+          )?.title ?? "conversation"
+        }`}
         key={`${message.id}-anchor-${segment.branchConversationId}`}
         className="message-anchor"
+        onClick={() => {
+          const selection = window.getSelection();
+
+          if (selection && !selection.isCollapsed) {
+            return;
+          }
+
+          onOpenBranch(segment.branchConversationId!);
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") {
+            return;
+          }
+
+          event.preventDefault();
+          onOpenBranch(segment.branchConversationId!);
+        }}
+        role="link"
+        tabIndex={0}
       >
         <span
           ref={(element) =>
@@ -488,10 +611,12 @@ function renderMessageContent(
 interface MessageContentProps {
   anchors: MessageAnchorLink[];
   conversationId: string;
+  isStreaming: boolean;
   isTypewriting: boolean;
   message: Message;
   onTypewriterProgress: (messageId: string, visibleCount: number) => void;
   onTypewriterComplete: (messageId: string) => void;
+  onOpenBranch: (conversationId: string) => void;
   pendingSelection: SelectionDraft | null;
   registerAnchorRef: (
     branchConversationId: string,
@@ -504,10 +629,12 @@ interface MessageContentProps {
 function MessageContent({
   anchors,
   conversationId,
+  isStreaming,
   isTypewriting,
   message,
   onTypewriterProgress,
   onTypewriterComplete,
+  onOpenBranch,
   pendingSelection,
   registerAnchorRef,
   theme,
@@ -615,14 +742,17 @@ function MessageContent({
       <MarkdownMessage
         anchors={anchors}
         className={
-          isTypewriting ? "message-content is-typewriter-active" : "message-content"
+          isTypewriting || isStreaming
+            ? "message-content is-typewriter-active"
+            : "message-content"
         }
         content={renderedMessage.content}
         conversationId={conversationId}
         enableMermaidRendering={
-          !isTypewriting && visibleLength >= typewriterChunks.length
+          !isStreaming && !isTypewriting && visibleLength >= typewriterChunks.length
         }
         messageId={message.id}
+        onOpenBranch={onOpenBranch}
         pendingSelection={pendingSelection}
         registerAnchorRef={registerAnchorRef}
         theme={theme}
@@ -641,6 +771,7 @@ function MessageContent({
           anchors,
           registerAnchorRef,
           pendingSelection,
+          onOpenBranch,
         )}
       </div>
     )
@@ -658,19 +789,30 @@ export default function ChatPanel({
   typingProgressByMessageId,
   typingMessageIds,
   selectionPreview,
+  initialScrollTop,
   onActivate,
   onDraftChange,
   onModelChange,
+  onOpenBranch,
   onStopTypewriter,
   onSubmit,
   onTypewriterProgress,
   onTypewriterComplete,
+  onScrollPositionChange,
+  onVisibleOutlineChange,
   registerPanelRef,
   registerComposerSurfaceRef,
   registerAnchorRef,
+  registerBranchOriginRef,
+  showBranchMargin = true,
 }: ChatPanelProps) {
   const [isServicePickerOpen, setServicePickerOpen] = useState(false);
+  const [branchMarginPositions, setBranchMarginPositions] = useState<
+    Record<string, BranchMarginPosition>
+  >({});
   const panelBodyRef = useRef<HTMLDivElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const localAnchorRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerPrimaryRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -682,6 +824,7 @@ export default function ChatPanel({
   const hasActiveTypewriter = conversation.messages.some(
     (message) => typingMessageIds[message.id],
   );
+  const latestMessage = conversation.messages.at(-1);
   const currentService =
     getBackendServiceOption(conversation.serviceId) ??
     getBackendServiceOption("backend-services");
@@ -696,9 +839,119 @@ export default function ChatPanel({
     currentSelectionLabel,
     serviceId: conversation.serviceId,
   });
-  const showPendingAssistant = isSubmitting && !hasActiveTypewriter;
+  const showPendingAssistant =
+    isSubmitting && !hasActiveTypewriter && latestMessage?.role !== "assistant";
   const showAgentStatus =
     showPendingAssistant && conversation.serviceId === "openai-agent";
+  const branchMarginLinks = showBranchMargin
+    ? Object.values(anchorsByMessageId).flat()
+    : [];
+  const outlineItems = buildChatOutline(conversation);
+  const branchMarginKey = branchMarginLinks
+    .map((link) => link.branchConversationId)
+    .join("|");
+
+  const syncBranchMarginPositions = useEffectEvent(() => {
+    const panelBody = panelBodyRef.current;
+
+    if (!panelBody || !branchMarginLinks.length) {
+      setBranchMarginPositions((current) =>
+        Object.keys(current).length ? {} : current,
+      );
+      return;
+    }
+
+    const panelRect = panelBody.getBoundingClientRect();
+    const cardWidth = panelBody.clientWidth >= 760 ? 220 : 184;
+    const cardX = Math.max(panelBody.clientWidth - cardWidth - 24, 0);
+    const nextPositions: Record<string, BranchMarginPosition> = {};
+
+    for (const link of branchMarginLinks) {
+      const anchorElement = localAnchorRefs.current[link.branchConversationId];
+
+      if (!anchorElement) {
+        continue;
+      }
+
+      const anchorRect = anchorElement.getBoundingClientRect();
+      const anchorX = anchorRect.right - panelRect.left + panelBody.scrollLeft;
+      const top =
+        anchorRect.top - panelRect.top + panelBody.scrollTop + anchorRect.height / 2;
+
+      nextPositions[link.branchConversationId] = {
+        anchorX,
+        cardX: Math.max(cardX, anchorX + 12),
+        top,
+      };
+    }
+
+    setBranchMarginPositions((current) => {
+      const nextIds = Object.keys(nextPositions);
+      const currentIds = Object.keys(current);
+      const positionsMatch =
+        nextIds.length === currentIds.length &&
+        nextIds.every((conversationId) => {
+          const currentPosition = current[conversationId];
+          const nextPosition = nextPositions[conversationId];
+
+          return (
+            currentPosition &&
+            Math.abs(currentPosition.anchorX - nextPosition.anchorX) < 0.5 &&
+            Math.abs(currentPosition.cardX - nextPosition.cardX) < 0.5 &&
+            Math.abs(currentPosition.top - nextPosition.top) < 0.5
+          );
+        });
+
+      return positionsMatch ? current : nextPositions;
+    });
+  });
+
+  useLayoutEffect(() => {
+    if (!branchMarginLinks.length) {
+      setBranchMarginPositions((current) =>
+        Object.keys(current).length ? {} : current,
+      );
+      return undefined;
+    }
+
+    let frameId = window.requestAnimationFrame(syncBranchMarginPositions);
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(syncBranchMarginPositions);
+    });
+
+    if (panelBodyRef.current) {
+      observer.observe(panelBodyRef.current);
+    }
+
+    if (messageListRef.current) {
+      observer.observe(messageListRef.current);
+    }
+
+    for (const link of branchMarginLinks) {
+      const anchorElement = localAnchorRefs.current[link.branchConversationId];
+
+      if (anchorElement) {
+        observer.observe(anchorElement);
+      }
+    }
+
+    window.addEventListener("resize", syncBranchMarginPositions);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      observer.disconnect();
+      window.removeEventListener("resize", syncBranchMarginPositions);
+    };
+  }, [branchMarginKey, conversation.messages]);
+
+  function handleRegisterAnchorRef(
+    branchConversationId: string,
+    element: HTMLSpanElement | null,
+  ) {
+    localAnchorRefs.current[branchConversationId] = element;
+    registerAnchorRef(branchConversationId, element);
+  }
 
   useLayoutEffect(() => {
     const panelBody = panelBodyRef.current;
@@ -711,18 +964,34 @@ export default function ChatPanel({
       previousMessageCountRef.current !== conversation.messages.length;
     const pendingAssistantChanged =
       previousPendingAssistantRef.current !== showPendingAssistant;
+    const assistantStreamStarted =
+      messageCountChanged &&
+      isSubmitting &&
+      latestMessage?.role === "assistant";
 
     previousMessageCountRef.current = conversation.messages.length;
     previousPendingAssistantRef.current = showPendingAssistant;
 
     if (!hasInitializedScrollPositionRef.current) {
       hasInitializedScrollPositionRef.current = true;
-      panelBody.scrollTop = panelBody.scrollHeight;
-      shouldStickToBottomRef.current = true;
+      if (typeof initialScrollTop === "number") {
+        panelBody.scrollTop = Math.min(
+          Math.max(initialScrollTop, 0),
+          Math.max(panelBody.scrollHeight - panelBody.clientHeight, 0),
+        );
+        shouldStickToBottomRef.current = isElementNearBottom(panelBody);
+      } else {
+        panelBody.scrollTop = panelBody.scrollHeight;
+        shouldStickToBottomRef.current = true;
+      }
       return;
     }
 
     if (!messageCountChanged && !pendingAssistantChanged) {
+      return;
+    }
+
+    if (assistantStreamStarted) {
       return;
     }
 
@@ -732,7 +1001,13 @@ export default function ChatPanel({
 
     panelBody.scrollTop = panelBody.scrollHeight;
     shouldStickToBottomRef.current = true;
-  }, [conversation.messages.length, showPendingAssistant]);
+  }, [
+    conversation.messages.length,
+    initialScrollTop,
+    isSubmitting,
+    latestMessage?.role,
+    showPendingAssistant,
+  ]);
 
   const syncComposerTextareaHeight = useEffectEvent(() => {
     const surface = composerSurfaceRef.current;
@@ -850,6 +1125,13 @@ export default function ChatPanel({
   }
 
   function handlePanelClick(event: MouseEvent<HTMLElement>) {
+    if (
+      isActive &&
+      event.target === composerTextareaRef.current
+    ) {
+      return;
+    }
+
     const selection = window.getSelection();
 
     if (
@@ -902,16 +1184,6 @@ export default function ChatPanel({
       return;
     }
 
-    if (event.target instanceof Element) {
-      const nestedScrollable = event.target.closest<HTMLElement>(
-        "pre, .message-mermaid-diagram",
-      );
-
-      if (nestedScrollable && nestedScrollable !== panelBody) {
-        return;
-      }
-    }
-
     const normalizedDeltaX = normalizeWheelDelta(
       event.deltaX,
       event.deltaMode,
@@ -923,7 +1195,10 @@ export default function ChatPanel({
       panelBody.clientHeight,
     );
 
-    if (Math.abs(normalizedDeltaY) < Math.abs(normalizedDeltaX)) {
+    if (
+      Math.abs(normalizedDeltaX) >
+      Math.abs(normalizedDeltaY) * 1.25
+    ) {
       return;
     }
 
@@ -976,7 +1251,44 @@ export default function ChatPanel({
     }
 
     shouldStickToBottomRef.current = isElementNearBottom(panelBody);
+    onScrollPositionChange?.(conversation.id, panelBody.scrollTop);
+
+    if (!onVisibleOutlineChange || !outlineItems.length) {
+      return;
+    }
+
+    const panelRect = panelBody.getBoundingClientRect();
+    const readingLine = panelRect.top + Math.min(panelRect.height * 0.24, 120);
+    let visibleOutlineItemId = outlineItems[0]?.id ?? null;
+
+    for (const outlineItem of outlineItems) {
+      const target = Array.from(
+        panelBody.querySelectorAll<HTMLElement>("[data-chat-outline-id]"),
+      ).find(
+        (element) => element.dataset.chatOutlineId === outlineItem.id,
+      );
+
+      if (!target || target.getBoundingClientRect().top > readingLine) {
+        break;
+      }
+
+      visibleOutlineItemId = outlineItem.id;
+    }
+
+    if (visibleOutlineItemId) {
+      onVisibleOutlineChange(conversation.id, visibleOutlineItemId);
+    }
   });
+
+  useEffect(() => {
+    const panelBody = panelBodyRef.current;
+
+    return () => {
+      if (panelBody) {
+        onScrollPositionChange?.(conversation.id, panelBody.scrollTop);
+      }
+    };
+  }, [conversation.id, onScrollPositionChange]);
 
   useEffect(() => {
     const panelBody = panelBodyRef.current;
@@ -999,20 +1311,46 @@ export default function ChatPanel({
 
   return (
     <article
-      className={isActive ? "chat-panel is-active" : "chat-panel"}
+      className={
+        branchMarginLinks.length
+          ? isActive
+            ? "chat-panel has-branch-margin is-active"
+            : "chat-panel has-branch-margin"
+          : isActive
+            ? "chat-panel is-active"
+            : "chat-panel"
+      }
       onClick={handlePanelClick}
       ref={(element) => registerPanelRef(conversation.id, element)}
     >
       <div className="panel-body" ref={panelBodyRef}>
         {conversation.branchAnchor ? (
-          <section className="branch-context-card">
-            <p className="eyebrow">Branch origin</p>
+          <section
+            className="branch-context-card"
+            ref={(element) =>
+              registerBranchOriginRef?.(conversation.id, element)
+            }
+          >
+            <div className="branch-context-head">
+              <p className="eyebrow">Branch origin</p>
+              {conversation.parentId ? (
+                <button
+                  className="branch-context-back"
+                  onClick={() => onOpenBranch(conversation.parentId!)}
+                  type="button"
+                >
+                  Back to source chat
+                </button>
+              ) : null}
+            </div>
             <blockquote>“{conversation.branchAnchor.quote}”</blockquote>
-            <p>{conversation.branchAnchor.prompt}</p>
+            <p className="branch-context-prompt">
+              {conversation.branchAnchor.prompt}
+            </p>
           </section>
         ) : null}
 
-        <div className="message-list">
+        <div className="message-list" ref={messageListRef}>
           {conversation.messages.length ? (
             <>
               {conversation.messages.map((message) => {
@@ -1025,23 +1363,35 @@ export default function ChatPanel({
                   <section
                     key={message.id}
                     className={`message-row is-${message.role}`}
+                    data-chat-outline-id={
+                      message.role === "user"
+                        ? getMessageOutlineId(message.id)
+                        : undefined
+                    }
+                    tabIndex={message.role === "user" ? -1 : undefined}
                   >
-                    <div className={`message-bubble is-${message.role}`}>
-                      <div className="message-meta">
-                        <span>{message.role}</span>
+                    <div className={`message-with-margin is-${message.role}`}>
+                      <div className={`message-bubble is-${message.role}`}>
+                        <div className="message-meta">
+                          <span>{message.role}</span>
+                        </div>
+                        <MessageContent
+                          anchors={anchors}
+                          conversationId={conversation.id}
+                          isStreaming={
+                            isSubmitting && latestMessage?.id === message.id
+                          }
+                          isTypewriting={Boolean(typingMessageIds[message.id])}
+                          message={message}
+                          onTypewriterProgress={onTypewriterProgress}
+                          onTypewriterComplete={onTypewriterComplete}
+                          onOpenBranch={onOpenBranch}
+                          pendingSelection={pendingSelection}
+                          registerAnchorRef={handleRegisterAnchorRef}
+                          theme={theme}
+                          typingProgressByMessageId={typingProgressByMessageId}
+                        />
                       </div>
-                      <MessageContent
-                        anchors={anchors}
-                        conversationId={conversation.id}
-                        isTypewriting={Boolean(typingMessageIds[message.id])}
-                        message={message}
-                        onTypewriterProgress={onTypewriterProgress}
-                        onTypewriterComplete={onTypewriterComplete}
-                        pendingSelection={pendingSelection}
-                        registerAnchorRef={registerAnchorRef}
-                        theme={theme}
-                        typingProgressByMessageId={typingProgressByMessageId}
-                      />
                     </div>
                   </section>
                 );
@@ -1059,14 +1409,19 @@ export default function ChatPanel({
             </>
           ) : (
             <section className="message-empty-state">
-              <strong>No messages yet.</strong>
+              <strong>What should we explore?</strong>
               <p>
-                Send a message to start the conversation. Once text appears in
-                the thread, you can highlight it to create a branch.
+                Start a conversation, then highlight any response to open a
+                focused branch without losing your place.
               </p>
             </section>
           )}
         </div>
+        <BranchMarginThreads
+          links={branchMarginLinks}
+          onOpenBranch={onOpenBranch}
+          positions={branchMarginPositions}
+        />
       </div>
 
       <form className="composer" onSubmit={handleSubmit}>

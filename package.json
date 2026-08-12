@@ -15,10 +15,13 @@
     "db:stop": "docker compose down",
     "build": "bun run --cwd client build",
     "preview": "bun run --cwd client preview",
-    "start:server": "node server/index.mjs"
+    "start:server": "node server/index.mjs",
+    "test": "bun test"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "pg": "^8.20.0",
-    "stripe": "^20.4.1"
+    "stripe": "^20.4.1",
+    "vercel": "^58.9.4"
   }
 }

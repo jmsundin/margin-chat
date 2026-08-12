@@ -1,0 +1,133 @@
+- generic [ref=e5]:
+  - banner [ref=e6]:
+    - heading "Margin Chat" [level=1] [ref=e8]
+    - region "Pinned main chat tabs" [ref=e10]:
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - button "Launch planning" [ref=e14] [cursor=pointer]:
+            - generic [ref=e15]: Launch planning
+          - generic [ref=e16]:
+            - generic [ref=e17]: 1m ago
+            - button "Unpin Launch planning" [ref=e18] [cursor=pointer]:
+              - img [ref=e19]
+        - generic [ref=e22]:
+          - button "Competitive research with a long title" [ref=e23] [cursor=pointer]:
+            - generic [ref=e24]: Competitive research with a long title
+          - generic [ref=e25]:
+            - generic [ref=e26]: 1m ago
+            - button "Unpin Competitive research with a long title" [ref=e27] [cursor=pointer]:
+              - img [ref=e28]
+        - generic [ref=e31]:
+          - button "Design direction" [ref=e32] [cursor=pointer]:
+            - generic [ref=e33]: Design direction
+          - generic [ref=e34]:
+            - generic [ref=e35]: 1m ago
+            - button "Unpin Design direction" [ref=e36] [cursor=pointer]:
+              - img [ref=e37]
+    - button "Log out" [ref=e41] [cursor=pointer]
+  - button "Close mobile navigation panels" [ref=e129] [cursor=pointer]
+  - main [ref=e42]:
+    - complementary [ref=e130]:
+      - generic [ref=e131]:
+        - group "Main workspace view" [ref=e133]:
+          - button "Open chat panel view" [pressed] [ref=e134] [cursor=pointer]:
+            - img [ref=e135]
+          - button "Open tile view" [ref=e137] [cursor=pointer]:
+            - img [ref=e138]
+          - button "Open graph view" [ref=e143] [cursor=pointer]:
+            - img [ref=e144]
+        - button "Minimize left sidebar" [ref=e151] [cursor=pointer]:
+          - img [ref=e152]
+      - generic [ref=e154]:
+        - button "New chat" [ref=e155] [cursor=pointer]:
+          - img [ref=e156]
+          - generic [ref=e157]: New chat
+        - button "Search chats" [ref=e158] [cursor=pointer]:
+          - img [ref=e159]
+          - generic [ref=e162]: Search chats
+      - generic [ref=e163]:
+        - generic [ref=e164]:
+          - button "Launch planning 3 branches 1m ago" [ref=e165]:
+            - generic [ref=e166]: Launch planning
+            - generic [ref=e167]:
+              - text: 3 branches
+              - generic [ref=e168]: •
+              - text: 1m ago
+          - button "Expand preview for Launch planning" [ref=e169] [cursor=pointer]:
+            - img [ref=e170]
+          - button "Open actions for Launch planning" [ref=e172] [cursor=pointer]:
+            - img [ref=e173]
+        - generic [ref=e177]:
+          - button "Competitive research with a long title 0 branches 1m ago" [ref=e178]:
+            - generic [ref=e179]: Competitive research with a long title
+            - generic [ref=e180]:
+              - text: 0 branches
+              - generic [ref=e181]: •
+              - text: 1m ago
+          - button "Expand preview for Competitive research with a long title" [ref=e182] [cursor=pointer]:
+            - img [ref=e183]
+          - button "Open actions for Competitive research with a long title" [ref=e185] [cursor=pointer]:
+            - img [ref=e186]
+        - generic [ref=e190]:
+          - button "Design direction 0 branches 1m ago" [ref=e191]:
+            - generic [ref=e192]: Design direction
+            - generic [ref=e193]:
+              - text: 0 branches
+              - generic [ref=e194]: •
+              - text: 1m ago
+          - button "Expand preview for Design direction" [ref=e195] [cursor=pointer]:
+            - img [ref=e196]
+          - button "Open actions for Design direction" [ref=e198] [cursor=pointer]:
+            - img [ref=e199]
+      - generic [ref=e203]:
+        - button "Open profile" [ref=e204] [cursor=pointer]:
+          - img [ref=e205]
+        - button "Open settings" [ref=e208] [cursor=pointer]:
+          - img [ref=e209]
+        - button "Switch to light theme" [ref=e212] [cursor=pointer]:
+          - img [ref=e213]
+    - generic [ref=e43]:
+      - generic [ref=e44]:
+        - generic [ref=e45]:
+          - paragraph [ref=e46]: Main chat
+          - heading "Launch planning" [level=2] [ref=e47]
+          - paragraph [ref=e48]: 3 direct branches ready to review
+        - toolbar "Mobile workspace actions" [ref=e49]:
+          - button "Chats 3" [active] [pressed] [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]: Chats
+            - strong [ref=e52]: "3"
+          - button "Branches 3" [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]: Branches
+            - strong [ref=e55]: "3"
+          - button "Search" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]: Search
+          - button "New chat" [ref=e58] [cursor=pointer]:
+            - generic [ref=e59]: New chat
+      - article [ref=e62]:
+        - generic [ref=e64]:
+          - generic [ref=e66]:
+            - generic [ref=e67]: user
+            - generic [ref=e68]: Map the mobile launch priorities for this week.
+          - generic [ref=e70]:
+            - generic [ref=e71]: assistant
+            - paragraph [ref=e73]:
+              - mark [ref=e74]: Focus on the active conversation first, keep na
+              - text: vigation available but secondary, and make composing feel stable while the user scrolls through recent context.
+          - generic [ref=e76]:
+            - generic [ref=e77]: user
+            - generic [ref=e78]: What should I polish next?
+          - generic [ref=e80]:
+            - generic [ref=e81]: assistant
+            - paragraph [ref=e83]:
+              - mark [ref=e84]: The next polish pass should reduce header height, keep the composer easy to reac
+              - text: h
+              - mark [ref=e85]: ", and make secondary surfaces feel like deliberate sheets instead of another de"
+              - text: sktop column.
+        - generic [ref=e87]:
+          - textbox "Reply in this conversation" [ref=e90]:
+            - /placeholder: Ask anything
+          - 'button "Choose AI model. Current selection: Smart routing" [ref=e93] [cursor=pointer]':
+            - generic [ref=e94]: AI Model
+            - generic [ref=e95]: Smart routing
+          - button "Send message" [disabled] [ref=e97]:
+            - img [ref=e98]

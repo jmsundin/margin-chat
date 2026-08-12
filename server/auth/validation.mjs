@@ -44,6 +44,35 @@ export function normalizeProfileUpdatePayload(input) {
   };
 }
 
+export function normalizePasswordResetRequestPayload(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw createStatusError(400, "Password reset payload must be a JSON object.");
+  }
+
+  return {
+    email: normalizeEmail(input.email),
+  };
+}
+
+export function normalizePasswordResetConfirmPayload(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw createStatusError(400, "Password reset payload must be a JSON object.");
+  }
+
+  if (typeof input.token !== "string" || input.token.length < 32 || input.token.length > 500) {
+    throw createStatusError(400, "Password reset link is invalid or expired.");
+  }
+
+  return {
+    token: input.token,
+    password: normalizePassword(input.password, {
+      maxLength: 200,
+      message: "Password must be at least 8 characters.",
+      minLength: 8,
+    }),
+  };
+}
+
 function normalizeDisplayName(value) {
   if (typeof value !== "string") {
     throw createStatusError(400, "Display name is required.");

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createStatusError } from "../lib/errors.mjs";
 import {
   createAuthSessionCookie,
@@ -6,8 +6,11 @@ import {
   readAuthSessionId,
 } from "./cookies.mjs";
 import { hashPassword, verifyPassword } from "./passwords.mjs";
+import { sendPasswordResetEmail } from "./passwordResetEmail.mjs";
 import {
   normalizeLoginPayload,
+  normalizePasswordResetConfirmPayload,
+  normalizePasswordResetRequestPayload,
   normalizeProfileUpdatePayload,
   normalizeSignupPayload,
 } from "./validation.mjs";
@@ -20,7 +23,11 @@ function resolveUserRole(email) {
     : "member";
 }
 
-export function createAuthService({ database, runtimeConfig }) {
+export function createAuthService({ database, env = process.env, runtimeConfig }) {
+  function hashResetToken(token) {
+    return createHash("sha256").update(token).digest("hex");
+  }
+
   function getSessionExpiryDate() {
     return new Date(Date.now() + runtimeConfig.authSessionTtlMs);
   }
@@ -75,6 +82,59 @@ export function createAuthService({ database, runtimeConfig }) {
         role: user.role,
       },
     };
+  }
+
+  async function requestPasswordReset(payload) {
+    const input = normalizePasswordResetRequestPayload(payload);
+    const user = await database.findUserForLogin(input.email);
+
+    if (!user) {
+      return { ok: true };
+    }
+
+    const token = randomBytes(32).toString("base64url");
+
+    const tokenHash = hashResetToken(token);
+
+    await database.createPasswordResetToken({
+      expiresAt: new Date(Date.now() + runtimeConfig.passwordResetTtlMs),
+      tokenHash,
+      userId: user.id,
+    });
+
+    if (env.NODE_ENV === "production") {
+      try {
+        const delivery = await sendPasswordResetEmail({
+          email: user.email,
+          env,
+          token,
+          tokenHash,
+        });
+
+        if (!delivery.delivered) {
+          console.error(delivery.reason);
+        }
+      } catch (error) {
+        console.error("Unable to send password reset email.", error);
+      }
+    }
+
+    return {
+      ok: true,
+      ...(env.NODE_ENV === "production" ? {} : { resetToken: token }),
+    };
+  }
+
+  async function resetPassword(payload) {
+    const input = normalizePasswordResetConfirmPayload(payload);
+    const passwordHash = await hashPassword(input.password);
+
+    await database.resetPasswordWithToken({
+      passwordHash,
+      tokenHash: hashResetToken(input.token),
+    });
+
+    return { ok: true };
   }
 
   async function getAuthContext(request) {
@@ -136,6 +196,8 @@ export function createAuthService({ database, runtimeConfig }) {
     getAuthContext,
     login,
     logout,
+    requestPasswordReset,
+    resetPassword,
     signup,
     updateProfile,
   };

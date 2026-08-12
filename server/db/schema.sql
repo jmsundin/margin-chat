@@ -159,6 +159,19 @@ create table if not exists marginchat_user_sessions (
   last_seen_at timestamptz not null default now()
 );
 
+create table if not exists marginchat_password_reset_tokens (
+  token_hash text primary key,
+  user_id text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists marginchat_password_reset_tokens_user_id_idx
+  on marginchat_password_reset_tokens (user_id);
+
+create index if not exists marginchat_password_reset_tokens_expires_at_idx
+  on marginchat_password_reset_tokens (expires_at);
+
 alter table marginchat_user_sessions
   drop constraint if exists auth_sessions_user_id_fkey;
 
@@ -210,6 +223,14 @@ alter table marginchat_app_sessions
 alter table marginchat_app_sessions
   add column if not exists default_model_id text;
 
+-- Remove paired service/model constraints before normalizing either column.
+-- Existing constraints can otherwise reject the migration's intermediate rows.
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_default_service_id_check;
+
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_default_model_id_check;
+
 update marginchat_app_sessions
 set default_service_id = null
 where
@@ -233,11 +254,11 @@ where default_service_id is null and default_model_id is not null;
 update marginchat_app_sessions
 set default_model_id = case default_service_id
   when 'backend-services' then 'smart-routing'
-  when 'openai-api' then 'gpt-5.4'
-  when 'openai-agent' then 'gpt-5.4'
+  when 'openai-api' then 'gpt-5.6'
+  when 'openai-agent' then 'gpt-5.6'
   when 'gemini-api' then 'gemini-3.1-pro-preview'
   when 'huggingface-api' then 'openai/gpt-oss-120b'
-  when 'xai-api' then 'grok-4.20-beta-latest-non-reasoning'
+  when 'xai-api' then 'grok-4.5'
   else null
 end
 where
@@ -249,34 +270,31 @@ where
     or (
       default_service_id = 'openai-api'
       and default_model_id not in (
-        'gpt-5.4',
-        'gpt-5.4-pro',
-        'gpt-5-chat-latest',
-        'gpt-5.4-mini',
-        'gpt-5.4-nano'
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
       )
     )
     or (
       default_service_id = 'openai-agent'
       and default_model_id not in (
-        'gpt-5.4',
-        'gpt-5.4-pro',
-        'gpt-5-chat-latest',
-        'gpt-5.4-mini',
-        'gpt-5.4-nano'
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
       )
     )
     or (
       default_service_id = 'gemini-api'
       and default_model_id not in (
         'gemini-3.1-pro-preview',
-        'gemini-3-flash-preview',
-        'gemini-3.1-flash-lite-preview'
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite'
       )
     )
     or (
       default_service_id = 'huggingface-api'
       and default_model_id not in (
+        'moonshotai/Kimi-K3',
         'openai/gpt-oss-120b',
         'deepseek-ai/DeepSeek-R1',
         'Qwen/Qwen3-Coder-480B-A35B-Instruct'
@@ -285,12 +303,8 @@ where
     or (
       default_service_id = 'xai-api'
       and default_model_id not in (
-        'grok-4.20-beta-latest-non-reasoning',
-        'grok-4',
-        'grok-4-fast',
-        'grok-4-fast-non-reasoning',
-        'grok-4-1-fast-reasoning',
-        'grok-4-1-fast-non-reasoning'
+        'grok-4.5',
+        'grok-4.3'
       )
     )
   );
@@ -300,9 +314,6 @@ alter table marginchat_app_sessions
 
 alter table marginchat_app_sessions
   alter column default_model_id set default 'smart-routing';
-
-alter table marginchat_app_sessions
-  drop constraint if exists app_sessions_default_service_id_check;
 
 alter table marginchat_app_sessions
   add constraint app_sessions_default_service_id_check check (
@@ -327,34 +338,31 @@ alter table marginchat_app_sessions
     or (
       default_service_id = 'openai-api'
       and default_model_id in (
-        'gpt-5.4',
-        'gpt-5.4-pro',
-        'gpt-5-chat-latest',
-        'gpt-5.4-mini',
-        'gpt-5.4-nano'
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
       )
     )
     or (
       default_service_id = 'openai-agent'
       and default_model_id in (
-        'gpt-5.4',
-        'gpt-5.4-pro',
-        'gpt-5-chat-latest',
-        'gpt-5.4-mini',
-        'gpt-5.4-nano'
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
       )
     )
     or (
       default_service_id = 'gemini-api'
       and default_model_id in (
         'gemini-3.1-pro-preview',
-        'gemini-3-flash-preview',
-        'gemini-3.1-flash-lite-preview'
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite'
       )
     )
     or (
       default_service_id = 'huggingface-api'
       and default_model_id in (
+        'moonshotai/Kimi-K3',
         'openai/gpt-oss-120b',
         'deepseek-ai/DeepSeek-R1',
         'Qwen/Qwen3-Coder-480B-A35B-Instruct'
@@ -363,12 +371,8 @@ alter table marginchat_app_sessions
     or (
       default_service_id = 'xai-api'
       and default_model_id in (
-        'grok-4.20-beta-latest-non-reasoning',
-        'grok-4',
-        'grok-4-fast',
-        'grok-4-fast-non-reasoning',
-        'grok-4-1-fast-reasoning',
-        'grok-4-1-fast-non-reasoning'
+        'grok-4.5',
+        'grok-4.3'
       )
     )
   );
@@ -414,41 +418,57 @@ set model_id = case
   when service_id = 'gemini-api' and model_id = 'gemini-3.1-pro-preview-03-25'
     then 'gemini-3.1-pro-preview'
   when service_id = 'gemini-api' and model_id = 'gemini-3-flash-preview-06-17'
-    then 'gemini-3-flash-preview'
+    then 'gemini-3.5-flash'
   when service_id = 'gemini-api' and model_id = 'gemini-3.1-flash-lite-preview-06-17'
-    then 'gemini-3.1-flash-lite-preview'
+    then 'gemini-3.1-flash-lite'
   when service_id = 'openai-api' and model_id = 'gpt-5.2'
-    then 'gpt-5.4'
+    then 'gpt-5.6'
   when service_id = 'openai-api' and model_id = 'gpt-5.2-pro'
-    then 'gpt-5.4-pro'
+    then 'gpt-5.6-terra'
   when service_id = 'openai-api' and model_id = 'gpt-5-mini'
-    then 'gpt-5.4-mini'
-  when service_id = 'backend-services' and model_id = 'smart-routing'
-    then 'smart-routing'
-  when service_id = 'openai-api' and model_id in ('gpt-5.4', 'gpt-5.4-pro', 'gpt-5-chat-latest', 'gpt-5.4-mini', 'gpt-5.4-nano')
-    then model_id
-  when service_id = 'openai-agent' and model_id in ('gpt-5.4', 'gpt-5.4-pro', 'gpt-5-chat-latest', 'gpt-5.4-mini', 'gpt-5.4-nano')
-    then model_id
-  when service_id = 'gemini-api' and model_id in ('gemini-3.1-pro-preview', 'gemini-3-flash-preview', 'gemini-3.1-flash-lite-preview')
-    then model_id
-  when service_id = 'huggingface-api' and model_id in ('openai/gpt-oss-120b', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen3-Coder-480B-A35B-Instruct')
-    then model_id
+    then 'gpt-5.6-luna'
+  when service_id in ('openai-api', 'openai-agent') and model_id = 'gpt-5.4'
+    then 'gpt-5.6'
+  when service_id in ('openai-api', 'openai-agent') and model_id in ('gpt-5.4-pro', 'gpt-5-chat-latest')
+    then 'gpt-5.6-terra'
+  when service_id in ('openai-api', 'openai-agent') and model_id in ('gpt-5.4-mini', 'gpt-5.4-nano')
+    then 'gpt-5.6-luna'
+  when service_id = 'gemini-api' and model_id = 'gemini-3-flash-preview'
+    then 'gemini-3.5-flash'
+  when service_id = 'gemini-api' and model_id = 'gemini-3.1-flash-lite-preview'
+    then 'gemini-3.1-flash-lite'
+  when service_id = 'xai-api' and model_id = 'grok-4.20-beta-latest-non-reasoning'
+    then 'grok-4.5'
   when service_id = 'xai-api' and model_id in (
-    'grok-4.20-beta-latest-non-reasoning',
     'grok-4',
     'grok-4-fast',
     'grok-4-fast-non-reasoning',
     'grok-4-1-fast-reasoning',
     'grok-4-1-fast-non-reasoning'
   )
+    then 'grok-4.3'
+  when service_id = 'backend-services' and model_id = 'smart-routing'
+    then 'smart-routing'
+  when service_id = 'openai-api' and model_id in ('gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna')
+    then model_id
+  when service_id = 'openai-agent' and model_id in ('gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna')
+    then model_id
+  when service_id = 'gemini-api' and model_id in ('gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite')
+    then model_id
+  when service_id = 'huggingface-api' and model_id in ('moonshotai/Kimi-K3', 'openai/gpt-oss-120b', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen3-Coder-480B-A35B-Instruct')
+    then model_id
+  when service_id = 'xai-api' and model_id in (
+    'grok-4.5',
+    'grok-4.3'
+  )
     then model_id
   else case service_id
   when 'backend-services' then 'smart-routing'
-  when 'openai-api' then 'gpt-5.4'
-  when 'openai-agent' then 'gpt-5.4'
+  when 'openai-api' then 'gpt-5.6'
+  when 'openai-agent' then 'gpt-5.6'
   when 'gemini-api' then 'gemini-3.1-pro-preview'
   when 'huggingface-api' then 'openai/gpt-oss-120b'
-  when 'xai-api' then 'grok-4.20-beta-latest-non-reasoning'
+  when 'xai-api' then 'grok-4.5'
   else 'smart-routing'
 end
 end
@@ -459,34 +479,31 @@ where
   or (
     service_id = 'openai-api'
     and model_id not in (
-      'gpt-5.4',
-      'gpt-5.4-pro',
-      'gpt-5-chat-latest',
-      'gpt-5.4-mini',
-      'gpt-5.4-nano'
+      'gpt-5.6',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
     )
   )
   or (
     service_id = 'openai-agent'
     and model_id not in (
-      'gpt-5.4',
-      'gpt-5.4-pro',
-      'gpt-5-chat-latest',
-      'gpt-5.4-mini',
-      'gpt-5.4-nano'
+      'gpt-5.6',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
     )
   )
   or (
     service_id = 'gemini-api'
     and model_id not in (
       'gemini-3.1-pro-preview',
-      'gemini-3-flash-preview',
-      'gemini-3.1-flash-lite-preview'
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite'
     )
   )
   or (
     service_id = 'huggingface-api'
     and model_id not in (
+      'moonshotai/Kimi-K3',
       'openai/gpt-oss-120b',
       'deepseek-ai/DeepSeek-R1',
       'Qwen/Qwen3-Coder-480B-A35B-Instruct'
@@ -495,12 +512,8 @@ where
   or (
     service_id = 'xai-api'
     and model_id not in (
-      'grok-4.20-beta-latest-non-reasoning',
-      'grok-4',
-      'grok-4-fast',
-      'grok-4-fast-non-reasoning',
-      'grok-4-1-fast-reasoning',
-      'grok-4-1-fast-non-reasoning'
+      'grok-4.5',
+      'grok-4.3'
     )
   );
 
@@ -516,34 +529,31 @@ alter table marginchat_conversations
     or (
       service_id = 'openai-api'
       and model_id in (
-        'gpt-5.4',
-        'gpt-5.4-pro',
-        'gpt-5-chat-latest',
-        'gpt-5.4-mini',
-        'gpt-5.4-nano'
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
       )
     )
     or (
       service_id = 'openai-agent'
       and model_id in (
-        'gpt-5.4',
-        'gpt-5.4-pro',
-        'gpt-5-chat-latest',
-        'gpt-5.4-mini',
-        'gpt-5.4-nano'
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
       )
     )
     or (
       service_id = 'gemini-api'
       and model_id in (
         'gemini-3.1-pro-preview',
-        'gemini-3-flash-preview',
-        'gemini-3.1-flash-lite-preview'
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite'
       )
     )
     or (
       service_id = 'huggingface-api'
       and model_id in (
+        'moonshotai/Kimi-K3',
         'openai/gpt-oss-120b',
         'deepseek-ai/DeepSeek-R1',
         'Qwen/Qwen3-Coder-480B-A35B-Instruct'
@@ -552,12 +562,8 @@ alter table marginchat_conversations
     or (
       service_id = 'xai-api'
       and model_id in (
-        'grok-4.20-beta-latest-non-reasoning',
-        'grok-4',
-        'grok-4-fast',
-        'grok-4-fast-non-reasoning',
-        'grok-4-1-fast-reasoning',
-        'grok-4-1-fast-non-reasoning'
+        'grok-4.5',
+        'grok-4.3'
       )
     )
   );

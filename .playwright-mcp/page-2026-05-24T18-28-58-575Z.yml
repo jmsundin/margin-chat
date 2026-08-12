@@ -1,0 +1,46 @@
+- generic [ref=e5]:
+  - generic [ref=e6]:
+    - paragraph [ref=e7]: Margin Chat
+    - heading "Bring every branch of the conversation into one workspace." [level=1] [ref=e8]
+    - paragraph [ref=e9]: Sign in to keep chats private to your account, pick up where you left off, and branch ideas without leaking threads across users.
+    - generic [ref=e10]:
+      - article [ref=e11]:
+        - generic [ref=e12]: Protected
+        - strong [ref=e13]: Each workspace is isolated per account.
+        - paragraph [ref=e14]: Conversations, pinned threads, and future sessions stay scoped to the person who owns them.
+      - article [ref=e15]:
+        - generic [ref=e16]: Persistent
+        - strong [ref=e17]: Server-backed history with local cache fallback.
+        - paragraph [ref=e18]: Your layout and thread graph come back after refresh without relying on a shared browser state.
+      - article [ref=e19]:
+        - generic [ref=e20]: Branchable
+        - strong [ref=e21]: Highlight, fork, and compare lines of thought.
+        - paragraph [ref=e22]: Keep the main thread moving while side explorations remain tied to the original message context.
+  - region "Authentication" [ref=e23]:
+    - generic [ref=e24]:
+      - generic [ref=e25]:
+        - paragraph [ref=e26]: Welcome
+        - heading "Create your workspace" [level=2] [ref=e27]
+      - button "Light theme" [ref=e28] [cursor=pointer]
+    - tablist "Auth mode" [ref=e29]:
+      - button "Sign up" [ref=e30] [cursor=pointer]
+      - button "Log in" [ref=e31] [cursor=pointer]
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - generic [ref=e34]: Name
+        - textbox "Name" [ref=e35]:
+          - /placeholder: Ada Lovelace
+      - generic [ref=e36]:
+        - generic [ref=e37]: Email
+        - textbox "Email" [ref=e38]:
+          - /placeholder: you@example.com
+      - generic [ref=e39]:
+        - generic [ref=e40]: Password
+        - textbox "Password" [ref=e41]:
+          - /placeholder: At least 8 characters
+      - generic [ref=e42]:
+        - generic [ref=e43]: Confirm password
+        - textbox "Confirm password" [ref=e44]:
+          - /placeholder: Repeat your password
+      - paragraph [ref=e45]: Session check failed.
+      - button "Create account" [ref=e46] [cursor=pointer]

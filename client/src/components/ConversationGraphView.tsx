@@ -1568,6 +1568,7 @@ export default function ConversationGraphView({
                   }
                   onDraftChange={(value) => onDraftChange(conversation.id, value)}
                   onModelChange={onModelChange}
+                  onOpenBranch={onActivateConversation}
                   onStopTypewriter={onStopTypewriter}
                   onSubmit={onSubmit}
                   onTypewriterComplete={onTypewriterComplete}

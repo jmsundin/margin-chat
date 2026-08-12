@@ -472,7 +472,7 @@ export default function ServicePickerModal({
           {!hasVisibleContent ? (
             <div className="service-picker-empty">
               <strong>No models matched.</strong>
-              <p>Try GPT, Gemini, DeepSeek, Qwen, or the provider name.</p>
+              <p>Try GPT, Gemini, Kimi, DeepSeek, Qwen, or the provider name.</p>
             </div>
           ) : null}
         </div>

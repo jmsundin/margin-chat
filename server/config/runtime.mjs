@@ -1,7 +1,14 @@
-import { getDefaultModelIdForService } from "../lib/backendModels.mjs";
+import {
+  getDefaultModelIdForService,
+  normalizeBackendModelId,
+} from "../lib/backendModels.mjs";
 
 export function createRuntimeConfig(env) {
   const authSessionDays = parsePositiveInteger(env.AUTH_SESSION_DAYS, 30);
+  const passwordResetMinutes = parsePositiveInteger(
+    env.PASSWORD_RESET_MINUTES,
+    60,
+  );
 
   return {
     authSessionTtlMs: authSessionDays * 24 * 60 * 60 * 1000,
@@ -9,20 +16,19 @@ export function createRuntimeConfig(env) {
     defaultBackendProvider: normalizeBackendProvider(
       env.DEFAULT_BACKEND_PROVIDER,
     ),
-    geminiModel:
-      env.GEMINI_MODEL ?? getDefaultModelIdForService("gemini-api"),
+    geminiModel: normalizeBackendModelId("gemini-api", env.GEMINI_MODEL),
     host: env.HOST ?? "127.0.0.1",
     huggingFaceModel:
       env.HUGGINGFACE_MODEL ??
       env.HF_MODEL ??
       getDefaultModelIdForService("huggingface-api"),
-    openaiModel:
-      env.OPENAI_MODEL ?? getDefaultModelIdForService("openai-api"),
+    openaiModel: normalizeBackendModelId("openai-api", env.OPENAI_MODEL),
+    passwordResetTtlMs: passwordResetMinutes * 60 * 1000,
     secureAuthCookies: parseBoolean(
       env.SECURE_AUTH_COOKIES,
       env.NODE_ENV === "production",
     ),
-    xaiModel: env.XAI_MODEL ?? getDefaultModelIdForService("xai-api"),
+    xaiModel: normalizeBackendModelId("xai-api", env.XAI_MODEL),
     port: parsePort(env.PORT ?? env.BACKEND_PORT, 8787),
   };
 }

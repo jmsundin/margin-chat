@@ -6,6 +6,7 @@ import {
   type SetStateAction,
   useDeferredValue,
   useEffect,
+  useEffectEvent,
   useLayoutEffect,
   useRef,
   useState,
@@ -16,8 +17,9 @@ import AuthLanding from "./components/AuthLanding";
 import BillingGate from "./components/BillingGate";
 import BranchRail from "./components/BranchRail";
 import ChatPanel from "./components/ChatPanel";
-import ConversationGraphView from "./components/ConversationGraphView";
 import ConnectorOverlay from "./components/ConnectorOverlay";
+import ConversationTreeNode from "./components/ConversationTreeNode";
+import ConversationGraphView from "./components/ConversationGraphView";
 import MainChatTileView from "./components/MainChatTileView";
 import PinnedThreadTabs from "./components/PinnedThreadTabs";
 import ProfileModal from "./components/ProfileModal";
@@ -30,8 +32,11 @@ import {
   persistStoredState,
   requestAuthSession,
   requestChatReply,
+  requestChatTitle,
   requestLogin,
   requestLogout,
+  requestPasswordReset,
+  requestPasswordResetConfirm,
   requestSignup,
   requestStoredState,
   requestUpdateProfile,
@@ -59,10 +64,14 @@ import {
 import {
   buildConversationTitle,
   excerpt,
+  getBranchNavigation,
   getConversationPath,
   getConversationRootId,
+  getConversationTreeLanes,
+  getConversationTraversalOrder,
   getRootConversations,
 } from "./lib/tree";
+import { buildChatOutline } from "./lib/chatOutline";
 import { categorizeThread, getThreadCategoryLabel } from "./lib/threadCategories";
 import {
   DEFAULT_MAIN_CHAT_TITLE,
@@ -98,7 +107,24 @@ const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
 const CHAT_PANEL_MAX_WIDTH_PX = 980;
 const CHAT_PANEL_MIN_WIDTH_PX = 320;
 const CHAT_PANEL_VIEWPORT_MARGIN_PX = 180;
+const CHAT_SCROLL_SELECTION_DELAY_MS = 140;
 const MOBILE_PANEL_RESIZE_BREAKPOINT_PX = 900;
+
+function normalizeWheelDelta(
+  delta: number,
+  deltaMode: number,
+  pageSize: number,
+) {
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) {
+    return delta * 16;
+  }
+
+  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) {
+    return delta * pageSize;
+  }
+
+  return delta;
+}
 const FALLBACK_TOOLTIP_SIZE = {
   height: 208,
   width: 360,
@@ -112,6 +138,7 @@ type MainThreadDragMode =
   | "pinning-main-thread"
   | "reordering-pinned-tab";
 type PinnedTabsLayoutMode = "strip" | "tray";
+type ChatTraversalDirection = "left" | "right";
 
 function SendIcon() {
   return (
@@ -131,8 +158,53 @@ function SendIcon() {
   );
 }
 
+function CloseIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="selection-close-icon"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeWidth="1.9"
+      viewBox="0 0 24 24"
+    >
+      <path d="m7 7 10 10" />
+      <path d="m17 7-10 10" />
+    </svg>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="workspace-menu-icon"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+    >
+      <path d="M5 7h14" />
+      <path d="M5 12h14" />
+      <path d="M5 17h14" />
+    </svg>
+  );
+}
+
 function getNextTheme(theme: ThemeMode): ThemeMode {
   return theme === "dark" ? "light" : "dark";
+}
+
+function getIsMobileViewport() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return window.matchMedia(
+    `(max-width: ${MOBILE_PANEL_RESIZE_BREAKPOINT_PX}px)`,
+  ).matches;
 }
 
 function resolvePersistedDefaultSelection(args: {
@@ -248,7 +320,7 @@ function hydratePersistedState(input: unknown): AppState | null {
         parsed.pinnedThreadIds,
         conversations,
       ),
-      railOpen: Boolean(parsed.railOpen),
+      railOpen: false,
       rootId: nextRootId,
     };
   } catch {
@@ -316,10 +388,14 @@ function loadInitialTheme(): ThemeMode {
       return storedValue;
     }
   } catch {
-    return "dark";
+    return window.matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
   }
 
-  return "dark";
+  return window.matchMedia("(prefers-color-scheme: light)").matches
+    ? "light"
+    : "dark";
 }
 
 function loadInitialPinnedTabsLayoutMode(): PinnedTabsLayoutMode {
@@ -345,6 +421,10 @@ function loadInitialPinnedTabsLayoutMode(): PinnedTabsLayoutMode {
 function loadInitialLeftSidebarOpen(): boolean {
   if (typeof window === "undefined") {
     return true;
+  }
+
+  if (getIsMobileViewport()) {
+    return false;
   }
 
   try {
@@ -546,9 +626,9 @@ function getLineRect(element: Element | null): DOMRect | null {
     return null;
   }
 
-  const clientRect = Array.from(element.getClientRects()).find(
-    (rect) => rect.width > 0 && rect.height > 0,
-  );
+  const clientRect = Array.from(element.getClientRects())
+    .filter((rect) => rect.width > 0 && rect.height > 0)
+    .at(-1);
 
   if (clientRect) {
     return clientRect;
@@ -1028,6 +1108,9 @@ function WorkspaceApp({
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
   const [leftSidebarOpen, setLeftSidebarOpen] =
     useState(INITIAL_LEFT_SIDEBAR_OPEN);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    getIsMobileViewport(),
+  );
   const [chatPanelWidth, setChatPanelWidth] = useState(INITIAL_CHAT_PANEL_WIDTH);
   const [isResizingChatPanel, setIsResizingChatPanel] = useState(false);
   const [resizingChatPanelConversationId, setResizingChatPanelConversationId] =
@@ -1050,6 +1133,9 @@ function WorkspaceApp({
   const [profileSaving, setProfileSaving] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeOutlineItemId, setActiveOutlineItemId] = useState<string | null>(
+    null,
+  );
   const [toolbarSize, setToolbarSize] = useState(FALLBACK_TOOLTIP_SIZE);
   const [connections, setConnections] = useState<ConnectionLine[]>([]);
   const [connectorOcclusionRects, setConnectorOcclusionRects] = useState<
@@ -1061,9 +1147,17 @@ function WorkspaceApp({
   const toolbarRef = useRef<HTMLFormElement>(null);
   const panelRefs = useRef<Record<string, HTMLElement | null>>({});
   const anchorRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const branchOriginRefs = useRef<Record<string, HTMLElement | null>>({});
   const composerSurfaceRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const treeNodeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const panelScrollPositionsRef = useRef<Record<string, number>>({});
+  const chatScrollSelectionTimerRef = useRef(0);
+  const suppressNextChatAutoCenterRef = useRef(false);
+  const pendingTreeLaneFocusRef = useRef<string | null>(null);
   const typingProgressByMessageIdRef = useRef<Record<string, number>>({});
+  const pendingPersistStateRef = useRef<AppState | null>(null);
+  const persistenceInFlightRef = useRef(false);
   const selectionSyncFrameRef = useRef(0);
   const panelResizeStateRef = useRef<{
     conversationId: string;
@@ -1075,13 +1169,26 @@ function WorkspaceApp({
   const activeConversation =
     state.conversations[state.activeConversationId] ??
     state.conversations[state.rootId];
-  const path = getConversationPath(state.conversations, activeConversation.id);
-  const activeRootConversation = path[0] ?? activeConversation;
-  const focusedBranches = activeConversation.childIds
-    .map((conversationId) => state.conversations[conversationId])
-    .filter((conversation): conversation is Conversation => Boolean(conversation))
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const {
+    children: focusedBranches,
+    parent: parentConversation,
+    path,
+    siblings: siblingBranches,
+  } = getBranchNavigation(state.conversations, activeConversation.id);
   const isMainView = activeConversation.parentId === null;
+  const activeRootConversation = path[0] ?? activeConversation;
+  const visibleConversationStrip = getConversationTraversalOrder(
+    state.conversations,
+    activeRootConversation.id,
+  );
+  const conversationTreeLanes = getConversationTreeLanes(
+    state.conversations,
+    activeConversation.id,
+  );
+  const currentChatOutline = buildChatOutline(activeConversation);
+  const currentChatOutlineKey = currentChatOutline
+    .map((item) => item.id)
+    .join("|");
   const isTileView = mainViewMode === "tiles";
   const isGraphView = mainViewMode === "graph";
   const threadSummaries = buildThreadSummaries(state.conversations);
@@ -1091,10 +1198,95 @@ function WorkspaceApp({
   const pinnedThreadSummaries = state.pinnedThreadIds
     .map((threadId) => threadSummaryById.get(threadId))
     .filter((thread): thread is ThreadSummary => Boolean(thread));
+  const effectivePinnedTabsLayoutMode = isMobileViewport
+    ? "strip"
+    : pinnedTabsLayoutMode;
+  const nearbyBranchCount = siblingBranches.length + focusedBranches.length;
+  const branchNavigationCount =
+    nearbyBranchCount + Math.max(path.length - 1, 0);
+  const branchAccessEnabled = branchNavigationCount > 0;
+  const mobileChatContextCopy = isMainView
+    ? focusedBranches.length
+      ? `${focusedBranches.length} direct ${
+          focusedBranches.length === 1 ? "branch" : "branches"
+        } ready to review`
+      : "Focused on the main thread with quick actions nearby"
+    : `Branching from ${parentConversation?.title ?? activeRootConversation.title}`;
+  const mobilePanelsOpen =
+    isMobileViewport &&
+    !isTileView &&
+    !isGraphView &&
+    leftSidebarOpen;
   const searchResults = buildSearchResults(
     state.conversations,
     deferredSearchQuery,
   );
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(
+      `(max-width: ${MOBILE_PANEL_RESIZE_BREAKPOINT_PX}px)`,
+    );
+
+    const syncViewport = () => {
+      setIsMobileViewport(mediaQuery.matches);
+    };
+
+    syncViewport();
+    mediaQuery.addEventListener("change", syncViewport);
+
+    return () => {
+      mediaQuery.removeEventListener("change", syncViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMobileViewport || storageMode === "loading") {
+      return;
+    }
+
+    setLeftSidebarOpen(false);
+    setState((current) =>
+      current.railOpen
+        ? {
+            ...current,
+            railOpen: false,
+          }
+        : current,
+    );
+  }, [isMobileViewport, storageMode]);
+
+  useEffect(() => {
+    if (!mobilePanelsOpen) {
+      return undefined;
+    }
+
+    function closeMobilePanels(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      setLeftSidebarOpen(false);
+      setState((current) =>
+        current.railOpen ? { ...current, railOpen: false } : current,
+      );
+    }
+
+    document.addEventListener("keydown", closeMobilePanels);
+
+    return () => {
+      document.removeEventListener("keydown", closeMobilePanels);
+    };
+  }, [mobilePanelsOpen]);
+
+  useEffect(() => {
+    if (branchAccessEnabled || !state.railOpen) {
+      return;
+    }
+
+    setState((current) =>
+      current.railOpen ? { ...current, railOpen: false } : current,
+    );
+  }, [branchAccessEnabled, state.railOpen]);
 
   useEffect(() => {
     setRecentModelSelections(
@@ -1301,27 +1493,53 @@ function WorkspaceApp({
     };
   }, []);
 
+  const persistLatestState = useEffectEvent(async () => {
+    if (persistenceInFlightRef.current) {
+      return;
+    }
+
+    persistenceInFlightRef.current = true;
+
+    try {
+      while (pendingPersistStateRef.current) {
+        const nextState = pendingPersistStateRef.current;
+        pendingPersistStateRef.current = null;
+
+        try {
+          await persistStoredState(nextState);
+        } catch (error) {
+          pendingPersistStateRef.current = null;
+
+          if (isApiErrorStatus(error, 401)) {
+            onAuthExpired();
+            return;
+          }
+
+          console.warn("Unable to persist app state to Postgres.", error);
+          setStorageMode("fallback");
+          return;
+        }
+      }
+    } finally {
+      persistenceInFlightRef.current = false;
+    }
+  });
+
   useEffect(() => {
     if (storageMode !== "server") {
+      pendingPersistStateRef.current = null;
       return undefined;
     }
 
     const timeoutId = window.setTimeout(() => {
-      void persistStoredState(state).catch((error) => {
-        if (isApiErrorStatus(error, 401)) {
-          onAuthExpired();
-          return;
-        }
-
-        console.warn("Unable to persist app state to Postgres.", error);
-        setStorageMode("fallback");
-      });
+      pendingPersistStateRef.current = state;
+      void persistLatestState();
     }, 240);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [state, storageMode]);
+  }, [persistLatestState, state, storageMode]);
 
   useEffect(() => {
     if (mainThreadDragMode === "idle") {
@@ -1354,6 +1572,11 @@ function WorkspaceApp({
       return;
     }
 
+    if (suppressNextChatAutoCenterRef.current) {
+      suppressNextChatAutoCenterRef.current = false;
+      return;
+    }
+
     const panel = panelRefs.current[state.activeConversationId];
     panel?.scrollIntoView({
       behavior: "smooth",
@@ -1361,6 +1584,158 @@ function WorkspaceApp({
       inline: "center",
     });
   }, [mainViewMode, state.activeConversationId]);
+
+  useLayoutEffect(() => {
+    const parentConversationId = pendingTreeLaneFocusRef.current;
+    const canvas = canvasRef.current;
+
+    if (!parentConversationId || !canvas) {
+      return undefined;
+    }
+
+    const targetLane = Array.from(
+      canvas.querySelectorAll<HTMLElement>("[data-tree-parent-id]"),
+    ).find(
+      (lane) => lane.dataset.treeParentId === parentConversationId,
+    );
+
+    if (!targetLane) {
+      return undefined;
+    }
+
+    pendingTreeLaneFocusRef.current = null;
+    const frameId = window.requestAnimationFrame(() => {
+      targetLane.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [state.activeConversationId]);
+
+  useEffect(() => {
+    setActiveOutlineItemId((current) =>
+      current && currentChatOutline.some((item) => item.id === current)
+        ? current
+        : currentChatOutline[0]?.id ?? null,
+    );
+  }, [activeConversation.id, currentChatOutlineKey]);
+
+  const selectClosestChatColumn = useEffectEvent(() => {
+    const canvas = canvasRef.current;
+
+    if (!canvas) {
+      return;
+    }
+
+    const canvasRect = canvas.getBoundingClientRect();
+    const canvasCenterX = canvasRect.left + canvasRect.width / 2;
+    const closestConversationId = visibleConversationStrip.reduce(
+      (closest, conversation) => {
+        const panel = panelRefs.current[conversation.id];
+
+        if (!panel) {
+          return closest;
+        }
+
+        const rect = panel.getBoundingClientRect();
+        const distance = Math.abs(rect.left + rect.width / 2 - canvasCenterX);
+
+        return distance < closest.distance
+          ? { distance, id: conversation.id }
+          : closest;
+      },
+      { distance: Number.POSITIVE_INFINITY, id: state.activeConversationId },
+    ).id;
+
+    if (closestConversationId === state.activeConversationId) {
+      return;
+    }
+
+    suppressNextChatAutoCenterRef.current = true;
+    handleSelectConversation(closestConversationId);
+  });
+
+  function handleChatStripScroll() {
+    window.clearTimeout(chatScrollSelectionTimerRef.current);
+    chatScrollSelectionTimerRef.current = window.setTimeout(() => {
+      selectClosestChatColumn();
+    }, CHAT_SCROLL_SELECTION_DELAY_MS);
+  }
+
+  const handleConversationCanvasWheel = useEffectEvent((event: WheelEvent) => {
+    const canvas = canvasRef.current;
+
+    if (!canvas || event.ctrlKey || event.defaultPrevented) {
+      return;
+    }
+
+    const deltaX = normalizeWheelDelta(
+      event.deltaX,
+      event.deltaMode,
+      canvas.clientWidth,
+    );
+    const deltaY = normalizeWheelDelta(
+      event.deltaY,
+      event.deltaMode,
+      canvas.clientHeight,
+    );
+    const horizontalDelta =
+      Math.abs(deltaX) > Math.abs(deltaY) * 0.8
+        ? deltaX
+        : event.shiftKey
+          ? deltaY
+          : 0;
+
+    if (Math.abs(horizontalDelta) < 0.5) {
+      return;
+    }
+
+    const maxScrollLeft = Math.max(
+      canvas.scrollWidth - canvas.clientWidth,
+      0,
+    );
+    const nextScrollLeft = clamp(
+      canvas.scrollLeft + horizontalDelta,
+      0,
+      maxScrollLeft,
+    );
+
+    if (nextScrollLeft === canvas.scrollLeft) {
+      return;
+    }
+
+    event.preventDefault();
+    canvas.scrollLeft = nextScrollLeft;
+  });
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+
+    if (mainViewMode !== "chat" || !canvas) {
+      return undefined;
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      handleConversationCanvasWheel(event);
+    };
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => {
+      canvas.removeEventListener("wheel", handleWheel);
+    };
+  }, [handleConversationCanvasWheel, mainViewMode]);
+
+  useEffect(() => {
+    return () => {
+      window.clearTimeout(chatScrollSelectionTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!selectionDraft) {
@@ -1415,7 +1790,7 @@ function WorkspaceApp({
   }, [selectionDraft]);
 
   useEffect(() => {
-    if (mainViewMode !== "chat") {
+    if (mainViewMode !== "chat" || isMobileViewport) {
       setConnections([]);
       setConnectorOcclusionRects([]);
       return;
@@ -1450,75 +1825,61 @@ function WorkspaceApp({
           });
         }
 
-        for (const conversation of getConversationPath(
+        const activePath = getConversationPath(
           state.conversations,
           focusedConversation.id,
-        ).slice(1)) {
-          if (!conversation.parentId || !conversation.branchAnchor) {
-            continue;
+        );
+        const activePathIds = new Set(
+          activePath.map((conversation) => conversation.id),
+        );
+
+        for (const [pathIndex, parentConversation] of activePath.entries()) {
+          const expandedChildId = activePath[pathIndex + 1]?.id ?? null;
+
+          for (const childConversationId of parentConversation.childIds) {
+            if (expandedChildId && childConversationId !== expandedChildId) {
+              continue;
+            }
+
+            const childConversation =
+              state.conversations[childConversationId];
+
+            if (!childConversation?.branchAnchor) {
+              continue;
+            }
+
+            const anchorRect = getLineRect(
+              anchorRefs.current[childConversation.id],
+            );
+            const parentPanelRect = getElementRect(
+              panelRefs.current[parentConversation.id],
+            );
+            const targetElement = activePathIds.has(childConversation.id)
+              ? branchOriginRefs.current[childConversation.id]
+              : treeNodeRefs.current[childConversation.id];
+            const targetRect = getElementRect(targetElement);
+
+            if (!anchorRect || !parentPanelRect || !targetRect) {
+              continue;
+            }
+
+            nextConnections.push({
+              id: `tree-${childConversation.id}`,
+              start: {
+                x: parentPanelRect.right,
+                y: anchorRect.top + anchorRect.height / 2,
+              },
+              end: {
+                x: targetRect.left,
+                y: targetRect.top + targetRect.height / 2,
+              },
+              active: activePathIds.has(childConversation.id),
+              variant: "curve",
+            });
           }
-
-          const parentPanel = panelRefs.current[conversation.parentId];
-          const childPanel = panelRefs.current[conversation.id];
-          const anchorElement = anchorRefs.current[conversation.id];
-          const anchorRect = getLineRect(anchorElement);
-
-          if (!parentPanel || !childPanel || !anchorRect) {
-            continue;
-          }
-
-          const childPanelRect = childPanel.getBoundingClientRect();
-          const parentPanelRect = parentPanel.getBoundingClientRect();
-          const sourceContentRect = getElementRect(
-            getMessageBubbleElement(anchorElement),
-          );
-          const startY = anchorRect.top + anchorRect.height / 2;
-          const useAnchorEdge = hasAnotherAnchorOnSameLine({
-            anchorRefs: anchorRefs.current,
-            conversations: state.conversations,
-            conversationId: conversation.id,
-          });
-          const startX = useAnchorEdge
-            ? anchorRect.right
-            : Math.max(
-                anchorRect.right,
-                (sourceContentRect?.right ?? anchorRect.right) +
-                  CONNECTOR_CONTENT_GUTTER_PX,
-              );
-
-          nextConnections.push({
-            id: `panel-link-${conversation.id}`,
-            start: {
-              x: parentPanelRect.right,
-              y: parentPanelRect.top + parentPanelRect.height / 2,
-            },
-            end: {
-              x: childPanelRect.left,
-              y: childPanelRect.top + childPanelRect.height / 2,
-            },
-            active: true,
-            variant: "curve",
-          });
-
-          nextConnections.push({
-            id: `path-${conversation.id}`,
-            start: {
-              x: startX,
-              y: startY,
-            },
-            end: {
-              x: childPanelRect.left,
-              y: startY,
-            },
-            active: conversation.id === state.activeConversationId,
-            variant: "straight",
-          });
         }
 
-        for (const conversation of getConversationPath(
-          state.conversations,
-          focusedConversation.id,
-        )) {
+        for (const conversation of activePath) {
           const composerSurface = composerSurfaceRefs.current[conversation.id];
           const composerRect = getElementRect(composerSurface);
 
@@ -1533,53 +1894,6 @@ function WorkspaceApp({
             width: composerRect.width + 4,
             height: composerRect.height + 4,
             radius: 30,
-          });
-        }
-
-        for (const childConversationId of focusedConversation.childIds) {
-          const conversation = state.conversations[childConversationId];
-
-          if (!conversation?.branchAnchor) {
-            continue;
-          }
-
-          const anchorElement = anchorRefs.current[conversation.id];
-          const anchorRect = getLineRect(anchorElement);
-          const tabElement = tabRefs.current[conversation.id];
-
-          if (!anchorRect || !tabElement) {
-            continue;
-          }
-
-          const tabRect = tabElement.getBoundingClientRect();
-          const sourceContentRect = getElementRect(
-            getMessageBubbleElement(anchorElement),
-          );
-          const useAnchorEdge = hasAnotherAnchorOnSameLine({
-            anchorRefs: anchorRefs.current,
-            conversations: state.conversations,
-            conversationId: conversation.id,
-          });
-          const startX = useAnchorEdge
-            ? anchorRect.right
-            : Math.max(
-                anchorRect.right,
-                (sourceContentRect?.right ?? anchorRect.right) +
-                  CONNECTOR_CONTENT_GUTTER_PX,
-              );
-
-          nextConnections.push({
-            id: `rail-${conversation.id}`,
-            start: {
-              x: startX,
-              y: anchorRect.top + anchorRect.height / 2,
-            },
-            end: {
-              x: tabRect.left,
-              y: tabRect.top + tabRect.height / 2,
-            },
-            active: conversation.id === state.activeConversationId,
-            variant: "curve",
           });
         }
 
@@ -1601,6 +1915,7 @@ function WorkspaceApp({
     };
   }, [
     chatPanelWidth,
+    isMobileViewport,
     leftSidebarOpen,
     mainViewMode,
     state.activeConversationId,
@@ -1724,6 +2039,91 @@ function WorkspaceApp({
 
   }
 
+  function appendAssistantDelta(
+    conversationId: string,
+    messageId: string,
+    contentDelta: string,
+    createdAt: string,
+  ) {
+    if (!contentDelta) {
+      return;
+    }
+
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+
+      if (!conversation) {
+        return current;
+      }
+
+      const messageIndex = conversation.messages.findIndex(
+        (message) => message.id === messageId,
+      );
+      const messages = [...conversation.messages];
+
+      if (messageIndex >= 0) {
+        messages[messageIndex] = {
+          ...messages[messageIndex],
+          content: `${messages[messageIndex].content}${contentDelta}`,
+        };
+      } else {
+        messages.push({
+          id: messageId,
+          role: "assistant",
+          content: contentDelta,
+          createdAt,
+        });
+      }
+
+      return {
+        ...current,
+        conversations: {
+          ...current.conversations,
+          [conversationId]: {
+            ...conversation,
+            messages,
+            updatedAt: createdAt,
+          },
+        },
+      };
+    });
+  }
+
+  function createAssistantStreamWriter(
+    conversationId: string,
+    messageId: string,
+    createdAt: string,
+  ) {
+    let bufferedDelta = "";
+    let frameId = 0;
+
+    const flush = () => {
+      if (frameId) {
+        window.cancelAnimationFrame(frameId);
+        frameId = 0;
+      }
+
+      if (!bufferedDelta) {
+        return;
+      }
+
+      const delta = bufferedDelta;
+      bufferedDelta = "";
+      appendAssistantDelta(conversationId, messageId, delta, createdAt);
+    };
+
+    return {
+      flush,
+      write(delta: string) {
+        bufferedDelta += delta;
+
+        if (!frameId) {
+          frameId = window.requestAnimationFrame(flush);
+        }
+      },
+    };
+  }
+
   function handleTypewriterProgress(messageId: string, visibleCount: number) {
     typingProgressByMessageIdRef.current[messageId] = visibleCount;
   }
@@ -1778,7 +2178,35 @@ function WorkspaceApp({
   }
 
   function getConversationRequestPayload(conversation: Conversation) {
+    const contextPath = conversation.parentId
+      ? [
+          ...getConversationPath(state.conversations, conversation.parentId),
+          conversation,
+        ]
+      : [conversation];
+    const ancestorContext = contextPath.slice(0, -1).map((ancestor, index) => {
+      const descendant = contextPath[index + 1];
+      const sourceMessageId =
+        descendant?.branchAnchor?.sourceConversationId === ancestor.id
+          ? descendant.branchAnchor.sourceMessageId
+          : null;
+      const sourceMessageIndex = sourceMessageId
+        ? ancestor.messages.findIndex((message) => message.id === sourceMessageId)
+        : -1;
+
+      return {
+        branchAnchor: ancestor.branchAnchor,
+        id: ancestor.id,
+        messages:
+          sourceMessageIndex >= 0
+            ? ancestor.messages.slice(0, sourceMessageIndex + 1)
+            : ancestor.messages,
+        title: ancestor.title,
+      };
+    });
+
     return {
+      ancestorContext,
       branchAnchor: conversation.branchAnchor,
       id: conversation.id,
       parentId: conversation.parentId,
@@ -1804,6 +2232,10 @@ function WorkspaceApp({
       && conversation.title === DEFAULT_MAIN_CHAT_TITLE
         ? excerpt(trimmed, 34)
         : conversation.title;
+    const shouldGenerateTitle =
+      conversation.parentId === null &&
+      conversation.messages.length === 0 &&
+      conversation.title === DEFAULT_MAIN_CHAT_TITLE;
     const createdAt = new Date().toISOString();
     const userMessage: Message = {
       id: createId("message"),
@@ -1846,19 +2278,62 @@ function WorkspaceApp({
       [conversationId]: true,
     }));
 
+    if (shouldGenerateTitle) {
+      void requestChatTitle({
+        modelId: conversation.modelId,
+        prompt: trimmed,
+        serviceId: conversation.serviceId,
+      })
+        .then((generatedTitle) => {
+          setState((current) => {
+            const currentConversation = current.conversations[conversationId];
+
+            if (
+              !currentConversation ||
+              currentConversation.title !== nextConversationTitle
+            ) {
+              return current;
+            }
+
+            return {
+              ...current,
+              conversations: {
+                ...current.conversations,
+                [conversationId]: {
+                  ...currentConversation,
+                  title: generatedTitle,
+                },
+              },
+            };
+          });
+        })
+        .catch(() => {
+          // Keep the prompt excerpt as a useful fallback when title generation fails.
+        });
+    }
+
+    const assistantMessageId = createId("message");
+    const assistantStream = createAssistantStreamWriter(
+      conversationId,
+      assistantMessageId,
+      new Date().toISOString(),
+    );
+
     try {
-      const response = await requestChatReply({
+      await requestChatReply({
         conversation: getConversationRequestPayload({
           ...conversation,
           title: nextConversationTitle,
         }),
         messages: [...conversation.messages, userMessage],
         modelId: conversation.modelId,
+        onDelta: assistantStream.write,
         serviceId: conversation.serviceId,
       });
-
-      appendAssistantMessage(conversationId, response.reply);
+      assistantStream.flush();
     } catch (error) {
+      assistantStream.flush();
+
       if (isApiErrorStatus(error, 401)) {
         onAuthExpired();
         return;
@@ -1999,9 +2474,6 @@ function WorkspaceApp({
       },
     });
 
-    setState((current) =>
-      current.railOpen ? current : { ...current, railOpen: true },
-    );
   }
 
   useEffect(() => {
@@ -2046,7 +2518,7 @@ function WorkspaceApp({
       document.removeEventListener("pointerup", handleDocumentPointerUp);
       document.removeEventListener("keyup", handleDocumentKeyUp);
     };
-  }, [state.conversations]);
+  }, [isMobileViewport, state.conversations]);
 
   function handleUpdateGraphNodeLayout(
     conversationId: string,
@@ -2183,7 +2655,7 @@ function WorkspaceApp({
       return {
         ...current,
         activeConversationId: branchId,
-        railOpen: true,
+        railOpen: false,
         rootId: rootConversationId,
         conversations: {
           ...current.conversations,
@@ -2212,16 +2684,25 @@ function WorkspaceApp({
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
 
+    const assistantMessageId = createId("message");
+    const assistantStream = createAssistantStreamWriter(
+      branchId,
+      assistantMessageId,
+      new Date().toISOString(),
+    );
+
     try {
-      const response = await requestChatReply({
+      await requestChatReply({
         conversation: getConversationRequestPayload(branchConversation),
         messages: branchConversation.messages,
         modelId: branchConversation.modelId,
+        onDelta: assistantStream.write,
         serviceId: branchConversation.serviceId,
       });
-
-      appendAssistantMessage(branchId, response.reply);
+      assistantStream.flush();
     } catch (error) {
+      assistantStream.flush();
+
       if (isApiErrorStatus(error, 401)) {
         onAuthExpired();
         return;
@@ -2293,9 +2774,33 @@ function WorkspaceApp({
       ...current,
       [conversationId]: "",
     }));
+
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+      setState((current) =>
+        current.railOpen
+          ? {
+              ...current,
+              railOpen: false,
+            }
+          : current,
+      );
+    }
   }
 
   function handleOpenSearch() {
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+      setState((current) =>
+        current.railOpen
+          ? {
+              ...current,
+              railOpen: false,
+            }
+          : current,
+      );
+    }
+
     setSearchModalOpen(true);
   }
 
@@ -2313,6 +2818,7 @@ function WorkspaceApp({
     conversationId: string,
     options: {
       nextViewMode?: MainViewMode;
+      preserveRail?: boolean;
     } = {},
   ) {
     setSelectionDraft(null);
@@ -2328,13 +2834,86 @@ function WorkspaceApp({
         return {
           ...current,
           activeConversationId: conversationId,
-          railOpen: true,
+          railOpen: options.preserveRail ? current.railOpen : false,
           rootId:
             getConversationRootId(current.conversations, conversationId) ??
             current.rootId,
         };
       });
     });
+
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+    }
+  }
+
+  function handleSelectOutlineItem(outlineItemId: string) {
+    const panel = panelRefs.current[activeConversation.id];
+    const target = panel
+      ? Array.from(
+          panel.querySelectorAll<HTMLElement>("[data-chat-outline-id]"),
+        ).find(
+          (element) => element.dataset.chatOutlineId === outlineItemId,
+        ) ?? null
+      : null;
+
+    if (!target) {
+      return;
+    }
+
+    setActiveOutlineItemId(outlineItemId);
+    target.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+      inline: "nearest",
+    });
+    target.focus({ preventScroll: true });
+    target.classList.remove("is-outline-target");
+    window.requestAnimationFrame(() => {
+      target.classList.add("is-outline-target");
+    });
+
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+    }
+  }
+
+  function handleVisibleOutlineChange(
+    conversationId: string,
+    outlineItemId: string,
+  ) {
+    if (conversationId !== activeConversation.id) {
+      return;
+    }
+
+    setActiveOutlineItemId((current) =>
+      current === outlineItemId ? current : outlineItemId,
+    );
+  }
+
+  function navigateChatInDirection(direction: ChatTraversalDirection) {
+    const activeIndex = visibleConversationStrip.findIndex(
+      (conversation) => conversation.id === activeConversation.id,
+    );
+    const targetIndex = activeIndex + (direction === "right" ? 1 : -1);
+    const targetConversation = visibleConversationStrip[targetIndex];
+
+    if (!targetConversation) {
+      return;
+    }
+
+    handleSelectConversation(targetConversation.id);
+  }
+
+  function handleChatTraversalKeyDown(
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) {
+    if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) {
+      return;
+    }
+
+    event.preventDefault();
+    navigateChatInDirection(event.key === "ArrowLeft" ? "left" : "right");
   }
 
   function handlePinThread(conversationId: string, index: number | null) {
@@ -2459,6 +3038,7 @@ function WorkspaceApp({
       delete anchorRefs.current[deletedConversationId];
       delete composerSurfaceRefs.current[deletedConversationId];
       delete tabRefs.current[deletedConversationId];
+      delete panelScrollPositionsRef.current[deletedConversationId];
     }
 
     for (const deletedMessageId of deletedMessageIds) {
@@ -2587,21 +3167,45 @@ function WorkspaceApp({
     setSearchModalOpen(false);
     setSearchQuery("");
     setMainViewMode(nextViewMode);
+
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+    }
+
+    setState((current) =>
+      current.railOpen ? { ...current, railOpen: false } : current,
+    );
   }
 
   function handleToggleLeftSidebar() {
+    if (isMobileViewport) {
+      setState((current) =>
+        current.railOpen ? { ...current, railOpen: false } : current,
+      );
+    }
+
     startTransition(() => {
       setLeftSidebarOpen((current) => !current);
     });
   }
 
   function handleToggleRail() {
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+    }
+
     startTransition(() => {
       setState((current) => ({
         ...current,
         railOpen: !current.railOpen,
       }));
     });
+  }
+
+  function handleCloseRail() {
+    setState((current) =>
+      current.railOpen ? { ...current, railOpen: false } : current,
+    );
   }
 
   async function handleSaveProfile(args: {
@@ -2650,6 +3254,132 @@ function WorkspaceApp({
     "--chat-panel-width": `${chatPanelWidth}px`,
   } as CSSProperties;
   const chatPanelWidthBounds = getChatPanelWidthBounds();
+  const activeTraversalIndex = visibleConversationStrip.findIndex(
+    (conversation) => conversation.id === activeConversation.id,
+  );
+  const previousTraversalConversation =
+    visibleConversationStrip[activeTraversalIndex - 1] ?? null;
+  const nextTraversalConversation =
+    visibleConversationStrip[activeTraversalIndex + 1] ?? null;
+
+  function renderExpandedTreeConversation(
+    conversation: Conversation,
+    allowMinimize: boolean,
+  ) {
+    const isResizing =
+      conversation.id === resizingChatPanelConversationId &&
+      isResizingChatPanel;
+    const contextLabel =
+      conversation.id === activeConversation.id
+        ? "Current chat"
+        : conversation.parentId === null
+          ? "Main chat"
+          : "Ancestor chat";
+
+    return (
+      <div
+        className={
+          isResizing
+            ? "conversation-tree-expanded panel-slot is-resizable is-split-context is-resizing"
+            : "conversation-tree-expanded panel-slot is-resizable is-split-context"
+        }
+        data-expanded-conversation-id={conversation.id}
+        key={conversation.id}
+      >
+        <span className="panel-context-label">{contextLabel}</span>
+        {allowMinimize && conversation.parentId ? (
+          <button
+            aria-label={`Minimize ${conversation.title}`}
+            className="conversation-tree-minimize"
+            onClick={() => {
+              pendingTreeLaneFocusRef.current = conversation.parentId;
+              suppressNextChatAutoCenterRef.current = true;
+              handleSelectConversation(conversation.parentId!);
+            }}
+            type="button"
+          >
+            <svg
+              aria-hidden="true"
+              fill="none"
+              stroke="currentColor"
+              strokeLinecap="round"
+              strokeWidth="1.8"
+              viewBox="0 0 24 24"
+            >
+              <path d="M6 12h12" />
+            </svg>
+          </button>
+        ) : null}
+        <ChatPanel
+          anchorsByMessageId={getAnchorsByMessageId(
+            state.conversations,
+            conversation.id,
+          )}
+          conversation={conversation}
+          draft={drafts[conversation.id] ?? ""}
+          initialScrollTop={panelScrollPositionsRef.current[conversation.id]}
+          isActive={conversation.id === activeConversation.id}
+          isSubmitting={Boolean(pendingConversationIds[conversation.id])}
+          onActivate={() => handleSelectConversation(conversation.id)}
+          onDraftChange={(value) => handleDraftChange(conversation.id, value)}
+          onModelChange={handleModelChange}
+          onOpenBranch={handleSelectConversation}
+          onScrollPositionChange={(conversationId, scrollTop) => {
+            panelScrollPositionsRef.current[conversationId] = scrollTop;
+          }}
+          onStopTypewriter={handleStopTypewriter}
+          onSubmit={handleSubmit}
+          onTypewriterComplete={handleTypewriterComplete}
+          onTypewriterProgress={handleTypewriterProgress}
+          onVisibleOutlineChange={
+            conversation.id === activeConversation.id
+              ? handleVisibleOutlineChange
+              : undefined
+          }
+          recentModelSelections={recentModelSelections}
+          registerAnchorRef={(branchConversationId, element) => {
+            anchorRefs.current[branchConversationId] = element;
+          }}
+          registerBranchOriginRef={(conversationId, element) => {
+            branchOriginRefs.current[conversationId] = element;
+          }}
+          registerComposerSurfaceRef={(conversationId, element) => {
+            composerSurfaceRefs.current[conversationId] = element;
+          }}
+          registerPanelRef={(conversationId, element) => {
+            panelRefs.current[conversationId] = element;
+          }}
+          selectionPreview={
+            selectionDraft?.conversationId === conversation.id
+              ? selectionDraft
+              : null
+          }
+          showBranchMargin={false}
+          theme={theme}
+          typingMessageIds={typingMessageIds}
+          typingProgressByMessageId={typingProgressByMessageIdRef.current}
+        />
+        <div
+          aria-label="Resize chat panel width"
+          aria-orientation="vertical"
+          aria-valuemax={chatPanelWidthBounds.max}
+          aria-valuemin={chatPanelWidthBounds.min}
+          aria-valuenow={Math.round(chatPanelWidth)}
+          aria-valuetext={`${Math.round(chatPanelWidth)} pixels wide`}
+          className="panel-resize-handle"
+          onDoubleClick={handleResetChatPanelWidth}
+          onKeyDown={handleChatPanelResizeKeyDown}
+          onPointerDown={(event) =>
+            handleChatPanelResizePointerDown(conversation.id, event)
+          }
+          role="separator"
+          tabIndex={0}
+        >
+          <span className="panel-resize-handle-grip" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -2657,13 +3387,22 @@ function WorkspaceApp({
         <div className="workspace-shell">
           <header className="workspace-session-bar">
             <div className="workspace-session-brand">
+              <button
+                aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
+                aria-pressed={leftSidebarOpen}
+                className="workspace-menu-button"
+                onClick={handleToggleLeftSidebar}
+                type="button"
+              >
+                <MenuIcon />
+              </button>
               <h1>Margin Chat</h1>
             </div>
 
             <div className="workspace-session-pins">
               <PinnedThreadTabs
                 activeThreadId={activeRootConversation.id}
-                layoutMode={pinnedTabsLayoutMode}
+                layoutMode={effectivePinnedTabsLayoutMode}
                 onLayoutModeChange={setPinnedTabsLayoutMode}
                 onOpenThread={handleSelectConversation}
                 onPinThread={handlePinThread}
@@ -2678,16 +3417,54 @@ function WorkspaceApp({
             </div>
 
             <div className="workspace-session-actions">
-              <button className="ghost-button" onClick={onLogout} type="button">
-                Log out
-              </button>
+              {!isMobileViewport &&
+              !isTileView &&
+              !isGraphView &&
+              branchAccessEnabled ? (
+                <button
+                  aria-controls="branch-navigation-map"
+                  aria-expanded={state.railOpen}
+                  className={
+                    state.railOpen
+                      ? "branch-drawer-trigger is-active"
+                      : "branch-drawer-trigger"
+                  }
+                  onClick={handleToggleRail}
+                  type="button"
+                >
+                  <span>Map</span>
+                  <strong>{branchNavigationCount}</strong>
+                </button>
+              ) : null}
             </div>
           </header>
 
+          {mobilePanelsOpen ? (
+            <button
+              aria-label="Close mobile navigation panels"
+              className="workspace-mobile-backdrop"
+              onClick={() => {
+                setLeftSidebarOpen(false);
+                setState((current) =>
+                  current.railOpen
+                    ? {
+                        ...current,
+                        railOpen: false,
+                      }
+                    : current,
+                );
+              }}
+              type="button"
+            />
+          ) : null}
+
           <main className="workspace">
             <ThreadSidebar
+              activeOutlineItemId={activeOutlineItemId}
               activeThreadId={activeRootConversation.id}
               collapsed={!leftSidebarOpen}
+              currentChatOutline={currentChatOutline}
+              currentChatTitle={activeConversation.title}
               mainViewMode={mainViewMode}
               onDeleteThread={handleDeleteThread}
               onMainThreadDragEnd={() => setMainThreadDragMode("idle")}
@@ -2702,6 +3479,7 @@ function WorkspaceApp({
               onOpenSettings={() => setAppSettingsOpen(true)}
               onOpenSearch={handleOpenSearch}
               onRenameThread={handleRenameThread}
+              onSelectOutlineItem={handleSelectOutlineItem}
               onSetMainViewMode={handleSetMainViewMode}
               onSelectThread={handleSelectConversation}
               onToggleCollapse={handleToggleLeftSidebar}
@@ -2721,14 +3499,76 @@ function WorkspaceApp({
                     : "canvas-section"
               }
             >
+              {isMobileViewport && !isTileView && !isGraphView ? (
+                <div className="workspace-mobile-shell">
+                  <div className="workspace-mobile-summary">
+                    <p className="eyebrow">
+                      {isMainView ? "Main chat" : "Branch chat"}
+                    </p>
+                    <h2>{activeConversation.title}</h2>
+                    <p className="workspace-mobile-copy">
+                      {mobileChatContextCopy}
+                    </p>
+                  </div>
+
+                  <div
+                    aria-label="Mobile workspace actions"
+                    className="workspace-mobile-actions"
+                    role="toolbar"
+                  >
+                    <button
+                      aria-pressed={leftSidebarOpen}
+                      className={
+                        leftSidebarOpen
+                          ? "workspace-mobile-button is-active"
+                          : "workspace-mobile-button"
+                      }
+                      onClick={handleToggleLeftSidebar}
+                      type="button"
+                    >
+                      <span>Chats {threadSummaries.length}</span>
+                      <strong>{threadSummaries.length}</strong>
+                    </button>
+                    <button
+                      aria-pressed={state.railOpen}
+                      aria-controls="branch-navigation-map"
+                      className={
+                        state.railOpen
+                          ? "workspace-mobile-button is-active"
+                          : "workspace-mobile-button"
+                      }
+                      disabled={!branchAccessEnabled}
+                      onClick={handleToggleRail}
+                      type="button"
+                    >
+                      <span>Map {branchNavigationCount}</span>
+                      <strong>{branchNavigationCount}</strong>
+                    </button>
+                    <button
+                      className="workspace-mobile-button"
+                      onClick={handleOpenSearch}
+                      type="button"
+                    >
+                      <span>Search</span>
+                    </button>
+                    <button
+                      className="workspace-mobile-button is-primary"
+                      onClick={handleCreateMainConversation}
+                      type="button"
+                    >
+                      <span>New chat</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
               {isTileView ? (
                 <div className="canvas-head">
                   <div className="canvas-view-intro">
                     <p className="eyebrow">Main chats</p>
-                    <h2>Thread tile view</h2>
+                    <h2>Threads</h2>
                     <p className="canvas-hint">
-                      Browse threads by auto-detected category, then search, sort,
-                      and jump back into the conversation.
+                      Search or choose a thread to continue the conversation.
                     </p>
                   </div>
                 </div>
@@ -2772,114 +3612,189 @@ function WorkspaceApp({
                 />
               ) : (
                 <div
+                  className="chat-tree-workspace"
+                  onKeyDown={handleChatTraversalKeyDown}
+                >
+                  <div className="chat-tree-navigation">
+                    <nav
+                      aria-label="Conversation hierarchy"
+                      className="canvas-breadcrumb"
+                    >
+                      {path.map((conversation, index) => (
+                        <span
+                          className={
+                            conversation.id === activeConversation.id
+                              ? "breadcrumb-item is-active"
+                              : "breadcrumb-item"
+                          }
+                          key={conversation.id}
+                        >
+                          {index > 0 ? (
+                            <span
+                              aria-hidden="true"
+                              className="breadcrumb-separator"
+                            >
+                              ›
+                            </span>
+                          ) : null}
+                          <button
+                            aria-current={
+                              conversation.id === activeConversation.id
+                                ? "page"
+                                : undefined
+                            }
+                            className="breadcrumb-button"
+                            onClick={() =>
+                              handleSelectConversation(conversation.id)
+                            }
+                            type="button"
+                          >
+                            {conversation.title}
+                          </button>
+                        </span>
+                      ))}
+                    </nav>
+
+                    <div
+                      aria-label="Nearby chats"
+                      className="chat-neighbor-controls"
+                      role="group"
+                    >
+                      <button
+                        aria-keyshortcuts="Alt+ArrowLeft"
+                        className="chat-neighbor-button is-previous"
+                        disabled={!previousTraversalConversation}
+                        onClick={() => navigateChatInDirection("left")}
+                        title="Previous nearby chat (Alt + Left Arrow)"
+                        type="button"
+                      >
+                        <span aria-hidden="true">←</span>
+                        <span>
+                          {previousTraversalConversation?.title ?? "Start"}
+                        </span>
+                      </button>
+                      <span className="chat-navigation-hint">
+                        Two-finger scroll to explore
+                      </span>
+                      <button
+                        aria-keyshortcuts="Alt+ArrowRight"
+                        className="chat-neighbor-button is-next"
+                        disabled={!nextTraversalConversation}
+                        onClick={() => navigateChatInDirection("right")}
+                        title="Next nearby chat (Alt + Right Arrow)"
+                        type="button"
+                      >
+                        <span>
+                          {nextTraversalConversation?.title ?? "End"}
+                        </span>
+                        <span aria-hidden="true">→</span>
+                      </button>
+                    </div>
+                  </div>
+
+                <div
                   className={
-                    isMainView
-                      ? isResizingChatPanel
-                        ? "conversation-canvas is-main-view is-resizing-panel"
-                        : "conversation-canvas is-main-view"
-                      : isResizingChatPanel
-                        ? "conversation-canvas is-resizing-panel"
-                        : "conversation-canvas"
+                    isResizingChatPanel
+                      ? "conversation-canvas is-tree-browser is-resizing-panel"
+                      : "conversation-canvas is-tree-browser"
                   }
+                  onScroll={handleChatStripScroll}
                   ref={canvasRef}
                   style={conversationCanvasStyle}
                 >
-                  {path.map((conversation) => (
-                    <div
-                      key={conversation.id}
-                      className={
-                        isMainView
-                          ? conversation.id === resizingChatPanelConversationId &&
-                            isResizingChatPanel
-                            ? "panel-slot is-main-view is-resizable is-resizing"
-                            : "panel-slot is-main-view is-resizable"
-                          : conversation.id === resizingChatPanelConversationId &&
-                              isResizingChatPanel
-                            ? "panel-slot is-resizable is-resizing"
-                            : "panel-slot is-resizable"
-                      }
-                    >
-                      <ChatPanel
-                        anchorsByMessageId={getAnchorsByMessageId(
-                          state.conversations,
-                          conversation.id,
-                        )}
-                        conversation={conversation}
-                        draft={drafts[conversation.id] ?? ""}
-                        isActive={conversation.id === activeConversation.id}
-                        isSubmitting={Boolean(
-                          pendingConversationIds[conversation.id],
-                        )}
-                        recentModelSelections={recentModelSelections}
-                        theme={theme}
-                        typingProgressByMessageId={
-                          typingProgressByMessageIdRef.current
+                  {renderExpandedTreeConversation(activeRootConversation, false)}
+
+                  {conversationTreeLanes.map((lane, laneIndex) => {
+                    const parentConversation =
+                      state.conversations[lane.parentId];
+
+                    if (!parentConversation) {
+                      return null;
+                    }
+
+                    return (
+                      <section
+                        aria-label={`Children of ${parentConversation.title}`}
+                        className={
+                          lane.selectedConversationId
+                            ? "conversation-tree-lane has-expanded-chat"
+                            : "conversation-tree-lane"
                         }
-                        typingMessageIds={typingMessageIds}
-                        selectionPreview={
-                          selectionDraft?.conversationId === conversation.id
-                            ? selectionDraft
-                            : null
-                        }
-                        onActivate={() => handleSelectConversation(conversation.id)}
-                        onDraftChange={(value) =>
-                          handleDraftChange(conversation.id, value)
-                        }
-                        onModelChange={handleModelChange}
-                        onStopTypewriter={handleStopTypewriter}
-                        onSubmit={handleSubmit}
-                        onTypewriterProgress={handleTypewriterProgress}
-                        onTypewriterComplete={handleTypewriterComplete}
-                        registerPanelRef={(conversationId, element) => {
-                          panelRefs.current[conversationId] = element;
-                        }}
-                        registerComposerSurfaceRef={(conversationId, element) => {
-                          composerSurfaceRefs.current[conversationId] = element;
-                        }}
-                        registerAnchorRef={(branchConversationId, element) => {
-                          anchorRefs.current[branchConversationId] = element;
-                        }}
-                      />
-                      <div
-                        aria-label="Resize chat panel width"
-                        aria-orientation="vertical"
-                        aria-valuemax={chatPanelWidthBounds.max}
-                        aria-valuemin={chatPanelWidthBounds.min}
-                        aria-valuenow={Math.round(chatPanelWidth)}
-                        aria-valuetext={`${Math.round(chatPanelWidth)} pixels wide`}
-                        className="panel-resize-handle"
-                        onDoubleClick={handleResetChatPanelWidth}
-                        onKeyDown={handleChatPanelResizeKeyDown}
-                        onPointerDown={(event) =>
-                          handleChatPanelResizePointerDown(conversation.id, event)
-                        }
-                        role="separator"
-                        tabIndex={0}
+                        data-tree-depth={laneIndex + 1}
+                        data-tree-parent-id={lane.parentId}
+                        key={lane.parentId}
                       >
-                        <span className="panel-resize-handle-grip" />
-                      </div>
-                    </div>
-                  ))}
+                        <header className="conversation-tree-lane-head">
+                          <span>Depth {laneIndex + 1}</span>
+                          <strong>{parentConversation.title}</strong>
+                          <span>
+                            {lane.conversationIds.length} child
+                            {lane.conversationIds.length === 1 ? "" : "ren"}
+                          </span>
+                        </header>
+                        <div className="conversation-tree-lane-list">
+                          {lane.conversationIds.map((conversationId) => {
+                            const conversation =
+                              state.conversations[conversationId];
+
+                            if (!conversation) {
+                              return null;
+                            }
+
+                            if (
+                              conversation.id === lane.selectedConversationId
+                            ) {
+                              return renderExpandedTreeConversation(
+                                conversation,
+                                true,
+                              );
+                            }
+
+                            return (
+                              <ConversationTreeNode
+                                conversation={conversation}
+                                key={conversation.id}
+                                onExpand={(nextConversationId) =>
+                                  handleSelectConversation(nextConversationId)
+                                }
+                                registerNodeRef={(
+                                  nextConversationId,
+                                  element,
+                                ) => {
+                                  treeNodeRefs.current[nextConversationId] =
+                                    element;
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
                 </div>
               )}
             </section>
 
           {!isTileView && !isGraphView ? (
             <BranchRail
-              branches={focusedBranches}
-              isRootActive={isMainView}
-              onSelectConversation={handleSelectConversation}
-              onSelectRoot={() => handleSelectConversation(activeRootConversation.id)}
-              onToggle={handleToggleRail}
+              activeConversationId={activeConversation.id}
+              conversations={state.conversations}
+              onClose={handleCloseRail}
+              onSelectConversation={(conversationId) =>
+                handleSelectConversation(conversationId, {
+                  preserveRail: !isMobileViewport,
+                })
+              }
               open={state.railOpen}
-              rootTitle={activeRootConversation.title}
               registerTabRef={(conversationId, element) => {
                 tabRefs.current[conversationId] = element;
               }}
+              rootId={activeRootConversation.id}
             />
           ) : null}
 
-          {!isTileView && !isGraphView ? (
+          {!isTileView && !isGraphView && connections.length ? (
             <ConnectorOverlay
               connections={connections}
               occlusionRects={connectorOcclusionRects}
@@ -2889,6 +3804,7 @@ function WorkspaceApp({
           {!isTileView && selectionDraft ? (
             <form
               className="selection-tooltip"
+              data-testid="branch-composer"
               onSubmit={(event) => {
                 event.preventDefault();
                 handleCreateBranch();
@@ -2896,13 +3812,27 @@ function WorkspaceApp({
               ref={toolbarRef}
               style={toolbarStyle}
             >
-              <p className="eyebrow">New branch</p>
+              <div className="selection-tooltip-head">
+                <p className="eyebrow">New branch</p>
+                <button
+                  aria-label="Cancel new branch"
+                  className="selection-close"
+                  onClick={() => {
+                    setSelectionDraft(null);
+                    window.getSelection()?.removeAllRanges();
+                  }}
+                  type="button"
+                >
+                  <CloseIcon />
+                </button>
+              </div>
               <p className="selection-tooltip-quote">
                 “{excerpt(selectionDraft.quote, 132)}”
               </p>
               <div className="selection-input-row">
                 <input
-                  autoFocus
+                  autoFocus={!isMobileViewport}
+                  aria-label="Branch prompt"
                   id="branch-prompt"
                   onChange={(event) =>
                     setSelectionDraft((current) =>
@@ -2960,6 +3890,7 @@ function WorkspaceApp({
               setProfileModalOpen(false);
             }}
             onManageBilling={onManageBilling}
+            onLogout={onLogout}
             onStartSubscription={onStartSubscription}
             onSave={handleSaveProfile}
             user={user}
@@ -2981,6 +3912,9 @@ function WorkspaceApp({
 }
 
 export default function App() {
+  const hasPasswordResetToken = new URLSearchParams(window.location.search).has(
+    "reset_token",
+  );
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(null);
@@ -3003,6 +3937,13 @@ export default function App() {
     let cancelled = false;
 
     async function hydrateAuthSession() {
+      if (hasPasswordResetToken) {
+        setAuthUser(null);
+        setAuthStatus("unauthenticated");
+        setAuthError(null);
+        return;
+      }
+
       try {
         const user = await requestAuthSession();
 
@@ -3029,7 +3970,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hasPasswordResetToken]);
 
   function handleAuthExpired(
     message = "Your session expired. Sign in again to continue.",
@@ -3087,6 +4028,35 @@ export default function App() {
       setAuthStatus("authenticated");
     } catch (error) {
       setAuthError(getErrorText(error, "Signup failed."));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleRequestPasswordReset(args: { email: string }) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+
+    try {
+      return await requestPasswordReset(args);
+    } catch (error) {
+      setAuthError(getErrorText(error, "Unable to request a password reset."));
+      return null;
+    } finally {
+      setAuthSubmitting(false);
+    }
+  }
+
+  async function handleResetPassword(args: { password: string; token: string }) {
+    setAuthSubmitting(true);
+    setAuthError(null);
+
+    try {
+      await requestPasswordResetConfirm(args);
+      return true;
+    } catch (error) {
+      setAuthError(getErrorText(error, "Unable to reset the password."));
+      return false;
     } finally {
       setAuthSubmitting(false);
     }
@@ -3173,6 +4143,8 @@ export default function App() {
             errorMessage={authError}
             isSubmitting={authSubmitting}
             onLogin={handleLogin}
+            onRequestPasswordReset={handleRequestPasswordReset}
+            onResetPassword={handleResetPassword}
             onSignup={handleSignup}
             onToggleTheme={() => setTheme((current) => getNextTheme(current))}
             theme={theme}

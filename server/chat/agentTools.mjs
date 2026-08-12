@@ -179,7 +179,7 @@ function mergeWorkspaceState({ chatRequest, persistedState }) {
       persistedState?.defaultServiceId ?? currentConversation.serviceId,
     graphLayouts: persistedState?.graphLayouts ?? {},
     pinnedThreadIds: persistedState?.pinnedThreadIds ?? [],
-    railOpen: persistedState?.railOpen ?? true,
+    railOpen: persistedState?.railOpen ?? false,
     rootId,
   };
 }

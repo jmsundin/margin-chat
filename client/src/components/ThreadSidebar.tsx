@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { setMainThreadDragData } from "../lib/pinnedThreads";
+import type { ChatOutlineItem } from "../lib/chatOutline";
 import type { MainViewMode, ThreadSummary } from "../types";
 
 type ThemeMode = "light" | "dark";
@@ -11,8 +12,11 @@ const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
 interface ThreadSidebarProps {
+  activeOutlineItemId: string | null;
   activeThreadId: string;
   collapsed: boolean;
+  currentChatOutline: ChatOutlineItem[];
+  currentChatTitle: string;
   mainViewMode: MainViewMode;
   onDeleteThread: (conversationId: string) => void;
   onMainThreadDragEnd: () => void;
@@ -22,6 +26,7 @@ interface ThreadSidebarProps {
   onOpenSettings: () => void;
   onOpenSearch: () => void;
   onRenameThread: (conversationId: string, title: string) => void;
+  onSelectOutlineItem: (outlineItemId: string) => void;
   onSetMainViewMode: (viewMode: MainViewMode) => void;
   onSelectThread: (conversationId: string) => void;
   onToggleCollapse: () => void;
@@ -307,8 +312,11 @@ function SidebarCollapseIcon({ collapsed }: { collapsed: boolean }) {
 }
 
 export default function ThreadSidebar({
+  activeOutlineItemId,
   activeThreadId,
   collapsed,
+  currentChatOutline,
+  currentChatTitle,
   mainViewMode,
   onDeleteThread,
   onMainThreadDragEnd,
@@ -318,6 +326,7 @@ export default function ThreadSidebar({
   onOpenSettings,
   onOpenSearch,
   onRenameThread,
+  onSelectOutlineItem,
   onSetMainViewMode,
   onSelectThread,
   onToggleCollapse,
@@ -503,10 +512,16 @@ export default function ThreadSidebar({
   }
 
   function handleToggleExpanded(threadId: string) {
+    const willExpand = !expandedThreadIds[threadId];
+
     setExpandedThreadIds((current) => ({
-      ...current,
       [threadId]: !current[threadId],
     }));
+
+    if (willExpand && threadId !== activeThreadId) {
+      setOpenMenuState(null);
+      onSelectThread(threadId);
+    }
   }
 
   function handleThreadDragStart(
@@ -668,17 +683,12 @@ export default function ThreadSidebar({
                     <span aria-hidden="true">•</span>
                     {thread.updatedLabel}
                   </span>
-                  {isExpanded ? (
-                    <span className="thread-item-preview" id={`thread-preview-${thread.id}`}>
-                      {thread.preview}
-                    </span>
-                  ) : null}
                 </button>
 
                 <button
-                  aria-controls={`thread-preview-${thread.id}`}
+                  aria-controls={`chat-outline-${thread.id}`}
                   aria-expanded={isExpanded}
-                  aria-label={`${isExpanded ? "Collapse" : "Expand"} preview for ${thread.title}`}
+                  aria-label={`${isExpanded ? "Collapse" : "Expand"} outline for ${thread.title}`}
                   className={
                     isExpanded
                       ? "thread-item-expand-trigger is-expanded"
@@ -706,6 +716,53 @@ export default function ThreadSidebar({
                 >
                   <MoreIcon />
                 </button>
+
+                {isExpanded && thread.id === activeThreadId ? (
+                  <nav
+                    aria-label={`Outline for ${currentChatTitle}`}
+                    className="chat-outline is-nested"
+                    id={`chat-outline-${thread.id}`}
+                  >
+                    {currentChatOutline.length ? (
+                      <ol className="chat-outline-list">
+                        {currentChatOutline.map((item) => (
+                          <li
+                            className={`chat-outline-level-${item.level}`}
+                            key={item.id}
+                          >
+                            <button
+                              aria-current={
+                                item.id === activeOutlineItemId
+                                  ? "location"
+                                  : undefined
+                              }
+                              className={
+                                item.id === activeOutlineItemId
+                                  ? "chat-outline-item is-active"
+                                  : "chat-outline-item"
+                              }
+                              onClick={() => onSelectOutlineItem(item.id)}
+                              title={item.label}
+                              type="button"
+                            >
+                              <span
+                                aria-hidden="true"
+                                className="chat-outline-marker"
+                              />
+                              <span className="chat-outline-label">
+                                {item.label}
+                              </span>
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    ) : (
+                      <p className="chat-outline-empty">
+                        Send a message to start this outline.
+                      </p>
+                    )}
+                  </nav>
+                ) : null}
               </div>
             );
           })}

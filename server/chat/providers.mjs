@@ -1,5 +1,329 @@
 import { HttpError } from "../lib/errors.mjs";
 import { extractConversationMessages } from "./systemPrompt.mjs";
+import {
+  parseProviderErrorResponse,
+  parseServerSentEvents,
+  parseStreamJson,
+} from "./streaming.mjs";
+
+async function ensureStreamingResponse(response, fallbackError) {
+  if (response.ok) {
+    return;
+  }
+
+  const payload = await parseProviderErrorResponse(response);
+
+  throw new HttpError(
+    response.status,
+    extractApiErrorMessage(payload) ?? fallbackError,
+  );
+}
+
+export async function requestResponsesApiStream({
+  apiKey,
+  body,
+  fallbackError,
+  onDelta,
+  onReady,
+  url,
+}) {
+  const response = await fetch(url, {
+    body: JSON.stringify({ ...body, stream: true }),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  await ensureStreamingResponse(response, fallbackError);
+  await onReady?.();
+
+  let completedPayload = null;
+  let reply = "";
+
+  for await (const data of parseServerSentEvents(response.body)) {
+    const event = parseStreamJson(data);
+
+    if (!event) {
+      continue;
+    }
+
+    if (
+      (event.type === "response.output_text.delta" ||
+        event.type === "response.refusal.delta") &&
+      typeof event.delta === "string"
+    ) {
+      reply += event.delta;
+      await onDelta?.(event.delta);
+    } else if (event.type === "response.completed") {
+      completedPayload = event.response ?? null;
+    } else if (
+      event.type === "response.failed" ||
+      event.type === "response.incomplete" ||
+      event.type === "error"
+    ) {
+      throw new HttpError(
+        502,
+        extractApiErrorMessage(event.response ?? event) ?? fallbackError,
+      );
+    }
+  }
+
+  return { completedPayload, reply };
+}
+
+export async function requestOpenAIResponseStream({
+  apiKey,
+  chatRequest,
+  model,
+  onDelta,
+  onReady,
+  systemInstruction,
+}) {
+  if (!apiKey) {
+    throw new HttpError(
+      503,
+      "OpenAI API is not configured. Add OPENAI_API_KEY to your environment.",
+    );
+  }
+
+  const result = await requestResponsesApiStream({
+    apiKey,
+    body: {
+      input: extractConversationMessages(chatRequest.messages).map((message) => ({
+        content: message.content,
+        role: message.role,
+      })),
+      instructions: systemInstruction,
+      model,
+    },
+    fallbackError: "OpenAI request failed.",
+    onDelta,
+    onReady,
+    url: "https://api.openai.com/v1/responses",
+  });
+
+  if (!result.reply.trim()) {
+    throw new HttpError(502, "OpenAI returned a response without assistant text.");
+  }
+
+  return {
+    model:
+      typeof result.completedPayload?.model === "string" &&
+      result.completedPayload.model.trim()
+        ? result.completedPayload.model
+        : model,
+    reply: result.reply,
+  };
+}
+
+export async function requestXAIResponseStream({
+  apiKey,
+  chatRequest,
+  model,
+  onDelta,
+  onReady,
+  systemInstruction,
+}) {
+  if (!apiKey) {
+    throw new HttpError(
+      503,
+      "xAI API is not configured. Add XAI_API_KEY to your environment.",
+    );
+  }
+
+  const result = await requestResponsesApiStream({
+    apiKey,
+    body: {
+      input: [
+        { content: systemInstruction, role: "system" },
+        ...extractConversationMessages(chatRequest.messages).map((message) => ({
+          content: message.content,
+          role: message.role,
+        })),
+      ],
+      model,
+    },
+    fallbackError: "xAI request failed.",
+    onDelta,
+    onReady,
+    url: "https://api.x.ai/v1/responses",
+  });
+
+  if (!result.reply.trim()) {
+    throw new HttpError(502, "xAI returned a response without assistant text.");
+  }
+
+  return {
+    model:
+      typeof result.completedPayload?.model === "string" &&
+      result.completedPayload.model.trim()
+        ? result.completedPayload.model
+        : model,
+    reply: result.reply,
+  };
+}
+
+export async function requestGeminiResponseStream({
+  apiKey,
+  chatRequest,
+  model,
+  onDelta,
+  onReady,
+  systemInstruction,
+}) {
+  if (!apiKey) {
+    throw new HttpError(
+      503,
+      "Gemini API is not configured. Add GEMINI_API_KEY to your environment.",
+    );
+  }
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model,
+    )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`,
+    {
+      body: JSON.stringify({
+        contents: extractConversationMessages(chatRequest.messages).map(
+          (message) => ({
+            parts: [{ text: message.content }],
+            role: message.role === "assistant" ? "model" : "user",
+          }),
+        ),
+        system_instruction: { parts: [{ text: systemInstruction }] },
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    },
+  );
+
+  await ensureStreamingResponse(response, "Gemini request failed.");
+  await onReady?.();
+
+  let reply = "";
+
+  for await (const data of parseServerSentEvents(response.body)) {
+    const payload = parseStreamJson(data);
+
+    if (!payload) {
+      continue;
+    }
+
+    if (payload.error) {
+      throw new HttpError(
+        502,
+        extractApiErrorMessage(payload) ?? "Gemini request failed.",
+      );
+    }
+
+    const delta = (payload.candidates?.[0]?.content?.parts ?? [])
+      .map((part) => (typeof part.text === "string" ? part.text : ""))
+      .join("");
+
+    if (delta) {
+      reply += delta;
+      await onDelta?.(delta);
+    }
+  }
+
+  if (!reply.trim()) {
+    throw new HttpError(502, "Gemini returned a response without assistant text.");
+  }
+
+  return { model, reply };
+}
+
+export async function requestHuggingFaceResponseStream({
+  apiKey,
+  chatRequest,
+  model,
+  onDelta,
+  onReady,
+  systemInstruction,
+}) {
+  if (!apiKey) {
+    throw new HttpError(
+      503,
+      "Hugging Face API is not configured. Add HUGGINGFACE_API_KEY or HF_TOKEN to your environment.",
+    );
+  }
+
+  const response = await fetch("https://router.huggingface.co/v1/chat/completions", {
+    body: JSON.stringify({
+      messages: [
+        { content: systemInstruction, role: "system" },
+        ...extractConversationMessages(chatRequest.messages).map((message) => ({
+          content: message.content,
+          role: message.role,
+        })),
+      ],
+      model,
+      stream: true,
+    }),
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  await ensureStreamingResponse(response, "Hugging Face request failed.");
+  await onReady?.();
+
+  let reply = "";
+  let resolvedModel = model;
+
+  for await (const data of parseServerSentEvents(response.body)) {
+    const payload = parseStreamJson(data);
+
+    if (!payload) {
+      continue;
+    }
+
+    if (payload.error) {
+      throw new HttpError(
+        502,
+        extractApiErrorMessage(payload) ?? "Hugging Face request failed.",
+      );
+    }
+
+    if (typeof payload.model === "string" && payload.model.trim()) {
+      resolvedModel = payload.model;
+    }
+
+    const content = payload.choices?.[0]?.delta?.content;
+    const delta =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content
+              .map((part) =>
+                typeof part === "string"
+                  ? part
+                  : typeof part?.text === "string"
+                    ? part.text
+                    : "",
+              )
+              .join("")
+          : "";
+
+    if (delta) {
+      reply += delta;
+      await onDelta?.(delta);
+    }
+  }
+
+  if (!reply.trim()) {
+    throw new HttpError(
+      502,
+      "Hugging Face returned a response without assistant text.",
+    );
+  }
+
+  return { model: resolvedModel, reply };
+}
 
 export async function requestOpenAIResponse({
   apiKey,

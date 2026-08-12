@@ -1,0 +1,65 @@
+- generic [ref=e5]:
+  - banner [ref=e6]:
+    - heading "Margin Chat" [level=1] [ref=e8]
+    - region "Pinned main chat tabs" [ref=e10]:
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - button "Mobile navigation refactor" [ref=e14] [cursor=pointer]:
+            - generic [ref=e15]: Mobile navigation refactor
+          - generic [ref=e16]:
+            - generic [ref=e17]: 5h ago
+            - button "Unpin Mobile navigation refactor" [ref=e18] [cursor=pointer]:
+              - img [ref=e19]
+        - generic [ref=e22]:
+          - button "Design sprint recap" [ref=e23] [cursor=pointer]:
+            - generic [ref=e24]: Design sprint recap
+          - generic [ref=e25]:
+            - generic [ref=e26]: 4d ago
+            - button "Unpin Design sprint recap" [ref=e27] [cursor=pointer]:
+              - img [ref=e28]
+    - button "Log out" [ref=e32] [cursor=pointer]
+  - main [ref=e34]:
+    - generic [ref=e35]:
+      - generic [ref=e36]:
+        - generic [ref=e37]:
+          - paragraph [ref=e38]: Main chat
+          - heading "Mobile navigation refactor" [level=2] [ref=e39]
+          - paragraph [ref=e40]: 2 direct branches ready to review
+        - toolbar "Mobile workspace actions" [ref=e41]:
+          - button "Chats 3" [ref=e42] [cursor=pointer]:
+            - generic [ref=e43]: Chats
+            - strong [ref=e44]: "3"
+          - button "Branches 2" [ref=e45] [cursor=pointer]:
+            - generic [ref=e46]: Branches
+            - strong [ref=e47]: "2"
+          - button "Search" [ref=e48] [cursor=pointer]:
+            - generic [ref=e49]: Search
+          - button "New chat" [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]: New chat
+      - article [ref=e54]:
+        - generic [ref=e56]:
+          - generic [ref=e58]:
+            - generic [ref=e59]: user
+            - generic [ref=e60]: Audit the current mobile experience and tell me where the navigation is getting in the way.
+          - generic [ref=e62]:
+            - generic [ref=e63]: assistant
+            - paragraph [ref=e65]:
+              - text: The biggest friction points are stacked
+              - mark [ref=e66]: navigation, oversized headers, and branch controls that compete with the composer on small screens. I wou
+              - text: ld simplify the shell, compress secondary actions, and make branch browsing feel like a bottom sheet.
+          - generic [ref=e68]:
+            - generic [ref=e69]: user
+            - generic [ref=e70]: Show me a focused plan for the chat screen first.
+          - generic [ref=e72]:
+            - generic [ref=e73]: assistant
+            - paragraph [ref=e75]:
+              - mark [ref=e76]: Start with a single primary reading column, keep the composer pinned, move branch history into a slide-up
+              - text: pattern, and demote theme or settings actions until the user explicitly asks for them.
+        - generic [ref=e78]:
+          - textbox "Reply in this conversation" [ref=e81]:
+            - /placeholder: Ask anything
+          - 'button "Choose AI model. Current selection: Smart routing" [ref=e84] [cursor=pointer]':
+            - generic [ref=e85]: AI Model
+            - generic [ref=e86]: Smart routing
+          - button "Send message" [disabled] [ref=e88]:
+            - img [ref=e89]

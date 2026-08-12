@@ -15,6 +15,11 @@ export function createApiHandler({
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
+  function writeChatStreamEvent(response, event) {
+    response.write(`${JSON.stringify(event)}\n`);
+    response.flush?.();
+  }
+
   return async function handleRequest(request, response) {
     try {
       if (request.method === "OPTIONS") {
@@ -103,6 +108,28 @@ export function createApiHandler({
             "Set-Cookie": result.cookie,
           },
         );
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/api/auth/password-reset/request"
+      ) {
+        const result = await authService.requestPasswordReset(await readJsonBody(request));
+
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/api/auth/password-reset/confirm"
+      ) {
+        const result = await authService.resetPassword(await readJsonBody(request));
+
+        sendJson(response, 200, result, {
+          "Set-Cookie": authService.buildClearedSessionCookie(),
+        });
         return;
       }
 
@@ -195,15 +222,55 @@ export function createApiHandler({
         }
 
         const body = await readJsonBody(request);
-        const chatResponse = await chatService.requestReply(body, {
-          userId: authContext.user.id,
-        });
+        const chatResponse = await chatService.requestReplyStream(
+          body,
+          { userId: authContext.user.id },
+          {
+            onDelta(delta) {
+              writeChatStreamEvent(response, { delta, type: "delta" });
+            },
+            onReady(metadata) {
+              if (!response.headersSent) {
+                response.writeHead(200, {
+                  "Access-Control-Allow-Origin": "*",
+                  "Cache-Control": "no-cache, no-transform",
+                  "Content-Type": "application/x-ndjson; charset=utf-8",
+                  "X-Accel-Buffering": "no",
+                });
+                response.flushHeaders?.();
+              }
+
+              writeChatStreamEvent(response, { metadata, type: "metadata" });
+            },
+          },
+        );
 
         if (authContext.user.billing.accessKind === "trial") {
           await database.incrementTrialApiCallsUsed(authContext.user.id);
         }
 
-        sendJson(response, 200, chatResponse);
+        writeChatStreamEvent(response, {
+          metadata: chatResponse.metadata,
+          type: "done",
+        });
+        response.end();
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/chat/title") {
+        if (!authContext.user.billing.hasAccess) {
+          throw new HttpError(
+            402,
+            `You have used all ${authContext.user.billing.trialCallsLimit} free model calls. Start a paid plan to keep chatting.`,
+          );
+        }
+
+        const titleResponse = await chatService.generateTitle(
+          await readJsonBody(request),
+          { userId: authContext.user.id },
+        );
+
+        sendJson(response, 200, titleResponse);
         return;
       }
 
@@ -211,6 +278,29 @@ export function createApiHandler({
         error: "Not found",
       });
     } catch (error) {
+      if (response.headersSent) {
+        if (!response.writableEnded) {
+          writeChatStreamEvent(response, {
+            error:
+              error instanceof HttpError || hasStatusCode(error)
+                ? error.message
+                : "The model stream ended unexpectedly.",
+            statusCode:
+              error instanceof HttpError || hasStatusCode(error)
+                ? error.statusCode
+                : 500,
+            type: "error",
+          });
+          response.end();
+        }
+
+        if (!(error instanceof HttpError) && !hasStatusCode(error)) {
+          console.error(error);
+        }
+
+        return;
+      }
+
       if (error instanceof HttpError || hasStatusCode(error)) {
         sendJson(response, error.statusCode, {
           error: error.message,

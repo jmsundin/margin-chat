@@ -56,6 +56,63 @@ export async function createAuthSession(client, { expiresAt, id, userId }) {
   );
 }
 
+export async function createPasswordResetToken(
+  client,
+  { expiresAt, tokenHash, userId },
+) {
+  await client.query(
+    "delete from marginchat_password_reset_tokens where user_id = $1 or expires_at <= now()",
+    [userId],
+  );
+  await client.query(
+    `
+      insert into marginchat_password_reset_tokens (
+        token_hash,
+        user_id,
+        expires_at
+      )
+      values ($1, $2, $3)
+    `,
+    [tokenHash, userId, expiresAt],
+  );
+}
+
+export async function resetPasswordWithToken(
+  client,
+  { passwordHash, tokenHash },
+) {
+  await client.query("begin");
+
+  try {
+    const tokenResult = await client.query(
+      `
+        delete from marginchat_password_reset_tokens
+        where token_hash = $1
+          and expires_at > now()
+        returning user_id
+      `,
+      [tokenHash],
+    );
+
+    if (!tokenResult.rowCount) {
+      throw createStatusError(400, "Password reset link is invalid or expired.");
+    }
+
+    const userId = tokenResult.rows[0].user_id;
+
+    await client.query(
+      "update marginchat_users set password_hash = $1, updated_at = now() where id = $2",
+      [passwordHash, userId],
+    );
+    await client.query("delete from marginchat_user_sessions where user_id = $1", [userId]);
+    await client.query("delete from marginchat_password_reset_tokens where user_id = $1", [userId]);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
 export async function deleteAuthSession(client, sessionId) {
   await client.query("delete from marginchat_user_sessions where id = $1", [sessionId]);
 }

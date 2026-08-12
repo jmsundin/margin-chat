@@ -7,23 +7,42 @@ import type {
 } from "../types";
 
 interface ConversationContext {
+  ancestorContext: Array<{
+    branchAnchor: BranchAnchor | null;
+    id: string;
+    messages: Message[];
+    title: string;
+  }>;
   branchAnchor: BranchAnchor | null;
   id: string;
   parentId: string | null;
   title: string;
 }
 
-interface ChatReplyResponse {
+export interface ChatReplyResponse {
   metadata: {
     model: string;
+    requestedModelId?: string;
     requestedServiceId: BackendServiceId;
     resolvedServiceId: BackendServiceId;
   };
   reply: string;
 }
 
+interface ChatStreamEvent {
+  delta?: string;
+  error?: string;
+  metadata?: ChatReplyResponse["metadata"];
+  statusCode?: number;
+  type?: "metadata" | "delta" | "done" | "error";
+}
+
 interface ErrorPayload {
   error?: string;
+}
+
+interface ChatTitleResponse {
+  title: string;
 }
 
 interface AuthSessionResponse {
@@ -32,6 +51,11 @@ interface AuthSessionResponse {
 
 interface AuthSuccessResponse {
   user: AuthenticatedUser;
+}
+
+export interface PasswordResetRequestResponse {
+  ok: boolean;
+  resetToken?: string;
 }
 
 interface RedirectSessionResponse {
@@ -113,9 +137,111 @@ export async function requestChatReply(args: {
   conversation: ConversationContext;
   messages: Message[];
   modelId: string;
+  onDelta?: (delta: string) => void;
   serviceId: BackendServiceId;
 }): Promise<ChatReplyResponse> {
+  const { onDelta, ...requestBody } = args;
   const response = await fetch("/api/chat", {
+    body: JSON.stringify(requestBody),
+    credentials: "same-origin",
+    headers: {
+      Accept: "application/x-ndjson",
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const payload = (await readJson(response)) as ErrorPayload | null;
+    ensureOk(response, payload, "Backend request failed.");
+  }
+
+  if (!response.headers.get("content-type")?.includes("application/x-ndjson")) {
+    const payload = (await readJson(response)) as
+      | ChatReplyResponse
+      | ErrorPayload
+      | null;
+
+    if (!isChatReplyResponse(payload)) {
+      throw new Error("Backend returned an empty assistant reply.");
+    }
+
+    onDelta?.(payload.reply);
+    return payload;
+  }
+
+  if (!response.body) {
+    throw new Error("Backend returned an empty assistant stream.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let metadata: ChatReplyResponse["metadata"] | null = null;
+  let reply = "";
+
+  const handleLine = (line: string) => {
+    if (!line.trim()) {
+      return;
+    }
+
+    let event: ChatStreamEvent;
+
+    try {
+      event = JSON.parse(line) as ChatStreamEvent;
+    } catch {
+      throw new Error("Backend returned an invalid assistant stream event.");
+    }
+
+    if (event.type === "error") {
+      throw new ApiError(
+        typeof event.statusCode === "number" ? event.statusCode : 502,
+        event.error || "The model stream ended unexpectedly.",
+      );
+    }
+
+    if (event.metadata) {
+      metadata = event.metadata;
+    }
+
+    if (event.type === "delta" && typeof event.delta === "string") {
+      reply += event.delta;
+      onDelta?.(event.delta);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      handleLine(line);
+    }
+
+    if (done) {
+      break;
+    }
+  }
+
+  if (buffer.trim()) {
+    handleLine(buffer);
+  }
+
+  if (!metadata || !reply.trim()) {
+    throw new Error("Backend returned an empty assistant reply.");
+  }
+
+  return { metadata, reply };
+}
+
+export async function requestChatTitle(args: {
+  modelId: string;
+  prompt: string;
+  serviceId: BackendServiceId;
+}): Promise<string> {
+  const response = await fetch("/api/chat/title", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: {
@@ -123,19 +249,21 @@ export async function requestChatReply(args: {
     },
     method: "POST",
   });
+  const payload = (await readJson(response)) as ChatTitleResponse | ErrorPayload | null;
 
-  const payload = (await readJson(response)) as
-    | ChatReplyResponse
-    | ErrorPayload
-    | null;
+  ensureOk(response, payload, "Chat title generation failed.");
 
-  ensureOk(response, payload, "Backend request failed.");
-
-  if (!isChatReplyResponse(payload)) {
-    throw new Error("Backend returned an empty assistant reply.");
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("title" in payload) ||
+    typeof payload.title !== "string" ||
+    !payload.title.trim()
+  ) {
+    throw new Error("Backend returned an empty chat title.");
   }
 
-  return payload;
+  return payload.title.trim();
 }
 
 export async function requestStoredState(): Promise<AppState | null> {
@@ -233,6 +361,49 @@ export async function requestSignup(args: {
   }
 
   return payload.user;
+}
+
+export async function requestPasswordReset(args: {
+  email: string;
+}): Promise<PasswordResetRequestResponse> {
+  const response = await fetch("/api/auth/password-reset/request", {
+    body: JSON.stringify(args),
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as PasswordResetRequestResponse | ErrorPayload | null;
+
+  ensureOk(response, payload, "Unable to request a password reset.");
+
+  if (!payload || typeof payload !== "object" || !("ok" in payload) || payload.ok !== true) {
+    throw new Error("Backend returned an invalid password reset response.");
+  }
+
+  return payload;
+}
+
+export async function requestPasswordResetConfirm(args: {
+  password: string;
+  token: string;
+}): Promise<void> {
+  const response = await fetch("/api/auth/password-reset/confirm", {
+    body: JSON.stringify(args),
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { ok?: boolean } | ErrorPayload | null;
+
+  ensureOk(response, payload, "Unable to reset the password.");
+
+  if (!payload || !("ok" in payload) || payload.ok !== true) {
+    throw new Error("Backend returned an invalid password reset response.");
+  }
 }
 
 export async function requestLogout(): Promise<void> {

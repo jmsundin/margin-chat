@@ -1,0 +1,87 @@
+- generic [ref=e199]:
+  - banner [ref=e200]:
+    - heading "Margin Chat" [level=1] [ref=e202]
+    - region "Pinned main chat tabs" [ref=e204]:
+      - generic [ref=e206]:
+        - generic [ref=e207]:
+          - button "Mobile navigation refactor" [ref=e208] [cursor=pointer]:
+            - generic [ref=e209]: Mobile navigation refactor
+          - generic [ref=e210]:
+            - generic [ref=e211]: 5h ago
+            - button "Unpin Mobile navigation refactor" [ref=e212] [cursor=pointer]:
+              - img [ref=e213]
+        - generic [ref=e216]:
+          - button "Design sprint recap" [ref=e217] [cursor=pointer]:
+            - generic [ref=e218]: Design sprint recap
+          - generic [ref=e219]:
+            - generic [ref=e220]: 4d ago
+            - button "Unpin Design sprint recap" [ref=e221] [cursor=pointer]:
+              - img [ref=e222]
+    - button "Log out" [ref=e226] [cursor=pointer]
+  - button "Close mobile navigation panels" [ref=e227] [cursor=pointer]
+  - main [ref=e228]:
+    - generic [ref=e229]:
+      - generic [ref=e230]:
+        - generic [ref=e231]:
+          - paragraph [ref=e232]: Main chat
+          - heading "Mobile navigation refactor" [level=2] [ref=e233]
+          - paragraph [ref=e234]: 2 direct branches ready to review
+        - toolbar "Mobile workspace actions" [ref=e235]:
+          - button "Chats 3" [ref=e236] [cursor=pointer]:
+            - generic [ref=e237]: Chats
+            - strong [ref=e238]: "3"
+          - button "Branches 2" [pressed] [ref=e239] [cursor=pointer]:
+            - generic [ref=e240]: Branches
+            - strong [ref=e241]: "2"
+          - button "Search" [ref=e242] [cursor=pointer]:
+            - generic [ref=e243]: Search
+          - button "New chat" [ref=e244] [cursor=pointer]:
+            - generic [ref=e245]: New chat
+      - article [ref=e248]:
+        - generic [ref=e250]:
+          - generic [ref=e252]:
+            - generic [ref=e253]: user
+            - generic [ref=e254]: Audit the current mobile experience and tell me where the navigation is getting in the way.
+          - generic [ref=e256]:
+            - generic [ref=e257]: assistant
+            - paragraph [ref=e259]:
+              - text: The biggest friction points are stacked
+              - mark [ref=e260]: navigation, oversized headers, and branch controls that compete with the composer on small screens. I wou
+              - text: ld simplify the shell, compress secondary actions, and make branch browsing feel like a bottom sheet.
+          - generic [ref=e262]:
+            - generic [ref=e263]: user
+            - generic [ref=e264]: Show me a focused plan for the chat screen first.
+          - generic [ref=e266]:
+            - generic [ref=e267]: assistant
+            - paragraph [ref=e269]:
+              - mark [ref=e270]: Start with a single primary reading column, keep the composer pinned, move branch history into a slide-up
+              - text: pattern, and demote theme or settings actions until the user explicitly asks for them.
+        - generic [ref=e272]:
+          - textbox "Reply in this conversation" [ref=e275]:
+            - /placeholder: Ask anything
+          - 'button "Choose AI model. Current selection: Smart routing" [ref=e278] [cursor=pointer]':
+            - generic [ref=e279]: AI Model
+            - generic [ref=e280]: Smart routing
+          - button "Send message" [disabled] [ref=e282]:
+            - img [ref=e283]
+    - complementary [ref=e285]:
+      - generic [ref=e286]:
+        - generic [ref=e287]:
+          - heading "Child branches" [level=2] [ref=e289]
+          - button "Minimize child branches panel" [expanded] [ref=e290] [cursor=pointer]:
+            - img [ref=e291]
+        - paragraph [ref=e293]: 2 direct branches
+        - button "Mobile navigation refactor Return to this thread's main chat" [ref=e294] [cursor=pointer]:
+          - generic [ref=e295]: Mobile navigation refactor
+          - generic [ref=e296]: Return to this thread's main chat
+        - generic [ref=e297]:
+          - button "Trim the mobile header “The biggest friction points are stacked navigation, oversized headers,...” What should the mobile header keep, hide, or move?" [ref=e298] [cursor=pointer]:
+            - generic [ref=e299]:
+              - generic [ref=e300]: Trim the mobile header
+              - generic [ref=e301]: “The biggest friction points are stacked navigation, oversized headers,...”
+              - generic [ref=e302]: What should the mobile header keep, hide, or move?
+          - button "Mobile UX checklist “Start with a single primary reading column, keep the composer pinned, m...” Turn that into a practical implementation checklist." [ref=e303] [cursor=pointer]:
+            - generic [ref=e304]:
+              - generic [ref=e305]: Mobile UX checklist
+              - generic [ref=e306]: “Start with a single primary reading column, keep the composer pinned, m...”
+              - generic [ref=e307]: Turn that into a practical implementation checklist.

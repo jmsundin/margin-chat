@@ -1,0 +1,100 @@
+- generic [ref=e5]:
+  - banner [ref=e6]:
+    - heading "Margin Chat" [level=1] [ref=e8]
+    - region "Pinned main chat tabs" [ref=e10]:
+      - generic [ref=e12]:
+        - generic [ref=e13]:
+          - button "Launch planning" [ref=e14] [cursor=pointer]:
+            - generic [ref=e15]: Launch planning
+          - generic [ref=e16]:
+            - generic [ref=e17]: just now
+            - button "Unpin Launch planning" [ref=e18] [cursor=pointer]:
+              - img [ref=e19]
+        - generic [ref=e22]:
+          - button "Competitive research with a long title" [ref=e23] [cursor=pointer]:
+            - generic [ref=e24]: Competitive research with a long title
+          - generic [ref=e25]:
+            - generic [ref=e26]: just now
+            - button "Unpin Competitive research with a long title" [ref=e27] [cursor=pointer]:
+              - img [ref=e28]
+        - generic [ref=e31]:
+          - button "Design direction" [ref=e32] [cursor=pointer]:
+            - generic [ref=e33]: Design direction
+          - generic [ref=e34]:
+            - generic [ref=e35]: just now
+            - button "Unpin Design direction" [ref=e36] [cursor=pointer]:
+              - img [ref=e37]
+    - button "Log out" [ref=e41] [cursor=pointer]
+  - button "Close mobile navigation panels" [ref=e100] [cursor=pointer]
+  - main [ref=e42]:
+    - generic [ref=e43]:
+      - generic [ref=e44]:
+        - generic [ref=e45]:
+          - paragraph [ref=e46]: Main chat
+          - heading "Launch planning" [level=2] [ref=e47]
+          - paragraph [ref=e48]: 3 direct branches ready to review
+        - toolbar "Mobile workspace actions" [ref=e49]:
+          - button "Chats 3" [ref=e50] [cursor=pointer]:
+            - generic [ref=e51]: Chats
+            - strong [ref=e52]: "3"
+          - button "Branches 3" [active] [pressed] [ref=e53] [cursor=pointer]:
+            - generic [ref=e54]: Branches
+            - strong [ref=e55]: "3"
+          - button "Search" [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]: Search
+          - button "New chat" [ref=e58] [cursor=pointer]:
+            - generic [ref=e59]: New chat
+      - article [ref=e62]:
+        - generic [ref=e64]:
+          - generic [ref=e66]:
+            - generic [ref=e67]: user
+            - generic [ref=e68]: Map the mobile launch priorities for this week.
+          - generic [ref=e70]:
+            - generic [ref=e71]: assistant
+            - paragraph [ref=e73]:
+              - mark [ref=e74]: Focus on the active conversation first, keep na
+              - text: vigation available but secondary, and make composing feel stable while the user scrolls through recent context.
+          - generic [ref=e76]:
+            - generic [ref=e77]: user
+            - generic [ref=e78]: What should I polish next?
+          - generic [ref=e80]:
+            - generic [ref=e81]: assistant
+            - paragraph [ref=e83]:
+              - mark [ref=e84]: The next polish pass should reduce header height, keep the composer easy to reac
+              - text: h
+              - mark [ref=e85]: ", and make secondary surfaces feel like deliberate sheets instead of another de"
+              - text: sktop column.
+        - generic [ref=e87]:
+          - textbox "Reply in this conversation" [ref=e90]:
+            - /placeholder: Ask anything
+          - 'button "Choose AI model. Current selection: Smart routing" [ref=e93] [cursor=pointer]':
+            - generic [ref=e94]: AI Model
+            - generic [ref=e95]: Smart routing
+          - button "Send message" [disabled] [ref=e97]:
+            - img [ref=e98]
+    - complementary [ref=e101]:
+      - generic [ref=e102]:
+        - generic [ref=e103]:
+          - heading "Child branches" [level=2] [ref=e105]
+          - button "Minimize child branches panel" [expanded] [ref=e106] [cursor=pointer]:
+            - img [ref=e107]
+        - paragraph [ref=e109]: 3 direct branches
+        - button "Launch planning Return to this thread's main chat" [ref=e110] [cursor=pointer]:
+          - generic [ref=e111]: Launch planning
+          - generic [ref=e112]: Return to this thread's main chat
+        - generic [ref=e113]:
+          - button "Priority ordering “Focus on the active conversation first” Order the priorities." [ref=e114] [cursor=pointer]:
+            - generic [ref=e115]:
+              - generic [ref=e116]: Priority ordering
+              - generic [ref=e117]: “Focus on the active conversation first”
+              - generic [ref=e118]: Order the priorities.
+          - button "Risks to check “The next polish pass should reduce header height, keep the composer eas...” List risks." [ref=e119] [cursor=pointer]:
+            - generic [ref=e120]:
+              - generic [ref=e121]: Risks to check
+              - generic [ref=e122]: “The next polish pass should reduce header height, keep the composer eas...”
+              - generic [ref=e123]: List risks.
+          - button "Microcopy pass “make secondary surfaces feel like deliberate sheets instead of another...” Tighten language." [ref=e124] [cursor=pointer]:
+            - generic [ref=e125]:
+              - generic [ref=e126]: Microcopy pass
+              - generic [ref=e127]: “make secondary surfaces feel like deliberate sheets instead of another...”
+              - generic [ref=e128]: Tighten language.

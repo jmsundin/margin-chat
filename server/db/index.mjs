@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import {
   createAuthSession,
+  createPasswordResetToken,
   createUser,
   deleteAuthSession,
   findUserForLogin,
   getUserByAuthSession,
+  resetPasswordWithToken,
   updateUserProfile,
 } from "./authRepository.mjs";
 import {
@@ -87,6 +89,10 @@ export function createAppDatabase(env) {
     return withClient((client) => createUser(client, args));
   }
 
+  async function createPasswordResetTokenRecord(args) {
+    return withClient((client) => createPasswordResetToken(client, args));
+  }
+
   async function deleteAuthSessionRecord(sessionId) {
     return withClient((client) => deleteAuthSession(client, sessionId));
   }
@@ -105,6 +111,10 @@ export function createAppDatabase(env) {
 
   async function loadState(userId) {
     return withClient((client) => readState(client, userId));
+  }
+
+  async function resetPasswordWithTokenRecord(args) {
+    return withClient((client) => resetPasswordWithToken(client, args));
   }
 
   async function getUserBillingAccountRecord(userId) {
@@ -157,6 +167,7 @@ export function createAppDatabase(env) {
   return {
     close,
     createAuthSession: createAuthSessionRecord,
+    createPasswordResetToken: createPasswordResetTokenRecord,
     createUser: createUserRecord,
     deleteAuthSession: deleteAuthSessionRecord,
     findUserForLogin: findUserForLoginRecord,
@@ -166,6 +177,7 @@ export function createAppDatabase(env) {
     incrementTrialApiCallsUsed: incrementTrialApiCallsUsedRecord,
     loadState,
     ready,
+    resetPasswordWithToken: resetPasswordWithTokenRecord,
     saveState,
     syncUserBillingByCustomerId: syncUserBillingByCustomerIdRecord,
     syncUserBillingById: syncUserBillingByIdRecord,

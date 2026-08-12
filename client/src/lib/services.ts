@@ -29,41 +29,27 @@ export const MAX_RECENT_BACKEND_SERVICE_SELECTIONS = 5;
 
 const OPENAI_MODELS: BackendServiceModel[] = [
   {
-    badgeLabel: "NEW",
+    badgeLabel: "FLAGSHIP",
     description:
-      "Current default OpenAI flagship for general-purpose work, coding, and tool-heavy tasks.",
+      "OpenAI's flagship GPT-5.6 model for complex reasoning, coding, and professional work.",
     featured: true,
-    id: "gpt-5.4",
-    label: "GPT-5.4",
+    id: "gpt-5.6",
+    label: "GPT-5.6 Sol",
   },
   {
-    badgeLabel: "BEST",
+    badgeLabel: "BALANCED",
     description:
-      "Higher-compute GPT-5.4 variant for the hardest problems and deeper reasoning.",
-    id: "gpt-5.4-pro",
-    label: "GPT-5.4 Pro",
-  },
-  {
-    badgeLabel: "CHATGPT",
-    description:
-      "Alias for the model currently powering ChatGPT when you want the freshest ChatGPT behavior.",
+      "GPT-5.6 model balancing frontier intelligence with lower cost for everyday production use.",
     featured: true,
-    id: "gpt-5-chat-latest",
-    label: "GPT-5 Chat Latest",
+    id: "gpt-5.6-terra",
+    label: "GPT-5.6 Terra",
   },
   {
     badgeLabel: "FAST",
     description:
-      "Smaller faster GPT-5.4 variant for high-volume coding and agent workflows.",
-    featured: true,
-    id: "gpt-5.4-mini",
-    label: "GPT-5.4 mini",
-  },
-  {
-    badgeLabel: "NANO",
-    description: "Fastest low-cost GPT-5.4 variant for simple high-throughput tasks.",
-    id: "gpt-5.4-nano",
-    label: "GPT-5.4 nano",
+      "Cost-sensitive GPT-5.6 model for responsive, high-volume workloads.",
+    id: "gpt-5.6-luna",
+    label: "GPT-5.6 Luna",
   },
 ];
 
@@ -132,16 +118,16 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
         label: "Gemini 3.1 Pro",
       },
       {
-        badgeLabel: "POPULAR",
-        description: "Google's latest 3-series chat model with Pro-level intelligence at Flash speed and pricing.",
+        badgeLabel: "STABLE",
+        description: "Google's stable frontier model for sustained agentic, coding, and long-horizon work at Flash speed.",
         featured: true,
-        id: "gemini-3-flash-preview",
-        label: "Gemini 3 Flash",
+        id: "gemini-3.5-flash",
+        label: "Gemini 3.5 Flash",
       },
       {
         badgeLabel: "FAST",
-        description: "Cost-efficient workhorse for high-volume chat and lightweight reasoning tasks.",
-        id: "gemini-3.1-flash-lite-preview",
+        description: "Stable high-volume Gemini 3 model optimized for latency and cost efficiency.",
+        id: "gemini-3.1-flash-lite",
         label: "Gemini 3.1 Flash-Lite",
       },
     ],
@@ -152,7 +138,15 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
     label: "Hugging Face",
     description: "Route the conversation through Hugging Face's OpenAI-compatible inference router.",
     iconLabel: "HF",
-    keywords: ["hugging face", "huggingface", "hf", "inference", "open models"],
+    keywords: [
+      "hugging face",
+      "huggingface",
+      "hf",
+      "inference",
+      "open models",
+      "kimi",
+      "moonshot",
+    ],
     modeLabel: "Direct",
     models: [
       {
@@ -161,6 +155,14 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
         featured: true,
         id: "openai/gpt-oss-120b",
         label: "gpt-oss-120b",
+      },
+      {
+        badgeLabel: "NEW",
+        description:
+          "Moonshot AI's native multimodal agentic model for long-context reasoning, coding, and knowledge work.",
+        featured: true,
+        id: "moonshotai/Kimi-K3",
+        label: "Kimi K3",
       },
       {
         badgeLabel: "REASONING",
@@ -187,43 +189,18 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
     modeLabel: "Direct",
     models: [
       {
-        badgeLabel: "NEW",
-        description: "xAI's getting-started default and the newest Grok 4.20 beta chat path.",
-        featured: true,
-        id: "grok-4.20-beta-latest-non-reasoning",
-        label: "Grok 4.20 Beta",
-      },
-      {
         badgeLabel: "FLAGSHIP",
-        description: "Stable Grok 4 flagship for stronger reasoning and general-purpose work.",
+        description: "xAI's flagship model for code, agentic tool use, configurable reasoning, and general chat.",
         featured: true,
-        id: "grok-4",
-        label: "Grok 4",
+        id: "grok-4.5",
+        label: "Grok 4.5",
       },
       {
-        badgeLabel: "FAST",
-        description: "Fast Grok 4 variant for coding, chat, and document-heavy workflows.",
+        badgeLabel: "BALANCED",
+        description: "Current stable Grok model with configurable reasoning and a large context window.",
         featured: true,
-        id: "grok-4-fast",
-        label: "Grok 4 Fast",
-      },
-      {
-        badgeLabel: "FAST",
-        description: "Low-latency non-reasoning Grok 4 Fast variant for quick responses.",
-        id: "grok-4-fast-non-reasoning",
-        label: "Grok 4 Fast Non-Reasoning",
-      },
-      {
-        badgeLabel: "TOOLS",
-        description: "Fast reasoning Grok model used across xAI's current tool and search guides.",
-        id: "grok-4-1-fast-reasoning",
-        label: "Grok 4.1 Fast Reasoning",
-      },
-      {
-        badgeLabel: "TOOLS",
-        description: "Fast non-reasoning Grok 4.1 variant for structured outputs and lighter workflows.",
-        id: "grok-4-1-fast-non-reasoning",
-        label: "Grok 4.1 Fast Non-Reasoning",
+        id: "grok-4.3",
+        label: "Grok 4.3",
       },
     ],
     provider: "xAI",

@@ -89,8 +89,53 @@ export function validateChatRequest(body) {
     );
   }
 
+  const ancestorContext = body.conversation.ancestorContext ?? [];
+
+  if (!Array.isArray(ancestorContext)) {
+    throw new HttpError(400, "conversation.ancestorContext must be an array.");
+  }
+
+  for (const ancestor of ancestorContext) {
+    if (
+      !ancestor ||
+      typeof ancestor !== "object" ||
+      typeof ancestor.id !== "string" ||
+      typeof ancestor.title !== "string" ||
+      !Array.isArray(ancestor.messages)
+    ) {
+      throw new HttpError(
+        400,
+        "Each ancestor context entry must include id, title, and messages.",
+      );
+    }
+
+    for (const message of ancestor.messages) {
+      if (
+        !message ||
+        typeof message !== "object" ||
+        !VALID_MESSAGE_ROLES.has(message.role) ||
+        typeof message.content !== "string" ||
+        !message.content.trim()
+      ) {
+        throw new HttpError(
+          400,
+          "Ancestor context messages must include a valid role and content.",
+        );
+      }
+    }
+  }
+
   return {
     conversation: {
+      ancestorContext: ancestorContext.map((ancestor) => ({
+        branchAnchor: ancestor.branchAnchor ?? null,
+        id: ancestor.id,
+        messages: ancestor.messages.map((message) => ({
+          content: message.content,
+          role: message.role,
+        })),
+        title: ancestor.title,
+      })),
       branchAnchor: branchAnchor ?? null,
       id: String(body.conversation.id ?? ""),
       parentId:

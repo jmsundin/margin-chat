@@ -12,6 +12,7 @@ interface ProfileModalProps {
   isOpen: boolean;
   isSaving: boolean;
   onClose: () => void;
+  onLogout: () => void | Promise<void>;
   onManageBilling: () => void | Promise<void>;
   onStartSubscription: () => void | Promise<void>;
   onSave: (args: { displayName: string; email: string }) => void | Promise<void>;
@@ -54,6 +55,7 @@ export default function ProfileModal({
   isOpen,
   isSaving,
   onClose,
+  onLogout,
   onManageBilling,
   onStartSubscription,
   onSave,
@@ -216,6 +218,14 @@ export default function ProfileModal({
           ) : null}
 
           <div className="thread-dialog-actions">
+            <button
+              className="thread-dialog-button is-danger profile-logout-button"
+              disabled={isSaving || billingSubmitting}
+              onClick={() => void onLogout()}
+              type="button"
+            >
+              Log out
+            </button>
             <button
               className="thread-dialog-button"
               onClick={onClose}

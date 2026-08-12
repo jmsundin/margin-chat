@@ -14,6 +14,28 @@ export function buildSystemInstruction(chatRequest) {
       `Branch prompt: "${chatRequest.conversation.branchAnchor.prompt}"`,
       "Keep the answer tightly connected to that anchor while still addressing the latest user request.",
     );
+
+    const inheritedContext = chatRequest.conversation.ancestorContext
+      .map((conversation) => {
+        const messages = conversation.messages
+          .filter((message) => message.role !== "system")
+          .map((message) => `${message.role}: ${message.content.trim()}`)
+          .filter((message) => !message.endsWith(": "))
+          .join("\n");
+
+        return messages
+          ? `Conversation: ${conversation.title}\n${messages}`
+          : "";
+      })
+      .filter(Boolean)
+      .join("\n\n");
+
+    if (inheritedContext) {
+      parts.push(
+        "The branch inherits the following ancestor conversation up to each branching point. Use it as prior context without repeating it unless relevant:",
+        inheritedContext,
+      );
+    }
   } else {
     parts.push(
       "This is the root conversation, so you can stay broader and more compositional than a branch.",

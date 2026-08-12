@@ -11,6 +11,7 @@ import {
 import { createPortal } from "react-dom";
 import type { MermaidConfig } from "mermaid";
 import { renderMarkdownToHtml } from "../lib/markdown";
+import { getHeadingOutlineId } from "../lib/chatOutline";
 import type { MessageAnchorLink, SelectionDraft } from "../types";
 
 type Decoration =
@@ -19,6 +20,7 @@ type Decoration =
       startOffset: number;
       endOffset: number;
       branchConversationId: string;
+      title: string;
     }
   | {
       type: "preview";
@@ -33,6 +35,7 @@ interface MarkdownMessageProps {
   conversationId: string;
   enableMermaidRendering: boolean;
   messageId: string;
+  onOpenBranch: (conversationId: string) => void;
   pendingSelection: SelectionDraft | null;
   registerAnchorRef: (
     branchConversationId: string,
@@ -174,6 +177,14 @@ function findInteractiveMermaidDiagram(target: EventTarget | null) {
   return target.closest<HTMLElement>(INTERACTIVE_MERMAID_SELECTOR);
 }
 
+function findInteractiveBranchAnchor(target: EventTarget | null) {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  return target.closest<HTMLElement>("[data-branch-conversation-id]");
+}
+
 function getMermaidConfig(theme: "light" | "dark"): MermaidConfig {
   return {
     darkMode: theme === "dark",
@@ -222,6 +233,7 @@ function buildDecorations(
     startOffset: link.anchor.startOffset,
     endOffset: link.anchor.endOffset,
     branchConversationId: link.branchConversationId,
+    title: link.title,
   }));
 
   if (canRenderPendingSelection) {
@@ -296,6 +308,13 @@ function applyDecorations(
           ? "message-anchor is-pending-selection"
           : "message-anchor";
 
+      if (decoration.type === "anchor") {
+        mark.dataset.branchConversationId = decoration.branchConversationId;
+        mark.setAttribute("aria-label", `Open branch ${decoration.title}`);
+        mark.setAttribute("role", "link");
+        mark.tabIndex = 0;
+      }
+
       const innerSpan = document.createElement("span");
       innerSpan.textContent = text.slice(localStart, localEnd);
       mark.append(innerSpan);
@@ -332,6 +351,7 @@ export default function MarkdownMessage({
   conversationId,
   enableMermaidRendering,
   messageId,
+  onOpenBranch,
   pendingSelection,
   registerAnchorRef,
   theme,
@@ -436,6 +456,21 @@ export default function MarkdownMessage({
   }
 
   function handleMarkdownClick(event: ReactMouseEvent<HTMLDivElement>) {
+    const branchAnchor = findInteractiveBranchAnchor(event.target);
+
+    if (branchAnchor) {
+      const selection = window.getSelection();
+
+      if (selection && !selection.isCollapsed) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenBranch(branchAnchor.dataset.branchConversationId!);
+      return;
+    }
+
     const diagram = findInteractiveMermaidDiagram(event.target);
 
     if (!diagram) {
@@ -449,6 +484,15 @@ export default function MarkdownMessage({
 
   function handleMarkdownKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+
+    const branchAnchor = findInteractiveBranchAnchor(event.target);
+
+    if (branchAnchor) {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenBranch(branchAnchor.dataset.branchConversationId!);
       return;
     }
 
@@ -547,6 +591,15 @@ export default function MarkdownMessage({
     }
 
     root.innerHTML = renderedHtml;
+    root
+      .querySelectorAll<HTMLElement>("h1, h2, h3")
+      .forEach((heading, headingIndex) => {
+        heading.dataset.chatOutlineId = getHeadingOutlineId(
+          messageId,
+          headingIndex,
+        );
+        heading.tabIndex = -1;
+      });
     registeredAnchorIdsRef.current = applyDecorations(
       root,
       decorationsRef.current,

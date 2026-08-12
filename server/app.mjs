@@ -20,6 +20,7 @@ function buildAppContext() {
   const database = createAppDatabase(process.env);
   const authService = createAuthService({
     database,
+    env: process.env,
     runtimeConfig,
   });
   const billingService = createBillingService({
