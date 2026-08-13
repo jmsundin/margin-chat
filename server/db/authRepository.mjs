@@ -27,7 +27,8 @@ export async function createUser(
           billing_current_period_end,
           billing_cancel_at_period_end,
           trial_api_calls_used,
-          trial_api_calls_limit
+          trial_api_calls_limit,
+          hosted_credit_balance_micros
       `,
       [id, email, passwordHash, displayName, role],
     );
@@ -140,7 +141,8 @@ export async function updateUserProfile(
           billing_current_period_end,
           billing_cancel_at_period_end,
           trial_api_calls_used,
-          trial_api_calls_limit
+          trial_api_calls_limit,
+          hosted_credit_balance_micros
       `,
       [displayName, email, userId],
     );
@@ -174,7 +176,8 @@ export async function findUserForLogin(client, email) {
         billing_current_period_end,
         billing_cancel_at_period_end,
         trial_api_calls_used,
-        trial_api_calls_limit
+        trial_api_calls_limit,
+        hosted_credit_balance_micros
       from marginchat_users
       where email = $1
     `,
@@ -210,7 +213,8 @@ export async function getUserByAuthSession(client, sessionId) {
         marginchat_users.billing_current_period_end,
         marginchat_users.billing_cancel_at_period_end,
         marginchat_users.trial_api_calls_used,
-        marginchat_users.trial_api_calls_limit
+        marginchat_users.trial_api_calls_limit,
+        marginchat_users.hosted_credit_balance_micros
       from marginchat_user_sessions
       join marginchat_users on marginchat_users.id = marginchat_user_sessions.user_id
       where marginchat_user_sessions.id = $1

@@ -84,6 +84,7 @@ export function normalizeAppState(input) {
   }
 
   const messageIds = new Set();
+  const noteIds = new Set();
 
   for (const conversation of normalizedConversations) {
     if (conversation.parentId && !conversationsById[conversation.parentId]) {
@@ -110,6 +111,24 @@ export function normalizeAppState(input) {
       }
 
       messageIds.add(message.id);
+    }
+
+    const conversationMessageIds = new Set(
+      conversation.messages.map((message) => message.id),
+    );
+
+    for (const note of conversation.notes) {
+      if (noteIds.has(note.id)) {
+        throw createStateError(`Duplicate note id "${note.id}".`);
+      }
+
+      if (note.sourceMessageId && !conversationMessageIds.has(note.sourceMessageId)) {
+        throw createStateError(
+          `Note "${note.id}" must reference a message in its conversation.`,
+        );
+      }
+
+      noteIds.add(note.id);
     }
   }
 
@@ -404,6 +423,10 @@ function normalizeConversation(expectedId, input) {
     messages: input.messages.map((message, index) =>
       normalizeMessage(expectedId, index, message),
     ),
+    notes:
+      input.notes === undefined
+        ? []
+        : normalizeNotes(expectedId, input.notes),
     modelId,
     parentId:
       input.parentId === null || input.parentId === undefined
@@ -416,6 +439,73 @@ function normalizeConversation(expectedId, input) {
       `Conversation "${expectedId}" updatedAt`,
     ),
   };
+}
+
+function normalizeNotes(conversationId, input) {
+  if (!Array.isArray(input)) {
+    throw createStateError(
+      `Conversation "${conversationId}" notes must be an array.`,
+    );
+  }
+
+  return input.map((note, index) => {
+    if (!note || typeof note !== "object" || Array.isArray(note)) {
+      throw createStateError(
+        `Note ${index} in conversation "${conversationId}" must be an object.`,
+      );
+    }
+
+    if (typeof note.content !== "string" || !note.content.trim()) {
+      throw createStateError(
+        `Note "${note.id ?? index}" must include non-empty content.`,
+      );
+    }
+
+    const sourceMessageId =
+      note.sourceMessageId === null || note.sourceMessageId === undefined
+        ? null
+        : normalizeId(note.sourceMessageId, `Note "${note.id ?? index}" sourceMessageId`);
+    const hasSelection =
+      note.startOffset !== null && note.startOffset !== undefined;
+    const startOffset = hasSelection
+      ? normalizeInteger(note.startOffset, `Note "${note.id ?? index}" startOffset`)
+      : null;
+    const endOffset = hasSelection
+      ? normalizeInteger(note.endOffset, `Note "${note.id ?? index}" endOffset`)
+      : null;
+    const quote = hasSelection ? note.quote : null;
+
+    if (hasSelection) {
+      if (!sourceMessageId || endOffset <= startOffset) {
+        throw createStateError(
+          `Note "${note.id ?? index}" must include a valid message selection.`,
+        );
+      }
+
+      if (typeof quote !== "string" || !quote.trim()) {
+        throw createStateError(
+          `Note "${note.id ?? index}" must include its selected quote.`,
+        );
+      }
+    }
+
+    return {
+      content: note.content.trim(),
+      createdAt: normalizeTimestamp(
+        note.createdAt,
+        `Note "${note.id ?? index}" createdAt`,
+      ),
+      endOffset,
+      id: normalizeId(note.id, `Note ${index} in conversation "${conversationId}" id`),
+      quote: hasSelection ? quote : null,
+      sourceMessageId,
+      startOffset,
+      updatedAt: normalizeTimestamp(
+        note.updatedAt,
+        `Note "${note.id ?? index}" updatedAt`,
+      ),
+    };
+  });
 }
 
 function normalizeConversationModelId(expectedId, serviceId, input) {

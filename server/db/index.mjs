@@ -13,8 +13,16 @@ import {
   updateUserProfile,
 } from "./authRepository.mjs";
 import {
+  deleteUserApiKey,
+  listUserApiKeys,
+  upsertUserApiKey,
+} from "./apiKeyRepository.mjs";
+import {
+  chargeHostedRequest,
+  creditHostedBalance,
   getUserBillingAccount,
   incrementTrialApiCallsUsed,
+  refundHostedRequest,
   syncUserBillingByCustomerId,
   syncUserBillingById,
   updateStripeCustomerId,
@@ -109,6 +117,18 @@ export function createAppDatabase(env) {
     return withClient((client) => updateUserProfile(client, args));
   }
 
+  async function deleteUserApiKeyRecord(args) {
+    return withClient((client) => deleteUserApiKey(client, args));
+  }
+
+  async function listUserApiKeysRecord(userId) {
+    return withClient((client) => listUserApiKeys(client, userId));
+  }
+
+  async function upsertUserApiKeyRecord(args) {
+    return withClient((client) => upsertUserApiKey(client, args));
+  }
+
   async function loadState(userId) {
     return withClient((client) => readState(client, userId));
   }
@@ -119,6 +139,18 @@ export function createAppDatabase(env) {
 
   async function getUserBillingAccountRecord(userId) {
     return withClient((client) => getUserBillingAccount(client, userId));
+  }
+
+  async function chargeHostedRequestRecord(args) {
+    return withClient((client) => chargeHostedRequest(client, args));
+  }
+
+  async function creditHostedBalanceRecord(args) {
+    return withClient((client) => creditHostedBalance(client, args));
+  }
+
+  async function refundHostedRequestRecord(args) {
+    return withClient((client) => refundHostedRequest(client, args));
   }
 
   async function updateStripeCustomerIdRecord(args) {
@@ -165,23 +197,29 @@ export function createAppDatabase(env) {
   });
 
   return {
+    chargeHostedRequest: chargeHostedRequestRecord,
     close,
     createAuthSession: createAuthSessionRecord,
     createPasswordResetToken: createPasswordResetTokenRecord,
     createUser: createUserRecord,
+    creditHostedBalance: creditHostedBalanceRecord,
     deleteAuthSession: deleteAuthSessionRecord,
+    deleteUserApiKey: deleteUserApiKeyRecord,
     findUserForLogin: findUserForLoginRecord,
     getUserBillingAccount: getUserBillingAccountRecord,
     getHealth,
     getUserByAuthSession: getUserByAuthSessionRecord,
     incrementTrialApiCallsUsed: incrementTrialApiCallsUsedRecord,
+    listUserApiKeys: listUserApiKeysRecord,
     loadState,
     ready,
     resetPasswordWithToken: resetPasswordWithTokenRecord,
+    refundHostedRequest: refundHostedRequestRecord,
     saveState,
     syncUserBillingByCustomerId: syncUserBillingByCustomerIdRecord,
     syncUserBillingById: syncUserBillingByIdRecord,
     updateUserProfile: updateUserProfileRecord,
     updateStripeCustomerId: updateStripeCustomerIdRecord,
+    upsertUserApiKey: upsertUserApiKeyRecord,
   };
 }

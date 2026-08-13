@@ -4,9 +4,11 @@ import {
   readRawBody,
   sendJson,
 } from "../http/json.mjs";
+import { randomUUID } from "node:crypto";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 
 export function createApiHandler({
+  apiKeyService,
   authService,
   billingService,
   chatService,
@@ -191,6 +193,23 @@ export function createApiHandler({
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/api/settings/api-keys") {
+        sendJson(response, 200, {
+          apiKeys: await apiKeyService.getSummaries(authContext.user.id),
+        });
+        return;
+      }
+
+      if (request.method === "PUT" && url.pathname === "/api/settings/api-keys") {
+        sendJson(response, 200, {
+          apiKeys: await apiKeyService.updateKeys(
+            authContext.user.id,
+            await readJsonBody(request),
+          ),
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/api/state") {
         const state = await database.loadState(authContext.user.id);
 
@@ -214,38 +233,74 @@ export function createApiHandler({
       }
 
       if (request.method === "POST" && url.pathname === "/api/chat") {
-        if (!authContext.user.billing.hasAccess) {
-          throw new HttpError(
-            402,
-            `You have used all ${authContext.user.billing.trialCallsLimit} free model calls. Start a paid plan to keep chatting.`,
+        const body = await readJsonBody(request);
+        const apiKeys = await apiKeyService.getDecryptedKeys(authContext.user.id);
+        const chatContext = {
+          allowHosted: authContext.user.billing.hasAccess,
+          apiKeys,
+          userId: authContext.user.id,
+        };
+        const plannedCredentialSource = chatService.getPlannedCredentialSource(
+          body,
+          chatContext,
+        );
+        if (plannedCredentialSource === "hosted") {
+          chatContext.hostedMaxOutputTokens =
+            billingService.getHostedUsageLimits(body).maxOutputTokens;
+        }
+        const requestId = randomUUID();
+        const reservation =
+          plannedCredentialSource === "hosted" &&
+          authContext.user.billing.accessKind === "credits"
+            ? await billingService.reserveHostedRequest({
+                requestId,
+                userId: authContext.user.id,
+              })
+            : null;
+        let providerStarted = false;
+        let chatResponse;
+
+        try {
+          chatResponse = await chatService.requestReplyStream(
+            body,
+            chatContext,
+            {
+              onDelta(delta) {
+                writeChatStreamEvent(response, { delta, type: "delta" });
+              },
+              onReady(metadata) {
+                providerStarted = true;
+
+                if (!response.headersSent) {
+                  response.writeHead(200, {
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "no-cache, no-transform",
+                    "Content-Type": "application/x-ndjson; charset=utf-8",
+                    "X-Accel-Buffering": "no",
+                  });
+                  response.flushHeaders?.();
+                }
+
+                writeChatStreamEvent(response, { metadata, type: "metadata" });
+              },
+            },
           );
+        } catch (error) {
+          if (reservation && !providerStarted) {
+            await billingService.refundHostedRequest({
+              amountMicros: reservation.amountMicros,
+              requestId,
+              userId: authContext.user.id,
+            });
+          }
+
+          throw error;
         }
 
-        const body = await readJsonBody(request);
-        const chatResponse = await chatService.requestReplyStream(
-          body,
-          { userId: authContext.user.id },
-          {
-            onDelta(delta) {
-              writeChatStreamEvent(response, { delta, type: "delta" });
-            },
-            onReady(metadata) {
-              if (!response.headersSent) {
-                response.writeHead(200, {
-                  "Access-Control-Allow-Origin": "*",
-                  "Cache-Control": "no-cache, no-transform",
-                  "Content-Type": "application/x-ndjson; charset=utf-8",
-                  "X-Accel-Buffering": "no",
-                });
-                response.flushHeaders?.();
-              }
-
-              writeChatStreamEvent(response, { metadata, type: "metadata" });
-            },
-          },
-        );
-
-        if (authContext.user.billing.accessKind === "trial") {
+        if (
+          authContext.user.billing.accessKind === "trial" &&
+          chatResponse.metadata.credentialSource === "hosted"
+        ) {
           await database.incrementTrialApiCallsUsed(authContext.user.id);
         }
 
@@ -258,16 +313,16 @@ export function createApiHandler({
       }
 
       if (request.method === "POST" && url.pathname === "/api/chat/title") {
-        if (!authContext.user.billing.hasAccess) {
-          throw new HttpError(
-            402,
-            `You have used all ${authContext.user.billing.trialCallsLimit} free model calls. Start a paid plan to keep chatting.`,
-          );
-        }
-
+        const body = await readJsonBody(request);
         const titleResponse = await chatService.generateTitle(
-          await readJsonBody(request),
-          { userId: authContext.user.id },
+          body,
+          {
+            allowHosted: authContext.user.billing.hasAccess,
+            apiKeys: await apiKeyService.getDecryptedKeys(authContext.user.id),
+            hostedMaxOutputTokens:
+              billingService.getHostedUsageLimits(body).maxOutputTokens,
+            userId: authContext.user.id,
+          },
         );
 
         sendJson(response, 200, titleResponse);

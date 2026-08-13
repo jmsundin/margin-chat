@@ -82,6 +82,24 @@ export async function readState(client, userId) {
     `,
     [conversationIds],
   );
+  const noteResult = await client.query(
+    `
+      select
+        id,
+        conversation_id,
+        source_message_id,
+        content,
+        start_offset,
+        end_offset,
+        quote,
+        created_at,
+        updated_at
+      from marginchat_conversation_notes
+      where conversation_id = any($1::text[])
+      order by created_at asc, id asc
+    `,
+    [conversationIds],
+  );
 
   const conversations = {};
 
@@ -92,6 +110,7 @@ export async function readState(client, userId) {
       createdAt: toIsoString(row.created_at),
       id: row.id,
       messages: [],
+      notes: [],
       modelId: row.model_id,
       parentId: row.parent_id,
       serviceId: row.service_id,
@@ -132,6 +151,25 @@ export async function readState(client, userId) {
       sourceMessageId: row.source_message_id,
       startOffset: row.start_offset,
     };
+  }
+
+  for (const row of noteResult.rows) {
+    const conversation = conversations[row.conversation_id];
+
+    if (!conversation) {
+      continue;
+    }
+
+    conversation.notes.push({
+      content: row.content,
+      createdAt: toIsoString(row.created_at),
+      endOffset: row.end_offset,
+      id: row.id,
+      quote: row.quote,
+      sourceMessageId: row.source_message_id,
+      startOffset: row.start_offset,
+      updatedAt: toIsoString(row.updated_at),
+    });
   }
 
   for (const row of conversationResult.rows) {
@@ -272,6 +310,38 @@ export async function writeState(client, userId, normalizedState) {
             message.role,
             message.content,
             message.createdAt,
+          ],
+        );
+      }
+    }
+
+    for (const conversation of orderedConversations) {
+      for (const note of conversation.notes ?? []) {
+        await client.query(
+          `
+            insert into marginchat_conversation_notes (
+              id,
+              conversation_id,
+              source_message_id,
+              content,
+              start_offset,
+              end_offset,
+              quote,
+              created_at,
+              updated_at
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `,
+          [
+            note.id,
+            conversation.id,
+            note.sourceMessageId,
+            note.content,
+            note.startOffset,
+            note.endOffset,
+            note.quote,
+            note.createdAt,
+            note.updatedAt,
           ],
         );
       }

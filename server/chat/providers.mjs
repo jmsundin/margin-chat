@@ -76,6 +76,7 @@ export async function requestResponsesApiStream({
 export async function requestOpenAIResponseStream({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   onDelta,
   onReady,
@@ -96,6 +97,7 @@ export async function requestOpenAIResponseStream({
         role: message.role,
       })),
       instructions: systemInstruction,
+      max_output_tokens: maxOutputTokens,
       model,
     },
     fallbackError: "OpenAI request failed.",
@@ -121,6 +123,7 @@ export async function requestOpenAIResponseStream({
 export async function requestXAIResponseStream({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   onDelta,
   onReady,
@@ -143,6 +146,7 @@ export async function requestXAIResponseStream({
           role: message.role,
         })),
       ],
+      max_output_tokens: maxOutputTokens,
       model,
     },
     fallbackError: "xAI request failed.",
@@ -168,6 +172,7 @@ export async function requestXAIResponseStream({
 export async function requestGeminiResponseStream({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   onDelta,
   onReady,
@@ -192,6 +197,7 @@ export async function requestGeminiResponseStream({
             role: message.role === "assistant" ? "model" : "user",
           }),
         ),
+        generationConfig: { maxOutputTokens },
         system_instruction: { parts: [{ text: systemInstruction }] },
       }),
       headers: { "Content-Type": "application/json" },
@@ -238,6 +244,7 @@ export async function requestGeminiResponseStream({
 export async function requestHuggingFaceResponseStream({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   onDelta,
   onReady,
@@ -260,6 +267,7 @@ export async function requestHuggingFaceResponseStream({
         })),
       ],
       model,
+      max_tokens: maxOutputTokens,
       stream: true,
     }),
     headers: {
@@ -328,6 +336,7 @@ export async function requestHuggingFaceResponseStream({
 export async function requestOpenAIResponse({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   systemInstruction,
 }) {
@@ -346,6 +355,7 @@ export async function requestOpenAIResponse({
         role: message.role,
       })),
       instructions: systemInstruction,
+      max_output_tokens: maxOutputTokens,
       model,
     },
   });
@@ -389,6 +399,7 @@ export async function requestOpenAIResponsesPayload({ apiKey, body }) {
 export async function requestXAIResponse({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   systemInstruction,
 }) {
@@ -411,6 +422,7 @@ export async function requestXAIResponse({
           role: message.role,
         })),
       ],
+      max_output_tokens: maxOutputTokens,
       model,
     }),
     headers: {
@@ -450,6 +462,7 @@ export async function requestXAIResponse({
 export async function requestGeminiResponse({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   systemInstruction,
 }) {
@@ -472,6 +485,7 @@ export async function requestGeminiResponse({
             role: message.role === "assistant" ? "model" : "user",
           }),
         ),
+        generationConfig: { maxOutputTokens },
         system_instruction: {
           parts: [{ text: systemInstruction }],
         },
@@ -510,6 +524,7 @@ export async function requestGeminiResponse({
 export async function requestHuggingFaceResponse({
   apiKey,
   chatRequest,
+  maxOutputTokens,
   model,
   systemInstruction,
 }) {
@@ -533,6 +548,7 @@ export async function requestHuggingFaceResponse({
         })),
       ],
       model,
+      max_tokens: maxOutputTokens,
     }),
     headers: {
       Authorization: `Bearer ${apiKey}`,

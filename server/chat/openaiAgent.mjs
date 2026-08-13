@@ -31,6 +31,7 @@ export async function requestOpenAIAgentResponse({
   apiKey,
   chatRequest,
   database,
+  maxOutputTokens,
   model,
   systemInstruction,
   userId,
@@ -61,6 +62,7 @@ export async function requestOpenAIAgentResponse({
     body: {
       input,
       instructions: systemInstruction,
+      max_output_tokens: maxOutputTokens,
       model,
       tools: OPENAI_AGENT_TOOL_DEFINITIONS,
     },
@@ -112,6 +114,7 @@ export async function requestOpenAIAgentResponse({
       body: {
         input,
         instructions: systemInstruction,
+        max_output_tokens: maxOutputTokens,
         model,
         tools: OPENAI_AGENT_TOOL_DEFINITIONS,
       },
@@ -128,6 +131,7 @@ export async function requestOpenAIAgentResponseStream({
   apiKey,
   chatRequest,
   database,
+  maxOutputTokens,
   model,
   onDelta,
   onReady,
@@ -164,6 +168,7 @@ export async function requestOpenAIAgentResponseStream({
       body: {
         input,
         instructions: systemInstruction,
+        max_output_tokens: maxOutputTokens,
         model,
         tools: OPENAI_AGENT_TOOL_DEFINITIONS,
       },

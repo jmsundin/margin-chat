@@ -1,6 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAuthService } from "./auth/index.mjs";
+import { createApiKeyService } from "./apiKeys/index.mjs";
 import { createBillingService } from "./billing/index.mjs";
 import { createChatService } from "./chat/index.mjs";
 import { loadProjectEnv } from "./config/env.mjs";
@@ -18,7 +19,12 @@ function buildAppContext() {
 
   const runtimeConfig = createRuntimeConfig(process.env);
   const database = createAppDatabase(process.env);
+  const apiKeyService = createApiKeyService({
+    database,
+    env: process.env,
+  });
   const authService = createAuthService({
+    apiKeyService,
     database,
     env: process.env,
     runtimeConfig,
@@ -28,11 +34,13 @@ function buildAppContext() {
     env: process.env,
   });
   const chatService = createChatService({
+    apiKeyService,
     database,
     env: process.env,
     runtimeConfig,
   });
   const apiHandler = createApiHandler({
+    apiKeyService,
     authService,
     billingService,
     chatService,
@@ -42,6 +50,7 @@ function buildAppContext() {
 
   return {
     apiHandler,
+    apiKeyService,
     authService,
     billingService,
     chatService,

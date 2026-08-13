@@ -42,89 +42,107 @@ export function createChatService({ database, env, runtimeConfig }) {
     return env.XAI_API_KEY ?? null;
   }
 
-  function isServiceConfigured(serviceId) {
+  function getPersonalApiKey(serviceId, context = {}) {
     if (serviceId === "openai-api" || serviceId === "openai-agent") {
-      return Boolean(env.OPENAI_API_KEY);
+      return context.apiKeys?.openai ?? null;
     }
 
     if (serviceId === "gemini-api") {
-      return Boolean(env.GEMINI_API_KEY);
+      return context.apiKeys?.gemini ?? null;
     }
 
     if (serviceId === "huggingface-api") {
-      return Boolean(getHuggingFaceApiKey());
+      return context.apiKeys?.huggingface ?? null;
     }
 
     if (serviceId === "xai-api") {
-      return Boolean(getXaiApiKey());
+      return context.apiKeys?.xai ?? null;
     }
 
-    return false;
+    return null;
   }
 
-  function getAutomaticServiceIds() {
-    return [...new Set(automaticServicePriority)].filter((serviceId) =>
-      isServiceConfigured(serviceId),
+  function getHostedApiKey(serviceId) {
+    if (serviceId === "openai-api" || serviceId === "openai-agent") {
+      return env.OPENAI_API_KEY ?? null;
+    }
+
+    if (serviceId === "gemini-api") {
+      return env.GEMINI_API_KEY ?? null;
+    }
+
+    if (serviceId === "huggingface-api") {
+      return getHuggingFaceApiKey();
+    }
+
+    if (serviceId === "xai-api") {
+      return getXaiApiKey();
+    }
+
+    return null;
+  }
+
+  function getProviderCredential(serviceId, context = {}) {
+    const personalApiKey = getPersonalApiKey(serviceId, context);
+
+    if (personalApiKey) {
+      return { apiKey: personalApiKey, source: "personal" };
+    }
+
+    const hostedApiKey =
+      context.allowHosted === false ? null : getHostedApiKey(serviceId);
+
+    return hostedApiKey
+      ? { apiKey: hostedApiKey, source: "hosted" }
+      : { apiKey: null, source: null };
+  }
+
+  function isServiceConfigured(serviceId, context = {}) {
+    return Boolean(getProviderCredential(serviceId, context).apiKey);
+  }
+
+  function getAutomaticServiceIds(context = {}) {
+    const serviceIds = [...new Set(automaticServicePriority)];
+    const personalServiceIds = serviceIds.filter((serviceId) =>
+      Boolean(getPersonalApiKey(serviceId, context)),
+    );
+
+    if (personalServiceIds.length) {
+      return personalServiceIds;
+    }
+
+    return serviceIds.filter((serviceId) =>
+      isServiceConfigured(serviceId, context),
     );
   }
 
-  function resolveServiceId(requestedServiceId) {
-    if (requestedServiceId === "openai-api") {
-      if (!env.OPENAI_API_KEY) {
-        throw new HttpError(
-          503,
-          "OpenAI API is selected but OPENAI_API_KEY is missing.",
-        );
-      }
+  function resolveServiceId(requestedServiceId, context = {}) {
+    if (
+      requestedServiceId !== "backend-services" &&
+      !isServiceConfigured(requestedServiceId, context)
+    ) {
+      const providerLabel =
+        requestedServiceId === "openai-agent"
+          ? "OpenAI Agent"
+          : requestedServiceId === "openai-api"
+            ? "OpenAI"
+            : requestedServiceId === "gemini-api"
+              ? "Gemini"
+              : requestedServiceId === "huggingface-api"
+                ? "Hugging Face"
+                : "xAI";
 
+      throw new HttpError(
+        context.allowHosted === false ? 402 : 503,
+        `${providerLabel} is selected, but no personal key is saved and hosted access is unavailable.`,
+      );
+    }
+
+    if (requestedServiceId !== "backend-services") {
       return requestedServiceId;
     }
 
-    if (requestedServiceId === "openai-agent") {
-      if (!env.OPENAI_API_KEY) {
-        throw new HttpError(
-          503,
-          "OpenAI Agent is selected but OPENAI_API_KEY is missing.",
-        );
-      }
-
-      return requestedServiceId;
-    }
-
-    if (requestedServiceId === "gemini-api") {
-      if (!env.GEMINI_API_KEY) {
-        throw new HttpError(
-          503,
-          "Gemini API is selected but GEMINI_API_KEY is missing.",
-        );
-      }
-
-      return requestedServiceId;
-    }
-
-    if (requestedServiceId === "huggingface-api") {
-      if (!getHuggingFaceApiKey()) {
-        throw new HttpError(
-          503,
-          "Hugging Face API is selected but HUGGINGFACE_API_KEY or HF_TOKEN is missing.",
-        );
-      }
-
-      return requestedServiceId;
-    }
-
-    if (requestedServiceId === "xai-api") {
-      if (!getXaiApiKey()) {
-        throw new HttpError(
-          503,
-          "xAI API is selected but XAI_API_KEY is missing.",
-        );
-      }
-
-      return requestedServiceId;
-    }
-
-    return getAutomaticServiceIds()[0] ?? null;
+    return getAutomaticServiceIds(context)[0] ?? null;
   }
 
   async function requestProviderReply(
@@ -133,6 +151,9 @@ export function createChatService({ database, env, runtimeConfig }) {
     context,
     systemInstructionOverride = null,
   ) {
+    const credential = getProviderCredential(resolvedServiceId, context);
+    const maxOutputTokens =
+      credential.source === "hosted" ? context.hostedMaxOutputTokens : undefined;
     const resolvedModel =
       chatRequest.serviceId === resolvedServiceId
         ? chatRequest.modelId
@@ -146,38 +167,43 @@ export function createChatService({ database, env, runtimeConfig }) {
 
     if (resolvedServiceId === "openai-agent") {
       result = await requestOpenAIAgentResponse({
-        apiKey: env.OPENAI_API_KEY,
+        apiKey: credential.apiKey,
         chatRequest,
         database,
+        maxOutputTokens,
         model: resolvedModel,
         systemInstruction,
         userId: context.userId,
       });
     } else if (resolvedServiceId === "openai-api") {
       result = await requestOpenAIResponse({
-        apiKey: env.OPENAI_API_KEY,
+        apiKey: credential.apiKey,
         chatRequest,
+        maxOutputTokens,
         model: resolvedModel,
         systemInstruction,
       });
     } else if (resolvedServiceId === "gemini-api") {
       result = await requestGeminiResponse({
-        apiKey: env.GEMINI_API_KEY,
+        apiKey: credential.apiKey,
         chatRequest,
+        maxOutputTokens,
         model: resolvedModel,
         systemInstruction,
       });
     } else if (resolvedServiceId === "xai-api") {
       result = await requestXAIResponse({
-        apiKey: getXaiApiKey(),
+        apiKey: credential.apiKey,
         chatRequest,
+        maxOutputTokens,
         model: resolvedModel,
         systemInstruction,
       });
     } else {
       result = await requestHuggingFaceResponse({
-        apiKey: getHuggingFaceApiKey(),
+        apiKey: credential.apiKey,
         chatRequest,
+        maxOutputTokens,
         model: resolvedModel,
         systemInstruction,
       });
@@ -187,6 +213,7 @@ export function createChatService({ database, env, runtimeConfig }) {
       model: result.model,
       reply: result.reply,
       resolvedServiceId,
+      credentialSource: credential.source,
     };
   }
 
@@ -195,12 +222,14 @@ export function createChatService({ database, env, runtimeConfig }) {
     context,
     systemInstructionOverride = null,
   ) {
-    const serviceIds = getAutomaticServiceIds();
+    const serviceIds = getAutomaticServiceIds(context);
 
     if (!serviceIds.length) {
       throw new HttpError(
-        503,
-        "No backend provider is configured. Add OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY, or HUGGINGFACE_API_KEY (or HF_TOKEN).",
+        context.allowHosted === false ? 402 : 503,
+        context.allowHosted === false
+          ? "Hosted access is unavailable. Add a personal API key in Profile settings or use Stripe billing."
+          : "No backend provider is configured. Add a provider API key.",
       );
     }
 
@@ -239,6 +268,9 @@ export function createChatService({ database, env, runtimeConfig }) {
     context,
     handlers,
   ) {
+    const credential = getProviderCredential(resolvedServiceId, context);
+    const maxOutputTokens =
+      credential.source === "hosted" ? context.hostedMaxOutputTokens : undefined;
     const resolvedModel =
       chatRequest.serviceId === resolvedServiceId
         ? chatRequest.modelId
@@ -248,6 +280,7 @@ export function createChatService({ database, env, runtimeConfig }) {
         ? buildOpenAIAgentInstruction(chatRequest)
         : buildSystemInstruction(chatRequest);
     const streamMetadata = {
+      credentialSource: credential.source,
       model: resolvedModel,
       requestedModelId: chatRequest.modelId,
       requestedServiceId: chatRequest.serviceId,
@@ -265,6 +298,7 @@ export function createChatService({ database, env, runtimeConfig }) {
     };
     const providerArgs = {
       chatRequest,
+      maxOutputTokens,
       model: resolvedModel,
       onDelta: async (delta) => {
         await ensureClientStreamReady();
@@ -277,29 +311,29 @@ export function createChatService({ database, env, runtimeConfig }) {
     if (resolvedServiceId === "openai-agent") {
       result = await requestOpenAIAgentResponseStream({
         ...providerArgs,
-        apiKey: env.OPENAI_API_KEY,
+        apiKey: credential.apiKey,
         database,
         userId: context.userId,
       });
     } else if (resolvedServiceId === "openai-api") {
       result = await requestOpenAIResponseStream({
         ...providerArgs,
-        apiKey: env.OPENAI_API_KEY,
+        apiKey: credential.apiKey,
       });
     } else if (resolvedServiceId === "gemini-api") {
       result = await requestGeminiResponseStream({
         ...providerArgs,
-        apiKey: env.GEMINI_API_KEY,
+        apiKey: credential.apiKey,
       });
     } else if (resolvedServiceId === "xai-api") {
       result = await requestXAIResponseStream({
         ...providerArgs,
-        apiKey: getXaiApiKey(),
+        apiKey: credential.apiKey,
       });
     } else {
       result = await requestHuggingFaceResponseStream({
         ...providerArgs,
-        apiKey: getHuggingFaceApiKey(),
+        apiKey: credential.apiKey,
       });
     }
 
@@ -309,16 +343,19 @@ export function createChatService({ database, env, runtimeConfig }) {
       model: result.model,
       reply: result.reply,
       resolvedServiceId,
+      credentialSource: credential.source,
     };
   }
 
   async function requestAutomaticReplyStream(chatRequest, context, handlers) {
-    const serviceIds = getAutomaticServiceIds();
+    const serviceIds = getAutomaticServiceIds(context);
 
     if (!serviceIds.length) {
       throw new HttpError(
-        503,
-        "No backend provider is configured. Add OPENAI_API_KEY, GEMINI_API_KEY, XAI_API_KEY, or HUGGINGFACE_API_KEY (or HF_TOKEN).",
+        context.allowHosted === false ? 402 : 503,
+        context.allowHosted === false
+          ? "Hosted access is unavailable. Add a personal API key in Profile settings or use Stripe billing."
+          : "No backend provider is configured. Add a provider API key.",
       );
     }
 
@@ -370,12 +407,13 @@ export function createChatService({ database, env, runtimeConfig }) {
         ? await requestAutomaticReply(chatRequest, context)
         : await requestProviderReply(
             chatRequest,
-            resolveServiceId(chatRequest.serviceId),
+            resolveServiceId(chatRequest.serviceId, context),
             context,
           );
 
     return {
       metadata: {
+        credentialSource: result.credentialSource,
         model: result.model,
         requestedModelId: chatRequest.modelId,
         requestedServiceId: chatRequest.serviceId,
@@ -383,6 +421,23 @@ export function createChatService({ database, env, runtimeConfig }) {
       },
       reply: result.reply,
     };
+  }
+
+  function getPlannedCredentialSource(payload, context = {}) {
+    const chatRequest = validateChatRequest(payload);
+    const resolvedServiceId =
+      chatRequest.serviceId === "backend-services"
+        ? getAutomaticServiceIds(context)[0] ?? null
+        : resolveServiceId(chatRequest.serviceId, context);
+
+    if (!resolvedServiceId) {
+      throw new HttpError(
+        context.allowHosted === false ? 402 : 503,
+        "No model provider is available for this request.",
+      );
+    }
+
+    return getProviderCredential(resolvedServiceId, context).source;
   }
 
   async function generateTitle(payload, context = {}) {
@@ -416,7 +471,7 @@ export function createChatService({ database, env, runtimeConfig }) {
         ? await requestAutomaticReply(chatRequest, context, titleInstruction)
         : await requestProviderReply(
             chatRequest,
-            resolveServiceId(titleServiceId),
+            resolveServiceId(titleServiceId, context),
             context,
             titleInstruction,
           );
@@ -436,13 +491,14 @@ export function createChatService({ database, env, runtimeConfig }) {
         ? await requestAutomaticReplyStream(chatRequest, context, handlers)
         : await requestProviderReplyStream(
             chatRequest,
-            resolveServiceId(chatRequest.serviceId),
+            resolveServiceId(chatRequest.serviceId, context),
             context,
             handlers,
           );
 
     return {
       metadata: {
+        credentialSource: result.credentialSource,
         model: result.model,
         requestedModelId: chatRequest.modelId,
         requestedServiceId: chatRequest.serviceId,
@@ -498,6 +554,7 @@ export function createChatService({ database, env, runtimeConfig }) {
   return {
     buildHealthPayload,
     generateTitle,
+    getPlannedCredentialSource,
     requestReply,
     requestReplyStream,
   };

@@ -67,6 +67,10 @@ export function mapBillingRow(row) {
   const trialCallsUsed = normalizeTrialCallsUsed(row?.trial_api_calls_used);
   const trialCallsLimit = normalizeTrialCallsLimit(row?.trial_api_calls_limit);
   const trialCallsRemaining = Math.max(trialCallsLimit - trialCallsUsed, 0);
+  const creditBalanceMicros = Math.max(
+    Number(row?.hosted_credit_balance_micros ?? 0),
+    0,
+  );
   const accessKind =
     row?.role === "admin"
       ? "admin"
@@ -74,11 +78,14 @@ export function mapBillingRow(row) {
         ? "subscription"
         : trialCallsRemaining > 0
           ? "trial"
-          : "none";
+          : creditBalanceMicros > 0
+            ? "credits"
+            : "none";
 
   return {
     accessKind,
     cancelAtPeriodEnd: Boolean(row?.billing_cancel_at_period_end),
+    creditBalanceMicros,
     currentPeriodEnd: serializeBillingPeriodEnd(row?.billing_current_period_end),
     hasAccess: accessKind !== "none",
     hasCustomer: Boolean(row?.stripe_customer_id),

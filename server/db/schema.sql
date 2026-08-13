@@ -85,6 +85,17 @@ alter table marginchat_users
 alter table marginchat_users
   add column if not exists trial_api_calls_limit integer not null default 100;
 
+alter table marginchat_users
+  add column if not exists hosted_credit_balance_micros bigint not null default 0;
+
+alter table marginchat_users
+  drop constraint if exists marginchat_users_hosted_credit_balance_check;
+
+alter table marginchat_users
+  add constraint marginchat_users_hosted_credit_balance_check check (
+    hosted_credit_balance_micros >= 0
+  );
+
 update marginchat_users
 set trial_api_calls_used = greatest(coalesce(trial_api_calls_used, 0), 0);
 
@@ -150,6 +161,44 @@ create unique index if not exists marginchat_user_accounts_stripe_customer_id_id
 create unique index if not exists marginchat_user_accounts_stripe_subscription_id_idx
   on marginchat_users (stripe_subscription_id)
   where stripe_subscription_id is not null;
+
+create table if not exists marginchat_user_api_keys (
+  user_id text not null references marginchat_users(id) on delete cascade,
+  provider text not null,
+  encrypted_api_key text not null,
+  key_hint text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, provider),
+  constraint marginchat_user_api_keys_provider_check check (
+    provider in ('openai', 'gemini', 'huggingface', 'xai')
+  )
+);
+
+create table if not exists marginchat_billing_ledger (
+  id text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  amount_micros bigint not null,
+  entry_type text not null,
+  stripe_checkout_session_id text,
+  request_id text,
+  created_at timestamptz not null default now(),
+  constraint marginchat_billing_ledger_entry_type_check check (
+    entry_type in ('stripe_credit_purchase', 'hosted_request', 'hosted_request_refund')
+  )
+);
+
+create unique index if not exists marginchat_billing_ledger_stripe_session_idx
+  on marginchat_billing_ledger (stripe_checkout_session_id)
+  where stripe_checkout_session_id is not null;
+
+create unique index if not exists marginchat_billing_ledger_request_charge_idx
+  on marginchat_billing_ledger (request_id)
+  where request_id is not null and entry_type = 'hosted_request';
+
+create unique index if not exists marginchat_billing_ledger_request_refund_idx
+  on marginchat_billing_ledger (request_id)
+  where request_id is not null and entry_type = 'hosted_request_refund';
 
 create table if not exists marginchat_user_sessions (
   id text primary key,
@@ -588,6 +637,25 @@ create table if not exists marginchat_branch_anchors (
   created_at timestamptz not null
 );
 
+create table if not exists marginchat_conversation_notes (
+  id text primary key,
+  conversation_id text not null references marginchat_conversations(id) on delete cascade,
+  source_message_id text references marginchat_messages(id) on delete cascade,
+  content text not null,
+  start_offset integer,
+  end_offset integer,
+  quote text,
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  constraint marginchat_conversation_notes_anchor_check check (
+    (source_message_id is null and start_offset is null and end_offset is null and quote is null)
+    or
+    (source_message_id is not null and start_offset is null and end_offset is null and quote is null)
+    or
+    (source_message_id is not null and start_offset is not null and end_offset is not null and quote is not null and end_offset > start_offset)
+  )
+);
+
 create index if not exists conversations_session_parent_created_idx
   on marginchat_conversations (session_id, parent_id, created_at);
 
@@ -596,3 +664,10 @@ create index if not exists messages_conversation_created_idx
 
 create index if not exists branch_anchors_source_message_idx
   on marginchat_branch_anchors (source_conversation_id, source_message_id);
+
+create index if not exists conversation_notes_conversation_created_idx
+  on marginchat_conversation_notes (conversation_id, created_at);
+
+create index if not exists conversation_notes_source_message_idx
+  on marginchat_conversation_notes (source_message_id)
+  where source_message_id is not null;

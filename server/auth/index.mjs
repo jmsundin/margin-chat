@@ -23,7 +23,15 @@ function resolveUserRole(email) {
     : "member";
 }
 
-export function createAuthService({ database, env = process.env, runtimeConfig }) {
+export function createAuthService({
+  apiKeyService = null,
+  database,
+  env = process.env,
+  runtimeConfig,
+}) {
+  async function decorateUser(user) {
+    return apiKeyService ? apiKeyService.decorateUser(user) : user;
+  }
   function hashResetToken(token) {
     return createHash("sha256").update(token).digest("hex");
   }
@@ -58,7 +66,7 @@ export function createAuthService({ database, env = process.env, runtimeConfig }
 
     return {
       cookie,
-      user,
+      user: await decorateUser(user),
     };
   }
 
@@ -74,13 +82,13 @@ export function createAuthService({ database, env = process.env, runtimeConfig }
 
     return {
       cookie,
-      user: {
+      user: await decorateUser({
         billing: user.billing,
         displayName: user.displayName,
         email: user.email,
         id: user.id,
         role: user.role,
-      },
+      }),
     };
   }
 
@@ -161,7 +169,7 @@ export function createAuthService({ database, env = process.env, runtimeConfig }
     return {
       sessionId,
       shouldClearSession: false,
-      user: authSession.user,
+      user: await decorateUser(authSession.user),
     };
   }
 
@@ -180,11 +188,11 @@ export function createAuthService({ database, env = process.env, runtimeConfig }
   async function updateProfile(userId, payload) {
     const input = normalizeProfileUpdatePayload(payload);
 
-    return database.updateUserProfile({
+    return decorateUser(await database.updateUserProfile({
       displayName: input.displayName,
       email: input.email,
       userId,
-    });
+    }));
   }
 
   function buildClearedSessionCookie() {

@@ -1,4 +1,5 @@
 import Stripe from "stripe";
+import { randomUUID } from "node:crypto";
 import { HttpError } from "../lib/errors.mjs";
 import { billingStatusHasAccess, normalizeBillingStatus } from "./status.mjs";
 
@@ -12,6 +13,36 @@ function getStripeWebhookSecret(env) {
 
 function getStripePriceId(env) {
   return env.STRIPE_PRICE_ID ?? null;
+}
+
+function getStripeCreditPriceId(env) {
+  return env.STRIPE_CREDIT_PRICE_ID ?? null;
+}
+
+function getCreditAmountMicros(env) {
+  const amount = Number(env.STRIPE_CREDIT_AMOUNT_MICROS);
+
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+}
+
+function getCreditPurchaseAmountCents(env) {
+  const amountMicros = getCreditAmountMicros(env);
+
+  return amountMicros && amountMicros % 10_000 === 0
+    ? amountMicros / 10_000
+    : null;
+}
+
+function getHostedRequestPriceMicros(env) {
+  const amount = Number(env.HOSTED_API_REQUEST_PRICE_MICROS);
+
+  return Number.isSafeInteger(amount) && amount > 0 ? amount : null;
+}
+
+function getPositiveInteger(value, fallback) {
+  const parsed = Number(value);
+
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function getStripeClient(env) {
@@ -80,6 +111,63 @@ function getSubscriptionPriceId(subscription) {
 }
 
 export function createBillingService({ database, env }) {
+  function getHostedUsageLimits(payload) {
+    const maxInputCharacters = getPositiveInteger(
+      env.HOSTED_MAX_INPUT_CHARACTERS,
+      60_000,
+    );
+    const maxOutputTokens = getPositiveInteger(
+      env.HOSTED_MAX_OUTPUT_TOKENS,
+      2_000,
+    );
+    const inputCharacters = JSON.stringify(payload).length;
+
+    if (inputCharacters > maxInputCharacters) {
+      throw new HttpError(
+        413,
+        `This hosted request is too large (${inputCharacters.toLocaleString()} characters). The current limit is ${maxInputCharacters.toLocaleString()}. Use a personal API key or shorten the conversation.`,
+      );
+    }
+
+    return { maxInputCharacters, maxOutputTokens };
+  }
+
+  async function reserveHostedRequest({ requestId, userId }) {
+    const amountMicros = getHostedRequestPriceMicros(env);
+
+    if (!amountMicros) {
+      throw new HttpError(
+        503,
+        "Hosted credit usage requires HOSTED_API_REQUEST_PRICE_MICROS.",
+      );
+    }
+
+    const balanceMicros = await database.chargeHostedRequest({
+      amountMicros,
+      ledgerId: randomUUID(),
+      requestId,
+      userId,
+    });
+
+    if (balanceMicros === null) {
+      throw new HttpError(
+        402,
+        "Your hosted credit balance is too low for another request. Add credits or use a personal API key.",
+      );
+    }
+
+    return { amountMicros, balanceMicros };
+  }
+
+  async function refundHostedRequest({ amountMicros, requestId, userId }) {
+    await database.refundHostedRequest({
+      amountMicros,
+      ledgerId: randomUUID(),
+      requestId,
+      userId,
+    });
+  }
+
   async function ensureCustomerForUser(user) {
     const stripe = getStripeClient(env);
     const billingAccount = await database.getUserBillingAccount(user.id);
@@ -163,6 +251,43 @@ export function createBillingService({ database, env }) {
   }
 
   async function createCheckoutSession({ request, user }) {
+    const creditPriceId = getStripeCreditPriceId(env);
+    const creditAmountMicros = getCreditAmountMicros(env);
+    const creditPurchaseAmountCents = getCreditPurchaseAmountCents(env);
+
+    if (creditPriceId || creditAmountMicros) {
+      if (!creditPriceId || !creditAmountMicros || !creditPurchaseAmountCents) {
+        throw new HttpError(
+          503,
+          "Stripe credits require STRIPE_CREDIT_PRICE_ID and a cent-aligned STRIPE_CREDIT_AMOUNT_MICROS.",
+        );
+      }
+
+      const stripe = getStripeClient(env);
+      const customerId = await ensureCustomerForUser(user);
+      const origin = getRequestOrigin(request, env);
+      const session = await stripe.checkout.sessions.create({
+        cancel_url: `${origin}/?checkout=canceled`,
+        client_reference_id: user.id,
+        customer: customerId,
+        line_items: [{ price: creditPriceId, quantity: 1 }],
+        metadata: {
+          creditAmountMicros: String(creditAmountMicros),
+          purchaseKind: "hosted_credits",
+          userId: user.id,
+        },
+        mode: "payment",
+        payment_method_types: ["card"],
+        success_url: `${origin}/?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      });
+
+      if (!session.url) {
+        throw new HttpError(500, "Stripe did not return a checkout URL.");
+      }
+
+      return { url: session.url };
+    }
+
     const priceId = getStripePriceId(env);
 
     if (!priceId) {
@@ -285,6 +410,37 @@ export function createBillingService({ database, env }) {
         });
       }
 
+      if (
+        userId &&
+        session.mode === "payment" &&
+        session.payment_status === "paid" &&
+        session.metadata?.purchaseKind === "hosted_credits"
+      ) {
+        const configuredAmount = getCreditAmountMicros(env);
+        const configuredPurchaseAmountCents = getCreditPurchaseAmountCents(env);
+        const sessionAmount = Number(session.metadata.creditAmountMicros);
+
+        if (
+          !configuredAmount ||
+          !configuredPurchaseAmountCents ||
+          sessionAmount !== configuredAmount ||
+          session.amount_total !== configuredPurchaseAmountCents ||
+          session.currency !== "usd"
+        ) {
+          throw new HttpError(
+            400,
+            "Stripe credit checkout metadata does not match server configuration.",
+          );
+        }
+
+        await database.creditHostedBalance({
+          amountMicros: configuredAmount,
+          ledgerId: randomUUID(),
+          stripeCheckoutSessionId: session.id,
+          userId,
+        });
+      }
+
       if (typeof session.subscription === "string") {
         await retrieveAndSyncSubscription({
           customerId,
@@ -316,5 +472,8 @@ export function createBillingService({ database, env }) {
     createBillingPortalSession,
     createCheckoutSession,
     handleWebhook,
+    getHostedUsageLimits,
+    refundHostedRequest,
+    reserveHostedRequest,
   };
 }
