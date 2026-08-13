@@ -1,5 +1,7 @@
 import type {
   AppState,
+  ApiKeyProvider,
+  ApiKeySettings,
   AuthenticatedUser,
   BranchAnchor,
   BackendServiceId,
@@ -21,6 +23,7 @@ interface ConversationContext {
 
 export interface ChatReplyResponse {
   metadata: {
+    credentialSource?: "hosted" | "personal";
     model: string;
     requestedModelId?: string;
     requestedServiceId: BackendServiceId;
@@ -60,6 +63,10 @@ export interface PasswordResetRequestResponse {
 
 interface RedirectSessionResponse {
   url: string;
+}
+
+interface ApiKeySettingsResponse {
+  apiKeys: ApiKeySettings;
 }
 
 export class ApiError extends Error {
@@ -437,6 +444,36 @@ export async function requestUpdateProfile(args: {
   }
 
   return payload.user;
+}
+
+export async function requestUpdateApiKeys(args: {
+  keys: Partial<Record<ApiKeyProvider, string | null>>;
+}): Promise<ApiKeySettings> {
+  const response = await fetch("/api/settings/api-keys", {
+    body: JSON.stringify(args),
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "PUT",
+  });
+  const payload = (await readJson(response)) as
+    | ApiKeySettingsResponse
+    | ErrorPayload
+    | null;
+
+  ensureOk(response, payload, "Unable to update personal API keys.");
+
+  if (
+    !payload ||
+    !("apiKeys" in payload) ||
+    !payload.apiKeys ||
+    typeof payload.apiKeys.hasAny !== "boolean"
+  ) {
+    throw new Error("Backend returned invalid API key settings.");
+  }
+
+  return payload.apiKeys;
 }
 
 export async function requestCreateCheckoutSession(): Promise<string> {

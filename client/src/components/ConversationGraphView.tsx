@@ -1,120 +1,94 @@
 import {
+  useCallback,
   useEffect,
   useEffectEvent,
   useMemo,
   useRef,
   useState,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
 } from "react";
-import ChatPanel from "./ChatPanel";
 import {
-  buildDefaultGraphLayouts,
-  GRAPH_NODE_DEFAULT_HEIGHT,
-  GRAPH_NODE_DEFAULT_WIDTH,
-  GRAPH_NODE_MAX_HEIGHT,
-  GRAPH_NODE_MAX_WIDTH,
-  GRAPH_NODE_MIN_HEIGHT,
-  GRAPH_NODE_MIN_WIDTH,
-} from "../lib/graphLayout";
-import {
-  buildCategoryOrganizedGraphLayouts,
-  buildGraphCategoryRegions,
-  getGraphCategoryPalette,
-  type GraphCategoryPalette,
-} from "../lib/graphCategories";
-import type { RecentBackendServiceSelection } from "../lib/services";
+  buildConversationGraphScene,
+  type ConversationGraphDetail,
+  type ConversationGraphNodePlacement,
+  type ConversationGraphScene,
+} from "../lib/conversationGraph";
 import { excerpt, getConversationPath, getConversationRootId } from "../lib/tree";
-import type {
-  BackendServiceId,
-  Conversation,
-  GraphNodeLayout,
-  MessageAnchorLink,
-  SelectionDraft,
-  ThreadCategoryId,
-  ThreadSummary,
-} from "../types";
+import { getWheelGestureAxis } from "../lib/wheelGestures";
+import type { Conversation, ThreadSummary } from "../types";
 
-const GRAPH_STAGE_PADDING = 240;
-const GRAPH_STAGE_WORLD_BLEED = 3200;
-const GRAPH_STAGE_WORLD_ORIGIN = 3200;
-const GRAPH_VIEWPORT_MARGIN = 96;
-const GRAPH_RESIZE_KEYBOARD_STEP = 24;
-const GRAPH_SCALE_MAX = 2.2;
-const GRAPH_SCALE_MIN = 0.22;
-const GRAPH_BUTTON_ZOOM_FACTOR = 1.18;
-const GRAPH_CATEGORY_OVERVIEW_SCALE = 0.46;
-const GRAPH_CATEGORY_FOCUS_SCALE = 0.84;
+const GRAPH_SCALE_MIN = 0.38;
+const GRAPH_SCALE_MAX = 1.5;
+const GRAPH_ZOOM_STEP = 1.14;
 const GRAPH_ZOOM_SENSITIVITY = 0.0012;
+const GRAPH_PAN_EDGE_MARGIN = 88;
+const GRAPH_PAN_SLACK = 112;
 
-type ViewportPosition = {
+type GraphViewport = {
+  scale: number;
   x: number;
   y: number;
 };
 
-type ActiveInteraction =
-  | {
-      originX: number;
-      originY: number;
-      startClientX: number;
-      startClientY: number;
-      type: "pan";
-    }
-  | {
-      conversationId: string;
-      originX: number;
-      originY: number;
-      startClientX: number;
-      startClientY: number;
-      type: "move";
-    }
-  | {
-      conversationId: string;
-      handle: "corner-bottom" | "corner-top" | "edge";
-      originHeight: number;
-      originWidth: number;
-      originY: number;
-      startClientX: number;
-      startClientY: number;
-      type: "resize";
-    };
+type PanInteraction = {
+  originX: number;
+  originY: number;
+  pointerId: number;
+  startClientX: number;
+  startClientY: number;
+};
 
 interface ConversationGraphViewProps {
   activeConversationId: string;
   conversations: Record<string, Conversation>;
-  drafts: Record<string, string>;
-  getAnchorsByMessageId: (
-    conversationId: string,
-  ) => Record<string, MessageAnchorLink[]>;
-  graphLayouts: Record<string, GraphNodeLayout>;
-  pendingConversationIds: Record<string, boolean>;
-  recentModelSelections: RecentBackendServiceSelection[];
-  selectionPreview: SelectionDraft | null;
-  theme: "light" | "dark";
   threads: ThreadSummary[];
-  typingProgressByMessageId: Record<string, number>;
-  typingMessageIds: Record<string, boolean>;
-  onApplyGraphLayouts: (nextLayouts: Record<string, GraphNodeLayout>) => void;
   onActivateConversation: (conversationId: string) => void;
-  onDraftChange: (conversationId: string, value: string) => void;
-  onModelChange: (
-    conversationId: string,
-    serviceId: BackendServiceId,
-    modelId: string,
-  ) => void;
-  onStopTypewriter: (conversationId: string) => void;
-  onSubmit: (conversationId: string, value: string) => void;
-  onTypewriterComplete: (messageId: string) => void;
-  onTypewriterProgress: (messageId: string, visibleCount: number) => void;
-  onUpdateGraphNodeLayout: (
-    conversationId: string,
-    nextLayout: Partial<GraphNodeLayout>,
-  ) => void;
+  onOpenConversation: (conversationId: string) => void;
+  renderDockedConversation?: (conversationId: string) => ReactNode;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+function normalizeWheelDelta(
+  delta: number,
+  deltaMode: number,
+  viewportSize: number,
+) {
+  if (deltaMode === 1) {
+    return delta * 16;
+  }
+
+  if (deltaMode === 2) {
+    return delta * Math.max(viewportSize, 1);
+  }
+
+  return delta;
+}
+
+function constrainPanAxis(args: {
+  contentSize: number;
+  position: number;
+  viewportSize: number;
+}) {
+  if (args.contentSize <= args.viewportSize) {
+    const centeredPosition = (args.viewportSize - args.contentSize) / 2;
+
+    return clamp(
+      args.position,
+      centeredPosition - GRAPH_PAN_SLACK,
+      centeredPosition + GRAPH_PAN_SLACK,
+    );
+  }
+
+  return clamp(
+    args.position,
+    args.viewportSize - args.contentSize - GRAPH_PAN_EDGE_MARGIN,
+    GRAPH_PAN_EDGE_MARGIN,
+  );
 }
 
 function buildConnectorPath(args: {
@@ -123,607 +97,597 @@ function buildConnectorPath(args: {
   startX: number;
   startY: number;
 }) {
-  const horizontalGap = args.endX - args.startX;
+  const distance = Math.max(0, args.endX - args.startX);
+  const controlOffset = Math.max(54, Math.min(150, distance * 0.42));
 
-  if (horizontalGap <= 32) {
-    return `M ${args.startX} ${args.startY} L ${args.endX} ${args.endY}`;
-  }
-
-  const controlOffset = Math.max(72, Math.min(220, horizontalGap * 0.35));
-
-  return `M ${args.startX} ${args.startY} C ${args.startX + controlOffset} ${
-    args.startY
-  }, ${args.endX - controlOffset} ${args.endY}, ${args.endX} ${args.endY}`;
+  return `M ${args.startX} ${args.startY} C ${
+    args.startX + controlOffset
+  } ${args.startY}, ${args.endX - controlOffset} ${args.endY}, ${args.endX} ${
+    args.endY
+  }`;
 }
 
-function getViewportPositionForConversation(args: {
-  conversationId: string;
-  graphLayouts: Record<string, GraphNodeLayout>;
-  stageOriginX: number;
-  stageOriginY: number;
-  scale: number;
-  viewportHeight: number;
-  viewportWidth: number;
-}) {
-  const layout = args.graphLayouts[args.conversationId];
-
-  if (!layout) {
-    return {
-      x: GRAPH_VIEWPORT_MARGIN,
-      y: GRAPH_VIEWPORT_MARGIN,
-    };
-  }
-
-  return {
-    x:
-      args.viewportWidth * 0.32 -
-      (layout.x + args.stageOriginX + layout.width / 2) * args.scale,
-    y:
-      args.viewportHeight * 0.24 -
-      (layout.y + args.stageOriginY + Math.min(layout.height / 2, 240)) *
-        args.scale,
-  };
+function getLatestMessage(
+  conversation: Conversation,
+  role?: "assistant" | "user",
+) {
+  return [...conversation.messages]
+    .reverse()
+    .find((message) => role === undefined || message.role === role);
 }
 
-function getGraphNodeScrollElement(target: HTMLElement | null) {
-  if (!target) {
-    return null;
+function getConversationPreview(conversation: Conversation) {
+  const message =
+    getLatestMessage(conversation, "assistant") ??
+    getLatestMessage(conversation);
+
+  return message
+    ? excerpt(message.content, 124)
+    : "This chat does not have any messages yet.";
+}
+
+function getSourceQuote(conversation: Conversation) {
+  if (!conversation.branchAnchor) {
+    return "Root of this discussion";
   }
 
-  return (
-    target.closest<HTMLElement>(".composer-textarea") ??
-    target.closest<HTMLElement>(".panel-body") ??
-    target.closest<HTMLElement>(".composer-primary-scroll")
+  return excerpt(
+    conversation.branchAnchor.quote || conversation.branchAnchor.prompt,
+    132,
   );
 }
 
-function canScrollGraphNodeElement(element: HTMLElement, deltaY: number) {
-  if (Math.abs(deltaY) < 0.5) {
-    return false;
-  }
-
-  const maxScrollTop = element.scrollHeight - element.clientHeight;
-
-  if (maxScrollTop <= 1) {
-    return false;
-  }
-
-  if (deltaY < 0) {
-    return element.scrollTop > 1;
-  }
-
-  return element.scrollTop < maxScrollTop - 1;
-}
-
-function normalizeWheelDelta(
-  delta: number,
-  deltaMode: number,
-  viewportSize: number,
+function sortChildConversations(
+  conversations: Record<string, Conversation>,
+  conversation: Conversation,
 ) {
-  if (deltaMode === WheelEvent.DOM_DELTA_LINE) {
-    return delta * 16;
-  }
-
-  if (deltaMode === WheelEvent.DOM_DELTA_PAGE) {
-    return delta * Math.max(viewportSize, 800);
-  }
-
-  return delta;
+  return conversation.childIds
+    .map((conversationId) => conversations[conversationId])
+    .filter((child): child is Conversation => Boolean(child))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 }
 
-function areGraphLayoutsEqual(
-  left: Record<string, GraphNodeLayout>,
-  right: Record<string, GraphNodeLayout>,
-) {
-  const leftIds = Object.keys(left);
-  const rightIds = Object.keys(right);
+function calculateFitViewport(
+  scene: ConversationGraphScene,
+  viewportElement: HTMLDivElement,
+): GraphViewport {
+  const availableWidth = Math.max(240, viewportElement.clientWidth - 56);
+  const availableHeight = Math.max(220, viewportElement.clientHeight - 48);
+  const scale = clamp(
+    Math.min(availableWidth / scene.width, availableHeight / scene.height),
+    GRAPH_SCALE_MIN,
+    0.96,
+  );
 
-  if (leftIds.length !== rightIds.length) {
-    return false;
-  }
-
-  return leftIds.every((conversationId) => {
-    const leftLayout = left[conversationId];
-    const rightLayout = right[conversationId];
-
-    return (
-      Boolean(rightLayout) &&
-      leftLayout.x === rightLayout.x &&
-      leftLayout.y === rightLayout.y &&
-      leftLayout.width === rightLayout.width &&
-      leftLayout.height === rightLayout.height
-    );
-  });
-}
-
-function getCategoryStyleVariables(palette: GraphCategoryPalette) {
   return {
-    "--graph-category-accent": palette.accent,
-    "--graph-category-border": palette.border,
-    "--graph-category-glow": palette.glow,
-    "--graph-category-surface": palette.surface,
-    "--graph-category-surface-strong": palette.surfaceStrong,
-  } as CSSProperties;
+    scale,
+    x: (viewportElement.clientWidth - scene.width * scale) / 2,
+    y: (viewportElement.clientHeight - scene.height * scale) / 2,
+  };
 }
 
-function noopRegisterPanelRef() {}
+function GraphActionIcon({
+  name,
+}: {
+  name: "collapse" | "dock" | "expand" | "main" | "open";
+}) {
+  if (name === "collapse") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M6 12h12" />
+      </svg>
+    );
+  }
 
-function noopRegisterComposerSurfaceRef() {}
+  if (name === "dock") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <rect height="14" rx="2" width="18" x="3" y="5" />
+        <path d="M12 5v14" />
+      </svg>
+    );
+  }
 
-function noopRegisterAnchorRef() {}
+  if (name === "expand") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" />
+      </svg>
+    );
+  }
+
+  if (name === "main") {
+    return (
+      <svg aria-hidden="true" viewBox="0 0 24 24">
+        <path d="m8 4 8 8-8 8" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg aria-hidden="true" viewBox="0 0 24 24">
+      <path d="M5 6.5h14v10H9l-4 3z" />
+    </svg>
+  );
+}
+
+function GraphNodeAction({
+  icon,
+  label,
+  onClick,
+  primary = false,
+}: {
+  icon: "collapse" | "dock" | "expand" | "main" | "open";
+  label: string;
+  onClick: () => void;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      aria-label={label}
+      className={
+        primary
+          ? "conversation-graph-node-action is-primary"
+          : "conversation-graph-node-action"
+      }
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      title={label}
+      type="button"
+    >
+      <GraphActionIcon name={icon} />
+    </button>
+  );
+}
+
+function GraphNode({
+  activeConversationId,
+  conversation,
+  conversations,
+  detailLevel,
+  isSelected,
+  onCollapse,
+  onDock,
+  onExpand,
+  onMakeMain,
+  onOpen,
+  onSelect,
+  placement,
+}: {
+  activeConversationId: string;
+  conversation: Conversation;
+  conversations: Record<string, Conversation>;
+  detailLevel: ConversationGraphDetail;
+  isSelected: boolean;
+  onCollapse: () => void;
+  onDock: (conversationId: string) => void;
+  onExpand: (conversationId: string) => void;
+  onMakeMain: (conversationId: string) => void;
+  onOpen: (conversationId: string) => void;
+  onSelect: (conversationId: string) => void;
+  placement: ConversationGraphNodePlacement;
+}) {
+  const childConversations = sortChildConversations(conversations, conversation);
+  const isPreview = isSelected && detailLevel === "preview";
+  const isReader = isSelected && detailLevel === "reader";
+  const nodeStyle = {
+    height: `${placement.height}px`,
+    left: `${placement.x}px`,
+    top: `${placement.y}px`,
+    width: `${placement.width}px`,
+  } as CSSProperties;
+  const nodeType =
+    conversation.id === activeConversationId
+      ? "Current main"
+      : conversation.parentId
+          ? "Child chat"
+          : "Main chat";
+
+  return (
+    <article
+      className={[
+        "conversation-graph-node",
+        isSelected ? "is-selected" : "",
+        isPreview ? "is-preview" : "",
+        isReader ? "is-reader" : "",
+        conversation.id === activeConversationId ? "is-current-main" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      data-conversation-id={conversation.id}
+      style={nodeStyle}
+    >
+      <button
+        aria-label={`Preview ${conversation.title}`}
+        aria-pressed={isSelected}
+        className="conversation-graph-node-select"
+        onClick={() => onSelect(conversation.id)}
+        type="button"
+      >
+        <span className="conversation-graph-node-head">
+          <span className="conversation-graph-node-kicker">
+            <span>{nodeType}</span>
+            {conversation.id === activeConversationId ? (
+              <span aria-hidden="true" className="conversation-graph-main-dot" />
+            ) : null}
+          </span>
+          <strong>{conversation.title}</strong>
+        </span>
+
+        {!isPreview && !isReader ? (
+          <span className="conversation-graph-node-meta">
+            {conversation.branchAnchor
+              ? excerpt(
+                  conversation.branchAnchor.quote ||
+                    conversation.branchAnchor.prompt,
+                  52,
+                )
+              : `${conversation.childIds.length} child chat${
+                  conversation.childIds.length === 1 ? "" : "s"
+                }`}
+          </span>
+        ) : null}
+      </button>
+
+      {isPreview ? (
+        <div className="conversation-graph-node-preview">
+          <span className="conversation-graph-node-source-label">
+            Branched from
+          </span>
+          <blockquote>{getSourceQuote(conversation)}</blockquote>
+          <p>{getConversationPreview(conversation)}</p>
+          <div className="conversation-graph-node-actions">
+            <GraphNodeAction
+              icon="expand"
+              label={`Expand ${conversation.title}`}
+              onClick={() => onExpand(conversation.id)}
+              primary
+            />
+            <GraphNodeAction
+              icon="dock"
+              label={`Dock ${conversation.title} in split view`}
+              onClick={() => onDock(conversation.id)}
+            />
+            {conversation.id !== activeConversationId ? (
+              <GraphNodeAction
+                icon="main"
+                label={`Make ${conversation.title} the main chat`}
+                onClick={() => onMakeMain(conversation.id)}
+              />
+            ) : null}
+            <GraphNodeAction
+              icon="open"
+              label={`Open ${conversation.title} in chat view`}
+              onClick={() => onOpen(conversation.id)}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {isReader ? (
+        <div className="conversation-graph-node-reader">
+          <div className="conversation-graph-reader-actions">
+            <GraphNodeAction
+              icon="collapse"
+              label={`Minimize ${conversation.title}`}
+              onClick={onCollapse}
+            />
+            <GraphNodeAction
+              icon="dock"
+              label={`Dock ${conversation.title} in split view`}
+              onClick={() => onDock(conversation.id)}
+              primary
+            />
+            {conversation.id !== activeConversationId ? (
+              <GraphNodeAction
+                icon="main"
+                label={`Make ${conversation.title} the main chat`}
+                onClick={() => onMakeMain(conversation.id)}
+              />
+            ) : null}
+            <GraphNodeAction
+              icon="open"
+              label={`Open ${conversation.title} in chat view`}
+              onClick={() => onOpen(conversation.id)}
+            />
+          </div>
+          <div
+            className="conversation-graph-reader-messages"
+            data-graph-reader-scroll="true"
+          >
+            {conversation.messages.length ? (
+              conversation.messages.map((message) => (
+                <div
+                  className={`conversation-graph-reader-message is-${message.role}`}
+                  key={message.id}
+                >
+                  <span>{message.role === "user" ? "You" : "Assistant"}</span>
+                  <p>{message.content}</p>
+                </div>
+              ))
+            ) : (
+              <p className="conversation-graph-reader-empty">
+                This chat does not have any messages yet.
+              </p>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {(isPreview || isReader) && childConversations.length ? (
+        <div className="conversation-graph-source-list">
+          {childConversations.map((childConversation) => (
+            <span
+              className="conversation-graph-source-row"
+              data-source-child-id={childConversation.id}
+              key={childConversation.id}
+            >
+              {excerpt(
+                childConversation.branchAnchor?.quote ||
+                  childConversation.branchAnchor?.prompt ||
+                  childConversation.title,
+                54,
+              )}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+}
 
 export default function ConversationGraphView({
   activeConversationId,
   conversations,
-  drafts,
-  getAnchorsByMessageId,
-  graphLayouts,
-  pendingConversationIds,
-  recentModelSelections,
-  selectionPreview,
-  theme,
   threads,
-  typingProgressByMessageId,
-  typingMessageIds,
-  onApplyGraphLayouts,
   onActivateConversation,
-  onDraftChange,
-  onModelChange,
-  onStopTypewriter,
-  onSubmit,
-  onTypewriterComplete,
-  onTypewriterProgress,
-  onUpdateGraphNodeLayout,
+  onOpenConversation,
+  renderDockedConversation,
 }: ConversationGraphViewProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const interactionRef = useRef<ActiveInteraction | null>(null);
-  const initializedViewportRef = useRef(false);
-  const autoArrangedByCategoryRef = useRef(false);
-  const centeredConversationIdRef = useRef<string | null>(null);
-  const suppressNextAutoCenterRef = useRef(false);
-  const scaleRef = useRef(1);
-  const [viewport, setViewport] = useState<ViewportPosition>({
-    x: GRAPH_VIEWPORT_MARGIN,
-    y: GRAPH_VIEWPORT_MARGIN,
+  const panInteractionRef = useRef<PanInteraction | null>(null);
+  const viewportStateRef = useRef<GraphViewport>({ scale: 1, x: 0, y: 0 });
+  const [selectedConversationId, setSelectedConversationId] = useState<
+    string | null
+  >(null);
+  const [detailLevel, setDetailLevel] =
+    useState<ConversationGraphDetail>("compact");
+  const [dockedConversationId, setDockedConversationId] = useState<
+    string | null
+  >(null);
+  const [viewport, setViewport] = useState<GraphViewport>({
+    scale: 1,
+    x: 0,
+    y: 0,
   });
-  const viewportStateRef = useRef<ViewportPosition>({
-    x: GRAPH_VIEWPORT_MARGIN,
-    y: GRAPH_VIEWPORT_MARGIN,
-  });
-  const [scale, setScale] = useState(1);
+  const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
   const [isPanning, setIsPanning] = useState(false);
-  const [draggingConversationId, setDraggingConversationId] = useState<
-    string | null
-  >(null);
-  const [resizingConversationId, setResizingConversationId] = useState<
-    string | null
-  >(null);
-  const [focusedCategoryId, setFocusedCategoryId] = useState<ThreadCategoryId | null>(
-    null,
+  const activeRootConversationId = getConversationRootId(
+    conversations,
+    activeConversationId,
   );
-  const [scrollFocusedConversationId, setScrollFocusedConversationId] =
-    useState<string | null>(null);
-  const threadSummaryById = useMemo(
-    () => new Map(threads.map((thread) => [thread.id, thread] as const)),
-    [threads],
-  );
-  const conversationRootIdById = useMemo(
+  const activeConversation = conversations[activeConversationId];
+  const selectedConversation = selectedConversationId
+    ? conversations[selectedConversationId] ?? null
+    : null;
+  const navigationConversation = selectedConversation ?? activeConversation;
+  const selectedRootConversationId = selectedConversation
+    ? getConversationRootId(conversations, selectedConversation.id)
+    : null;
+  const sceneConversationId =
+    selectedConversation?.id ?? activeConversationId;
+  const scene = useMemo(
     () =>
-      Object.fromEntries(
-        Object.keys(conversations).map((conversationId) => [
-          conversationId,
-          getConversationRootId(conversations, conversationId) ?? conversationId,
-        ]),
-      ) as Record<string, string>,
-    [conversations],
-  );
-  const categoryByConversationId = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.keys(conversations).map((conversationId) => {
-          const rootConversationId = conversationRootIdById[conversationId];
-
-          return [
-            conversationId,
-            threadSummaryById.get(rootConversationId)?.categoryId ?? "general",
-          ];
-        }),
-      ) as Record<string, ThreadCategoryId>,
-    [conversationRootIdById, conversations, threadSummaryById],
-  );
-  const activeCategoryId = categoryByConversationId[activeConversationId] ?? null;
-  const activePathIds = useMemo(
-    () =>
-      new Set(
-        getConversationPath(conversations, activeConversationId).map(
-          (conversation) => conversation.id,
-        ),
-      ),
-    [activeConversationId, conversations],
-  );
-  const categoryRegions = useMemo(
-    () =>
-      buildGraphCategoryRegions({
+      buildConversationGraphScene({
         conversations,
-        graphLayouts,
-        threads,
+        detailLevel: selectedConversation ? detailLevel : "compact",
+        mode: "overview",
+        selectedConversationId: sceneConversationId,
       }),
-    [conversations, graphLayouts, threads],
+    [conversations, detailLevel, sceneConversationId, selectedConversation],
   );
-  const categoryRegionById = useMemo(
-    () =>
-      new Map(
-        categoryRegions.map((region) => [region.categoryId, region] as const),
-      ),
-    [categoryRegions],
+  const selectedPath = navigationConversation
+    ? getConversationPath(conversations, navigationConversation.id)
+    : [];
+  const activeRootThread = threads.find(
+    (thread) => thread.id === activeRootConversationId,
   );
-  const defaultGraphLayouts = useMemo(
-    () => buildDefaultGraphLayouts(conversations),
-    [conversations],
-  );
-  const categoryOrganizedLayouts = useMemo(
-    () =>
-      buildCategoryOrganizedGraphLayouts({
-        conversations,
-        graphLayouts,
-        threads,
-      }),
-    [conversations, graphLayouts, threads],
-  );
-  const overviewCategoryNodes = useMemo(
-    () =>
-      categoryRegions.map((region) => {
-        const width = Math.min(320, 212 + region.threadCount * 16);
-        const height = 128;
-
-        return {
-          categoryId: region.categoryId,
-          height,
-          label: region.label,
-          palette: region.palette,
-          panelCount: region.panelCount,
-          threadCount: region.threadCount,
-          width,
-          x: region.bounds.x + region.bounds.width / 2 - width / 2,
-          y: region.bounds.y + region.bounds.height / 2 - height / 2,
-        };
-      }),
-    [categoryRegions],
-  );
-  const isCategoryOverview = scale <= GRAPH_CATEGORY_OVERVIEW_SCALE;
-  const orderedConversations = useMemo(
-    () =>
-      Object.values(conversations).sort((left, right) => {
-        if (left.id === activeConversationId) {
-          return 1;
-        }
-
-        if (right.id === activeConversationId) {
-          return -1;
-        }
-
-        return left.createdAt.localeCompare(right.createdAt);
-      }),
-    [activeConversationId, conversations],
-  );
-  const stageSize = useMemo(() => {
-    const layouts = Object.values(graphLayouts);
-    const categoryBounds = categoryRegions.map((region) => region.bounds);
-
-    if (!layouts.length && !categoryBounds.length) {
-      return {
-        height: 6400,
-        originX: GRAPH_STAGE_WORLD_ORIGIN,
-        originY: GRAPH_STAGE_WORLD_ORIGIN,
-        width: 6400,
-      };
-    }
-
-    const maxRight = [...layouts, ...categoryBounds].reduce(
-      (currentMax, layout) => Math.max(currentMax, layout.x + layout.width),
-      0,
-    );
-    const maxBottom = [...layouts, ...categoryBounds].reduce(
-      (currentMax, layout) => Math.max(currentMax, layout.y + layout.height),
-      0,
-    );
-
-    return {
-      height: Math.max(
-        6400,
-        GRAPH_STAGE_WORLD_ORIGIN + maxBottom + GRAPH_STAGE_WORLD_BLEED,
-      ),
-      originX: GRAPH_STAGE_WORLD_ORIGIN,
-      originY: GRAPH_STAGE_WORLD_ORIGIN,
-      width: Math.max(
-        6400,
-        GRAPH_STAGE_WORLD_ORIGIN + maxRight + GRAPH_STAGE_WORLD_BLEED,
-      ),
-    };
-  }, [categoryRegions, graphLayouts]);
+  const dockedConversation = dockedConversationId
+    ? conversations[dockedConversationId] ?? null
+    : null;
+  const showMinimap = scene.nodes.length > 4;
   const stageStyle = {
-    height: `${stageSize.height}px`,
-    transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${scale})`,
-    width: `${stageSize.width}px`,
+    height: `${scene.height}px`,
+    transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
+    width: `${scene.width}px`,
   } as CSSProperties;
 
-  useEffect(() => {
-    viewportStateRef.current = viewport;
-  }, [viewport]);
+  const applyViewport = useCallback((nextViewport: GraphViewport) => {
+    viewportStateRef.current = nextViewport;
+    setViewport(nextViewport);
+  }, []);
 
-  useEffect(() => {
-    scaleRef.current = scale;
-  }, [scale]);
-
-  useEffect(() => {
+  const fitGraph = useCallback(() => {
     const viewportElement = viewportRef.current;
 
     if (!viewportElement) {
       return;
     }
 
-    const activeCategoryRegion =
-      activeCategoryId === null ? null : categoryRegionById.get(activeCategoryId);
-    const focusBounds =
-      isCategoryOverview && activeCategoryRegion
-        ? activeCategoryRegion.bounds
-        : graphLayouts[activeConversationId]
-          ? {
-              height: graphLayouts[activeConversationId].height,
-              width: graphLayouts[activeConversationId].width,
-              x: graphLayouts[activeConversationId].x,
-              y: graphLayouts[activeConversationId].y,
-            }
-          : null;
-    const nextViewport =
-      isCategoryOverview && activeCategoryRegion
-        ? {
-            x:
-              viewportElement.clientWidth / 2 -
-              (stageSize.originX +
-                activeCategoryRegion.bounds.x +
-                activeCategoryRegion.bounds.width / 2) *
-                scale,
-            y:
-              viewportElement.clientHeight / 2 -
-              (stageSize.originY +
-                activeCategoryRegion.bounds.y +
-                activeCategoryRegion.bounds.height / 2) *
-                scale,
-          }
-        : getViewportPositionForConversation({
-            conversationId: activeConversationId,
-            graphLayouts,
-            scale,
-            stageOriginX: stageSize.originX,
-            stageOriginY: stageSize.originY,
-            viewportHeight: viewportElement.clientHeight,
-            viewportWidth: viewportElement.clientWidth,
-          });
+    applyViewport(calculateFitViewport(scene, viewportElement));
+  }, [applyViewport, scene]);
 
-    if (!initializedViewportRef.current) {
-      initializedViewportRef.current = true;
-      centeredConversationIdRef.current = activeConversationId;
-      viewportStateRef.current = nextViewport;
-      setViewport(nextViewport);
+  const revealSelectedConversation = useCallback(() => {
+    const viewportElement = viewportRef.current;
+
+    if (!viewportElement || !selectedConversation) {
+      fitGraph();
       return;
     }
 
-    if (suppressNextAutoCenterRef.current) {
-      suppressNextAutoCenterRef.current = false;
-      centeredConversationIdRef.current = activeConversationId;
+    const selectedPlacement = scene.nodes.find(
+      (placement) => placement.conversationId === selectedConversation.id,
+    );
+
+    if (!selectedPlacement) {
+      fitGraph();
       return;
     }
 
-    if (centeredConversationIdRef.current === activeConversationId) {
-      return;
-    }
+    const fitScale = calculateFitViewport(scene, viewportElement).scale;
+    const preferredScale = detailLevel === "reader" ? 0.9 : 0.82;
+    const scale = clamp(
+      Math.max(fitScale, Math.min(viewportStateRef.current.scale, preferredScale)),
+      GRAPH_SCALE_MIN,
+      preferredScale,
+    );
 
-    if (!focusBounds) {
-      return;
-    }
-
-    const left = viewport.x + (focusBounds.x + stageSize.originX) * scale;
-    const right = left + focusBounds.width * scale;
-    const top = viewport.y + (focusBounds.y + stageSize.originY) * scale;
-    const bottom = top + focusBounds.height * scale;
-    const withinHorizontalBounds =
-      left >= GRAPH_VIEWPORT_MARGIN &&
-      right <= viewportElement.clientWidth - GRAPH_VIEWPORT_MARGIN;
-    const withinVerticalBounds =
-      top >= GRAPH_VIEWPORT_MARGIN &&
-      bottom <= viewportElement.clientHeight - GRAPH_VIEWPORT_MARGIN;
-
-    if (withinHorizontalBounds && withinVerticalBounds) {
-      centeredConversationIdRef.current = activeConversationId;
-      return;
-    }
-
-    centeredConversationIdRef.current = activeConversationId;
-    viewportStateRef.current = nextViewport;
-    setViewport(nextViewport);
-  }, [
-    activeCategoryId,
-    activeConversationId,
-    categoryRegionById,
-    graphLayouts,
-    isCategoryOverview,
-    scale,
-    stageSize.originX,
-    stageSize.originY,
-    viewport.x,
-    viewport.y,
-  ]);
+    applyViewport({
+      scale,
+      x:
+        viewportElement.clientWidth / 2 -
+        (selectedPlacement.x + selectedPlacement.width / 2) * scale,
+      y:
+        viewportElement.clientHeight / 2 -
+        (selectedPlacement.y + selectedPlacement.height / 2) * scale,
+    });
+  }, [applyViewport, detailLevel, fitGraph, scene, selectedConversation]);
 
   useEffect(() => {
     if (
-      scrollFocusedConversationId &&
-      scrollFocusedConversationId !== activeConversationId
+      !selectedConversation ||
+      (activeRootConversationId &&
+        selectedRootConversationId !== activeRootConversationId)
     ) {
-      setScrollFocusedConversationId(null);
+      setSelectedConversationId(null);
+      setDetailLevel("compact");
     }
-  }, [activeConversationId, scrollFocusedConversationId]);
-
-  useEffect(() => {
-    if (!focusedCategoryId || categoryRegionById.has(focusedCategoryId)) {
-      return;
-    }
-
-    setFocusedCategoryId(null);
-  }, [categoryRegionById, focusedCategoryId]);
-
-  useEffect(() => {
-    if (autoArrangedByCategoryRef.current || categoryRegions.length < 2) {
-      return;
-    }
-
-    if (areGraphLayoutsEqual(graphLayouts, categoryOrganizedLayouts)) {
-      autoArrangedByCategoryRef.current = true;
-      return;
-    }
-
-    if (!areGraphLayoutsEqual(graphLayouts, defaultGraphLayouts)) {
-      return;
-    }
-
-    autoArrangedByCategoryRef.current = true;
-    onApplyGraphLayouts(categoryOrganizedLayouts);
   }, [
-    categoryOrganizedLayouts,
-    categoryRegions.length,
-    defaultGraphLayouts,
-    graphLayouts,
-    onApplyGraphLayouts,
+    activeConversationId,
+    activeRootConversationId,
+    selectedConversation,
+    selectedRootConversationId,
   ]);
 
   useEffect(() => {
-    function clearInteraction() {
-      if (!interactionRef.current) {
-        return;
-      }
-
-      interactionRef.current = null;
-      setDraggingConversationId(null);
-      setIsPanning(false);
-      setResizingConversationId(null);
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
-    }
-
-    function handlePointerMove(event: PointerEvent) {
-      const interaction = interactionRef.current;
-
-      if (!interaction) {
-        return;
-      }
-
-      event.preventDefault();
-
-      if (interaction.type === "pan") {
-        const nextViewport = {
-          x: interaction.originX + (event.clientX - interaction.startClientX),
-          y: interaction.originY + (event.clientY - interaction.startClientY),
-        };
-
-        viewportStateRef.current = nextViewport;
-        setViewport(nextViewport);
-        return;
-      }
-
-      if (interaction.type === "move") {
-        onUpdateGraphNodeLayout(interaction.conversationId, {
-          x: Math.round(
-            interaction.originX +
-              (event.clientX - interaction.startClientX) / scale,
-          ),
-          y: Math.round(
-            interaction.originY +
-              (event.clientY - interaction.startClientY) / scale,
-          ),
-        });
-        return;
-      }
-
-      const width = clamp(
-        interaction.originWidth +
-          (event.clientX - interaction.startClientX) / scale,
-        GRAPH_NODE_MIN_WIDTH,
-        GRAPH_NODE_MAX_WIDTH,
-      );
-
-      if (interaction.handle === "edge") {
-        onUpdateGraphNodeLayout(interaction.conversationId, {
-          width,
-        });
-        return;
-      }
-
-      if (interaction.handle === "corner-bottom") {
-        onUpdateGraphNodeLayout(interaction.conversationId, {
-          height: clamp(
-            interaction.originHeight +
-              (event.clientY - interaction.startClientY) / scale,
-            GRAPH_NODE_MIN_HEIGHT,
-            GRAPH_NODE_MAX_HEIGHT,
-          ),
-          width,
-        });
-        return;
-      }
-
-      const bottomY = interaction.originY + interaction.originHeight;
-      const height = clamp(
-        interaction.originHeight -
-          (event.clientY - interaction.startClientY) / scale,
-        GRAPH_NODE_MIN_HEIGHT,
-        GRAPH_NODE_MAX_HEIGHT,
-      );
-
-      onUpdateGraphNodeLayout(interaction.conversationId, {
-        height,
-        width,
-        y: Math.round(bottomY - height),
-      });
-    }
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", clearInteraction);
-    window.addEventListener("pointercancel", clearInteraction);
-    window.addEventListener("blur", clearInteraction);
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", clearInteraction);
-      window.removeEventListener("pointercancel", clearInteraction);
-      window.removeEventListener("blur", clearInteraction);
-    };
-  }, [onUpdateGraphNodeLayout, scale]);
-
-  function setScaleAtViewportPoint(
-    nextScale: number,
-    localX: number,
-    localY: number,
-  ) {
-    const currentScale = scaleRef.current;
-    const clampedScale = clamp(nextScale, GRAPH_SCALE_MIN, GRAPH_SCALE_MAX);
-
-    if (Math.abs(clampedScale - currentScale) < 0.0001) {
+    if (!dockedConversation) {
       return;
     }
 
-    suppressNextAutoCenterRef.current = true;
-    const currentViewport = viewportStateRef.current;
-    const worldX = (localX - currentViewport.x) / currentScale;
-    const worldY = (localY - currentViewport.y) / currentScale;
-    const nextViewport = {
-      x: localX - worldX * clampedScale,
-      y: localY - worldY * clampedScale,
-    };
+    const dockedRootConversationId = getConversationRootId(
+      conversations,
+      dockedConversation.id,
+    );
 
-    scaleRef.current = clampedScale;
-    viewportStateRef.current = nextViewport;
-    setScale(clampedScale);
-    setViewport(nextViewport);
+    if (
+      activeRootConversationId &&
+      dockedRootConversationId !== activeRootConversationId
+    ) {
+      setDockedConversationId(null);
+    }
+  }, [activeRootConversationId, conversations, dockedConversation]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(
+      selectedConversation ? revealSelectedConversation : fitGraph,
+    );
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [fitGraph, revealSelectedConversation, selectedConversation]);
+
+  useEffect(() => {
+    const viewportElement = viewportRef.current;
+
+    if (!viewportElement || typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    setViewportSize({
+      height: viewportElement.clientHeight,
+      width: viewportElement.clientWidth,
+    });
+    const responsiveResizeObserver = new ResizeObserver(() => {
+      setViewportSize({
+        height: viewportElement.clientHeight,
+        width: viewportElement.clientWidth,
+      });
+      if (selectedConversation) {
+        revealSelectedConversation();
+      } else {
+        fitGraph();
+      }
+    });
+
+    responsiveResizeObserver.observe(viewportElement);
+    return () => responsiveResizeObserver.disconnect();
+  }, [fitGraph, revealSelectedConversation, selectedConversation]);
+
+  useEffect(() => {
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape") {
+        return;
+      }
+
+      if (detailLevel === "reader") {
+        setDetailLevel("preview");
+        return;
+      }
+
+      if (selectedConversationId) {
+        setSelectedConversationId(null);
+        setDetailLevel("compact");
+        return;
+      }
+
+      if (dockedConversationId) {
+        setDockedConversationId(null);
+      }
+    }
+
+    document.addEventListener("keydown", handleEscape);
+    return () => document.removeEventListener("keydown", handleEscape);
+  }, [detailLevel, dockedConversationId, selectedConversationId]);
+
+  function setScaleAtPoint(nextScale: number, localX: number, localY: number) {
+    const current = viewportStateRef.current;
+    const scale = clamp(nextScale, GRAPH_SCALE_MIN, GRAPH_SCALE_MAX);
+
+    if (Math.abs(scale - current.scale) < 0.001) {
+      return;
+    }
+
+    const worldX = (localX - current.x) / current.scale;
+    const worldY = (localY - current.y) / current.scale;
+
+    applyViewport(constrainViewport({
+      scale,
+      x: localX - worldX * scale,
+      y: localY - worldY * scale,
+    }));
+  }
+
+  function constrainViewport(nextViewport: GraphViewport) {
+    const viewportElement = viewportRef.current;
+
+    if (!viewportElement) {
+      return nextViewport;
+    }
+
+    return {
+      scale: nextViewport.scale,
+      x: constrainPanAxis({
+        contentSize: scene.width * nextViewport.scale,
+        position: nextViewport.x,
+        viewportSize: viewportElement.clientWidth,
+      }),
+      y: constrainPanAxis({
+        contentSize: scene.height * nextViewport.scale,
+        position: nextViewport.y,
+        viewportSize: viewportElement.clientHeight,
+      }),
+    };
   }
 
   function zoomByStep(direction: "in" | "out") {
@@ -733,282 +697,80 @@ export default function ConversationGraphView({
       return;
     }
 
-    const factor =
-      direction === "in"
-        ? GRAPH_BUTTON_ZOOM_FACTOR
-        : 1 / GRAPH_BUTTON_ZOOM_FACTOR;
-
-    setScaleAtViewportPoint(
-      scaleRef.current * factor,
+    setScaleAtPoint(
+      viewportStateRef.current.scale *
+        (direction === "in" ? GRAPH_ZOOM_STEP : 1 / GRAPH_ZOOM_STEP),
       viewportElement.clientWidth / 2,
       viewportElement.clientHeight / 2,
     );
   }
 
-  function focusViewportOnRect(
-    bounds: {
-      height: number;
-      width: number;
-      x: number;
-      y: number;
-    },
-    options?: { preferredScale?: number },
-  ) {
+  const handleViewportWheel = useEffectEvent((event: WheelEvent) => {
     const viewportElement = viewportRef.current;
 
     if (!viewportElement) {
       return;
     }
 
-    const nextScale =
-      options?.preferredScale === undefined
-        ? scaleRef.current
-        : clamp(options.preferredScale, GRAPH_SCALE_MIN, GRAPH_SCALE_MAX);
-
-    suppressNextAutoCenterRef.current = true;
-    const nextViewport = {
-      x:
-        viewportElement.clientWidth / 2 -
-        (stageSize.originX + bounds.x + bounds.width / 2) * nextScale,
-      y:
-        viewportElement.clientHeight / 2 -
-        (stageSize.originY + bounds.y + bounds.height / 2) * nextScale,
-    };
-
-    scaleRef.current = nextScale;
-    viewportStateRef.current = nextViewport;
-    setScale(nextScale);
-    setViewport(nextViewport);
-  }
-
-  function focusCategory(
-    categoryId: ThreadCategoryId | null,
-    options?: { preferredScale?: number },
-  ) {
-    setScrollFocusedConversationId(null);
-    setFocusedCategoryId(categoryId);
-
-    if (!categoryId) {
-      return;
-    }
-
-    const region = categoryRegionById.get(categoryId);
-
-    if (!region) {
-      return;
-    }
-
-    focusViewportOnRect(region.bounds, options);
-  }
-
-  function arrangeByCategory() {
-    onApplyGraphLayouts(categoryOrganizedLayouts);
-    const targetCategoryId = focusedCategoryId ?? activeCategoryId;
-
-    if (!targetCategoryId) {
-      return;
-    }
-
-    const nextRegion = buildGraphCategoryRegions({
-      conversations,
-      graphLayouts: categoryOrganizedLayouts,
-      threads,
-    }).find((region) => region.categoryId === targetCategoryId);
-
-    if (!nextRegion) {
-      return;
-    }
-
-    focusViewportOnRect(nextRegion.bounds);
-  }
-
-  function selectCategoryFromLegend(categoryId: ThreadCategoryId | null) {
-    if (categoryId === null) {
-      focusCategory(null);
-      return;
-    }
-
-    focusCategory(categoryId, {
-      preferredScale: isCategoryOverview
-        ? Math.max(scaleRef.current, GRAPH_CATEGORY_FOCUS_SCALE)
-        : undefined,
-    });
-  }
-
-  function startPan(event: ReactPointerEvent<HTMLDivElement>) {
-    if (event.button !== 0) {
-      return;
-    }
-
-    const target = event.target as HTMLElement;
-
-    if (
-      target.closest("[data-graph-node='true']") ||
-      target.closest("[data-graph-ui='true']")
-    ) {
-      return;
-    }
-
-    event.preventDefault();
-    setScrollFocusedConversationId(null);
-    interactionRef.current = {
-      originX: viewport.x,
-      originY: viewport.y,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      type: "pan",
-    };
-    setIsPanning(true);
-    document.body.style.setProperty("cursor", "grabbing");
-    document.body.style.setProperty("user-select", "none");
-  }
-
-  function activateConversationLocally(
-    conversationId: string,
-    options?: { engageScroll?: boolean },
-  ) {
-    const nextCategoryId = categoryByConversationId[conversationId];
-
-    if (focusedCategoryId && nextCategoryId && focusedCategoryId !== nextCategoryId) {
-      setFocusedCategoryId(nextCategoryId);
-    }
-
-    suppressNextAutoCenterRef.current = true;
-    onActivateConversation(conversationId);
-
-    if (options?.engageScroll) {
-      setScrollFocusedConversationId(conversationId);
-      return;
-    }
-
-    setScrollFocusedConversationId(null);
-  }
-
-  function startNodeDrag(
-    conversationId: string,
-    event: ReactPointerEvent<HTMLButtonElement>,
-  ) {
-    if (event.button !== 0) {
-      return;
-    }
-
-    const layout = graphLayouts[conversationId];
-
-    if (!layout) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    activateConversationLocally(conversationId);
-    interactionRef.current = {
-      conversationId,
-      originX: layout.x,
-      originY: layout.y,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      type: "move",
-    };
-    setDraggingConversationId(conversationId);
-    document.body.style.setProperty("cursor", "grabbing");
-    document.body.style.setProperty("user-select", "none");
-  }
-
-  function startNodeResize(
-    conversationId: string,
-    handle: "corner-bottom" | "corner-top" | "edge",
-    event: ReactPointerEvent<HTMLElement>,
-  ) {
-    if (event.button !== 0) {
-      return;
-    }
-
-    const layout = graphLayouts[conversationId];
-
-    if (!layout) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    activateConversationLocally(conversationId);
-    interactionRef.current = {
-      conversationId,
-      handle,
-      originHeight: layout.height,
-      originWidth: layout.width,
-      originY: layout.y,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      type: "resize",
-    };
-    setResizingConversationId(conversationId);
-    document.body.style.setProperty(
-      "cursor",
-      handle === "edge"
-        ? "col-resize"
-        : handle === "corner-top"
-          ? "nesw-resize"
-          : "nwse-resize",
-    );
-    document.body.style.setProperty("user-select", "none");
-  }
-
-  const handleViewportWheel = useEffectEvent((event: WheelEvent) => {
-    const viewportElement = viewportRef.current;
-    const target = event.target as HTMLElement;
-    const hoveredNode = target.closest<HTMLElement>("[data-graph-node='true']");
-    const hoveredConversationId = hoveredNode?.dataset.conversationId ?? null;
-    const normalizedDeltaX = normalizeWheelDelta(
+    const deltaX = normalizeWheelDelta(
       event.deltaX,
       event.deltaMode,
-      viewportElement?.clientWidth ?? 0,
+      viewportElement.clientWidth,
     );
-    const normalizedDeltaY = normalizeWheelDelta(
+    const deltaY = normalizeWheelDelta(
       event.deltaY,
       event.deltaMode,
-      viewportElement?.clientHeight ?? 0,
+      viewportElement.clientHeight,
     );
-    const scrollElement =
-      hoveredConversationId === activeConversationId &&
-      hoveredConversationId === scrollFocusedConversationId
-        ? getGraphNodeScrollElement(target)
+
+    const readerScroller =
+      event.target instanceof Element
+        ? event.target.closest<HTMLElement>("[data-graph-reader-scroll]")
         : null;
+    const gestureAxis = getWheelGestureAxis(deltaX, deltaY);
 
     if (
+      readerScroller &&
       !event.ctrlKey &&
-      scrollElement &&
-      canScrollGraphNodeElement(scrollElement, normalizedDeltaY)
+      !event.metaKey &&
+      !event.shiftKey &&
+      gestureAxis === "vertical"
     ) {
-      return;
+      const canScrollUp = deltaY < 0 && readerScroller.scrollTop > 0;
+      const canScrollDown =
+        deltaY > 0 &&
+        readerScroller.scrollTop + readerScroller.clientHeight <
+          readerScroller.scrollHeight - 1;
+
+      if (canScrollUp || canScrollDown) {
+        return;
+      }
     }
 
     event.preventDefault();
 
-    if (event.ctrlKey) {
-      if (!viewportElement) {
-        return;
-      }
-
+    if (event.ctrlKey || event.metaKey) {
       const rect = viewportElement.getBoundingClientRect();
-      const localX = event.clientX - rect.left;
-      const localY = event.clientY - rect.top;
-      const nextScale =
-        scaleRef.current * Math.exp(-normalizedDeltaY * GRAPH_ZOOM_SENSITIVITY);
+      const zoomFactor = Math.exp(-deltaY * GRAPH_ZOOM_SENSITIVITY);
 
-      setScaleAtViewportPoint(nextScale, localX, localY);
+      setScaleAtPoint(
+        viewportStateRef.current.scale * zoomFactor,
+        event.clientX - rect.left,
+        event.clientY - rect.top,
+      );
       return;
     }
 
-    setViewport((current) => {
-      const nextViewport = {
-        x: current.x - normalizedDeltaX,
-        y: current.y - normalizedDeltaY,
-      };
+    const current = viewportStateRef.current;
+    const isShiftScrolling = event.shiftKey && Math.abs(deltaX) < 0.5;
 
-      viewportStateRef.current = nextViewport;
-      return nextViewport;
-    });
+    applyViewport(
+      constrainViewport({
+        ...current,
+        x: current.x - (isShiftScrolling ? deltaY : deltaX),
+        y: current.y - (isShiftScrolling ? 0 : deltaY),
+      }),
+    );
   });
 
   useEffect(() => {
@@ -1018,647 +780,321 @@ export default function ConversationGraphView({
       return;
     }
 
-    function handleNativeWheel(event: WheelEvent) {
+    function handleWheel(event: WheelEvent) {
       handleViewportWheel(event);
     }
 
-    viewportElement.addEventListener("wheel", handleNativeWheel, {
-      passive: false,
-    });
-
-    return () => {
-      viewportElement.removeEventListener("wheel", handleNativeWheel);
-    };
+    viewportElement.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewportElement.removeEventListener("wheel", handleWheel);
   }, [handleViewportWheel]);
 
-  function handleResizeKeyDown(
-    conversationId: string,
-    event: ReactKeyboardEvent<HTMLElement>,
-  ) {
-    const layout = graphLayouts[conversationId];
-
-    if (!layout) {
+  function startPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (
+      event.button !== 0 ||
+      (event.target as HTMLElement).closest(
+        "button, .conversation-graph-node, [data-graph-reader-scroll]",
+      )
+    ) {
       return;
     }
 
-    const step = event.shiftKey
-      ? GRAPH_RESIZE_KEYBOARD_STEP * 2
-      : GRAPH_RESIZE_KEYBOARD_STEP;
-
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      onUpdateGraphNodeLayout(conversationId, {
-        width: clamp(
-          layout.width - step,
-          GRAPH_NODE_MIN_WIDTH,
-          GRAPH_NODE_MAX_WIDTH,
-        ),
-      });
-      return;
-    }
-
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      onUpdateGraphNodeLayout(conversationId, {
-        width: clamp(
-          layout.width + step,
-          GRAPH_NODE_MIN_WIDTH,
-          GRAPH_NODE_MAX_WIDTH,
-        ),
-      });
-      return;
-    }
-
-    if (event.key === "Home") {
-      event.preventDefault();
-      onUpdateGraphNodeLayout(conversationId, {
-        width: GRAPH_NODE_MIN_WIDTH,
-      });
-      return;
-    }
-
-    if (event.key === "End") {
-      event.preventDefault();
-      onUpdateGraphNodeLayout(conversationId, {
-        width: GRAPH_NODE_MAX_WIDTH,
-      });
-    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const current = viewportStateRef.current;
+    panInteractionRef.current = {
+      originX: current.x,
+      originY: current.y,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    };
+    setIsPanning(true);
   }
 
+  function continuePan(event: ReactPointerEvent<HTMLDivElement>) {
+    const interaction = panInteractionRef.current;
+
+    if (!interaction || interaction.pointerId !== event.pointerId) {
+      return;
+    }
+
+    applyViewport(
+      constrainViewport({
+        ...viewportStateRef.current,
+        x: interaction.originX + event.clientX - interaction.startClientX,
+        y: interaction.originY + event.clientY - interaction.startClientY,
+      }),
+    );
+  }
+
+  function endPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (panInteractionRef.current?.pointerId !== event.pointerId) {
+      return;
+    }
+
+    panInteractionRef.current = null;
+    setIsPanning(false);
+  }
+
+  function selectConversation(conversationId: string) {
+    if (!conversations[conversationId]) {
+      return;
+    }
+
+    if (selectedConversationId === conversationId) {
+      return;
+    }
+
+    setSelectedConversationId(conversationId);
+    setDetailLevel("preview");
+  }
+
+  function expandConversation(conversationId: string) {
+    if (!conversations[conversationId]) {
+      return;
+    }
+
+    setSelectedConversationId(conversationId);
+    setDetailLevel("reader");
+  }
+
+  function dockConversation(conversationId: string) {
+    if (!conversations[conversationId]) {
+      return;
+    }
+
+    setDockedConversationId(conversationId);
+    setSelectedConversationId(conversationId);
+    setDetailLevel("preview");
+  }
+
+  if (!navigationConversation) {
+    return null;
+  }
+
+  const minimapScale = Math.min(112 / scene.width, 66 / scene.height);
+  const minimapViewport = {
+    height: Math.min(scene.height, viewportSize.height / viewport.scale),
+    width: Math.min(scene.width, viewportSize.width / viewport.scale),
+    x: clamp(-viewport.x / viewport.scale, 0, scene.width),
+    y: clamp(-viewport.y / viewport.scale, 0, scene.height),
+  };
+
+  minimapViewport.x = Math.min(
+    minimapViewport.x,
+    Math.max(0, scene.width - minimapViewport.width),
+  );
+  minimapViewport.y = Math.min(
+    minimapViewport.y,
+    Math.max(0, scene.height - minimapViewport.height),
+  );
+
   return (
-    <div
-      className={isPanning ? "graph-canvas-viewport is-panning" : "graph-canvas-viewport"}
-      onPointerDown={startPan}
-      ref={viewportRef}
-    >
-      {categoryRegions.length ? (
-        <div
-          className="graph-map-hud"
-          data-graph-ui="true"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <div className="graph-map-zoom-stack">
-            <button
-              aria-label="Zoom in"
-              className="graph-map-zoom-button"
-              data-graph-ui="true"
-              disabled={scale >= GRAPH_SCALE_MAX - 0.01}
-              onClick={() => zoomByStep("in")}
-              type="button"
-            >
-              +
-            </button>
-
-            <button
-              aria-label="Zoom out"
-              className="graph-map-zoom-button"
-              data-graph-ui="true"
-              disabled={scale <= GRAPH_SCALE_MIN + 0.01}
-              onClick={() => zoomByStep("out")}
-              type="button"
-            >
-              -
-            </button>
-          </div>
-
-          <div className="graph-category-dock">
-            <div className="graph-category-dock-head">
-              <div className="graph-category-dock-copy">
-                <p className="graph-category-dock-label">Workspace Map</p>
-                <p className="graph-category-dock-body">
-                  {isCategoryOverview
-                    ? "Zoomed out to category view"
-                    : focusedCategoryId
-                      ? "Focused on one category"
-                      : "Legend and category focus"}
-                </p>
-              </div>
-
+    <section className="conversation-graph" aria-label="Conversation graph">
+      <header className="conversation-graph-header">
+        <nav aria-label="Selected chat path" className="conversation-graph-breadcrumbs">
+          {selectedPath.map((conversation, index) => (
+            <span key={conversation.id}>
+              {index > 0 ? <span aria-hidden="true">›</span> : null}
               <button
-                className="graph-category-arrange-button"
-                data-graph-ui="true"
-                onClick={arrangeByCategory}
-                type="button"
-              >
-                Arrange
-              </button>
-            </div>
-
-            <div
-              aria-label="Focus graph by category"
-              className="graph-category-chip-row"
-              role="toolbar"
-            >
-              <button
-                aria-pressed={focusedCategoryId === null}
-                className={
-                  focusedCategoryId === null
-                    ? "graph-category-chip is-active is-neutral"
-                    : "graph-category-chip is-neutral"
+                aria-current={
+                  conversation.id === navigationConversation.id
+                    ? "page"
+                    : undefined
                 }
-                data-graph-ui="true"
-                onClick={() => selectCategoryFromLegend(null)}
+                onClick={() => selectConversation(conversation.id)}
                 type="button"
               >
-                <span>All threads</span>
-                <strong>{threads.length}</strong>
+                {conversation.title}
               </button>
+            </span>
+          ))}
+        </nav>
+      </header>
 
-              {categoryRegions.map((region) => (
-                <button
-                  key={`graph-category-chip-${region.categoryId}`}
-                  aria-pressed={focusedCategoryId === region.categoryId}
-                  className={
-                    focusedCategoryId === region.categoryId
-                      ? "graph-category-chip is-active"
-                      : "graph-category-chip"
-                  }
-                  data-graph-ui="true"
-                  onClick={() =>
-                    selectCategoryFromLegend(
-                      focusedCategoryId === region.categoryId
-                        ? null
-                        : region.categoryId,
-                    )
-                  }
-                  style={getCategoryStyleVariables(region.palette)}
-                  type="button"
-                >
-                  <span>{region.label}</span>
-                  <strong>{region.threadCount}</strong>
-                </button>
-              ))}
-            </div>
-          </div>
+      <div className="conversation-graph-toolbar">
+        <div>
+          <strong>Whole discussion</strong>
+          <span>
+            {activeRootThread?.title
+              ? `${activeRootThread.title} · ${scene.nodes.length} chats`
+              : `${scene.nodes.length} chats in this discussion`}
+          </span>
         </div>
-      ) : null}
+        <div className="conversation-graph-zoom" role="group" aria-label="Graph navigation">
+          <button aria-label="Zoom out" onClick={() => zoomByStep("out")} type="button">
+            −
+          </button>
+          <button onClick={fitGraph} type="button">Fit</button>
+          <button aria-label="Zoom in" onClick={() => zoomByStep("in")} type="button">
+            +
+          </button>
+        </div>
+      </div>
 
-      <div className="graph-canvas-stage" style={stageStyle}>
-        <div aria-hidden="true" className="graph-canvas-mesh" />
-
-        {!isCategoryOverview
-          ? categoryRegions.map((region) => {
-          const isFocused =
-            focusedCategoryId === region.categoryId ||
-            (!focusedCategoryId && activeCategoryId === region.categoryId);
-          const isDimmed = Boolean(
-            focusedCategoryId && focusedCategoryId !== region.categoryId,
-          );
-          const regionStyle = {
-            ...getCategoryStyleVariables(region.palette),
-            height: `${region.bounds.height}px`,
-            left: `${stageSize.originX + region.bounds.x}px`,
-            top: `${stageSize.originY + region.bounds.y}px`,
-            width: `${region.bounds.width}px`,
-          } as CSSProperties;
-          const hubStyle = {
-            height: `${region.hub.height}px`,
-            left: `${region.hub.x - region.bounds.x}px`,
-            top: `${region.hub.y - region.bounds.y}px`,
-            width: `${region.hub.width}px`,
-          } as CSSProperties;
-
-          return (
-            <div
-              key={`graph-category-region-${region.categoryId}`}
-              className={[
-                "graph-category-region",
-                isFocused ? "is-active" : "",
-                isDimmed ? "is-dimmed" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              style={regionStyle}
-            >
-              <button
-                className="graph-category-hub"
-                data-graph-ui="true"
-                onClick={() =>
-                  focusCategory(
-                    focusedCategoryId === region.categoryId
-                      ? null
-                      : region.categoryId,
-                  )
-                }
-                onPointerDown={(event) => event.stopPropagation()}
-                style={hubStyle}
-                type="button"
-              >
-                <span className="graph-category-hub-label">Auto category</span>
-                <strong>{region.label}</strong>
-                <span className="graph-category-hub-meta">
-                  {region.threadCount} main chat
-                  {region.threadCount === 1 ? "" : "s"} • {region.panelCount} panel
-                  {region.panelCount === 1 ? "" : "s"}
-                </span>
-                <span className="graph-category-hub-copy">{region.description}</span>
-              </button>
-            </div>
-          );
-            })
-          : overviewCategoryNodes.map((region) => {
-              const isFocused =
-                focusedCategoryId === region.categoryId ||
-                (!focusedCategoryId && activeCategoryId === region.categoryId);
-              const isDimmed = Boolean(
-                focusedCategoryId && focusedCategoryId !== region.categoryId,
-              );
-              const overviewStyle = {
-                ...getCategoryStyleVariables(region.palette),
-                height: `${region.height}px`,
-                left: `${stageSize.originX + region.x}px`,
-                top: `${stageSize.originY + region.y}px`,
-                width: `${region.width}px`,
-              } as CSSProperties;
-
-              return (
-                <button
-                  key={`graph-category-overview-${region.categoryId}`}
-                  className={[
-                    "graph-category-overview-node",
-                    isFocused ? "is-active" : "",
-                    isDimmed ? "is-dimmed" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  data-graph-ui="true"
-                  onClick={() =>
-                    focusCategory(region.categoryId, {
-                      preferredScale: GRAPH_CATEGORY_FOCUS_SCALE,
-                    })
-                  }
-                  onPointerDown={(event) => event.stopPropagation()}
-                  style={overviewStyle}
-                  type="button"
-                >
-                  <span className="graph-category-overview-label">
-                    Category
-                  </span>
-                  <strong>{region.label}</strong>
-                  <span className="graph-category-overview-meta">
-                    {region.threadCount} main chat
-                    {region.threadCount === 1 ? "" : "s"} • {region.panelCount} panel
-                    {region.panelCount === 1 ? "" : "s"}
-                  </span>
-                </button>
-              );
-            })}
-
-        <svg
-          aria-hidden="true"
-          className="graph-canvas-connections"
-          height={stageSize.height}
-          viewBox={`0 0 ${stageSize.width} ${stageSize.height}`}
-          width={stageSize.width}
+      <div
+        className={
+          dockedConversation
+            ? "conversation-graph-workspace has-docked-chat"
+            : "conversation-graph-workspace"
+        }
+      >
+        <div
+          className={
+            isPanning
+              ? "conversation-graph-viewport is-panning"
+              : "conversation-graph-viewport"
+          }
+          onPointerCancel={endPan}
+          onPointerDown={startPan}
+          onPointerMove={continuePan}
+          onPointerUp={endPan}
+          ref={viewportRef}
         >
-          <defs>
-            <linearGradient id="graph-connector-gradient" x1="0%" x2="100%">
-              <stop offset="0%" stopColor="var(--connector-start)" />
-              <stop offset="100%" stopColor="var(--connector-end)" />
-            </linearGradient>
-          </defs>
-
-          {!isCategoryOverview
-            ? categoryRegions.flatMap((region) =>
-            region.roots.map((root) => {
-              const isFocused =
-                focusedCategoryId === region.categoryId ||
-                (!focusedCategoryId && activeCategoryId === region.categoryId);
-              const isDimmed = Boolean(
-                focusedCategoryId && focusedCategoryId !== region.categoryId,
-              );
-              const startX =
-                stageSize.originX + region.hub.x + region.hub.width;
-              const startY =
-                stageSize.originY + region.hub.y + region.hub.height / 2;
-              const endX = stageSize.originX + root.x;
-              const endY =
-                stageSize.originY + root.y + Math.min(root.height * 0.36, 112);
-
-              return (
-                <g key={`graph-category-edge-${region.categoryId}-${root.conversationId}`}>
+          <div className="conversation-graph-stage" style={stageStyle}>
+            <svg
+              aria-label="Chat branch relationships"
+              className="conversation-graph-edges"
+              height={scene.height}
+              role="img"
+              viewBox={`0 0 ${scene.width} ${scene.height}`}
+              width={scene.width}
+            >
+              <title>Chat branch relationships</title>
+              {scene.edges.map((edge) => (
+                <g key={`${edge.parentConversationId}-${edge.childConversationId}`}>
                   <path
-                    className={[
-                      "graph-category-connection-path",
-                      isFocused ? "is-active" : "",
-                      isDimmed ? "is-dimmed" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    d={buildConnectorPath({
-                      endX,
-                      endY,
-                      startX,
-                      startY,
-                    })}
-                    style={{ stroke: region.palette.accent }}
+                    className={
+                      edge.isSelectedPath
+                        ? "conversation-graph-edge is-selected-path"
+                        : "conversation-graph-edge"
+                    }
+                    d={buildConnectorPath(edge)}
+                    data-child-conversation-id={edge.childConversationId}
+                    data-parent-conversation-id={edge.parentConversationId}
                   />
                   <circle
-                    className={[
-                      "graph-category-connection-node",
-                      isFocused ? "is-active" : "",
-                      isDimmed ? "is-dimmed" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    cx={startX}
-                    cy={startY}
-                    r={4}
-                    style={{ fill: region.palette.accent }}
-                  />
-                  <circle
-                    className={[
-                      "graph-category-connection-node",
-                      isFocused ? "is-active" : "",
-                      isDimmed ? "is-dimmed" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")}
-                    cx={endX}
-                    cy={endY}
-                    r={4}
-                    style={{ fill: region.palette.accent }}
+                    className={
+                      edge.isSelectedPath
+                        ? "conversation-graph-edge-port is-selected-path"
+                        : "conversation-graph-edge-port"
+                    }
+                    cx={edge.startX}
+                    cy={edge.startY}
+                    r="4"
                   />
                 </g>
-              );
-            }),
-            )
-            : null}
+              ))}
+            </svg>
 
-          {!isCategoryOverview
-            ? Object.values(conversations).map((conversation) => {
-            if (!conversation.parentId) {
-              return null;
-            }
+            {scene.nodes.map((placement) => {
+              const conversation = conversations[placement.conversationId];
 
-            const parentLayout = graphLayouts[conversation.parentId];
-            const childLayout = graphLayouts[conversation.id];
-
-            if (!parentLayout || !childLayout) {
-              return null;
-            }
-
-            const startX =
-              stageSize.originX + parentLayout.x + parentLayout.width;
-            const startY =
-              stageSize.originY + parentLayout.y + parentLayout.height / 2;
-            const endX = stageSize.originX + childLayout.x;
-            const endY =
-              stageSize.originY + childLayout.y + childLayout.height / 2;
-            const isActivePath = activePathIds.has(conversation.id);
-            const isDimmed = Boolean(
-              focusedCategoryId &&
-                categoryByConversationId[conversation.id] !== focusedCategoryId,
-            );
-
-            return (
-              <g key={`graph-edge-${conversation.id}`}>
-                <path
-                  className={[
-                    "graph-connection-path",
-                    isActivePath ? "is-active" : "",
-                    isDimmed ? "is-dimmed" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  d={buildConnectorPath({
-                    endX,
-                    endY,
-                    startX,
-                    startY,
-                  })}
-                />
-                <circle
-                  className={[
-                    "graph-connection-node",
-                    isActivePath ? "is-active" : "",
-                    isDimmed ? "is-dimmed" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  cx={startX}
-                  cy={startY}
-                  r={4}
-                />
-                <circle
-                  className={[
-                    "graph-connection-node",
-                    isActivePath ? "is-active" : "",
-                    isDimmed ? "is-dimmed" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  cx={endX}
-                  cy={endY}
-                  r={4}
-                />
-              </g>
-            );
-            })
-            : null}
-        </svg>
-
-        {isCategoryOverview
-          ? null
-          : orderedConversations.map((conversation) => {
-          const layout = graphLayouts[conversation.id];
-
-          if (!layout) {
-            return null;
-          }
-
-          const isActive = conversation.id === activeConversationId;
-          const isDimmed = Boolean(
-            focusedCategoryId &&
-              categoryByConversationId[conversation.id] !== focusedCategoryId,
-          );
-          const rootConversationId = conversationRootIdById[conversation.id];
-          const threadSummary = threadSummaryById.get(rootConversationId);
-          const categoryId = categoryByConversationId[conversation.id];
-          const palette = getGraphCategoryPalette(categoryId);
-          const nodeStyle = {
-            ...getCategoryStyleVariables(palette),
-            height: `${layout.height}px`,
-            left: `${stageSize.originX + layout.x}px`,
-            top: `${stageSize.originY + layout.y}px`,
-            width: `${layout.width}px`,
-            zIndex: isActive ? 8 : conversation.parentId === null ? 4 : 3,
-          } as CSSProperties;
-
-          return (
-            <div
-              key={conversation.id}
-              className={[
-                "graph-node-shell",
-                isActive ? "is-active" : "",
-                scrollFocusedConversationId === conversation.id
-                  ? "is-scroll-focused"
-                  : "",
-                draggingConversationId === conversation.id ? "is-dragging" : "",
-                resizingConversationId === conversation.id ? "is-resizing" : "",
-                isDimmed ? "is-dimmed" : "",
-                conversation.parentId === null ? "is-root-thread" : "",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-              data-graph-node="true"
-              data-conversation-id={conversation.id}
-              style={nodeStyle}
-            >
-              <div className="graph-node-toolbar" data-graph-node-toolbar="true">
-                <button
-                  className="graph-node-drag-handle"
-                  onClick={() => activateConversationLocally(conversation.id)}
-                  onPointerDown={(event) => startNodeDrag(conversation.id, event)}
-                  type="button"
-                >
-                  <div className="graph-node-meta">
-                    <span className="graph-node-type">
-                      {conversation.parentId === null ? "Main chat" : "Branch"}
-                    </span>
-                    {conversation.parentId === null && threadSummary ? (
-                      <span className="graph-node-category-badge">
-                        {threadSummary.categoryLabel}
-                      </span>
-                    ) : null}
-                  </div>
-                  <strong>{conversation.title}</strong>
-                  <span className="graph-node-context">
-                    {conversation.branchAnchor
-                      ? excerpt(
-                          conversation.branchAnchor.prompt ||
-                          conversation.branchAnchor.quote,
-                          56,
-                        )
-                      : conversation.parentId === null && threadSummary
-                        ? `${threadSummary.conversationCount} panel${
-                            threadSummary.conversationCount === 1 ? "" : "s"
-                          } • ${threadSummary.updatedLabel}`
-                      : `${conversation.childIds.length} connected ${
-                          conversation.childIds.length === 1
-                            ? "branch"
-                            : "branches"
-                        }`}
-                  </span>
-                </button>
-              </div>
-
-              <div
-                className="graph-node-panel"
-                onPointerDownCapture={(event) => {
-                  if (event.button !== 0) {
-                    return;
-                  }
-
-                  setScrollFocusedConversationId(conversation.id);
-                  suppressNextAutoCenterRef.current = true;
-                }}
-              >
-                <ChatPanel
-                  anchorsByMessageId={getAnchorsByMessageId(conversation.id)}
+              return conversation ? (
+                <GraphNode
+                  activeConversationId={activeConversationId}
                   conversation={conversation}
-                  draft={drafts[conversation.id] ?? ""}
-                  isActive={isActive}
-                  isSubmitting={Boolean(pendingConversationIds[conversation.id])}
-                  recentModelSelections={recentModelSelections}
-                  onActivate={() =>
-                    activateConversationLocally(conversation.id, {
-                      engageScroll: true,
-                    })
+                  conversations={conversations}
+                  detailLevel={
+                    conversation.id === selectedConversation?.id
+                      ? detailLevel
+                      : "compact"
                   }
-                  onDraftChange={(value) => onDraftChange(conversation.id, value)}
-                  onModelChange={onModelChange}
-                  onOpenBranch={onActivateConversation}
-                  onStopTypewriter={onStopTypewriter}
-                  onSubmit={onSubmit}
-                  onTypewriterComplete={onTypewriterComplete}
-                  onTypewriterProgress={onTypewriterProgress}
-                  registerAnchorRef={noopRegisterAnchorRef}
-                  registerComposerSurfaceRef={noopRegisterComposerSurfaceRef}
-                  registerPanelRef={noopRegisterPanelRef}
-                  selectionPreview={
-                    selectionPreview?.conversationId === conversation.id
-                      ? selectionPreview
-                      : null
-                  }
-                  theme={theme}
-                  typingMessageIds={typingMessageIds}
-                  typingProgressByMessageId={typingProgressByMessageId}
+                  isSelected={conversation.id === selectedConversation?.id}
+                  key={conversation.id}
+                  onCollapse={() => setDetailLevel("preview")}
+                  onDock={dockConversation}
+                  onExpand={expandConversation}
+                  onMakeMain={onActivateConversation}
+                  onOpen={onOpenConversation}
+                  onSelect={selectConversation}
+                  placement={placement}
                 />
-              </div>
-
-              {isActive || resizingConversationId === conversation.id ? (
-                <>
-                  <div
-                    aria-label="Resize graph node width"
-                    aria-orientation="vertical"
-                    aria-valuemax={GRAPH_NODE_MAX_WIDTH}
-                    aria-valuemin={GRAPH_NODE_MIN_WIDTH}
-                    aria-valuenow={Math.round(layout.width)}
-                    aria-valuetext={`${Math.round(layout.width)} pixels wide`}
-                    className="graph-node-resize-handle"
-                    onDoubleClick={() =>
-                      onUpdateGraphNodeLayout(conversation.id, {
-                        width: GRAPH_NODE_DEFAULT_WIDTH,
-                      })
-                    }
-                    onKeyDown={(event) =>
-                      handleResizeKeyDown(conversation.id, event)
-                    }
-                    onPointerDown={(event) =>
-                      startNodeResize(conversation.id, "edge", event)
-                    }
-                    role="separator"
-                    tabIndex={0}
-                  >
-                    <span className="graph-node-resize-grip" />
-                  </div>
-
-                  <button
-                    aria-label={`Resize ${conversation.title} from top right`}
-                    className="graph-node-corner-knob is-top-right"
-                    onDoubleClick={() =>
-                      onUpdateGraphNodeLayout(conversation.id, {
-                        height: GRAPH_NODE_DEFAULT_HEIGHT,
-                        width: GRAPH_NODE_DEFAULT_WIDTH,
-                      })
-                    }
-                    onKeyDown={(event) =>
-                      handleResizeKeyDown(conversation.id, event)
-                    }
-                    onPointerDown={(event) =>
-                      startNodeResize(conversation.id, "corner-top", event)
-                    }
-                    type="button"
-                  >
-                    <span className="graph-node-corner-knob-dot is-diagonal-top" />
-                  </button>
-
-                  <button
-                    aria-label={`Resize ${conversation.title} from bottom right`}
-                    className="graph-node-corner-knob is-bottom-right"
-                    onDoubleClick={() =>
-                      onUpdateGraphNodeLayout(conversation.id, {
-                        height: GRAPH_NODE_DEFAULT_HEIGHT,
-                        width: GRAPH_NODE_DEFAULT_WIDTH,
-                      })
-                    }
-                    onKeyDown={(event) =>
-                      handleResizeKeyDown(conversation.id, event)
-                    }
-                    onPointerDown={(event) =>
-                      startNodeResize(conversation.id, "corner-bottom", event)
-                    }
-                    type="button"
-                  >
-                    <span className="graph-node-corner-knob-dot is-diagonal" />
-                  </button>
-                </>
-              ) : null}
-            </div>
-          );
+              ) : null;
             })}
+          </div>
+
+          <p className="conversation-graph-pan-hint">
+            {detailLevel === "compact"
+              ? "Click a chat for a preview · Drag or two-finger scroll to pan"
+              : detailLevel === "preview"
+                ? "Expand to read here · Dock to keep the graph interactive"
+                : "Scroll inside the chat · Minimize or dock when ready"}
+          </p>
+
+          {showMinimap ? (
+            <div className="conversation-graph-minimap" aria-label="Discussion minimap">
+              <svg
+                aria-hidden="true"
+                height={Math.max(28, scene.height * minimapScale)}
+                viewBox={`0 0 ${scene.width} ${scene.height}`}
+                width={Math.max(48, scene.width * minimapScale)}
+              >
+                {scene.edges.map((edge) => (
+                  <path
+                    className="conversation-graph-minimap-edge"
+                    d={buildConnectorPath(edge)}
+                    key={`minimap-${edge.parentConversationId}-${edge.childConversationId}`}
+                  />
+                ))}
+                {scene.nodes.map((placement) => (
+                  <rect
+                    className={
+                      placement.conversationId === selectedConversation?.id
+                        ? "conversation-graph-minimap-node is-selected"
+                        : "conversation-graph-minimap-node"
+                    }
+                    height={placement.height}
+                    key={`minimap-${placement.conversationId}`}
+                    rx="8"
+                    width={placement.width}
+                    x={placement.x}
+                    y={placement.y}
+                  />
+                ))}
+                <rect
+                  className="conversation-graph-minimap-viewport"
+                  height={minimapViewport.height}
+                  rx="10"
+                  width={minimapViewport.width}
+                  x={minimapViewport.x}
+                  y={minimapViewport.y}
+                />
+              </svg>
+            </div>
+          ) : null}
+        </div>
+
+        {dockedConversation ? (
+          <aside
+            aria-label={`Docked chat: ${dockedConversation.title}`}
+            className="conversation-graph-dock"
+          >
+            <header className="conversation-graph-dock-header">
+              <div>
+                <span>Docked chat</span>
+                <strong>{dockedConversation.title}</strong>
+              </div>
+              <button
+                aria-label={`Close ${dockedConversation.title} split view`}
+                onClick={() => setDockedConversationId(null)}
+                type="button"
+              >
+                ×
+              </button>
+            </header>
+            <div className="conversation-graph-dock-body">
+              {renderDockedConversation?.(dockedConversation.id) ?? (
+                <div className="conversation-graph-dock-fallback">
+                  {dockedConversation.messages.map((message) => (
+                    <p key={message.id}>{message.content}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </aside>
+        ) : null}
       </div>
-    </div>
+    </section>
   );
 }

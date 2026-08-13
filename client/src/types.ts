@@ -10,7 +10,20 @@ export type BillingStatus =
   | "paused"
   | "trialing"
   | "unpaid";
-export type BillingAccessKind = "admin" | "subscription" | "trial" | "none";
+export type BillingAccessKind =
+  | "admin"
+  | "credits"
+  | "subscription"
+  | "trial"
+  | "none";
+export type ApiKeyProvider = "openai" | "gemini" | "huggingface" | "xai";
+export type ApiKeySettings = {
+  byProvider: Record<
+    ApiKeyProvider,
+    { configured: boolean; hint: string | null }
+  >;
+  hasAny: boolean;
+};
 export type MainViewMode = "chat" | "tiles" | "graph";
 export type BackendServiceId =
   | "backend-services"
@@ -36,6 +49,17 @@ export interface Message {
   createdAt: string;
 }
 
+export interface ConversationNote {
+  id: string;
+  content: string;
+  sourceMessageId: string | null;
+  startOffset: number | null;
+  endOffset: number | null;
+  quote: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface BranchAnchor {
   id: string;
   sourceConversationId: string;
@@ -56,6 +80,7 @@ export interface Conversation {
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   messages: Message[];
+  notes?: ConversationNote[];
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +104,7 @@ export interface AppState {
 }
 
 export interface AuthenticatedUser {
+  apiKeys: ApiKeySettings;
   billing: UserBilling;
   id: string;
   email: string;
@@ -89,6 +115,7 @@ export interface AuthenticatedUser {
 export interface UserBilling {
   accessKind: BillingAccessKind;
   cancelAtPeriodEnd: boolean;
+  creditBalanceMicros: number;
   currentPeriodEnd: string | null;
   hasAccess: boolean;
   hasCustomer: boolean;

@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import type { AuthenticatedUser } from "../types";
+import type {
+  ApiKeyProvider,
+  ApiKeySettings,
+  AuthenticatedUser,
+} from "../types";
 import {
   getBillingDisplayLabel,
   getBillingStatusCopy,
@@ -14,10 +18,35 @@ interface ProfileModalProps {
   onClose: () => void;
   onLogout: () => void | Promise<void>;
   onManageBilling: () => void | Promise<void>;
+  onSaveApiKeys: (args: {
+    keys: Partial<Record<ApiKeyProvider, string | null>>;
+  }) => Promise<ApiKeySettings>;
   onStartSubscription: () => void | Promise<void>;
   onSave: (args: { displayName: string; email: string }) => void | Promise<void>;
   user: AuthenticatedUser;
 }
+
+const API_KEY_FIELDS: Array<{
+  label: string;
+  provider: ApiKeyProvider;
+  placeholder: string;
+}> = [
+  { label: "OpenAI", provider: "openai", placeholder: "sk-..." },
+  { label: "Google Gemini", provider: "gemini", placeholder: "AIza..." },
+  {
+    label: "Hugging Face",
+    provider: "huggingface",
+    placeholder: "hf_...",
+  },
+  { label: "xAI", provider: "xai", placeholder: "xai-..." },
+];
+
+const EMPTY_API_KEY_DRAFTS: Record<ApiKeyProvider, string> = {
+  gemini: "",
+  huggingface: "",
+  openai: "",
+  xai: "",
+};
 
 function CloseIcon() {
   return (
@@ -57,6 +86,7 @@ export default function ProfileModal({
   onClose,
   onLogout,
   onManageBilling,
+  onSaveApiKeys,
   onStartSubscription,
   onSave,
   user,
@@ -64,6 +94,13 @@ export default function ProfileModal({
   const displayNameInputRef = useRef<HTMLInputElement>(null);
   const [displayName, setDisplayName] = useState(user.displayName);
   const [email, setEmail] = useState(user.email);
+  const [apiKeyDrafts, setApiKeyDrafts] = useState(EMPTY_API_KEY_DRAFTS);
+  const [dirtyApiKeyProviders, setDirtyApiKeyProviders] = useState<
+    ApiKeyProvider[]
+  >([]);
+  const [apiKeySettings, setApiKeySettings] = useState(user.apiKeys);
+  const [apiKeySaving, setApiKeySaving] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -72,6 +109,10 @@ export default function ProfileModal({
 
     setDisplayName(user.displayName);
     setEmail(user.email);
+    setApiKeyDrafts(EMPTY_API_KEY_DRAFTS);
+    setDirtyApiKeyProviders([]);
+    setApiKeySettings(user.apiKeys);
+    setApiKeyError(null);
     displayNameInputRef.current?.focus();
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -85,7 +126,7 @@ export default function ProfileModal({
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, user.displayName, user.email]);
+  }, [isOpen, onClose, user.apiKeys, user.displayName, user.email]);
 
   if (!isOpen) {
     return null;
@@ -98,6 +139,37 @@ export default function ProfileModal({
   const showBillingAction = user.role !== "admin";
   const useManageBillingAction =
     user.billing.hasCustomer && user.billing.status !== "inactive";
+
+  async function saveApiKeyChanges(
+    overrides: Partial<Record<ApiKeyProvider, string | null>> = {},
+  ) {
+    const keys: Partial<Record<ApiKeyProvider, string | null>> = {
+      ...Object.fromEntries(
+        dirtyApiKeyProviders
+          .filter((provider) => apiKeyDrafts[provider].trim())
+          .map((provider) => [provider, apiKeyDrafts[provider].trim()]),
+      ),
+      ...overrides,
+    };
+
+    setApiKeySaving(true);
+    setApiKeyError(null);
+
+    try {
+      const settings = await onSaveApiKeys({ keys });
+      setApiKeySettings(settings);
+      setApiKeyDrafts(EMPTY_API_KEY_DRAFTS);
+      setDirtyApiKeyProviders([]);
+    } catch (error) {
+      setApiKeyError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Unable to save personal API keys.",
+      );
+    } finally {
+      setApiKeySaving(false);
+    }
+  }
 
   return (
     <div
@@ -165,9 +237,97 @@ export default function ProfileModal({
                 ? "Opening Stripe..."
                 : useManageBillingAction
                   ? "Manage billing"
-                  : "Start paid plan"}
+                  : "Add hosted credits"}
             </button>
           ) : null}
+        </section>
+
+        <section className="profile-api-key-section" aria-label="Personal API keys">
+          <div className="profile-api-key-heading">
+            <div>
+              <p className="eyebrow">Model providers</p>
+              <strong>Use your own API keys</strong>
+            </div>
+            <span>Encrypted at rest</span>
+          </div>
+
+          <p className="thread-dialog-copy">
+            A personal key is preferred for its provider and is billed directly by
+            that provider. Saved keys are never displayed again.
+          </p>
+
+          <div className="profile-api-key-list">
+            {API_KEY_FIELDS.map(({ label, placeholder, provider }) => {
+              const summary = apiKeySettings.byProvider[provider];
+
+              return (
+                <div className="profile-api-key-row" key={provider}>
+                  <label className="thread-dialog-field">
+                    <span className="thread-dialog-label">
+                      {label}
+                      {summary.configured ? (
+                        <small>Saved ••••{summary.hint}</small>
+                      ) : null}
+                    </span>
+                    <input
+                      autoComplete="off"
+                      className="thread-dialog-input"
+                      disabled={apiKeySaving}
+                      onChange={(event) => {
+                        setApiKeyDrafts((current) => ({
+                          ...current,
+                          [provider]: event.target.value,
+                        }));
+                        setDirtyApiKeyProviders((current) =>
+                          current.includes(provider)
+                            ? current
+                            : [...current, provider],
+                        );
+                      }}
+                      placeholder={
+                        summary.configured
+                          ? "Enter a replacement key"
+                          : placeholder
+                      }
+                      type="password"
+                      value={apiKeyDrafts[provider]}
+                    />
+                  </label>
+
+                  {summary.configured ? (
+                    <button
+                      className="thread-dialog-button is-danger profile-api-key-remove"
+                      disabled={apiKeySaving}
+                      onClick={() => void saveApiKeyChanges({ [provider]: null })}
+                      type="button"
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+
+          {apiKeyError ? (
+            <p className="profile-dialog-error" role="alert">
+              {apiKeyError}
+            </p>
+          ) : null}
+
+          <button
+            className="thread-dialog-button is-primary profile-api-key-save"
+            disabled={
+              apiKeySaving ||
+              !dirtyApiKeyProviders.some(
+                (provider) => apiKeyDrafts[provider].trim().length > 0,
+              )
+            }
+            onClick={() => void saveApiKeyChanges()}
+            type="button"
+          >
+            {apiKeySaving ? "Saving keys..." : "Save API keys"}
+          </button>
         </section>
 
         <form

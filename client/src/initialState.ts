@@ -28,6 +28,7 @@ export function createMainConversation({
     branchAnchor: null,
     childIds: [],
     messages: [],
+    notes: [],
     createdAt,
     updatedAt: createdAt,
   };

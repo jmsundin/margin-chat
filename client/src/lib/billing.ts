@@ -32,11 +32,22 @@ export function getBillingDisplayLabel(billing: UserBilling) {
     return "Free trial";
   }
 
+  if (billing.accessKind === "credits") {
+    return `${formatCreditBalance(billing.creditBalanceMicros)} hosted credits`;
+  }
+
   if (billing.accessKind === "none" && billing.trialCallsRemaining === 0) {
     return "Trial exhausted";
   }
 
   return getBillingStatusLabel(billing.status);
+}
+
+export function formatCreditBalance(micros: number) {
+  return new Intl.NumberFormat(undefined, {
+    currency: "USD",
+    style: "currency",
+  }).format(Math.max(micros, 0) / 1_000_000);
 }
 
 export function formatBillingPeriodEnd(value: string | null) {
@@ -63,11 +74,19 @@ export function getBillingStatusCopy(billing: UserBilling) {
   }
 
   if (billing.accessKind === "trial") {
-    return `You have ${billing.trialCallsRemaining} of ${billing.trialCallsLimit} free model calls remaining. Start a paid plan any time to avoid losing access when the trial is used up.`;
+    const prepaidCopy = billing.creditBalanceMicros > 0
+      ? ` You also have ${formatCreditBalance(billing.creditBalanceMicros)} in hosted credits ready when the trial ends.`
+      : " Add hosted credits any time to avoid losing hosted access when the trial is used up.";
+
+    return `You have ${billing.trialCallsRemaining} of ${billing.trialCallsLimit} free model calls remaining.${prepaidCopy}`;
+  }
+
+  if (billing.accessKind === "credits") {
+    return `You have ${formatCreditBalance(billing.creditBalanceMicros)} in prepaid hosted usage. Personal API keys are used instead whenever you save one for the selected provider.`;
   }
 
   if (billing.accessKind === "none" && billing.trialCallsRemaining === 0) {
-    return `You have used all ${billing.trialCallsLimit} free model calls. Start a paid plan to keep chatting with the hosted models.`;
+    return `You have used all ${billing.trialCallsLimit} free model calls. Add hosted credits or save a personal provider key to keep chatting.`;
   }
 
   if (billing.status === "active") {
@@ -110,5 +129,5 @@ export function getBillingStatusCopy(billing: UserBilling) {
     return "Your subscription is paused. Resume it in Stripe before this account can use the hosted models.";
   }
 
-  return "Start the paid plan before this account can use your hosted model keys.";
+  return "Add prepaid credits to use the hosted model keys, or save your own provider key below.";
 }

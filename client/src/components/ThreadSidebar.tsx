@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { setMainThreadDragData } from "../lib/pinnedThreads";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { ChatOutlineItem } from "../lib/chatOutline";
 import type { MainViewMode, ThreadSummary } from "../types";
 
@@ -7,7 +6,7 @@ type ThemeMode = "light" | "dark";
 type ThreadActionTarget = Pick<ThreadSummary, "id" | "title">;
 
 const THREAD_MENU_WIDTH = 176;
-const THREAD_MENU_HEIGHT = 108;
+const THREAD_MENU_HEIGHT = 154;
 const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
@@ -19,18 +18,19 @@ interface ThreadSidebarProps {
   currentChatTitle: string;
   mainViewMode: MainViewMode;
   onDeleteThread: (conversationId: string) => void;
-  onMainThreadDragEnd: () => void;
-  onMainThreadDragStart: () => void;
   onNewChat: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
+  onPinThread: (conversationId: string) => void;
   onRenameThread: (conversationId: string, title: string) => void;
   onSelectOutlineItem: (outlineItemId: string) => void;
   onSetMainViewMode: (viewMode: MainViewMode) => void;
   onSelectThread: (conversationId: string) => void;
   onToggleCollapse: () => void;
   onToggleTheme: () => void;
+  onUnpinThread: (conversationId: string) => void;
+  pinnedThreads: ThreadSummary[];
   theme: ThemeMode;
   threads: ThreadSummary[];
 }
@@ -276,6 +276,24 @@ function MoreIcon() {
   );
 }
 
+function PinIcon({ filled = false }: { filled?: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="thread-item-pin-icon"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.6"
+      viewBox="0 0 24 24"
+    >
+      <path d="m8 3 8 0-1.2 5.2 3.2 3.2v1.6H6v-1.6l3.2-3.2L8 3Z" />
+      <path d="M12 13v8" fill="none" />
+    </svg>
+  );
+}
+
 function ExpandIcon() {
   return (
     <svg
@@ -319,18 +337,19 @@ export default function ThreadSidebar({
   currentChatTitle,
   mainViewMode,
   onDeleteThread,
-  onMainThreadDragEnd,
-  onMainThreadDragStart,
   onNewChat,
   onOpenProfile,
   onOpenSettings,
   onOpenSearch,
+  onPinThread,
   onRenameThread,
   onSelectOutlineItem,
   onSetMainViewMode,
   onSelectThread,
   onToggleCollapse,
   onToggleTheme,
+  onUnpinThread,
+  pinnedThreads,
   theme,
   threads,
 }: ThreadSidebarProps) {
@@ -524,13 +543,11 @@ export default function ThreadSidebar({
     }
   }
 
-  function handleThreadDragStart(
-    event: React.DragEvent<HTMLButtonElement>,
-    threadId: string,
-  ) {
-    onMainThreadDragStart();
-    setMainThreadDragData(event.dataTransfer, threadId);
-  }
+  const pinnedThreadIds = new Set(pinnedThreads.map((thread) => thread.id));
+  const unpinnedThreads = threads.filter(
+    (thread) => !pinnedThreadIds.has(thread.id),
+  );
+  const orderedThreads = [...pinnedThreads, ...unpinnedThreads];
 
   return (
     <aside className={collapsed ? "thread-sidebar is-collapsed" : "thread-sidebar"}>
@@ -618,17 +635,22 @@ export default function ThreadSidebar({
 
       {collapsed ? (
         <div className="thread-sidebar-mini-list">
-          {threads.map((thread) => {
+          {orderedThreads.map((thread) => {
             const branchCount = Math.max(thread.conversationCount - 1, 0);
+            const isPinned = pinnedThreadIds.has(thread.id);
 
             return (
               <button
                 key={thread.id}
                 aria-label={`Open chat ${thread.title}`}
                 className={
-                  thread.id === activeThreadId
-                    ? "thread-sidebar-mini-item is-active"
-                    : "thread-sidebar-mini-item"
+                  [
+                    "thread-sidebar-mini-item",
+                    thread.id === activeThreadId ? "is-active" : "",
+                    isPinned ? "is-pinned" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")
                 }
                 onClick={() => {
                   setOpenMenuState(null);
@@ -640,6 +662,11 @@ export default function ThreadSidebar({
                 <span className="thread-sidebar-mini-badge" aria-hidden="true">
                   {getCompactLabel(thread.title)}
                 </span>
+                {isPinned ? (
+                  <span className="thread-sidebar-mini-pin" aria-hidden="true">
+                    <PinIcon filled />
+                  </span>
+                ) : null}
                 <span className="thread-sidebar-mini-card" aria-hidden="true">
                   <span className="thread-sidebar-mini-title">{thread.title}</span>
                   <span className="thread-sidebar-mini-meta">
@@ -655,29 +682,41 @@ export default function ThreadSidebar({
         </div>
       ) : (
         <div className="thread-list">
-          {threads.map((thread) => {
+          {orderedThreads.map((thread, index) => {
             const branchCount = Math.max(thread.conversationCount - 1, 0);
             const isExpanded = Boolean(expandedThreadIds[thread.id]);
+            const isPinned = pinnedThreadIds.has(thread.id);
 
             return (
-              <div
-                key={thread.id}
-                className={
-                  thread.id === activeThreadId ? "thread-item is-active" : "thread-item"
-                }
-              >
+              <Fragment key={thread.id}>
+                {index === 0 && pinnedThreads.length ? (
+                  <p className="thread-list-section-label">Pinned</p>
+                ) : null}
+                {index === pinnedThreads.length && unpinnedThreads.length ? (
+                  <p className="thread-list-section-label">Chats</p>
+                ) : null}
+                <div
+                  className={
+                    [
+                      "thread-item",
+                      thread.id === activeThreadId ? "is-active" : "",
+                      isPinned ? "is-pinned" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")
+                  }
+                >
                 <button
                   className="thread-item-main"
-                  draggable
                   onClick={() => {
                     setOpenMenuState(null);
                     onSelectThread(thread.id);
                   }}
-                  onDragEnd={onMainThreadDragEnd}
-                  onDragStart={(event) => handleThreadDragStart(event, thread.id)}
                   type="button"
                 >
-                  <span className="thread-item-title">{thread.title}</span>
+                  <span className="thread-item-title">
+                    <span>{thread.title}</span>
+                  </span>
                   <span className="thread-item-meta">
                     {branchCount === 1 ? "1 branch" : `${branchCount} branches`}
                     <span aria-hidden="true">•</span>
@@ -763,7 +802,8 @@ export default function ThreadSidebar({
                     )}
                   </nav>
                 ) : null}
-              </div>
+                </div>
+              </Fragment>
             );
           })}
         </div>
@@ -817,6 +857,23 @@ export default function ThreadSidebar({
             .filter((thread) => thread.id === openMenuState.threadId)
             .map((thread) => (
               <div key={thread.id} className="thread-item-menu-group" role="none">
+                <button
+                  className="thread-item-menu-action"
+                  onClick={() => {
+                    if (pinnedThreadIds.has(thread.id)) {
+                      onUnpinThread(thread.id);
+                    } else {
+                      onPinThread(thread.id);
+                    }
+
+                    setOpenMenuState(null);
+                  }}
+                  role="menuitem"
+                  type="button"
+                >
+                  <PinIcon filled={pinnedThreadIds.has(thread.id)} />
+                  <span>{pinnedThreadIds.has(thread.id) ? "Unpin" : "Pin"}</span>
+                </button>
                 <button
                   className="thread-item-menu-action"
                   onClick={() => handleOpenRename(thread)}

@@ -14,14 +14,12 @@ import {
 } from "react";
 import AppSettingsModal from "./components/AppSettingsModal";
 import AuthLanding from "./components/AuthLanding";
-import BillingGate from "./components/BillingGate";
 import BranchRail from "./components/BranchRail";
 import ChatPanel from "./components/ChatPanel";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import ConversationTreeNode from "./components/ConversationTreeNode";
 import ConversationGraphView from "./components/ConversationGraphView";
 import MainChatTileView from "./components/MainChatTileView";
-import PinnedThreadTabs from "./components/PinnedThreadTabs";
 import ProfileModal from "./components/ProfileModal";
 import SearchModal, { type ChatSearchResult } from "./components/SearchModal";
 import ThreadSidebar from "./components/ThreadSidebar";
@@ -40,11 +38,14 @@ import {
   requestSignup,
   requestStoredState,
   requestUpdateProfile,
+  requestUpdateApiKeys,
 } from "./lib/api";
+import { sanitizePinnedThreadIds } from "./lib/pinnedThreads";
 import {
-  sanitizePinnedThreadIds,
-  upsertPinnedThreadIdAtIndex,
-} from "./lib/pinnedThreads";
+  getSelectionTooltipLayout,
+  writeSelectedQuoteToClipboard,
+} from "./lib/selectionTooltip";
+import { getHorizontalWheelDelta } from "./lib/wheelGestures";
 import {
   DEFAULT_BACKEND_SERVICE_ID,
   getBackendServiceLabel,
@@ -68,7 +69,6 @@ import {
   getConversationPath,
   getConversationRootId,
   getConversationTreeLanes,
-  getConversationTraversalOrder,
   getRootConversations,
 } from "./lib/tree";
 import { buildChatOutline } from "./lib/chatOutline";
@@ -80,11 +80,14 @@ import {
 } from "./initialState";
 import type {
   AppState,
+  ApiKeyProvider,
+  ApiKeySettings,
   AuthenticatedUser,
   BackendServiceId,
   ConnectionLine,
   ConnectorOcclusionRect,
   Conversation,
+  ConversationNote,
   GraphNodeLayout,
   MainViewMode,
   Message,
@@ -96,10 +99,10 @@ import type {
 const STORAGE_KEY = "margin-chat-state";
 const RECENT_MODEL_SELECTIONS_STORAGE_KEY = "margin-chat-recent-model-selections";
 const THEME_STORAGE_KEY = "margin-chat-theme";
-const PINNED_TABS_LAYOUT_STORAGE_KEY = "margin-chat-pinned-tabs-layout";
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
+const NOTE_PROMPT_PLACEHOLDER = "Add a private thought about this text...";
 const EXPLAIN_SELECTION_PROMPT = "Explain the selected text.";
 const TOOLTIP_VIEWPORT_MARGIN = 16;
 const CHAT_PANEL_DEFAULT_WIDTH_PX = 630;
@@ -107,7 +110,6 @@ const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
 const CHAT_PANEL_MAX_WIDTH_PX = 980;
 const CHAT_PANEL_MIN_WIDTH_PX = 320;
 const CHAT_PANEL_VIEWPORT_MARGIN_PX = 180;
-const CHAT_SCROLL_SELECTION_DELAY_MS = 140;
 const MOBILE_PANEL_RESIZE_BREAKPOINT_PX = 900;
 
 function normalizeWheelDelta(
@@ -126,19 +128,13 @@ function normalizeWheelDelta(
   return delta;
 }
 const FALLBACK_TOOLTIP_SIZE = {
-  height: 208,
+  height: 300,
   width: 360,
 };
 const CONNECTOR_CONTENT_GUTTER_PX = 8;
 type ThemeMode = "light" | "dark";
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 type StorageMode = "loading" | "fallback" | "server";
-type MainThreadDragMode =
-  | "idle"
-  | "pinning-main-thread"
-  | "reordering-pinned-tab";
-type PinnedTabsLayoutMode = "strip" | "tray";
-type ChatTraversalDirection = "left" | "right";
 
 function SendIcon() {
   return (
@@ -273,6 +269,9 @@ function hydratePersistedState(input: unknown): AppState | null {
 
               return {
                 ...conversation,
+                notes: Array.isArray(conversation.notes)
+                  ? conversation.notes
+                  : [],
                 modelId: resolveBackendServiceModelId(
                   serviceId,
                   conversation.modelId,
@@ -398,26 +397,6 @@ function loadInitialTheme(): ThemeMode {
     : "dark";
 }
 
-function loadInitialPinnedTabsLayoutMode(): PinnedTabsLayoutMode {
-  if (typeof window === "undefined") {
-    return "tray";
-  }
-
-  try {
-    const storedValue = window.localStorage.getItem(
-      PINNED_TABS_LAYOUT_STORAGE_KEY,
-    );
-
-    if (storedValue === "strip" || storedValue === "tray") {
-      return storedValue;
-    }
-  } catch {
-    return "tray";
-  }
-
-  return "tray";
-}
-
 function loadInitialLeftSidebarOpen(): boolean {
   if (typeof window === "undefined") {
     return true;
@@ -513,7 +492,6 @@ function getErrorText(error: unknown, fallback: string) {
 }
 
 const INITIAL_THEME = loadInitialTheme();
-const INITIAL_PINNED_TABS_LAYOUT_MODE = loadInitialPinnedTabsLayoutMode();
 const INITIAL_LEFT_SIDEBAR_OPEN = loadInitialLeftSidebarOpen();
 const INITIAL_CHAT_PANEL_WIDTH = loadInitialChatPanelWidth();
 
@@ -534,19 +512,15 @@ interface WorkspaceAppProps {
     displayName: string;
     email: string;
   }) => Promise<AuthenticatedUser>;
+  onUpdateApiKeys: (args: {
+    keys: Partial<Record<ApiKeyProvider, string | null>>;
+  }) => Promise<ApiKeySettings>;
   theme: ThemeMode;
   user: AuthenticatedUser;
 }
 
 function createId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
-}
-
-function areThreadIdListsEqual(left: string[], right: string[]) {
-  return (
-    left.length === right.length &&
-    left.every((threadId, index) => threadId === right[index])
-  );
 }
 
 function areGraphLayoutsEqual(
@@ -1055,6 +1029,28 @@ function buildSearchResults(
         message.content.toLowerCase().includes(normalizedQuery),
       );
 
+      const matchingNote = (conversation.notes ?? []).find((note) =>
+        note.content.toLowerCase().includes(normalizedQuery),
+      );
+
+      if (!matchingMessage && !matchingNote) {
+        return null;
+      }
+
+      if (matchingNote) {
+        return {
+          conversationId: conversation.id,
+          locationLabel:
+            conversation.parentId === null ? "Main chat" : "Branch conversation",
+          matchLabel: "Personal note",
+          preview: getMatchPreview(matchingNote.content, normalizedQuery),
+          rootTitle: rootConversation.title,
+          title: conversation.title,
+          updatedAt: matchingNote.updatedAt,
+          updatedLabel: formatRelativeTime(matchingNote.updatedAt),
+        };
+      }
+
       if (!matchingMessage) {
         return null;
       }
@@ -1093,6 +1089,7 @@ function WorkspaceApp({
   onStartSubscription,
   onSetTheme,
   onUpdateProfile,
+  onUpdateApiKeys,
   theme,
   user,
 }: WorkspaceAppProps) {
@@ -1115,8 +1112,6 @@ function WorkspaceApp({
   const [isResizingChatPanel, setIsResizingChatPanel] = useState(false);
   const [resizingChatPanelConversationId, setResizingChatPanelConversationId] =
     useState<string | null>(null);
-  const [pinnedTabsLayoutMode, setPinnedTabsLayoutMode] =
-    useState<PinnedTabsLayoutMode>(INITIAL_PINNED_TABS_LAYOUT_MODE);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [pendingConversationIds, setPendingConversationIds] = useState<
     Record<string, boolean>
@@ -1127,6 +1122,7 @@ function WorkspaceApp({
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
     null,
   );
+  const [selectionIntent, setSelectionIntent] = useState<"branch" | "note">("branch");
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
@@ -1141,8 +1137,6 @@ function WorkspaceApp({
   const [connectorOcclusionRects, setConnectorOcclusionRects] = useState<
     ConnectorOcclusionRect[]
   >([]);
-  const [mainThreadDragMode, setMainThreadDragMode] =
-    useState<MainThreadDragMode>("idle");
   const canvasRef = useRef<HTMLDivElement>(null);
   const toolbarRef = useRef<HTMLFormElement>(null);
   const panelRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -1152,7 +1146,6 @@ function WorkspaceApp({
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const treeNodeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const panelScrollPositionsRef = useRef<Record<string, number>>({});
-  const chatScrollSelectionTimerRef = useRef(0);
   const suppressNextChatAutoCenterRef = useRef(false);
   const pendingTreeLaneFocusRef = useRef<string | null>(null);
   const typingProgressByMessageIdRef = useRef<Record<string, number>>({});
@@ -1177,10 +1170,6 @@ function WorkspaceApp({
   } = getBranchNavigation(state.conversations, activeConversation.id);
   const isMainView = activeConversation.parentId === null;
   const activeRootConversation = path[0] ?? activeConversation;
-  const visibleConversationStrip = getConversationTraversalOrder(
-    state.conversations,
-    activeRootConversation.id,
-  );
   const conversationTreeLanes = getConversationTreeLanes(
     state.conversations,
     activeConversation.id,
@@ -1198,9 +1187,6 @@ function WorkspaceApp({
   const pinnedThreadSummaries = state.pinnedThreadIds
     .map((threadId) => threadSummaryById.get(threadId))
     .filter((thread): thread is ThreadSummary => Boolean(thread));
-  const effectivePinnedTabsLayoutMode = isMobileViewport
-    ? "strip"
-    : pinnedTabsLayoutMode;
   const nearbyBranchCount = siblingBranches.length + focusedBranches.length;
   const branchNavigationCount =
     nearbyBranchCount + Math.max(path.length - 1, 0);
@@ -1361,17 +1347,6 @@ function WorkspaceApp({
       cancelled = true;
     };
   }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        PINNED_TABS_LAYOUT_STORAGE_KEY,
-        pinnedTabsLayoutMode,
-      );
-    } catch {
-      return;
-    }
-  }, [pinnedTabsLayoutMode]);
 
   useEffect(() => {
     try {
@@ -1542,32 +1517,6 @@ function WorkspaceApp({
   }, [persistLatestState, state, storageMode]);
 
   useEffect(() => {
-    if (mainThreadDragMode === "idle") {
-      return undefined;
-    }
-
-    function resetDragMode() {
-      setMainThreadDragMode("idle");
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        resetDragMode();
-      }
-    }
-
-    document.addEventListener("dragend", resetDragMode);
-    document.addEventListener("drop", resetDragMode);
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("dragend", resetDragMode);
-      document.removeEventListener("drop", resetDragMode);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [mainThreadDragMode]);
-
-  useEffect(() => {
     if (mainViewMode !== "chat") {
       return;
     }
@@ -1625,52 +1574,10 @@ function WorkspaceApp({
     );
   }, [activeConversation.id, currentChatOutlineKey]);
 
-  const selectClosestChatColumn = useEffectEvent(() => {
-    const canvas = canvasRef.current;
-
-    if (!canvas) {
-      return;
-    }
-
-    const canvasRect = canvas.getBoundingClientRect();
-    const canvasCenterX = canvasRect.left + canvasRect.width / 2;
-    const closestConversationId = visibleConversationStrip.reduce(
-      (closest, conversation) => {
-        const panel = panelRefs.current[conversation.id];
-
-        if (!panel) {
-          return closest;
-        }
-
-        const rect = panel.getBoundingClientRect();
-        const distance = Math.abs(rect.left + rect.width / 2 - canvasCenterX);
-
-        return distance < closest.distance
-          ? { distance, id: conversation.id }
-          : closest;
-      },
-      { distance: Number.POSITIVE_INFINITY, id: state.activeConversationId },
-    ).id;
-
-    if (closestConversationId === state.activeConversationId) {
-      return;
-    }
-
-    suppressNextChatAutoCenterRef.current = true;
-    handleSelectConversation(closestConversationId);
-  });
-
-  function handleChatStripScroll() {
-    window.clearTimeout(chatScrollSelectionTimerRef.current);
-    chatScrollSelectionTimerRef.current = window.setTimeout(() => {
-      selectClosestChatColumn();
-    }, CHAT_SCROLL_SELECTION_DELAY_MS);
-  }
-
   const handleConversationCanvasWheel = useEffectEvent((event: WheelEvent) => {
     const canvas = canvasRef.current;
 
-    if (!canvas || event.ctrlKey || event.defaultPrevented) {
+    if (!canvas || event.ctrlKey) {
       return;
     }
 
@@ -1684,16 +1591,22 @@ function WorkspaceApp({
       event.deltaMode,
       canvas.clientHeight,
     );
-    const horizontalDelta =
-      Math.abs(deltaX) > Math.abs(deltaY) * 0.8
-        ? deltaX
-        : event.shiftKey
-          ? deltaY
-          : 0;
+    const horizontalDelta = getHorizontalWheelDelta({
+      deltaX,
+      deltaY,
+      shiftKey: event.shiftKey,
+    });
 
     if (Math.abs(horizontalDelta) < 0.5) {
       return;
     }
+
+    // The canvas owns horizontal gestures even when they begin over a chat's
+    // vertically scrollable body or composer. Capturing and stopping the event
+    // prevents nested surfaces from swallowing the gesture or scrolling
+    // sideways independently.
+    event.preventDefault();
+    event.stopPropagation();
 
     const maxScrollLeft = Math.max(
       canvas.scrollWidth - canvas.clientWidth,
@@ -1709,7 +1622,6 @@ function WorkspaceApp({
       return;
     }
 
-    event.preventDefault();
     canvas.scrollLeft = nextScrollLeft;
   });
 
@@ -1724,23 +1636,22 @@ function WorkspaceApp({
       handleConversationCanvasWheel(event);
     };
 
-    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    canvas.addEventListener("wheel", handleWheel, {
+      capture: true,
+      passive: false,
+    });
 
     return () => {
-      canvas.removeEventListener("wheel", handleWheel);
+      canvas.removeEventListener("wheel", handleWheel, true);
     };
   }, [handleConversationCanvasWheel, mainViewMode]);
-
-  useEffect(() => {
-    return () => {
-      window.clearTimeout(chatScrollSelectionTimerRef.current);
-    };
-  }, []);
 
   useEffect(() => {
     if (!selectionDraft) {
       return undefined;
     }
+
+    const selectedQuote = selectionDraft.quote;
 
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as HTMLElement;
@@ -1749,11 +1660,8 @@ function WorkspaceApp({
         return;
       }
 
-      if (target.closest("[data-message-bubble='true']")) {
-        return;
-      }
-
       setSelectionDraft(null);
+      window.getSelection()?.removeAllRanges();
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -1763,12 +1671,32 @@ function WorkspaceApp({
       }
     }
 
+    function handleCopy(event: ClipboardEvent) {
+      const activeElement = document.activeElement;
+      const isEditingText =
+        activeElement instanceof HTMLInputElement ||
+        activeElement instanceof HTMLTextAreaElement ||
+        (activeElement instanceof HTMLElement && activeElement.isContentEditable);
+
+      if (
+        writeSelectedQuoteToClipboard({
+          clipboardData: event.clipboardData,
+          isEditingText,
+          quote: selectedQuote,
+        })
+      ) {
+        event.preventDefault();
+      }
+    }
+
     document.addEventListener("mousedown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("copy", handleCopy);
 
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("copy", handleCopy);
     };
   }, [selectionDraft]);
 
@@ -2473,6 +2401,7 @@ function WorkspaceApp({
         height: rect.height,
       },
     });
+    setSelectionIntent("branch");
 
   }
 
@@ -2632,6 +2561,7 @@ function WorkspaceApp({
       createdAt: now,
       updatedAt: now,
       messages: [userMessage],
+      notes: [],
     };
     const rootConversationId =
       getConversationRootId(state.conversations, parentConversation.id) ??
@@ -2730,6 +2660,104 @@ function WorkspaceApp({
 
   function handleExplainSelection() {
     handleCreateBranch(EXPLAIN_SELECTION_PROMPT);
+  }
+
+  function handleCreateNote(args: {
+    content: string;
+    conversationId: string;
+    endOffset?: number | null;
+    quote?: string | null;
+    sourceMessageId: string | null;
+    startOffset?: number | null;
+  }) {
+    const content = args.content.trim();
+    if (!content) return;
+    const now = new Date().toISOString();
+    const note: ConversationNote = {
+      id: createId("note"),
+      content,
+      sourceMessageId: args.sourceMessageId,
+      startOffset: args.startOffset ?? null,
+      endOffset: args.endOffset ?? null,
+      quote: args.quote ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    setState((current) => {
+      const conversation = current.conversations[args.conversationId];
+      if (!conversation) return current;
+      return {
+        ...current,
+        conversations: {
+          ...current.conversations,
+          [conversation.id]: {
+            ...conversation,
+            notes: [...(conversation.notes ?? []), note],
+            updatedAt: now,
+          },
+        },
+      };
+    });
+  }
+
+  function handleCreateSelectionNote() {
+    if (!selectionDraft?.prompt.trim()) return;
+    handleCreateNote({
+      content: selectionDraft.prompt,
+      conversationId: selectionDraft.conversationId,
+      sourceMessageId: selectionDraft.messageId,
+      startOffset: selectionDraft.startOffset,
+      endOffset: selectionDraft.endOffset,
+      quote: selectionDraft.quote,
+    });
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function handleUpdateNote(conversationId: string, noteId: string, content: string) {
+    const value = content.trim();
+    if (!value) return;
+    const now = new Date().toISOString();
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      return {
+        ...current,
+        conversations: {
+          ...current.conversations,
+          [conversationId]: {
+            ...conversation,
+            notes: (conversation.notes ?? []).map((note) => note.id === noteId ? { ...note, content: value, updatedAt: now } : note),
+            updatedAt: now,
+          },
+        },
+      };
+    });
+  }
+
+  function handleDeleteNote(conversationId: string, noteId: string) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      const currentNotes = conversation.notes ?? [];
+      const notes = currentNotes.filter((note) => note.id !== noteId);
+      if (notes.length === currentNotes.length) return current;
+      return {
+        ...current,
+        conversations: {
+          ...current.conversations,
+          [conversationId]: { ...conversation, notes, updatedAt: new Date().toISOString() },
+        },
+      };
+    });
+  }
+
+  function handleUseNote(conversationId: string, content: string) {
+    setDrafts((current) => ({
+      ...current,
+      [conversationId]: `${current[conversationId]?.trim() ? `${current[conversationId].trim()}\n\n` : ""}[From my personal notes]\n${content}`,
+    }));
   }
 
   function handleCreateMainConversation() {
@@ -2891,54 +2919,21 @@ function WorkspaceApp({
     );
   }
 
-  function navigateChatInDirection(direction: ChatTraversalDirection) {
-    const activeIndex = visibleConversationStrip.findIndex(
-      (conversation) => conversation.id === activeConversation.id,
-    );
-    const targetIndex = activeIndex + (direction === "right" ? 1 : -1);
-    const targetConversation = visibleConversationStrip[targetIndex];
-
-    if (!targetConversation) {
-      return;
-    }
-
-    handleSelectConversation(targetConversation.id);
-  }
-
-  function handleChatTraversalKeyDown(
-    event: ReactKeyboardEvent<HTMLDivElement>,
-  ) {
-    if (!event.altKey || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) {
-      return;
-    }
-
-    event.preventDefault();
-    navigateChatInDirection(event.key === "ArrowLeft" ? "left" : "right");
-  }
-
-  function handlePinThread(conversationId: string, index: number | null) {
+  function handlePinThread(conversationId: string) {
     setState((current) => {
       const conversation = current.conversations[conversationId];
 
-      if (!conversation || conversation.parentId !== null) {
-        return current;
-      }
-
-      const targetIndex =
-        index === null ? current.pinnedThreadIds.length : index;
-      const nextPinnedThreadIds = upsertPinnedThreadIdAtIndex(
-        current.pinnedThreadIds,
-        conversationId,
-        targetIndex,
-      );
-
-      if (areThreadIdListsEqual(current.pinnedThreadIds, nextPinnedThreadIds)) {
+      if (
+        !conversation ||
+        conversation.parentId !== null ||
+        current.pinnedThreadIds.includes(conversationId)
+      ) {
         return current;
       }
 
       return {
         ...current,
-        pinnedThreadIds: nextPinnedThreadIds,
+        pinnedThreadIds: [...current.pinnedThreadIds, conversationId],
       };
     });
   }
@@ -3230,37 +3225,83 @@ function WorkspaceApp({
     }
   }
 
-  const toolbarCenterX =
+  const selectionTooltipLayout =
     selectionDraft && typeof window !== "undefined"
-      ? clamp(
-          selectionDraft.rect.left + selectionDraft.rect.width / 2,
-          toolbarSize.width / 2 + TOOLTIP_VIEWPORT_MARGIN,
-          window.innerWidth - toolbarSize.width / 2 - TOOLTIP_VIEWPORT_MARGIN,
-        )
-      : 0;
-  const toolbarTop =
-    selectionDraft && typeof window !== "undefined"
-      ? clamp(
-          selectionDraft.rect.top - 18,
-          toolbarSize.height + TOOLTIP_VIEWPORT_MARGIN,
-          window.innerHeight - TOOLTIP_VIEWPORT_MARGIN,
-        )
-      : 0;
+      ? getSelectionTooltipLayout({
+          rect: selectionDraft.rect,
+          tooltipWidth: toolbarSize.width,
+          viewportHeight: window.innerHeight,
+          viewportMargin: TOOLTIP_VIEWPORT_MARGIN,
+          viewportWidth: window.innerWidth,
+        })
+      : { left: 0, maxHeight: 0, top: 0 };
   const toolbarStyle = {
-    left: `${toolbarCenterX}px`,
-    top: `${toolbarTop}px`,
+    left: `${selectionTooltipLayout.left}px`,
+    maxHeight: `${selectionTooltipLayout.maxHeight}px`,
+    top: `${selectionTooltipLayout.top}px`,
   } as CSSProperties;
   const conversationCanvasStyle = {
     "--chat-panel-width": `${chatPanelWidth}px`,
   } as CSSProperties;
   const chatPanelWidthBounds = getChatPanelWidthBounds();
-  const activeTraversalIndex = visibleConversationStrip.findIndex(
-    (conversation) => conversation.id === activeConversation.id,
-  );
-  const previousTraversalConversation =
-    visibleConversationStrip[activeTraversalIndex - 1] ?? null;
-  const nextTraversalConversation =
-    visibleConversationStrip[activeTraversalIndex + 1] ?? null;
+
+  function renderConversationChatPanel(conversation: Conversation) {
+    return (
+      <ChatPanel
+        anchorsByMessageId={getAnchorsByMessageId(
+          state.conversations,
+          conversation.id,
+        )}
+        conversation={conversation}
+        draft={drafts[conversation.id] ?? ""}
+        initialScrollTop={panelScrollPositionsRef.current[conversation.id]}
+        isActive={conversation.id === activeConversation.id}
+        isSubmitting={Boolean(pendingConversationIds[conversation.id])}
+        onActivate={() => handleSelectConversation(conversation.id)}
+        onCreateNote={handleCreateNote}
+        onDeleteNote={handleDeleteNote}
+        onDraftChange={(value) => handleDraftChange(conversation.id, value)}
+        onModelChange={handleModelChange}
+        onOpenBranch={handleSelectConversation}
+        onScrollPositionChange={(conversationId, scrollTop) => {
+          panelScrollPositionsRef.current[conversationId] = scrollTop;
+        }}
+        onStopTypewriter={handleStopTypewriter}
+        onSubmit={handleSubmit}
+        onTypewriterComplete={handleTypewriterComplete}
+        onTypewriterProgress={handleTypewriterProgress}
+        onUpdateNote={handleUpdateNote}
+        onUseNote={handleUseNote}
+        onVisibleOutlineChange={
+          conversation.id === activeConversation.id
+            ? handleVisibleOutlineChange
+            : undefined
+        }
+        recentModelSelections={recentModelSelections}
+        registerAnchorRef={(branchConversationId, element) => {
+          anchorRefs.current[branchConversationId] = element;
+        }}
+        registerBranchOriginRef={(conversationId, element) => {
+          branchOriginRefs.current[conversationId] = element;
+        }}
+        registerComposerSurfaceRef={(conversationId, element) => {
+          composerSurfaceRefs.current[conversationId] = element;
+        }}
+        registerPanelRef={(conversationId, element) => {
+          panelRefs.current[conversationId] = element;
+        }}
+        selectionPreview={
+          selectionDraft?.conversationId === conversation.id
+            ? selectionDraft
+            : null
+        }
+        showBranchMargin={false}
+        theme={theme}
+        typingMessageIds={typingMessageIds}
+        typingProgressByMessageId={typingProgressByMessageIdRef.current}
+      />
+    );
+  }
 
   function renderExpandedTreeConversation(
     conversation: Conversation,
@@ -3310,55 +3351,7 @@ function WorkspaceApp({
             </svg>
           </button>
         ) : null}
-        <ChatPanel
-          anchorsByMessageId={getAnchorsByMessageId(
-            state.conversations,
-            conversation.id,
-          )}
-          conversation={conversation}
-          draft={drafts[conversation.id] ?? ""}
-          initialScrollTop={panelScrollPositionsRef.current[conversation.id]}
-          isActive={conversation.id === activeConversation.id}
-          isSubmitting={Boolean(pendingConversationIds[conversation.id])}
-          onActivate={() => handleSelectConversation(conversation.id)}
-          onDraftChange={(value) => handleDraftChange(conversation.id, value)}
-          onModelChange={handleModelChange}
-          onOpenBranch={handleSelectConversation}
-          onScrollPositionChange={(conversationId, scrollTop) => {
-            panelScrollPositionsRef.current[conversationId] = scrollTop;
-          }}
-          onStopTypewriter={handleStopTypewriter}
-          onSubmit={handleSubmit}
-          onTypewriterComplete={handleTypewriterComplete}
-          onTypewriterProgress={handleTypewriterProgress}
-          onVisibleOutlineChange={
-            conversation.id === activeConversation.id
-              ? handleVisibleOutlineChange
-              : undefined
-          }
-          recentModelSelections={recentModelSelections}
-          registerAnchorRef={(branchConversationId, element) => {
-            anchorRefs.current[branchConversationId] = element;
-          }}
-          registerBranchOriginRef={(conversationId, element) => {
-            branchOriginRefs.current[conversationId] = element;
-          }}
-          registerComposerSurfaceRef={(conversationId, element) => {
-            composerSurfaceRefs.current[conversationId] = element;
-          }}
-          registerPanelRef={(conversationId, element) => {
-            panelRefs.current[conversationId] = element;
-          }}
-          selectionPreview={
-            selectionDraft?.conversationId === conversation.id
-              ? selectionDraft
-              : null
-          }
-          showBranchMargin={false}
-          theme={theme}
-          typingMessageIds={typingMessageIds}
-          typingProgressByMessageId={typingProgressByMessageIdRef.current}
-        />
+        {renderConversationChatPanel(conversation)}
         <div
           aria-label="Resize chat panel width"
           aria-orientation="vertical"
@@ -3381,6 +3374,42 @@ function WorkspaceApp({
     );
   }
 
+  function renderChatTreeNavigation() {
+    return (
+      <div className="chat-tree-navigation">
+        <nav aria-label="Conversation hierarchy" className="canvas-breadcrumb">
+          {path.map((conversation, index) => (
+            <span
+              className={
+                conversation.id === activeConversation.id
+                  ? "breadcrumb-item is-active"
+                  : "breadcrumb-item"
+              }
+              key={conversation.id}
+            >
+              {index > 0 ? (
+                <span aria-hidden="true" className="breadcrumb-separator">
+                  ›
+                </span>
+              ) : null}
+              <button
+                aria-current={
+                  conversation.id === activeConversation.id ? "page" : undefined
+                }
+                className="breadcrumb-button"
+                onClick={() => handleSelectConversation(conversation.id)}
+                type="button"
+              >
+                {conversation.title}
+              </button>
+            </span>
+          ))}
+        </nav>
+
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       <div className="app-chrome">
@@ -3399,22 +3428,9 @@ function WorkspaceApp({
               <h1>Margin Chat</h1>
             </div>
 
-            <div className="workspace-session-pins">
-              <PinnedThreadTabs
-                activeThreadId={activeRootConversation.id}
-                layoutMode={effectivePinnedTabsLayoutMode}
-                onLayoutModeChange={setPinnedTabsLayoutMode}
-                onOpenThread={handleSelectConversation}
-                onPinThread={handlePinThread}
-                onReorderDragEnd={() => setMainThreadDragMode("idle")}
-                onReorderDragStart={() =>
-                  setMainThreadDragMode("reordering-pinned-tab")
-                }
-                onUnpinThread={handleUnpinThread}
-                pinnedThreads={pinnedThreadSummaries}
-                showHint={mainThreadDragMode === "pinning-main-thread"}
-              />
-            </div>
+            {!isTileView && !isGraphView
+              ? renderChatTreeNavigation()
+              : null}
 
             <div className="workspace-session-actions">
               {!isMobileViewport &&
@@ -3467,10 +3483,6 @@ function WorkspaceApp({
               currentChatTitle={activeConversation.title}
               mainViewMode={mainViewMode}
               onDeleteThread={handleDeleteThread}
-              onMainThreadDragEnd={() => setMainThreadDragMode("idle")}
-              onMainThreadDragStart={() =>
-                setMainThreadDragMode("pinning-main-thread")
-              }
               onNewChat={handleCreateMainConversation}
               onOpenProfile={() => {
                 setProfileSaveError(null);
@@ -3478,6 +3490,7 @@ function WorkspaceApp({
               }}
               onOpenSettings={() => setAppSettingsOpen(true)}
               onOpenSearch={handleOpenSearch}
+              onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
               onSelectOutlineItem={handleSelectOutlineItem}
               onSetMainViewMode={handleSetMainViewMode}
@@ -3486,6 +3499,8 @@ function WorkspaceApp({
               onToggleTheme={() =>
                 onSetTheme((current) => getNextTheme(current))
               }
+              onUnpinThread={handleUnpinThread}
+              pinnedThreads={pinnedThreadSummaries}
               theme={theme}
               threads={threadSummaries}
             />
@@ -3577,10 +3592,6 @@ function WorkspaceApp({
               {isTileView ? (
                 <MainChatTileView
                   activeThreadId={activeRootConversation.id}
-                  onMainThreadDragEnd={() => setMainThreadDragMode("idle")}
-                  onMainThreadDragStart={() =>
-                    setMainThreadDragMode("pinning-main-thread")
-                  }
                   onOpenThread={handleSelectConversation}
                   threads={threadSummaries}
                 />
@@ -3588,117 +3599,29 @@ function WorkspaceApp({
                 <ConversationGraphView
                   activeConversationId={activeConversation.id}
                   conversations={state.conversations}
-                  drafts={drafts}
-                  getAnchorsByMessageId={(conversationId) =>
-                    getAnchorsByMessageId(state.conversations, conversationId)
-                  }
-                  graphLayouts={state.graphLayouts}
-                  pendingConversationIds={pendingConversationIds}
-                  recentModelSelections={recentModelSelections}
-                  selectionPreview={selectionDraft}
-                  theme={theme}
                   threads={threadSummaries}
-                  typingMessageIds={typingMessageIds}
-                  typingProgressByMessageId={typingProgressByMessageIdRef.current}
-                  onApplyGraphLayouts={handleApplyGraphLayouts}
                   onActivateConversation={handleSelectConversation}
-                  onDraftChange={handleDraftChange}
-                  onModelChange={handleModelChange}
-                  onStopTypewriter={handleStopTypewriter}
-                  onSubmit={handleSubmit}
-                  onTypewriterComplete={handleTypewriterComplete}
-                  onTypewriterProgress={handleTypewriterProgress}
-                  onUpdateGraphNodeLayout={handleUpdateGraphNodeLayout}
+                  onOpenConversation={(conversationId) =>
+                    handleSelectConversation(conversationId, {
+                      nextViewMode: "chat",
+                    })
+                  }
+                  renderDockedConversation={(conversationId) => {
+                    const conversation = state.conversations[conversationId];
+
+                    return conversation
+                      ? renderConversationChatPanel(conversation)
+                      : null;
+                  }}
                 />
               ) : (
-                <div
-                  className="chat-tree-workspace"
-                  onKeyDown={handleChatTraversalKeyDown}
-                >
-                  <div className="chat-tree-navigation">
-                    <nav
-                      aria-label="Conversation hierarchy"
-                      className="canvas-breadcrumb"
-                    >
-                      {path.map((conversation, index) => (
-                        <span
-                          className={
-                            conversation.id === activeConversation.id
-                              ? "breadcrumb-item is-active"
-                              : "breadcrumb-item"
-                          }
-                          key={conversation.id}
-                        >
-                          {index > 0 ? (
-                            <span
-                              aria-hidden="true"
-                              className="breadcrumb-separator"
-                            >
-                              ›
-                            </span>
-                          ) : null}
-                          <button
-                            aria-current={
-                              conversation.id === activeConversation.id
-                                ? "page"
-                                : undefined
-                            }
-                            className="breadcrumb-button"
-                            onClick={() =>
-                              handleSelectConversation(conversation.id)
-                            }
-                            type="button"
-                          >
-                            {conversation.title}
-                          </button>
-                        </span>
-                      ))}
-                    </nav>
-
-                    <div
-                      aria-label="Nearby chats"
-                      className="chat-neighbor-controls"
-                      role="group"
-                    >
-                      <button
-                        aria-keyshortcuts="Alt+ArrowLeft"
-                        className="chat-neighbor-button is-previous"
-                        disabled={!previousTraversalConversation}
-                        onClick={() => navigateChatInDirection("left")}
-                        title="Previous nearby chat (Alt + Left Arrow)"
-                        type="button"
-                      >
-                        <span aria-hidden="true">←</span>
-                        <span>
-                          {previousTraversalConversation?.title ?? "Start"}
-                        </span>
-                      </button>
-                      <span className="chat-navigation-hint">
-                        Two-finger scroll to explore
-                      </span>
-                      <button
-                        aria-keyshortcuts="Alt+ArrowRight"
-                        className="chat-neighbor-button is-next"
-                        disabled={!nextTraversalConversation}
-                        onClick={() => navigateChatInDirection("right")}
-                        title="Next nearby chat (Alt + Right Arrow)"
-                        type="button"
-                      >
-                        <span>
-                          {nextTraversalConversation?.title ?? "End"}
-                        </span>
-                        <span aria-hidden="true">→</span>
-                      </button>
-                    </div>
-                  </div>
-
-                <div
+                <div className="chat-tree-workspace">
+                  <div
                   className={
                     isResizingChatPanel
                       ? "conversation-canvas is-tree-browser is-resizing-panel"
                       : "conversation-canvas is-tree-browser"
                   }
-                  onScroll={handleChatStripScroll}
                   ref={canvasRef}
                   style={conversationCanvasStyle}
                 >
@@ -3807,7 +3730,8 @@ function WorkspaceApp({
               data-testid="branch-composer"
               onSubmit={(event) => {
                 event.preventDefault();
-                handleCreateBranch();
+                if (selectionIntent === "note") handleCreateSelectionNote();
+                else handleCreateBranch();
               }}
               ref={toolbarRef}
               style={toolbarStyle}
@@ -3829,10 +3753,30 @@ function WorkspaceApp({
               <p className="selection-tooltip-quote">
                 “{excerpt(selectionDraft.quote, 132)}”
               </p>
+              <div aria-label="Selected text action" className="selection-intent-switch" role="group">
+                <button
+                  aria-pressed={selectionIntent === "note"}
+                  className={selectionIntent === "note" ? "is-active" : ""}
+                  onClick={() => setSelectionIntent("note")}
+                  type="button"
+                >
+                  Add note
+                </button>
+                <button
+                  aria-pressed={selectionIntent === "branch"}
+                  className={selectionIntent === "branch" ? "is-active" : ""}
+                  onClick={() => setSelectionIntent("branch")}
+                  type="button"
+                >
+                  Start branch
+                </button>
+              </div>
+              {selectionIntent === "note" ? (
+                <p className="selection-note-privacy">Personal note · Not sent to AI</p>
+              ) : null}
               <div className="selection-input-row">
                 <input
-                  autoFocus={!isMobileViewport}
-                  aria-label="Branch prompt"
+                  aria-label={selectionIntent === "note" ? "Personal note" : "Branch prompt"}
                   id="branch-prompt"
                   onChange={(event) =>
                     setSelectionDraft((current) =>
@@ -3841,12 +3785,12 @@ function WorkspaceApp({
                         : current,
                     )
                   }
-                  placeholder={BRANCH_PROMPT_PLACEHOLDER}
+                  placeholder={selectionIntent === "note" ? NOTE_PROMPT_PLACEHOLDER : BRANCH_PROMPT_PLACEHOLDER}
                   type="text"
                   value={selectionDraft.prompt}
                 />
                 <button
-                  aria-label="Create branch with prompt"
+                  aria-label={selectionIntent === "note" ? "Save personal note" : "Create branch with prompt"}
                   className="selection-send"
                   disabled={!selectionDraft.prompt.trim()}
                   type="submit"
@@ -3854,7 +3798,7 @@ function WorkspaceApp({
                   <SendIcon />
                 </button>
               </div>
-              <div className="selection-actions">
+              {selectionIntent === "branch" ? <div className="selection-actions">
                 <button
                   className="selection-explain"
                   onClick={handleExplainSelection}
@@ -3862,7 +3806,7 @@ function WorkspaceApp({
                 >
                   Explain selection
                 </button>
-              </div>
+              </div> : null}
             </form>
           ) : null}
 
@@ -3891,6 +3835,7 @@ function WorkspaceApp({
             }}
             onManageBilling={onManageBilling}
             onLogout={onLogout}
+            onSaveApiKeys={onUpdateApiKeys}
             onStartSubscription={onStartSubscription}
             onSave={handleSaveProfile}
             user={user}
@@ -4087,6 +4032,14 @@ export default function App() {
     return user;
   }
 
+  async function handleUpdateApiKeys(args: {
+    keys: Partial<Record<ApiKeyProvider, string | null>>;
+  }) {
+    const apiKeys = await requestUpdateApiKeys(args);
+    setAuthUser((current) => (current ? { ...current, apiKeys } : current));
+    return apiKeys;
+  }
+
   async function redirectToStripe(
     callback: () => Promise<string>,
     fallbackMessage: string,
@@ -4154,27 +4107,6 @@ export default function App() {
     );
   }
 
-  if (!authUser.billing.hasAccess) {
-    return (
-      <div className="app-shell">
-        <div className="app-chrome auth-chrome">
-          <BillingGate
-            errorMessage={billingError}
-            isSubmitting={billingSubmitting}
-            onLogout={() => {
-              void handleLogout();
-            }}
-            onManageBilling={handleManageBilling}
-            onStartSubscription={handleStartSubscription}
-            onToggleTheme={() => setTheme((current) => getNextTheme(current))}
-            theme={theme}
-            user={authUser}
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
     <WorkspaceApp
       billingErrorMessage={billingError}
@@ -4189,6 +4121,7 @@ export default function App() {
       onStartSubscription={handleStartSubscription}
       onSetTheme={setTheme}
       onUpdateProfile={handleUpdateProfile}
+      onUpdateApiKeys={handleUpdateApiKeys}
       theme={theme}
       user={authUser}
     />

@@ -95,7 +95,7 @@ export default function SearchModal({
         </div>
 
         <label className="search-modal-field">
-          <span className="search-modal-label">Find by title or message</span>
+          <span className="search-modal-label">Find by title, message, or personal note</span>
           <input
             ref={inputRef}
             className="search-modal-input"
@@ -136,7 +136,7 @@ export default function SearchModal({
           ) : (
             <div className="search-empty">
               <strong>No chats matched.</strong>
-              <p>Try a different title, phrase, or message snippet.</p>
+              <p>Try a different title, phrase, message, or note.</p>
             </div>
           )}
         </div>

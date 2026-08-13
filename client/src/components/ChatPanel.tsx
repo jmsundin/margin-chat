@@ -22,9 +22,11 @@ import {
   type RecentBackendServiceSelection,
 } from "../lib/services";
 import { excerpt } from "../lib/tree";
+import { getWheelGestureAxis } from "../lib/wheelGestures";
 import type {
   BackendServiceId,
   Conversation,
+  ConversationNote,
   Message,
   MessageAnchorLink,
   SelectionDraft,
@@ -329,12 +331,20 @@ interface ChatPanelProps {
   initialScrollTop?: number;
   onActivate: () => void;
   onDraftChange: (value: string) => void;
+  onCreateNote: (args: {
+    content: string;
+    conversationId: string;
+    sourceMessageId: string | null;
+  }) => void;
+  onDeleteNote: (conversationId: string, noteId: string) => void;
   onModelChange: (
     conversationId: string,
     serviceId: BackendServiceId,
     modelId: string,
   ) => void;
   onOpenBranch: (conversationId: string) => void;
+  onUpdateNote: (conversationId: string, noteId: string, content: string) => void;
+  onUseNote: (conversationId: string, content: string) => void;
   onStopTypewriter: (conversationId: string) => void;
   onSubmit: (conversationId: string, value: string) => void;
   onTypewriterProgress: (messageId: string, visibleCount: number) => void;
@@ -364,6 +374,110 @@ interface ChatPanelProps {
     element: HTMLElement | null,
   ) => void;
   showBranchMargin?: boolean;
+}
+
+function NoteIcon() {
+  return (
+    <svg aria-hidden="true" className="note-icon" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+      <path d="M5 4h14v12l-4 4H5z" />
+      <path d="M15 20v-4h4" />
+      <path d="M8 8h8M8 12h6" />
+    </svg>
+  );
+}
+
+function NoteEditor({
+  note,
+  onDelete,
+  onReveal,
+  onUpdate,
+  onUse,
+}: {
+  note: ConversationNote;
+  onDelete: () => void;
+  onReveal?: () => void;
+  onUpdate: (content: string) => void;
+  onUse: () => void;
+}) {
+  const [draft, setDraft] = useState(note.content);
+
+  useEffect(() => setDraft(note.content), [note.content]);
+
+  function save() {
+    const value = draft.trim();
+    if (value && value !== note.content) onUpdate(value);
+    else if (!value) setDraft(note.content);
+  }
+
+  return (
+    <article className="personal-note-card">
+      <div className="personal-note-head">
+        <span><NoteIcon /> Personal note</span>
+        <span className="personal-note-private">Not sent to AI</span>
+      </div>
+      {note.quote ? <blockquote>“{excerpt(note.quote, 96)}”</blockquote> : null}
+      <textarea
+        aria-label="Edit personal note"
+        onBlur={save}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            save();
+            event.currentTarget.blur();
+          }
+        }}
+        value={draft}
+      />
+      <div className="personal-note-actions">
+        {onReveal ? <button onClick={onReveal} type="button">View in chat</button> : null}
+        <button onClick={onUse} type="button">Use in next message</button>
+        <button className="is-danger" onClick={onDelete} type="button">Delete</button>
+      </div>
+    </article>
+  );
+}
+
+function MessageNoteGroup({
+  notes,
+  onDelete,
+  onUpdate,
+  onUse,
+}: {
+  notes: ConversationNote[];
+  onDelete: (noteId: string) => void;
+  onUpdate: (noteId: string, content: string) => void;
+  onUse: (content: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <aside className={open ? "message-note-group is-open" : "message-note-group"}>
+      <button
+        aria-label={`${notes.length} personal note${notes.length === 1 ? "" : "s"}. Private, not sent to AI. ${open ? "Close" : "Open"} notes`}
+        aria-expanded={open}
+        className="message-note-marker"
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <NoteIcon />
+        <span>Note{notes.length === 1 ? "" : "s"}</span>
+        <strong>{notes.length}</strong>
+      </button>
+      {open ? (
+        <div className="message-note-stack">
+          {notes.map((note) => (
+            <NoteEditor
+              key={note.id}
+              note={note}
+              onDelete={() => onDelete(note.id)}
+              onUpdate={(content) => onUpdate(note.id, content)}
+              onUse={() => onUse(note.content)}
+            />
+          ))}
+        </div>
+      ) : null}
+    </aside>
+  );
 }
 
 function getTypewriterDurationMs(contentLength: number) {
@@ -472,6 +586,7 @@ function splitTypewriterChunks(value: string) {
 function renderMessageContent(
   message: Message,
   anchors: MessageAnchorLink[],
+  notes: ConversationNote[],
   registerAnchorRef: (
     branchConversationId: string,
     element: HTMLSpanElement | null,
@@ -488,7 +603,7 @@ function renderMessageContent(
         pendingSelection.endOffset > link.anchor.startOffset,
     );
   const decorations: Array<{
-    type: "anchor" | "preview";
+    type: "anchor" | "note" | "preview";
     startOffset: number;
     endOffset: number;
     branchConversationId?: string;
@@ -498,6 +613,16 @@ function renderMessageContent(
     endOffset: link.anchor.endOffset,
     branchConversationId: link.branchConversationId,
   }));
+
+  for (const note of notes) {
+    if (note.startOffset === null || note.endOffset === null) continue;
+    decorations.push({
+      type: "note",
+      startOffset: note.startOffset,
+      endOffset: note.endOffset,
+      branchConversationId: note.id,
+    });
+  }
 
   if (canRenderPendingSelection) {
     decorations.push({
@@ -511,94 +636,58 @@ function renderMessageContent(
     return message.content;
   }
 
-  const segments: Array<{
-    type: "plain" | "anchor" | "preview";
-    value: string;
-    branchConversationId?: string;
-  }> = [];
-
-  let cursor = 0;
-  const orderedDecorations = [...decorations].sort(
-    (left, right) => left.startOffset - right.startOffset,
-  );
-
-  for (const decoration of orderedDecorations) {
-    const start = Math.max(cursor, decoration.startOffset);
-    const end = Math.max(start, decoration.endOffset);
-
-    if (start > cursor) {
-      segments.push({
-        type: "plain",
-        value: message.content.slice(cursor, start),
-      });
-    }
-
-    if (end > start) {
-      segments.push({
-        type: decoration.type,
-        value: message.content.slice(start, end),
-        branchConversationId: decoration.branchConversationId,
-      });
-    }
-
-    cursor = Math.max(cursor, end);
-  }
-
-  if (cursor < message.content.length) {
-    segments.push({
-      type: "plain",
-      value: message.content.slice(cursor),
-    });
-  }
+  const boundaries = [...new Set([0, message.content.length, ...decorations.flatMap((item) => [item.startOffset, item.endOffset])])]
+    .filter((offset) => offset >= 0 && offset <= message.content.length)
+    .sort((left, right) => left - right);
+  const segments = boundaries.slice(0, -1).map((start, index) => {
+    const end = boundaries[index + 1];
+    return {
+      start,
+      end,
+      value: message.content.slice(start, end),
+      active: decorations.filter((item) => item.startOffset < end && item.endOffset > start),
+    };
+  });
 
   return segments.map((segment, index) => {
-    if (segment.type === "plain") {
+    if (!segment.active.length) {
       return <span key={`${message.id}-plain-${index}`}>{segment.value}</span>;
     }
 
-    if (segment.type === "preview") {
-      return (
-        <mark
-          key={`${message.id}-preview`}
-          className="message-anchor is-pending-selection"
-        >
-          <span>{segment.value}</span>
-        </mark>
-      );
-    }
+    const branch = segment.active.find((item) => item.type === "anchor");
+    const hasNote = segment.active.some((item) => item.type === "note");
+    const hasPreview = segment.active.some((item) => item.type === "preview");
 
     return (
       <mark
-        aria-label={`Open branch ${
-          anchors.find(
-            (link) => link.branchConversationId === segment.branchConversationId,
-          )?.title ?? "conversation"
-        }`}
-        key={`${message.id}-anchor-${segment.branchConversationId}`}
-        className="message-anchor"
+        aria-label={branch ? `Open branch ${anchors.find((link) => link.branchConversationId === branch.branchConversationId)?.title ?? "conversation"}` : hasNote ? "Text with a personal note" : undefined}
+        key={`${message.id}-decoration-${segment.start}`}
+        className={`message-anchor${hasNote ? " is-note-anchor" : ""}${hasPreview ? " is-pending-selection" : ""}`}
         onClick={() => {
+          if (!branch) return;
           const selection = window.getSelection();
 
           if (selection && !selection.isCollapsed) {
             return;
           }
 
-          onOpenBranch(segment.branchConversationId!);
+          onOpenBranch(branch.branchConversationId!);
         }}
         onKeyDown={(event) => {
+          if (!branch) return;
           if (event.key !== "Enter" && event.key !== " ") {
             return;
           }
 
           event.preventDefault();
-          onOpenBranch(segment.branchConversationId!);
+          onOpenBranch(branch.branchConversationId!);
         }}
-        role="link"
-        tabIndex={0}
+        role={branch ? "link" : undefined}
+        tabIndex={branch ? 0 : undefined}
       >
         <span
           ref={(element) =>
-            registerAnchorRef(segment.branchConversationId!, element)
+            branch ? registerAnchorRef(branch.branchConversationId!, element) : undefined
           }
         >
           {segment.value}
@@ -610,6 +699,7 @@ function renderMessageContent(
 
 interface MessageContentProps {
   anchors: MessageAnchorLink[];
+  notes: ConversationNote[];
   conversationId: string;
   isStreaming: boolean;
   isTypewriting: boolean;
@@ -632,6 +722,7 @@ function MessageContent({
   isStreaming,
   isTypewriting,
   message,
+  notes,
   onTypewriterProgress,
   onTypewriterComplete,
   onOpenBranch,
@@ -741,6 +832,7 @@ function MessageContent({
     message.role === "assistant" ? (
       <MarkdownMessage
         anchors={anchors}
+        notes={notes}
         className={
           isTypewriting || isStreaming
             ? "message-content is-typewriter-active"
@@ -769,6 +861,7 @@ function MessageContent({
         {renderMessageContent(
           renderedMessage,
           anchors,
+          notes,
           registerAnchorRef,
           pendingSelection,
           onOpenBranch,
@@ -791,6 +884,8 @@ export default function ChatPanel({
   selectionPreview,
   initialScrollTop,
   onActivate,
+  onCreateNote,
+  onDeleteNote,
   onDraftChange,
   onModelChange,
   onOpenBranch,
@@ -798,6 +893,8 @@ export default function ChatPanel({
   onSubmit,
   onTypewriterProgress,
   onTypewriterComplete,
+  onUpdateNote,
+  onUseNote,
   onScrollPositionChange,
   onVisibleOutlineChange,
   registerPanelRef,
@@ -807,6 +904,10 @@ export default function ChatPanel({
   showBranchMargin = true,
 }: ChatPanelProps) {
   const [isServicePickerOpen, setServicePickerOpen] = useState(false);
+  const [notesDrawerOpen, setNotesDrawerOpen] = useState(false);
+  const [newChatNote, setNewChatNote] = useState("");
+  const [messageNoteDraft, setMessageNoteDraft] = useState("");
+  const [messageNoteTargetId, setMessageNoteTargetId] = useState<string | null>(null);
   const [branchMarginPositions, setBranchMarginPositions] = useState<
     Record<string, BranchMarginPosition>
   >({});
@@ -850,6 +951,31 @@ export default function ChatPanel({
   const branchMarginKey = branchMarginLinks
     .map((link) => link.branchConversationId)
     .join("|");
+  const conversationNotes = conversation.notes ?? [];
+  const messageNotesById = conversationNotes.reduce<Record<string, ConversationNote[]>>(
+    (groups, note) => {
+      if (!note.sourceMessageId) return groups;
+      (groups[note.sourceMessageId] ??= []).push(note);
+      return groups;
+    },
+    {},
+  );
+
+  function submitMessageNote(messageId: string) {
+    const content = messageNoteDraft.trim();
+    if (!content) return;
+    onCreateNote({ content, conversationId: conversation.id, sourceMessageId: messageId });
+    setMessageNoteDraft("");
+    setMessageNoteTargetId(null);
+  }
+
+  function submitChatNote(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = newChatNote.trim();
+    if (!content) return;
+    onCreateNote({ content, conversationId: conversation.id, sourceMessageId: null });
+    setNewChatNote("");
+  }
 
   const syncBranchMarginPositions = useEffectEvent(() => {
     const panelBody = panelBodyRef.current;
@@ -1196,8 +1322,7 @@ export default function ChatPanel({
     );
 
     if (
-      Math.abs(normalizedDeltaX) >
-      Math.abs(normalizedDeltaY) * 1.25
+      getWheelGestureAxis(normalizedDeltaX, normalizedDeltaY) !== "vertical"
     ) {
       return;
     }
@@ -1355,6 +1480,7 @@ export default function ChatPanel({
             <>
               {conversation.messages.map((message) => {
                 const anchors = anchorsByMessageId[message.id] ?? [];
+                const messageNotes = messageNotesById[message.id] ?? [];
                 const pendingSelection =
                   selectionPreview?.messageId === message.id
                     ? selectionPreview
@@ -1363,17 +1489,29 @@ export default function ChatPanel({
                   <section
                     key={message.id}
                     className={`message-row is-${message.role}`}
+                    data-message-row-id={message.id}
                     data-chat-outline-id={
                       message.role === "user"
                         ? getMessageOutlineId(message.id)
                         : undefined
                     }
-                    tabIndex={message.role === "user" ? -1 : undefined}
+                    tabIndex={-1}
                   >
-                    <div className={`message-with-margin is-${message.role}`}>
+                    <div className={`message-with-margin is-${message.role}${messageNotes.length ? " has-notes" : ""}`}>
                       <div className={`message-bubble is-${message.role}`}>
                         <div className="message-meta">
                           <span>{message.role}</span>
+                          <button
+                            aria-label="Add a personal note to this message"
+                            className="message-note-add"
+                            onClick={() => {
+                              setMessageNoteTargetId((current) => current === message.id ? null : message.id);
+                              setMessageNoteDraft("");
+                            }}
+                            type="button"
+                          >
+                            <NoteIcon /> Add note
+                          </button>
                         </div>
                         <MessageContent
                           anchors={anchors}
@@ -1383,6 +1521,7 @@ export default function ChatPanel({
                           }
                           isTypewriting={Boolean(typingMessageIds[message.id])}
                           message={message}
+                          notes={messageNotes}
                           onTypewriterProgress={onTypewriterProgress}
                           onTypewriterComplete={onTypewriterComplete}
                           onOpenBranch={onOpenBranch}
@@ -1391,7 +1530,40 @@ export default function ChatPanel({
                           theme={theme}
                           typingProgressByMessageId={typingProgressByMessageId}
                         />
+                        {messageNoteTargetId === message.id ? (
+                          <div className="message-note-composer">
+                            <div className="personal-note-head">
+                              <span><NoteIcon /> Personal note</span>
+                              <span className="personal-note-private">Not sent to AI</span>
+                            </div>
+                            <textarea
+                              autoFocus
+                              aria-label="Personal note"
+                              onChange={(event) => setMessageNoteDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                                  submitMessageNote(message.id);
+                                }
+                                if (event.key === "Escape") setMessageNoteTargetId(null);
+                              }}
+                              placeholder="Write a private thought…"
+                              value={messageNoteDraft}
+                            />
+                            <div className="message-note-composer-actions">
+                              <button onClick={() => setMessageNoteTargetId(null)} type="button">Cancel</button>
+                              <button disabled={!messageNoteDraft.trim()} onClick={() => submitMessageNote(message.id)} type="button">Save note</button>
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
+                      {messageNotes.length ? (
+                        <MessageNoteGroup
+                          notes={messageNotes}
+                          onDelete={(noteId) => onDeleteNote(conversation.id, noteId)}
+                          onUpdate={(noteId, content) => onUpdateNote(conversation.id, noteId, content)}
+                          onUse={(content) => onUseNote(conversation.id, content)}
+                        />
+                      ) : null}
                     </div>
                   </section>
                 );
@@ -1514,6 +1686,17 @@ export default function ChatPanel({
                   {servicePillValue}
                 </span>
               </button>
+              <button
+                aria-expanded={notesDrawerOpen}
+                aria-label={`${conversationNotes.length} personal notes. Private, not sent to AI. Open notes`}
+                className="composer-notes-button"
+                onClick={() => setNotesDrawerOpen(true)}
+                type="button"
+              >
+                <NoteIcon />
+                <span>Notes</span>
+                {conversationNotes.length ? <strong>{conversationNotes.length}</strong> : null}
+              </button>
             </div>
           </div>
 
@@ -1536,6 +1719,42 @@ export default function ChatPanel({
           </div>
         </div>
       </form>
+
+      {notesDrawerOpen ? (
+        <div className="notes-drawer-backdrop" onClick={() => setNotesDrawerOpen(false)} role="presentation">
+          <aside aria-label="Personal notes" className="notes-drawer" onClick={(event) => event.stopPropagation()}>
+            <header className="notes-drawer-head">
+              <div>
+                <p className="eyebrow">Notebook</p>
+                <h2>Personal notes</h2>
+                <p>Private by default. Notes are not sent to AI.</p>
+              </div>
+              <button aria-label="Close notes" className="notes-drawer-close" onClick={() => setNotesDrawerOpen(false)} type="button"><CloseIcon /></button>
+            </header>
+            <form className="chat-note-composer" onSubmit={submitChatNote}>
+              <textarea aria-label="New chat-level note" onChange={(event) => setNewChatNote(event.target.value)} placeholder="Add a thought about this chat…" value={newChatNote} />
+              <button disabled={!newChatNote.trim()} type="submit">Add note</button>
+            </form>
+            <div className="notes-drawer-list">
+              {conversationNotes.length ? conversationNotes.map((note) => (
+                <NoteEditor
+                  key={note.id}
+                  note={note}
+                  onDelete={() => onDeleteNote(conversation.id, note.id)}
+                  onReveal={note.sourceMessageId ? () => {
+                    const target = panelBodyRef.current?.querySelector<HTMLElement>(`[data-message-row-id="${CSS.escape(note.sourceMessageId!)}"]`);
+                    setNotesDrawerOpen(false);
+                    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    target?.focus({ preventScroll: true });
+                  } : undefined}
+                  onUpdate={(content) => onUpdateNote(conversation.id, note.id, content)}
+                  onUse={() => onUseNote(conversation.id, note.content)}
+                />
+              )) : <p className="notes-empty">No notes yet. Add a chat thought here, or use “Add note” on any message.</p>}
+            </div>
+          </aside>
+        </div>
+      ) : null}
 
       <ServicePickerModal
         currentModelId={conversation.modelId}

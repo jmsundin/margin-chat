@@ -12,7 +12,7 @@ import { createPortal } from "react-dom";
 import type { MermaidConfig } from "mermaid";
 import { renderMarkdownToHtml } from "../lib/markdown";
 import { getHeadingOutlineId } from "../lib/chatOutline";
-import type { MessageAnchorLink, SelectionDraft } from "../types";
+import type { ConversationNote, MessageAnchorLink, SelectionDraft } from "../types";
 
 type Decoration =
   | {
@@ -26,6 +26,12 @@ type Decoration =
       type: "preview";
       startOffset: number;
       endOffset: number;
+    }
+  | {
+      type: "note";
+      startOffset: number;
+      endOffset: number;
+      noteId: string;
     };
 
 interface MarkdownMessageProps {
@@ -35,6 +41,7 @@ interface MarkdownMessageProps {
   conversationId: string;
   enableMermaidRendering: boolean;
   messageId: string;
+  notes: ConversationNote[];
   onOpenBranch: (conversationId: string) => void;
   pendingSelection: SelectionDraft | null;
   registerAnchorRef: (
@@ -80,7 +87,9 @@ function buildDecorationKey(decorations: Decoration[]) {
     .map((decoration) =>
       decoration.type === "anchor"
         ? `a:${decoration.startOffset}:${decoration.endOffset}:${decoration.branchConversationId}`
-        : `p:${decoration.startOffset}:${decoration.endOffset}`,
+        : decoration.type === "note"
+          ? `n:${decoration.startOffset}:${decoration.endOffset}:${decoration.noteId}`
+          : `p:${decoration.startOffset}:${decoration.endOffset}`,
     )
     .join("|");
 }
@@ -218,6 +227,7 @@ function setMermaidStatus(block: HTMLElement, message: string | null) {
 
 function buildDecorations(
   anchors: MessageAnchorLink[],
+  notes: ConversationNote[],
   pendingSelection: SelectionDraft | null,
 ) {
   const canRenderPendingSelection =
@@ -235,6 +245,16 @@ function buildDecorations(
     branchConversationId: link.branchConversationId,
     title: link.title,
   }));
+
+  for (const note of notes) {
+    if (note.startOffset === null || note.endOffset === null) continue;
+    decorations.push({
+      type: "note",
+      startOffset: note.startOffset,
+      endOffset: note.endOffset,
+      noteId: note.id,
+    });
+  }
 
   if (canRenderPendingSelection) {
     decorations.push({
@@ -288,50 +308,45 @@ function applyDecorations(
     }
 
     const fragment = document.createDocumentFragment();
-    let cursor = 0;
+    const boundaries = [...new Set([0, textLength, ...overlappingDecorations.flatMap((item) => [
+      Math.max(0, item.startOffset - nodeStart),
+      Math.min(textLength, item.endOffset - nodeStart),
+    ])])].sort((left, right) => left - right);
 
-    for (const decoration of overlappingDecorations) {
-      const localStart = Math.max(0, decoration.startOffset - nodeStart);
-      const localEnd = Math.min(textLength, decoration.endOffset - nodeStart);
+    for (let index = 0; index < boundaries.length - 1; index += 1) {
+      const localStart = boundaries[index];
+      const localEnd = boundaries[index + 1];
+      const active = overlappingDecorations.filter((item) =>
+        item.startOffset < nodeStart + localEnd && item.endOffset > nodeStart + localStart,
+      );
+      const value = text.slice(localStart, localEnd);
 
-      if (localEnd <= localStart) {
+      if (!active.length) {
+        fragment.append(value);
         continue;
       }
 
-      if (localStart > cursor) {
-        fragment.append(text.slice(cursor, localStart));
-      }
-
+      const branch = active.find((item) => item.type === "anchor");
       const mark = document.createElement("mark");
-      mark.className =
-        decoration.type === "preview"
-          ? "message-anchor is-pending-selection"
-          : "message-anchor";
+      mark.className = `message-anchor${active.some((item) => item.type === "note") ? " is-note-anchor" : ""}${active.some((item) => item.type === "preview") ? " is-pending-selection" : ""}`;
 
-      if (decoration.type === "anchor") {
-        mark.dataset.branchConversationId = decoration.branchConversationId;
-        mark.setAttribute("aria-label", `Open branch ${decoration.title}`);
+      if (branch?.type === "anchor") {
+        mark.dataset.branchConversationId = branch.branchConversationId;
+        mark.setAttribute("aria-label", `Open branch ${branch.title}`);
         mark.setAttribute("role", "link");
         mark.tabIndex = 0;
+      } else if (active.some((item) => item.type === "note")) {
+        mark.setAttribute("aria-label", "Text with a personal note");
       }
 
       const innerSpan = document.createElement("span");
-      innerSpan.textContent = text.slice(localStart, localEnd);
+      innerSpan.textContent = value;
       mark.append(innerSpan);
       fragment.append(mark);
 
-      if (
-        decoration.type === "anchor" &&
-        !anchorElements.has(decoration.branchConversationId)
-      ) {
-        anchorElements.set(decoration.branchConversationId, innerSpan);
+      if (branch?.type === "anchor" && !anchorElements.has(branch.branchConversationId)) {
+        anchorElements.set(branch.branchConversationId, innerSpan);
       }
-
-      cursor = localEnd;
-    }
-
-    if (cursor < textLength) {
-      fragment.append(text.slice(cursor));
     }
 
     textNode.replaceWith(fragment);
@@ -351,6 +366,7 @@ export default function MarkdownMessage({
   conversationId,
   enableMermaidRendering,
   messageId,
+  notes,
   onOpenBranch,
   pendingSelection,
   registerAnchorRef,
@@ -378,7 +394,7 @@ export default function MarkdownMessage({
     y: 0,
   });
   const renderedHtml = renderMarkdownToHtml(content);
-  const decorations = buildDecorations(anchors, pendingSelection);
+  const decorations = buildDecorations(anchors, notes, pendingSelection);
   const decorationsKey = buildDecorationKey(decorations);
 
   decorationsRef.current = decorations;
