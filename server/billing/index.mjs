@@ -110,7 +110,47 @@ function getSubscriptionPriceId(subscription) {
   return subscription?.items?.data?.[0]?.price?.id ?? null;
 }
 
-export function createBillingService({ database, env }) {
+function getSubscriptionPeriodEnd(subscription) {
+  const itemPeriodEnds = (subscription?.items?.data ?? [])
+    .map((item) => item?.current_period_end)
+    .filter((value) => typeof value === "number" && !Number.isNaN(value));
+
+  if (itemPeriodEnds.length) {
+    return Math.max(...itemPeriodEnds);
+  }
+
+  return subscription?.current_period_end ?? null;
+}
+
+function getCheckoutSessionUserId(session) {
+  if (typeof session?.metadata?.userId === "string" && session.metadata.userId) {
+    return session.metadata.userId;
+  }
+
+  return typeof session?.client_reference_id === "string" &&
+    session.client_reference_id
+    ? session.client_reference_id
+    : null;
+}
+
+function getInvoiceSubscriptionId(invoice) {
+  const subscription =
+    invoice?.subscription ??
+    invoice?.parent?.subscription_details?.subscription ??
+    null;
+
+  if (!subscription) {
+    return null;
+  }
+
+  return typeof subscription === "string" ? subscription : subscription.id;
+}
+
+export function createBillingService({ database, env, stripeClient = null }) {
+  function getClient() {
+    return stripeClient ?? getStripeClient(env);
+  }
+
   function getHostedUsageLimits(payload) {
     const maxInputCharacters = getPositiveInteger(
       env.HOSTED_MAX_INPUT_CHARACTERS,
@@ -169,7 +209,7 @@ export function createBillingService({ database, env }) {
   }
 
   async function ensureCustomerForUser(user) {
-    const stripe = getStripeClient(env);
+    const stripe = getClient();
     const billingAccount = await database.getUserBillingAccount(user.id);
 
     if (!billingAccount) {
@@ -213,7 +253,7 @@ export function createBillingService({ database, env }) {
     const syncArgs = {
       billingCancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
       billingCurrentPeriodEnd: serializePeriodEnd(
-        subscription.current_period_end,
+        getSubscriptionPeriodEnd(subscription),
       ),
       billingPriceId: getSubscriptionPriceId(subscription),
       billingStatus: normalizedStatus,
@@ -240,7 +280,7 @@ export function createBillingService({ database, env }) {
     fallbackUserId = null,
     subscriptionId,
   }) {
-    const stripe = getStripeClient(env);
+    const stripe = getClient();
     const subscription = await stripe.subscriptions.retrieve(subscriptionId);
 
     return syncSubscription({
@@ -248,6 +288,120 @@ export function createBillingService({ database, env }) {
       fallbackUserId,
       subscription,
     });
+  }
+
+  async function createSubscriptionCheckoutSession({ request, user }) {
+    const priceId = getStripePriceId(env);
+
+    if (!priceId) {
+      throw new HttpError(
+        503,
+        "Stripe subscriptions are not configured. Add STRIPE_PRICE_ID first.",
+      );
+    }
+
+    if (user.role === "admin") {
+      throw new HttpError(
+        409,
+        "Admin accounts do not require a subscription to use the models.",
+      );
+    }
+
+    if (billingStatusHasAccess(user.billing.status)) {
+      throw new HttpError(
+        409,
+        "Your subscription is already active. Manage billing instead.",
+      );
+    }
+
+    const stripe = getClient();
+    const customerId = await ensureCustomerForUser(user);
+    const origin = getRequestOrigin(request, env);
+    const session = await stripe.checkout.sessions.create({
+      allow_promotion_codes: true,
+      cancel_url: `${origin}/?checkout=subscription_canceled`,
+      client_reference_id: user.id,
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      metadata: {
+        purchaseKind: "subscription",
+        userId: user.id,
+      },
+      mode: "subscription",
+      payment_method_types: ["card"],
+      success_url: `${origin}/?checkout=subscription_success&session_id={CHECKOUT_SESSION_ID}`,
+      subscription_data: {
+        metadata: {
+          userId: user.id,
+        },
+      },
+    });
+
+    if (!session.url) {
+      throw new HttpError(500, "Stripe did not return a checkout URL.");
+    }
+
+    return { url: session.url };
+  }
+
+  async function confirmSubscriptionCheckout({ sessionId, user }) {
+    if (typeof sessionId !== "string" || !sessionId.startsWith("cs_")) {
+      throw new HttpError(400, "A valid Stripe Checkout Session ID is required.");
+    }
+
+    const stripe = getClient();
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ["subscription"],
+    });
+
+    if (
+      session.mode !== "subscription" ||
+      getCheckoutSessionUserId(session) !== user.id
+    ) {
+      throw new HttpError(
+        403,
+        "This Stripe Checkout Session does not belong to your subscription purchase.",
+      );
+    }
+
+    if (session.status !== "complete" || !session.subscription) {
+      throw new HttpError(409, "Stripe Checkout has not completed this subscription yet.");
+    }
+
+    const customerId =
+      typeof session.customer === "string"
+        ? session.customer
+        : session.customer?.id ?? null;
+    const subscription =
+      typeof session.subscription === "string"
+        ? await stripe.subscriptions.retrieve(session.subscription)
+        : session.subscription;
+    const configuredPriceId = getStripePriceId(env);
+
+    if (!configuredPriceId || getSubscriptionPriceId(subscription) !== configuredPriceId) {
+      throw new HttpError(
+        409,
+        "This Checkout Session does not contain the configured Margin Chat subscription.",
+      );
+    }
+
+    if (customerId) {
+      await database.updateStripeCustomerId({
+        stripeCustomerId: customerId,
+        userId: user.id,
+      });
+    }
+
+    await syncSubscription({
+      customerId: customerId ?? getSubscriptionCustomerId(subscription),
+      fallbackUserId: user.id,
+      subscription,
+    });
+
+    return {
+      confirmed: billingStatusHasAccess(normalizeBillingStatus(subscription.status)),
+      status: normalizeBillingStatus(subscription.status),
+    };
   }
 
   async function createCheckoutSession({ request, user }) {
@@ -263,7 +417,7 @@ export function createBillingService({ database, env }) {
         );
       }
 
-      const stripe = getStripeClient(env);
+      const stripe = getClient();
       const customerId = await ensureCustomerForUser(user);
       const origin = getRequestOrigin(request, env);
       const session = await stripe.checkout.sessions.create({
@@ -311,7 +465,7 @@ export function createBillingService({ database, env }) {
       );
     }
 
-    const stripe = getStripeClient(env);
+    const stripe = getClient();
     const customerId = await ensureCustomerForUser(user);
     const origin = getRequestOrigin(request, env);
     const session = await stripe.checkout.sessions.create({
@@ -347,7 +501,7 @@ export function createBillingService({ database, env }) {
   }
 
   async function createBillingPortalSession({ request, user }) {
-    const stripe = getStripeClient(env);
+    const stripe = getClient();
     const billingAccount = await database.getUserBillingAccount(user.id);
 
     if (!billingAccount?.stripeCustomerId) {
@@ -382,7 +536,7 @@ export function createBillingService({ database, env }) {
       throw new HttpError(400, "Stripe-Signature header is required.");
     }
 
-    const stripe = getStripeClient(env);
+    const stripe = getClient();
     let event;
 
     try {
@@ -395,13 +549,7 @@ export function createBillingService({ database, env }) {
       const session = event.data.object;
       const customerId =
         typeof session.customer === "string" ? session.customer : null;
-      const userId =
-        typeof session.metadata?.userId === "string" && session.metadata.userId
-          ? session.metadata.userId
-          : typeof session.client_reference_id === "string" &&
-              session.client_reference_id
-            ? session.client_reference_id
-            : null;
+      const userId = getCheckoutSessionUserId(session);
 
       if (userId && customerId) {
         await database.updateStripeCustomerId({
@@ -453,7 +601,9 @@ export function createBillingService({ database, env }) {
     if (
       event.type === "customer.subscription.created" ||
       event.type === "customer.subscription.updated" ||
-      event.type === "customer.subscription.deleted"
+      event.type === "customer.subscription.deleted" ||
+      event.type === "customer.subscription.paused" ||
+      event.type === "customer.subscription.resumed"
     ) {
       const subscription = event.data.object;
 
@@ -461,6 +611,21 @@ export function createBillingService({ database, env }) {
         customerId: getSubscriptionCustomerId(subscription),
         subscription,
       });
+    }
+
+    if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
+      const invoice = event.data.object;
+      const subscriptionId = getInvoiceSubscriptionId(invoice);
+
+      if (subscriptionId) {
+        await retrieveAndSyncSubscription({
+          customerId:
+            typeof invoice.customer === "string"
+              ? invoice.customer
+              : invoice.customer?.id ?? null,
+          subscriptionId,
+        });
+      }
     }
 
     return {
@@ -471,6 +636,8 @@ export function createBillingService({ database, env }) {
   return {
     createBillingPortalSession,
     createCheckoutSession,
+    createSubscriptionCheckoutSession,
+    confirmSubscriptionCheckout,
     handleWebhook,
     getHostedUsageLimits,
     refundHostedRequest,

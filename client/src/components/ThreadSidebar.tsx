@@ -1,12 +1,16 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import {
+  ConversationGroupSelect,
+  NewConversationGroupForm,
+} from "./ConversationGroupControls";
 import type { ChatOutlineItem } from "../lib/chatOutline";
-import type { MainViewMode, ThreadSummary } from "../types";
+import type { ConversationGroup, MainViewMode, ThreadSummary } from "../types";
 
 type ThemeMode = "light" | "dark";
 type ThreadActionTarget = Pick<ThreadSummary, "id" | "title">;
 
 const THREAD_MENU_WIDTH = 176;
-const THREAD_MENU_HEIGHT = 154;
+const THREAD_MENU_HEIGHT = 212;
 const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
@@ -16,9 +20,13 @@ interface ThreadSidebarProps {
   collapsed: boolean;
   currentChatOutline: ChatOutlineItem[];
   currentChatTitle: string;
+  groups: Record<string, ConversationGroup>;
   mainViewMode: MainViewMode;
+  onAssignGroup: (conversationId: string, groupId: string | null) => void;
+  onCreateGroup: (name: string) => void;
   onDeleteThread: (conversationId: string) => void;
   onNewChat: () => void;
+  onNewNote: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
@@ -28,9 +36,11 @@ interface ThreadSidebarProps {
   onSetMainViewMode: (viewMode: MainViewMode) => void;
   onSelectThread: (conversationId: string) => void;
   onToggleCollapse: () => void;
+  onToggleGroup: (groupId: string) => void;
   onToggleTheme: () => void;
   onUnpinThread: (conversationId: string) => void;
   pinnedThreads: ThreadSummary[];
+  streamingThreadIds: ReadonlySet<string>;
   theme: ThemeMode;
   threads: ThreadSummary[];
 }
@@ -118,6 +128,24 @@ function SearchIcon() {
     >
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" />
+    </svg>
+  );
+}
+
+function NoteIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="sidebar-icon"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+      viewBox="0 0 24 24"
+    >
+      <path d="M6 3.5h8.5L19 8v12.5H6z" />
+      <path d="M14.5 3.5V8H19M9 12h7M9 15.5h5" />
     </svg>
   );
 }
@@ -335,9 +363,13 @@ export default function ThreadSidebar({
   collapsed,
   currentChatOutline,
   currentChatTitle,
+  groups,
   mainViewMode,
+  onAssignGroup,
+  onCreateGroup,
   onDeleteThread,
   onNewChat,
+  onNewNote,
   onOpenProfile,
   onOpenSettings,
   onOpenSearch,
@@ -347,9 +379,11 @@ export default function ThreadSidebar({
   onSetMainViewMode,
   onSelectThread,
   onToggleCollapse,
+  onToggleGroup,
   onToggleTheme,
   onUnpinThread,
   pinnedThreads,
+  streamingThreadIds,
   theme,
   threads,
 }: ThreadSidebarProps) {
@@ -547,7 +581,13 @@ export default function ThreadSidebar({
   const unpinnedThreads = threads.filter(
     (thread) => !pinnedThreadIds.has(thread.id),
   );
-  const orderedThreads = [...pinnedThreads, ...unpinnedThreads];
+  const priorityOrderedThreads = [...pinnedThreads, ...unpinnedThreads];
+  const orderedThreads = [
+    ...Object.values(groups).flatMap((group) =>
+      priorityOrderedThreads.filter((thread) => thread.groupId === group.id),
+    ),
+    ...priorityOrderedThreads.filter((thread) => !thread.groupId),
+  ];
 
   return (
     <aside className={collapsed ? "thread-sidebar is-collapsed" : "thread-sidebar"}>
@@ -622,6 +662,17 @@ export default function ThreadSidebar({
         </button>
 
         <button
+          aria-label="New note"
+          className="sidebar-action"
+          onClick={onNewNote}
+          title="New note"
+          type="button"
+        >
+          <NoteIcon />
+          <span>New note</span>
+        </button>
+
+        <button
           aria-label="Search chats"
           className="sidebar-action"
           onClick={onOpenSearch}
@@ -631,6 +682,9 @@ export default function ThreadSidebar({
           <SearchIcon />
           <span>Search chats</span>
         </button>
+        {!collapsed ? (
+          <NewConversationGroupForm compact onCreate={onCreateGroup} />
+        ) : null}
       </div>
 
       {collapsed ? (
@@ -638,16 +692,19 @@ export default function ThreadSidebar({
           {orderedThreads.map((thread) => {
             const branchCount = Math.max(thread.conversationCount - 1, 0);
             const isPinned = pinnedThreadIds.has(thread.id);
+            const isStreaming = streamingThreadIds.has(thread.id);
 
             return (
               <button
                 key={thread.id}
-                aria-label={`Open chat ${thread.title}`}
+                aria-label={`Open ${thread.kind === "note" ? "note" : "chat"} ${thread.title}${isStreaming ? ", response streaming" : ""}`}
                 className={
                   [
                     "thread-sidebar-mini-item",
                     thread.id === activeThreadId ? "is-active" : "",
                     isPinned ? "is-pinned" : "",
+                    isStreaming ? "is-streaming" : "",
+                    thread.kind === "note" ? "is-note" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")
@@ -660,17 +717,36 @@ export default function ThreadSidebar({
                 type="button"
               >
                 <span className="thread-sidebar-mini-badge" aria-hidden="true">
-                  {getCompactLabel(thread.title)}
+                  {thread.kind === "note" ? <NoteIcon /> : getCompactLabel(thread.title)}
                 </span>
                 {isPinned ? (
                   <span className="thread-sidebar-mini-pin" aria-hidden="true">
                     <PinIcon filled />
                   </span>
                 ) : null}
+                {isStreaming ? (
+                  <span
+                    aria-hidden="true"
+                    className="thread-sidebar-mini-streaming"
+                  />
+                ) : null}
                 <span className="thread-sidebar-mini-card" aria-hidden="true">
                   <span className="thread-sidebar-mini-title">{thread.title}</span>
                   <span className="thread-sidebar-mini-meta">
-                    {branchCount === 1 ? "1 branch" : `${branchCount} branches`}
+                    {isStreaming ? (
+                      <>
+                        <span className="thread-streaming-status">
+                          <span className="thread-streaming-dot" />
+                          Streaming
+                        </span>
+                        <span>•</span>
+                      </>
+                    ) : null}
+                    {thread.kind === "note"
+                      ? "Note"
+                      : branchCount === 1
+                        ? "1 branch"
+                        : `${branchCount} branches`}
                     <span aria-hidden="true">•</span>
                     {thread.updatedLabel}
                   </span>
@@ -682,25 +758,74 @@ export default function ThreadSidebar({
         </div>
       ) : (
         <div className="thread-list">
+          {Object.values(groups)
+            .filter(
+              (group) =>
+                !orderedThreads.some((thread) => thread.groupId === group.id),
+            )
+            .map((group) => (
+              <div className="thread-group-section-header" key={group.id}>
+                <button
+                  aria-expanded={!group.collapsed}
+                  onClick={() => onToggleGroup(group.id)}
+                  type="button"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="conversation-group-color"
+                    style={{ backgroundColor: group.color }}
+                  />
+                  <span>{group.name}</span>
+                  <span>0</span>
+                  <span aria-hidden="true">
+                    {group.collapsed ? "＋" : "−"}
+                  </span>
+                </button>
+              </div>
+            ))}
           {orderedThreads.map((thread, index) => {
             const branchCount = Math.max(thread.conversationCount - 1, 0);
             const isExpanded = Boolean(expandedThreadIds[thread.id]);
             const isPinned = pinnedThreadIds.has(thread.id);
+            const isStreaming = streamingThreadIds.has(thread.id);
+            const group = thread.groupId ? groups[thread.groupId] : null;
+            const previousThread = orderedThreads[index - 1];
+            const startsGroup =
+              index === 0 || previousThread?.groupId !== thread.groupId;
 
             return (
               <Fragment key={thread.id}>
-                {index === 0 && pinnedThreads.length ? (
-                  <p className="thread-list-section-label">Pinned</p>
+                {startsGroup ? (
+                  <div className="thread-group-section-header">
+                    <button
+                      aria-expanded={group ? !group.collapsed : true}
+                      disabled={!group}
+                      onClick={() => group && onToggleGroup(group.id)}
+                      type="button"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="conversation-group-color"
+                        style={{ backgroundColor: group?.color ?? "transparent" }}
+                      />
+                      <span>{group?.name ?? "Ungrouped"}</span>
+                      {group ? (
+                        <span aria-hidden="true">
+                          {group.collapsed ? "＋" : "−"}
+                        </span>
+                      ) : null}
+                    </button>
+                  </div>
                 ) : null}
-                {index === pinnedThreads.length && unpinnedThreads.length ? (
-                  <p className="thread-list-section-label">Chats</p>
-                ) : null}
+                {!group?.collapsed ? (
                 <div
                   className={
                     [
                       "thread-item",
                       thread.id === activeThreadId ? "is-active" : "",
                       isPinned ? "is-pinned" : "",
+                      isStreaming ? "is-streaming" : "",
+                      thread.kind === "note" ? "is-note" : "",
                     ]
                       .filter(Boolean)
                       .join(" ")
@@ -715,16 +840,34 @@ export default function ThreadSidebar({
                   type="button"
                 >
                   <span className="thread-item-title">
+                    {thread.kind === "note" ? (
+                      <span aria-hidden="true" className="thread-item-kind-icon">
+                        <NoteIcon />
+                      </span>
+                    ) : null}
                     <span>{thread.title}</span>
                   </span>
                   <span className="thread-item-meta">
-                    {branchCount === 1 ? "1 branch" : `${branchCount} branches`}
+                    {isStreaming ? (
+                      <>
+                        <span className="thread-streaming-status" role="status">
+                          <span aria-hidden="true" className="thread-streaming-dot" />
+                          Streaming
+                        </span>
+                        <span aria-hidden="true">•</span>
+                      </>
+                    ) : null}
+                    {thread.kind === "note"
+                      ? "Note"
+                      : branchCount === 1
+                        ? "1 branch"
+                        : `${branchCount} branches`}
                     <span aria-hidden="true">•</span>
                     {thread.updatedLabel}
                   </span>
                 </button>
 
-                <button
+                {thread.kind !== "note" ? <button
                   aria-controls={`chat-outline-${thread.id}`}
                   aria-expanded={isExpanded}
                   aria-label={`${isExpanded ? "Collapse" : "Expand"} outline for ${thread.title}`}
@@ -737,7 +880,7 @@ export default function ThreadSidebar({
                   type="button"
                 >
                   <ExpandIcon />
-                </button>
+                </button> : null}
 
                 <button
                   aria-controls={
@@ -803,6 +946,7 @@ export default function ThreadSidebar({
                   </nav>
                 ) : null}
                 </div>
+                ) : null}
               </Fragment>
             );
           })}
@@ -882,6 +1026,15 @@ export default function ThreadSidebar({
                 >
                   Rename
                 </button>
+                <ConversationGroupSelect
+                  className="is-menu"
+                  conversationId={thread.id}
+                  groups={groups}
+                  onAssign={(conversationId, groupId) => {
+                    onAssignGroup(conversationId, groupId);
+                    setOpenMenuState(null);
+                  }}
+                />
                 <button
                   className="thread-item-menu-action is-danger"
                   onClick={() => handleOpenDelete(thread)}

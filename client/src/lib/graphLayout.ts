@@ -157,6 +157,15 @@ export function createDefaultGraphNodeLayout(
     ),
     x: normalizeCoordinate(partial.x, 0),
     y: normalizeCoordinate(partial.y, 0),
+    positioned: Boolean(partial.positioned),
+    treeOriginX:
+      partial.treeOriginX === undefined
+        ? undefined
+        : normalizeCoordinate(partial.treeOriginX, 0),
+    treeOriginY:
+      partial.treeOriginY === undefined
+        ? undefined
+        : normalizeCoordinate(partial.treeOriginY, 0),
   };
 }
 
@@ -215,6 +224,11 @@ export function normalizeGraphLayouts(
           width: candidateLayout.width ?? fallback.width,
           x: candidateLayout.x ?? fallback.x,
           y: candidateLayout.y ?? fallback.y,
+          positioned: candidateLayout.positioned ?? fallback.positioned,
+          treeOriginX:
+            candidateLayout.treeOriginX ?? fallback.treeOriginX,
+          treeOriginY:
+            candidateLayout.treeOriginY ?? fallback.treeOriginY,
         }),
       ];
     }),

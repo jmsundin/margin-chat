@@ -7,6 +7,12 @@ import {
 import { randomUUID } from "node:crypto";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 
+export function canUseCloudWorkspaceStorage(user) {
+  return (
+    user?.role === "admin" || user?.billing?.accessKind === "subscription"
+  );
+}
+
 export function createApiHandler({
   apiKeyService,
   authService,
@@ -164,8 +170,22 @@ export function createApiHandler({
       }
 
       if (request.method === "POST" && url.pathname === "/api/billing/checkout") {
-        const result = await billingService.createCheckoutSession({
+        const result = await billingService.createSubscriptionCheckoutSession({
           request,
+          user: authContext.user,
+        });
+
+        sendJson(response, 200, result);
+        return;
+      }
+
+      if (
+        request.method === "POST" &&
+        url.pathname === "/api/billing/checkout/confirm"
+      ) {
+        const body = await readJsonBody(request);
+        const result = await billingService.confirmSubscriptionCheckout({
+          sessionId: body?.sessionId,
           user: authContext.user,
         });
 
@@ -211,6 +231,13 @@ export function createApiHandler({
       }
 
       if (request.method === "GET" && url.pathname === "/api/state") {
+        if (!canUseCloudWorkspaceStorage(authContext.user)) {
+          throw new HttpError(
+            403,
+            "Cloud workspace sync requires a paid plan or an admin account.",
+          );
+        }
+
         const state = await database.loadState(authContext.user.id);
 
         if (!state) {
@@ -225,6 +252,13 @@ export function createApiHandler({
       }
 
       if (request.method === "PUT" && url.pathname === "/api/state") {
+        if (!canUseCloudWorkspaceStorage(authContext.user)) {
+          throw new HttpError(
+            403,
+            "Cloud workspace sync requires a paid plan or an admin account.",
+          );
+        }
+
         const body = await readJsonBody(request);
         const persistedState = await database.saveState(authContext.user.id, body);
 

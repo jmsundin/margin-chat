@@ -15,6 +15,27 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: `http://127.0.0.1:${backendPort}`,
           changeOrigin: true,
+          configure(proxy) {
+            proxy.on("error", (_error, _request, response) => {
+              if (
+                !("writeHead" in response) ||
+                response.headersSent ||
+                response.writableEnded
+              ) {
+                return;
+              }
+
+              response.writeHead(503, {
+                "Content-Type": "application/json; charset=utf-8",
+              });
+              response.end(
+                JSON.stringify({
+                  error:
+                    "The local Margin Chat backend is unavailable. Local saving is still active.",
+                }),
+              );
+            });
+          },
         },
       },
     },

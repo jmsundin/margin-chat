@@ -17,7 +17,8 @@ export async function readState(client, userId) {
         default_model_id,
         rail_open,
         pinned_thread_ids,
-        graph_layouts
+        graph_layouts,
+        conversation_groups
       from marginchat_app_sessions
       where user_id = $1
     `,
@@ -34,6 +35,7 @@ export async function readState(client, userId) {
       select
         id,
         title,
+        conversation_kind,
         parent_id,
         model_id,
         service_id,
@@ -89,6 +91,7 @@ export async function readState(client, userId) {
         conversation_id,
         source_message_id,
         content,
+        note_kind,
         start_offset,
         end_offset,
         quote,
@@ -109,6 +112,7 @@ export async function readState(client, userId) {
       childIds: [],
       createdAt: toIsoString(row.created_at),
       id: row.id,
+      kind: row.conversation_kind,
       messages: [],
       notes: [],
       modelId: row.model_id,
@@ -165,6 +169,7 @@ export async function readState(client, userId) {
       createdAt: toIsoString(row.created_at),
       endOffset: row.end_offset,
       id: row.id,
+      kind: row.note_kind,
       quote: row.quote,
       sourceMessageId: row.source_message_id,
       startOffset: row.start_offset,
@@ -217,6 +222,12 @@ export async function readState(client, userId) {
             ),
           )
         : {},
+    groups:
+      session.conversation_groups &&
+      typeof session.conversation_groups === "object" &&
+      !Array.isArray(session.conversation_groups)
+        ? session.conversation_groups
+        : {},
     pinnedThreadIds: (session.pinned_thread_ids ?? []).filter(
       (conversationId) => conversations[conversationId]?.parentId === null,
     ),
@@ -244,9 +255,10 @@ export async function writeState(client, userId, normalizedState) {
           default_model_id,
           rail_open,
           pinned_thread_ids,
-          graph_layouts
+          graph_layouts,
+          conversation_groups
         )
-        values ($1, $2, $3, $4, $5, $6, $7)
+        values ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
       [
         sessionId,
@@ -256,6 +268,7 @@ export async function writeState(client, userId, normalizedState) {
         normalizedState.railOpen,
         normalizedState.pinnedThreadIds,
         normalizedState.graphLayouts,
+        normalizedState.groups,
       ],
     );
 
@@ -270,18 +283,20 @@ export async function writeState(client, userId, normalizedState) {
             id,
             session_id,
             title,
+            conversation_kind,
             parent_id,
             model_id,
             service_id,
             created_at,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         `,
         [
           conversation.id,
           sessionId,
           conversation.title,
+          conversation.kind,
           conversation.parentId,
           conversation.modelId,
           conversation.serviceId,
@@ -324,19 +339,21 @@ export async function writeState(client, userId, normalizedState) {
               conversation_id,
               source_message_id,
               content,
+              note_kind,
               start_offset,
               end_offset,
               quote,
               created_at,
               updated_at
             )
-            values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           `,
           [
             note.id,
             conversation.id,
             note.sourceMessageId,
             note.content,
+            note.kind,
             note.startOffset,
             note.endOffset,
             note.quote,

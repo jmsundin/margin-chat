@@ -23,6 +23,14 @@ function buildConversationPreview(conversation) {
     }
   }
 
+  const standaloneNote = (conversation.notes ?? []).find(
+    (note) => note.kind === "standalone",
+  );
+
+  if (standaloneNote?.content) {
+    return clipText(standaloneNote.content, 160);
+  }
+
   return conversation.branchAnchor?.quote
     ? clipText(conversation.branchAnchor.quote, 160)
     : "No messages yet.";
@@ -54,6 +62,7 @@ function buildConversationSearchText(conversation) {
     conversation.branchAnchor?.quote ?? "",
     conversation.branchAnchor?.prompt ?? "",
     ...conversation.messages.slice(-8).map((message) => message.content),
+    ...(conversation.notes ?? []).map((note) => note.content),
   ]
     .join("\n")
     .toLowerCase();
@@ -98,6 +107,7 @@ function scoreConversationMatch(conversation, normalizedQuery) {
 function summarizeConversation(conversations, conversation) {
   return {
     conversation_id: conversation.id,
+    kind: conversation.kind ?? "chat",
     title: conversation.title,
     parent_id: conversation.parentId,
     root_conversation_id:
@@ -178,6 +188,7 @@ function mergeWorkspaceState({ chatRequest, persistedState }) {
     defaultServiceId:
       persistedState?.defaultServiceId ?? currentConversation.serviceId,
     graphLayouts: persistedState?.graphLayouts ?? {},
+    groups: persistedState?.groups ?? {},
     pinnedThreadIds: persistedState?.pinnedThreadIds ?? [],
     railOpen: persistedState?.railOpen ?? false,
     rootId,

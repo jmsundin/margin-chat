@@ -244,6 +244,7 @@ create table if not exists marginchat_app_sessions (
   rail_open boolean not null default true,
   pinned_thread_ids text[] not null default '{}'::text[],
   graph_layouts jsonb not null default '{}'::jsonb,
+  conversation_groups jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -265,6 +266,9 @@ alter table marginchat_app_sessions
 
 alter table marginchat_app_sessions
   add column if not exists graph_layouts jsonb not null default '{}'::jsonb;
+
+alter table marginchat_app_sessions
+  add column if not exists conversation_groups jsonb not null default '{}'::jsonb;
 
 alter table marginchat_app_sessions
   add column if not exists default_service_id text;
@@ -434,12 +438,24 @@ create table if not exists marginchat_conversations (
   id text primary key,
   session_id text not null references marginchat_app_sessions(id) on delete cascade,
   title text not null,
+  conversation_kind text not null default 'chat',
   parent_id text references marginchat_conversations(id) on delete cascade,
   service_id text not null,
   model_id text not null,
   created_at timestamptz not null,
   updated_at timestamptz not null
 );
+
+alter table marginchat_conversations
+  add column if not exists conversation_kind text not null default 'chat';
+
+alter table marginchat_conversations
+  drop constraint if exists marginchat_conversations_kind_check;
+
+alter table marginchat_conversations
+  add constraint marginchat_conversations_kind_check check (
+    conversation_kind in ('chat', 'note')
+  );
 
 alter table marginchat_conversations
   add column if not exists model_id text;
@@ -642,6 +658,7 @@ create table if not exists marginchat_conversation_notes (
   conversation_id text not null references marginchat_conversations(id) on delete cascade,
   source_message_id text references marginchat_messages(id) on delete cascade,
   content text not null,
+  note_kind text not null default 'comment',
   start_offset integer,
   end_offset integer,
   quote text,
@@ -655,6 +672,17 @@ create table if not exists marginchat_conversation_notes (
     (source_message_id is not null and start_offset is not null and end_offset is not null and quote is not null and end_offset > start_offset)
   )
 );
+
+alter table marginchat_conversation_notes
+  add column if not exists note_kind text not null default 'comment';
+
+alter table marginchat_conversation_notes
+  drop constraint if exists marginchat_conversation_notes_kind_check;
+
+alter table marginchat_conversation_notes
+  add constraint marginchat_conversation_notes_kind_check check (
+    note_kind in ('comment', 'side-chat', 'standalone')
+  );
 
 create index if not exists conversations_session_parent_created_idx
   on marginchat_conversations (session_id, parent_id, created_at);

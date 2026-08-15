@@ -51,6 +51,7 @@ describe("branch margin thread", () => {
         onDraftChange={() => {}}
         onModelChange={() => {}}
         onOpenBranch={() => {}}
+        onStopStreaming={() => {}}
         onStopTypewriter={() => {}}
         onSubmit={() => {}}
         onTypewriterComplete={() => {}}

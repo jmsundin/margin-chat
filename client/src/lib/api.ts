@@ -65,6 +65,11 @@ interface RedirectSessionResponse {
   url: string;
 }
 
+interface CheckoutConfirmationResponse {
+  confirmed: boolean;
+  status: string;
+}
+
 interface ApiKeySettingsResponse {
   apiKeys: ApiKeySettings;
 }
@@ -146,8 +151,9 @@ export async function requestChatReply(args: {
   modelId: string;
   onDelta?: (delta: string) => void;
   serviceId: BackendServiceId;
+  signal?: AbortSignal;
 }): Promise<ChatReplyResponse> {
-  const { onDelta, ...requestBody } = args;
+  const { onDelta, signal, ...requestBody } = args;
   const response = await fetch("/api/chat", {
     body: JSON.stringify(requestBody),
     credentials: "same-origin",
@@ -156,6 +162,7 @@ export async function requestChatReply(args: {
       "Content-Type": "application/json",
     },
     method: "POST",
+    signal,
   });
 
   if (!response.ok) {
@@ -490,6 +497,37 @@ export async function requestCreateCheckoutSession(): Promise<string> {
   }
 
   return payload.url;
+}
+
+export async function requestConfirmCheckoutSession(
+  sessionId: string,
+): Promise<CheckoutConfirmationResponse> {
+  const response = await fetch("/api/billing/checkout/confirm", {
+    body: JSON.stringify({ sessionId }),
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as
+    | CheckoutConfirmationResponse
+    | ErrorPayload
+    | null;
+
+  ensureOk(response, payload, "Unable to confirm the Stripe subscription.");
+
+  if (
+    !payload ||
+    !("confirmed" in payload) ||
+    typeof payload.confirmed !== "boolean" ||
+    !("status" in payload) ||
+    typeof payload.status !== "string"
+  ) {
+    throw new Error("Backend returned an invalid subscription confirmation.");
+  }
+
+  return payload;
 }
 
 export async function requestCreateBillingPortalSession(): Promise<string> {

@@ -6,9 +6,9 @@
     "client"
   ],
   "scripts": {
-    "dev": "bun run --cwd client dev",
+    "dev": "bun scripts/dev.mjs",
     "dev:client": "bun run --cwd client dev",
-    "dev:full": "node scripts/dev.mjs",
+    "dev:full": "bun scripts/dev.mjs",
     "dev:server": "bun --watch server/index.mjs",
     "db:logs": "docker compose logs -f postgres",
     "db:start": "docker compose up -d postgres",

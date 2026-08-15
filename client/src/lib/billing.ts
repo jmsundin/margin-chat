@@ -76,7 +76,7 @@ export function getBillingStatusCopy(billing: UserBilling) {
   if (billing.accessKind === "trial") {
     const prepaidCopy = billing.creditBalanceMicros > 0
       ? ` You also have ${formatCreditBalance(billing.creditBalanceMicros)} in hosted credits ready when the trial ends.`
-      : " Add hosted credits any time to avoid losing hosted access when the trial is used up.";
+      : " Start a subscription any time to avoid losing hosted access when the trial is used up.";
 
     return `You have ${billing.trialCallsRemaining} of ${billing.trialCallsLimit} free model calls remaining.${prepaidCopy}`;
   }
@@ -86,7 +86,7 @@ export function getBillingStatusCopy(billing: UserBilling) {
   }
 
   if (billing.accessKind === "none" && billing.trialCallsRemaining === 0) {
-    return `You have used all ${billing.trialCallsLimit} free model calls. Add hosted credits or save a personal provider key to keep chatting.`;
+    return `You have used all ${billing.trialCallsLimit} free model calls. Start a subscription or save a personal provider key to keep chatting.`;
   }
 
   if (billing.status === "active") {
@@ -129,5 +129,5 @@ export function getBillingStatusCopy(billing: UserBilling) {
     return "Your subscription is paused. Resume it in Stripe before this account can use the hosted models.";
   }
 
-  return "Add prepaid credits to use the hosted model keys, or save your own provider key below.";
+  return "Start a subscription to use the hosted model keys, or save your own provider key below.";
 }

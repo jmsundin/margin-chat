@@ -52,6 +52,7 @@ export interface Message {
 export interface ConversationNote {
   id: string;
   content: string;
+  kind?: "comment" | "side-chat" | "standalone";
   sourceMessageId: string | null;
   startOffset: number | null;
   endOffset: number | null;
@@ -73,6 +74,7 @@ export interface BranchAnchor {
 
 export interface Conversation {
   id: string;
+  kind?: "chat" | "note";
   title: string;
   parentId: string | null;
   serviceId: BackendServiceId;
@@ -90,6 +92,17 @@ export interface GraphNodeLayout {
   y: number;
   width: number;
   height: number;
+  positioned?: boolean;
+  treeOriginX?: number;
+  treeOriginY?: number;
+}
+
+export interface ConversationGroup {
+  id: string;
+  name: string;
+  color: string;
+  collapsed: boolean;
+  conversationIds: string[];
 }
 
 export interface AppState {
@@ -100,6 +113,7 @@ export interface AppState {
   railOpen: boolean;
   pinnedThreadIds: string[];
   graphLayouts: Record<string, GraphNodeLayout>;
+  groups: Record<string, ConversationGroup>;
   conversations: Record<string, Conversation>;
 }
 
@@ -131,6 +145,8 @@ export interface ThreadSummary {
   categoryLabel: string;
   conversationCount: number;
   id: string;
+  kind?: "chat" | "note";
+  groupId?: string | null;
   preview: string;
   title: string;
   updatedAt: string;
@@ -150,6 +166,8 @@ export interface SelectionDraft {
     width: number;
     height: number;
   };
+  sourceKind?: "message" | "standalone-note";
+  sourceNoteId?: string;
 }
 
 export interface ConnectionLine {

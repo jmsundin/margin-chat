@@ -19,14 +19,17 @@ import ChatPanel from "./components/ChatPanel";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import ConversationTreeNode from "./components/ConversationTreeNode";
 import ConversationGraphView from "./components/ConversationGraphView";
+import { ConversationGroupSelect } from "./components/ConversationGroupControls";
 import MainChatTileView from "./components/MainChatTileView";
 import ProfileModal from "./components/ProfileModal";
 import SearchModal, { type ChatSearchResult } from "./components/SearchModal";
+import StandaloneNotePanel from "./components/StandaloneNotePanel";
 import ThreadSidebar from "./components/ThreadSidebar";
 import {
   ApiError,
   requestCreateBillingPortalSession,
   requestCreateCheckoutSession,
+  requestConfirmCheckoutSession,
   persistStoredState,
   requestAuthSession,
   requestChatReply,
@@ -42,10 +45,30 @@ import {
 } from "./lib/api";
 import { sanitizePinnedThreadIds } from "./lib/pinnedThreads";
 import {
+  CONVERSATION_GROUP_COLORS,
+  assignConversationToGroup,
+  getConversationGroupId,
+  normalizeConversationGroups,
+  removeConversationsFromGroups,
+} from "./lib/conversationGroups";
+import {
   getSelectionTooltipLayout,
   writeSelectedQuoteToClipboard,
 } from "./lib/selectionTooltip";
 import { getHorizontalWheelDelta } from "./lib/wheelGestures";
+import {
+  areWorkspaceStatesEqual,
+  canSyncWorkspaceToCloud,
+  chooseLocalDirectory,
+  clearLocalDirectory,
+  createLocalWorkspaceRecord,
+  getLocalDirectoryStatus,
+  getLocalWorkspaceFileName,
+  isRecoverableCloudSyncError,
+  readLocalDirectoryState,
+  writeLocalDirectoryState,
+  type LocalDirectoryStatus,
+} from "./lib/workspaceStorage";
 import {
   DEFAULT_BACKEND_SERVICE_ID,
   getBackendServiceLabel,
@@ -72,11 +95,21 @@ import {
   getRootConversations,
 } from "./lib/tree";
 import { buildChatOutline } from "./lib/chatOutline";
+import { getConversationSelectionViewMode } from "./lib/conversationNavigation";
+import {
+  getStandaloneNote,
+  getStandaloneNoteContextMessageId,
+  upsertStandaloneNoteContextMessage,
+} from "./lib/standaloneNotes";
 import { categorizeThread, getThreadCategoryLabel } from "./lib/threadCategories";
 import {
   DEFAULT_MAIN_CHAT_TITLE,
+  DEFAULT_SIDE_CHAT_TITLE,
+  createChildConversation,
   createEmptyState,
   createMainConversation,
+  createSideConversation,
+  createStandaloneNoteConversation,
 } from "./initialState";
 import type {
   AppState,
@@ -97,6 +130,7 @@ import type {
 } from "./types";
 
 const STORAGE_KEY = "margin-chat-state";
+const STORAGE_SAVED_AT_KEY = "margin-chat-state-saved-at";
 const RECENT_MODEL_SELECTIONS_STORAGE_KEY = "margin-chat-recent-model-selections";
 const THEME_STORAGE_KEY = "margin-chat-theme";
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
@@ -111,6 +145,8 @@ const CHAT_PANEL_MAX_WIDTH_PX = 980;
 const CHAT_PANEL_MIN_WIDTH_PX = 320;
 const CHAT_PANEL_VIEWPORT_MARGIN_PX = 180;
 const MOBILE_PANEL_RESIZE_BREAKPOINT_PX = 900;
+const ASSISTANT_STREAM_FLUSH_INTERVAL_MS = 32;
+const CLOUD_RECONCILIATION_INTERVAL_MS = 30_000;
 
 function normalizeWheelDelta(
   delta: number,
@@ -134,7 +170,7 @@ const FALLBACK_TOOLTIP_SIZE = {
 const CONNECTOR_CONTENT_GUTTER_PX = 8;
 type ThemeMode = "light" | "dark";
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
-type StorageMode = "loading" | "fallback" | "server";
+type StorageMode = "loading" | "fallback" | "local" | "server";
 
 function SendIcon() {
   return (
@@ -269,8 +305,15 @@ function hydratePersistedState(input: unknown): AppState | null {
 
               return {
                 ...conversation,
+                kind: conversation.kind === "note" ? "note" : "chat",
                 notes: Array.isArray(conversation.notes)
-                  ? conversation.notes
+                  ? conversation.notes.map((note) => ({
+                      ...note,
+                      kind:
+                        note.kind === "side-chat" || note.kind === "standalone"
+                          ? note.kind
+                          : "comment",
+                    }))
                   : [],
                 modelId: resolveBackendServiceModelId(
                   serviceId,
@@ -315,6 +358,7 @@ function hydratePersistedState(input: unknown): AppState | null {
         conversations,
         parsed.graphLayouts,
       ),
+      groups: normalizeConversationGroups(parsed.groups, conversations),
       pinnedThreadIds: sanitizePinnedThreadIds(
         parsed.pinnedThreadIds,
         conversations,
@@ -331,27 +375,47 @@ function getStateStorageKey(userId: string) {
   return `${STORAGE_KEY}:${userId}`;
 }
 
+function getStateSavedAtStorageKey(userId: string) {
+  return `${STORAGE_SAVED_AT_KEY}:${userId}`;
+}
+
 function getRecentModelSelectionsStorageKey(userId: string) {
   return `${RECENT_MODEL_SELECTIONS_STORAGE_KEY}:${userId}`;
 }
 
-function loadStoredState(storageKey: string): AppState {
+function loadStoredState(
+  storageKey: string,
+  savedAtStorageKey: string,
+): { hasStoredState: boolean; savedAt: string | null; state: AppState } {
   const fallback = createEmptyState();
 
   if (typeof window === "undefined") {
-    return fallback;
+    return { hasStoredState: false, savedAt: null, state: fallback };
   }
 
   try {
     const storedValue = window.localStorage.getItem(storageKey);
 
     if (!storedValue) {
-      return fallback;
+      return { hasStoredState: false, savedAt: null, state: fallback };
     }
 
-    return hydratePersistedState(JSON.parse(storedValue)) ?? fallback;
+    const hydratedState = hydratePersistedState(JSON.parse(storedValue));
+
+    if (!hydratedState) {
+      return { hasStoredState: false, savedAt: null, state: fallback };
+    }
+
+    const savedAt = window.localStorage.getItem(savedAtStorageKey);
+
+    return {
+      hasStoredState: true,
+      savedAt:
+        savedAt && !Number.isNaN(Date.parse(savedAt)) ? savedAt : null,
+      state: hydratedState,
+    };
   } catch {
-    return fallback;
+    return { hasStoredState: false, savedAt: null, state: fallback };
   }
 }
 
@@ -487,6 +551,12 @@ function isApiErrorStatus(error: unknown, statusCode: number) {
   return error instanceof ApiError && error.statusCode === statusCode;
 }
 
+function isAbortError(error: unknown) {
+  return typeof DOMException !== "undefined" && error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
+}
+
 function getErrorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
@@ -500,6 +570,8 @@ if (typeof document !== "undefined") {
 }
 
 interface WorkspaceAppProps {
+  billingNotice: { kind: "error" | "info" | "success"; message: string } | null;
+  onDismissBillingNotice: () => void;
   onAuthExpired: (message?: string) => void;
   onBillingRequired: (message?: string) => void;
   billingErrorMessage: string | null;
@@ -517,6 +589,14 @@ interface WorkspaceAppProps {
   }) => Promise<ApiKeySettings>;
   theme: ThemeMode;
   user: AuthenticatedUser;
+}
+
+interface ActiveChatStream {
+  assistantMessageId: string;
+  controller: AbortController;
+  discard: () => void;
+  flush: () => void;
+  requestId: string;
 }
 
 function createId(prefix: string): string {
@@ -543,7 +623,10 @@ function areGraphLayoutsEqual(
       leftLayout.x === rightLayout.x &&
       leftLayout.y === rightLayout.y &&
       leftLayout.width === rightLayout.width &&
-      leftLayout.height === rightLayout.height
+      leftLayout.height === rightLayout.height &&
+      Boolean(leftLayout.positioned) === Boolean(rightLayout.positioned) &&
+      leftLayout.treeOriginX === rightLayout.treeOriginX &&
+      leftLayout.treeOriginY === rightLayout.treeOriginY
     );
   });
 }
@@ -567,7 +650,10 @@ function mergeGraphLayouts(
       currentLayout.x === normalizedLayout.x &&
       currentLayout.y === normalizedLayout.y &&
       currentLayout.width === normalizedLayout.width &&
-      currentLayout.height === normalizedLayout.height
+      currentLayout.height === normalizedLayout.height &&
+      Boolean(currentLayout.positioned) === Boolean(normalizedLayout.positioned) &&
+      currentLayout.treeOriginX === normalizedLayout.treeOriginX &&
+      currentLayout.treeOriginY === normalizedLayout.treeOriginY
     ) {
       continue;
     }
@@ -690,20 +776,23 @@ function hasAnotherAnchorOnSameLine(args: {
   return false;
 }
 
-function getMessageBubbleElement(node: Node | null): HTMLDivElement | null {
+function getSelectionSourceElement(node: Node | null): HTMLDivElement | null {
   if (!node) {
     return null;
   }
 
+  const selector =
+    "[data-message-bubble='true'], [data-selection-source='standalone-note']";
+
   if (node instanceof HTMLDivElement) {
-    return node.closest("[data-message-bubble='true']");
+    return node.closest(selector);
   }
 
   if (node instanceof HTMLElement) {
-    return node.closest("[data-message-bubble='true']");
+    return node.closest(selector);
   }
 
-  return node.parentElement?.closest("[data-message-bubble='true']") ?? null;
+  return node.parentElement?.closest(selector) ?? null;
 }
 
 function getAnchorsByMessageId(
@@ -953,7 +1042,10 @@ function buildThreadSummaries(
         rootConversation.id,
       );
       const latestConversation = threadConversations[0] ?? rootConversation;
-      const preview = getThreadPreviewFromConversations(threadConversations);
+      const standaloneNote = getStandaloneNote(rootConversation);
+      const preview = standaloneNote
+        ? excerpt(standaloneNote.content, 108) || "Empty note"
+        : getThreadPreviewFromConversations(threadConversations);
       const categoryId = categorizeThread({
         context: getThreadCategoryContext(threadConversations),
         preview,
@@ -965,6 +1057,7 @@ function buildThreadSummaries(
         categoryLabel: getThreadCategoryLabel(categoryId),
         conversationCount: threadConversations.length,
         id: rootConversation.id,
+        kind: standaloneNote ? ("note" as const) : ("chat" as const),
         preview,
         title: rootConversation.title,
         updatedAt: latestConversation.updatedAt,
@@ -984,7 +1077,7 @@ function buildSearchResults(
     return buildThreadSummaries(conversations).map((thread) => ({
       conversationId: thread.id,
       locationLabel: thread.title,
-      matchLabel: "Recent chat",
+      matchLabel: thread.kind === "note" ? "Recent note" : "Recent chat",
       preview: thread.preview,
       rootTitle: thread.title,
       title: thread.title,
@@ -1009,12 +1102,21 @@ function buildSearchResults(
       const lowerTitle = conversation.title.toLowerCase();
 
       if (lowerTitle.includes(normalizedQuery)) {
+        const isStandaloneNote = conversation.kind === "note";
         return {
           conversationId: conversation.id,
           locationLabel:
-            conversation.parentId === null ? "Main chat" : "Branch conversation",
+            isStandaloneNote
+              ? "Standalone note"
+              : conversation.parentId === null
+                ? "Main chat"
+                : "Branch conversation",
           matchLabel:
-            conversation.parentId === null ? "Thread title" : "Branch title",
+            isStandaloneNote
+              ? "Note title"
+              : conversation.parentId === null
+                ? "Thread title"
+                : "Branch title",
           preview: conversation.parentId
             ? `Inside "${rootConversation.title}"`
             : getThreadPreview(conversations, rootConversation.id),
@@ -1041,8 +1143,13 @@ function buildSearchResults(
         return {
           conversationId: conversation.id,
           locationLabel:
-            conversation.parentId === null ? "Main chat" : "Branch conversation",
-          matchLabel: "Personal note",
+            conversation.kind === "note"
+              ? "Standalone note"
+              : conversation.parentId === null
+                ? "Main chat"
+                : "Branch conversation",
+          matchLabel:
+            conversation.kind === "note" ? "Note content" : "Personal note",
           preview: getMatchPreview(matchingNote.content, normalizedQuery),
           rootTitle: rootConversation.title,
           title: conversation.title,
@@ -1080,6 +1187,8 @@ function buildSearchResults(
 }
 
 function WorkspaceApp({
+  billingNotice,
+  onDismissBillingNotice,
   onAuthExpired,
   onBillingRequired,
   billingErrorMessage,
@@ -1094,15 +1203,42 @@ function WorkspaceApp({
   user,
 }: WorkspaceAppProps) {
   const stateStorageKey = getStateStorageKey(user.id);
+  const stateSavedAtStorageKey = getStateSavedAtStorageKey(user.id);
   const recentModelSelectionsStorageKey = getRecentModelSelectionsStorageKey(
     user.id,
   );
-  const [state, setState] = useState<AppState>(() => loadStoredState(stateStorageKey));
+  const initialStoredStateRef = useRef<ReturnType<typeof loadStoredState> | null>(
+    null,
+  );
+
+  if (!initialStoredStateRef.current) {
+    initialStoredStateRef.current = loadStoredState(
+      stateStorageKey,
+      stateSavedAtStorageKey,
+    );
+  }
+
+  const [state, setState] = useState<AppState>(
+    () => initialStoredStateRef.current!.state,
+  );
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
   const [storageMode, setStorageMode] = useState<StorageMode>("loading");
+  const [localStorageReady, setLocalStorageReady] = useState(false);
+  const [cloudSyncReady, setCloudSyncReady] = useState(false);
+  const [localDirectoryStatus, setLocalDirectoryStatus] =
+    useState<LocalDirectoryStatus>({
+      directoryName: null,
+      fileName: getLocalWorkspaceFileName(user.id),
+      permission: "unselected",
+      supported: false,
+    });
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
+  const [graphFocusRequest, setGraphFocusRequest] = useState<{
+    conversationId: string;
+    requestId: number;
+  } | null>(null);
   const [leftSidebarOpen, setLeftSidebarOpen] =
     useState(INITIAL_LEFT_SIDEBAR_OPEN);
   const [isMobileViewport, setIsMobileViewport] = useState(() =>
@@ -1149,8 +1285,17 @@ function WorkspaceApp({
   const suppressNextChatAutoCenterRef = useRef(false);
   const pendingTreeLaneFocusRef = useRef<string | null>(null);
   const typingProgressByMessageIdRef = useRef<Record<string, number>>({});
+  const currentStateRef = useRef(state);
+  const localSavedAtRef = useRef(initialStoredStateRef.current.savedAt);
+  const localStateRevisionRef = useRef(0);
+  const hadLocalMasterAtStartupRef = useRef(
+    initialStoredStateRef.current.hasStoredState,
+  );
   const pendingPersistStateRef = useRef<AppState | null>(null);
   const persistenceInFlightRef = useRef(false);
+  const cloudSyncPausedRef = useRef(false);
+  const activeChatStreamsRef = useRef<Map<string, ActiveChatStream>>(new Map());
+  const workspaceMountedRef = useRef(true);
   const selectionSyncFrameRef = useRef(0);
   const panelResizeStateRef = useRef<{
     conversationId: string;
@@ -1158,6 +1303,7 @@ function WorkspaceApp({
     startClientX: number;
   } | null>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
+  const cloudSyncEnabled = canSyncWorkspaceToCloud(user);
 
   const activeConversation =
     state.conversations[state.activeConversationId] ??
@@ -1180,13 +1326,38 @@ function WorkspaceApp({
     .join("|");
   const isTileView = mainViewMode === "tiles";
   const isGraphView = mainViewMode === "graph";
-  const threadSummaries = buildThreadSummaries(state.conversations);
+  const threadSummaries = buildThreadSummaries(state.conversations).map(
+    (thread) => ({
+      ...thread,
+      groupId: getConversationGroupId(state.groups, thread.id),
+    }),
+  );
   const threadSummaryById = new Map(
     threadSummaries.map((thread) => [thread.id, thread] as const),
   );
   const pinnedThreadSummaries = state.pinnedThreadIds
     .map((threadId) => threadSummaryById.get(threadId))
-    .filter((thread): thread is ThreadSummary => Boolean(thread));
+    .filter(
+      (thread): thread is (typeof threadSummaries)[number] => Boolean(thread),
+    );
+  const streamingThreadIds = new Set<string>();
+
+  for (const [conversationId, isStreaming] of Object.entries(
+    pendingConversationIds,
+  )) {
+    if (!isStreaming) {
+      continue;
+    }
+
+    const rootConversationId = getConversationRootId(
+      state.conversations,
+      conversationId,
+    );
+
+    if (rootConversationId) {
+      streamingThreadIds.add(rootConversationId);
+    }
+  }
   const nearbyBranchCount = siblingBranches.length + focusedBranches.length;
   const branchNavigationCount =
     nearbyBranchCount + Math.max(path.length - 1, 0);
@@ -1281,8 +1452,178 @@ function WorkspaceApp({
   }, [recentModelSelectionsStorageKey]);
 
   useEffect(() => {
-    window.localStorage.setItem(stateStorageKey, JSON.stringify(state));
-  }, [state, stateStorageKey]);
+    let cancelled = false;
+
+    async function hydrateLocalDirectory() {
+      try {
+        const status = await getLocalDirectoryStatus(user.id);
+        const directoryRecord =
+          status.permission === "granted"
+            ? await readLocalDirectoryState(user.id)
+            : null;
+
+        if (cancelled) {
+          return;
+        }
+
+        setLocalDirectoryStatus(status);
+
+        if (directoryRecord) {
+          const directoryState = hydratePersistedState(directoryRecord.state);
+
+          if (directoryState) {
+            hadLocalMasterAtStartupRef.current = true;
+            const browserSavedAt = initialStoredStateRef.current?.savedAt;
+            const directoryIsNewer =
+              !initialStoredStateRef.current?.hasStoredState ||
+              !browserSavedAt ||
+              Date.parse(directoryRecord.savedAt) > Date.parse(browserSavedAt);
+
+            if (directoryIsNewer) {
+              localSavedAtRef.current = directoryRecord.savedAt;
+              currentStateRef.current = directoryState;
+              setState(directoryState);
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("Unable to read the local workspace directory.", error);
+      } finally {
+        if (!cancelled) {
+          setLocalStorageReady(true);
+        }
+      }
+    }
+
+    void hydrateLocalDirectory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user.id]);
+
+  useEffect(() => {
+    currentStateRef.current = state;
+
+    if (!localStorageReady) {
+      return undefined;
+    }
+
+    localStateRevisionRef.current += 1;
+
+    const timeoutId = window.setTimeout(() => {
+      const savedAt = new Date().toISOString();
+      localSavedAtRef.current = savedAt;
+
+      try {
+        window.localStorage.setItem(stateStorageKey, JSON.stringify(state));
+        window.localStorage.setItem(stateSavedAtStorageKey, savedAt);
+      } catch (error) {
+        console.warn("Unable to save the local browser workspace.", error);
+      }
+    }, 320);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [localStorageReady, state, stateSavedAtStorageKey, stateStorageKey]);
+
+  useEffect(() => {
+    if (!localStorageReady) return undefined;
+
+    function flushBrowserWorkspace() {
+      const savedAt = new Date().toISOString();
+      localSavedAtRef.current = savedAt;
+
+      try {
+        window.localStorage.setItem(
+          stateStorageKey,
+          JSON.stringify(currentStateRef.current),
+        );
+        window.localStorage.setItem(stateSavedAtStorageKey, savedAt);
+      } catch (error) {
+        console.warn("Unable to flush the local browser workspace.", error);
+      }
+    }
+
+    window.addEventListener("pagehide", flushBrowserWorkspace);
+    return () => window.removeEventListener("pagehide", flushBrowserWorkspace);
+  }, [localStorageReady, stateSavedAtStorageKey, stateStorageKey]);
+
+  useEffect(() => {
+    if (!localStorageReady) {
+      return undefined;
+    }
+
+    function adoptNewerLocalTabState(event: StorageEvent) {
+      if (event.key !== stateSavedAtStorageKey || !event.newValue) {
+        return;
+      }
+
+      const incomingSavedAt = event.newValue;
+      const currentSavedAt = localSavedAtRef.current;
+
+      if (
+        Number.isNaN(Date.parse(incomingSavedAt)) ||
+        (currentSavedAt &&
+          Date.parse(incomingSavedAt) <= Date.parse(currentSavedAt))
+      ) {
+        return;
+      }
+
+      try {
+        const storedValue = window.localStorage.getItem(stateStorageKey);
+        const incomingState = storedValue
+          ? hydratePersistedState(JSON.parse(storedValue))
+          : null;
+
+        if (!incomingState) {
+          return;
+        }
+
+        localSavedAtRef.current = incomingSavedAt;
+
+        if (areWorkspaceStatesEqual(currentStateRef.current, incomingState)) {
+          return;
+        }
+
+        currentStateRef.current = incomingState;
+        setState(incomingState);
+      } catch (error) {
+        console.warn("Unable to adopt a newer local workspace copy.", error);
+      }
+    }
+
+    window.addEventListener("storage", adoptNewerLocalTabState);
+
+    return () => {
+      window.removeEventListener("storage", adoptNewerLocalTabState);
+    };
+  }, [localStorageReady, stateSavedAtStorageKey, stateStorageKey]);
+
+  useEffect(() => {
+    if (
+      !localStorageReady ||
+      localDirectoryStatus.permission !== "granted"
+    ) {
+      return undefined;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const record = createLocalWorkspaceRecord(
+        state,
+        localSavedAtRef.current ?? new Date().toISOString(),
+      );
+
+      void writeLocalDirectoryState(user.id, record)
+        .then(setLocalDirectoryStatus)
+        .catch((error) => {
+          console.warn("Unable to save the local workspace file.", error);
+        });
+    }, 320);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [localDirectoryStatus.permission, localStorageReady, state, user.id]);
 
   useEffect(() => {
     window.localStorage.setItem(
@@ -1308,45 +1649,79 @@ function WorkspaceApp({
   }, [state.conversations, state.graphLayouts]);
 
   useEffect(() => {
+    if (!localStorageReady) {
+      return undefined;
+    }
+
     let cancelled = false;
+    setCloudSyncReady(false);
 
-    async function hydrateState() {
+    if (!cloudSyncEnabled) {
+      pendingPersistStateRef.current = null;
+      setStorageMode("local");
+      setCloudSyncReady(true);
+      return undefined;
+    }
+
+    async function initializeCloudSync() {
+      const revisionAtStart = localStateRevisionRef.current;
+
       try {
-        const persistedState = await requestStoredState();
+        if (!hadLocalMasterAtStartupRef.current) {
+          const persistedState = await requestStoredState();
 
-        if (cancelled) {
-          return;
-        }
+          if (cancelled) {
+            return;
+          }
 
-        if (persistedState) {
-          const hydratedState = hydratePersistedState(persistedState);
+          if (
+            persistedState &&
+            revisionAtStart === localStateRevisionRef.current
+          ) {
+            const hydratedState = hydratePersistedState(persistedState);
 
-          if (hydratedState) {
-            setState(hydratedState);
+            if (hydratedState) {
+              currentStateRef.current = hydratedState;
+              setState(hydratedState);
+            }
           }
         }
 
-        setStorageMode("server");
+        if (!cancelled) {
+          cloudSyncPausedRef.current = false;
+          setStorageMode("server");
+        }
       } catch (error) {
         if (isApiErrorStatus(error, 401)) {
           onAuthExpired();
           return;
         }
 
-        console.warn("Falling back to local state storage.", error);
-
         if (!cancelled) {
-          setStorageMode("fallback");
+          const cloudAccessDenied = isApiErrorStatus(error, 403);
+          cloudSyncPausedRef.current = !cloudAccessDenied;
+          setStorageMode(cloudAccessDenied ? "local" : "fallback");
+        }
+
+        if (
+          !isApiErrorStatus(error, 403) &&
+          !isRecoverableCloudSyncError(error)
+        ) {
+          console.warn("Cloud workspace sync is temporarily unavailable.", error);
+        }
+      } finally {
+        if (!cancelled) {
+          setCloudSyncReady(true);
         }
       }
     }
 
-    void hydrateState();
+    void initializeCloudSync();
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [cloudSyncEnabled, localStorageReady, onAuthExpired]);
 
   useEffect(() => {
     try {
@@ -1454,6 +1829,12 @@ function WorkspaceApp({
   }, [mainViewMode]);
 
   useEffect(() => {
+    if (mainViewMode !== "graph") {
+      setGraphFocusRequest(null);
+    }
+  }, [mainViewMode]);
+
+  useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -1468,8 +1849,27 @@ function WorkspaceApp({
     };
   }, []);
 
+  useEffect(() => {
+    workspaceMountedRef.current = true;
+
+    return () => {
+      workspaceMountedRef.current = false;
+
+      for (const stream of activeChatStreamsRef.current.values()) {
+        stream.discard();
+        stream.controller.abort();
+      }
+
+      activeChatStreamsRef.current.clear();
+    };
+  }, []);
+
   const persistLatestState = useEffectEvent(async () => {
-    if (persistenceInFlightRef.current) {
+    if (
+      !cloudSyncEnabled ||
+      cloudSyncPausedRef.current ||
+      persistenceInFlightRef.current
+    ) {
       return;
     }
 
@@ -1482,15 +1882,29 @@ function WorkspaceApp({
 
         try {
           await persistStoredState(nextState);
+          cloudSyncPausedRef.current = false;
+          setStorageMode("server");
         } catch (error) {
-          pendingPersistStateRef.current = null;
-
           if (isApiErrorStatus(error, 401)) {
+            pendingPersistStateRef.current = null;
             onAuthExpired();
             return;
           }
 
-          console.warn("Unable to persist app state to Postgres.", error);
+          if (isApiErrorStatus(error, 403)) {
+            pendingPersistStateRef.current = null;
+            cloudSyncPausedRef.current = false;
+            setStorageMode("local");
+            return;
+          }
+
+          pendingPersistStateRef.current = currentStateRef.current;
+          cloudSyncPausedRef.current = true;
+
+          if (!isRecoverableCloudSyncError(error)) {
+            console.warn("Unable to update the cloud workspace copy.", error);
+          }
+
           setStorageMode("fallback");
           return;
         }
@@ -1501,7 +1915,7 @@ function WorkspaceApp({
   });
 
   useEffect(() => {
-    if (storageMode !== "server") {
+    if (!cloudSyncEnabled || !cloudSyncReady) {
       pendingPersistStateRef.current = null;
       return undefined;
     }
@@ -1514,7 +1928,81 @@ function WorkspaceApp({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [persistLatestState, state, storageMode]);
+  }, [cloudSyncEnabled, cloudSyncReady, persistLatestState, state]);
+
+  const reconcileCloudState = useEffectEvent(async () => {
+    if (
+      !cloudSyncEnabled ||
+      !cloudSyncReady ||
+      persistenceInFlightRef.current
+    ) {
+      return;
+    }
+
+    try {
+      const persistedState = await requestStoredState();
+      const localState = currentStateRef.current;
+
+      if (
+        !persistedState ||
+        !areWorkspaceStatesEqual(localState, persistedState)
+      ) {
+        pendingPersistStateRef.current = localState;
+        cloudSyncPausedRef.current = false;
+        await persistLatestState();
+        return;
+      }
+
+      pendingPersistStateRef.current = null;
+      cloudSyncPausedRef.current = false;
+      setStorageMode("server");
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) {
+        onAuthExpired();
+        return;
+      }
+
+      if (isApiErrorStatus(error, 403)) {
+        pendingPersistStateRef.current = null;
+        cloudSyncPausedRef.current = false;
+        setStorageMode("local");
+        return;
+      }
+
+      cloudSyncPausedRef.current = true;
+
+      if (!isRecoverableCloudSyncError(error)) {
+        console.warn("Unable to reconcile the cloud workspace copy.", error);
+      }
+
+      setStorageMode("fallback");
+    }
+  });
+
+  useEffect(() => {
+    if (!cloudSyncEnabled || !cloudSyncReady) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void reconcileCloudState();
+    }, CLOUD_RECONCILIATION_INTERVAL_MS);
+    const handleOnline = () => void reconcileCloudState();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void reconcileCloudState();
+      }
+    };
+
+    window.addEventListener("online", handleOnline);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("online", handleOnline);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [cloudSyncEnabled, cloudSyncReady, reconcileCloudState]);
 
   useEffect(() => {
     if (mainViewMode !== "chat") {
@@ -2023,12 +2511,12 @@ function WorkspaceApp({
     createdAt: string,
   ) {
     let bufferedDelta = "";
-    let frameId = 0;
+    let flushTimerId = 0;
 
     const flush = () => {
-      if (frameId) {
-        window.cancelAnimationFrame(frameId);
-        frameId = 0;
+      if (flushTimerId) {
+        window.clearTimeout(flushTimerId);
+        flushTimerId = 0;
       }
 
       if (!bufferedDelta) {
@@ -2041,15 +2529,65 @@ function WorkspaceApp({
     };
 
     return {
+      discard() {
+        if (flushTimerId) {
+          window.clearTimeout(flushTimerId);
+          flushTimerId = 0;
+        }
+
+        bufferedDelta = "";
+      },
       flush,
       write(delta: string) {
         bufferedDelta += delta;
 
-        if (!frameId) {
-          frameId = window.requestAnimationFrame(flush);
+        if (!flushTimerId) {
+          flushTimerId = window.setTimeout(
+            flush,
+            ASSISTANT_STREAM_FLUSH_INTERVAL_MS,
+          );
         }
       },
     };
+  }
+
+  function stopChatStream(conversationId: string) {
+    const stream = activeChatStreamsRef.current.get(conversationId);
+
+    if (!stream) {
+      return;
+    }
+
+    stream.flush();
+    activeChatStreamsRef.current.delete(conversationId);
+    stream.controller.abort();
+    setPendingConversationIds((current) => {
+      if (!current[conversationId]) {
+        return current;
+      }
+
+      const next = { ...current };
+      delete next[conversationId];
+      return next;
+    });
+  }
+
+  function abortChatStreams(conversationIds: Iterable<string>) {
+    for (const conversationId of conversationIds) {
+      const stream = activeChatStreamsRef.current.get(conversationId);
+
+      if (!stream) {
+        continue;
+      }
+
+      activeChatStreamsRef.current.delete(conversationId);
+      stream.discard();
+      stream.controller.abort();
+    }
+  }
+
+  function abortAllChatStreams() {
+    abortChatStreams([...activeChatStreamsRef.current.keys()]);
   }
 
   function handleTypewriterProgress(messageId: string, visibleCount: number) {
@@ -2121,12 +2659,21 @@ function WorkspaceApp({
       const sourceMessageIndex = sourceMessageId
         ? ancestor.messages.findIndex((message) => message.id === sourceMessageId)
         : -1;
+      const standaloneNote = getStandaloneNote(ancestor);
 
       return {
         branchAnchor: ancestor.branchAnchor,
         id: ancestor.id,
-        messages:
-          sourceMessageIndex >= 0
+        messages: standaloneNote?.content.trim()
+          ? [
+              {
+                content: standaloneNote.content,
+                createdAt: standaloneNote.updatedAt,
+                id: getStandaloneNoteContextMessageId(standaloneNote.id),
+                role: "user" as const,
+              },
+            ]
+          : sourceMessageIndex >= 0
             ? ancestor.messages.slice(0, sourceMessageIndex + 1)
             : ancestor.messages,
         title: ancestor.title,
@@ -2142,10 +2689,133 @@ function WorkspaceApp({
     };
   }
 
-  async function handleSubmit(conversationId: string, value: string) {
+  function startAssistantStream(
+    conversation: Conversation,
+    messages: Message[],
+  ) {
+    const conversationId = conversation.id;
+
+    if (activeChatStreamsRef.current.has(conversationId)) {
+      return false;
+    }
+
+    const assistantMessageId = createId("message");
+    const requestId = createId("request");
+    const controller = new AbortController();
+    const assistantStream = createAssistantStreamWriter(
+      conversationId,
+      assistantMessageId,
+      new Date().toISOString(),
+    );
+    const activeStream: ActiveChatStream = {
+      assistantMessageId,
+      controller,
+      discard: assistantStream.discard,
+      flush: assistantStream.flush,
+      requestId,
+    };
+
+    activeChatStreamsRef.current.set(conversationId, activeStream);
+    setPendingConversationIds((current) => ({
+      ...current,
+      [conversationId]: true,
+    }));
+
+    void requestChatReply({
+      conversation: getConversationRequestPayload(conversation),
+      messages,
+      modelId: conversation.modelId,
+      onDelta(delta) {
+        const currentStream = activeChatStreamsRef.current.get(conversationId);
+
+        if (
+          currentStream?.requestId === requestId &&
+          currentStream.assistantMessageId === assistantMessageId
+        ) {
+          assistantStream.write(delta);
+        }
+      },
+      serviceId: conversation.serviceId,
+      signal: controller.signal,
+    })
+      .then(() => {
+        if (
+          activeChatStreamsRef.current.get(conversationId)?.requestId ===
+          requestId
+        ) {
+          assistantStream.flush();
+        } else {
+          assistantStream.discard();
+        }
+      })
+      .catch((error) => {
+        if (
+          activeChatStreamsRef.current.get(conversationId)?.requestId !==
+          requestId
+        ) {
+          assistantStream.discard();
+          return;
+        }
+
+        assistantStream.flush();
+
+        if (isAbortError(error)) {
+          return;
+        }
+
+        if (isApiErrorStatus(error, 401)) {
+          onAuthExpired();
+          return;
+        }
+
+        if (isApiErrorStatus(error, 402)) {
+          onBillingRequired(getErrorText(
+            error,
+            "An active paid plan is required before you can chat with the models.",
+          ));
+          return;
+        }
+
+        appendAssistantMessage(
+          conversationId,
+          buildBackendErrorReply(conversation.serviceId, error),
+        );
+      })
+      .finally(() => {
+        const currentStream = activeChatStreamsRef.current.get(conversationId);
+
+        if (currentStream?.requestId !== requestId) {
+          return;
+        }
+
+        activeChatStreamsRef.current.delete(conversationId);
+
+        if (!workspaceMountedRef.current) {
+          return;
+        }
+
+        setPendingConversationIds((current) => {
+          if (!current[conversationId]) {
+            return current;
+          }
+
+          const next = { ...current };
+          delete next[conversationId];
+          return next;
+        });
+      });
+
+    return true;
+  }
+
+  function handleSubmit(conversationId: string, value: string) {
     const trimmed = value.trim();
 
-    if (!trimmed || pendingConversationIds[conversationId]) {
+    if (
+      !trimmed ||
+      pendingConversationIds[conversationId] ||
+      activeChatStreamsRef.current.has(conversationId)
+    ) {
       return;
     }
 
@@ -2155,15 +2825,15 @@ function WorkspaceApp({
       return;
     }
 
+    const isUntitledConversation =
+      conversation.messages.length === 0 &&
+      (conversation.title === DEFAULT_MAIN_CHAT_TITLE ||
+        conversation.title === DEFAULT_SIDE_CHAT_TITLE);
     const nextConversationTitle =
-      conversation.parentId === null && conversation.messages.length === 0
-      && conversation.title === DEFAULT_MAIN_CHAT_TITLE
+      isUntitledConversation
         ? excerpt(trimmed, 34)
         : conversation.title;
-    const shouldGenerateTitle =
-      conversation.parentId === null &&
-      conversation.messages.length === 0 &&
-      conversation.title === DEFAULT_MAIN_CHAT_TITLE;
+    const shouldGenerateTitle = isUntitledConversation;
     const createdAt = new Date().toISOString();
     const userMessage: Message = {
       id: createId("message"),
@@ -2201,11 +2871,6 @@ function WorkspaceApp({
       };
     });
 
-    setPendingConversationIds((current) => ({
-      ...current,
-      [conversationId]: true,
-    }));
-
     if (shouldGenerateTitle) {
       void requestChatTitle({
         modelId: conversation.modelId,
@@ -2240,51 +2905,13 @@ function WorkspaceApp({
         });
     }
 
-    const assistantMessageId = createId("message");
-    const assistantStream = createAssistantStreamWriter(
-      conversationId,
-      assistantMessageId,
-      new Date().toISOString(),
+    startAssistantStream(
+      {
+        ...conversation,
+        title: nextConversationTitle,
+      },
+      [...conversation.messages, userMessage],
     );
-
-    try {
-      await requestChatReply({
-        conversation: getConversationRequestPayload({
-          ...conversation,
-          title: nextConversationTitle,
-        }),
-        messages: [...conversation.messages, userMessage],
-        modelId: conversation.modelId,
-        onDelta: assistantStream.write,
-        serviceId: conversation.serviceId,
-      });
-      assistantStream.flush();
-    } catch (error) {
-      assistantStream.flush();
-
-      if (isApiErrorStatus(error, 401)) {
-        onAuthExpired();
-        return;
-      }
-
-      if (isApiErrorStatus(error, 402)) {
-        onBillingRequired(getErrorText(
-          error,
-          "An active paid plan is required before you can chat with the models.",
-        ));
-        return;
-      }
-
-      appendAssistantMessage(
-        conversationId,
-        buildBackendErrorReply(conversation.serviceId, error),
-      );
-    } finally {
-      setPendingConversationIds((current) => ({
-        ...current,
-        [conversationId]: false,
-      }));
-    }
   }
 
   function handleModelChange(
@@ -2345,8 +2972,8 @@ function WorkspaceApp({
     }
 
     const range = selection.getRangeAt(0);
-    const startBubble = getMessageBubbleElement(range.startContainer);
-    const endBubble = getMessageBubbleElement(range.endContainer);
+    const startBubble = getSelectionSourceElement(range.startContainer);
+    const endBubble = getSelectionSourceElement(range.endContainer);
 
     if (!startBubble || !endBubble || startBubble !== endBubble) {
       setSelectionDraft(null);
@@ -2355,6 +2982,11 @@ function WorkspaceApp({
 
     const conversationId = startBubble.dataset.conversationId;
     const messageId = startBubble.dataset.messageId;
+    const sourceKind =
+      startBubble.dataset.selectionSource === "standalone-note"
+        ? "standalone-note"
+        : "message";
+    const sourceNoteId = startBubble.dataset.noteId;
 
     if (!conversationId || !messageId) {
       setSelectionDraft(null);
@@ -2362,11 +2994,23 @@ function WorkspaceApp({
     }
 
     const conversation = state.conversations[conversationId];
-    const message = conversation?.messages.find(
-      (candidate) => candidate.id === messageId,
-    );
+    const hasValidSource =
+      sourceKind === "standalone-note"
+        ? Boolean(
+            conversation?.kind === "note" &&
+              sourceNoteId &&
+              (conversation.notes ?? []).some(
+                (note) =>
+                  note.id === sourceNoteId && note.kind === "standalone",
+              ),
+          )
+        : Boolean(
+            conversation?.messages.some(
+              (candidate) => candidate.id === messageId,
+            ),
+          );
 
-    if (!conversation || !message) {
+    if (!conversation || !hasValidSource) {
       setSelectionDraft(null);
       return;
     }
@@ -2389,7 +3033,7 @@ function WorkspaceApp({
 
     setSelectionDraft({
       conversationId,
-      messageId: message.id,
+      messageId,
       quote,
       startOffset: startRange.toString().length,
       endOffset: endRange.toString().length,
@@ -2400,6 +3044,9 @@ function WorkspaceApp({
         width: rect.width,
         height: rect.height,
       },
+      sourceKind,
+      sourceNoteId:
+        sourceKind === "standalone-note" ? sourceNoteId : undefined,
     });
     setSelectionIntent("branch");
 
@@ -2449,38 +3096,55 @@ function WorkspaceApp({
     };
   }, [isMobileViewport, state.conversations]);
 
-  function handleUpdateGraphNodeLayout(
-    conversationId: string,
-    nextLayout: Partial<GraphNodeLayout>,
+  function handleUpdateGraphNodeLayouts(
+    nextLayouts: Record<string, Partial<GraphNodeLayout>>,
   ) {
     setState((current) => {
-      if (!current.conversations[conversationId]) {
-        return current;
+      let changed = false;
+      const graphLayouts = { ...current.graphLayouts };
+
+      for (const [conversationId, nextLayout] of Object.entries(nextLayouts)) {
+        const conversation = current.conversations[conversationId];
+
+        if (!conversation) {
+          continue;
+        }
+
+        const currentLayout =
+          current.graphLayouts[conversationId] ?? createDefaultGraphNodeLayout();
+        const preservesTreeOrigin =
+          conversation.parentId === null &&
+          nextLayout.positioned &&
+          !currentLayout.positioned;
+        const mergedLayout = createDefaultGraphNodeLayout({
+          ...currentLayout,
+          ...nextLayout,
+          treeOriginX: preservesTreeOrigin
+            ? currentLayout.treeOriginX ?? currentLayout.x
+            : currentLayout.treeOriginX,
+          treeOriginY: preservesTreeOrigin
+            ? currentLayout.treeOriginY ?? currentLayout.y
+            : currentLayout.treeOriginY,
+        });
+
+        if (
+          currentLayout.x === mergedLayout.x &&
+          currentLayout.y === mergedLayout.y &&
+          currentLayout.width === mergedLayout.width &&
+          currentLayout.height === mergedLayout.height &&
+          Boolean(currentLayout.positioned) ===
+            Boolean(mergedLayout.positioned) &&
+          currentLayout.treeOriginX === mergedLayout.treeOriginX &&
+          currentLayout.treeOriginY === mergedLayout.treeOriginY
+        ) {
+          continue;
+        }
+
+        graphLayouts[conversationId] = mergedLayout;
+        changed = true;
       }
 
-      const currentLayout =
-        current.graphLayouts[conversationId] ?? createDefaultGraphNodeLayout();
-      const mergedLayout = createDefaultGraphNodeLayout({
-        ...currentLayout,
-        ...nextLayout,
-      });
-
-      if (
-        currentLayout.x === mergedLayout.x &&
-        currentLayout.y === mergedLayout.y &&
-        currentLayout.width === mergedLayout.width &&
-        currentLayout.height === mergedLayout.height
-      ) {
-        return current;
-      }
-
-      return {
-        ...current,
-        graphLayouts: {
-          ...current.graphLayouts,
-          [conversationId]: mergedLayout,
-        },
-      };
+      return changed ? { ...current, graphLayouts } : current;
     });
   }
 
@@ -2507,7 +3171,7 @@ function WorkspaceApp({
     });
   }
 
-  async function handleCreateBranch(promptOverride?: string) {
+  function handleCreateBranch(promptOverride?: string) {
     const draft = selectionDraft;
 
     if (!draft) {
@@ -2582,6 +3246,20 @@ function WorkspaceApp({
         return current;
       }
 
+      const sourceNote = draft.sourceNoteId
+        ? (currentParent.notes ?? []).find(
+            (note) =>
+              note.id === draft.sourceNoteId && note.kind === "standalone",
+          )
+        : null;
+      const parentMessages = sourceNote
+        ? upsertStandaloneNoteContextMessage(
+            currentParent.messages,
+            sourceNote,
+            now,
+          )
+        : currentParent.messages;
+
       return {
         ...current,
         activeConversationId: branchId,
@@ -2592,6 +3270,7 @@ function WorkspaceApp({
           [currentParent.id]: {
             ...currentParent,
             childIds: [...currentParent.childIds, branchId],
+            messages: parentMessages,
             updatedAt: now,
           },
           [branchId]: branchConversation,
@@ -2600,6 +3279,16 @@ function WorkspaceApp({
           ...current.graphLayouts,
           [branchId]: branchGraphLayout,
         },
+        groups: (() => {
+          const parentGroupId = getConversationGroupId(
+            current.groups,
+            currentParent.id,
+          );
+
+          return parentGroupId
+            ? assignConversationToGroup(current.groups, branchId, parentGroupId)
+            : current.groups;
+        })(),
       };
     });
 
@@ -2607,55 +3296,10 @@ function WorkspaceApp({
       ...current,
       [branchId]: "",
     }));
-    setPendingConversationIds((current) => ({
-      ...current,
-      [branchId]: true,
-    }));
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
 
-    const assistantMessageId = createId("message");
-    const assistantStream = createAssistantStreamWriter(
-      branchId,
-      assistantMessageId,
-      new Date().toISOString(),
-    );
-
-    try {
-      await requestChatReply({
-        conversation: getConversationRequestPayload(branchConversation),
-        messages: branchConversation.messages,
-        modelId: branchConversation.modelId,
-        onDelta: assistantStream.write,
-        serviceId: branchConversation.serviceId,
-      });
-      assistantStream.flush();
-    } catch (error) {
-      assistantStream.flush();
-
-      if (isApiErrorStatus(error, 401)) {
-        onAuthExpired();
-        return;
-      }
-
-      if (isApiErrorStatus(error, 402)) {
-        onBillingRequired(getErrorText(
-          error,
-          "An active paid plan is required before you can chat with the models.",
-        ));
-        return;
-      }
-
-      appendAssistantMessage(
-        branchId,
-        buildBackendErrorReply(branchConversation.serviceId, error),
-      );
-    } finally {
-      setPendingConversationIds((current) => ({
-        ...current,
-        [branchId]: false,
-      }));
-    }
+    startAssistantStream(branchConversation, branchConversation.messages);
   }
 
   function handleExplainSelection() {
@@ -2666,16 +3310,19 @@ function WorkspaceApp({
     content: string;
     conversationId: string;
     endOffset?: number | null;
+    kind?: "comment" | "side-chat";
     quote?: string | null;
     sourceMessageId: string | null;
+    sourceStandaloneNoteId?: string;
     startOffset?: number | null;
   }) {
-    const content = args.content.trim();
-    if (!content) return;
+    const content = args.kind === "side-chat" ? args.content : args.content.trim();
+    if (!content.trim()) return "";
     const now = new Date().toISOString();
     const note: ConversationNote = {
       id: createId("note"),
       content,
+      kind: args.kind ?? "comment",
       sourceMessageId: args.sourceMessageId,
       startOffset: args.startOffset ?? null,
       endOffset: args.endOffset ?? null,
@@ -2687,18 +3334,34 @@ function WorkspaceApp({
     setState((current) => {
       const conversation = current.conversations[args.conversationId];
       if (!conversation) return current;
+      const sourceNote = args.sourceStandaloneNoteId
+        ? (conversation.notes ?? []).find(
+            (candidate) =>
+              candidate.id === args.sourceStandaloneNoteId &&
+              candidate.kind === "standalone",
+          )
+        : null;
       return {
         ...current,
         conversations: {
           ...current.conversations,
           [conversation.id]: {
             ...conversation,
+            messages: sourceNote
+              ? upsertStandaloneNoteContextMessage(
+                  conversation.messages,
+                  sourceNote,
+                  now,
+                )
+              : conversation.messages,
             notes: [...(conversation.notes ?? []), note],
             updatedAt: now,
           },
         },
       };
     });
+
+    return note.id;
   }
 
   function handleCreateSelectionNote() {
@@ -2706,18 +3369,19 @@ function WorkspaceApp({
     handleCreateNote({
       content: selectionDraft.prompt,
       conversationId: selectionDraft.conversationId,
+      kind: "comment",
       sourceMessageId: selectionDraft.messageId,
       startOffset: selectionDraft.startOffset,
       endOffset: selectionDraft.endOffset,
       quote: selectionDraft.quote,
+      sourceStandaloneNoteId: selectionDraft.sourceNoteId,
     });
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
   }
 
   function handleUpdateNote(conversationId: string, noteId: string, content: string) {
-    const value = content.trim();
-    if (!value) return;
+    const value = content;
     const now = new Date().toISOString();
     setState((current) => {
       const conversation = current.conversations[conversationId];
@@ -2729,6 +3393,51 @@ function WorkspaceApp({
           [conversationId]: {
             ...conversation,
             notes: (conversation.notes ?? []).map((note) => note.id === noteId ? { ...note, content: value, updatedAt: now } : note),
+            updatedAt: now,
+          },
+        },
+      };
+    });
+  }
+
+  function handleUpdateStandaloneNote(
+    conversationId: string,
+    noteId: string,
+    content: string,
+  ) {
+    const now = new Date().toISOString();
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation || conversation.kind !== "note") return current;
+
+      const notes = (conversation.notes ?? []).map((note) =>
+        note.id === noteId && note.kind === "standalone"
+          ? { ...note, content, updatedAt: now }
+          : note,
+      );
+      const standaloneNote = notes.find(
+        (note) => note.id === noteId && note.kind === "standalone",
+      );
+      const contextMessageId = getStandaloneNoteContextMessageId(noteId);
+      const hasContextMessage = conversation.messages.some(
+        (message) => message.id === contextMessageId,
+      );
+
+      return {
+        ...current,
+        conversations: {
+          ...current.conversations,
+          [conversationId]: {
+            ...conversation,
+            messages:
+              standaloneNote && hasContextMessage
+                ? upsertStandaloneNoteContextMessage(
+                    conversation.messages,
+                    standaloneNote,
+                    now,
+                  )
+                : conversation.messages,
+            notes,
             updatedAt: now,
           },
         },
@@ -2816,6 +3525,218 @@ function WorkspaceApp({
     }
   }
 
+  function handleCreateStandaloneNote() {
+    const now = new Date().toISOString();
+    const conversationId = createId("note-conversation");
+    const noteConversation = createStandaloneNoteConversation({
+      createdAt: now,
+      id: conversationId,
+      modelId: state.defaultModelId,
+      noteId: createId("note"),
+      serviceId: state.defaultServiceId,
+    });
+    const nextGraphLayout = buildRootGraphNodeLayout(
+      state.conversations,
+      normalizeGraphLayouts(state.conversations, state.graphLayouts),
+    );
+
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+    setSearchModalOpen(false);
+    setSearchQuery("");
+    setMainViewMode("chat");
+
+    startTransition(() => {
+      setState((current) => ({
+        ...current,
+        activeConversationId: conversationId,
+        rootId: conversationId,
+        conversations: {
+          ...current.conversations,
+          [conversationId]: noteConversation,
+        },
+        graphLayouts: {
+          ...current.graphLayouts,
+          [conversationId]: nextGraphLayout,
+        },
+      }));
+    });
+
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+      setState((current) =>
+        current.railOpen ? { ...current, railOpen: false } : current,
+      );
+    }
+  }
+
+  function handleAddSideChat(sourceConversationId: string) {
+    if (!state.conversations[sourceConversationId]) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const sideConversationId = createId("conversation");
+
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+    setMainViewMode("chat");
+
+    startTransition(() => {
+      setState((current) => {
+        const sourceConversation = current.conversations[sourceConversationId];
+
+        if (!sourceConversation) {
+          return current;
+        }
+
+        const sideConversation = createSideConversation({
+          createdAt: now,
+          id: sideConversationId,
+          sourceConversation,
+        });
+        const parentConversation =
+          current.conversations[sideConversation.parentId!];
+
+        if (!parentConversation) {
+          return current;
+        }
+
+        const sideGraphLayout = buildBranchGraphNodeLayout({
+          conversations: current.conversations,
+          graphLayouts: normalizeGraphLayouts(
+            current.conversations,
+            current.graphLayouts,
+          ),
+          parentConversationId: parentConversation.id,
+        });
+
+        return {
+          ...current,
+          activeConversationId: sideConversation.id,
+          railOpen: false,
+          rootId:
+            getConversationRootId(
+              current.conversations,
+              parentConversation.id,
+            ) ?? current.rootId,
+          conversations: {
+            ...current.conversations,
+            [parentConversation.id]: {
+              ...parentConversation,
+              childIds: [...parentConversation.childIds, sideConversation.id],
+              updatedAt: now,
+            },
+            [sideConversation.id]: sideConversation,
+          },
+          graphLayouts: {
+            ...current.graphLayouts,
+            [sideConversation.id]: sideGraphLayout,
+          },
+          groups: (() => {
+            const sourceGroupId = getConversationGroupId(
+              current.groups,
+              sourceConversation.id,
+            );
+
+            return sourceGroupId
+              ? assignConversationToGroup(
+                  current.groups,
+                  sideConversation.id,
+                  sourceGroupId,
+                )
+              : current.groups;
+          })(),
+        };
+      });
+    });
+
+    setDrafts((current) => ({
+      ...current,
+      [sideConversationId]: "",
+    }));
+
+    if (isMobileViewport) {
+      setLeftSidebarOpen(false);
+    }
+  }
+
+  function handleAddGraphChildChat(parentConversationId: string) {
+    if (!state.conversations[parentConversationId]) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const childConversationId = createId("conversation");
+
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+
+    setState((current) => {
+      const parentConversation =
+        current.conversations[parentConversationId];
+
+      if (!parentConversation) {
+        return current;
+      }
+
+      const childConversation = createChildConversation({
+        createdAt: now,
+        id: childConversationId,
+        parentConversation,
+      });
+      const childGraphLayout = buildBranchGraphNodeLayout({
+        conversations: current.conversations,
+        graphLayouts: normalizeGraphLayouts(
+          current.conversations,
+          current.graphLayouts,
+        ),
+        parentConversationId,
+      });
+
+      return {
+        ...current,
+        conversations: {
+          ...current.conversations,
+          [parentConversationId]: {
+            ...parentConversation,
+            childIds: [
+              ...parentConversation.childIds,
+              childConversationId,
+            ],
+            updatedAt: now,
+          },
+          [childConversationId]: childConversation,
+        },
+        graphLayouts: {
+          ...current.graphLayouts,
+          [childConversationId]: childGraphLayout,
+        },
+        groups: (() => {
+          const parentGroupId = getConversationGroupId(
+            current.groups,
+            parentConversationId,
+          );
+
+          return parentGroupId
+            ? assignConversationToGroup(
+                current.groups,
+                childConversationId,
+                parentGroupId,
+              )
+            : current.groups;
+        })(),
+      };
+    });
+
+    setDrafts((current) => ({
+      ...current,
+      [childConversationId]: "",
+    }));
+
+    return childConversationId;
+  }
+
   function handleOpenSearch() {
     if (isMobileViewport) {
       setLeftSidebarOpen(false);
@@ -2851,7 +3772,13 @@ function WorkspaceApp({
   ) {
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
-    setMainViewMode(options.nextViewMode ?? (mainViewMode === "tiles" ? "chat" : mainViewMode));
+    setMainViewMode(
+      getConversationSelectionViewMode({
+        currentViewMode: mainViewMode,
+        requestedViewMode: options.nextViewMode,
+        targetKind: state.conversations[conversationId]?.kind,
+      }),
+    );
 
     startTransition(() => {
       setState((current) => {
@@ -2873,6 +3800,17 @@ function WorkspaceApp({
     if (isMobileViewport) {
       setLeftSidebarOpen(false);
     }
+  }
+
+  function handleSelectSidebarConversation(conversationId: string) {
+    if (mainViewMode === "graph") {
+      setGraphFocusRequest((current) => ({
+        conversationId,
+        requestId: (current?.requestId ?? 0) + 1,
+      }));
+    }
+
+    handleSelectConversation(conversationId);
   }
 
   function handleSelectOutlineItem(outlineItemId: string) {
@@ -2938,6 +3876,85 @@ function WorkspaceApp({
     });
   }
 
+  function handleCreateConversationGroup(name: string) {
+    const trimmedName = name.trim();
+
+    if (!trimmedName) {
+      return;
+    }
+
+    const groupId = createId("group");
+
+    setState((current) => ({
+      ...current,
+      groups: {
+        ...current.groups,
+        [groupId]: {
+          collapsed: false,
+          color:
+            CONVERSATION_GROUP_COLORS[
+              Object.keys(current.groups).length %
+                CONVERSATION_GROUP_COLORS.length
+            ],
+          conversationIds: [],
+          id: groupId,
+          name: trimmedName,
+        },
+      },
+    }));
+  }
+
+  function handleAssignConversationGroup(
+    conversationId: string,
+    groupId: string | null,
+  ) {
+    setState((current) => {
+      if (
+        !current.conversations[conversationId] ||
+        (groupId && !current.groups[groupId])
+      ) {
+        return current;
+      }
+
+      const conversationIds = collectConversationTreeIds(
+        current.conversations,
+        conversationId,
+      );
+      const groups = conversationIds.reduce(
+        (nextGroups, nextConversationId) =>
+          assignConversationToGroup(
+            nextGroups,
+            nextConversationId,
+            groupId,
+          ),
+        current.groups,
+      );
+
+      return groups === current.groups ? current : { ...current, groups };
+    });
+  }
+
+  function handleToggleConversationGroup(groupId: string) {
+    setState((current) => {
+      const group = current.groups[groupId];
+
+      if (!group) {
+        return current;
+      }
+
+      return {
+        ...current,
+        groups: {
+          ...current.groups,
+          [groupId]: {
+            ...group,
+            collapsed: !group.collapsed,
+          },
+        },
+      };
+    });
+  }
+
   function handleUnpinThread(conversationId: string) {
     setState((current) => {
       const nextPinnedThreadIds = current.pinnedThreadIds.filter(
@@ -2980,6 +3997,7 @@ function WorkspaceApp({
           [conversationId]: {
             ...conversation,
             title: trimmedTitle,
+            updatedAt: new Date().toISOString(),
           },
         },
       };
@@ -3019,6 +4037,8 @@ function WorkspaceApp({
           serviceId: state.defaultServiceId,
         })
       : null;
+
+    abortChatStreams(deletedConversationIds);
 
     if (
       selectionDraft &&
@@ -3151,6 +4171,10 @@ function WorkspaceApp({
           rootId: nextRootId,
           conversations: nextConversations,
           graphLayouts: nextGraphLayouts,
+          groups: removeConversationsFromGroups(
+            current.groups,
+            deletedConversationIdSet,
+          ),
         };
       });
     });
@@ -3165,6 +4189,9 @@ function WorkspaceApp({
 
     if (isMobileViewport) {
       setLeftSidebarOpen(false);
+      setState((current) =>
+        current.railOpen ? { ...current, railOpen: false } : current,
+      );
     }
 
     setState((current) =>
@@ -3225,6 +4252,50 @@ function WorkspaceApp({
     }
   }
 
+  async function handleChooseLocalDirectory() {
+    const status = await chooseLocalDirectory(user.id);
+    setLocalDirectoryStatus(status);
+
+    if (status.permission !== "granted") {
+      return;
+    }
+
+    const directoryRecord = await readLocalDirectoryState(user.id);
+    const directoryState = directoryRecord
+      ? hydratePersistedState(directoryRecord.state)
+      : null;
+    const currentSavedAt = localSavedAtRef.current;
+
+    if (
+      directoryRecord &&
+      directoryState &&
+      (!currentSavedAt ||
+        Date.parse(directoryRecord.savedAt) > Date.parse(currentSavedAt))
+    ) {
+      localSavedAtRef.current = directoryRecord.savedAt;
+      currentStateRef.current = directoryState;
+      setState(directoryState);
+      return;
+    }
+
+    const savedAt = currentSavedAt ?? new Date().toISOString();
+    const nextStatus = await writeLocalDirectoryState(
+      user.id,
+      createLocalWorkspaceRecord(currentStateRef.current, savedAt),
+    );
+    setLocalDirectoryStatus(nextStatus);
+  }
+
+  async function handleClearLocalDirectory() {
+    await clearLocalDirectory(user.id);
+    setLocalDirectoryStatus(await getLocalDirectoryStatus(user.id));
+  }
+
+  function handleWorkspaceLogout() {
+    abortAllChatStreams();
+    onLogout();
+  }
+
   const selectionTooltipLayout =
     selectionDraft && typeof window !== "undefined"
       ? getSelectionTooltipLayout({
@@ -3246,6 +4317,21 @@ function WorkspaceApp({
   const chatPanelWidthBounds = getChatPanelWidthBounds();
 
   function renderConversationChatPanel(conversation: Conversation) {
+    if (conversation.kind === "note") {
+      return (
+        <StandaloneNotePanel
+          conversation={conversation}
+          isActive={conversation.id === activeConversation.id}
+          onActivate={() => handleSelectConversation(conversation.id)}
+          onRename={handleRenameThread}
+          onUpdate={handleUpdateStandaloneNote}
+          registerPanelRef={(conversationId, element) => {
+            panelRefs.current[conversationId] = element;
+          }}
+        />
+      );
+    }
+
     return (
       <ChatPanel
         anchorsByMessageId={getAnchorsByMessageId(
@@ -3257,7 +4343,13 @@ function WorkspaceApp({
         initialScrollTop={panelScrollPositionsRef.current[conversation.id]}
         isActive={conversation.id === activeConversation.id}
         isSubmitting={Boolean(pendingConversationIds[conversation.id])}
+        key={conversation.id}
         onActivate={() => handleSelectConversation(conversation.id)}
+        onAddSideChat={
+          conversation.id === activeConversation.id
+            ? handleAddSideChat
+            : undefined
+        }
         onCreateNote={handleCreateNote}
         onDeleteNote={handleDeleteNote}
         onDraftChange={(value) => handleDraftChange(conversation.id, value)}
@@ -3266,6 +4358,7 @@ function WorkspaceApp({
         onScrollPositionChange={(conversationId, scrollTop) => {
           panelScrollPositionsRef.current[conversationId] = scrollTop;
         }}
+        onStopStreaming={stopChatStream}
         onStopTypewriter={handleStopTypewriter}
         onSubmit={handleSubmit}
         onTypewriterComplete={handleTypewriterComplete}
@@ -3397,7 +4490,9 @@ function WorkspaceApp({
                   conversation.id === activeConversation.id ? "page" : undefined
                 }
                 className="breadcrumb-button"
+                data-breadcrumb-conversation-id={conversation.id}
                 onClick={() => handleSelectConversation(conversation.id)}
+                title={conversation.title}
                 type="button"
               >
                 {conversation.title}
@@ -3413,6 +4508,17 @@ function WorkspaceApp({
   return (
     <div className="app-shell">
       <div className="app-chrome">
+        {billingNotice ? (
+          <div
+            className={`billing-return-notice is-${billingNotice.kind}`}
+            role={billingNotice.kind === "error" ? "alert" : "status"}
+          >
+            <span>{billingNotice.message}</span>
+            <button onClick={onDismissBillingNotice} type="button">
+              Dismiss
+            </button>
+          </div>
+        ) : null}
         <div className="workspace-shell">
           <header className="workspace-session-bar">
             <div className="workspace-session-brand">
@@ -3433,6 +4539,14 @@ function WorkspaceApp({
               : null}
 
             <div className="workspace-session-actions">
+              {!isTileView && !isGraphView ? (
+                <ConversationGroupSelect
+                  className="is-chat-header"
+                  conversationId={activeConversation.id}
+                  groups={state.groups}
+                  onAssign={handleAssignConversationGroup}
+                />
+              ) : null}
               {!isMobileViewport &&
               !isTileView &&
               !isGraphView &&
@@ -3481,9 +4595,13 @@ function WorkspaceApp({
               collapsed={!leftSidebarOpen}
               currentChatOutline={currentChatOutline}
               currentChatTitle={activeConversation.title}
+              groups={state.groups}
               mainViewMode={mainViewMode}
+              onAssignGroup={handleAssignConversationGroup}
+              onCreateGroup={handleCreateConversationGroup}
               onDeleteThread={handleDeleteThread}
               onNewChat={handleCreateMainConversation}
+              onNewNote={handleCreateStandaloneNote}
               onOpenProfile={() => {
                 setProfileSaveError(null);
                 setProfileModalOpen(true);
@@ -3494,13 +4612,15 @@ function WorkspaceApp({
               onRenameThread={handleRenameThread}
               onSelectOutlineItem={handleSelectOutlineItem}
               onSetMainViewMode={handleSetMainViewMode}
-              onSelectThread={handleSelectConversation}
+              onSelectThread={handleSelectSidebarConversation}
               onToggleCollapse={handleToggleLeftSidebar}
+              onToggleGroup={handleToggleConversationGroup}
               onToggleTheme={() =>
                 onSetTheme((current) => getNextTheme(current))
               }
               onUnpinThread={handleUnpinThread}
               pinnedThreads={pinnedThreadSummaries}
+              streamingThreadIds={streamingThreadIds}
               theme={theme}
               threads={threadSummaries}
             />
@@ -3592,21 +4712,38 @@ function WorkspaceApp({
               {isTileView ? (
                 <MainChatTileView
                   activeThreadId={activeRootConversation.id}
+                  groups={state.groups}
+                  onAssignGroup={handleAssignConversationGroup}
+                  onCreateGroup={handleCreateConversationGroup}
                   onOpenThread={handleSelectConversation}
+                  onToggleGroup={handleToggleConversationGroup}
                   threads={threadSummaries}
                 />
               ) : isGraphView ? (
                 <ConversationGraphView
                   activeConversationId={activeConversation.id}
                   conversations={state.conversations}
-                  threads={threadSummaries}
+                  focusRequest={graphFocusRequest}
+                  graphLayouts={state.graphLayouts}
+                  groups={state.groups}
                   onActivateConversation={handleSelectConversation}
+                  onAssignGroup={handleAssignConversationGroup}
+                  onCreateChildConversation={handleAddGraphChildChat}
                   onOpenConversation={(conversationId) =>
                     handleSelectConversation(conversationId, {
                       nextViewMode: "chat",
                     })
                   }
+                  onToggleGroup={handleToggleConversationGroup}
+                  onUpdateGraphNodeLayouts={handleUpdateGraphNodeLayouts}
                   renderDockedConversation={(conversationId) => {
+                    const conversation = state.conversations[conversationId];
+
+                    return conversation
+                      ? renderConversationChatPanel(conversation)
+                      : null;
+                  }}
+                  renderExpandedConversation={(conversationId) => {
                     const conversation = state.conversations[conversationId];
 
                     return conversation
@@ -3737,7 +4874,11 @@ function WorkspaceApp({
               style={toolbarStyle}
             >
               <div className="selection-tooltip-head">
-                <p className="eyebrow">New branch</p>
+                <p className="eyebrow">
+                  {selectionDraft.sourceKind === "standalone-note"
+                    ? "Chat with note"
+                    : "New branch"}
+                </p>
                 <button
                   aria-label="Cancel new branch"
                   className="selection-close"
@@ -3822,9 +4963,13 @@ function WorkspaceApp({
           <ProfileModal
             billingErrorMessage={billingErrorMessage}
             billingSubmitting={billingSubmitting}
+            cloudSyncEnabled={cloudSyncEnabled}
             errorMessage={profileSaveError}
             isOpen={profileModalOpen}
             isSaving={profileSaving}
+            localDirectoryStatus={localDirectoryStatus}
+            onChooseLocalDirectory={handleChooseLocalDirectory}
+            onClearLocalDirectory={handleClearLocalDirectory}
             onClose={() => {
               if (profileSaving) {
                 return;
@@ -3834,7 +4979,7 @@ function WorkspaceApp({
               setProfileModalOpen(false);
             }}
             onManageBilling={onManageBilling}
-            onLogout={onLogout}
+            onLogout={handleWorkspaceLogout}
             onSaveApiKeys={onUpdateApiKeys}
             onStartSubscription={onStartSubscription}
             onSave={handleSaveProfile}
@@ -3867,6 +5012,10 @@ export default function App() {
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
   const [billingSubmitting, setBillingSubmitting] = useState(false);
+  const [billingNotice, setBillingNotice] = useState<{
+    kind: "error" | "info" | "success";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     syncTheme(theme);
@@ -3890,7 +5039,61 @@ export default function App() {
       }
 
       try {
-        const user = await requestAuthSession();
+        let user = await requestAuthSession();
+        const checkoutParams = new URLSearchParams(window.location.search);
+        const checkoutResult = checkoutParams.get("checkout");
+        const checkoutSessionId = checkoutParams.get("session_id");
+
+        if (user && checkoutResult === "subscription_success") {
+          try {
+            if (!checkoutSessionId) {
+              throw new Error("Stripe returned without a Checkout Session ID.");
+            }
+
+            const confirmation = await requestConfirmCheckoutSession(
+              checkoutSessionId,
+            );
+            user = await requestAuthSession();
+            setBillingNotice(
+              confirmation.confirmed
+                ? {
+                    kind: "success",
+                    message: "Your Margin Chat subscription is active.",
+                  }
+                : {
+                    kind: "error",
+                    message: `Stripe completed Checkout, but the subscription is ${confirmation.status}. Manage billing to finish activation.`,
+                  },
+            );
+          } catch (error) {
+            setBillingNotice({
+              kind: "error",
+              message: getErrorText(
+                error,
+                "Your payment completed, but Margin Chat could not confirm the subscription yet. Refresh shortly or manage billing.",
+              ),
+            });
+          }
+        } else if (checkoutResult === "subscription_canceled") {
+          setBillingNotice({
+            kind: "info",
+            message: "Stripe Checkout was canceled. You were not charged.",
+          });
+        }
+
+        if (
+          checkoutResult === "subscription_success" ||
+          checkoutResult === "subscription_canceled"
+        ) {
+          const cleanUrl = new URL(window.location.href);
+          cleanUrl.searchParams.delete("checkout");
+          cleanUrl.searchParams.delete("session_id");
+          window.history.replaceState(
+            {},
+            "",
+            `${cleanUrl.pathname}${cleanUrl.search}${cleanUrl.hash}`,
+          );
+        }
 
         if (cancelled) {
           return;
@@ -3925,6 +5128,7 @@ export default function App() {
     setAuthSubmitting(false);
     setAuthError(message);
     setBillingError(null);
+    setBillingNotice(null);
   }
 
   async function handleBillingRequired(
@@ -4019,6 +5223,7 @@ export default function App() {
       setAuthSubmitting(false);
       setBillingError(null);
       setBillingSubmitting(false);
+      setBillingNotice(null);
     }
   }
 
@@ -4109,10 +5314,12 @@ export default function App() {
 
   return (
     <WorkspaceApp
+      billingNotice={billingNotice}
       billingErrorMessage={billingError}
       billingSubmitting={billingSubmitting}
       key={authUser.id}
       onAuthExpired={handleAuthExpired}
+      onDismissBillingNotice={() => setBillingNotice(null)}
       onBillingRequired={handleBillingRequired}
       onLogout={() => {
         void handleLogout();

@@ -10,6 +10,7 @@ import {
   type MouseEvent,
 } from "react";
 import MarkdownMessage from "./MarkdownMessage";
+import LiveMarkdownEditor from "./LiveMarkdownEditor";
 import {
   buildChatOutline,
   getMessageOutlineId,
@@ -23,6 +24,10 @@ import {
 } from "../lib/services";
 import { excerpt } from "../lib/tree";
 import { getWheelGestureAxis } from "../lib/wheelGestures";
+import {
+  clampChatScrollPosition,
+  getJumpToTopVisibility,
+} from "../lib/chatScroll";
 import type {
   BackendServiceId,
   Conversation,
@@ -330,12 +335,14 @@ interface ChatPanelProps {
   selectionPreview: SelectionDraft | null;
   initialScrollTop?: number;
   onActivate: () => void;
+  onAddSideChat?: (conversationId: string) => void;
   onDraftChange: (value: string) => void;
   onCreateNote: (args: {
     content: string;
     conversationId: string;
+    kind?: "comment" | "side-chat";
     sourceMessageId: string | null;
-  }) => void;
+  }) => string;
   onDeleteNote: (conversationId: string, noteId: string) => void;
   onModelChange: (
     conversationId: string,
@@ -343,6 +350,7 @@ interface ChatPanelProps {
     modelId: string,
   ) => void;
   onOpenBranch: (conversationId: string) => void;
+  onStopStreaming: (conversationId: string) => void;
   onUpdateNote: (conversationId: string, noteId: string, content: string) => void;
   onUseNote: (conversationId: string, content: string) => void;
   onStopTypewriter: (conversationId: string) => void;
@@ -386,6 +394,15 @@ function NoteIcon() {
   );
 }
 
+function SideNoteIcon() {
+  return (
+    <svg aria-hidden="true" className="note-icon" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24">
+      <path d="M4 5h16v12H9l-5 4z" />
+      <path d="M8 9h8M8 13h5" />
+    </svg>
+  );
+}
+
 function NoteEditor({
   note,
   onDelete,
@@ -397,7 +414,7 @@ function NoteEditor({
   onDelete: () => void;
   onReveal?: () => void;
   onUpdate: (content: string) => void;
-  onUse: () => void;
+  onUse: (content: string) => void;
 }) {
   const [draft, setDraft] = useState(note.content);
 
@@ -412,25 +429,20 @@ function NoteEditor({
   return (
     <article className="personal-note-card">
       <div className="personal-note-head">
-        <span><NoteIcon /> Personal note</span>
+        <span><NoteIcon /> Sticky comment</span>
         <span className="personal-note-private">Not sent to AI</span>
       </div>
       {note.quote ? <blockquote>“{excerpt(note.quote, 96)}”</blockquote> : null}
-      <textarea
-        aria-label="Edit personal note"
+      <LiveMarkdownEditor
+        ariaLabel="Edit personal note"
+        className="is-compact"
         onBlur={save}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            save();
-            event.currentTarget.blur();
-          }
-        }}
+        onChange={setDraft}
         value={draft}
       />
       <div className="personal-note-actions">
         {onReveal ? <button onClick={onReveal} type="button">View in chat</button> : null}
-        <button onClick={onUse} type="button">Use in next message</button>
+        <button onClick={() => onUse(draft.trim() || note.content)} type="button">Use in next message</button>
         <button className="is-danger" onClick={onDelete} type="button">Delete</button>
       </div>
     </article>
@@ -471,7 +483,7 @@ function MessageNoteGroup({
               note={note}
               onDelete={() => onDelete(note.id)}
               onUpdate={(content) => onUpdate(note.id, content)}
-              onUse={() => onUse(note.content)}
+              onUse={onUse}
             />
           ))}
         </div>
@@ -884,11 +896,13 @@ export default function ChatPanel({
   selectionPreview,
   initialScrollTop,
   onActivate,
+  onAddSideChat,
   onCreateNote,
   onDeleteNote,
   onDraftChange,
   onModelChange,
   onOpenBranch,
+  onStopStreaming,
   onStopTypewriter,
   onSubmit,
   onTypewriterProgress,
@@ -904,10 +918,13 @@ export default function ChatPanel({
   showBranchMargin = true,
 }: ChatPanelProps) {
   const [isServicePickerOpen, setServicePickerOpen] = useState(false);
-  const [notesDrawerOpen, setNotesDrawerOpen] = useState(false);
-  const [newChatNote, setNewChatNote] = useState("");
+  const [sideNotesOpen, setSideNotesOpen] = useState(false);
+  const [activeSideNoteId, setActiveSideNoteId] = useState<string | null>(null);
+  const [sideNoteEditorValue, setSideNoteEditorValue] = useState("");
+  const [newSideNoteMessageId, setNewSideNoteMessageId] = useState<string | null>(null);
   const [messageNoteDraft, setMessageNoteDraft] = useState("");
   const [messageNoteTargetId, setMessageNoteTargetId] = useState<string | null>(null);
+  const [showJumpToTop, setShowJumpToTop] = useState(false);
   const [branchMarginPositions, setBranchMarginPositions] = useState<
     Record<string, BranchMarginPosition>
   >({});
@@ -917,7 +934,16 @@ export default function ChatPanel({
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerPrimaryRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingSideNoteSaveRef = useRef<{
+    content: string;
+    conversationId: string;
+    noteId: string;
+  } | null>(null);
+  const sideNoteSaveTimeoutRef = useRef<number | null>(null);
+  const onUpdateNoteRef = useRef(onUpdateNote);
+  onUpdateNoteRef.current = onUpdateNote;
   const hasInitializedScrollPositionRef = useRef(false);
+  const previousScrollTopRef = useRef(initialScrollTop ?? 0);
   const previousMessageCountRef = useRef(conversation.messages.length);
   const previousPendingAssistantRef = useRef(false);
   const shouldFocusComposerOnActivateRef = useRef(false);
@@ -952,7 +978,10 @@ export default function ChatPanel({
     .map((link) => link.branchConversationId)
     .join("|");
   const conversationNotes = conversation.notes ?? [];
-  const messageNotesById = conversationNotes.reduce<Record<string, ConversationNote[]>>(
+  const commentNotes = conversationNotes.filter((note) => (note.kind ?? "comment") === "comment");
+  const sideNotes = conversationNotes.filter((note) => note.kind === "side-chat");
+  const activeSideNote = sideNotes.find((note) => note.id === activeSideNoteId) ?? null;
+  const messageNotesById = commentNotes.reduce<Record<string, ConversationNote[]>>(
     (groups, note) => {
       if (!note.sourceMessageId) return groups;
       (groups[note.sourceMessageId] ??= []).push(note);
@@ -961,20 +990,63 @@ export default function ChatPanel({
     {},
   );
 
+  useEffect(() => {
+    if (activeSideNote) setSideNoteEditorValue(activeSideNote.content);
+  }, [activeSideNote?.id]);
+
+  function flushSideNoteSave() {
+    if (sideNoteSaveTimeoutRef.current !== null) {
+      window.clearTimeout(sideNoteSaveTimeoutRef.current);
+      sideNoteSaveTimeoutRef.current = null;
+    }
+    const pending = pendingSideNoteSaveRef.current;
+    if (!pending) return;
+    pendingSideNoteSaveRef.current = null;
+    onUpdateNoteRef.current(pending.conversationId, pending.noteId, pending.content);
+  }
+
+  useEffect(() => () => flushSideNoteSave(), []);
+
   function submitMessageNote(messageId: string) {
     const content = messageNoteDraft.trim();
     if (!content) return;
-    onCreateNote({ content, conversationId: conversation.id, sourceMessageId: messageId });
+    onCreateNote({ content, conversationId: conversation.id, kind: "comment", sourceMessageId: messageId });
     setMessageNoteDraft("");
     setMessageNoteTargetId(null);
   }
 
-  function submitChatNote(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const content = newChatNote.trim();
-    if (!content) return;
-    onCreateNote({ content, conversationId: conversation.id, sourceMessageId: null });
-    setNewChatNote("");
+  function openNewSideNote(sourceMessageId: string | null) {
+    setActiveSideNoteId(null);
+    setSideNoteEditorValue("");
+    setNewSideNoteMessageId(sourceMessageId);
+    setSideNotesOpen(true);
+  }
+
+  function updateSideNote(value: string) {
+    setSideNoteEditorValue(value);
+
+    if (activeSideNote) {
+      pendingSideNoteSaveRef.current = {
+        content: value,
+        conversationId: conversation.id,
+        noteId: activeSideNote.id,
+      };
+      if (sideNoteSaveTimeoutRef.current !== null) {
+        window.clearTimeout(sideNoteSaveTimeoutRef.current);
+      }
+      sideNoteSaveTimeoutRef.current = window.setTimeout(flushSideNoteSave, 320);
+      return;
+    }
+
+    if (!value.trim()) return;
+
+    const noteId = onCreateNote({
+      content: value,
+      conversationId: conversation.id,
+      kind: "side-chat",
+      sourceMessageId: newSideNoteMessageId,
+    });
+    setActiveSideNoteId(noteId);
   }
 
   const syncBranchMarginPositions = useEffectEvent(() => {
@@ -1101,15 +1173,16 @@ export default function ChatPanel({
     if (!hasInitializedScrollPositionRef.current) {
       hasInitializedScrollPositionRef.current = true;
       if (typeof initialScrollTop === "number") {
-        panelBody.scrollTop = Math.min(
-          Math.max(initialScrollTop, 0),
-          Math.max(panelBody.scrollHeight - panelBody.clientHeight, 0),
+        panelBody.scrollTop = clampChatScrollPosition(
+          initialScrollTop,
+          panelBody.scrollHeight - panelBody.clientHeight,
         );
         shouldStickToBottomRef.current = isElementNearBottom(panelBody);
       } else {
         panelBody.scrollTop = panelBody.scrollHeight;
         shouldStickToBottomRef.current = true;
       }
+      previousScrollTopRef.current = panelBody.scrollTop;
       return;
     }
 
@@ -1220,6 +1293,11 @@ export default function ChatPanel({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    if (isSubmitting) {
+      onStopStreaming(conversation.id);
+      return;
+    }
+
     if (hasActiveTypewriter) {
       stopTypewriter();
       return;
@@ -1241,6 +1319,11 @@ export default function ChatPanel({
     }
 
     event.preventDefault();
+
+    if (isSubmitting) {
+      onStopStreaming(conversation.id);
+      return;
+    }
 
     if (hasActiveTypewriter) {
       stopTypewriter();
@@ -1375,8 +1458,17 @@ export default function ChatPanel({
       return;
     }
 
+    const currentScrollTop = panelBody.scrollTop;
     shouldStickToBottomRef.current = isElementNearBottom(panelBody);
-    onScrollPositionChange?.(conversation.id, panelBody.scrollTop);
+    setShowJumpToTop((wasVisible) =>
+      getJumpToTopVisibility({
+        currentScrollTop,
+        previousScrollTop: previousScrollTopRef.current,
+        wasVisible,
+      }),
+    );
+    previousScrollTopRef.current = currentScrollTop;
+    onScrollPositionChange?.(conversation.id, currentScrollTop);
 
     if (!onVisibleOutlineChange || !outlineItems.length) {
       return;
@@ -1434,20 +1526,37 @@ export default function ChatPanel({
     };
   }, [syncStickToBottomState]);
 
+  function handleJumpToTop() {
+    const panelBody = panelBodyRef.current;
+
+    if (!panelBody) {
+      return;
+    }
+
+    panelBody.scrollTop = 0;
+    previousScrollTopRef.current = 0;
+    shouldStickToBottomRef.current = isElementNearBottom(panelBody);
+    setShowJumpToTop(false);
+    onScrollPositionChange?.(conversation.id, 0);
+  }
+
   return (
     <article
-      className={
-        branchMarginLinks.length
-          ? isActive
-            ? "chat-panel has-branch-margin is-active"
-            : "chat-panel has-branch-margin"
-          : isActive
-            ? "chat-panel is-active"
-            : "chat-panel"
-      }
+      className={`chat-panel${branchMarginLinks.length ? " has-branch-margin" : ""}${isActive ? " is-active" : ""}${sideNotesOpen ? " has-side-note-panel" : ""}`}
       onClick={handlePanelClick}
       ref={(element) => registerPanelRef(conversation.id, element)}
     >
+      {isActive && showJumpToTop ? (
+        <button
+          aria-label="Jump to top of current chat"
+          className="chat-jump-to-top"
+          onClick={handleJumpToTop}
+          title="Jump to top"
+          type="button"
+        >
+          <ArrowUpIcon />
+        </button>
+      ) : null}
       <div className="panel-body" ref={panelBodyRef}>
         {conversation.branchAnchor ? (
           <section
@@ -1501,17 +1610,29 @@ export default function ChatPanel({
                       <div className={`message-bubble is-${message.role}`}>
                         <div className="message-meta">
                           <span>{message.role}</span>
-                          <button
-                            aria-label="Add a personal note to this message"
-                            className="message-note-add"
-                            onClick={() => {
-                              setMessageNoteTargetId((current) => current === message.id ? null : message.id);
-                              setMessageNoteDraft("");
-                            }}
-                            type="button"
-                          >
-                            <NoteIcon /> Add note
-                          </button>
+                          <div aria-label="Message note actions" className="message-note-actions" role="group">
+                            <button
+                              aria-label="Open a side note for this message"
+                              className="message-note-add"
+                              onClick={() => openNewSideNote(message.id)}
+                              title="Side note"
+                              type="button"
+                            >
+                              <SideNoteIcon />
+                            </button>
+                            <button
+                              aria-label="Add a sticky comment to this message"
+                              className="message-note-add"
+                              onClick={() => {
+                                setMessageNoteTargetId((current) => current === message.id ? null : message.id);
+                                setMessageNoteDraft("");
+                              }}
+                              title="Sticky comment"
+                              type="button"
+                            >
+                              <NoteIcon />
+                            </button>
+                          </div>
                         </div>
                         <MessageContent
                           anchors={anchors}
@@ -1533,19 +1654,14 @@ export default function ChatPanel({
                         {messageNoteTargetId === message.id ? (
                           <div className="message-note-composer">
                             <div className="personal-note-head">
-                              <span><NoteIcon /> Personal note</span>
+                              <span><NoteIcon /> Sticky comment</span>
                               <span className="personal-note-private">Not sent to AI</span>
                             </div>
-                            <textarea
+                            <LiveMarkdownEditor
+                              ariaLabel="Sticky comment"
                               autoFocus
-                              aria-label="Personal note"
-                              onChange={(event) => setMessageNoteDraft(event.target.value)}
-                              onKeyDown={(event) => {
-                                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                                  submitMessageNote(message.id);
-                                }
-                                if (event.key === "Escape") setMessageNoteTargetId(null);
-                              }}
+                              className="is-compact"
+                              onChange={setMessageNoteDraft}
                               placeholder="Write a private thought…"
                               value={messageNoteDraft}
                             />
@@ -1670,6 +1786,18 @@ export default function ChatPanel({
                 </button>
               </div> */}
 
+              {onAddSideChat ? (
+                <button
+                  aria-label="Add side chat"
+                  className="composer-side-chat-button"
+                  disabled={!isActive}
+                  onClick={() => onAddSideChat(conversation.id)}
+                  type="button"
+                >
+                  <PlusIcon />
+                  <span>Add side chat</span>
+                </button>
+              ) : null}
               <button
                 aria-expanded={isServicePickerOpen}
                 aria-haspopup="dialog"
@@ -1687,71 +1815,130 @@ export default function ChatPanel({
                 </span>
               </button>
               <button
-                aria-expanded={notesDrawerOpen}
-                aria-label={`${conversationNotes.length} personal notes. Private, not sent to AI. Open notes`}
+                aria-expanded={sideNotesOpen}
+                aria-label="Open a new side note"
                 className="composer-notes-button"
-                onClick={() => setNotesDrawerOpen(true)}
+                onClick={() => openNewSideNote(null)}
                 type="button"
               >
-                <NoteIcon />
-                <span>Notes</span>
-                {conversationNotes.length ? <strong>{conversationNotes.length}</strong> : null}
+                <SideNoteIcon />
+                <span>Side note</span>
+                {sideNotes.length ? <strong>{sideNotes.length}</strong> : null}
               </button>
             </div>
           </div>
 
           <div className="composer-trailing">
             <button
-              aria-label={hasActiveTypewriter ? "Stop assistant output" : "Send message"}
+              aria-label={
+                isSubmitting || hasActiveTypewriter
+                  ? "Stop assistant output"
+                  : "Send message"
+              }
               className={
-                hasActiveTypewriter
+                isSubmitting || hasActiveTypewriter
                   ? "composer-action-button is-stop"
                   : "composer-action-button"
               }
               disabled={
                 !isActive ||
-                (!hasActiveTypewriter && (isSubmitting || !draft.trim()))
+                (!isSubmitting && !hasActiveTypewriter && !draft.trim())
               }
               type="submit"
             >
-              {hasActiveTypewriter ? <StopIcon /> : <ArrowUpIcon />}
+              {isSubmitting || hasActiveTypewriter ? <StopIcon /> : <ArrowUpIcon />}
             </button>
           </div>
         </div>
       </form>
 
-      {notesDrawerOpen ? (
-        <div className="notes-drawer-backdrop" onClick={() => setNotesDrawerOpen(false)} role="presentation">
-          <aside aria-label="Personal notes" className="notes-drawer" onClick={(event) => event.stopPropagation()}>
-            <header className="notes-drawer-head">
+      {sideNotesOpen ? (
+        <div className="side-note-panel-backdrop" onClick={() => setSideNotesOpen(false)} role="presentation">
+          <aside aria-label="Side notes" className="side-note-panel" onClick={(event) => event.stopPropagation()}>
+            <header className="side-note-panel-head">
               <div>
-                <p className="eyebrow">Notebook</p>
-                <h2>Personal notes</h2>
-                <p>Private by default. Notes are not sent to AI.</p>
+                <p className="eyebrow">Side note</p>
+                <h2>Notes beside the chat</h2>
+                <p>Private workspace · Not sent to AI</p>
               </div>
-              <button aria-label="Close notes" className="notes-drawer-close" onClick={() => setNotesDrawerOpen(false)} type="button"><CloseIcon /></button>
+              <button aria-label="Close side notes" className="notes-drawer-close" onClick={() => setSideNotesOpen(false)} type="button"><CloseIcon /></button>
             </header>
-            <form className="chat-note-composer" onSubmit={submitChatNote}>
-              <textarea aria-label="New chat-level note" onChange={(event) => setNewChatNote(event.target.value)} placeholder="Add a thought about this chat…" value={newChatNote} />
-              <button disabled={!newChatNote.trim()} type="submit">Add note</button>
-            </form>
-            <div className="notes-drawer-list">
-              {conversationNotes.length ? conversationNotes.map((note) => (
-                <NoteEditor
+            <nav aria-label="Side note documents" className="side-note-tabs">
+              <button
+                className={!activeSideNote ? "side-note-tab is-active" : "side-note-tab"}
+                onClick={() => openNewSideNote(null)}
+                type="button"
+              >
+                <PlusIcon /> New note
+              </button>
+              {sideNotes.map((note, index) => (
+                <button
+                  className={activeSideNote?.id === note.id ? "side-note-tab is-active" : "side-note-tab"}
                   key={note.id}
-                  note={note}
-                  onDelete={() => onDeleteNote(conversation.id, note.id)}
-                  onReveal={note.sourceMessageId ? () => {
-                    const target = panelBodyRef.current?.querySelector<HTMLElement>(`[data-message-row-id="${CSS.escape(note.sourceMessageId!)}"]`);
-                    setNotesDrawerOpen(false);
+                  onClick={() => {
+                    setActiveSideNoteId(note.id);
+                    setSideNoteEditorValue(note.content);
+                    setNewSideNoteMessageId(note.sourceMessageId);
+                  }}
+                  type="button"
+                >
+                  <SideNoteIcon />
+                  <span>{excerpt(note.content.replace(/[#*_>`~-]/g, " ").replace(/\s+/g, " ").trim(), 28) || `Side note ${index + 1}`}</span>
+                </button>
+              ))}
+            </nav>
+            <div className="side-note-editor-shell">
+              {(activeSideNote?.sourceMessageId ?? newSideNoteMessageId) ? (
+                <button
+                  className="side-note-source"
+                  onClick={() => {
+                    const messageId = activeSideNote?.sourceMessageId ?? newSideNoteMessageId;
+                    if (!messageId) return;
+                    const target = panelBodyRef.current?.querySelector<HTMLElement>(`[data-message-row-id="${CSS.escape(messageId)}"]`);
                     target?.scrollIntoView({ behavior: "smooth", block: "center" });
                     target?.focus({ preventScroll: true });
-                  } : undefined}
-                  onUpdate={(content) => onUpdateNote(conversation.id, note.id, content)}
-                  onUse={() => onUseNote(conversation.id, note.content)}
-                />
-              )) : <p className="notes-empty">No notes yet. Add a chat thought here, or use “Add note” on any message.</p>}
+                  }}
+                  type="button"
+                >
+                  Linked to message · View in chat
+                </button>
+              ) : null}
+              <LiveMarkdownEditor
+                ariaLabel="Side note Markdown editor"
+                autoFocus
+                className="is-side-note"
+                onBlur={flushSideNoteSave}
+                onChange={updateSideNote}
+                placeholder="Start a side note… Use # headings, **bold**, lists, links, quotes, and code."
+                value={sideNoteEditorValue}
+              />
+              <p className="side-note-editor-hint">
+                Live Preview · Enter continues Markdown blocks. Esc leaves the editor.
+              </p>
             </div>
+            <footer className="side-note-panel-actions">
+              <button
+                disabled={!sideNoteEditorValue.trim()}
+                onClick={() => onUseNote(conversation.id, sideNoteEditorValue)}
+                type="button"
+              >
+                Use in next message
+              </button>
+              {activeSideNote ? (
+                <button
+                  className="is-danger"
+                  onClick={() => {
+                    onDeleteNote(conversation.id, activeSideNote.id);
+                    setActiveSideNoteId(null);
+                    setSideNoteEditorValue("");
+                    setNewSideNoteMessageId(null);
+                  }}
+                  type="button"
+                >
+                  Delete side note
+                </button>
+              ) : null}
+            </footer>
           </aside>
         </div>
       ) : null}

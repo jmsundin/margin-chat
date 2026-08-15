@@ -1,9 +1,13 @@
 import { useDeferredValue, useState } from "react";
 import {
+  ConversationGroupSelect,
+  NewConversationGroupForm,
+} from "./ConversationGroupControls";
+import {
   categorizeThread,
   getThreadCategoryLabel,
 } from "../lib/threadCategories";
-import type { ThreadSummary } from "../types";
+import type { ConversationGroup, ThreadSummary } from "../types";
 
 function normalizeThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.map((thread) => {
@@ -25,7 +29,11 @@ function normalizeThreads(threads: ThreadSummary[]): ThreadSummary[] {
 
 interface MainChatTileViewProps {
   activeThreadId: string;
+  groups: Record<string, ConversationGroup>;
+  onAssignGroup: (conversationId: string, groupId: string | null) => void;
+  onCreateGroup: (name: string) => void;
   onOpenThread: (conversationId: string) => void;
+  onToggleGroup: (groupId: string) => void;
   threads: ThreadSummary[];
 }
 
@@ -49,46 +57,68 @@ function SearchIcon() {
 
 interface ThreadTileCardProps {
   activeThreadId: string;
+  groups: Record<string, ConversationGroup>;
+  onAssignGroup: (conversationId: string, groupId: string | null) => void;
   onOpenThread: (conversationId: string) => void;
   thread: ThreadSummary;
 }
 
 function ThreadTileCard({
   activeThreadId,
+  groups,
+  onAssignGroup,
   onOpenThread,
   thread,
 }: ThreadTileCardProps) {
   return (
-    <button
-      className={
-        thread.id === activeThreadId
-          ? "thread-tile-card is-active"
-          : "thread-tile-card"
-      }
-      onClick={() => onOpenThread(thread.id)}
-      type="button"
+    <article
+      className={`thread-tile-card-shell${thread.kind === "note" ? " is-note" : ""}`}
     >
-      <div className="thread-tile-card-body">
-        <span className="thread-tile-category">{thread.categoryLabel}</span>
-        <h4>{thread.title}</h4>
-        <p>{thread.preview}</p>
-      </div>
+      <button
+        className={
+          thread.id === activeThreadId
+            ? "thread-tile-card is-active"
+            : "thread-tile-card"
+        }
+        onClick={() => onOpenThread(thread.id)}
+        type="button"
+      >
+        <div className="thread-tile-card-body">
+          <span className="thread-tile-category">
+            {thread.kind === "note" ? "Standalone note" : thread.categoryLabel}
+          </span>
+          <h4>{thread.title}</h4>
+          <p>{thread.preview}</p>
+        </div>
 
-      <div className="thread-tile-card-head">
-        <span className="thread-tile-updated">{thread.updatedLabel}</span>
-        <span className="thread-tile-badge">
-          {thread.conversationCount === 1
-            ? "1 panel"
-            : `${thread.conversationCount} panels`}
-        </span>
-      </div>
-    </button>
+        <div className="thread-tile-card-head">
+          <span className="thread-tile-updated">{thread.updatedLabel}</span>
+          <span className="thread-tile-badge">
+            {thread.kind === "note"
+              ? "Note"
+              : thread.conversationCount === 1
+              ? "1 panel"
+              : `${thread.conversationCount} panels`}
+          </span>
+        </div>
+      </button>
+      <ConversationGroupSelect
+        className="is-tile"
+        conversationId={thread.id}
+        groups={groups}
+        onAssign={onAssignGroup}
+      />
+    </article>
   );
 }
 
 export default function MainChatTileView({
   activeThreadId,
+  groups,
+  onAssignGroup,
+  onCreateGroup,
   onOpenThread,
+  onToggleGroup,
   threads,
 }: MainChatTileViewProps) {
   const [query, setQuery] = useState("");
@@ -112,6 +142,26 @@ export default function MainChatTileView({
         body: "Start a new main chat and it will appear here.",
         title: "No threads yet.",
       };
+  const groupSections = [
+    ...Object.values(groups).map((group) => ({
+      collapsed: group.collapsed,
+      color: group.color,
+      id: group.id as string | null,
+      name: group.name,
+      threads: filteredThreads.filter((thread) => thread.groupId === group.id),
+    })),
+    {
+      collapsed: false,
+      color: "transparent",
+      id: null,
+      name: "Ungrouped",
+      threads: filteredThreads.filter((thread) => !thread.groupId),
+    },
+  ].filter(
+    (section) =>
+      section.threads.length > 0 ||
+      (!normalizedQuery && section.id !== null),
+  );
 
   return (
     <section className="thread-tile-view">
@@ -121,23 +171,64 @@ export default function MainChatTileView({
           <input
             id="thread-tile-search"
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search main chat threads"
+            placeholder="Search chats and notes"
             type="search"
             value={query}
           />
         </label>
-
+        <NewConversationGroupForm onCreate={onCreateGroup} />
       </div>
 
       {filteredThreads.length ? (
-        <div className="thread-tile-grid">
-          {filteredThreads.map((thread) => (
-            <ThreadTileCard
-              key={thread.id}
-              activeThreadId={activeThreadId}
-              onOpenThread={onOpenThread}
-              thread={thread}
-            />
+        <div className="thread-tile-groups">
+          {groupSections.map((section) => (
+            <section
+              className="thread-tile-group"
+              key={section.id ?? "ungrouped"}
+            >
+              <header className="thread-tile-group-header">
+                <button
+                  aria-expanded={!section.collapsed}
+                  disabled={!section.id}
+                  onClick={() => section.id && onToggleGroup(section.id)}
+                  type="button"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="conversation-group-color"
+                    style={{ backgroundColor: section.color }}
+                  />
+                  <strong>{section.name}</strong>
+                  <span>{section.threads.length}</span>
+                  {section.id ? (
+                    <span aria-hidden="true">
+                      {section.collapsed ? "＋" : "−"}
+                    </span>
+                  ) : null}
+                </button>
+              </header>
+
+              {!section.collapsed ? (
+                section.threads.length ? (
+                  <div className="thread-tile-grid">
+                    {section.threads.map((thread) => (
+                      <ThreadTileCard
+                        key={thread.id}
+                        activeThreadId={activeThreadId}
+                        groups={groups}
+                        onAssignGroup={onAssignGroup}
+                        onOpenThread={onOpenThread}
+                        thread={thread}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="thread-tile-group-empty">
+                    Move a chat here to start this group.
+                  </p>
+                )
+              ) : null}
+            </section>
           ))}
         </div>
       ) : (

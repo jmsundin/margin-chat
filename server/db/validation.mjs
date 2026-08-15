@@ -58,6 +58,10 @@ export function normalizeAppState(input) {
     input.graphLayouts,
     conversationsById,
   );
+  const normalizedGroups = normalizeConversationGroups(
+    input.groups,
+    conversationsById,
+  );
 
   if (!conversationsById[input.rootId]) {
     throw createStateError("rootId must reference an existing conversation.");
@@ -181,10 +185,91 @@ export function normalizeAppState(input) {
     defaultModelId,
     defaultServiceId,
     graphLayouts: normalizedGraphLayouts,
+    groups: normalizedGroups,
     pinnedThreadIds: normalizedPinnedThreadIds,
     railOpen: input.railOpen,
     rootId: input.rootId,
   };
+}
+
+function normalizeConversationGroups(input, conversationsById) {
+  if (input === undefined || input === null) {
+    return {};
+  }
+
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw createStateError("groups must be a keyed object.");
+  }
+
+  const assignedConversationIds = new Set();
+
+  return Object.fromEntries(
+    Object.entries(input).map(([groupId, group]) => {
+      if (!group || typeof group !== "object" || Array.isArray(group)) {
+        throw createStateError(`Group "${groupId}" must be an object.`);
+      }
+
+      if (group.id !== groupId) {
+        throw createStateError(`Group "${groupId}" must include a matching id.`);
+      }
+
+      if (typeof group.name !== "string" || !group.name.trim()) {
+        throw createStateError(`Group "${groupId}" must include a name.`);
+      }
+
+      if (
+        typeof group.color !== "string" ||
+        !/^#[0-9a-f]{6}$/i.test(group.color)
+      ) {
+        throw createStateError(`Group "${groupId}" must include a hex color.`);
+      }
+
+      if (group.collapsed !== undefined && typeof group.collapsed !== "boolean") {
+        throw createStateError(`Group "${groupId}" collapsed must be a boolean.`);
+      }
+
+      if (!Array.isArray(group.conversationIds)) {
+        throw createStateError(
+          `Group "${groupId}" must include a conversationIds array.`,
+        );
+      }
+
+      const conversationIds = group.conversationIds.map(
+        (conversationId, conversationIndex) => {
+          const normalizedId = normalizeId(
+            conversationId,
+            `groups["${groupId}"].conversationIds[${conversationIndex}]`,
+          );
+
+          if (!conversationsById[normalizedId]) {
+            throw createStateError(
+              `Group "${groupId}" references a missing conversation.`,
+            );
+          }
+
+          if (assignedConversationIds.has(normalizedId)) {
+            throw createStateError(
+              `Conversation "${normalizedId}" can belong to only one group.`,
+            );
+          }
+
+          assignedConversationIds.add(normalizedId);
+          return normalizedId;
+        },
+      );
+
+      return [
+        groupId,
+        {
+          collapsed: Boolean(group.collapsed),
+          color: group.color.toLowerCase(),
+          conversationIds,
+          id: groupId,
+          name: group.name.trim(),
+        },
+      ];
+    }),
+  );
 }
 
 function normalizeDefaultSelection(
@@ -317,6 +402,24 @@ function normalizeGraphLayout(conversationId, input) {
     );
   }
 
+  if (
+    input.positioned !== undefined &&
+    typeof input.positioned !== "boolean"
+  ) {
+    throw createStateError(
+      `graphLayouts["${conversationId}"].positioned must be a boolean.`,
+    );
+  }
+
+  for (const coordinateName of ["treeOriginX", "treeOriginY"]) {
+    if (input[coordinateName] !== undefined) {
+      normalizeSignedInteger(
+        input[coordinateName],
+        `graphLayouts["${conversationId}"].${coordinateName}`,
+      );
+    }
+  }
+
   return {
     height: normalizeGraphDimension(
       input.height,
@@ -332,6 +435,21 @@ function normalizeGraphLayout(conversationId, input) {
     ),
     x: normalizeSignedInteger(input.x, `graphLayouts["${conversationId}"].x`),
     y: normalizeSignedInteger(input.y, `graphLayouts["${conversationId}"].y`),
+    positioned: Boolean(input.positioned),
+    treeOriginX:
+      input.treeOriginX === undefined
+        ? undefined
+        : normalizeSignedInteger(
+            input.treeOriginX,
+            `graphLayouts["${conversationId}"].treeOriginX`,
+          ),
+    treeOriginY:
+      input.treeOriginY === undefined
+        ? undefined
+        : normalizeSignedInteger(
+            input.treeOriginY,
+            `graphLayouts["${conversationId}"].treeOriginY`,
+          ),
   };
 }
 
@@ -420,6 +538,16 @@ function normalizeConversation(expectedId, input) {
       `Conversation "${expectedId}" createdAt`,
     ),
     id: input.id,
+    kind:
+      input.kind === undefined || input.kind === null
+        ? "chat"
+        : input.kind === "chat" || input.kind === "note"
+          ? input.kind
+          : (() => {
+              throw createStateError(
+                `Conversation "${expectedId}" must use a supported kind.`,
+              );
+            })(),
     messages: input.messages.map((message, index) =>
       normalizeMessage(expectedId, index, message),
     ),
@@ -455,7 +583,10 @@ function normalizeNotes(conversationId, input) {
       );
     }
 
-    if (typeof note.content !== "string" || !note.content.trim()) {
+    if (
+      typeof note.content !== "string" ||
+      (!note.content.trim() && note.kind !== "standalone")
+    ) {
       throw createStateError(
         `Note "${note.id ?? index}" must include non-empty content.`,
       );
@@ -490,13 +621,25 @@ function normalizeNotes(conversationId, input) {
     }
 
     return {
-      content: note.content.trim(),
+      content: note.content,
       createdAt: normalizeTimestamp(
         note.createdAt,
         `Note "${note.id ?? index}" createdAt`,
       ),
       endOffset,
       id: normalizeId(note.id, `Note ${index} in conversation "${conversationId}" id`),
+      kind:
+        note.kind === undefined || note.kind === null
+          ? "comment"
+          : note.kind === "comment" ||
+              note.kind === "side-chat" ||
+              note.kind === "standalone"
+            ? note.kind
+            : (() => {
+                throw createStateError(
+                  `Note "${note.id ?? index}" must use a supported kind.`,
+                );
+              })(),
       quote: hasSelection ? quote : null,
       sourceMessageId,
       startOffset,
