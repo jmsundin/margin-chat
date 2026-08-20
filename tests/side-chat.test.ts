@@ -3,9 +3,11 @@ import {
   DEFAULT_CHILD_CHAT_TITLE,
   DEFAULT_SIDE_CHAT_TITLE,
   createChildConversation,
+  createEmptyState,
   createMainConversation,
   createSideConversation,
 } from "../client/src/initialState";
+import { normalizeAppState } from "../server/db/validation.mjs";
 
 describe("side chats", () => {
   test("creates a direct child of a main chat without a text anchor", () => {
@@ -56,5 +58,32 @@ describe("side chats", () => {
     expect(child.title).toBe(DEFAULT_CHILD_CHAT_TITLE);
     expect(child.modelId).toBe(branch.modelId);
     expect(child.serviceId).toBe(branch.serviceId);
+  });
+
+  test("allows an unanchored child chat in cloud workspace state", () => {
+    const state = createEmptyState();
+    const root = state.conversations[state.rootId];
+    const child = createChildConversation({
+      id: "conversation-unanchored-child",
+      parentConversation: root,
+    });
+    const normalized = normalizeAppState({
+      ...state,
+      activeConversationId: child.id,
+      conversations: {
+        ...state.conversations,
+        [root.id]: {
+          ...root,
+          childIds: [child.id],
+        },
+        [child.id]: child,
+      },
+    });
+
+    expect(
+      normalized.conversations.find(
+        (conversation) => conversation.id === child.id,
+      )?.branchAnchor,
+    ).toBeNull();
   });
 });

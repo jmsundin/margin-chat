@@ -9,15 +9,21 @@ import {
   getBillingStatusCopy,
 } from "../lib/billing";
 import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
+import type { StateUploadProgress } from "../lib/api";
 
 interface ProfileModalProps {
   billingErrorMessage: string | null;
   billingSubmitting: boolean;
   cloudSyncEnabled: boolean;
+  cloudBackupMatchesLocal: boolean;
+  cloudBackupSizeBytes: number;
   errorMessage: string | null;
   isOpen: boolean;
   isSaving: boolean;
   localDirectoryStatus: LocalDirectoryStatus;
+  onBackupToCloud: (
+    onProgress: (progress: StateUploadProgress) => void,
+  ) => Promise<void>;
   onChooseLocalDirectory: () => Promise<void>;
   onClearLocalDirectory: () => Promise<void>;
   onClose: () => void;
@@ -53,6 +59,24 @@ const EMPTY_API_KEY_DRAFTS: Record<ApiKeyProvider, string> = {
   xai: "",
 };
 
+function formatByteCount(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const fractionDigits = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(fractionDigits)} ${units[unitIndex]}`;
+}
+
 function CloseIcon() {
   return (
     <svg
@@ -86,10 +110,13 @@ export default function ProfileModal({
   billingErrorMessage,
   billingSubmitting,
   cloudSyncEnabled,
+  cloudBackupMatchesLocal,
+  cloudBackupSizeBytes,
   errorMessage,
   isOpen,
   isSaving,
   localDirectoryStatus,
+  onBackupToCloud,
   onChooseLocalDirectory,
   onClearLocalDirectory,
   onClose,
@@ -116,6 +143,13 @@ export default function ProfileModal({
   >("account");
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
+  const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
+  const [cloudBackupProgress, setCloudBackupProgress] =
+    useState<StateUploadProgress | null>(null);
+  const [cloudBackupResult, setCloudBackupResult] = useState<{
+    kind: "error" | "success";
+    message: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!isOpen) {
@@ -130,6 +164,14 @@ export default function ProfileModal({
     setApiKeyError(null);
     setActiveTab("account");
     setStorageError(null);
+    setCloudBackupResult(null);
+    setCloudBackupProgress(null);
+  }, [isOpen, user.apiKeys, user.displayName, user.email]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -142,7 +184,7 @@ export default function ProfileModal({
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isOpen, onClose, user.apiKeys, user.displayName, user.email]);
+  }, [isOpen, onClose]);
 
   useEffect(() => {
     if (profileBodyRef.current) {
@@ -165,6 +207,13 @@ export default function ProfileModal({
   const showBillingAction = user.role !== "admin";
   const useManageBillingAction =
     user.billing.hasCustomer && user.billing.status !== "inactive";
+  const displayedCloudBackupProgress =
+    cloudBackupBusy && cloudBackupProgress
+      ? cloudBackupProgress
+      : {
+          totalBytes: cloudBackupSizeBytes,
+          uploadedBytes: cloudBackupMatchesLocal ? cloudBackupSizeBytes : 0,
+        };
 
   async function saveApiKeyChanges(
     overrides: Partial<Record<ApiKeyProvider, string | null>> = {},
@@ -235,6 +284,30 @@ export default function ProfileModal({
     }
   }
 
+  async function backupLocalMasterToCloud() {
+    setCloudBackupBusy(true);
+    setCloudBackupResult(null);
+    setCloudBackupProgress(null);
+
+    try {
+      await onBackupToCloud(setCloudBackupProgress);
+      setCloudBackupResult({
+        kind: "success",
+        message: "Cloud backup completed from your local master copy.",
+      });
+    } catch (error) {
+      setCloudBackupResult({
+        kind: "error",
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : "Unable to back up the local master copy to the cloud.",
+      });
+    } finally {
+      setCloudBackupBusy(false);
+    }
+  }
+
   return (
     <div
       className="thread-dialog-backdrop"
@@ -272,7 +345,7 @@ export default function ProfileModal({
           {([
             ["account", "Account"],
             ["api-keys", "API keys"],
-            ["storage", "Local storage"],
+            ["storage", "Local Storage / Cloud"],
           ] as const).map(([tabId, label]) => (
             <button
               aria-controls={`profile-panel-${tabId}`}
@@ -546,6 +619,61 @@ export default function ProfileModal({
                       : "Cloud sync requires a paid plan or admin access"}
                   </small>
                 </div>
+              </div>
+
+              <div className="profile-storage-directory-card">
+                <div>
+                  <span>Manual cloud backup</span>
+                  <strong>Back up the local master copy</strong>
+                  <small>
+                    {cloudSyncEnabled
+                      ? "Upload what is on this computer now. This action never pulls cloud data down."
+                      : "Manual cloud backup requires a paid plan or admin access."}
+                  </small>
+                </div>
+
+                <div className="profile-storage-directory-actions">
+                  <button
+                    className={`thread-dialog-button is-primary${
+                      cloudBackupMatchesLocal ? " is-cloud-current" : ""
+                    }`}
+                    disabled={!cloudSyncEnabled || cloudBackupBusy}
+                    onClick={() => void backupLocalMasterToCloud()}
+                    type="button"
+                  >
+                    {cloudBackupBusy
+                      ? "Backing up..."
+                      : "Back up to cloud now"}
+                  </button>
+
+                  <div
+                    aria-live="polite"
+                    className="profile-storage-upload-progress"
+                  >
+                    <span>
+                      {formatByteCount(
+                        displayedCloudBackupProgress.uploadedBytes,
+                      )}{" "}
+                      / {formatByteCount(displayedCloudBackupProgress.totalBytes)}
+                    </span>
+                    <progress
+                      aria-label="Cloud backup upload progress"
+                      max={Math.max(displayedCloudBackupProgress.totalBytes, 1)}
+                      value={displayedCloudBackupProgress.uploadedBytes}
+                    />
+                  </div>
+                </div>
+
+                {cloudBackupResult ? (
+                  <p
+                    className={`profile-storage-backup-result is-${cloudBackupResult.kind}`}
+                    role={
+                      cloudBackupResult.kind === "error" ? "alert" : "status"
+                    }
+                  >
+                    {cloudBackupResult.message}
+                  </p>
+                ) : null}
               </div>
 
               <div className="profile-storage-directory-card">

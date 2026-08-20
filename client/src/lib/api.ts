@@ -90,6 +90,11 @@ export class ApiError extends Error {
   }
 }
 
+export interface StateUploadProgress {
+  totalBytes: number;
+  uploadedBytes: number;
+}
+
 function getErrorMessage(
   payload: unknown,
   fallback: string,
@@ -361,6 +366,66 @@ export async function persistStoredState(state: AppState): Promise<void> {
   const payload = (await readJson(response)) as AppState | ErrorPayload | null;
 
   ensureOk(response, payload, "State persistence failed.");
+}
+
+export function persistStoredStateWithProgress(
+  state: AppState,
+  onProgress: (progress: StateUploadProgress) => void,
+): Promise<void> {
+  const body = JSON.stringify(state);
+  const totalBytes = new TextEncoder().encode(body).byteLength;
+
+  onProgress({ totalBytes, uploadedBytes: 0 });
+
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+
+    request.open("PUT", "/api/state");
+    request.withCredentials = true;
+    request.setRequestHeader("Content-Type", "application/json");
+
+    request.upload.addEventListener("progress", (event) => {
+      onProgress({
+        totalBytes,
+        uploadedBytes: Math.min(event.loaded, totalBytes),
+      });
+    });
+
+    request.addEventListener("load", () => {
+      let payload: unknown = null;
+
+      try {
+        payload = request.responseText
+          ? JSON.parse(request.responseText)
+          : null;
+      } catch {
+        payload = null;
+      }
+
+      if (request.status >= 200 && request.status < 300) {
+        onProgress({ totalBytes, uploadedBytes: totalBytes });
+        resolve();
+        return;
+      }
+
+      reject(
+        new ApiError(
+          request.status,
+          getErrorMessage(payload, "State persistence failed."),
+        ),
+      );
+    });
+
+    request.addEventListener("error", () => {
+      reject(new TypeError("Failed to fetch"));
+    });
+
+    request.addEventListener("abort", () => {
+      reject(new DOMException("Cloud backup was cancelled.", "AbortError"));
+    });
+
+    request.send(body);
+  });
 }
 
 export async function requestAuthSession(): Promise<AuthenticatedUser | null> {

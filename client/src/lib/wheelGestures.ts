@@ -3,6 +3,14 @@ const HORIZONTAL_INTENT_RATIO = 0.75;
 
 export type WheelGestureAxis = "horizontal" | "vertical" | "none";
 
+export function isProfileDialogWheelTarget(target: EventTarget | null) {
+  if (!target || typeof (target as Element).closest !== "function") {
+    return false;
+  }
+
+  return Boolean((target as Element).closest(".profile-dialog"));
+}
+
 export function getWheelGestureAxis(
   deltaX: number,
   deltaY: number,

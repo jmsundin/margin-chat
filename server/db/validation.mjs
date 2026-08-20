@@ -103,12 +103,6 @@ export function normalizeAppState(input) {
       );
     }
 
-    if (conversation.parentId !== null && conversation.branchAnchor === null) {
-      throw createStateError(
-        `Branch conversation "${conversation.id}" must include a branch anchor.`,
-      );
-    }
-
     for (const message of conversation.messages) {
       if (messageIds.has(message.id)) {
         throw createStateError(`Duplicate message id "${message.id}".`);

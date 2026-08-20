@@ -8,6 +8,7 @@ import {
   useEffect,
   useEffectEvent,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -33,6 +34,7 @@ import {
   requestConfirmCheckoutSession,
   requestDeleteDocument,
   persistStoredState,
+  persistStoredStateWithProgress,
   requestAuthSession,
   requestChatReply,
   requestChatTitle,
@@ -58,7 +60,10 @@ import {
   getSelectionTooltipLayout,
   writeSelectedQuoteToClipboard,
 } from "./lib/selectionTooltip";
-import { getHorizontalWheelDelta } from "./lib/wheelGestures";
+import {
+  getHorizontalWheelDelta,
+  isProfileDialogWheelTarget,
+} from "./lib/wheelGestures";
 import {
   areWorkspaceStatesEqual,
   canSyncWorkspaceToCloud,
@@ -142,7 +147,7 @@ const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
 const NOTE_PROMPT_PLACEHOLDER = "Add a private thought about this text...";
 const EXPLAIN_SELECTION_PROMPT = "Explain the selected text.";
 const TOOLTIP_VIEWPORT_MARGIN = 16;
-const CHAT_PANEL_DEFAULT_WIDTH_PX = 630;
+const CHAT_PANEL_DEFAULT_WIDTH_PX = 760;
 const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
 const CHAT_PANEL_MAX_WIDTH_PX = 980;
 const CHAT_PANEL_MIN_WIDTH_PX = 320;
@@ -523,9 +528,11 @@ function loadInitialChatPanelWidth() {
   }
 
   try {
-    const storedValue = Number(
-      window.localStorage.getItem(CHAT_PANEL_WIDTH_STORAGE_KEY),
+    const rawStoredValue = window.localStorage.getItem(
+      CHAT_PANEL_WIDTH_STORAGE_KEY,
     );
+    const storedValue =
+      rawStoredValue === null ? Number.NaN : Number(rawStoredValue);
 
     if (Number.isFinite(storedValue)) {
       return clamp(storedValue, bounds.min, bounds.max);
@@ -1329,6 +1336,7 @@ function WorkspaceApp({
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
   const [storageMode, setStorageMode] = useState<StorageMode>("loading");
+  const [cloudBackupMatchesLocal, setCloudBackupMatchesLocal] = useState(false);
   const [localStorageReady, setLocalStorageReady] = useState(false);
   const [cloudSyncReady, setCloudSyncReady] = useState(false);
   const [localDirectoryStatus, setLocalDirectoryStatus] =
@@ -1399,6 +1407,7 @@ function WorkspaceApp({
   );
   const pendingPersistStateRef = useRef<AppState | null>(null);
   const persistenceInFlightRef = useRef(false);
+  const persistenceIdleWaitersRef = useRef<Array<() => void>>([]);
   const cloudSyncPausedRef = useRef(false);
   const activeChatStreamsRef = useRef<Map<string, ActiveChatStream>>(new Map());
   const workspaceMountedRef = useRef(true);
@@ -1410,6 +1419,10 @@ function WorkspaceApp({
   } | null>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const cloudSyncEnabled = canSyncWorkspaceToCloud(user);
+  const cloudBackupSizeBytes = useMemo(
+    () => new TextEncoder().encode(JSON.stringify(state)).byteLength,
+    [state],
+  );
 
   const activeConversation =
     state.conversations[state.activeConversationId] ??
@@ -1610,6 +1623,7 @@ function WorkspaceApp({
 
   useEffect(() => {
     currentStateRef.current = state;
+    setCloudBackupMatchesLocal(false);
 
     if (!localStorageReady) {
       return undefined;
@@ -1764,6 +1778,7 @@ function WorkspaceApp({
 
     if (!cloudSyncEnabled) {
       pendingPersistStateRef.current = null;
+      setCloudBackupMatchesLocal(false);
       setStorageMode("local");
       setCloudSyncReady(true);
       return undefined;
@@ -1806,6 +1821,7 @@ function WorkspaceApp({
         if (!cancelled) {
           const cloudAccessDenied = isApiErrorStatus(error, 403);
           cloudSyncPausedRef.current = !cloudAccessDenied;
+          setCloudBackupMatchesLocal(false);
           setStorageMode(cloudAccessDenied ? "local" : "fallback");
         }
 
@@ -1970,6 +1986,25 @@ function WorkspaceApp({
     };
   }, []);
 
+  function resolvePersistenceIdleWaiters() {
+    const waiters = persistenceIdleWaitersRef.current;
+    persistenceIdleWaitersRef.current = [];
+
+    for (const resolve of waiters) {
+      resolve();
+    }
+  }
+
+  function waitForCloudPersistenceIdle() {
+    if (!persistenceInFlightRef.current) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      persistenceIdleWaitersRef.current.push(resolve);
+    });
+  }
+
   const persistLatestState = useEffectEvent(async () => {
     if (
       !cloudSyncEnabled ||
@@ -1989,10 +2024,14 @@ function WorkspaceApp({
         try {
           await persistStoredState(nextState);
           cloudSyncPausedRef.current = false;
+          setCloudBackupMatchesLocal(
+            areWorkspaceStatesEqual(currentStateRef.current, nextState),
+          );
           setStorageMode("server");
         } catch (error) {
           if (isApiErrorStatus(error, 401)) {
             pendingPersistStateRef.current = null;
+            setCloudBackupMatchesLocal(false);
             onAuthExpired();
             return;
           }
@@ -2000,12 +2039,14 @@ function WorkspaceApp({
           if (isApiErrorStatus(error, 403)) {
             pendingPersistStateRef.current = null;
             cloudSyncPausedRef.current = false;
+            setCloudBackupMatchesLocal(false);
             setStorageMode("local");
             return;
           }
 
           pendingPersistStateRef.current = currentStateRef.current;
           cloudSyncPausedRef.current = true;
+          setCloudBackupMatchesLocal(false);
 
           if (!isRecoverableCloudSyncError(error)) {
             console.warn("Unable to update the cloud workspace copy.", error);
@@ -2017,6 +2058,7 @@ function WorkspaceApp({
       }
     } finally {
       persistenceInFlightRef.current = false;
+      resolvePersistenceIdleWaiters();
     }
   });
 
@@ -2053,6 +2095,7 @@ function WorkspaceApp({
         !persistedState ||
         !areWorkspaceStatesEqual(localState, persistedState)
       ) {
+        setCloudBackupMatchesLocal(false);
         pendingPersistStateRef.current = localState;
         cloudSyncPausedRef.current = false;
         await persistLatestState();
@@ -2061,9 +2104,11 @@ function WorkspaceApp({
 
       pendingPersistStateRef.current = null;
       cloudSyncPausedRef.current = false;
+      setCloudBackupMatchesLocal(true);
       setStorageMode("server");
     } catch (error) {
       if (isApiErrorStatus(error, 401)) {
+        setCloudBackupMatchesLocal(false);
         onAuthExpired();
         return;
       }
@@ -2071,11 +2116,13 @@ function WorkspaceApp({
       if (isApiErrorStatus(error, 403)) {
         pendingPersistStateRef.current = null;
         cloudSyncPausedRef.current = false;
+        setCloudBackupMatchesLocal(false);
         setStorageMode("local");
         return;
       }
 
       cloudSyncPausedRef.current = true;
+      setCloudBackupMatchesLocal(false);
 
       if (!isRecoverableCloudSyncError(error)) {
         console.warn("Unable to reconcile the cloud workspace copy.", error);
@@ -2170,8 +2217,13 @@ function WorkspaceApp({
 
   const handleConversationCanvasWheel = useEffectEvent((event: WheelEvent) => {
     const canvas = canvasRef.current;
+    const target = event.target;
 
-    if (!canvas || event.ctrlKey) {
+    if (
+      !canvas ||
+      event.ctrlKey ||
+      isProfileDialogWheelTarget(target)
+    ) {
       return;
     }
 
@@ -4516,6 +4568,70 @@ function WorkspaceApp({
     setLocalDirectoryStatus(await getLocalDirectoryStatus(user.id));
   }
 
+  async function handleManualCloudBackup(
+    onProgress: Parameters<typeof persistStoredStateWithProgress>[1],
+  ) {
+    if (!cloudSyncEnabled) {
+      throw new Error(
+        "Cloud backup requires a paid plan or admin access.",
+      );
+    }
+
+    while (persistenceInFlightRef.current) {
+      await waitForCloudPersistenceIdle();
+    }
+
+    const localMasterCopy = currentStateRef.current;
+    persistenceInFlightRef.current = true;
+    cloudSyncPausedRef.current = false;
+
+    try {
+      await persistStoredStateWithProgress(localMasterCopy, onProgress);
+
+      const cloudMatchesLocal = areWorkspaceStatesEqual(
+        currentStateRef.current,
+        localMasterCopy,
+      );
+      pendingPersistStateRef.current = cloudMatchesLocal
+        ? null
+        : currentStateRef.current;
+      setCloudBackupMatchesLocal(cloudMatchesLocal);
+      setStorageMode("server");
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) {
+        pendingPersistStateRef.current = null;
+        setCloudBackupMatchesLocal(false);
+        onAuthExpired();
+        throw new Error(
+          "Your session expired. Sign in again to back up your work.",
+        );
+      }
+
+      if (isApiErrorStatus(error, 403)) {
+        pendingPersistStateRef.current = null;
+        cloudSyncPausedRef.current = false;
+        setCloudBackupMatchesLocal(false);
+        setStorageMode("local");
+        throw new Error(
+          "Cloud backup requires a paid plan or admin access.",
+        );
+      }
+
+      pendingPersistStateRef.current = currentStateRef.current;
+      cloudSyncPausedRef.current = true;
+      setCloudBackupMatchesLocal(false);
+      setStorageMode("fallback");
+      throw error;
+    } finally {
+      persistenceInFlightRef.current = false;
+      resolvePersistenceIdleWaiters();
+
+      if (pendingPersistStateRef.current && !cloudSyncPausedRef.current) {
+        void persistLatestState();
+      }
+    }
+  }
+
   function handleWorkspaceLogout() {
     abortAllChatStreams();
     onLogout();
@@ -5248,11 +5364,14 @@ function WorkspaceApp({
           <ProfileModal
             billingErrorMessage={billingErrorMessage}
             billingSubmitting={billingSubmitting}
+            cloudBackupMatchesLocal={cloudBackupMatchesLocal}
+            cloudBackupSizeBytes={cloudBackupSizeBytes}
             cloudSyncEnabled={cloudSyncEnabled}
             errorMessage={profileSaveError}
             isOpen={profileModalOpen}
             isSaving={profileSaving}
             localDirectoryStatus={localDirectoryStatus}
+            onBackupToCloud={handleManualCloudBackup}
             onChooseLocalDirectory={handleChooseLocalDirectory}
             onClearLocalDirectory={handleClearLocalDirectory}
             onClose={() => {

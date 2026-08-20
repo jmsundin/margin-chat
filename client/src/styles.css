@@ -1656,6 +1656,12 @@ button {
   color: var(--primary-ink);
 }
 
+.thread-dialog-button.is-primary.is-cloud-current {
+  background: #2f8f5b;
+  border-color: color-mix(in srgb, #2f8f5b 72%, var(--button-border));
+  color: #ffffff;
+}
+
 .thread-dialog-button.is-danger {
   background: var(--danger);
   border-color: transparent;
@@ -6554,9 +6560,48 @@ button {
 }
 
 .profile-storage-directory-actions {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 9px;
+}
+
+.profile-storage-upload-progress {
+  display: grid;
+  gap: 5px;
+  min-width: 132px;
+}
+
+.profile-storage-upload-progress span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.profile-storage-upload-progress progress {
+  accent-color: var(--panel-active-border);
+  height: 6px;
+  width: 100%;
+}
+
+.profile-storage-backup-result {
+  border-radius: 12px;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.profile-storage-backup-result.is-success {
+  background: color-mix(in srgb, #2f8f5b 12%, transparent);
+  color: color-mix(in srgb, #2f8f5b 78%, var(--text));
+}
+
+.profile-storage-backup-result.is-error {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger-border);
+  color: var(--danger);
 }
 
 .profile-storage-footnote {
@@ -9982,7 +10027,7 @@ button {
   justify-content: flex-start;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0 max(24px, calc((100% - var(--chat-panel-width, 630px)) / 2));
+  padding: 0 max(24px, calc((100% - var(--chat-panel-width, 760px)) / 2));
   scroll-behavior: auto;
   scroll-snap-type: none;
   touch-action: pan-x pan-y pinch-zoom;
@@ -9990,20 +10035,20 @@ button {
 }
 
 .conversation-tree-expanded {
-  flex: 0 0 var(--chat-panel-width, 630px);
+  flex: 0 0 var(--chat-panel-width, 760px);
   height: 100%;
-  max-width: var(--chat-panel-width, 630px);
+  max-width: var(--chat-panel-width, 760px);
   min-height: 0;
   min-width: 320px;
   scroll-snap-align: center;
-  width: var(--chat-panel-width, 630px);
+  width: var(--chat-panel-width, 760px);
 }
 
 .conversation-canvas.is-tree-browser > .conversation-tree-expanded {
-  flex: 0 0 var(--chat-panel-width, 630px);
-  max-width: var(--chat-panel-width, 630px);
-  min-width: var(--chat-panel-width, 630px);
-  width: var(--chat-panel-width, 630px);
+  flex: 0 0 var(--chat-panel-width, 760px);
+  max-width: var(--chat-panel-width, 760px);
+  min-width: var(--chat-panel-width, 760px);
+  width: var(--chat-panel-width, 760px);
 }
 
 .conversation-tree-expanded .chat-panel {
@@ -10058,10 +10103,10 @@ button {
 }
 
 .conversation-tree-lane.has-expanded-chat {
-  flex-basis: var(--chat-panel-width, 630px);
-  min-width: var(--chat-panel-width, 630px);
+  flex-basis: var(--chat-panel-width, 760px);
+  min-width: var(--chat-panel-width, 760px);
   padding-bottom: 0;
-  width: var(--chat-panel-width, 630px);
+  width: var(--chat-panel-width, 760px);
 }
 
 .conversation-tree-lane.has-expanded-chat .conversation-tree-lane-head {
@@ -10309,7 +10354,7 @@ button {
   justify-content: flex-start;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0 max(18px, calc((100% - var(--chat-panel-width, 630px)) / 2));
+  padding: 0 max(18px, calc((100% - var(--chat-panel-width, 760px)) / 2));
   scroll-behavior: auto;
   scroll-snap-type: none;
   touch-action: pan-x pan-y pinch-zoom;

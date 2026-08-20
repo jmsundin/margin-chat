@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   getHorizontalWheelDelta,
   getWheelGestureAxis,
+  isProfileDialogWheelTarget,
 } from "../client/src/lib/wheelGestures";
 
 describe("wheel gesture routing", () => {
@@ -38,5 +39,19 @@ describe("wheel gesture routing", () => {
     expect(
       getHorizontalWheelDelta({ deltaX: 0.2, deltaY: -0.3, shiftKey: true }),
     ).toBe(0);
+  });
+
+  test("leaves wheel gestures inside the Profile dialog untouched", () => {
+    const profileTarget = {
+      closest: (selector: string) =>
+        selector === ".profile-dialog" ? { role: "dialog" } : null,
+    } as unknown as EventTarget;
+    const workspaceTarget = {
+      closest: () => null,
+    } as unknown as EventTarget;
+
+    expect(isProfileDialogWheelTarget(profileTarget)).toBe(true);
+    expect(isProfileDialogWheelTarget(workspaceTarget)).toBe(false);
+    expect(isProfileDialogWheelTarget(null)).toBe(false);
   });
 });
