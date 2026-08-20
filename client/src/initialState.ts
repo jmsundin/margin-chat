@@ -31,6 +31,7 @@ export function createMainConversation({
     modelId: resolveBackendServiceModelId(serviceId, modelId),
     branchAnchor: null,
     childIds: [],
+    documents: [],
     messages: [],
     notes: [],
     createdAt,
@@ -56,6 +57,7 @@ export function createSideConversation({
     modelId: sourceConversation.modelId,
     branchAnchor: null,
     childIds: [],
+    documents: [...(sourceConversation.documents ?? [])],
     messages: [],
     notes: [],
     createdAt,
@@ -81,6 +83,7 @@ export function createChildConversation({
     modelId: parentConversation.modelId,
     branchAnchor: null,
     childIds: [],
+    documents: [...(parentConversation.documents ?? [])],
     messages: [],
     notes: [],
     createdAt,
@@ -110,6 +113,7 @@ export function createStandaloneNoteConversation({
     modelId: resolveBackendServiceModelId(serviceId, modelId),
     branchAnchor: null,
     childIds: [],
+    documents: [],
     messages: [],
     notes: [
       {

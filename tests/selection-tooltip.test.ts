@@ -8,6 +8,7 @@ describe("selected text popup positioning", () => {
   test("places the popup below the selected text", () => {
     const layout = getSelectionTooltipLayout({
       rect: { height: 36, left: 240, top: 180, width: 160 },
+      tooltipHeight: 240,
       tooltipWidth: 360,
       viewportHeight: 800,
       viewportMargin: 16,
@@ -16,12 +17,29 @@ describe("selected text popup positioning", () => {
 
     expect(layout.top).toBe(228);
     expect(layout.maxHeight).toBe(556);
+    expect(layout.placement).toBe("below");
+  });
+
+  test("places the popup above the last selected line when it cannot fit below", () => {
+    const layout = getSelectionTooltipLayout({
+      rect: { height: 22, left: 240, top: 700, width: 160 },
+      tooltipHeight: 260,
+      tooltipWidth: 360,
+      viewportHeight: 800,
+      viewportMargin: 16,
+      viewportWidth: 1000,
+    });
+
+    expect(layout.top).toBe(428);
+    expect(layout.maxHeight).toBe(672);
+    expect(layout.placement).toBe("above");
   });
 
   test("keeps the popup horizontally inside the viewport", () => {
     expect(
       getSelectionTooltipLayout({
         rect: { height: 20, left: 4, top: 80, width: 40 },
+        tooltipHeight: 240,
         tooltipWidth: 360,
         viewportHeight: 600,
         viewportMargin: 16,

@@ -1,5 +1,6 @@
 import {
   jsonHeaders,
+  readMultipartForm,
   readJsonBody,
   readRawBody,
   sendJson,
@@ -19,6 +20,7 @@ export function createApiHandler({
   billingService,
   chatService,
   database,
+  documentService,
   runtimeConfig,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
@@ -248,6 +250,43 @@ export function createApiHandler({
         }
 
         sendJson(response, 200, state);
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/documents") {
+        const form = await readMultipartForm(request, 4 * 1024 * 1024 + 64 * 1024);
+        const file = form.get("file");
+
+        if (!file || typeof file === "string") {
+          throw new HttpError(400, "A document file is required.");
+        }
+
+        const document = await documentService.upload({
+          context: {
+            allowHosted: authContext.user.billing.hasAccess,
+            apiKeys: await apiKeyService.getDecryptedKeys(authContext.user.id),
+          },
+          file,
+          userId: authContext.user.id,
+        });
+
+        sendJson(response, 201, { document });
+        return;
+      }
+
+      const documentMatch = url.pathname.match(/^\/api\/documents\/([^/]+)$/u);
+
+      if (request.method === "DELETE" && documentMatch) {
+        const deleted = await documentService.delete(
+          decodeURIComponent(documentMatch[1]),
+          authContext.user.id,
+        );
+
+        if (!deleted) {
+          throw new HttpError(404, "Document not found.");
+        }
+
+        sendJson(response, 200, { deleted: true });
         return;
       }
 

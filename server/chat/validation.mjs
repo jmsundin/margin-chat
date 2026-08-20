@@ -74,6 +74,38 @@ export function validateChatRequest(body) {
   }
 
   const branchAnchor = body.conversation.branchAnchor;
+  const documents = body.conversation.documents ?? [];
+
+  if (!Array.isArray(documents) || documents.length > 20) {
+    throw new HttpError(
+      400,
+      "conversation.documents must be an array containing at most 20 documents.",
+    );
+  }
+
+  const documentIds = new Set();
+
+  for (const document of documents) {
+    if (
+      !document ||
+      typeof document !== "object" ||
+      typeof document.id !== "string" ||
+      !document.id.trim() ||
+      typeof document.filename !== "string" ||
+      !document.filename.trim()
+    ) {
+      throw new HttpError(
+        400,
+        "Each conversation document must include an id and filename.",
+      );
+    }
+
+    if (documentIds.has(document.id)) {
+      throw new HttpError(400, "conversation.documents cannot contain duplicates.");
+    }
+
+    documentIds.add(document.id);
+  }
 
   if (
     branchAnchor !== null &&
@@ -137,6 +169,10 @@ export function validateChatRequest(body) {
         title: ancestor.title,
       })),
       branchAnchor: branchAnchor ?? null,
+      documents: documents.map((document) => ({
+        filename: document.filename.trim(),
+        id: document.id.trim(),
+      })),
       id: String(body.conversation.id ?? ""),
       parentId:
         body.conversation.parentId === null ||

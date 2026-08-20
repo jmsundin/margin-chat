@@ -44,6 +44,8 @@ describe("conversation tree node", () => {
     );
 
     expect(markup).toContain('aria-label="Expand Approach comparison"');
+    expect(markup).toContain("Margin Chat");
+    expect(markup).not.toContain("Child chat");
     expect(markup).toContain("the selected source context");
     expect(markup).toContain("1 message");
     expect(markup).toContain("1 child");

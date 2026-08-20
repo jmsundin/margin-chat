@@ -1,3 +1,5 @@
+create extension if not exists vector;
+
 do $$
 begin
   if to_regclass('marginchat_users') is null
@@ -641,6 +643,41 @@ create table if not exists marginchat_messages (
   created_at timestamptz not null
 );
 
+create table if not exists marginchat_documents (
+  id text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  filename text not null,
+  mime_type text not null,
+  size_bytes bigint not null check (size_bytes > 0),
+  original_bytes bytea not null,
+  status text not null default 'processing',
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint marginchat_documents_status_check check (
+    status in ('processing', 'ready', 'failed')
+  )
+);
+
+create table if not exists marginchat_document_chunks (
+  id text primary key,
+  document_id text not null references marginchat_documents(id) on delete cascade,
+  chunk_index integer not null check (chunk_index >= 0),
+  page_number integer check (page_number is null or page_number > 0),
+  content text not null,
+  token_count integer not null check (token_count > 0),
+  embedding_model text not null,
+  embedding vector(1536) not null,
+  unique (document_id, chunk_index)
+);
+
+create table if not exists marginchat_conversation_documents (
+  conversation_id text not null references marginchat_conversations(id) on delete cascade,
+  document_id text not null references marginchat_documents(id) on delete cascade,
+  attached_at timestamptz not null default now(),
+  primary key (conversation_id, document_id)
+);
+
 create table if not exists marginchat_branch_anchors (
   id text primary key,
   conversation_id text not null unique references marginchat_conversations(id) on delete cascade,
@@ -689,6 +726,18 @@ create index if not exists conversations_session_parent_created_idx
 
 create index if not exists messages_conversation_created_idx
   on marginchat_messages (conversation_id, created_at);
+
+create index if not exists documents_user_created_idx
+  on marginchat_documents (user_id, created_at desc);
+
+create index if not exists conversation_documents_document_idx
+  on marginchat_conversation_documents (document_id);
+
+create index if not exists document_chunks_document_idx
+  on marginchat_document_chunks (document_id, chunk_index);
+
+create index if not exists document_chunks_embedding_hnsw_idx
+  on marginchat_document_chunks using hnsw (embedding vector_cosine_ops);
 
 create index if not exists branch_anchors_source_message_idx
   on marginchat_branch_anchors (source_conversation_id, source_message_id);

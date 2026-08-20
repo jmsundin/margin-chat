@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -326,6 +327,7 @@ interface ChatPanelProps {
   anchorsByMessageId: Record<string, MessageAnchorLink[]>;
   conversation: Conversation;
   draft: string;
+  documentUploadState?: { error: string | null; uploading: boolean };
   isActive: boolean;
   isSubmitting: boolean;
   recentModelSelections: RecentBackendServiceSelection[];
@@ -344,6 +346,7 @@ interface ChatPanelProps {
     sourceMessageId: string | null;
   }) => string;
   onDeleteNote: (conversationId: string, noteId: string) => void;
+  onDeleteDocument?: (documentId: string) => void;
   onModelChange: (
     conversationId: string,
     serviceId: BackendServiceId,
@@ -355,6 +358,7 @@ interface ChatPanelProps {
   onUseNote: (conversationId: string, content: string) => void;
   onStopTypewriter: (conversationId: string) => void;
   onSubmit: (conversationId: string, value: string) => void;
+  onUploadDocuments?: (conversationId: string, files: File[]) => void;
   onTypewriterProgress: (messageId: string, visibleCount: number) => void;
   onTypewriterComplete: (messageId: string) => void;
   onScrollPositionChange?: (
@@ -400,95 +404,6 @@ function SideNoteIcon() {
       <path d="M4 5h16v12H9l-5 4z" />
       <path d="M8 9h8M8 13h5" />
     </svg>
-  );
-}
-
-function NoteEditor({
-  note,
-  onDelete,
-  onReveal,
-  onUpdate,
-  onUse,
-}: {
-  note: ConversationNote;
-  onDelete: () => void;
-  onReveal?: () => void;
-  onUpdate: (content: string) => void;
-  onUse: (content: string) => void;
-}) {
-  const [draft, setDraft] = useState(note.content);
-
-  useEffect(() => setDraft(note.content), [note.content]);
-
-  function save() {
-    const value = draft.trim();
-    if (value && value !== note.content) onUpdate(value);
-    else if (!value) setDraft(note.content);
-  }
-
-  return (
-    <article className="personal-note-card">
-      <div className="personal-note-head">
-        <span><NoteIcon /> Sticky comment</span>
-        <span className="personal-note-private">Not sent to AI</span>
-      </div>
-      {note.quote ? <blockquote>“{excerpt(note.quote, 96)}”</blockquote> : null}
-      <LiveMarkdownEditor
-        ariaLabel="Edit personal note"
-        className="is-compact"
-        onBlur={save}
-        onChange={setDraft}
-        value={draft}
-      />
-      <div className="personal-note-actions">
-        {onReveal ? <button onClick={onReveal} type="button">View in chat</button> : null}
-        <button onClick={() => onUse(draft.trim() || note.content)} type="button">Use in next message</button>
-        <button className="is-danger" onClick={onDelete} type="button">Delete</button>
-      </div>
-    </article>
-  );
-}
-
-function MessageNoteGroup({
-  notes,
-  onDelete,
-  onUpdate,
-  onUse,
-}: {
-  notes: ConversationNote[];
-  onDelete: (noteId: string) => void;
-  onUpdate: (noteId: string, content: string) => void;
-  onUse: (content: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <aside className={open ? "message-note-group is-open" : "message-note-group"}>
-      <button
-        aria-label={`${notes.length} personal note${notes.length === 1 ? "" : "s"}. Private, not sent to AI. ${open ? "Close" : "Open"} notes`}
-        aria-expanded={open}
-        className="message-note-marker"
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <NoteIcon />
-        <span>Note{notes.length === 1 ? "" : "s"}</span>
-        <strong>{notes.length}</strong>
-      </button>
-      {open ? (
-        <div className="message-note-stack">
-          {notes.map((note) => (
-            <NoteEditor
-              key={note.id}
-              note={note}
-              onDelete={() => onDelete(note.id)}
-              onUpdate={(content) => onUpdate(note.id, content)}
-              onUse={onUse}
-            />
-          ))}
-        </div>
-      ) : null}
-    </aside>
   );
 }
 
@@ -887,6 +802,7 @@ export default function ChatPanel({
   anchorsByMessageId,
   conversation,
   draft,
+  documentUploadState = { error: null, uploading: false },
   isActive,
   isSubmitting,
   recentModelSelections,
@@ -899,12 +815,14 @@ export default function ChatPanel({
   onAddSideChat,
   onCreateNote,
   onDeleteNote,
+  onDeleteDocument = () => undefined,
   onDraftChange,
   onModelChange,
   onOpenBranch,
   onStopStreaming,
   onStopTypewriter,
   onSubmit,
+  onUploadDocuments = () => undefined,
   onTypewriterProgress,
   onTypewriterComplete,
   onUpdateNote,
@@ -934,6 +852,7 @@ export default function ChatPanel({
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerPrimaryRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
   const pendingSideNoteSaveRef = useRef<{
     content: string;
     conversationId: string;
@@ -1333,6 +1252,15 @@ export default function ChatPanel({
     submitDraft();
   }
 
+  function handleDocumentSelection(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+
+    if (files.length) {
+      onUploadDocuments(conversation.id, files);
+    }
+  }
+
   function handlePanelClick(event: MouseEvent<HTMLElement>) {
     if (
       isActive &&
@@ -1672,14 +1600,6 @@ export default function ChatPanel({
                           </div>
                         ) : null}
                       </div>
-                      {messageNotes.length ? (
-                        <MessageNoteGroup
-                          notes={messageNotes}
-                          onDelete={(noteId) => onDeleteNote(conversation.id, noteId)}
-                          onUpdate={(noteId, content) => onUpdateNote(conversation.id, noteId, content)}
-                          onUse={(content) => onUseNote(conversation.id, content)}
-                        />
-                      ) : null}
                     </div>
                   </section>
                 );
@@ -1714,7 +1634,14 @@ export default function ChatPanel({
 
       <form className="composer" onSubmit={handleSubmit}>
         <div className="composer-hidden">
-          <input multiple tabIndex={-1} type="file" />
+          <input
+            accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json,.html,.htm,.xml,.yaml,.yml,.js,.jsx,.ts,.tsx,.mjs,.css,.py,.rb,.rs,.go,.java,.c,.cpp,.sql,text/*,application/pdf,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            multiple
+            onChange={handleDocumentSelection}
+            ref={documentInputRef}
+            tabIndex={-1}
+            type="file"
+          />
         </div>
 
         <div
@@ -1726,6 +1653,44 @@ export default function ChatPanel({
             registerComposerSurfaceRef(conversation.id, element);
           }}
         >
+          {(conversation.documents?.length ?? 0) > 0 ||
+          documentUploadState.uploading ||
+          documentUploadState.error ? (
+            <div className="composer-document-area">
+              <div aria-label="Attached documents" className="composer-document-list">
+                {(conversation.documents ?? []).map((document) => (
+                  <span className="composer-document-chip" key={document.id}>
+                    <span aria-hidden="true" className="composer-document-icon">
+                      DOC
+                    </span>
+                    <span className="composer-document-name" title={document.filename}>
+                      {document.filename}
+                    </span>
+                    <button
+                      aria-label={`Delete ${document.filename} from every chat`}
+                      disabled={documentUploadState.uploading || isSubmitting}
+                      onClick={() => onDeleteDocument(document.id)}
+                      title="Delete this document from every chat"
+                      type="button"
+                    >
+                      <CloseIcon />
+                    </button>
+                  </span>
+                ))}
+                {documentUploadState.uploading ? (
+                  <span className="composer-document-chip is-loading" role="status">
+                    Processing document…
+                  </span>
+                ) : null}
+              </div>
+              {documentUploadState.error ? (
+                <p className="composer-document-error" role="alert">
+                  {documentUploadState.error}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           <div ref={composerPrimaryRef} className="composer-primary">
             <div className="composer-primary-scroll">
               <textarea
@@ -1753,15 +1718,22 @@ export default function ChatPanel({
             </div>
           </div>
 
-          {/* <div className="composer-leading">
+          <div className="composer-leading">
             <button
-              aria-label="Add files and more"
+              aria-label="Attach documents"
               className="composer-btn"
+              disabled={
+                !isActive ||
+                isSubmitting ||
+                documentUploadState.uploading ||
+                (conversation.documents?.length ?? 0) >= 20
+              }
+              onClick={() => documentInputRef.current?.click()}
               type="button"
             >
               <PlusIcon />
             </button>
-          </div> */}
+          </div>
 
           <div className="composer-footer-actions">
             <div className="composer-footer-scroll">

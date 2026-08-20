@@ -49,6 +49,16 @@ export interface Message {
   createdAt: string;
 }
 
+export interface ConversationDocument {
+  createdAt: string;
+  error: string | null;
+  filename: string;
+  id: string;
+  mimeType: string;
+  sizeBytes: number;
+  status: "processing" | "ready" | "failed";
+}
+
 export interface ConversationNote {
   id: string;
   content: string;
@@ -81,6 +91,7 @@ export interface Conversation {
   modelId: string;
   branchAnchor: BranchAnchor | null;
   childIds: string[];
+  documents?: ConversationDocument[];
   messages: Message[];
   notes?: ConversationNote[];
   createdAt: string;

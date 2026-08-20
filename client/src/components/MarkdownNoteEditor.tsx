@@ -3,20 +3,19 @@ import {
   Compartment,
   EditorSelection,
   EditorState,
+  StateField,
   type Extension,
   type Range,
 } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
-  ViewPlugin,
   WidgetType,
   drawSelection,
   dropCursor,
   keymap,
   placeholder as editorPlaceholder,
   type DecorationSet,
-  type ViewUpdate,
 } from "@codemirror/view";
 import {
   bracketMatching,
@@ -115,8 +114,17 @@ class RenderedMarkdownBlockWidget extends WidgetType {
   toDOM(view: EditorView) {
     const block = document.createElement("div");
     block.className = "cm-live-rendered-block message-content is-markdown obsidian-note-markdown";
+    block.dataset.sourceFrom = String(this.from);
+    block.dataset.sourceValue = this.source;
     block.innerHTML = renderObsidianMarkdownToHtml(this.source);
     block.addEventListener("click", (event) => {
+      const nativeSelection = window.getSelection();
+
+      // A click opens this rendered line for editing, but the click event also
+      // fires after a drag selection. Keep that selection intact so the app can
+      // offer its selected-text actions in Live Preview.
+      if (nativeSelection && !nativeSelection.isCollapsed) return;
+
       event.preventDefault();
       const caretDocument = document as Document & {
         caretPositionFromPoint?: (x: number, y: number) => {
@@ -159,23 +167,23 @@ class RenderedMarkdownBlockWidget extends WidgetType {
   }
 }
 
-function isSelectionInside(view: EditorView, from: number, to: number) {
-  return view.state.selection.ranges.some((range) =>
+function isSelectionInside(state: EditorState, from: number, to: number) {
+  return state.selection.ranges.some((range) =>
     range.empty
       ? range.head >= from && range.head <= to
       : range.from < to && range.to > from,
   );
 }
 
-function buildLivePreview(view: EditorView) {
+function buildLivePreview(state: EditorState) {
   const decorations: Range<Decoration>[] = [];
   const replacements: Range<Decoration>[] = [];
   const lineKeys = new Set<string>();
-  const document = view.state.doc;
+  const document = state.doc;
   const source = document.toString();
   const blocks = parseMarkdownBlocks(source);
   const activeBlocks = blocks.filter((block) =>
-    block.kind === "blank" || isSelectionInside(view, block.start, block.end),
+    block.kind === "blank" || isSelectionInside(state, block.start, block.end),
   );
   const inlineTokens = findObsidianInlineTokens(source);
   const calloutBlocks = findObsidianCalloutBlocks(source);
@@ -200,7 +208,7 @@ function buildLivePreview(view: EditorView) {
     if (
       block.kind === "blank" ||
       block.start === block.end ||
-      isSelectionInside(view, block.start, block.end)
+      isSelectionInside(state, block.start, block.end)
     ) {
       continue;
     }
@@ -255,64 +263,59 @@ function buildLivePreview(view: EditorView) {
     }
   }
 
-  for (const visible of view.visibleRanges) {
-    syntaxTree(view.state).iterate({
-      enter(nodeRef) {
-        const { from, name, to } = nodeRef;
-        if (to < visible.from || from > visible.to) return;
-        if (!overlapsActiveBlock(from, to)) return false;
-        const editable = isInsideActiveBlock(from, to);
+  syntaxTree(state).iterate({
+    enter(nodeRef) {
+      const { from, name, to } = nodeRef;
+      if (!overlapsActiveBlock(from, to)) return false;
+      const editable = isInsideActiveBlock(from, to);
 
-        const heading = name.match(/^ATXHeading([1-6])$/);
-        if (heading && editable) addLine(from, `cm-live-heading cm-live-heading-${heading[1]}`);
-        const setextHeading = name.match(/^SetextHeading([12])$/);
-        if (setextHeading && editable) addLine(from, `cm-live-heading cm-live-heading-${setextHeading[1]}`);
-        if (name === "HorizontalRule" && editable) addLine(from, "cm-live-horizontal-rule-line");
-        if (name === "Blockquote" && editable) {
-          for (let line = document.lineAt(from); line.from <= to && line.from <= visible.to;) {
-            addLine(line.from, "cm-live-blockquote");
-            if (line.to >= document.length || line.to >= to) break;
-            line = document.line(line.number + 1);
-          }
+      const heading = name.match(/^ATXHeading([1-6])$/);
+      if (heading && editable) addLine(from, `cm-live-heading cm-live-heading-${heading[1]}`);
+      const setextHeading = name.match(/^SetextHeading([12])$/);
+      if (setextHeading && editable) addLine(from, `cm-live-heading cm-live-heading-${setextHeading[1]}`);
+      if (name === "HorizontalRule" && editable) addLine(from, "cm-live-horizontal-rule-line");
+      if (name === "Blockquote" && editable) {
+        for (let line = document.lineAt(from); line.from <= to;) {
+          addLine(line.from, "cm-live-blockquote");
+          if (line.to >= document.length || line.to >= to) break;
+          line = document.line(line.number + 1);
         }
-        if (editable && (name === "BulletList" || name === "OrderedList")) addLine(from, "cm-live-list");
-        if (editable && (name === "TableHeader" || name === "TableRow")) addLine(from, "cm-live-table-row");
-        if (name === "FencedCode" && editable) {
-          const firstLine = document.lineAt(from);
-          const lastLine = document.lineAt(Math.max(from, to - 1));
-          for (let line = document.lineAt(from); line.from <= to && line.from <= visible.to;) {
-            const edgeClass = line.from === firstLine.from
-              ? " cm-live-code-start"
-              : line.from === lastLine.from
-                ? " cm-live-code-end"
-                : "";
-            addLine(line.from, `cm-live-code-line${edgeClass}`);
-            if (line.to >= document.length || line.to >= to) break;
-            line = document.line(line.number + 1);
-          }
+      }
+      if (editable && (name === "BulletList" || name === "OrderedList")) addLine(from, "cm-live-list");
+      if (editable && (name === "TableHeader" || name === "TableRow")) addLine(from, "cm-live-table-row");
+      if (name === "FencedCode" && editable) {
+        const firstLine = document.lineAt(from);
+        const lastLine = document.lineAt(Math.max(from, to - 1));
+        for (let line = document.lineAt(from); line.from <= to;) {
+          const edgeClass = line.from === firstLine.from
+            ? " cm-live-code-start"
+            : line.from === lastLine.from
+              ? " cm-live-code-end"
+              : "";
+          addLine(line.from, `cm-live-code-line${edgeClass}`);
+          if (line.to >= document.length || line.to >= to) break;
+          line = document.line(line.number + 1);
         }
+      }
 
-        if (!editable) return;
-        if (name === "StrongEmphasis") {
-          decorations.push(Decoration.mark({ class: "cm-live-strong" }).range(from, to));
-        } else if (name === "Emphasis") {
-          decorations.push(Decoration.mark({ class: "cm-live-emphasis" }).range(from, to));
-        } else if (name === "Strikethrough") {
-          decorations.push(Decoration.mark({ class: "cm-live-strikethrough" }).range(from, to));
-        } else if (name === "InlineCode") {
-          decorations.push(Decoration.mark({ class: "cm-live-inline-code" }).range(from, to));
-        } else if (name === "Link") {
-          decorations.push(Decoration.mark({ class: "cm-live-link" }).range(from, to));
-        } else if (name === "Image") {
-          decorations.push(Decoration.mark({ class: "cm-live-image" }).range(from, to));
-        } else if (name === "URL") {
-          decorations.push(Decoration.mark({ class: "cm-live-link" }).range(from, to));
-        }
-      },
-      from: visible.from,
-      to: visible.to,
-    });
-  }
+      if (!editable) return;
+      if (name === "StrongEmphasis") {
+        decorations.push(Decoration.mark({ class: "cm-live-strong" }).range(from, to));
+      } else if (name === "Emphasis") {
+        decorations.push(Decoration.mark({ class: "cm-live-emphasis" }).range(from, to));
+      } else if (name === "Strikethrough") {
+        decorations.push(Decoration.mark({ class: "cm-live-strikethrough" }).range(from, to));
+      } else if (name === "InlineCode") {
+        decorations.push(Decoration.mark({ class: "cm-live-inline-code" }).range(from, to));
+      } else if (name === "Link") {
+        decorations.push(Decoration.mark({ class: "cm-live-link" }).range(from, to));
+      } else if (name === "Image") {
+        decorations.push(Decoration.mark({ class: "cm-live-image" }).range(from, to));
+      } else if (name === "URL") {
+        decorations.push(Decoration.mark({ class: "cm-live-link" }).range(from, to));
+      }
+    },
+  });
 
   return {
     decorations: Decoration.set(decorations, true),
@@ -320,32 +323,27 @@ function buildLivePreview(view: EditorView) {
   };
 }
 
-class LivePreviewView {
+const livePreviewField = StateField.define<{
   decorations: DecorationSet;
   replacements: DecorationSet;
-
-  constructor(view: EditorView) {
-    const preview = buildLivePreview(view);
-    this.decorations = preview.decorations;
-    this.replacements = preview.replacements;
-  }
-
-  update(update: ViewUpdate) {
-    if (update.docChanged || update.selectionSet || update.viewportChanged) {
-      const preview = buildLivePreview(update.view);
-      this.decorations = preview.decorations;
-      this.replacements = preview.replacements;
-    }
-  }
-}
-
-const livePreviewPlugin = ViewPlugin.fromClass(LivePreviewView, {
-  decorations: (plugin) => plugin.decorations,
+}>({
+  create: buildLivePreview,
+  provide: (field) =>
+    EditorView.decorations.from(field, (preview) => preview.decorations),
+  update(preview, transaction) {
+    return transaction.docChanged || transaction.selection
+      ? buildLivePreview(transaction.state)
+      : preview;
+  },
 });
 
 const livePreviewExtension: Extension = [
-  livePreviewPlugin,
-  EditorView.atomicRanges.of((view) => view.plugin(livePreviewPlugin)?.replacements ?? Decoration.none),
+  // CodeMirror requires block replacements to come from state-backed
+  // decorations. A view plugin throws during layout before it can measure them.
+  livePreviewField,
+  EditorView.atomicRanges.of(
+    (view) => view.state.field(livePreviewField).replacements,
+  ),
 ];
 
 function modeLabel(mode: EditorMode) {
@@ -430,6 +428,24 @@ export default function MarkdownNoteEditor({
           ...historyKeymap,
         ]),
         EditorView.updateListener.of((update) => {
+          if (update.selectionSet || update.docChanged) {
+            const selection = update.state.selection.main;
+            const root = rootRef.current;
+
+            if (root && !selection.empty) {
+              root.dataset.editorSelectionStart = String(selection.from);
+              root.dataset.editorSelectionEnd = String(selection.to);
+              root.dataset.editorSelectionQuote = update.state.sliceDoc(
+                selection.from,
+                selection.to,
+              );
+            } else if (root) {
+              delete root.dataset.editorSelectionStart;
+              delete root.dataset.editorSelectionEnd;
+              delete root.dataset.editorSelectionQuote;
+            }
+          }
+
           if (!update.docChanged || update.transactions.some((transaction) => transaction.annotation(externalSync))) {
             return;
           }
@@ -495,9 +511,15 @@ export default function MarkdownNoteEditor({
     <div
       aria-label={ariaLabel}
       className={`live-markdown-editor ${className}`.trim()}
+      data-conversation-id={readingSelectionContext?.conversationId}
       data-empty={value ? undefined : "true"}
+      data-message-id={readingSelectionContext?.messageId}
       data-mode={mode}
+      data-note-id={readingSelectionContext?.noteId}
       data-placeholder={placeholder}
+      data-selection-source={
+        readingSelectionContext ? "standalone-note" : undefined
+      }
       onBlur={handleBlur}
       ref={rootRef}
       role="group"

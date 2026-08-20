@@ -168,11 +168,13 @@ describe("getConversationTreeLanes", () => {
     expect(getConversationTreeLanes(conversations, "leaf-b")).toEqual([
       {
         conversationIds: ["branch-b", "branch-a"],
+        noteIds: [],
         parentId: "root",
         selectedConversationId: "branch-b",
       },
       {
         conversationIds: ["leaf-b", "leaf-a"],
+        noteIds: [],
         parentId: "branch-b",
         selectedConversationId: "leaf-b",
       },
@@ -193,8 +195,46 @@ describe("getConversationTreeLanes", () => {
 
     expect(getConversationTreeLanes(conversations, "branch").at(-1)).toEqual({
       conversationIds: ["leaf"],
+      noteIds: [],
       parentId: "branch",
       selectedConversationId: null,
     });
+  });
+
+  test("creates a side lane for margin notes even without child chats", () => {
+    const root = conversation("root", null, [], "2026-01-01");
+    root.notes = [
+      {
+        content: "Keep the boundary explicit.",
+        createdAt: "2026-01-02",
+        endOffset: 12,
+        id: "margin-note",
+        kind: "comment",
+        quote: "the boundary",
+        sourceMessageId: "message-root",
+        startOffset: 0,
+        updatedAt: "2026-01-02",
+      },
+      {
+        content: "A full side-note document",
+        createdAt: "2026-01-03",
+        endOffset: null,
+        id: "side-note",
+        kind: "side-chat",
+        quote: null,
+        sourceMessageId: null,
+        startOffset: null,
+        updatedAt: "2026-01-03",
+      },
+    ];
+
+    expect(getConversationTreeLanes({ root }, "root")).toEqual([
+      {
+        conversationIds: [],
+        noteIds: ["margin-note"],
+        parentId: "root",
+        selectedConversationId: null,
+      },
+    ]);
   });
 });

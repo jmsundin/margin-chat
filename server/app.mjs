@@ -7,6 +7,7 @@ import { createChatService } from "./chat/index.mjs";
 import { loadProjectEnv } from "./config/env.mjs";
 import { createRuntimeConfig } from "./config/runtime.mjs";
 import { createAppDatabase } from "./db/index.mjs";
+import { createDocumentService } from "./documents/index.mjs";
 import { createApiHandler } from "./routes/api.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -33,9 +34,14 @@ function buildAppContext() {
     database,
     env: process.env,
   });
+  const documentService = createDocumentService({
+    database,
+    env: process.env,
+  });
   const chatService = createChatService({
     apiKeyService,
     database,
+    documentService,
     env: process.env,
     runtimeConfig,
   });
@@ -45,6 +51,7 @@ function buildAppContext() {
     billingService,
     chatService,
     database,
+    documentService,
     runtimeConfig,
   });
 
@@ -55,6 +62,7 @@ function buildAppContext() {
     billingService,
     chatService,
     database,
+    documentService,
     runtimeConfig,
   };
 }

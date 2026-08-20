@@ -5,6 +5,7 @@ import type {
   AuthenticatedUser,
   BranchAnchor,
   BackendServiceId,
+  ConversationDocument,
   Message,
 } from "../types";
 
@@ -16,6 +17,7 @@ interface ConversationContext {
     title: string;
   }>;
   branchAnchor: BranchAnchor | null;
+  documents: ConversationDocument[];
   id: string;
   parentId: string | null;
   title: string;
@@ -72,6 +74,10 @@ interface CheckoutConfirmationResponse {
 
 interface ApiKeySettingsResponse {
   apiKeys: ApiKeySettings;
+}
+
+interface DocumentUploadResponse {
+  document: ConversationDocument;
 }
 
 export class ApiError extends Error {
@@ -278,6 +284,48 @@ export async function requestChatTitle(args: {
   }
 
   return payload.title.trim();
+}
+
+export async function requestUploadDocument(
+  file: File,
+): Promise<ConversationDocument> {
+  const form = new FormData();
+  form.set("file", file);
+  const response = await fetch("/api/documents", {
+    body: form,
+    credentials: "same-origin",
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as
+    | DocumentUploadResponse
+    | ErrorPayload
+    | null;
+
+  ensureOk(response, payload, "Document upload failed.");
+
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("document" in payload) ||
+    typeof payload.document?.id !== "string"
+  ) {
+    throw new Error("Backend returned an invalid document.");
+  }
+
+  return payload.document;
+}
+
+export async function requestDeleteDocument(documentId: string): Promise<void> {
+  const response = await fetch(
+    `/api/documents/${encodeURIComponent(documentId)}`,
+    {
+      credentials: "same-origin",
+      method: "DELETE",
+    },
+  );
+  const payload = (await readJson(response)) as ErrorPayload | null;
+
+  ensureOk(response, payload, "Document deletion failed.");
 }
 
 export async function requestStoredState(): Promise<AppState | null> {

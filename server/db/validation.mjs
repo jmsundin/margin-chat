@@ -551,6 +551,10 @@ function normalizeConversation(expectedId, input) {
     messages: input.messages.map((message, index) =>
       normalizeMessage(expectedId, index, message),
     ),
+    documents:
+      input.documents === undefined
+        ? []
+        : normalizeDocuments(expectedId, input.documents),
     notes:
       input.notes === undefined
         ? []
@@ -567,6 +571,66 @@ function normalizeConversation(expectedId, input) {
       `Conversation "${expectedId}" updatedAt`,
     ),
   };
+}
+
+function normalizeDocuments(conversationId, input) {
+  if (!Array.isArray(input)) {
+    throw createStateError(
+      `Conversation "${conversationId}" documents must be an array.`,
+    );
+  }
+
+  const seen = new Set();
+
+  return input.map((document, index) => {
+    if (!document || typeof document !== "object" || Array.isArray(document)) {
+      throw createStateError(
+        `Document ${index} in conversation "${conversationId}" must be an object.`,
+      );
+    }
+
+    const id = normalizeId(
+      document.id,
+      `Document ${index} in conversation "${conversationId}" id`,
+    );
+
+    if (seen.has(id)) {
+      throw createStateError(
+        `Conversation "${conversationId}" contains duplicate document "${id}".`,
+      );
+    }
+
+    if (typeof document.filename !== "string" || !document.filename.trim()) {
+      throw createStateError(
+        `Document "${id}" must include a filename.`,
+      );
+    }
+
+    seen.add(id);
+    return {
+      createdAt: normalizeTimestamp(
+        document.createdAt,
+        `Document "${id}" createdAt`,
+      ),
+      error:
+        typeof document.error === "string" && document.error.trim()
+          ? document.error.trim()
+          : null,
+      filename: document.filename.trim().slice(0, 240),
+      id,
+      mimeType:
+        typeof document.mimeType === "string" && document.mimeType.trim()
+          ? document.mimeType.trim().slice(0, 160)
+          : "application/octet-stream",
+      sizeBytes: normalizeInteger(document.sizeBytes, `Document "${id}" sizeBytes`),
+      status:
+        document.status === "processing" ||
+        document.status === "ready" ||
+        document.status === "failed"
+          ? document.status
+          : "ready",
+    };
+  });
 }
 
 function normalizeNotes(conversationId, input) {

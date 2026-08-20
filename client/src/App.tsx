@@ -21,6 +21,7 @@ import ConversationTreeNode from "./components/ConversationTreeNode";
 import ConversationGraphView from "./components/ConversationGraphView";
 import { ConversationGroupSelect } from "./components/ConversationGroupControls";
 import MainChatTileView from "./components/MainChatTileView";
+import MarginNoteTreeNode from "./components/MarginNoteTreeNode";
 import ProfileModal from "./components/ProfileModal";
 import SearchModal, { type ChatSearchResult } from "./components/SearchModal";
 import StandaloneNotePanel from "./components/StandaloneNotePanel";
@@ -30,6 +31,7 @@ import {
   requestCreateBillingPortalSession,
   requestCreateCheckoutSession,
   requestConfirmCheckoutSession,
+  requestDeleteDocument,
   persistStoredState,
   requestAuthSession,
   requestChatReply,
@@ -40,6 +42,7 @@ import {
   requestPasswordResetConfirm,
   requestSignup,
   requestStoredState,
+  requestUploadDocument,
   requestUpdateProfile,
   requestUpdateApiKeys,
 } from "./lib/api";
@@ -305,6 +308,9 @@ function hydratePersistedState(input: unknown): AppState | null {
 
               return {
                 ...conversation,
+                documents: Array.isArray(conversation.documents)
+                  ? conversation.documents
+                  : [],
                 kind: conversation.kind === "note" ? "note" : "chat",
                 notes: Array.isArray(conversation.notes)
                   ? conversation.notes.map((note) => ({
@@ -795,6 +801,104 @@ function getSelectionSourceElement(node: Node | null): HTMLDivElement | null {
   return node.parentElement?.closest(selector) ?? null;
 }
 
+function getElementForSelectionNode(node: Node) {
+  return node instanceof Element ? node : node.parentElement;
+}
+
+function getCodeMirrorSelection(
+  sourceElement: HTMLDivElement,
+  range: Range,
+): { endOffset: number; quote: string; startOffset: number } | null {
+  const startElement = getElementForSelectionNode(range.startContainer);
+  const endElement = getElementForSelectionNode(range.endContainer);
+
+  if (
+    !startElement?.closest(".cm-content") ||
+    !endElement?.closest(".cm-content")
+  ) {
+    return null;
+  }
+
+  const startRenderedBlock = startElement.closest<HTMLElement>(
+    ".cm-live-rendered-block",
+  );
+  const endRenderedBlock = endElement.closest<HTMLElement>(
+    ".cm-live-rendered-block",
+  );
+
+  // Inactive Live Preview lines are CodeMirror replacement widgets, so their
+  // native DOM selection does not update EditorState. Map the visible quote
+  // back into the widget's Markdown source instead.
+  if (startRenderedBlock && startRenderedBlock === endRenderedBlock) {
+    const rawQuote = range.toString();
+    const quote = rawQuote.trim();
+    const source = startRenderedBlock.dataset.sourceValue ?? "";
+    const blockStart = Number.parseInt(
+      startRenderedBlock.dataset.sourceFrom ?? "",
+      10,
+    );
+    const prefixRange = range.cloneRange();
+    prefixRange.selectNodeContents(startRenderedBlock);
+    prefixRange.setEnd(range.startContainer, range.startOffset);
+    const expectedQuoteStart =
+      prefixRange.toString().length +
+      (rawQuote.length - rawQuote.trimStart().length);
+    let quoteStart = -1;
+
+    if (quote) {
+      for (
+        let candidate = source.indexOf(quote);
+        candidate >= 0;
+        candidate = source.indexOf(quote, candidate + 1)
+      ) {
+        if (
+          quoteStart < 0 ||
+          Math.abs(candidate - expectedQuoteStart) <
+            Math.abs(quoteStart - expectedQuoteStart)
+        ) {
+          quoteStart = candidate;
+        }
+      }
+    }
+
+    if (quote && Number.isFinite(blockStart) && quoteStart >= 0) {
+      return {
+        endOffset: blockStart + quoteStart + quote.length,
+        quote,
+        startOffset: blockStart + quoteStart,
+      };
+    }
+  }
+
+  const startOffset = Number.parseInt(
+    sourceElement.dataset.editorSelectionStart ?? "",
+    10,
+  );
+  const endOffset = Number.parseInt(
+    sourceElement.dataset.editorSelectionEnd ?? "",
+    10,
+  );
+  const rawQuote = sourceElement.dataset.editorSelectionQuote ?? "";
+  const quote = rawQuote.trim();
+  const leadingWhitespace = rawQuote.length - rawQuote.trimStart().length;
+  const trailingWhitespace = rawQuote.length - rawQuote.trimEnd().length;
+
+  if (
+    !quote ||
+    !Number.isFinite(startOffset) ||
+    !Number.isFinite(endOffset) ||
+    endOffset <= startOffset
+  ) {
+    return null;
+  }
+
+  return {
+    endOffset: endOffset - trailingWhitespace,
+    quote,
+    startOffset: startOffset + leadingWhitespace,
+  };
+}
+
 function getAnchorsByMessageId(
   conversations: Record<string, Conversation>,
   conversationId: string,
@@ -1252,6 +1356,8 @@ function WorkspaceApp({
   const [pendingConversationIds, setPendingConversationIds] = useState<
     Record<string, boolean>
   >({});
+  const [documentUploadByConversationId, setDocumentUploadByConversationId] =
+    useState<Record<string, { error: string | null; uploading: boolean }>>({});
   const [typingMessageIds, setTypingMessageIds] = useState<Record<string, boolean>>(
     {},
   );
@@ -2195,7 +2301,7 @@ function WorkspaceApp({
 
     const nextSize = {
       width: toolbarRef.current.offsetWidth,
-      height: toolbarRef.current.offsetHeight,
+      height: toolbarRef.current.scrollHeight,
     };
 
     setToolbarSize((current) =>
@@ -2683,6 +2789,7 @@ function WorkspaceApp({
     return {
       ancestorContext,
       branchAnchor: conversation.branchAnchor,
+      documents: conversation.documents ?? [],
       id: conversation.id,
       parentId: conversation.parentId,
       title: conversation.title,
@@ -2914,6 +3021,115 @@ function WorkspaceApp({
     );
   }
 
+  async function handleUploadDocuments(
+    conversationId: string,
+    files: File[],
+  ) {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    const availableSlots = Math.max(
+      0,
+      20 - (conversation?.documents?.length ?? 0),
+    );
+    const selectedFiles = files.slice(0, availableSlots);
+
+    if (!conversation || !selectedFiles.length) {
+      return;
+    }
+
+    setDocumentUploadByConversationId((current) => ({
+      ...current,
+      [conversationId]: { error: null, uploading: true },
+    }));
+
+    try {
+      for (const file of selectedFiles) {
+        const document = await requestUploadDocument(file);
+
+        setState((current) => {
+          const currentConversation = current.conversations[conversationId];
+
+          if (
+            !currentConversation ||
+            currentConversation.documents?.some(
+              (candidate) => candidate.id === document.id,
+            )
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            conversations: {
+              ...current.conversations,
+              [conversationId]: {
+                ...currentConversation,
+                documents: [
+                  ...(currentConversation.documents ?? []),
+                  document,
+                ],
+                updatedAt: new Date().toISOString(),
+              },
+            },
+          };
+        });
+      }
+
+      setDocumentUploadByConversationId((current) => ({
+        ...current,
+        [conversationId]: { error: null, uploading: false },
+      }));
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) {
+        onAuthExpired();
+        return;
+      }
+
+      setDocumentUploadByConversationId((current) => ({
+        ...current,
+        [conversationId]: {
+          error: getErrorText(error, "Unable to process that document."),
+          uploading: false,
+        },
+      }));
+    }
+  }
+
+  async function handleDeleteDocument(documentId: string) {
+    try {
+      await requestDeleteDocument(documentId);
+      setState((current) => ({
+        ...current,
+        conversations: Object.fromEntries(
+          Object.entries(current.conversations).map(
+            ([conversationId, conversation]) => [
+              conversationId,
+              {
+                ...conversation,
+                documents: (conversation.documents ?? []).filter(
+                  (document) => document.id !== documentId,
+                ),
+              },
+            ],
+          ),
+        ),
+      }));
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) {
+        onAuthExpired();
+        return;
+      }
+
+      const conversationId = currentStateRef.current.activeConversationId;
+      setDocumentUploadByConversationId((current) => ({
+        ...current,
+        [conversationId]: {
+          error: getErrorText(error, "Unable to delete that document."),
+          uploading: false,
+        },
+      }));
+    }
+  }
+
   function handleModelChange(
     conversationId: string,
     serviceId: BackendServiceId,
@@ -3015,7 +3231,11 @@ function WorkspaceApp({
       return;
     }
 
-    const quote = selection.toString().trim();
+    const codeMirrorSelection =
+      sourceKind === "standalone-note"
+        ? getCodeMirrorSelection(startBubble, range)
+        : null;
+    const quote = codeMirrorSelection?.quote ?? selection.toString().trim();
 
     if (!quote) {
       return;
@@ -3029,14 +3249,18 @@ function WorkspaceApp({
     endRange.selectNodeContents(startBubble);
     endRange.setEnd(range.endContainer, range.endOffset);
 
-    const rect = range.getBoundingClientRect();
+    const selectionRects = Array.from(range.getClientRects()).filter(
+      (candidate) => candidate.width > 0 || candidate.height > 0,
+    );
+    const rect = selectionRects.at(-1) ?? range.getBoundingClientRect();
 
     setSelectionDraft({
       conversationId,
       messageId,
       quote,
-      startOffset: startRange.toString().length,
-      endOffset: endRange.toString().length,
+      startOffset:
+        codeMirrorSelection?.startOffset ?? startRange.toString().length,
+      endOffset: codeMirrorSelection?.endOffset ?? endRange.toString().length,
       prompt: "",
       rect: {
         left: rect.left,
@@ -3222,6 +3446,7 @@ function WorkspaceApp({
         createdAt: now,
       },
       childIds: [],
+      documents: [...(parentConversation.documents ?? [])],
       createdAt: now,
       updatedAt: now,
       messages: [userMessage],
@@ -4300,6 +4525,7 @@ function WorkspaceApp({
     selectionDraft && typeof window !== "undefined"
       ? getSelectionTooltipLayout({
           rect: selectionDraft.rect,
+          tooltipHeight: toolbarSize.height,
           tooltipWidth: toolbarSize.width,
           viewportHeight: window.innerHeight,
           viewportMargin: TOOLTIP_VIEWPORT_MARGIN,
@@ -4352,6 +4578,7 @@ function WorkspaceApp({
         }
         onCreateNote={handleCreateNote}
         onDeleteNote={handleDeleteNote}
+        onDeleteDocument={handleDeleteDocument}
         onDraftChange={(value) => handleDraftChange(conversation.id, value)}
         onModelChange={handleModelChange}
         onOpenBranch={handleSelectConversation}
@@ -4361,6 +4588,7 @@ function WorkspaceApp({
         onStopStreaming={stopChatStream}
         onStopTypewriter={handleStopTypewriter}
         onSubmit={handleSubmit}
+        onUploadDocuments={handleUploadDocuments}
         onTypewriterComplete={handleTypewriterComplete}
         onTypewriterProgress={handleTypewriterProgress}
         onUpdateNote={handleUpdateNote}
@@ -4371,6 +4599,12 @@ function WorkspaceApp({
             : undefined
         }
         recentModelSelections={recentModelSelections}
+        documentUploadState={
+          documentUploadByConversationId[conversation.id] ?? {
+            error: null,
+            uploading: false,
+          }
+        }
         registerAnchorRef={(branchConversationId, element) => {
           anchorRefs.current[branchConversationId] = element;
         }}
@@ -4772,9 +5006,19 @@ function WorkspaceApp({
                       return null;
                     }
 
+                    const marginNotes = lane.noteIds
+                      .map((noteId) =>
+                        (parentConversation.notes ?? []).find(
+                          (note) => note.id === noteId,
+                        ),
+                      )
+                      .filter(
+                        (note): note is ConversationNote => Boolean(note),
+                      );
+
                     return (
                       <section
-                        aria-label={`Children of ${parentConversation.title}`}
+                        aria-label={`Side items for ${parentConversation.title}`}
                         className={
                           lane.selectedConversationId
                             ? "conversation-tree-lane has-expanded-chat"
@@ -4788,8 +5032,21 @@ function WorkspaceApp({
                           <span>Depth {laneIndex + 1}</span>
                           <strong>{parentConversation.title}</strong>
                           <span>
-                            {lane.conversationIds.length} child
-                            {lane.conversationIds.length === 1 ? "" : "ren"}
+                            {lane.conversationIds.length
+                              ? `${lane.conversationIds.length} child${
+                                  lane.conversationIds.length === 1
+                                    ? ""
+                                    : "ren"
+                                }`
+                              : ""}
+                            {lane.conversationIds.length && marginNotes.length
+                              ? " · "
+                              : ""}
+                            {marginNotes.length
+                              ? `${marginNotes.length} note${
+                                  marginNotes.length === 1 ? "" : "s"
+                                }`
+                              : ""}
                           </span>
                         </header>
                         <div className="conversation-tree-lane-list">
@@ -4827,6 +5084,20 @@ function WorkspaceApp({
                               />
                             );
                           })}
+                          {marginNotes.map((note) => (
+                            <MarginNoteTreeNode
+                              conversationId={parentConversation.id}
+                              key={note.id}
+                              note={note}
+                              onDelete={handleDeleteNote}
+                              onUpdate={handleUpdateNote}
+                              onUse={
+                                parentConversation.kind === "note"
+                                  ? undefined
+                                  : handleUseNote
+                              }
+                            />
+                          ))}
                         </div>
                       </section>
                     );
@@ -4876,7 +5147,7 @@ function WorkspaceApp({
               <div className="selection-tooltip-head">
                 <p className="eyebrow">
                   {selectionDraft.sourceKind === "standalone-note"
-                    ? "Chat with note"
+                    ? "Selected note text"
                     : "New branch"}
                 </p>
                 <button
@@ -4896,20 +5167,34 @@ function WorkspaceApp({
               </p>
               <div aria-label="Selected text action" className="selection-intent-switch" role="group">
                 <button
+                  aria-label={
+                    selectionDraft.sourceKind === "standalone-note"
+                      ? "Create a side note"
+                      : "Add note"
+                  }
                   aria-pressed={selectionIntent === "note"}
                   className={selectionIntent === "note" ? "is-active" : ""}
                   onClick={() => setSelectionIntent("note")}
                   type="button"
                 >
-                  Add note
+                  {selectionDraft.sourceKind === "standalone-note"
+                    ? "Side note"
+                    : "Add note"}
                 </button>
                 <button
+                  aria-label={
+                    selectionDraft.sourceKind === "standalone-note"
+                      ? "Create a side chat"
+                      : "Start branch"
+                  }
                   aria-pressed={selectionIntent === "branch"}
                   className={selectionIntent === "branch" ? "is-active" : ""}
                   onClick={() => setSelectionIntent("branch")}
                   type="button"
                 >
-                  Start branch
+                  {selectionDraft.sourceKind === "standalone-note"
+                    ? "Side chat"
+                    : "Start branch"}
                 </button>
               </div>
               {selectionIntent === "note" ? (

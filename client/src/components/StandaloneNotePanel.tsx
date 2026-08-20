@@ -125,7 +125,6 @@ export default function StandaloneNotePanel({
     >
       <div className="panel-body standalone-note-body">
         <header className="standalone-note-header">
-          <span className="standalone-note-kicker">Standalone note</span>
           <input
             aria-label="Note title"
             className="standalone-note-title"

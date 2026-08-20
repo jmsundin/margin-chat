@@ -135,6 +135,7 @@ function buildCurrentConversationSnapshot(chatRequest, existingConversation) {
       lastMessage?.createdAt ??
       now,
     id: chatRequest.conversation.id,
+    documents: chatRequest.conversation.documents ?? [],
     messages: chatRequest.messages.map((message) => ({
       content: message.content,
       createdAt: message.createdAt,

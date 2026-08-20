@@ -59,7 +59,7 @@ export default function ConversationTreeNode({
       <span className="conversation-tree-node-head">
         <span className="conversation-tree-node-kicker">
           <BranchIcon />
-          Child chat
+          Margin Chat
         </span>
         <span aria-hidden="true" className="conversation-tree-node-expand">
           Expand ↗

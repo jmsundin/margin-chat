@@ -4,6 +4,7 @@ import ChatPanel from "../client/src/components/ChatPanel";
 import LiveMarkdownEditor, {
   parseMarkdownBlocks,
 } from "../client/src/components/LiveMarkdownEditor";
+import MarginNoteTreeNode from "../client/src/components/MarginNoteTreeNode";
 import StandaloneNotePanel from "../client/src/components/StandaloneNotePanel";
 import {
   getMarkdownBackspaceEdit,
@@ -254,9 +255,37 @@ describe("personal notes", () => {
       />,
     );
 
-    expect(markup).toContain("Standalone note");
+    expect(markup).not.toContain("standalone-note-kicker");
     expect(markup).toContain('aria-label="Note title"');
     expect(markup).toContain("Markdown Live Preview");
+  });
+
+  test("renders a margin note as a compact side-lane card", () => {
+    const markup = renderToStaticMarkup(
+      <MarginNoteTreeNode
+        conversationId="standalone-note"
+        note={{
+          content: "Compare this with the simpler option.",
+          createdAt,
+          endOffset: 34,
+          id: "margin-note",
+          kind: "comment",
+          quote: "architectural constraint",
+          sourceMessageId: "standalone-note-context-body",
+          startOffset: 10,
+          updatedAt: createdAt,
+        }}
+        onDelete={() => {}}
+        onUpdate={() => {}}
+      />,
+    );
+
+    expect(markup).toContain('data-margin-note-tree-node="margin-note"');
+    expect(markup).toContain("Margin note");
+    expect(markup).toContain("Compare this with the simpler option.");
+    expect(markup).toContain("architectural constraint");
+    expect(markup).toContain("Private note");
+    expect(markup).toContain("Not sent to AI");
   });
 
   test("normalizes note anchors as part of persisted state", () => {
@@ -324,7 +353,7 @@ describe("personal notes", () => {
     );
 
     expect(markup).toContain("Text with a personal note");
-    expect(markup).toContain("Private, not sent to AI");
+    expect(markup).not.toContain("message-note-group");
     expect(markup).toContain('aria-label="Open a side note for this message"');
     expect(markup).toContain('aria-label="Add a sticky comment to this message"');
     expect(markup).toContain('aria-label="Open a new side note"');
@@ -446,6 +475,26 @@ describe("personal notes", () => {
     expect(markup).toContain('aria-label="Use Source"');
     expect(markup).toContain('aria-label="Use Reading"');
     expect(markup).not.toContain("live-markdown-placeholder");
+  });
+
+  test("exposes standalone selection context in editable Markdown modes", () => {
+    const markup = renderToStaticMarkup(
+      <LiveMarkdownEditor
+        ariaLabel="Standalone Markdown editor"
+        onChange={() => {}}
+        readingSelectionContext={{
+          conversationId: "standalone-note",
+          messageId: "standalone-note-context-body",
+          noteId: "body",
+        }}
+        value="Select this text"
+      />,
+    );
+
+    expect(markup).toContain('data-selection-source="standalone-note"');
+    expect(markup).toContain('data-conversation-id="standalone-note"');
+    expect(markup).toContain('data-message-id="standalone-note-context-body"');
+    expect(markup).toContain('data-note-id="body"');
   });
 
   test("activates standalone editors before their click establishes the caret", () => {

@@ -7,6 +7,7 @@ export function getSelectionTooltipLayout(args: {
     top: number;
     width: number;
   };
+  tooltipHeight: number;
   tooltipWidth: number;
   viewportHeight: number;
   viewportMargin: number;
@@ -23,14 +24,32 @@ export function getSelectionTooltipLayout(args: {
           Math.max(args.rect.left + args.rect.width / 2, minimumLeft),
           maximumLeft,
         );
-  const top = Math.max(
-    args.rect.top + args.rect.height + SELECTION_TOOLTIP_GAP_PX,
+  const selectionBottom = args.rect.top + args.rect.height;
+  const topBelow = Math.max(
+    selectionBottom + SELECTION_TOOLTIP_GAP_PX,
     args.viewportMargin,
   );
+  const availableBelow = Math.max(
+    args.viewportHeight - topBelow - args.viewportMargin,
+    0,
+  );
+  const renderAbove =
+    args.tooltipHeight > 0 && availableBelow < args.tooltipHeight;
+  const availableAbove = Math.max(
+    args.rect.top - SELECTION_TOOLTIP_GAP_PX - args.viewportMargin,
+    0,
+  );
+  const top = renderAbove
+    ? Math.max(
+        args.rect.top - SELECTION_TOOLTIP_GAP_PX - args.tooltipHeight,
+        args.viewportMargin,
+      )
+    : topBelow;
 
   return {
     left,
-    maxHeight: Math.max(args.viewportHeight - top - args.viewportMargin, 0),
+    maxHeight: renderAbove ? availableAbove : availableBelow,
+    placement: renderAbove ? "above" : "below",
     top,
   };
 }

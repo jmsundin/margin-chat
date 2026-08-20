@@ -25,7 +25,7 @@ import {
 } from "./title.mjs";
 import { validateChatRequest } from "./validation.mjs";
 
-export function createChatService({ database, env, runtimeConfig }) {
+export function createChatService({ database, documentService, env, runtimeConfig }) {
   const automaticServicePriority = [
     runtimeConfig.defaultBackendProvider,
     "openai-api",
@@ -150,6 +150,7 @@ export function createChatService({ database, env, runtimeConfig }) {
     resolvedServiceId,
     context,
     systemInstructionOverride = null,
+    documentInstruction = null,
   ) {
     const credential = getProviderCredential(resolvedServiceId, context);
     const maxOutputTokens =
@@ -158,11 +159,14 @@ export function createChatService({ database, env, runtimeConfig }) {
       chatRequest.serviceId === resolvedServiceId
         ? chatRequest.modelId
         : getRuntimeDefaultModelForService(runtimeConfig, resolvedServiceId);
-    const systemInstruction =
+    const baseSystemInstruction =
       systemInstructionOverride ??
       (resolvedServiceId === "openai-agent"
         ? buildOpenAIAgentInstruction(chatRequest)
         : buildSystemInstruction(chatRequest));
+    const systemInstruction = documentInstruction
+      ? `${baseSystemInstruction}\n\n${documentInstruction}`
+      : baseSystemInstruction;
     let result;
 
     if (resolvedServiceId === "openai-agent") {
@@ -221,6 +225,7 @@ export function createChatService({ database, env, runtimeConfig }) {
     chatRequest,
     context,
     systemInstructionOverride = null,
+    documentInstruction = null,
   ) {
     const serviceIds = getAutomaticServiceIds(context);
 
@@ -242,6 +247,7 @@ export function createChatService({ database, env, runtimeConfig }) {
           serviceId,
           context,
           systemInstructionOverride,
+          documentInstruction,
         );
       } catch (error) {
         failures.push({ error, serviceId });
@@ -267,6 +273,7 @@ export function createChatService({ database, env, runtimeConfig }) {
     resolvedServiceId,
     context,
     handlers,
+    documentInstruction = null,
   ) {
     const credential = getProviderCredential(resolvedServiceId, context);
     const maxOutputTokens =
@@ -275,10 +282,13 @@ export function createChatService({ database, env, runtimeConfig }) {
       chatRequest.serviceId === resolvedServiceId
         ? chatRequest.modelId
         : getRuntimeDefaultModelForService(runtimeConfig, resolvedServiceId);
-    const systemInstruction =
+    const baseSystemInstruction =
       resolvedServiceId === "openai-agent"
         ? buildOpenAIAgentInstruction(chatRequest)
         : buildSystemInstruction(chatRequest);
+    const systemInstruction = documentInstruction
+      ? `${baseSystemInstruction}\n\n${documentInstruction}`
+      : baseSystemInstruction;
     const streamMetadata = {
       credentialSource: credential.source,
       model: resolvedModel,
@@ -347,7 +357,12 @@ export function createChatService({ database, env, runtimeConfig }) {
     };
   }
 
-  async function requestAutomaticReplyStream(chatRequest, context, handlers) {
+  async function requestAutomaticReplyStream(
+    chatRequest,
+    context,
+    handlers,
+    documentInstruction = null,
+  ) {
     const serviceIds = getAutomaticServiceIds(context);
 
     if (!serviceIds.length) {
@@ -376,6 +391,7 @@ export function createChatService({ database, env, runtimeConfig }) {
               await handlers.onReady?.(metadata);
             },
           },
+          documentInstruction,
         );
       } catch (error) {
         if (streamStarted) {
@@ -402,13 +418,21 @@ export function createChatService({ database, env, runtimeConfig }) {
 
   async function requestReply(payload, context = {}) {
     const chatRequest = validateChatRequest(payload);
+    const documentContext = await getDocumentContext(chatRequest, context);
     const result =
       chatRequest.serviceId === "backend-services"
-        ? await requestAutomaticReply(chatRequest, context)
+        ? await requestAutomaticReply(
+            chatRequest,
+            context,
+            null,
+            documentContext.instruction,
+          )
         : await requestProviderReply(
             chatRequest,
             resolveServiceId(chatRequest.serviceId, context),
             context,
+            null,
+            documentContext.instruction,
           );
 
     return {
@@ -486,14 +510,21 @@ export function createChatService({ database, env, runtimeConfig }) {
 
   async function requestReplyStream(payload, context = {}, handlers = {}) {
     const chatRequest = validateChatRequest(payload);
+    const documentContext = await getDocumentContext(chatRequest, context);
     const result =
       chatRequest.serviceId === "backend-services"
-        ? await requestAutomaticReplyStream(chatRequest, context, handlers)
+        ? await requestAutomaticReplyStream(
+            chatRequest,
+            context,
+            handlers,
+            documentContext.instruction,
+          )
         : await requestProviderReplyStream(
             chatRequest,
             resolveServiceId(chatRequest.serviceId, context),
             context,
             handlers,
+            documentContext.instruction,
           );
 
     return {
@@ -506,6 +537,18 @@ export function createChatService({ database, env, runtimeConfig }) {
       },
       reply: result.reply,
     };
+  }
+
+  async function getDocumentContext(chatRequest, context) {
+    if (!chatRequest.conversation.documents.length) {
+      return { chunks: [], instruction: null };
+    }
+
+    if (!documentService) {
+      throw new HttpError(503, "Document retrieval is not configured.");
+    }
+
+    return documentService.retrieveContext({ chatRequest, context });
   }
 
   function buildHealthPayload(databaseHealth) {

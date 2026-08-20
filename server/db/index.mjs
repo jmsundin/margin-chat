@@ -28,6 +28,13 @@ import {
   updateStripeCustomerId,
 } from "./billingRepository.mjs";
 import { buildConnectionOptions, getConnectionMetadata } from "./config.mjs";
+import {
+  completeDocument,
+  createDocument,
+  deleteDocument,
+  failDocument,
+  findRelevantDocumentChunks,
+} from "./documentRepository.mjs";
 import { wrapStorageError } from "./errors.mjs";
 import { readState, writeState } from "./repository.mjs";
 import { normalizeAppState } from "./validation.mjs";
@@ -129,6 +136,26 @@ export function createAppDatabase(env) {
     return withClient((client) => upsertUserApiKey(client, args));
   }
 
+  async function createDocumentRecord(args) {
+    return withClient((client) => createDocument(client, args));
+  }
+
+  async function completeDocumentRecord(args) {
+    return withClient((client) => completeDocument(client, args));
+  }
+
+  async function failDocumentRecord(args) {
+    return withClient((client) => failDocument(client, args));
+  }
+
+  async function deleteDocumentRecord(args) {
+    return withClient((client) => deleteDocument(client, args));
+  }
+
+  async function findRelevantDocumentChunksRecord(args) {
+    return withClient((client) => findRelevantDocumentChunks(client, args));
+  }
+
   async function loadState(userId) {
     return withClient((client) => readState(client, userId));
   }
@@ -202,10 +229,15 @@ export function createAppDatabase(env) {
     createAuthSession: createAuthSessionRecord,
     createPasswordResetToken: createPasswordResetTokenRecord,
     createUser: createUserRecord,
+    completeDocument: completeDocumentRecord,
+    createDocument: createDocumentRecord,
     creditHostedBalance: creditHostedBalanceRecord,
     deleteAuthSession: deleteAuthSessionRecord,
     deleteUserApiKey: deleteUserApiKeyRecord,
+    deleteDocument: deleteDocumentRecord,
+    failDocument: failDocumentRecord,
     findUserForLogin: findUserForLoginRecord,
+    findRelevantDocumentChunks: findRelevantDocumentChunksRecord,
     getUserBillingAccount: getUserBillingAccountRecord,
     getHealth,
     getUserByAuthSession: getUserByAuthSessionRecord,

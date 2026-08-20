@@ -2,6 +2,7 @@ import type { Conversation } from "../types";
 
 export interface ConversationTreeLane {
   conversationIds: string[];
+  noteIds: string[];
   parentId: string;
   selectedConversationId: string | null;
 }
@@ -146,8 +147,11 @@ export function getConversationTreeLanes(
       .map((childId) => conversations[childId])
       .filter((child): child is Conversation => Boolean(child))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    const marginNotes = (parentConversation.notes ?? [])
+      .filter((note) => (note.kind ?? "comment") === "comment")
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
-    if (!children.length) {
+    if (!children.length && !marginNotes.length) {
       return [];
     }
 
@@ -161,6 +165,7 @@ export function getConversationTreeLanes(
     return [
       {
         conversationIds: orderedChildren.map((child) => child.id),
+        noteIds: marginNotes.map((note) => note.id),
         parentId: parentConversation.id,
         selectedConversationId,
       },

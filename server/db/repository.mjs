@@ -67,6 +67,25 @@ export async function readState(client, userId) {
     `,
     [conversationIds],
   );
+  const documentResult = await client.query(
+    `
+      select
+        cd.conversation_id,
+        d.id,
+        d.filename,
+        d.mime_type,
+        d.size_bytes,
+        d.status,
+        d.error_message,
+        d.created_at
+      from marginchat_conversation_documents cd
+      join marginchat_documents d on d.id = cd.document_id
+      where cd.conversation_id = any($1::text[])
+        and d.user_id = $2
+      order by cd.attached_at asc, d.id asc
+    `,
+    [conversationIds, userId],
+  );
   const anchorResult = await client.query(
     `
       select
@@ -113,6 +132,7 @@ export async function readState(client, userId) {
       createdAt: toIsoString(row.created_at),
       id: row.id,
       kind: row.conversation_kind,
+      documents: [],
       messages: [],
       notes: [],
       modelId: row.model_id,
@@ -135,6 +155,24 @@ export async function readState(client, userId) {
       createdAt: toIsoString(row.created_at),
       id: row.id,
       role: row.role,
+    });
+  }
+
+  for (const row of documentResult.rows) {
+    const conversation = conversations[row.conversation_id];
+
+    if (!conversation) {
+      continue;
+    }
+
+    conversation.documents.push({
+      createdAt: toIsoString(row.created_at),
+      error: row.error_message ?? null,
+      filename: row.filename,
+      id: row.id,
+      mimeType: row.mime_type,
+      sizeBytes: Number(row.size_bytes),
+      status: row.status,
     });
   }
 
@@ -327,6 +365,31 @@ export async function writeState(client, userId, normalizedState) {
             message.createdAt,
           ],
         );
+      }
+    }
+
+    for (const conversation of orderedConversations) {
+      for (const document of conversation.documents ?? []) {
+        const result = await client.query(
+          `
+            insert into marginchat_conversation_documents (
+              conversation_id,
+              document_id,
+              attached_at
+            )
+            select $1, id, $4
+            from marginchat_documents
+            where id = $2 and user_id = $3
+            on conflict (conversation_id, document_id) do nothing
+          `,
+          [conversation.id, document.id, userId, document.createdAt],
+        );
+
+        if (!result.rowCount) {
+          throw createStateError(
+            `Document "${document.id}" is unavailable for this workspace.`,
+          );
+        }
       }
     }
 
