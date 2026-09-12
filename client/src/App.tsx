@@ -24,7 +24,7 @@ import { ConversationGroupSelect } from "./components/ConversationGroupControls"
 import MainChatTileView from "./components/MainChatTileView";
 import MarginNoteTreeNode from "./components/MarginNoteTreeNode";
 import ProfileModal from "./components/ProfileModal";
-import SearchModal, { type ChatSearchResult } from "./components/SearchModal";
+import SearchModal from "./components/SearchModal";
 import StandaloneNotePanel from "./components/StandaloneNotePanel";
 import ThreadSidebar from "./components/ThreadSidebar";
 import {
@@ -48,12 +48,20 @@ import {
   requestUpdateProfile,
   requestUpdateApiKeys,
 } from "./lib/api";
-import { sanitizePinnedThreadIds } from "./lib/pinnedThreads";
+import {
+  getRecentModelSelectionsStorageKey,
+  getStateSavedAtStorageKey,
+  getStateStorageKey,
+  hydratePersistedState,
+  loadRecentModelSelections,
+  loadStoredState,
+} from "./lib/appState";
+import { getConversationRequestPayload } from "./lib/chatContext";
+import { buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
   CONVERSATION_GROUP_COLORS,
   assignConversationToGroup,
   getConversationGroupId,
-  normalizeConversationGroups,
   removeConversationsFromGroups,
 } from "./lib/conversationGroups";
 import {
@@ -78,12 +86,8 @@ import {
   type LocalDirectoryStatus,
 } from "./lib/workspaceStorage";
 import {
-  DEFAULT_BACKEND_SERVICE_ID,
   getBackendServiceLabel,
-  getDefaultModelIdForService,
-  isBackendServiceId,
   resolveBackendServiceModelId,
-  sanitizeRecentBackendServiceSelections,
   type RecentBackendServiceSelection,
   upsertRecentBackendServiceSelection,
 } from "./lib/services";
@@ -95,26 +99,23 @@ import {
 } from "./lib/graphLayout";
 import {
   buildConversationTitle,
+  collectConversationTreeIds,
   excerpt,
   getBranchNavigation,
   getConversationPath,
   getConversationRootId,
   getConversationTreeLanes,
-  getRootConversations,
 } from "./lib/tree";
 import { buildChatOutline } from "./lib/chatOutline";
 import { getConversationSelectionViewMode } from "./lib/conversationNavigation";
 import {
-  getStandaloneNote,
   getStandaloneNoteContextMessageId,
   upsertStandaloneNoteContextMessage,
 } from "./lib/standaloneNotes";
-import { categorizeThread, getThreadCategoryLabel } from "./lib/threadCategories";
 import {
   DEFAULT_MAIN_CHAT_TITLE,
   DEFAULT_SIDE_CHAT_TITLE,
   createChildConversation,
-  createEmptyState,
   createMainConversation,
   createSideConversation,
   createStandaloneNoteConversation,
@@ -134,12 +135,8 @@ import type {
   Message,
   MessageAnchorLink,
   SelectionDraft,
-  ThreadSummary,
 } from "./types";
 
-const STORAGE_KEY = "margin-chat-state";
-const STORAGE_SAVED_AT_KEY = "margin-chat-state-saved-at";
-const RECENT_MODEL_SELECTIONS_STORAGE_KEY = "margin-chat-recent-model-selections";
 const THEME_STORAGE_KEY = "margin-chat-theme";
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
@@ -175,7 +172,6 @@ const FALLBACK_TOOLTIP_SIZE = {
   height: 300,
   width: 360,
 };
-const CONNECTOR_CONTENT_GUTTER_PX = 8;
 type ThemeMode = "light" | "dark";
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 type StorageMode = "loading" | "fallback" | "local" | "server";
@@ -245,209 +241,6 @@ function getIsMobileViewport() {
   return window.matchMedia(
     `(max-width: ${MOBILE_PANEL_RESIZE_BREAKPOINT_PX}px)`,
   ).matches;
-}
-
-function resolvePersistedDefaultSelection(args: {
-  activeConversationId?: string;
-  conversations: Record<string, Conversation>;
-  defaultModelId?: unknown;
-  defaultServiceId?: unknown;
-  rootId?: string;
-}): Pick<AppState, "defaultModelId" | "defaultServiceId"> {
-  const fallbackConversation =
-    (typeof args.activeConversationId === "string"
-      ? args.conversations[args.activeConversationId]
-      : null) ??
-    (typeof args.rootId === "string" ? args.conversations[args.rootId] : null) ??
-    getRootConversations(args.conversations)[0] ??
-    Object.values(args.conversations)[0] ??
-    null;
-  const defaultServiceId = isBackendServiceId(args.defaultServiceId)
-    ? args.defaultServiceId
-    : fallbackConversation?.serviceId ?? DEFAULT_BACKEND_SERVICE_ID;
-  const fallbackModelId =
-    fallbackConversation?.serviceId === defaultServiceId
-      ? fallbackConversation.modelId
-      : getDefaultModelIdForService(defaultServiceId);
-  const requestedModelId =
-    typeof args.defaultModelId === "string" && args.defaultModelId.trim()
-      ? args.defaultModelId
-      : fallbackModelId;
-
-  return {
-    defaultModelId: resolveBackendServiceModelId(
-      defaultServiceId,
-      requestedModelId,
-    ),
-    defaultServiceId,
-  };
-}
-
-function hydratePersistedState(input: unknown): AppState | null {
-  try {
-    if (!input || typeof input !== "object" || !("conversations" in input)) {
-      return null;
-    }
-
-    const parsed = input as Partial<AppState> & {
-      conversations: Record<string, Conversation>;
-    };
-
-    if (
-      !parsed.conversations ||
-      typeof parsed.conversations !== "object" ||
-      Array.isArray(parsed.conversations)
-    ) {
-      return null;
-    }
-
-    const conversations = deriveChildIds(
-      Object.fromEntries(
-        Object.entries(parsed.conversations).map(
-          ([conversationId, conversation]) => [
-            conversationId,
-            (() => {
-              const serviceId = isBackendServiceId(conversation.serviceId)
-                ? conversation.serviceId
-                : DEFAULT_BACKEND_SERVICE_ID;
-
-              return {
-                ...conversation,
-                documents: Array.isArray(conversation.documents)
-                  ? conversation.documents
-                  : [],
-                kind: conversation.kind === "note" ? "note" : "chat",
-                notes: Array.isArray(conversation.notes)
-                  ? conversation.notes.map((note) => ({
-                      ...note,
-                      kind:
-                        note.kind === "side-chat" || note.kind === "standalone"
-                          ? note.kind
-                          : "comment",
-                    }))
-                  : [],
-                modelId: resolveBackendServiceModelId(
-                  serviceId,
-                  conversation.modelId,
-                ),
-                serviceId,
-              };
-            })(),
-          ],
-        ),
-      ),
-    );
-    const rootConversations = getRootConversations(conversations);
-
-    if (!rootConversations.length) {
-      return null;
-    }
-
-    const nextActiveConversationId =
-      parsed.activeConversationId &&
-      conversations[parsed.activeConversationId]
-        ? parsed.activeConversationId
-        : rootConversations[0].id;
-    const nextRootId =
-      getConversationRootId(conversations, nextActiveConversationId) ??
-      rootConversations[0].id;
-    const { defaultModelId, defaultServiceId } =
-      resolvePersistedDefaultSelection({
-        activeConversationId: nextActiveConversationId,
-        conversations,
-        defaultModelId: parsed.defaultModelId,
-        defaultServiceId: parsed.defaultServiceId,
-        rootId: nextRootId,
-      });
-
-    return {
-      activeConversationId: nextActiveConversationId,
-      conversations,
-      defaultModelId,
-      defaultServiceId,
-      graphLayouts: normalizeGraphLayouts(
-        conversations,
-        parsed.graphLayouts,
-      ),
-      groups: normalizeConversationGroups(parsed.groups, conversations),
-      pinnedThreadIds: sanitizePinnedThreadIds(
-        parsed.pinnedThreadIds,
-        conversations,
-      ),
-      railOpen: false,
-      rootId: nextRootId,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function getStateStorageKey(userId: string) {
-  return `${STORAGE_KEY}:${userId}`;
-}
-
-function getStateSavedAtStorageKey(userId: string) {
-  return `${STORAGE_SAVED_AT_KEY}:${userId}`;
-}
-
-function getRecentModelSelectionsStorageKey(userId: string) {
-  return `${RECENT_MODEL_SELECTIONS_STORAGE_KEY}:${userId}`;
-}
-
-function loadStoredState(
-  storageKey: string,
-  savedAtStorageKey: string,
-): { hasStoredState: boolean; savedAt: string | null; state: AppState } {
-  const fallback = createEmptyState();
-
-  if (typeof window === "undefined") {
-    return { hasStoredState: false, savedAt: null, state: fallback };
-  }
-
-  try {
-    const storedValue = window.localStorage.getItem(storageKey);
-
-    if (!storedValue) {
-      return { hasStoredState: false, savedAt: null, state: fallback };
-    }
-
-    const hydratedState = hydratePersistedState(JSON.parse(storedValue));
-
-    if (!hydratedState) {
-      return { hasStoredState: false, savedAt: null, state: fallback };
-    }
-
-    const savedAt = window.localStorage.getItem(savedAtStorageKey);
-
-    return {
-      hasStoredState: true,
-      savedAt:
-        savedAt && !Number.isNaN(Date.parse(savedAt)) ? savedAt : null,
-      state: hydratedState,
-    };
-  } catch {
-    return { hasStoredState: false, savedAt: null, state: fallback };
-  }
-}
-
-function loadRecentModelSelections(
-  storageKey: string,
-): RecentBackendServiceSelection[] {
-  if (typeof window === "undefined") {
-    return [];
-  }
-
-  try {
-    const storedValue = window.localStorage.getItem(storageKey);
-
-    if (!storedValue) {
-      return [];
-    }
-
-    return sanitizeRecentBackendServiceSelections(JSON.parse(storedValue));
-  } catch {
-    return [];
-  }
 }
 
 function loadInitialTheme(): ThemeMode {
@@ -644,40 +437,6 @@ function areGraphLayoutsEqual(
   });
 }
 
-function mergeGraphLayouts(
-  currentLayouts: Record<string, GraphNodeLayout>,
-  nextLayouts: Record<string, GraphNodeLayout>,
-) {
-  let didChange = false;
-  const mergedLayouts = { ...currentLayouts };
-
-  for (const [conversationId, nextLayout] of Object.entries(nextLayouts)) {
-    const currentLayout =
-      currentLayouts[conversationId] ?? createDefaultGraphNodeLayout();
-    const normalizedLayout = createDefaultGraphNodeLayout({
-      ...currentLayout,
-      ...nextLayout,
-    });
-
-    if (
-      currentLayout.x === normalizedLayout.x &&
-      currentLayout.y === normalizedLayout.y &&
-      currentLayout.width === normalizedLayout.width &&
-      currentLayout.height === normalizedLayout.height &&
-      Boolean(currentLayout.positioned) === Boolean(normalizedLayout.positioned) &&
-      currentLayout.treeOriginX === normalizedLayout.treeOriginX &&
-      currentLayout.treeOriginY === normalizedLayout.treeOriginY
-    ) {
-      continue;
-    }
-
-    mergedLayouts[conversationId] = normalizedLayout;
-    didChange = true;
-  }
-
-  return didChange ? mergedLayouts : null;
-}
-
 function buildBackendErrorReply(
   serviceId: BackendServiceId,
   error: unknown,
@@ -728,65 +487,6 @@ function getElementRect(element: Element | null): DOMRect | null {
   }
 
   return null;
-}
-
-function hasAnotherAnchorOnSameLine(args: {
-  anchorRefs: Record<string, HTMLSpanElement | null>;
-  conversations: Record<string, Conversation>;
-  conversationId: string;
-}): boolean {
-  const conversation = args.conversations[args.conversationId];
-
-  if (!conversation?.branchAnchor || !conversation.parentId) {
-    return false;
-  }
-
-  const parentConversation = args.conversations[conversation.parentId];
-  const currentAnchorRect = getLineRect(args.anchorRefs[conversation.id]);
-
-  if (!parentConversation || !currentAnchorRect) {
-    return false;
-  }
-
-  const currentCenterY =
-    currentAnchorRect.top + currentAnchorRect.height / 2;
-
-  let sameLineCount = 0;
-
-  for (const childConversationId of parentConversation.childIds) {
-    const siblingConversation = args.conversations[childConversationId];
-
-    if (
-      !siblingConversation?.branchAnchor ||
-      siblingConversation.branchAnchor.sourceMessageId !==
-        conversation.branchAnchor.sourceMessageId
-    ) {
-      continue;
-    }
-
-    const siblingAnchorRect = getLineRect(args.anchorRefs[childConversationId]);
-
-    if (!siblingAnchorRect) {
-      continue;
-    }
-
-    const siblingCenterY =
-      siblingAnchorRect.top + siblingAnchorRect.height / 2;
-    const tolerance = Math.max(
-      4,
-      Math.min(currentAnchorRect.height, siblingAnchorRect.height) * 0.4,
-    );
-
-    if (Math.abs(siblingCenterY - currentCenterY) <= tolerance) {
-      sameLineCount += 1;
-    }
-
-    if (sameLineCount > 1) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function getSelectionSourceElement(node: Node | null): HTMLDivElement | null {
@@ -957,346 +657,6 @@ function hasOverlappingAnchor(
   });
 }
 
-function deriveChildIds(
-  conversations: Record<string, Conversation>,
-): Record<string, Conversation> {
-  const nextConversations = Object.fromEntries(
-    Object.values(conversations).map((conversation) => [
-      conversation.id,
-      {
-        ...conversation,
-        childIds: [],
-      },
-    ]),
-  ) as Record<string, Conversation>;
-
-  for (const conversation of Object.values(nextConversations)) {
-    if (conversation.parentId && nextConversations[conversation.parentId]) {
-      nextConversations[conversation.parentId].childIds.push(conversation.id);
-    }
-  }
-
-  for (const conversation of Object.values(nextConversations)) {
-    conversation.childIds.sort((left, right) =>
-      nextConversations[left].createdAt.localeCompare(
-        nextConversations[right].createdAt,
-      ),
-    );
-  }
-
-  return nextConversations;
-}
-
-function getThreadConversations(
-  conversations: Record<string, Conversation>,
-  rootConversationId: string,
-) {
-  return Object.values(conversations)
-    .filter(
-      (conversation) =>
-        getConversationRootId(conversations, conversation.id) === rootConversationId,
-    )
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
-function collectConversationTreeIds(
-  conversations: Record<string, Conversation>,
-  rootConversationId: string,
-) {
-  const visited = new Set<string>();
-  const stack = [rootConversationId];
-
-  while (stack.length) {
-    const conversationId = stack.pop();
-
-    if (!conversationId || visited.has(conversationId) || !conversations[conversationId]) {
-      continue;
-    }
-
-    visited.add(conversationId);
-
-    for (const childConversationId of conversations[conversationId].childIds) {
-      stack.push(childConversationId);
-    }
-  }
-
-  return Array.from(visited);
-}
-
-function getThreadPreviewFromConversations(threadConversations: Conversation[]) {
-  for (const conversation of threadConversations) {
-    const latestMessage = conversation.messages[conversation.messages.length - 1];
-
-    if (latestMessage?.content.trim()) {
-      return excerpt(latestMessage.content, 92);
-    }
-  }
-
-  return "No messages yet.";
-}
-
-function getThreadCategoryContext(threadConversations: Conversation[]) {
-  const snippets: string[] = [];
-  let remainingCharacters = 2200;
-
-  for (const conversation of threadConversations) {
-    if (remainingCharacters <= 0) {
-      break;
-    }
-
-    const titleSnippet = conversation.title.replace(/\s+/g, " ").trim();
-
-    if (titleSnippet) {
-      const nextSnippet = titleSnippet.slice(0, remainingCharacters);
-      snippets.push(nextSnippet);
-      remainingCharacters -= nextSnippet.length + 1;
-    }
-
-    for (const message of conversation.messages.slice(-3).reverse()) {
-      if (remainingCharacters <= 0) {
-        break;
-      }
-
-      const contentSnippet = message.content.replace(/\s+/g, " ").trim();
-
-      if (!contentSnippet) {
-        continue;
-      }
-
-      const nextSnippet = `${message.role} ${contentSnippet}`.slice(
-        0,
-        remainingCharacters,
-      );
-      snippets.push(nextSnippet);
-      remainingCharacters -= nextSnippet.length + 1;
-    }
-  }
-
-  return snippets.join(" ");
-}
-
-function getThreadPreview(
-  conversations: Record<string, Conversation>,
-  rootConversationId: string,
-) {
-  const rootConversation = conversations[rootConversationId];
-
-  if (!rootConversation) {
-    return "No messages yet.";
-  }
-
-  return getThreadPreviewFromConversations([rootConversation]);
-}
-
-function formatRelativeTime(value: string) {
-  const elapsedMs = Date.now() - new Date(value).getTime();
-  const elapsedMinutes = Math.max(0, Math.round(elapsedMs / 60000));
-
-  if (elapsedMinutes < 1) {
-    return "just now";
-  }
-
-  if (elapsedMinutes < 60) {
-    return `${elapsedMinutes}m ago`;
-  }
-
-  const elapsedHours = Math.round(elapsedMinutes / 60);
-
-  if (elapsedHours < 24) {
-    return `${elapsedHours}h ago`;
-  }
-
-  const elapsedDays = Math.round(elapsedHours / 24);
-
-  if (elapsedDays < 7) {
-    return `${elapsedDays}d ago`;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(value));
-}
-
-function getMatchPreview(content: string, query: string) {
-  const normalizedContent = content.replace(/\s+/g, " ").trim();
-  const normalizedQuery = query.trim().toLowerCase();
-
-  if (!normalizedContent) {
-    return "";
-  }
-
-  const matchIndex = normalizedContent.toLowerCase().indexOf(normalizedQuery);
-
-  if (matchIndex === -1) {
-    return excerpt(normalizedContent, 108);
-  }
-
-  const startIndex = Math.max(0, matchIndex - 42);
-  const endIndex = Math.min(
-    normalizedContent.length,
-    matchIndex + normalizedQuery.length + 52,
-  );
-  const prefix = startIndex > 0 ? "..." : "";
-  const suffix = endIndex < normalizedContent.length ? "..." : "";
-
-  return `${prefix}${normalizedContent.slice(startIndex, endIndex)}${suffix}`;
-}
-
-function buildThreadSummaries(
-  conversations: Record<string, Conversation>,
-): ThreadSummary[] {
-  return getRootConversations(conversations)
-    .map((rootConversation) => {
-      const threadConversations = getThreadConversations(
-        conversations,
-        rootConversation.id,
-      );
-      const latestConversation = threadConversations[0] ?? rootConversation;
-      const standaloneNote = getStandaloneNote(rootConversation);
-      const preview = standaloneNote
-        ? excerpt(standaloneNote.content, 108) || "Empty note"
-        : getThreadPreviewFromConversations(threadConversations);
-      const categoryId = categorizeThread({
-        context: getThreadCategoryContext(threadConversations),
-        preview,
-        title: rootConversation.title,
-      });
-
-      return {
-        categoryId,
-        categoryLabel: getThreadCategoryLabel(categoryId),
-        conversationCount: threadConversations.length,
-        id: rootConversation.id,
-        kind: standaloneNote ? ("note" as const) : ("chat" as const),
-        preview,
-        title: rootConversation.title,
-        updatedAt: latestConversation.updatedAt,
-        updatedLabel: formatRelativeTime(latestConversation.updatedAt),
-      };
-    })
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
-}
-
-function buildSearchResults(
-  conversations: Record<string, Conversation>,
-  query: string,
-): ChatSearchResult[] {
-  const normalizedQuery = query.trim().toLowerCase();
-
-  if (!normalizedQuery) {
-    return buildThreadSummaries(conversations).map((thread) => ({
-      conversationId: thread.id,
-      locationLabel: thread.title,
-      matchLabel: thread.kind === "note" ? "Recent note" : "Recent chat",
-      preview: thread.preview,
-      rootTitle: thread.title,
-      title: thread.title,
-      updatedLabel: thread.updatedLabel,
-    }));
-  }
-
-  return Object.values(conversations)
-    .map((conversation) => {
-      const rootId = getConversationRootId(conversations, conversation.id);
-
-      if (!rootId) {
-        return null;
-      }
-
-      const rootConversation = conversations[rootId];
-
-      if (!rootConversation) {
-        return null;
-      }
-
-      const lowerTitle = conversation.title.toLowerCase();
-
-      if (lowerTitle.includes(normalizedQuery)) {
-        const isStandaloneNote = conversation.kind === "note";
-        return {
-          conversationId: conversation.id,
-          locationLabel:
-            isStandaloneNote
-              ? "Standalone note"
-              : conversation.parentId === null
-                ? "Main chat"
-                : "Branch conversation",
-          matchLabel:
-            isStandaloneNote
-              ? "Note title"
-              : conversation.parentId === null
-                ? "Thread title"
-                : "Branch title",
-          preview: conversation.parentId
-            ? `Inside "${rootConversation.title}"`
-            : getThreadPreview(conversations, rootConversation.id),
-          rootTitle: rootConversation.title,
-          title: conversation.title,
-          updatedAt: conversation.updatedAt,
-          updatedLabel: formatRelativeTime(conversation.updatedAt),
-        };
-      }
-
-      const matchingMessage = conversation.messages.find((message) =>
-        message.content.toLowerCase().includes(normalizedQuery),
-      );
-
-      const matchingNote = (conversation.notes ?? []).find((note) =>
-        note.content.toLowerCase().includes(normalizedQuery),
-      );
-
-      if (!matchingMessage && !matchingNote) {
-        return null;
-      }
-
-      if (matchingNote) {
-        return {
-          conversationId: conversation.id,
-          locationLabel:
-            conversation.kind === "note"
-              ? "Standalone note"
-              : conversation.parentId === null
-                ? "Main chat"
-                : "Branch conversation",
-          matchLabel:
-            conversation.kind === "note" ? "Note content" : "Personal note",
-          preview: getMatchPreview(matchingNote.content, normalizedQuery),
-          rootTitle: rootConversation.title,
-          title: conversation.title,
-          updatedAt: matchingNote.updatedAt,
-          updatedLabel: formatRelativeTime(matchingNote.updatedAt),
-        };
-      }
-
-      if (!matchingMessage) {
-        return null;
-      }
-
-      return {
-        conversationId: conversation.id,
-        locationLabel:
-          conversation.parentId === null ? "Main chat" : "Branch conversation",
-        matchLabel: `${matchingMessage.role} message`,
-        preview: getMatchPreview(matchingMessage.content, normalizedQuery),
-        rootTitle: rootConversation.title,
-        title: conversation.title,
-        updatedAt: matchingMessage.createdAt,
-        updatedLabel: formatRelativeTime(matchingMessage.createdAt),
-      };
-    })
-    .filter(
-      (
-        result,
-      ): result is ChatSearchResult & {
-        updatedAt: string;
-      } => Boolean(result),
-    )
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .slice(0, 40)
-    .map(({ updatedAt: _updatedAt, ...result }) => result);
-}
-
 function WorkspaceApp({
   billingNotice,
   onDismissBillingNotice,
@@ -1409,6 +769,7 @@ function WorkspaceApp({
   const persistenceInFlightRef = useRef(false);
   const persistenceIdleWaitersRef = useRef<Array<() => void>>([]);
   const cloudSyncPausedRef = useRef(false);
+  const cloudRevisionRef = useRef<number | null>(null);
   const activeChatStreamsRef = useRef<Map<string, ActiveChatStream>>(new Map());
   const workspaceMountedRef = useRef(true);
   const selectionSyncFrameRef = useRef(0);
@@ -1493,10 +854,9 @@ function WorkspaceApp({
     !isTileView &&
     !isGraphView &&
     leftSidebarOpen;
-  const searchResults = buildSearchResults(
-    state.conversations,
-    deferredSearchQuery,
-  );
+  const searchResults = searchModalOpen
+    ? buildSearchResults(state.conversations, deferredSearchQuery, threadSummaries)
+    : [];
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(
@@ -1788,23 +1148,26 @@ function WorkspaceApp({
       const revisionAtStart = localStateRevisionRef.current;
 
       try {
-        if (!hadLocalMasterAtStartupRef.current) {
-          const persistedState = await requestStoredState();
+        const persistedWorkspace = await requestStoredState();
 
-          if (cancelled) {
-            return;
-          }
+        if (cancelled) {
+          return;
+        }
 
-          if (
-            persistedState &&
-            revisionAtStart === localStateRevisionRef.current
-          ) {
-            const hydratedState = hydratePersistedState(persistedState);
+        cloudRevisionRef.current = persistedWorkspace?.revision ?? 0;
 
-            if (hydratedState) {
-              currentStateRef.current = hydratedState;
-              setState(hydratedState);
-            }
+        if (
+          !hadLocalMasterAtStartupRef.current &&
+          persistedWorkspace &&
+          revisionAtStart === localStateRevisionRef.current
+        ) {
+          const hydratedState = hydratePersistedState(
+            persistedWorkspace.state,
+          );
+
+          if (hydratedState) {
+            currentStateRef.current = hydratedState;
+            setState(hydratedState);
           }
         }
 
@@ -2022,7 +1385,11 @@ function WorkspaceApp({
         pendingPersistStateRef.current = null;
 
         try {
-          await persistStoredState(nextState);
+          const revision = await persistStoredState(
+            nextState,
+            cloudRevisionRef.current,
+          );
+          cloudRevisionRef.current = revision;
           cloudSyncPausedRef.current = false;
           setCloudBackupMatchesLocal(
             areWorkspaceStatesEqual(currentStateRef.current, nextState),
@@ -2041,6 +1408,15 @@ function WorkspaceApp({
             cloudSyncPausedRef.current = false;
             setCloudBackupMatchesLocal(false);
             setStorageMode("local");
+            return;
+          }
+
+          if (isApiErrorStatus(error, 409)) {
+            cloudRevisionRef.current = null;
+            pendingPersistStateRef.current = currentStateRef.current;
+            cloudSyncPausedRef.current = true;
+            setCloudBackupMatchesLocal(false);
+            setStorageMode("fallback");
             return;
           }
 
@@ -2088,8 +1464,11 @@ function WorkspaceApp({
     }
 
     try {
-      const persistedState = await requestStoredState();
+      const persistedWorkspace = await requestStoredState();
       const localState = currentStateRef.current;
+      const persistedState = persistedWorkspace?.state ?? null;
+
+      cloudRevisionRef.current = persistedWorkspace?.revision ?? 0;
 
       if (
         !persistedState ||
@@ -2801,53 +2180,6 @@ function WorkspaceApp({
     });
   }
 
-  function getConversationRequestPayload(conversation: Conversation) {
-    const contextPath = conversation.parentId
-      ? [
-          ...getConversationPath(state.conversations, conversation.parentId),
-          conversation,
-        ]
-      : [conversation];
-    const ancestorContext = contextPath.slice(0, -1).map((ancestor, index) => {
-      const descendant = contextPath[index + 1];
-      const sourceMessageId =
-        descendant?.branchAnchor?.sourceConversationId === ancestor.id
-          ? descendant.branchAnchor.sourceMessageId
-          : null;
-      const sourceMessageIndex = sourceMessageId
-        ? ancestor.messages.findIndex((message) => message.id === sourceMessageId)
-        : -1;
-      const standaloneNote = getStandaloneNote(ancestor);
-
-      return {
-        branchAnchor: ancestor.branchAnchor,
-        id: ancestor.id,
-        messages: standaloneNote?.content.trim()
-          ? [
-              {
-                content: standaloneNote.content,
-                createdAt: standaloneNote.updatedAt,
-                id: getStandaloneNoteContextMessageId(standaloneNote.id),
-                role: "user" as const,
-              },
-            ]
-          : sourceMessageIndex >= 0
-            ? ancestor.messages.slice(0, sourceMessageIndex + 1)
-            : ancestor.messages,
-        title: ancestor.title,
-      };
-    });
-
-    return {
-      ancestorContext,
-      branchAnchor: conversation.branchAnchor,
-      documents: conversation.documents ?? [],
-      id: conversation.id,
-      parentId: conversation.parentId,
-      title: conversation.title,
-    };
-  }
-
   function startAssistantStream(
     conversation: Conversation,
     messages: Message[],
@@ -2881,7 +2213,7 @@ function WorkspaceApp({
     }));
 
     void requestChatReply({
-      conversation: getConversationRequestPayload(conversation),
+      conversation: getConversationRequestPayload(state.conversations, conversation),
       messages,
       modelId: conversation.modelId,
       onDelta(delta) {
@@ -3424,29 +2756,6 @@ function WorkspaceApp({
     });
   }
 
-  function handleApplyGraphLayouts(nextLayouts: Record<string, GraphNodeLayout>) {
-    setState((current) => {
-      const scopedLayouts = Object.fromEntries(
-        Object.entries(nextLayouts).filter(([conversationId]) =>
-          Boolean(current.conversations[conversationId]),
-        ),
-      );
-      const mergedLayouts = mergeGraphLayouts(
-        current.graphLayouts,
-        scopedLayouts,
-      );
-
-      if (!mergedLayouts) {
-        return current;
-      }
-
-      return {
-        ...current,
-        graphLayouts: mergedLayouts,
-      };
-    });
-  }
-
   function handleCreateBranch(promptOverride?: string) {
     const draft = selectionDraft;
 
@@ -3742,7 +3051,7 @@ function WorkspaceApp({
   function handleUseNote(conversationId: string, content: string) {
     setDrafts((current) => ({
       ...current,
-      [conversationId]: `${current[conversationId]?.trim() ? `${current[conversationId].trim()}\n\n` : ""}[From my personal notes]\n${content}`,
+      [conversationId]: `${current[conversationId]?.trim() ? `${current[conversationId].trim()}\n\n` : ""}[From my margin note]\n${content}`,
     }));
   }
 
@@ -4586,7 +3895,12 @@ function WorkspaceApp({
     cloudSyncPausedRef.current = false;
 
     try {
-      await persistStoredStateWithProgress(localMasterCopy, onProgress);
+      const revision = await persistStoredStateWithProgress(
+        localMasterCopy,
+        onProgress,
+        cloudRevisionRef.current,
+      );
+      cloudRevisionRef.current = revision;
 
       const cloudMatchesLocal = areWorkspaceStatesEqual(
         currentStateRef.current,
@@ -4614,6 +3928,17 @@ function WorkspaceApp({
         setStorageMode("local");
         throw new Error(
           "Cloud backup requires a paid plan or admin access.",
+        );
+      }
+
+      if (isApiErrorStatus(error, 409)) {
+        cloudRevisionRef.current = null;
+        pendingPersistStateRef.current = currentStateRef.current;
+        cloudSyncPausedRef.current = true;
+        setCloudBackupMatchesLocal(false);
+        setStorageMode("fallback");
+        throw new Error(
+          "The cloud copy changed during backup. Margin Chat will reconcile it before retrying.",
         );
       }
 
@@ -4770,29 +4095,35 @@ function WorkspaceApp({
         data-expanded-conversation-id={conversation.id}
         key={conversation.id}
       >
-        <span className="panel-context-label">{contextLabel}</span>
-        {allowMinimize && conversation.parentId ? (
-          <button
-            aria-label={`Minimize ${conversation.title}`}
-            className="conversation-tree-minimize"
-            onClick={() => {
-              pendingTreeLaneFocusRef.current = conversation.parentId;
-              suppressNextChatAutoCenterRef.current = true;
-              handleSelectConversation(conversation.parentId!);
-            }}
-            type="button"
-          >
-            <svg
-              aria-hidden="true"
-              fill="none"
-              stroke="currentColor"
-              strokeLinecap="round"
-              strokeWidth="1.8"
-              viewBox="0 0 24 24"
-            >
-              <path d="M6 12h12" />
-            </svg>
-          </button>
+        {contextLabel !== "Current chat" || (allowMinimize && conversation.parentId) ? (
+          <div className="panel-context-header">
+            {contextLabel !== "Current chat" ? (
+              <span className="panel-context-label">{contextLabel}</span>
+            ) : null}
+            {allowMinimize && conversation.parentId ? (
+              <button
+                aria-label={`Minimize ${conversation.title}`}
+                className="conversation-tree-minimize"
+                onClick={() => {
+                  pendingTreeLaneFocusRef.current = conversation.parentId;
+                  suppressNextChatAutoCenterRef.current = true;
+                  handleSelectConversation(conversation.parentId!);
+                }}
+                type="button"
+              >
+                <svg
+                  aria-hidden="true"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeWidth="1.8"
+                  viewBox="0 0 24 24"
+                >
+                  <path d="M6 12h12" />
+                </svg>
+              </button>
+            ) : null}
+          </div>
         ) : null}
         {renderConversationChatPanel(conversation)}
         <div
@@ -4850,7 +4181,9 @@ function WorkspaceApp({
             </span>
           ))}
         </nav>
-
+        {activeConversation.kind !== "note" ? (
+          <span className="panel-context-label workspace-current-chat-label">Current chat</span>
+        ) : null}
       </div>
     );
   }
@@ -5262,12 +4595,18 @@ function WorkspaceApp({
             >
               <div className="selection-tooltip-head">
                 <p className="eyebrow">
-                  {selectionDraft.sourceKind === "standalone-note"
-                    ? "Selected note text"
-                    : "New branch"}
+                  {selectionIntent === "note"
+                    ? "New margin note"
+                    : selectionDraft.sourceKind === "standalone-note"
+                      ? "Selected note text"
+                      : "New branch"}
                 </p>
                 <button
-                  aria-label="Cancel new branch"
+                  aria-label={
+                    selectionIntent === "note"
+                      ? "Cancel margin note"
+                      : "Cancel new branch"
+                  }
                   className="selection-close"
                   onClick={() => {
                     setSelectionDraft(null);
@@ -5286,7 +4625,7 @@ function WorkspaceApp({
                   aria-label={
                     selectionDraft.sourceKind === "standalone-note"
                       ? "Create a side note"
-                      : "Add note"
+                      : "Add a margin note"
                   }
                   aria-pressed={selectionIntent === "note"}
                   className={selectionIntent === "note" ? "is-active" : ""}
@@ -5295,7 +4634,7 @@ function WorkspaceApp({
                 >
                   {selectionDraft.sourceKind === "standalone-note"
                     ? "Side note"
-                    : "Add note"}
+                    : "Margin note"}
                 </button>
                 <button
                   aria-label={
@@ -5314,11 +4653,11 @@ function WorkspaceApp({
                 </button>
               </div>
               {selectionIntent === "note" ? (
-                <p className="selection-note-privacy">Personal note · Not sent to AI</p>
+                <p className="selection-note-privacy">Margin note · Not sent to AI</p>
               ) : null}
               <div className="selection-input-row">
                 <input
-                  aria-label={selectionIntent === "note" ? "Personal note" : "Branch prompt"}
+                  aria-label={selectionIntent === "note" ? "Margin note" : "Branch prompt"}
                   id="branch-prompt"
                   onChange={(event) =>
                     setSelectionDraft((current) =>
@@ -5332,7 +4671,7 @@ function WorkspaceApp({
                   value={selectionDraft.prompt}
                 />
                 <button
-                  aria-label={selectionIntent === "note" ? "Save personal note" : "Create branch with prompt"}
+                  aria-label={selectionIntent === "note" ? "Save margin note" : "Create branch with prompt"}
                   className="selection-send"
                   disabled={!selectionDraft.prompt.trim()}
                   type="submit"
@@ -5367,6 +4706,7 @@ function WorkspaceApp({
             cloudBackupMatchesLocal={cloudBackupMatchesLocal}
             cloudBackupSizeBytes={cloudBackupSizeBytes}
             cloudSyncEnabled={cloudSyncEnabled}
+            cloudSyncStatus={storageMode}
             errorMessage={profileSaveError}
             isOpen={profileModalOpen}
             isSaving={profileSaving}

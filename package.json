@@ -13,6 +13,7 @@
     "db:logs": "docker compose logs -f postgres",
     "db:start": "docker compose up -d postgres",
     "db:stop": "docker compose down",
+    "migrate:workspace": "bun scripts/migrate-workspace-json-to-markdown.ts",
     "build": "bun run --cwd client build",
     "preview": "bun run --cwd client preview",
     "start:server": "node server/index.mjs",

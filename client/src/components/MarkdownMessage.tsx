@@ -48,6 +48,10 @@ interface MarkdownMessageProps {
     branchConversationId: string,
     element: HTMLSpanElement | null,
   ) => void;
+  registerNoteAnchorRef: (
+    noteId: string,
+    element: HTMLSpanElement | null,
+  ) => void;
   theme: "light" | "dark";
 }
 
@@ -274,9 +278,13 @@ function applyDecorations(
     branchConversationId: string,
     element: HTMLSpanElement | null,
   ) => void,
+  registerNoteAnchorRef: (
+    noteId: string,
+    element: HTMLSpanElement | null,
+  ) => void,
 ) {
   if (!decorations.length) {
-    return [];
+    return { anchorIds: [], noteIds: [] };
   }
 
   const textNodes: Text[] = [];
@@ -289,6 +297,7 @@ function applyDecorations(
   }
 
   const anchorElements = new Map<string, HTMLSpanElement>();
+  const noteElements = new Map<string, HTMLSpanElement>();
   let globalOffset = 0;
 
   for (const textNode of textNodes) {
@@ -327,6 +336,7 @@ function applyDecorations(
       }
 
       const branch = active.find((item) => item.type === "anchor");
+      const activeNotes = active.filter((item) => item.type === "note");
       const mark = document.createElement("mark");
       mark.className = `message-anchor${active.some((item) => item.type === "note") ? " is-note-anchor" : ""}${active.some((item) => item.type === "preview") ? " is-pending-selection" : ""}`;
 
@@ -336,7 +346,7 @@ function applyDecorations(
         mark.setAttribute("role", "link");
         mark.tabIndex = 0;
       } else if (active.some((item) => item.type === "note")) {
-        mark.setAttribute("aria-label", "Text with a personal note");
+        mark.setAttribute("aria-label", "Text with a margin note");
       }
 
       const innerSpan = document.createElement("span");
@@ -347,6 +357,12 @@ function applyDecorations(
       if (branch?.type === "anchor" && !anchorElements.has(branch.branchConversationId)) {
         anchorElements.set(branch.branchConversationId, innerSpan);
       }
+
+      for (const note of activeNotes) {
+        if (note.type === "note") {
+          noteElements.set(note.noteId, innerSpan);
+        }
+      }
     }
 
     textNode.replaceWith(fragment);
@@ -356,7 +372,14 @@ function applyDecorations(
     registerAnchorRef(branchConversationId, element);
   }
 
-  return [...anchorElements.keys()];
+  for (const [noteId, element] of noteElements) {
+    registerNoteAnchorRef(noteId, element);
+  }
+
+  return {
+    anchorIds: [...anchorElements.keys()],
+    noteIds: [...noteElements.keys()],
+  };
 }
 
 export default function MarkdownMessage({
@@ -370,12 +393,15 @@ export default function MarkdownMessage({
   onOpenBranch,
   pendingSelection,
   registerAnchorRef,
+  registerNoteAnchorRef,
   theme,
 }: MarkdownMessageProps) {
   const contentRef = useRef<HTMLDivElement>(null);
   const decorationsRef = useRef<Decoration[]>([]);
   const registerAnchorRefRef = useRef(registerAnchorRef);
+  const registerNoteAnchorRefRef = useRef(registerNoteAnchorRef);
   const registeredAnchorIdsRef = useRef<string[]>([]);
+  const registeredNoteIdsRef = useRef<string[]>([]);
   const viewerDragRef = useRef<MermaidViewerDragState | null>(null);
   const viewerRenderCountRef = useRef(0);
   const viewerTransformRef = useRef<MermaidViewerTransform>({
@@ -399,6 +425,7 @@ export default function MarkdownMessage({
 
   decorationsRef.current = decorations;
   registerAnchorRefRef.current = registerAnchorRef;
+  registerNoteAnchorRefRef.current = registerNoteAnchorRef;
   viewerTransformRef.current = viewerTransform;
 
   function resetViewerTransform(nextViewer = activeViewer) {
@@ -597,6 +624,7 @@ export default function MarkdownMessage({
   useLayoutEffect(() => {
     const root = contentRef.current;
     const nextRegisterAnchorRef = registerAnchorRefRef.current;
+    const nextRegisterNoteAnchorRef = registerNoteAnchorRefRef.current;
 
     if (!root) {
       return;
@@ -604,6 +632,10 @@ export default function MarkdownMessage({
 
     for (const branchConversationId of registeredAnchorIdsRef.current) {
       nextRegisterAnchorRef(branchConversationId, null);
+    }
+
+    for (const noteId of registeredNoteIdsRef.current) {
+      nextRegisterNoteAnchorRef(noteId, null);
     }
 
     root.innerHTML = renderedHtml;
@@ -616,11 +648,14 @@ export default function MarkdownMessage({
         );
         heading.tabIndex = -1;
       });
-    registeredAnchorIdsRef.current = applyDecorations(
+    const registeredIds = applyDecorations(
       root,
       decorationsRef.current,
       nextRegisterAnchorRef,
+      nextRegisterNoteAnchorRef,
     );
+    registeredAnchorIdsRef.current = registeredIds.anchorIds;
+    registeredNoteIdsRef.current = registeredIds.noteIds;
 
     return () => {
       const currentRegisterAnchorRef = registerAnchorRefRef.current;
@@ -629,7 +664,14 @@ export default function MarkdownMessage({
         currentRegisterAnchorRef(branchConversationId, null);
       }
 
+      const currentRegisterNoteAnchorRef = registerNoteAnchorRefRef.current;
+
+      for (const noteId of registeredNoteIdsRef.current) {
+        currentRegisterNoteAnchorRef(noteId, null);
+      }
+
       registeredAnchorIdsRef.current = [];
+      registeredNoteIdsRef.current = [];
     };
   }, [decorationsKey, renderedHtml]);
 

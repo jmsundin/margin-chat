@@ -7,6 +7,10 @@ import {
 } from "../http/json.mjs";
 import { randomUUID } from "node:crypto";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
+import {
+  createAppStateFromWorkspaceDocument,
+  createWorkspaceDocument,
+} from "../db/workspaceDocument.mjs";
 
 export function canUseCloudWorkspaceStorage(user) {
   return (
@@ -240,16 +244,19 @@ export function createApiHandler({
           );
         }
 
-        const state = await database.loadState(authContext.user.id);
+        const storedWorkspace = await database.loadWorkspace(authContext.user.id);
 
-        if (!state) {
+        if (!storedWorkspace) {
           sendJson(response, 404, {
             error: "No persisted app state was found.",
           });
           return;
         }
 
-        sendJson(response, 200, state);
+        sendJson(response, 200, {
+          revision: storedWorkspace.revision,
+          workspace: createWorkspaceDocument(storedWorkspace.state),
+        });
         return;
       }
 
@@ -299,9 +306,29 @@ export function createApiHandler({
         }
 
         const body = await readJsonBody(request);
-        const persistedState = await database.saveState(authContext.user.id, body);
+        const workspaceState = body?.workspace
+          ? createAppStateFromWorkspaceDocument(body.workspace)
+          : body;
 
-        sendJson(response, 200, persistedState);
+        if (!workspaceState) {
+          throw new HttpError(400, "Workspace document is invalid.");
+        }
+
+        const persistedWorkspace = await database.saveState(
+          authContext.user.id,
+          workspaceState,
+          {
+            expectedRevision:
+              Number.isInteger(body?.baseRevision) && body.baseRevision >= 0
+                ? body.baseRevision
+                : null,
+          },
+        );
+
+        sendJson(response, 200, {
+          revision: persistedWorkspace.revision,
+          workspace: createWorkspaceDocument(persistedWorkspace.state),
+        });
         return;
       }
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createEmptyState } from "../client/src/initialState";
 import { persistStoredStateWithProgress } from "../client/src/lib/api";
+import { createWorkspaceDocument } from "../client/src/lib/workspaceModel";
 
 const originalXmlHttpRequest = globalThis.XMLHttpRequest;
 
@@ -18,7 +19,10 @@ describe("manual cloud state upload", () => {
   test("reports uploaded bytes against the serialized local master copy", async () => {
     const state = createEmptyState();
     state.conversations[state.rootId].title = "Résumé notes";
-    const serializedState = JSON.stringify(state);
+    const serializedState = JSON.stringify({
+      baseRevision: null,
+      workspace: createWorkspaceDocument(state),
+    });
     const totalBytes = new TextEncoder().encode(serializedState).byteLength;
     const progress: Array<{ totalBytes: number; uploadedBytes: number }> = [];
     let request: FakeXmlHttpRequest | null = null;
@@ -40,7 +44,7 @@ describe("manual cloud state upload", () => {
       body: string | null = null;
       listeners = new Map<string, () => void>();
       method = "";
-      responseText = "{}";
+      responseText = '{"revision":1}';
       status = 200;
       upload = new FakeUploadTarget();
       url = "";

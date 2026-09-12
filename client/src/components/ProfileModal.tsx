@@ -15,6 +15,7 @@ interface ProfileModalProps {
   billingErrorMessage: string | null;
   billingSubmitting: boolean;
   cloudSyncEnabled: boolean;
+  cloudSyncStatus: "fallback" | "loading" | "local" | "server";
   cloudBackupMatchesLocal: boolean;
   cloudBackupSizeBytes: number;
   errorMessage: string | null;
@@ -110,6 +111,7 @@ export default function ProfileModal({
   billingErrorMessage,
   billingSubmitting,
   cloudSyncEnabled,
+  cloudSyncStatus,
   cloudBackupMatchesLocal,
   cloudBackupSizeBytes,
   errorMessage,
@@ -597,8 +599,8 @@ export default function ProfileModal({
                 <h3>Keep your work on this computer</h3>
                 <p className="thread-dialog-copy">
                   Margin Chat saves every change in this browser first. A chosen
-                  directory also receives an automatic, readable JSON copy of your
-                  workspace.
+                  directory also receives Obsidian-compatible Markdown files: one
+                  file per chat and note, with parent, child, and note backlinks.
                 </p>
               </div>
 
@@ -611,12 +613,24 @@ export default function ProfileModal({
                 <div className="profile-storage-status">
                   <span>Cloud copy</span>
                   <strong>
-                    {cloudSyncEnabled ? "Syncing automatically" : "Local only"}
+                    {!cloudSyncEnabled
+                      ? "Local only"
+                      : cloudSyncStatus === "server"
+                        ? cloudBackupMatchesLocal
+                          ? "Cloud copy current"
+                          : "Syncing changes"
+                        : cloudSyncStatus === "fallback"
+                          ? "Retrying cloud sync"
+                          : cloudSyncStatus === "loading"
+                            ? "Connecting"
+                            : "Cloud unavailable"}
                   </strong>
                   <small>
-                    {cloudSyncEnabled
-                      ? "Available for paid plans and admins"
-                      : "Cloud sync requires a paid plan or admin access"}
+                    {!cloudSyncEnabled
+                      ? "Cloud sync requires a paid plan or admin access"
+                      : cloudSyncStatus === "fallback"
+                        ? "Your local master is safe while Margin Chat reconnects or reconciles changes"
+                        : "Automatic and manual backups use your signed-in account"}
                   </small>
                 </div>
               </div>
@@ -684,7 +698,7 @@ export default function ProfileModal({
                   </strong>
                   <small>
                     {localDirectoryStatus.permission === "granted"
-                      ? `Writing ${localDirectoryStatus.fileName}`
+                      ? `Writing Chats/, Notes/, and ${localDirectoryStatus.fileName}`
                       : localDirectoryStatus.supported
                         ? "Choose a folder for an additional local copy"
                         : "Directory selection is not supported by this browser"}

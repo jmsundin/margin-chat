@@ -273,6 +273,15 @@ alter table marginchat_app_sessions
   add column if not exists conversation_groups jsonb not null default '{}'::jsonb;
 
 alter table marginchat_app_sessions
+  add column if not exists revision bigint not null default 0;
+
+alter table marginchat_app_sessions
+  drop constraint if exists marginchat_app_sessions_revision_check;
+
+alter table marginchat_app_sessions
+  add constraint marginchat_app_sessions_revision_check check (revision >= 0);
+
+alter table marginchat_app_sessions
   add column if not exists default_service_id text;
 
 alter table marginchat_app_sessions

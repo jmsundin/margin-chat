@@ -1,9 +1,13 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ConversationGroupSelect,
   NewConversationGroupForm,
 } from "./ConversationGroupControls";
 import type { ChatOutlineItem } from "../lib/chatOutline";
+import {
+  getSidebarThreadDropAction,
+  sortThreadsByRecentActivity,
+} from "../lib/sidebarThreads";
 import type { ConversationGroup, MainViewMode, ThreadSummary } from "../types";
 
 type ThemeMode = "light" | "dark";
@@ -304,6 +308,24 @@ function MoreIcon() {
   );
 }
 
+function DragHandleIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="thread-item-drag-icon"
+      fill="currentColor"
+      viewBox="0 0 12 18"
+    >
+      <circle cx="3" cy="3" r="1.2" />
+      <circle cx="9" cy="3" r="1.2" />
+      <circle cx="3" cy="9" r="1.2" />
+      <circle cx="9" cy="9" r="1.2" />
+      <circle cx="3" cy="15" r="1.2" />
+      <circle cx="9" cy="15" r="1.2" />
+    </svg>
+  );
+}
+
 function PinIcon({ filled = false }: { filled?: boolean }) {
   return (
     <svg
@@ -398,6 +420,8 @@ export default function ThreadSidebar({
   const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string, boolean>>(
     {},
   );
+  const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
+  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -577,17 +601,247 @@ export default function ThreadSidebar({
     }
   }
 
+  function handleThreadDragStart(
+    event: React.DragEvent<HTMLElement>,
+    threadId: string,
+  ) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", threadId);
+    setDraggedThreadId(threadId);
+    setOpenMenuState(null);
+  }
+
+  function handleThreadDragEnd() {
+    setDraggedThreadId(null);
+    setDropTargetKey(null);
+  }
+
+  function handleThreadDragOver(
+    event: React.DragEvent<HTMLElement>,
+    targetKey: string,
+  ) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTargetKey(targetKey);
+  }
+
+  function handleThreadDragLeave(
+    event: React.DragEvent<HTMLElement>,
+    targetKey: string,
+  ) {
+    const relatedTarget = event.relatedTarget;
+
+    if (
+      relatedTarget instanceof Node &&
+      event.currentTarget.contains(relatedTarget)
+    ) {
+      return;
+    }
+
+    setDropTargetKey((current) => current === targetKey ? null : current);
+  }
+
+  function handleThreadDrop(
+    event: React.DragEvent<HTMLElement>,
+    target: { groupId?: string | null; pinned?: boolean },
+  ) {
+    event.preventDefault();
+    const threadId =
+      event.dataTransfer.getData("text/plain") || draggedThreadId;
+
+    setDraggedThreadId(null);
+    setDropTargetKey(null);
+
+    if (!threadId || !threads.some((thread) => thread.id === threadId)) {
+      return;
+    }
+
+    const action = getSidebarThreadDropAction({
+      isPinned: pinnedThreadIds.has(threadId),
+      targetGroupId: target.groupId,
+      targetPinned: target.pinned,
+    });
+
+    if (action.assignGroup) {
+      onAssignGroup(threadId, action.groupId);
+    }
+
+    if (action.pin) {
+      onPinThread(threadId);
+    }
+
+    if (action.unpin) {
+      onUnpinThread(threadId);
+    }
+  }
+
   const pinnedThreadIds = new Set(pinnedThreads.map((thread) => thread.id));
-  const unpinnedThreads = threads.filter(
+  const recentThreads = sortThreadsByRecentActivity(threads);
+  const recentPinnedThreads = recentThreads.filter((thread) =>
+    pinnedThreadIds.has(thread.id),
+  );
+  const unpinnedThreads = recentThreads.filter(
     (thread) => !pinnedThreadIds.has(thread.id),
   );
-  const priorityOrderedThreads = [...pinnedThreads, ...unpinnedThreads];
+  const groupPriority = new Map<string, number>();
+
+  unpinnedThreads.forEach((thread, index) => {
+    if (thread.groupId && !groupPriority.has(thread.groupId)) {
+      groupPriority.set(thread.groupId, index);
+    }
+  });
+
+  const activityOrderedGroups = Object.values(groups).sort(
+    (left, right) =>
+      (groupPriority.get(left.id) ?? Number.POSITIVE_INFINITY) -
+      (groupPriority.get(right.id) ?? Number.POSITIVE_INFINITY),
+  );
+  const groupedThreads = activityOrderedGroups.flatMap((group) =>
+    unpinnedThreads.filter((thread) => thread.groupId === group.id),
+  );
+  const ungroupedThreads = unpinnedThreads.filter((thread) => !thread.groupId);
   const orderedThreads = [
-    ...Object.values(groups).flatMap((group) =>
-      priorityOrderedThreads.filter((thread) => thread.groupId === group.id),
-    ),
-    ...priorityOrderedThreads.filter((thread) => !thread.groupId),
+    ...recentPinnedThreads,
+    ...groupedThreads,
+    ...ungroupedThreads,
   ];
+
+  function renderThreadItem(thread: ThreadSummary) {
+    const isExpanded = Boolean(expandedThreadIds[thread.id]);
+    const isPinned = pinnedThreadIds.has(thread.id);
+    const isStreaming = streamingThreadIds.has(thread.id);
+
+    return (
+      <div
+        className={
+          [
+            "thread-item",
+            thread.id === activeThreadId ? "is-active" : "",
+            isPinned ? "is-pinned" : "",
+            isStreaming ? "is-streaming" : "",
+            thread.kind === "note" ? "is-note" : "",
+            draggedThreadId === thread.id ? "is-dragging" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")
+        }
+        key={thread.id}
+      >
+        <span className="thread-item-drag-handle" title="Drag to pin or group">
+          <DragHandleIcon />
+        </span>
+        <button
+          className="thread-item-main"
+          draggable
+          onDragEnd={handleThreadDragEnd}
+          onDragStart={(event) => handleThreadDragStart(event, thread.id)}
+          onClick={() => {
+            setOpenMenuState(null);
+            onSelectThread(thread.id);
+          }}
+          title={thread.title}
+          type="button"
+        >
+          <span className="thread-item-title">
+            {thread.kind === "note" ? (
+              <span aria-hidden="true" className="thread-item-kind-icon">
+                <NoteIcon />
+              </span>
+            ) : null}
+            <span>{thread.title}</span>
+          </span>
+          <span className="thread-item-meta">
+            {isStreaming ? (
+              <span className="thread-streaming-status" role="status" title="Response streaming">
+                <span aria-hidden="true" className="thread-streaming-dot" />
+                <span className="thread-streaming-label">Streaming</span>
+              </span>
+            ) : null}
+            <span className="thread-item-date">{thread.updatedLabel}</span>
+          </span>
+        </button>
+
+        {thread.kind !== "note" ? (
+          <button
+            aria-controls={`chat-outline-${thread.id}`}
+            aria-expanded={isExpanded}
+            aria-label={`${isExpanded ? "Collapse" : "Expand"} outline for ${thread.title}`}
+            className={
+              isExpanded
+                ? "thread-item-expand-trigger is-expanded"
+                : "thread-item-expand-trigger"
+            }
+            onClick={() => handleToggleExpanded(thread.id)}
+            type="button"
+          >
+            <ExpandIcon />
+          </button>
+        ) : null}
+
+        <button
+          aria-controls={
+            openMenuState?.threadId === thread.id
+              ? `thread-menu-${thread.id}`
+              : undefined
+          }
+          aria-expanded={openMenuState?.threadId === thread.id}
+          aria-haspopup="menu"
+          aria-label={`Open actions for ${thread.title}`}
+          className="thread-item-menu-trigger"
+          data-thread-menu-trigger="true"
+          onClick={(event) => handleOpenMenu(event, thread)}
+          type="button"
+        >
+          <MoreIcon />
+        </button>
+
+        {isExpanded && thread.id === activeThreadId ? (
+          <nav
+            aria-label={`Outline for ${currentChatTitle}`}
+            className="chat-outline is-nested"
+            id={`chat-outline-${thread.id}`}
+          >
+            {currentChatOutline.length ? (
+              <ol className="chat-outline-list">
+                {currentChatOutline.map((item) => (
+                  <li
+                    className={`chat-outline-level-${item.level}`}
+                    key={item.id}
+                  >
+                    <button
+                      aria-current={
+                        item.id === activeOutlineItemId
+                          ? "location"
+                          : undefined
+                      }
+                      className={
+                        item.id === activeOutlineItemId
+                          ? "chat-outline-item is-active"
+                          : "chat-outline-item"
+                      }
+                      onClick={() => onSelectOutlineItem(item.id)}
+                      title={item.label}
+                      type="button"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="chat-outline-marker"
+                      />
+                      <span className="chat-outline-label">{item.label}</span>
+                    </button>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="chat-outline-empty">
+                Send a message to start this outline.
+              </p>
+            )}
+          </nav>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <aside className={collapsed ? "thread-sidebar is-collapsed" : "thread-sidebar"}>
@@ -637,6 +891,27 @@ export default function ThreadSidebar({
               <GraphViewIcon />
             </button>
           </div>
+          <div aria-label="Workspace actions" className="thread-sidebar-tools" role="group">
+            <button
+              aria-label="New note"
+              className="sidebar-tool-button"
+              onClick={onNewNote}
+              title="New note"
+              type="button"
+            >
+              <NoteIcon />
+            </button>
+            <button
+              aria-label="Search chats"
+              className="sidebar-tool-button"
+              onClick={onOpenSearch}
+              title="Search chats"
+              type="button"
+            >
+              <SearchIcon />
+            </button>
+            <NewConversationGroupForm compact iconOnly onCreate={onCreateGroup} />
+          </div>
         </div>
         <button
           aria-label={collapsed ? "Expand left sidebar" : "Minimize left sidebar"}
@@ -660,37 +935,11 @@ export default function ThreadSidebar({
           <PlusIcon />
           <span>New chat</span>
         </button>
-
-        <button
-          aria-label="New note"
-          className="sidebar-action"
-          onClick={onNewNote}
-          title="New note"
-          type="button"
-        >
-          <NoteIcon />
-          <span>New note</span>
-        </button>
-
-        <button
-          aria-label="Search chats"
-          className="sidebar-action"
-          onClick={onOpenSearch}
-          title="Search chats"
-          type="button"
-        >
-          <SearchIcon />
-          <span>Search chats</span>
-        </button>
-        {!collapsed ? (
-          <NewConversationGroupForm compact onCreate={onCreateGroup} />
-        ) : null}
       </div>
 
       {collapsed ? (
         <div className="thread-sidebar-mini-list">
           {orderedThreads.map((thread) => {
-            const branchCount = Math.max(thread.conversationCount - 1, 0);
             const isPinned = pinnedThreadIds.has(thread.id);
             const isStreaming = streamingThreadIds.has(thread.id);
 
@@ -742,12 +991,6 @@ export default function ThreadSidebar({
                         <span>•</span>
                       </>
                     ) : null}
-                    {thread.kind === "note"
-                      ? "Note"
-                      : branchCount === 1
-                        ? "1 branch"
-                        : `${branchCount} branches`}
-                    <span aria-hidden="true">•</span>
                     {thread.updatedLabel}
                   </span>
                   <span className="thread-sidebar-mini-preview">{thread.preview}</span>
@@ -758,198 +1001,129 @@ export default function ThreadSidebar({
         </div>
       ) : (
         <div className="thread-list">
-          {Object.values(groups)
-            .filter(
-              (group) =>
-                !orderedThreads.some((thread) => thread.groupId === group.id),
-            )
-            .map((group) => (
-              <div className="thread-group-section-header" key={group.id}>
-                <button
-                  aria-expanded={!group.collapsed}
-                  onClick={() => onToggleGroup(group.id)}
-                  type="button"
-                >
-                  <span
-                    aria-hidden="true"
-                    className="conversation-group-color"
-                    style={{ backgroundColor: group.color }}
-                  />
-                  <span>{group.name}</span>
-                  <span>0</span>
-                  <span aria-hidden="true">
-                    {group.collapsed ? "＋" : "−"}
-                  </span>
-                </button>
+          <section
+            aria-label="Pinned chats and notes"
+            className={
+              dropTargetKey === "pinned"
+                ? "thread-sidebar-section is-pinned is-drop-target"
+                : "thread-sidebar-section is-pinned"
+            }
+            data-thread-drop-target="pinned"
+            onDragLeave={(event) => handleThreadDragLeave(event, "pinned")}
+            onDragOver={(event) => handleThreadDragOver(event, "pinned")}
+            onDrop={(event) =>
+              handleThreadDrop(event, { pinned: true })
+            }
+          >
+            <div className="thread-group-section-header is-pinned">
+              <div className="thread-section-label">
+                <span aria-hidden="true" className="thread-section-pin-icon">
+                  <PinIcon filled />
+                </span>
+                <span>Pinned</span>
+                <span className="thread-section-count">
+                  {recentPinnedThreads.length}
+                </span>
               </div>
-            ))}
-          {orderedThreads.map((thread, index) => {
-            const branchCount = Math.max(thread.conversationCount - 1, 0);
-            const isExpanded = Boolean(expandedThreadIds[thread.id]);
-            const isPinned = pinnedThreadIds.has(thread.id);
-            const isStreaming = streamingThreadIds.has(thread.id);
-            const group = thread.groupId ? groups[thread.groupId] : null;
-            const previousThread = orderedThreads[index - 1];
-            const startsGroup =
-              index === 0 || previousThread?.groupId !== thread.groupId;
+            </div>
+            {recentPinnedThreads.length ? (
+              recentPinnedThreads.map(renderThreadItem)
+            ) : (
+              <p className="thread-section-drop-hint">Drop here to pin</p>
+            )}
+          </section>
+
+          {activityOrderedGroups.map((group) => {
+            const sectionThreads = groupedThreads.filter(
+              (thread) => thread.groupId === group.id,
+            );
+            const targetKey = `group:${group.id}`;
 
             return (
-              <Fragment key={thread.id}>
-                {startsGroup ? (
-                  <div className="thread-group-section-header">
-                    <button
-                      aria-expanded={group ? !group.collapsed : true}
-                      disabled={!group}
-                      onClick={() => group && onToggleGroup(group.id)}
-                      type="button"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="conversation-group-color"
-                        style={{ backgroundColor: group?.color ?? "transparent" }}
-                      />
-                      <span>{group?.name ?? "Ungrouped"}</span>
-                      {group ? (
-                        <span aria-hidden="true">
-                          {group.collapsed ? "＋" : "−"}
-                        </span>
-                      ) : null}
-                    </button>
-                  </div>
-                ) : null}
-                {!group?.collapsed ? (
-                <div
-                  className={
-                    [
-                      "thread-item",
-                      thread.id === activeThreadId ? "is-active" : "",
-                      isPinned ? "is-pinned" : "",
-                      isStreaming ? "is-streaming" : "",
-                      thread.kind === "note" ? "is-note" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ")
-                  }
-                >
-                <button
-                  className="thread-item-main"
-                  onClick={() => {
-                    setOpenMenuState(null);
-                    onSelectThread(thread.id);
-                  }}
-                  type="button"
-                >
-                  <span className="thread-item-title">
-                    {thread.kind === "note" ? (
-                      <span aria-hidden="true" className="thread-item-kind-icon">
-                        <NoteIcon />
-                      </span>
-                    ) : null}
-                    <span>{thread.title}</span>
-                  </span>
-                  <span className="thread-item-meta">
-                    {isStreaming ? (
-                      <>
-                        <span className="thread-streaming-status" role="status">
-                          <span aria-hidden="true" className="thread-streaming-dot" />
-                          Streaming
-                        </span>
-                        <span aria-hidden="true">•</span>
-                      </>
-                    ) : null}
-                    {thread.kind === "note"
-                      ? "Note"
-                      : branchCount === 1
-                        ? "1 branch"
-                        : `${branchCount} branches`}
-                    <span aria-hidden="true">•</span>
-                    {thread.updatedLabel}
-                  </span>
-                </button>
-
-                {thread.kind !== "note" ? <button
-                  aria-controls={`chat-outline-${thread.id}`}
-                  aria-expanded={isExpanded}
-                  aria-label={`${isExpanded ? "Collapse" : "Expand"} outline for ${thread.title}`}
-                  className={
-                    isExpanded
-                      ? "thread-item-expand-trigger is-expanded"
-                      : "thread-item-expand-trigger"
-                  }
-                  onClick={() => handleToggleExpanded(thread.id)}
-                  type="button"
-                >
-                  <ExpandIcon />
-                </button> : null}
-
-                <button
-                  aria-controls={
-                    openMenuState?.threadId === thread.id
-                      ? `thread-menu-${thread.id}`
-                      : undefined
-                  }
-                  aria-expanded={openMenuState?.threadId === thread.id}
-                  aria-haspopup="menu"
-                  aria-label={`Open actions for ${thread.title}`}
-                  className="thread-item-menu-trigger"
-                  data-thread-menu-trigger="true"
-                  onClick={(event) => handleOpenMenu(event, thread)}
-                  type="button"
-                >
-                  <MoreIcon />
-                </button>
-
-                {isExpanded && thread.id === activeThreadId ? (
-                  <nav
-                    aria-label={`Outline for ${currentChatTitle}`}
-                    className="chat-outline is-nested"
-                    id={`chat-outline-${thread.id}`}
+              <section
+                aria-label={`${group.name} group`}
+                className={
+                  dropTargetKey === targetKey
+                    ? "thread-sidebar-section is-drop-target"
+                    : "thread-sidebar-section"
+                }
+                data-thread-drop-target={targetKey}
+                key={group.id}
+                onDragLeave={(event) =>
+                  handleThreadDragLeave(event, targetKey)
+                }
+                onDragOver={(event) =>
+                  handleThreadDragOver(event, targetKey)
+                }
+                onDrop={(event) =>
+                  handleThreadDrop(event, {
+                    groupId: group.id,
+                  })
+                }
+              >
+                <div className="thread-group-section-header">
+                  <button
+                    aria-expanded={!group.collapsed}
+                    onClick={() => onToggleGroup(group.id)}
+                    type="button"
                   >
-                    {currentChatOutline.length ? (
-                      <ol className="chat-outline-list">
-                        {currentChatOutline.map((item) => (
-                          <li
-                            className={`chat-outline-level-${item.level}`}
-                            key={item.id}
-                          >
-                            <button
-                              aria-current={
-                                item.id === activeOutlineItemId
-                                  ? "location"
-                                  : undefined
-                              }
-                              className={
-                                item.id === activeOutlineItemId
-                                  ? "chat-outline-item is-active"
-                                  : "chat-outline-item"
-                              }
-                              onClick={() => onSelectOutlineItem(item.id)}
-                              title={item.label}
-                              type="button"
-                            >
-                              <span
-                                aria-hidden="true"
-                                className="chat-outline-marker"
-                              />
-                              <span className="chat-outline-label">
-                                {item.label}
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ol>
-                    ) : (
-                      <p className="chat-outline-empty">
-                        Send a message to start this outline.
-                      </p>
-                    )}
-                  </nav>
-                ) : null}
+                    <span
+                      aria-hidden="true"
+                      className="conversation-group-color"
+                      style={{ backgroundColor: group.color }}
+                    />
+                    <span>{group.name}</span>
+                    <span className="thread-section-count">
+                      {sectionThreads.length}
+                    </span>
+                    <span aria-hidden="true">
+                      {group.collapsed ? "＋" : "−"}
+                    </span>
+                  </button>
                 </div>
+                {!group.collapsed ? (
+                  sectionThreads.length ? (
+                    sectionThreads.map(renderThreadItem)
+                  ) : (
+                    <p className="thread-section-drop-hint">Drop into group</p>
+                  )
                 ) : null}
-              </Fragment>
+              </section>
             );
           })}
+
+          <section
+            aria-label="Ungrouped chats and notes"
+            className={
+              dropTargetKey === "ungrouped"
+                ? "thread-sidebar-section is-ungrouped is-drop-target"
+                : "thread-sidebar-section is-ungrouped"
+            }
+            data-thread-drop-target="ungrouped"
+            onDragLeave={(event) => handleThreadDragLeave(event, "ungrouped")}
+            onDragOver={(event) => handleThreadDragOver(event, "ungrouped")}
+            onDrop={(event) =>
+              handleThreadDrop(event, { groupId: null })
+            }
+          >
+            <div className="thread-group-section-header">
+              <div className="thread-section-label">
+                <span
+                  aria-hidden="true"
+                  className="conversation-group-color is-ungrouped"
+                />
+                <span>Ungrouped</span>
+                <span className="thread-section-count">
+                  {ungroupedThreads.length}
+                </span>
+              </div>
+            </div>
+            {ungroupedThreads.length ? (
+              ungroupedThreads.map(renderThreadItem)
+            ) : (
+              <p className="thread-section-drop-hint">Drop here to ungroup</p>
+            )}
+          </section>
         </div>
       )}
 

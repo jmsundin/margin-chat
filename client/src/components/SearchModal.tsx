@@ -1,14 +1,8 @@
 import { useEffect, useRef } from "react";
 
-export interface ChatSearchResult {
-  conversationId: string;
-  locationLabel: string;
-  matchLabel: string;
-  preview: string;
-  rootTitle: string;
-  title: string;
-  updatedLabel: string;
-}
+import type { ChatSearchResult } from "../lib/conversationSearch";
+
+export type { ChatSearchResult } from "../lib/conversationSearch";
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -95,7 +89,7 @@ export default function SearchModal({
         </div>
 
         <label className="search-modal-field">
-          <span className="search-modal-label">Find by title, message, or personal note</span>
+          <span className="search-modal-label">Find by title, message, or note</span>
           <input
             ref={inputRef}
             className="search-modal-input"

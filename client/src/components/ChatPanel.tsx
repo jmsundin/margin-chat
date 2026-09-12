@@ -252,6 +252,10 @@ type BranchMarginPosition = {
   top: number;
 };
 
+type MarginNotePosition = BranchMarginPosition & {
+  cardTop: number;
+};
+
 function BranchMarginThreads({
   links,
   onOpenBranch,
@@ -316,6 +320,88 @@ function BranchMarginThreads({
               </span>
               <span className="margin-thread-open">Open branch →</span>
             </button>
+          </div>
+        );
+      })}
+    </aside>
+  );
+}
+
+function MarginNotesLayer({
+  notes,
+  onDeleteNote,
+  onUseNote,
+  positions,
+}: {
+  notes: ConversationNote[];
+  onDeleteNote: (noteId: string) => void;
+  onUseNote: (content: string) => void;
+  positions: Record<string, MarginNotePosition>;
+}) {
+  if (!notes.length) {
+    return null;
+  }
+
+  return (
+    <aside aria-label="Margin notes" className="margin-note-layer">
+      {notes.map((note) => {
+        const position = positions[note.id];
+        const connectorWidth = position
+          ? Math.max(position.cardX - position.anchorX, 12)
+          : 0;
+
+        return (
+          <div className="margin-note-item" key={note.id}>
+            <span
+              aria-hidden="true"
+              className={
+                position
+                  ? "margin-note-connector is-positioned"
+                  : "margin-note-connector"
+              }
+              style={
+                position
+                  ? ({
+                      left: `${position.anchorX}px`,
+                      top: `${position.top}px`,
+                      width: `${connectorWidth}px`,
+                    } as CSSProperties)
+                  : undefined
+              }
+            />
+            <article
+              aria-label={`Margin note: ${excerpt(note.content, 64)}`}
+              className={
+                position ? "margin-note-card is-positioned" : "margin-note-card"
+              }
+              style={
+                position
+                  ? ({
+                      left: `${position.cardX}px`,
+                      top: `${position.cardTop}px`,
+                    } as CSSProperties)
+                  : undefined
+              }
+            >
+              <header className="margin-note-card-head">
+                <span><NoteIcon /> Margin note</span>
+                <span>Private</span>
+              </header>
+              {note.quote ? <blockquote>“{excerpt(note.quote, 72)}”</blockquote> : null}
+              <p>{note.content}</p>
+              <div className="margin-note-card-actions">
+                <button onClick={() => onUseNote(note.content)} type="button">
+                  Use in chat
+                </button>
+                <button
+                  className="is-danger"
+                  onClick={() => onDeleteNote(note.id)}
+                  type="button"
+                >
+                  Delete
+                </button>
+              </div>
+            </article>
           </div>
         );
       })}
@@ -518,6 +604,10 @@ function renderMessageContent(
     branchConversationId: string,
     element: HTMLSpanElement | null,
   ) => void,
+  registerNoteAnchorRef: (
+    noteId: string,
+    element: HTMLSpanElement | null,
+  ) => void,
   pendingSelection: SelectionDraft | null,
   onOpenBranch: (conversationId: string) => void,
 ) {
@@ -582,12 +672,13 @@ function renderMessageContent(
     }
 
     const branch = segment.active.find((item) => item.type === "anchor");
-    const hasNote = segment.active.some((item) => item.type === "note");
+    const activeNotes = segment.active.filter((item) => item.type === "note");
+    const hasNote = activeNotes.length > 0;
     const hasPreview = segment.active.some((item) => item.type === "preview");
 
     return (
       <mark
-        aria-label={branch ? `Open branch ${anchors.find((link) => link.branchConversationId === branch.branchConversationId)?.title ?? "conversation"}` : hasNote ? "Text with a personal note" : undefined}
+        aria-label={branch ? `Open branch ${anchors.find((link) => link.branchConversationId === branch.branchConversationId)?.title ?? "conversation"}` : hasNote ? "Text with a margin note" : undefined}
         key={`${message.id}-decoration-${segment.start}`}
         className={`message-anchor${hasNote ? " is-note-anchor" : ""}${hasPreview ? " is-pending-selection" : ""}`}
         onClick={() => {
@@ -613,9 +704,15 @@ function renderMessageContent(
         tabIndex={branch ? 0 : undefined}
       >
         <span
-          ref={(element) =>
-            branch ? registerAnchorRef(branch.branchConversationId!, element) : undefined
-          }
+          ref={(element) => {
+            if (branch) {
+              registerAnchorRef(branch.branchConversationId!, element);
+            }
+
+            for (const note of activeNotes) {
+              registerNoteAnchorRef(note.branchConversationId!, element);
+            }
+          }}
         >
           {segment.value}
         </span>
@@ -639,6 +736,10 @@ interface MessageContentProps {
     branchConversationId: string,
     element: HTMLSpanElement | null,
   ) => void;
+  registerNoteAnchorRef: (
+    noteId: string,
+    element: HTMLSpanElement | null,
+  ) => void;
   theme: "light" | "dark";
   typingProgressByMessageId: Record<string, number>;
 }
@@ -655,6 +756,7 @@ function MessageContent({
   onOpenBranch,
   pendingSelection,
   registerAnchorRef,
+  registerNoteAnchorRef,
   theme,
   typingProgressByMessageId,
 }: MessageContentProps) {
@@ -774,6 +876,7 @@ function MessageContent({
         onOpenBranch={onOpenBranch}
         pendingSelection={pendingSelection}
         registerAnchorRef={registerAnchorRef}
+        registerNoteAnchorRef={registerNoteAnchorRef}
         theme={theme}
       />
     ) : (
@@ -790,6 +893,7 @@ function MessageContent({
           anchors,
           notes,
           registerAnchorRef,
+          registerNoteAnchorRef,
           pendingSelection,
           onOpenBranch,
         )}
@@ -846,9 +950,14 @@ export default function ChatPanel({
   const [branchMarginPositions, setBranchMarginPositions] = useState<
     Record<string, BranchMarginPosition>
   >({});
+  const [marginNotePositions, setMarginNotePositions] = useState<
+    Record<string, MarginNotePosition>
+  >({});
   const panelBodyRef = useRef<HTMLDivElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const localAnchorRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const localNoteAnchorRefs = useRef<Record<string, HTMLSpanElement | null>>({});
+  const localMessageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const composerPrimaryRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -898,6 +1007,7 @@ export default function ChatPanel({
     .join("|");
   const conversationNotes = conversation.notes ?? [];
   const commentNotes = conversationNotes.filter((note) => (note.kind ?? "comment") === "comment");
+  const marginNotes = commentNotes.filter((note) => note.sourceMessageId);
   const sideNotes = conversationNotes.filter((note) => note.kind === "side-chat");
   const activeSideNote = sideNotes.find((note) => note.id === activeSideNoteId) ?? null;
   const messageNotesById = commentNotes.reduce<Record<string, ConversationNote[]>>(
@@ -908,6 +1018,7 @@ export default function ChatPanel({
     },
     {},
   );
+  const marginNoteKey = marginNotes.map((note) => note.id).join("|");
 
   useEffect(() => {
     if (activeSideNote) setSideNoteEditorValue(activeSideNote.content);
@@ -1069,6 +1180,102 @@ export default function ChatPanel({
     localAnchorRefs.current[branchConversationId] = element;
     registerAnchorRef(branchConversationId, element);
   }
+
+  function handleRegisterNoteAnchorRef(
+    noteId: string,
+    element: HTMLSpanElement | null,
+  ) {
+    localNoteAnchorRefs.current[noteId] = element;
+  }
+
+  const syncMarginNotePositions = useEffectEvent(() => {
+    const panelBody = panelBodyRef.current;
+
+    if (!panelBody || !marginNotes.length) {
+      setMarginNotePositions((current) =>
+        Object.keys(current).length ? {} : current,
+      );
+      return;
+    }
+
+    const panelRect = panelBody.getBoundingClientRect();
+    const cardWidth = panelBody.clientWidth >= 760 ? 220 : 184;
+    const cardX = Math.max(panelBody.clientWidth - cardWidth - 24, 0);
+    const candidates = marginNotes.flatMap((note) => {
+      const anchorElement =
+        localNoteAnchorRefs.current[note.id] ??
+        (note.sourceMessageId
+          ? localMessageRefs.current[note.sourceMessageId]
+          : null);
+
+      if (!anchorElement) {
+        return [];
+      }
+
+      const anchorRect = anchorElement.getBoundingClientRect();
+      const anchorX =
+        anchorRect.right - panelRect.left + panelBody.scrollLeft;
+      const top =
+        anchorRect.top -
+        panelRect.top +
+        panelBody.scrollTop +
+        anchorRect.height / 2;
+
+      return [{ anchorX, cardX: Math.max(cardX, anchorX + 12), note, top }];
+    });
+    candidates.sort((left, right) => left.top - right.top);
+
+    const nextPositions: Record<string, MarginNotePosition> = {};
+    let previousCardBottom = -Infinity;
+
+    for (const candidate of candidates) {
+      const cardTop = Math.max(candidate.top - 18, previousCardBottom + 10);
+      previousCardBottom = cardTop + 148;
+      nextPositions[candidate.note.id] = {
+        anchorX: candidate.anchorX,
+        cardTop,
+        cardX: candidate.cardX,
+        top: candidate.top,
+      };
+    }
+
+    setMarginNotePositions(nextPositions);
+  });
+
+  useLayoutEffect(() => {
+    if (!marginNotes.length) {
+      setMarginNotePositions((current) =>
+        Object.keys(current).length ? {} : current,
+      );
+      return undefined;
+    }
+
+    let frameId = window.requestAnimationFrame(syncMarginNotePositions);
+    const observer = new ResizeObserver(() => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(syncMarginNotePositions);
+    });
+
+    if (panelBodyRef.current) observer.observe(panelBodyRef.current);
+    if (messageListRef.current) observer.observe(messageListRef.current);
+
+    for (const note of marginNotes) {
+      const anchorElement = localNoteAnchorRefs.current[note.id];
+      const messageElement = note.sourceMessageId
+        ? localMessageRefs.current[note.sourceMessageId]
+        : null;
+      if (anchorElement) observer.observe(anchorElement);
+      if (messageElement) observer.observe(messageElement);
+    }
+
+    window.addEventListener("resize", syncMarginNotePositions);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      observer.disconnect();
+      window.removeEventListener("resize", syncMarginNotePositions);
+    };
+  }, [conversation.messages, marginNoteKey]);
 
   useLayoutEffect(() => {
     const panelBody = panelBodyRef.current;
@@ -1470,7 +1677,7 @@ export default function ChatPanel({
 
   return (
     <article
-      className={`chat-panel${branchMarginLinks.length ? " has-branch-margin" : ""}${isActive ? " is-active" : ""}${sideNotesOpen ? " has-side-note-panel" : ""}`}
+      className={`chat-panel${branchMarginLinks.length || marginNotes.length ? " has-margin-rail" : ""}${isActive ? " is-active" : ""}${sideNotesOpen ? " has-side-note-panel" : ""}`}
       onClick={handlePanelClick}
       ref={(element) => registerPanelRef(conversation.id, element)}
     >
@@ -1535,7 +1742,12 @@ export default function ChatPanel({
                     tabIndex={-1}
                   >
                     <div className={`message-with-margin is-${message.role}${messageNotes.length ? " has-notes" : ""}`}>
-                      <div className={`message-bubble is-${message.role}`}>
+                      <div
+                        className={`message-bubble is-${message.role}`}
+                        ref={(element) => {
+                          localMessageRefs.current[message.id] = element;
+                        }}
+                      >
                         <div className="message-meta">
                           <span>{message.role}</span>
                           <div aria-label="Message note actions" className="message-note-actions" role="group">
@@ -1549,13 +1761,13 @@ export default function ChatPanel({
                               <SideNoteIcon />
                             </button>
                             <button
-                              aria-label="Add a sticky comment to this message"
+                              aria-label="Add a margin note to this message"
                               className="message-note-add"
                               onClick={() => {
                                 setMessageNoteTargetId((current) => current === message.id ? null : message.id);
                                 setMessageNoteDraft("");
                               }}
-                              title="Sticky comment"
+                              title="Margin note"
                               type="button"
                             >
                               <NoteIcon />
@@ -1576,17 +1788,18 @@ export default function ChatPanel({
                           onOpenBranch={onOpenBranch}
                           pendingSelection={pendingSelection}
                           registerAnchorRef={handleRegisterAnchorRef}
+                          registerNoteAnchorRef={handleRegisterNoteAnchorRef}
                           theme={theme}
                           typingProgressByMessageId={typingProgressByMessageId}
                         />
                         {messageNoteTargetId === message.id ? (
                           <div className="message-note-composer">
                             <div className="personal-note-head">
-                              <span><NoteIcon /> Sticky comment</span>
+                              <span><NoteIcon /> Margin note</span>
                               <span className="personal-note-private">Not sent to AI</span>
                             </div>
                             <LiveMarkdownEditor
-                              ariaLabel="Sticky comment"
+                              ariaLabel="Margin note"
                               autoFocus
                               className="is-compact"
                               onChange={setMessageNoteDraft}
@@ -1595,7 +1808,7 @@ export default function ChatPanel({
                             />
                             <div className="message-note-composer-actions">
                               <button onClick={() => setMessageNoteTargetId(null)} type="button">Cancel</button>
-                              <button disabled={!messageNoteDraft.trim()} onClick={() => submitMessageNote(message.id)} type="button">Save note</button>
+                              <button disabled={!messageNoteDraft.trim()} onClick={() => submitMessageNote(message.id)} type="button">Save margin note</button>
                             </div>
                           </div>
                         ) : null}
@@ -1629,6 +1842,12 @@ export default function ChatPanel({
           links={branchMarginLinks}
           onOpenBranch={onOpenBranch}
           positions={branchMarginPositions}
+        />
+        <MarginNotesLayer
+          notes={marginNotes}
+          onDeleteNote={(noteId) => onDeleteNote(conversation.id, noteId)}
+          onUseNote={(content) => onUseNote(conversation.id, content)}
+          positions={marginNotePositions}
         />
       </div>
 
@@ -1764,6 +1983,7 @@ export default function ChatPanel({
                   className="composer-side-chat-button"
                   disabled={!isActive}
                   onClick={() => onAddSideChat(conversation.id)}
+                  title="Add side chat"
                   type="button"
                 >
                   <PlusIcon />
@@ -1771,26 +1991,11 @@ export default function ChatPanel({
                 </button>
               ) : null}
               <button
-                aria-expanded={isServicePickerOpen}
-                aria-haspopup="dialog"
-                aria-label={`Choose AI model. Current selection: ${currentSelectionLabel}`}
-                className={
-                  isActive ? "composer-service-pill" : "composer-service-pill is-disabled"
-                }
-                disabled={!isActive || isSubmitting}
-                onClick={() => setServicePickerOpen(true)}
-                type="button"
-              >
-                <span className="composer-service-label">AI Model</span>
-                <span className="composer-service-value">
-                  {servicePillValue}
-                </span>
-              </button>
-              <button
                 aria-expanded={sideNotesOpen}
                 aria-label="Open a new side note"
                 className="composer-notes-button"
                 onClick={() => openNewSideNote(null)}
+                title="Side note"
                 type="button"
               >
                 <SideNoteIcon />
@@ -1801,6 +2006,23 @@ export default function ChatPanel({
           </div>
 
           <div className="composer-trailing">
+            <button
+              aria-expanded={isServicePickerOpen}
+              aria-haspopup="dialog"
+              aria-label={`Choose AI model. Current selection: ${currentSelectionLabel}`}
+              className={
+                isActive ? "composer-service-pill" : "composer-service-pill is-disabled"
+              }
+              disabled={!isActive || isSubmitting}
+              onClick={() => setServicePickerOpen(true)}
+              title={currentSelectionLabel}
+              type="button"
+            >
+              <span className="composer-service-label">AI Model</span>
+              <span className="composer-service-value">
+                {servicePillValue}
+              </span>
+            </button>
             <button
               aria-label={
                 isSubmitting || hasActiveTypewriter

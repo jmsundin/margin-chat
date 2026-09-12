@@ -352,10 +352,11 @@ describe("personal notes", () => {
       />,
     );
 
-    expect(markup).toContain("Text with a personal note");
-    expect(markup).not.toContain("message-note-group");
+    expect(markup).toContain("Text with a margin note");
+    expect(markup).toContain('aria-label="Margin notes"');
+    expect(markup).toContain("This is the decision to revisit.");
     expect(markup).toContain('aria-label="Open a side note for this message"');
-    expect(markup).toContain('aria-label="Add a sticky comment to this message"');
+    expect(markup).toContain('aria-label="Add a margin note to this message"');
     expect(markup).toContain('aria-label="Open a new side note"');
     expect(markup).toContain('aria-label="Add side chat"');
   });

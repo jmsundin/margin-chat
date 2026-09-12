@@ -4,6 +4,20 @@ import {
 } from "../lib/backendModels.mjs";
 import { getWorkspaceSessionId, VALID_SERVICE_IDS } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
+import { createStatusError } from "../lib/errors.mjs";
+
+const WORKSPACE_ENTITY_ID_SEPARATOR = "::";
+
+export function toWorkspaceEntityId(sessionId, entityId) {
+  return `${sessionId}${WORKSPACE_ENTITY_ID_SEPARATOR}${entityId}`;
+}
+
+export function fromWorkspaceEntityId(sessionId, storedEntityId) {
+  const prefix = `${sessionId}${WORKSPACE_ENTITY_ID_SEPARATOR}`;
+  return typeof storedEntityId === "string" && storedEntityId.startsWith(prefix)
+    ? storedEntityId.slice(prefix.length)
+    : storedEntityId;
+}
 
 export async function readState(client, userId) {
   const sessionResult = await client.query(
@@ -30,6 +44,8 @@ export async function readState(client, userId) {
   }
 
   const session = sessionResult.rows[0];
+  const fromStorageId = (entityId) =>
+    fromWorkspaceEntityId(session.id, entityId);
   const conversationResult = await client.query(
     `
       select
@@ -126,17 +142,18 @@ export async function readState(client, userId) {
   const conversations = {};
 
   for (const row of conversationResult.rows) {
-    conversations[row.id] = {
+    const conversationId = fromStorageId(row.id);
+    conversations[conversationId] = {
       branchAnchor: null,
       childIds: [],
       createdAt: toIsoString(row.created_at),
-      id: row.id,
+      id: conversationId,
       kind: row.conversation_kind,
       documents: [],
       messages: [],
       notes: [],
       modelId: row.model_id,
-      parentId: row.parent_id,
+      parentId: row.parent_id ? fromStorageId(row.parent_id) : null,
       serviceId: row.service_id,
       title: row.title,
       updatedAt: toIsoString(row.updated_at),
@@ -144,7 +161,7 @@ export async function readState(client, userId) {
   }
 
   for (const row of messageResult.rows) {
-    const conversation = conversations[row.conversation_id];
+    const conversation = conversations[fromStorageId(row.conversation_id)];
 
     if (!conversation) {
       continue;
@@ -153,13 +170,13 @@ export async function readState(client, userId) {
     conversation.messages.push({
       content: row.content,
       createdAt: toIsoString(row.created_at),
-      id: row.id,
+      id: fromStorageId(row.id),
       role: row.role,
     });
   }
 
   for (const row of documentResult.rows) {
-    const conversation = conversations[row.conversation_id];
+    const conversation = conversations[fromStorageId(row.conversation_id)];
 
     if (!conversation) {
       continue;
@@ -177,7 +194,7 @@ export async function readState(client, userId) {
   }
 
   for (const row of anchorResult.rows) {
-    const conversation = conversations[row.conversation_id];
+    const conversation = conversations[fromStorageId(row.conversation_id)];
 
     if (!conversation) {
       continue;
@@ -186,17 +203,17 @@ export async function readState(client, userId) {
     conversation.branchAnchor = {
       createdAt: toIsoString(row.created_at),
       endOffset: row.end_offset,
-      id: row.id,
+      id: fromStorageId(row.id),
       prompt: row.prompt,
       quote: row.quote,
-      sourceConversationId: row.source_conversation_id,
-      sourceMessageId: row.source_message_id,
+      sourceConversationId: fromStorageId(row.source_conversation_id),
+      sourceMessageId: fromStorageId(row.source_message_id),
       startOffset: row.start_offset,
     };
   }
 
   for (const row of noteResult.rows) {
-    const conversation = conversations[row.conversation_id];
+    const conversation = conversations[fromStorageId(row.conversation_id)];
 
     if (!conversation) {
       continue;
@@ -206,18 +223,22 @@ export async function readState(client, userId) {
       content: row.content,
       createdAt: toIsoString(row.created_at),
       endOffset: row.end_offset,
-      id: row.id,
+      id: fromStorageId(row.id),
       kind: row.note_kind,
       quote: row.quote,
-      sourceMessageId: row.source_message_id,
+      sourceMessageId: row.source_message_id
+        ? fromStorageId(row.source_message_id)
+        : null,
       startOffset: row.start_offset,
       updatedAt: toIsoString(row.updated_at),
     });
   }
 
   for (const row of conversationResult.rows) {
-    if (row.parent_id && conversations[row.parent_id]) {
-      conversations[row.parent_id].childIds.push(row.id);
+    const conversationId = fromStorageId(row.id);
+    const parentId = row.parent_id ? fromStorageId(row.parent_id) : null;
+    if (parentId && conversations[parentId]) {
+      conversations[parentId].childIds.push(conversationId);
     }
   }
 
@@ -274,16 +295,63 @@ export async function readState(client, userId) {
   };
 }
 
-export async function writeState(client, userId, normalizedState) {
-  const sessionId = getWorkspaceSessionId(userId);
+export async function readWorkspace(client, userId) {
+  const state = await readState(client, userId);
+  if (!state) return null;
+
+  const revisionResult = await client.query(
+    `
+      select revision
+      from marginchat_app_sessions
+      where user_id = $1
+    `,
+    [userId],
+  );
+
+  return {
+    revision: Number(revisionResult.rows[0]?.revision ?? 0),
+    state,
+  };
+}
+
+export async function writeState(
+  client,
+  userId,
+  normalizedState,
+  { expectedRevision = null } = {},
+) {
+  const requestedSessionId = getWorkspaceSessionId(userId);
 
   await client.query("begin");
 
   try {
-    await client.query(
-      "delete from marginchat_app_sessions where user_id = $1 or id = $2",
-      [userId, sessionId],
+    const sessionResult = await client.query(
+      `
+        select id, revision
+        from marginchat_app_sessions
+        where user_id = $1 or id = $2
+        order by (user_id = $1) desc
+        limit 1
+        for update
+      `,
+      [userId, requestedSessionId],
     );
+    const currentRevision = Number(sessionResult.rows[0]?.revision ?? 0);
+
+    if (
+      expectedRevision !== null &&
+      Number(expectedRevision) !== currentRevision
+    ) {
+      throw createStatusError(
+        409,
+        `Cloud workspace revision changed from ${expectedRevision} to ${currentRevision}.`,
+      );
+    }
+
+    const sessionId = sessionResult.rows[0]?.id ?? requestedSessionId;
+    const nextRevision = currentRevision + 1;
+    const toStorageId = (entityId) => toWorkspaceEntityId(sessionId, entityId);
+
     await client.query(
       `
         insert into marginchat_app_sessions (
@@ -294,9 +362,24 @@ export async function writeState(client, userId, normalizedState) {
           rail_open,
           pinned_thread_ids,
           graph_layouts,
-          conversation_groups
+          conversation_groups,
+          active_conversation_id,
+          root_conversation_id,
+          revision
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        on conflict (id) do update set
+          user_id = excluded.user_id,
+          default_service_id = excluded.default_service_id,
+          default_model_id = excluded.default_model_id,
+          rail_open = excluded.rail_open,
+          pinned_thread_ids = excluded.pinned_thread_ids,
+          graph_layouts = excluded.graph_layouts,
+          conversation_groups = excluded.conversation_groups,
+          active_conversation_id = excluded.active_conversation_id,
+          root_conversation_id = excluded.root_conversation_id,
+          revision = excluded.revision,
+          updated_at = now()
       `,
       [
         sessionId,
@@ -307,6 +390,9 @@ export async function writeState(client, userId, normalizedState) {
         normalizedState.pinnedThreadIds,
         normalizedState.graphLayouts,
         normalizedState.groups,
+        normalizedState.activeConversationId,
+        normalizedState.rootId,
+        nextRevision,
       ],
     );
 
@@ -329,13 +415,22 @@ export async function writeState(client, userId, normalizedState) {
             updated_at
           )
           values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          on conflict (id) do update set
+            session_id = excluded.session_id,
+            title = excluded.title,
+            conversation_kind = excluded.conversation_kind,
+            parent_id = excluded.parent_id,
+            model_id = excluded.model_id,
+            service_id = excluded.service_id,
+            created_at = excluded.created_at,
+            updated_at = excluded.updated_at
         `,
         [
-          conversation.id,
+          toStorageId(conversation.id),
           sessionId,
           conversation.title,
           conversation.kind,
-          conversation.parentId,
+          conversation.parentId ? toStorageId(conversation.parentId) : null,
           conversation.modelId,
           conversation.serviceId,
           conversation.createdAt,
@@ -356,10 +451,15 @@ export async function writeState(client, userId, normalizedState) {
               created_at
             )
             values ($1, $2, $3, $4, $5)
+            on conflict (id) do update set
+              conversation_id = excluded.conversation_id,
+              role = excluded.role,
+              content = excluded.content,
+              created_at = excluded.created_at
           `,
           [
-            message.id,
-            conversation.id,
+            toStorageId(message.id),
+            toStorageId(conversation.id),
             message.role,
             message.content,
             message.createdAt,
@@ -380,9 +480,10 @@ export async function writeState(client, userId, normalizedState) {
             select $1, id, $4
             from marginchat_documents
             where id = $2 and user_id = $3
-            on conflict (conversation_id, document_id) do nothing
+            on conflict (conversation_id, document_id) do update set
+              attached_at = excluded.attached_at
           `,
-          [conversation.id, document.id, userId, document.createdAt],
+          [toStorageId(conversation.id), document.id, userId, document.createdAt],
         );
 
         if (!result.rowCount) {
@@ -410,11 +511,21 @@ export async function writeState(client, userId, normalizedState) {
               updated_at
             )
             values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            on conflict (id) do update set
+              conversation_id = excluded.conversation_id,
+              source_message_id = excluded.source_message_id,
+              content = excluded.content,
+              note_kind = excluded.note_kind,
+              start_offset = excluded.start_offset,
+              end_offset = excluded.end_offset,
+              quote = excluded.quote,
+              created_at = excluded.created_at,
+              updated_at = excluded.updated_at
           `,
           [
-            note.id,
-            conversation.id,
-            note.sourceMessageId,
+            toStorageId(note.id),
+            toStorageId(conversation.id),
+            note.sourceMessageId ? toStorageId(note.sourceMessageId) : null,
             note.content,
             note.kind,
             note.startOffset,
@@ -426,6 +537,22 @@ export async function writeState(client, userId, normalizedState) {
         );
       }
     }
+
+    const anchorIds = orderedConversations.flatMap((conversation) =>
+      conversation.branchAnchor
+        ? [toStorageId(conversation.branchAnchor.id)]
+        : [],
+    );
+    await client.query(
+      `
+        delete from marginchat_branch_anchors
+        where conversation_id in (
+          select id from marginchat_conversations where session_id = $1
+        )
+          and not (id = any($2::text[]))
+      `,
+      [sessionId, anchorIds],
+    );
 
     for (const conversation of orderedConversations) {
       if (!conversation.branchAnchor) {
@@ -446,12 +573,21 @@ export async function writeState(client, userId, normalizedState) {
             created_at
           )
           values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          on conflict (id) do update set
+            conversation_id = excluded.conversation_id,
+            source_conversation_id = excluded.source_conversation_id,
+            source_message_id = excluded.source_message_id,
+            start_offset = excluded.start_offset,
+            end_offset = excluded.end_offset,
+            quote = excluded.quote,
+            prompt = excluded.prompt,
+            created_at = excluded.created_at
         `,
         [
-          conversation.branchAnchor.id,
-          conversation.id,
-          conversation.branchAnchor.sourceConversationId,
-          conversation.branchAnchor.sourceMessageId,
+          toStorageId(conversation.branchAnchor.id),
+          toStorageId(conversation.id),
+          toStorageId(conversation.branchAnchor.sourceConversationId),
+          toStorageId(conversation.branchAnchor.sourceMessageId),
           conversation.branchAnchor.startOffset,
           conversation.branchAnchor.endOffset,
           conversation.branchAnchor.quote,
@@ -461,24 +597,61 @@ export async function writeState(client, userId, normalizedState) {
       );
     }
 
+    const conversationIds = orderedConversations.map((conversation) =>
+      toStorageId(conversation.id),
+    );
+    const messageIds = orderedConversations.flatMap((conversation) =>
+      conversation.messages.map((message) => toStorageId(message.id)),
+    );
+    const noteIds = orderedConversations.flatMap((conversation) =>
+      (conversation.notes ?? []).map((note) => toStorageId(note.id)),
+    );
     await client.query(
       `
-        update marginchat_app_sessions
-        set
-          active_conversation_id = $3,
-          root_conversation_id = $4,
-          updated_at = now()
-        where id = $1
-          and user_id = $2
+        delete from marginchat_conversation_notes
+        where conversation_id in (
+          select id from marginchat_conversations where session_id = $1
+        )
+          and not (id = any($2::text[]))
       `,
-      [
-        sessionId,
-        userId,
-        normalizedState.activeConversationId,
-        normalizedState.rootId,
-      ],
+      [sessionId, noteIds],
     );
+
+    for (const conversation of orderedConversations) {
+      const documentIds = (conversation.documents ?? []).map(
+        (document) => document.id,
+      );
+      await client.query(
+        `
+          delete from marginchat_conversation_documents
+          where conversation_id = $1
+            and not (document_id = any($2::text[]))
+        `,
+        [toStorageId(conversation.id), documentIds],
+      );
+    }
+
+    await client.query(
+      `
+        delete from marginchat_messages
+        where conversation_id in (
+          select id from marginchat_conversations where session_id = $1
+        )
+          and not (id = any($2::text[]))
+      `,
+      [sessionId, messageIds],
+    );
+    await client.query(
+      `
+        delete from marginchat_conversations
+        where session_id = $1
+          and not (id = any($2::text[]))
+      `,
+      [sessionId, conversationIds],
+    );
+
     await client.query("commit");
+    return nextRevision;
   } catch (error) {
     await client.query("rollback");
     throw error;

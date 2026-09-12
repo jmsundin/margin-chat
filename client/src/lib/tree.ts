@@ -246,3 +246,57 @@ export function excerpt(value: string, maxLength = 52): string {
 export function buildConversationTitle(quote: string, prompt: string): string {
   return excerpt(prompt || quote, 34);
 }
+
+export function deriveChildIds(
+  conversations: Record<string, Conversation>,
+): Record<string, Conversation> {
+  const nextConversations = Object.fromEntries(
+    Object.values(conversations).map((conversation) => [
+      conversation.id,
+      {
+        ...conversation,
+        childIds: [],
+      },
+    ]),
+  ) as Record<string, Conversation>;
+
+  for (const conversation of Object.values(nextConversations)) {
+    if (conversation.parentId && nextConversations[conversation.parentId]) {
+      nextConversations[conversation.parentId].childIds.push(conversation.id);
+    }
+  }
+
+  for (const conversation of Object.values(nextConversations)) {
+    conversation.childIds.sort((left, right) =>
+      nextConversations[left].createdAt.localeCompare(
+        nextConversations[right].createdAt,
+      ),
+    );
+  }
+
+  return nextConversations;
+}
+
+export function collectConversationTreeIds(
+  conversations: Record<string, Conversation>,
+  rootConversationId: string,
+) {
+  const visited = new Set<string>();
+  const stack = [rootConversationId];
+
+  while (stack.length) {
+    const conversationId = stack.pop();
+
+    if (!conversationId || visited.has(conversationId) || !conversations[conversationId]) {
+      continue;
+    }
+
+    visited.add(conversationId);
+
+    for (const childConversationId of conversations[conversationId].childIds) {
+      stack.push(childConversationId);
+    }
+  }
+
+  return Array.from(visited);
+}

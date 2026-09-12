@@ -78,6 +78,34 @@ describe("workspace storage policy", () => {
     ).toBe(false);
   });
 
+  test("ignores derived child lists and server-applied entity defaults", () => {
+    const state = createEmptyState();
+    const root = state.conversations[state.rootId];
+    const serverState = {
+      ...state,
+      conversations: {
+        ...state.conversations,
+        [root.id]: {
+          ...root,
+          childIds: ["derived-on-another-layer"],
+          kind: "chat" as const,
+        },
+      },
+    };
+    const localState = {
+      ...state,
+      conversations: {
+        ...state.conversations,
+        [root.id]: {
+          ...root,
+          kind: undefined,
+        },
+      },
+    };
+
+    expect(areWorkspaceStatesEqual(localState, serverState)).toBe(true);
+  });
+
   test("round-trips the timestamped local directory record", () => {
     const state = createEmptyState();
     const savedAt = "2026-08-14T14:00:00.000Z";

@@ -1,4 +1,11 @@
 import type { AppState, AuthenticatedUser } from "../types";
+import {
+  createMarkdownWorkspace,
+  parseMarkdownWorkspace,
+  parseMarkdownWorkspaceManifest,
+  type MarkdownWorkspaceManifest,
+} from "./workspaceMarkdown";
+import { createWorkspaceDocument } from "./workspaceModel";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
 const DIRECTORY_DATABASE_VERSION = 1;
@@ -49,7 +56,8 @@ export function isRecoverableCloudSyncError(error: unknown) {
 }
 
 export function areWorkspaceStatesEqual(left: AppState, right: AppState) {
-  return stableSerialize(left) === stableSerialize(right);
+  return stableSerialize(createWorkspaceDocument(left)) ===
+    stableSerialize(createWorkspaceDocument(right));
 }
 
 export function createLocalWorkspaceRecord(
@@ -175,7 +183,33 @@ export async function readLocalDirectoryState(
       getLocalWorkspaceFileName(userId),
     );
     const file = await fileHandle.getFile();
-    return parseLocalWorkspaceRecord(JSON.parse(await file.text()));
+    const parsed = JSON.parse(await file.text()) as unknown;
+    const legacyRecord = parseLocalWorkspaceRecord(parsed);
+
+    if (legacyRecord) {
+      return legacyRecord;
+    }
+
+    const manifest = parseMarkdownWorkspaceManifest(parsed);
+    if (!manifest) {
+      return null;
+    }
+
+    const markdownFiles = await readMarkdownFiles(handle, manifest);
+    const state = parseMarkdownWorkspace(manifest, markdownFiles.contents);
+    const savedAt =
+      markdownFiles.latestModifiedAt &&
+      Date.parse(markdownFiles.latestModifiedAt) > Date.parse(manifest.savedAt)
+        ? markdownFiles.latestModifiedAt
+        : manifest.savedAt;
+
+    return state
+      ? {
+          formatVersion: manifest.formatVersion,
+          savedAt,
+          state,
+        }
+      : null;
   } catch (error) {
     if (isDomExceptionNamed(error, "NotFoundError")) {
       return null;
@@ -202,16 +236,24 @@ export function writeLocalDirectoryState(
       return getLocalDirectoryStatus(userId);
     }
 
-    const fileHandle = await handle.getFileHandle(status.fileName, {
-      create: true,
-    });
-    const writable = await fileHandle.createWritable();
+    const previousManifest = await readMarkdownManifest(handle, status.fileName);
+    const workspace = createMarkdownWorkspace(record.state, record.savedAt);
 
-    try {
-      await writable.write(`${JSON.stringify(record, null, 2)}\n`);
-    } finally {
-      await writable.close();
-    }
+    await Promise.all(
+      Object.entries(workspace.files).map(([path, contents]) =>
+        writeDirectoryFile(handle, path, contents),
+      ),
+    );
+    await writeDirectoryFile(
+      handle,
+      status.fileName,
+      `${JSON.stringify(workspace.manifest, null, 2)}\n`,
+    );
+    await removeStaleMarkdownFiles(
+      handle,
+      previousManifest,
+      new Set(workspace.manifest.files.map((file) => file.path)),
+    );
 
     return status;
   });
@@ -320,6 +362,7 @@ function stableSerialize(value: unknown): string {
 
   if (value && typeof value === "object") {
     return `{${Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
       .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
       .map(
         ([key, entry]) => `${JSON.stringify(key)}:${stableSerialize(entry)}`,
@@ -328,6 +371,119 @@ function stableSerialize(value: unknown): string {
   }
 
   return JSON.stringify(value) ?? "null";
+}
+
+async function readMarkdownManifest(
+  handle: FileSystemDirectoryHandle,
+  fileName: string,
+) {
+  try {
+    const fileHandle = await handle.getFileHandle(fileName);
+    const file = await fileHandle.getFile();
+    return parseMarkdownWorkspaceManifest(JSON.parse(await file.text()));
+  } catch (error) {
+    if (isDomExceptionNamed(error, "NotFoundError") || error instanceof SyntaxError) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function readMarkdownFiles(
+  handle: FileSystemDirectoryHandle,
+  manifest: MarkdownWorkspaceManifest,
+) {
+  const entries = await Promise.all(
+    manifest.files.map(async ({ path }) => {
+      const fileHandle = await getNestedFileHandle(handle, path);
+      const file = await fileHandle.getFile();
+      return {
+        contents: await file.text(),
+        lastModified: file.lastModified,
+        path,
+      };
+    }),
+  );
+
+  const latestModified = Math.max(
+    ...entries.map((entry) => entry.lastModified).filter(Number.isFinite),
+    0,
+  );
+
+  return {
+    contents: Object.fromEntries(
+      entries.map((entry) => [entry.path, entry.contents]),
+    ),
+    latestModifiedAt:
+      latestModified > 0 ? new Date(latestModified).toISOString() : null,
+  };
+}
+
+async function writeDirectoryFile(
+  handle: FileSystemDirectoryHandle,
+  path: string,
+  contents: string,
+) {
+  const segments = path.split("/");
+  const fileName = segments.pop();
+  if (!fileName) throw new Error("Local workspace file path is invalid.");
+
+  let directory = handle;
+  for (const segment of segments) {
+    directory = await directory.getDirectoryHandle(segment, { create: true });
+  }
+
+  const fileHandle = await directory.getFileHandle(fileName, { create: true });
+  const writable = await fileHandle.createWritable();
+
+  try {
+    await writable.write(contents);
+  } finally {
+    await writable.close();
+  }
+}
+
+async function getNestedFileHandle(
+  handle: FileSystemDirectoryHandle,
+  path: string,
+) {
+  const segments = path.split("/");
+  const fileName = segments.pop();
+  if (!fileName) throw new Error("Local workspace file path is invalid.");
+
+  let directory = handle;
+  for (const segment of segments) {
+    directory = await directory.getDirectoryHandle(segment);
+  }
+
+  return directory.getFileHandle(fileName);
+}
+
+async function removeStaleMarkdownFiles(
+  handle: FileSystemDirectoryHandle,
+  previousManifest: MarkdownWorkspaceManifest | null,
+  currentPaths: Set<string>,
+) {
+  if (!previousManifest) return;
+
+  for (const { path } of previousManifest.files) {
+    if (currentPaths.has(path)) continue;
+
+    const segments = path.split("/");
+    const fileName = segments.pop();
+    if (!fileName) continue;
+
+    try {
+      let directory = handle;
+      for (const segment of segments) {
+        directory = await directory.getDirectoryHandle(segment);
+      }
+      await directory.removeEntry(fileName);
+    } catch (error) {
+      if (!isDomExceptionNamed(error, "NotFoundError")) throw error;
+    }
+  }
 }
 
 function isDomExceptionNamed(error: unknown, name: string) {

@@ -36,7 +36,8 @@ import {
   findRelevantDocumentChunks,
 } from "./documentRepository.mjs";
 import { wrapStorageError } from "./errors.mjs";
-import { readState, writeState } from "./repository.mjs";
+import { hasStatusCode } from "../lib/errors.mjs";
+import { readState, readWorkspace, writeState } from "./repository.mjs";
 import { normalizeAppState } from "./validation.mjs";
 
 const { Pool } = pg;
@@ -91,7 +92,9 @@ export function createAppDatabase(env) {
         client.release();
       }
     } catch (error) {
-      console.error("Postgres storage error", error);
+      if (!hasStatusCode(error)) {
+        console.error("Postgres storage error", error);
+      }
       throw wrapStorageError(error);
     }
   }
@@ -160,6 +163,10 @@ export function createAppDatabase(env) {
     return withClient((client) => readState(client, userId));
   }
 
+  async function loadWorkspace(userId) {
+    return withClient((client) => readWorkspace(client, userId));
+  }
+
   async function resetPasswordWithTokenRecord(args) {
     return withClient((client) => resetPasswordWithToken(client, args));
   }
@@ -196,12 +203,20 @@ export function createAppDatabase(env) {
     return withClient((client) => syncUserBillingById(client, args));
   }
 
-  async function saveState(userId, payload) {
+  async function saveState(userId, payload, options) {
     const normalizedState = normalizeAppState(payload);
 
     return withClient(async (client) => {
-      await writeState(client, userId, normalizedState);
-      return readState(client, userId);
+      const revision = await writeState(
+        client,
+        userId,
+        normalizedState,
+        options,
+      );
+      return {
+        revision,
+        state: await readState(client, userId),
+      };
     });
   }
 
@@ -244,6 +259,7 @@ export function createAppDatabase(env) {
     incrementTrialApiCallsUsed: incrementTrialApiCallsUsedRecord,
     listUserApiKeys: listUserApiKeysRecord,
     loadState,
+    loadWorkspace,
     ready,
     resetPasswordWithToken: resetPasswordWithTokenRecord,
     refundHostedRequest: refundHostedRequestRecord,

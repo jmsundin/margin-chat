@@ -20,6 +20,7 @@ function createRequestArgs(
     conversation: {
       ancestorContext: [],
       branchAnchor: null,
+      documents: [],
       id: conversationId,
       parentId: null,
       title: "Client stream test",
@@ -56,9 +57,7 @@ function controlledStreamedResponse() {
     },
     response,
     write(event: Record<string, unknown>) {
-      streamController.enqueue(
-        encoder.encode(`${JSON.stringify(event)}\n`),
-      );
+      streamController.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
     },
   };
 }
@@ -88,6 +87,77 @@ function streamedResponse(lines: string[], splitAt: number[]) {
 }
 
 describe("client chat stream", () => {
+  test("cancels and releases a stream when its event cannot be parsed", async () => {
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("not json\n"));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { headers: { "Content-Type": "application/x-ndjson" } },
+    );
+    globalThis.fetch = (async () => response) as typeof fetch;
+
+    await expect(requestChatReply(createRequestArgs(() => {}))).rejects.toThrow(
+      "Backend returned an invalid assistant stream event.",
+    );
+    expect(cancelled).toBe(true);
+    expect(response.body!.locked).toBe(false);
+  });
+
+  test("releases a completed stream, including an event with no trailing newline", async () => {
+    const metadata = {
+      model: "test-model",
+      requestedServiceId: "openai-api",
+      resolvedServiceId: "openai-api",
+    };
+    const response = new Response(
+      [
+        JSON.stringify({ metadata, type: "metadata" }),
+        JSON.stringify({ delta: "Complete reply", type: "delta" }),
+        JSON.stringify({ type: "done" }),
+      ].join("\n"),
+      { headers: { "Content-Type": "application/x-ndjson" } },
+    );
+    globalThis.fetch = (async () => response) as typeof fetch;
+
+    expect(await requestChatReply(createRequestArgs(() => {}))).toEqual({
+      metadata,
+      reply: "Complete reply",
+    });
+    expect(response.body!.locked).toBe(false);
+  });
+
+  test("preserves a callback failure even if cancelling the stream fails", async () => {
+    const response = new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode('{"type":"delta","delta":"Hello"}\n'),
+          );
+        },
+        cancel() {
+          throw new Error("Cancellation failed");
+        },
+      }),
+      { headers: { "Content-Type": "application/x-ndjson" } },
+    );
+    globalThis.fetch = (async () => response) as typeof fetch;
+
+    await expect(
+      requestChatReply(
+        createRequestArgs(() => {
+          throw new Error("Rendering failed");
+        }),
+      ),
+    ).rejects.toThrow("Rendering failed");
+    expect(response.body!.locked).toBe(false);
+  });
+
   test("parses fragmented NDJSON events without losing multibyte text", async () => {
     const metadata = {
       model: "gpt-5.6",
@@ -105,9 +175,11 @@ describe("client chat stream", () => {
     globalThis.fetch = (async () =>
       streamedResponse(lines, [3, 17, 61, 109])) as typeof fetch;
 
-    const response = await requestChatReply(createRequestArgs((delta) => {
-      deltas.push(delta);
-    }));
+    const response = await requestChatReply(
+      createRequestArgs((delta) => {
+        deltas.push(delta);
+      }),
+    );
 
     expect(deltas).toEqual(["Hello ", "🌍"]);
     expect(response.reply).toBe("Hello 🌍");
@@ -167,11 +239,17 @@ describe("client chat stream", () => {
     const firstController = new AbortController();
     const secondController = new AbortController();
     const firstReply = requestChatReply({
-      ...createRequestArgs((delta) => firstDeltas.push(delta), "conversation-1"),
+      ...createRequestArgs(
+        (delta) => firstDeltas.push(delta),
+        "conversation-1",
+      ),
       signal: firstController.signal,
     });
     const secondReply = requestChatReply({
-      ...createRequestArgs((delta) => secondDeltas.push(delta), "conversation-2"),
+      ...createRequestArgs(
+        (delta) => secondDeltas.push(delta),
+        "conversation-2",
+      ),
       signal: secondController.signal,
     });
     const firstMetadata = {
@@ -241,7 +319,8 @@ describe("client chat stream", () => {
       return Response.json({ confirmed: true, status: "active" });
     }) as typeof fetch;
 
-    const confirmation = await requestConfirmCheckoutSession("cs_test_marginchat");
+    const confirmation =
+      await requestConfirmCheckoutSession("cs_test_marginchat");
 
     expect(requestUrl).toBe("/api/billing/checkout/confirm");
     expect(requestBody).toEqual({ sessionId: "cs_test_marginchat" });

@@ -1,46 +1,23 @@
+import { ApiError } from "./apiError";
+import { readChatReplyStream, type ChatReplyResponse } from "./chatStream";
+import type { ConversationContext } from "./chatContext";
 import type {
   AppState,
   ApiKeyProvider,
   ApiKeySettings,
   AuthenticatedUser,
-  BranchAnchor,
   BackendServiceId,
   ConversationDocument,
   Message,
 } from "../types";
+import {
+  createAppStateFromWorkspaceDocument,
+  createWorkspaceDocument,
+  parseWorkspaceDocument,
+} from "./workspaceModel";
 
-interface ConversationContext {
-  ancestorContext: Array<{
-    branchAnchor: BranchAnchor | null;
-    id: string;
-    messages: Message[];
-    title: string;
-  }>;
-  branchAnchor: BranchAnchor | null;
-  documents: ConversationDocument[];
-  id: string;
-  parentId: string | null;
-  title: string;
-}
-
-export interface ChatReplyResponse {
-  metadata: {
-    credentialSource?: "hosted" | "personal";
-    model: string;
-    requestedModelId?: string;
-    requestedServiceId: BackendServiceId;
-    resolvedServiceId: BackendServiceId;
-  };
-  reply: string;
-}
-
-interface ChatStreamEvent {
-  delta?: string;
-  error?: string;
-  metadata?: ChatReplyResponse["metadata"];
-  statusCode?: number;
-  type?: "metadata" | "delta" | "done" | "error";
-}
+export { ApiError } from "./apiError";
+export type { ChatReplyResponse } from "./chatStream";
 
 interface ErrorPayload {
   error?: string;
@@ -80,19 +57,14 @@ interface DocumentUploadResponse {
   document: ConversationDocument;
 }
 
-export class ApiError extends Error {
-  statusCode: number;
-
-  constructor(statusCode: number, message: string) {
-    super(message);
-    this.name = "ApiError";
-    this.statusCode = statusCode;
-  }
-}
-
 export interface StateUploadProgress {
   totalBytes: number;
   uploadedBytes: number;
+}
+
+export interface StoredWorkspace {
+  revision: number;
+  state: AppState;
 }
 
 function getErrorMessage(
@@ -199,66 +171,7 @@ export async function requestChatReply(args: {
     throw new Error("Backend returned an empty assistant stream.");
   }
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let metadata: ChatReplyResponse["metadata"] | null = null;
-  let reply = "";
-
-  const handleLine = (line: string) => {
-    if (!line.trim()) {
-      return;
-    }
-
-    let event: ChatStreamEvent;
-
-    try {
-      event = JSON.parse(line) as ChatStreamEvent;
-    } catch {
-      throw new Error("Backend returned an invalid assistant stream event.");
-    }
-
-    if (event.type === "error") {
-      throw new ApiError(
-        typeof event.statusCode === "number" ? event.statusCode : 502,
-        event.error || "The model stream ended unexpectedly.",
-      );
-    }
-
-    if (event.metadata) {
-      metadata = event.metadata;
-    }
-
-    if (event.type === "delta" && typeof event.delta === "string") {
-      reply += event.delta;
-      onDelta?.(event.delta);
-    }
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      handleLine(line);
-    }
-
-    if (done) {
-      break;
-    }
-  }
-
-  if (buffer.trim()) {
-    handleLine(buffer);
-  }
-
-  if (!metadata || !reply.trim()) {
-    throw new Error("Backend returned an empty assistant reply.");
-  }
-
-  return { metadata, reply };
+  return readChatReplyStream(response.body, onDelta);
 }
 
 export async function requestChatTitle(args: {
@@ -333,7 +246,7 @@ export async function requestDeleteDocument(documentId: string): Promise<void> {
   ensureOk(response, payload, "Document deletion failed.");
 }
 
-export async function requestStoredState(): Promise<AppState | null> {
+export async function requestStoredState(): Promise<StoredWorkspace | null> {
   const response = await fetch("/api/state", {
     credentials: "same-origin",
   });
@@ -342,20 +255,47 @@ export async function requestStoredState(): Promise<AppState | null> {
     return null;
   }
 
-  const payload = (await readJson(response)) as AppState | ErrorPayload | null;
+  const payload = (await readJson(response)) as
+    | { revision?: number; workspace?: unknown }
+    | AppState
+    | ErrorPayload
+    | null;
 
   ensureOk(response, payload, "State request failed.");
 
-  if (!payload || typeof payload !== "object" || !("conversations" in payload)) {
-    throw new Error("Backend returned an invalid app state payload.");
+  if (payload && typeof payload === "object" && "workspace" in payload) {
+    const document = parseWorkspaceDocument(payload.workspace);
+    const state = document
+      ? createAppStateFromWorkspaceDocument(document)
+      : null;
+
+    if (state) {
+      return {
+        revision:
+          typeof payload.revision === "number" && payload.revision >= 0
+            ? payload.revision
+            : 0,
+        state,
+      };
+    }
   }
 
-  return payload;
+  if (payload && typeof payload === "object" && "conversations" in payload) {
+    return { revision: 0, state: payload as AppState };
+  }
+
+  throw new Error("Backend returned an invalid app state payload.");
 }
 
-export async function persistStoredState(state: AppState): Promise<void> {
+export async function persistStoredState(
+  state: AppState,
+  baseRevision: number | null = null,
+): Promise<number> {
   const response = await fetch("/api/state", {
-    body: JSON.stringify(state),
+    body: JSON.stringify({
+      baseRevision,
+      workspace: createWorkspaceDocument(state),
+    }),
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
@@ -363,16 +303,35 @@ export async function persistStoredState(state: AppState): Promise<void> {
     method: "PUT",
   });
 
-  const payload = (await readJson(response)) as AppState | ErrorPayload | null;
+  const payload = (await readJson(response)) as
+    | { revision?: number }
+    | ErrorPayload
+    | null;
 
   ensureOk(response, payload, "State persistence failed.");
+
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("revision" in payload) ||
+    typeof payload.revision !== "number" ||
+    payload.revision < 0
+  ) {
+    throw new Error("Backend returned an invalid workspace revision.");
+  }
+
+  return payload.revision;
 }
 
 export function persistStoredStateWithProgress(
   state: AppState,
   onProgress: (progress: StateUploadProgress) => void,
-): Promise<void> {
-  const body = JSON.stringify(state);
+  baseRevision: number | null = null,
+): Promise<number> {
+  const body = JSON.stringify({
+    baseRevision,
+    workspace: createWorkspaceDocument(state),
+  });
   const totalBytes = new TextEncoder().encode(body).byteLength;
 
   onProgress({ totalBytes, uploadedBytes: 0 });
@@ -403,8 +362,21 @@ export function persistStoredStateWithProgress(
       }
 
       if (request.status >= 200 && request.status < 300) {
+        const revision =
+          payload &&
+          typeof payload === "object" &&
+          "revision" in payload &&
+          typeof payload.revision === "number"
+            ? payload.revision
+            : null;
+
+        if (revision === null || revision < 0) {
+          reject(new Error("Backend returned an invalid workspace revision."));
+          return;
+        }
+
         onProgress({ totalBytes, uploadedBytes: totalBytes });
-        resolve();
+        resolve(revision);
         return;
       }
 
