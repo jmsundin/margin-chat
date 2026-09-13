@@ -1,14 +1,14 @@
 import { HttpError } from "../lib/errors.mjs";
 
 export const jsonHeaders = Object.freeze({
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Margin-Capture-Settings",
   "Access-Control-Allow-Methods": "DELETE,GET,POST,PUT,OPTIONS",
   "Access-Control-Allow-Origin": "*",
   "Content-Type": "application/json; charset=utf-8",
 });
 
-export async function readJsonBody(request) {
-  const body = await readRawBody(request);
+export async function readJsonBody(request, maxBytes = Infinity) {
+  const body = await readRawBody(request, maxBytes);
 
   if (!body.length) {
     throw new HttpError(400, "Request body is required.");
@@ -22,20 +22,33 @@ export async function readJsonBody(request) {
 }
 
 export async function readRawBody(request, maxBytes = Infinity) {
-  const chunks = [];
-  let size = 0;
-
-  for await (const chunk of request) {
-    size += chunk.length;
-
-    if (size > maxBytes) {
-      throw new HttpError(413, "Request body is too large.");
+  // Do not throw out of an IncomingMessage async iterator: it destroys the
+  // socket before the handler can return its 413 response (including on Bun).
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    function cleanup() {
+      request.off("data", onData);
+      request.off("end", onEnd);
+      request.off("error", onError);
+      request.off("aborted", onAborted);
     }
-
-    chunks.push(chunk);
-  }
-
-  return Buffer.concat(chunks);
+    function onError(error) { cleanup(); reject(error); }
+    function onAborted() { onError(new HttpError(400, "Request upload was interrupted.")); }
+    function onEnd() { cleanup(); resolve(Buffer.concat(chunks)); }
+    function onData(chunk) {
+      size += chunk.length;
+      if (size > maxBytes) {
+        cleanup();
+        request.resume();
+        reject(new HttpError(413, "Request body is too large."));
+      } else { chunks.push(chunk); }
+    }
+    request.on("data", onData);
+    request.on("end", onEnd);
+    request.on("error", onError);
+    request.on("aborted", onAborted);
+  });
 }
 
 export async function readMultipartForm(request, maxBytes) {

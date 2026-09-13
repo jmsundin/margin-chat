@@ -1,0 +1,23 @@
+{
+  "name": "margin-chat-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && bun scripts/build.mjs",
+    "release": "bun run build && bun scripts/release.mjs",
+    "test": "bun test tests"
+  },
+  "dependencies": {
+    "@margin-chat/capture-contracts": "workspace:*",
+    "@mozilla/readability": "^0.6.0",
+    "turndown": "^7.2.0"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/chrome": "^0.1.0",
+    "@types/turndown": "^5.0.5",
+    "happy-dom": "^20.14.5",
+    "typescript": "~5.8.2"
+  }
+}

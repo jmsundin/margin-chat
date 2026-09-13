@@ -39,6 +39,28 @@ create table if not exists marginchat_users (
   updated_at timestamptz not null default now()
 );
 
+-- Capture storage is independent of whole-workspace replacement and deletion.
+create table if not exists marginchat_capture_tokens (
+  user_id text primary key references marginchat_users(id) on delete cascade,
+  token_hash text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  last_used_at timestamptz
+);
+
+create table if not exists marginchat_captures (
+  id text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  client_capture_id text not null,
+  payload jsonb not null,
+  payload_hash text not null,
+  created_at timestamptz(3) not null default now(),
+  unique (user_id, client_capture_id)
+);
+
+create index if not exists marginchat_captures_inbox_idx
+  on marginchat_captures(user_id, created_at desc, id desc);
+
 create unique index if not exists marginchat_user_accounts_email_idx
   on marginchat_users (email);
 

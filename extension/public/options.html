@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect Save to Margin</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="options">
+    <main class="connection-card">
+      <div class="brand">
+        <img src="icons/icon-48.png" width="40" height="40" alt="" /><span
+          >Margin<span class="subtle">Web clipper</span></span
+        >
+      </div>
+      <h1>A place for what you find.</h1>
+      <p>Connect this browser to your Margin Chat Cloud Inbox.</p>
+      <ol>
+        <li>
+          Open Margin Chat and choose
+          <strong>Cloud Inbox → Connect extension</strong>.
+        </li>
+        <li>
+          Create a capture key, then enter your website address and paste the
+          key below.
+        </li>
+      </ol>
+      <form id="connection-form">
+        <label for="server-url">Margin Chat website</label
+        ><input
+          id="server-url"
+          type="url"
+          placeholder="https://your-margin-chat-website"
+          required
+          autocomplete="url"
+        /><label for="token">Capture key</label
+        ><input
+          id="token"
+          type="password"
+          placeholder="mc_capture_…"
+          required
+          autocomplete="off"
+          spellcheck="false"
+        /><button id="connect" class="primary" type="submit">Connect</button>
+      </form>
+      <div id="connected" hidden>
+        <p id="account"></p>
+        <button id="disconnect" type="button">Disconnect this browser</button>
+      </div>
+      <p id="status" role="status" aria-live="polite"></p>
+      <p class="fine-print">
+        Your key can save captures and check the connection. It cannot read your
+        Inbox, notes, or chats. Captures are sent only when you save. Keys
+        expire after 90 days and can be revoked in Margin Chat.
+      </p>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

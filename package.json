@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "client"
+    "client",
+    "extension",
+    "packages/*"
   ],
   "scripts": {
     "dev": "bun scripts/dev.mjs",
@@ -15,16 +17,23 @@
     "db:stop": "docker compose down",
     "migrate:workspace": "bun scripts/migrate-workspace-json-to-markdown.ts",
     "build": "bun run --cwd client build",
+    "build:extension": "bun run --cwd extension build",
+    "release:extension": "bun run --cwd extension release",
     "preview": "bun run --cwd client preview",
     "start:server": "node server/index.mjs",
     "test": "bun test"
   },
   "dependencies": {
+    "@margin-chat/capture-contracts": "workspace:*",
     "@neondatabase/serverless": "^1.1.0",
     "mammoth": "^1.10.0",
     "pdf-parse": "1.1.1",
     "pg": "^8.20.0",
     "stripe": "^20.4.1",
     "vercel": "^58.9.4"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@electric-sql/pglite-pgvector": "^0.0.9"
   }
 }

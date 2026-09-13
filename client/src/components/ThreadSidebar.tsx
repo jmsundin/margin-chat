@@ -31,6 +31,7 @@ interface ThreadSidebarProps {
   onDeleteThread: (conversationId: string) => void;
   onNewChat: () => void;
   onNewNote: () => void;
+  onOpenInbox?: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
@@ -392,6 +393,7 @@ export default function ThreadSidebar({
   onDeleteThread,
   onNewChat,
   onNewNote,
+  onOpenInbox,
   onOpenProfile,
   onOpenSettings,
   onOpenSearch,
@@ -892,6 +894,9 @@ export default function ThreadSidebar({
             </button>
           </div>
           <div aria-label="Workspace actions" className="thread-sidebar-tools" role="group">
+            {onOpenInbox ? <button aria-label="Cloud Inbox" className="sidebar-tool-button" onClick={onOpenInbox} title="Cloud Inbox" type="button">
+              <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m4 5-2 10v5h20v-5L20 5H4Z"/><path d="M2 15h6l2 3h4l2-3h6M12 4v8m-3-3 3 3 3-3"/></svg>
+            </button> : null}
             <button
               aria-label="New note"
               className="sidebar-tool-button"

@@ -6,6 +6,8 @@ import {
   sendJson,
 } from "../http/json.mjs";
 import { randomUUID } from "node:crypto";
+import { CAPTURE_API_PATH, CONNECTION_API_PATH } from "@margin-chat/capture-contracts";
+import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
   createAppStateFromWorkspaceDocument,
@@ -19,6 +21,7 @@ export function canUseCloudWorkspaceStorage(user) {
 }
 
 export function createApiHandler({
+  captureService,
   apiKeyService,
   authService,
   billingService,
@@ -69,6 +72,19 @@ export function createApiHandler({
         });
 
         sendJson(response, 200, result);
+        return;
+      }
+
+      // Capture credentials never authenticate workspace, chat, or account endpoints.
+      if ((request.method === "POST" && url.pathname === CAPTURE_API_PATH) ||
+          (request.method === "GET" && url.pathname === CONNECTION_API_PATH)) {
+        const user = await captureService.connect(request);
+        if (request.method === "GET") {
+          sendJson(response, 200, { displayName: user.displayName, expiresAt: user.expiresAt }, { "Cache-Control": "no-store" });
+        } else {
+          const capture = await captureService.save(user.id, await readJsonBody(request, 1_500_000));
+          sendJson(response, 201, { capture }, { "Cache-Control": "no-store" });
+        }
         return;
       }
 
@@ -182,6 +198,42 @@ export function createApiHandler({
         });
 
         sendJson(response, 200, result);
+        return;
+      }
+
+      if (url.pathname === "/api/settings/capture-token") {
+        const userId = authContext.user.id;
+        if (request.method === "GET") {
+          sendJson(response, 200, { summary: await database.getCaptureToken(userId) }, { "Cache-Control": "no-store" });
+          return;
+        }
+        if (request.method === "POST" || request.method === "DELETE") {
+          // A non-simple header plus same-origin fetch metadata prevents form-based CSRF.
+          if (request.headers["x-margin-capture-settings"] !== "1" || request.headers["sec-fetch-site"] === "cross-site") {
+            throw new HttpError(403, "Manage capture keys from your Margin Chat Cloud Inbox.");
+          }
+          if (request.method === "POST") {
+            requireCaptureAccess(authContext.user);
+            sendJson(response, 201, await captureService.issueToken(userId), { "Cache-Control": "no-store" });
+          } else {
+            await database.deleteCaptureToken(userId);
+            sendJson(response, 200, { revoked: true }, { "Cache-Control": "no-store" });
+          }
+          return;
+        }
+      }
+
+      if (request.method === "GET" && url.pathname === CAPTURE_API_PATH) {
+        requireCaptureAccess(authContext.user);
+        sendJson(response, 200, await captureService.list(authContext.user.id, url.searchParams.get("cursor")), { "Cache-Control": "no-store" });
+        return;
+      }
+      const captureMatch = url.pathname.match(/^\/api\/v1\/captures\/([0-9a-f-]{36})$/u);
+      if (request.method === "GET" && captureMatch) {
+        requireCaptureAccess(authContext.user);
+        const capture = await database.getCapture({ userId: authContext.user.id, id: captureMatch[1] });
+        if (!capture) throw new HttpError(404, "Capture not found.");
+        sendJson(response, 200, { capture }, { "Cache-Control": "no-store" });
         return;
       }
 

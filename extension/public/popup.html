@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Save to Margin</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="popup">
+    <header>
+      <div class="brand">
+        <img src="icons/icon-48.png" width="32" height="32" alt="" /><span
+          >Margin<span class="subtle">Web clipper</span></span
+        >
+      </div>
+      <button id="settings" class="text-button" type="button">Settings</button>
+    </header>
+    <main>
+      <section id="connect" hidden>
+        <h1>Keep what matters.</h1>
+        <p>
+          Bring the passages and articles you find into your Margin Chat Cloud
+          Inbox.
+        </p>
+        <button id="connect-button" class="primary" type="button">
+          Connect Margin Chat
+        </button>
+      </section>
+      <section id="clip" hidden>
+        <nav aria-label="Capture type" class="modes">
+          <button type="button" data-kind="selection">Selection</button
+          ><button type="button" data-kind="article">Article</button
+          ><button type="button" data-kind="bookmark">Bookmark</button>
+        </nav>
+        <form id="capture-form">
+          <label for="title">Title</label
+          ><input id="title" maxlength="300" required />
+          <p id="source" class="source"></p>
+          <label for="content" id="content-label">Capture preview</label
+          ><textarea id="content" rows="6" readonly></textarea>
+          <label for="comment"
+            >Your note <span class="subtle">optional</span></label
+          ><textarea
+            id="comment"
+            rows="2"
+            maxlength="10000"
+            placeholder="Why is this worth keeping?"
+          ></textarea>
+          <button id="save" type="submit" class="primary">
+            Save to Cloud Inbox
+          </button>
+        </form>
+        <p id="destination" class="subtle"></p>
+      </section>
+      <section id="pending" hidden>
+        <p class="eyebrow">Cloud Inbox</p>
+        <h1 id="pending-heading">Capture kept here</h1>
+        <p id="pending-title"></p>
+        <p id="pending-description"></p>
+        <div class="actions">
+          <button id="retry" class="primary" type="button">Retry save</button
+          ><button id="open-inbox" type="button">Open Inbox</button
+          ><button id="new" type="button">New capture</button>
+        </div>
+      </section>
+      <p id="status" role="status" aria-live="polite"></p>
+    </main>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

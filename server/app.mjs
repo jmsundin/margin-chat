@@ -9,6 +9,7 @@ import { createRuntimeConfig } from "./config/runtime.mjs";
 import { createAppDatabase } from "./db/index.mjs";
 import { createDocumentService } from "./documents/index.mjs";
 import { createApiHandler } from "./routes/api.mjs";
+import { createCaptureService } from "./captures/index.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -46,6 +47,7 @@ function buildAppContext() {
     runtimeConfig,
   });
   const apiHandler = createApiHandler({
+    captureService: createCaptureService({ database }),
     apiKeyService,
     authService,
     billingService,

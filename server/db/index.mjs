@@ -39,6 +39,7 @@ import { wrapStorageError } from "./errors.mjs";
 import { hasStatusCode } from "../lib/errors.mjs";
 import { readState, readWorkspace, writeState } from "./repository.mjs";
 import { normalizeAppState } from "./validation.mjs";
+import * as captures from "./captureRepository.mjs";
 
 const { Pool } = pg;
 
@@ -239,6 +240,9 @@ export function createAppDatabase(env) {
   });
 
   return {
+    ...Object.fromEntries(Object.entries(captures).map(([name, operation]) => [
+      name, (args) => withClient((client) => operation(client, args)),
+    ])),
     chargeHostedRequest: chargeHostedRequestRecord,
     close,
     createAuthSession: createAuthSessionRecord,

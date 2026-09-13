@@ -24,6 +24,8 @@ import { ConversationGroupSelect } from "./components/ConversationGroupControls"
 import MainChatTileView from "./components/MainChatTileView";
 import MarginNoteTreeNode from "./components/MarginNoteTreeNode";
 import ProfileModal from "./components/ProfileModal";
+import CaptureInbox from "./components/CaptureInbox";
+import { openCaptureAsNote } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
 import StandaloneNotePanel from "./components/StandaloneNotePanel";
 import ThreadSidebar from "./components/ThreadSidebar";
@@ -735,6 +737,7 @@ function WorkspaceApp({
   const [selectionIntent, setSelectionIntent] = useState<"branch" | "note">("branch");
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [captureInboxOpen, setCaptureInboxOpen] = useState(() => new URLSearchParams(window.location.search).has("inbox"));
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
@@ -4285,6 +4288,7 @@ function WorkspaceApp({
               onDeleteThread={handleDeleteThread}
               onNewChat={handleCreateMainConversation}
               onNewNote={handleCreateStandaloneNote}
+              onOpenInbox={() => setCaptureInboxOpen(true)}
               onOpenProfile={() => {
                 setProfileSaveError(null);
                 setProfileModalOpen(true);
@@ -4699,6 +4703,17 @@ function WorkspaceApp({
             query={searchQuery}
             results={searchResults}
           />
+
+          {captureInboxOpen ? <CaptureInbox
+            onClose={() => setCaptureInboxOpen(false)}
+            onOpenNote={(capture) => {
+              setSelectionDraft(null);
+              setMainViewMode("chat");
+              setState((current) => openCaptureAsNote(current, capture));
+              setCaptureInboxOpen(false);
+              if (isMobileViewport) setLeftSidebarOpen(false);
+            }}
+          /> : null}
 
           <ProfileModal
             billingErrorMessage={billingErrorMessage}

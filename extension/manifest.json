@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Save to Margin",
+  "description": "Save passages, articles, and bookmarks to your Margin Chat Cloud Inbox.",
+  "minimum_chrome_version": "127",
+  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "Save to Margin",
+    "default_popup": "popup.html"
+  },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  }
+}
