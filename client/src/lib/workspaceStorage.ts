@@ -1,11 +1,15 @@
 import type { AppState, AuthenticatedUser } from "../types";
 import {
   createMarkdownWorkspace,
+  discoverMarkdownWorkspace,
+  isSafeMarkdownPath,
   parseMarkdownWorkspace,
   parseMarkdownWorkspaceManifest,
   type MarkdownWorkspaceManifest,
+  type MarkdownWorkspace,
 } from "./workspaceMarkdown";
 import { createWorkspaceDocument } from "./workspaceModel";
+import { validVaultPath, type VaultFile } from "./vaultTypes";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
 const DIRECTORY_DATABASE_VERSION = 1;
@@ -39,6 +43,19 @@ export interface LocalWorkspaceRecord {
 }
 
 let directoryWriteQueue = Promise.resolve();
+const observedDirectoryWorkspaces = new Map<string, MarkdownWorkspace>();
+
+export class LocalDirectoryConflictError extends Error {
+  constructor(public readonly paths: string[]) {
+    super(`The connected folder changed outside Margin Chat (${paths.join(", ")}). Read and reconcile the folder before saving.`);
+    this.name = "LocalDirectoryConflictError";
+  }
+}
+
+export interface LocalDirectoryWorkspace {
+  workspace: MarkdownWorkspace;
+  savedAt: string;
+}
 
 export function canSyncWorkspaceToCloud(user: AuthenticatedUser) {
   return user.role === "admin" || user.billing.accessKind === "subscription";
@@ -152,6 +169,7 @@ export async function chooseLocalDirectory(
 }
 
 export async function clearLocalDirectory(userId: string) {
+  observedDirectoryWorkspaces.delete(userId);
   if (typeof indexedDB === "undefined") {
     return;
   }
@@ -169,101 +187,334 @@ export async function clearLocalDirectory(userId: string) {
   database.close();
 }
 
+export async function readLocalDirectoryWorkspace(
+  userId: string,
+  fallbackManifest?: MarkdownWorkspaceManifest,
+): Promise<LocalDirectoryWorkspace | null> {
+  const handle = await getStoredDirectoryHandle(userId);
+  if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
+  const snapshot = await readDirectoryWorkspace(handle, userId, fallbackManifest ?? observedDirectoryWorkspaces.get(userId)?.manifest, observedDirectoryWorkspaces.get(userId)?.files);
+  observedDirectoryWorkspaces.set(userId, snapshot.workspace);
+  return snapshot;
+}
+
 export async function readLocalDirectoryState(
   userId: string,
 ): Promise<LocalWorkspaceRecord | null> {
-  const handle = await getStoredDirectoryHandle(userId);
+  const snapshot = await readLocalDirectoryWorkspace(userId);
+  if (!snapshot || !snapshot.workspace.manifest.files.length) return null;
+  const state = parseMarkdownWorkspace(snapshot.workspace.manifest, snapshot.workspace.files);
+  return state ? { formatVersion: snapshot.workspace.manifest.formatVersion, savedAt: snapshot.savedAt, state } : null;
+}
 
-  if (!handle || (await queryDirectoryPermission(handle)) !== "granted") {
-    return null;
-  }
-
-  try {
-    const fileHandle = await handle.getFileHandle(
-      getLocalWorkspaceFileName(userId),
-    );
-    const file = await fileHandle.getFile();
-    const parsed = JSON.parse(await file.text()) as unknown;
-    const legacyRecord = parseLocalWorkspaceRecord(parsed);
-
-    if (legacyRecord) {
-      return legacyRecord;
-    }
-
-    const manifest = parseMarkdownWorkspaceManifest(parsed);
-    if (!manifest) {
-      return null;
-    }
-
-    const markdownFiles = await readMarkdownFiles(handle, manifest);
-    const state = parseMarkdownWorkspace(manifest, markdownFiles.contents);
-    const savedAt =
-      markdownFiles.latestModifiedAt &&
-      Date.parse(markdownFiles.latestModifiedAt) > Date.parse(manifest.savedAt)
-        ? markdownFiles.latestModifiedAt
-        : manifest.savedAt;
-
-    return state
-      ? {
-          formatVersion: manifest.formatVersion,
-          savedAt,
-          state,
-        }
-      : null;
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError")) {
-      return null;
-    }
-
-    throw error;
-  }
+/** expectedWorkspace must be the last folder snapshot incorporated by the caller. */
+export function writeLocalDirectoryWorkspace(
+  userId: string,
+  workspace: MarkdownWorkspace,
+  expectedWorkspace: MarkdownWorkspace | null,
+): Promise<LocalDirectoryStatus> {
+  const write = directoryWriteQueue.then(async () => {
+    const status = await getLocalDirectoryStatus(userId);
+    if (status.permission !== "granted") return status;
+    const handle = await getStoredDirectoryHandle(userId);
+    if (!handle) return getLocalDirectoryStatus(userId);
+    await writeConnectedDirectoryWorkspace(handle, userId, workspace, expectedWorkspace);
+    observedDirectoryWorkspaces.set(userId, workspace);
+    return status;
+  });
+  directoryWriteQueue = write.then(() => undefined, () => undefined);
+  return write;
 }
 
 export function writeLocalDirectoryState(
   userId: string,
   record: LocalWorkspaceRecord,
 ): Promise<LocalDirectoryStatus> {
+  const previous = observedDirectoryWorkspaces.get(userId) ?? null;
+  return writeLocalDirectoryWorkspace(userId, createMarkdownWorkspace(record.state, record.savedAt, previous ?? undefined), previous);
+}
+
+/** Also exported to allow storage adapters to verify identical conflict semantics. */
+export async function readDirectoryWorkspace(
+  handle: FileSystemDirectoryHandle,
+  userId: string,
+  fallbackManifest?: MarkdownWorkspaceManifest,
+  previousFiles?: Record<string, string>,
+): Promise<LocalDirectoryWorkspace> {
+  const manifestRaw = await readDirectoryFileOrNull(handle, getLocalWorkspaceFileName(userId));
+  let manifest = fallbackManifest;
+  let legacy: LocalWorkspaceRecord | null = null;
+  if (manifestRaw !== null) {
+    const parsed = JSON.parse(manifestRaw);
+    legacy = parseLocalWorkspaceRecord(parsed);
+    if (!legacy) {
+      const parsedManifest = parseMarkdownWorkspaceManifest(parsed);
+      if (!parsedManifest) throw new Error("The connected folder manifest is invalid. Its files were preserved.");
+      manifest = parsedManifest;
+    }
+  }
+  const portableMetadata = await readDirectoryFileOrNull(handle, "workspace.json");
+  if (portableMetadata !== null) {
+    const parsedManifest = parseMarkdownWorkspaceManifest(JSON.parse(portableMetadata));
+    if (!parsedManifest) throw new Error("The connected folder settings are invalid. Its files were preserved.");
+    manifest = parsedManifest;
+  }
+  const scanned = await scanMarkdownDirectory(handle);
+  if (legacy && !Object.keys(scanned.files).length) {
+    return { workspace: createMarkdownWorkspace(legacy.state, legacy.savedAt), savedAt: legacy.savedAt };
+  }
+  const workspace = discoverMarkdownWorkspace(scanned.files, manifest, previousFiles);
+  if (!parseMarkdownWorkspace(workspace.manifest, workspace.files)) {
+    throw new Error("A connected Markdown file could not be read. Its files were preserved.");
+  }
+  const savedAt = new Date(Math.max(scanned.latestModified, Date.parse(workspace.manifest.savedAt))).toISOString();
+  return { workspace, savedAt };
+}
+
+export async function writeConnectedDirectoryWorkspace(
+  handle: FileSystemDirectoryHandle,
+  userId: string,
+  workspace: MarkdownWorkspace,
+  expectedWorkspace: MarkdownWorkspace | null,
+) {
+  for (const path of Object.keys(workspace.files)) {
+    if (!isSafeMarkdownPath(path)) throw new Error(`Invalid Markdown path: ${path}`);
+  }
+  const manifestName = getLocalWorkspaceFileName(userId);
+  const manifestBefore = await readDirectoryFileOrNull(handle, manifestName);
+  const actual = await readDirectoryWorkspace(handle, userId, expectedWorkspace?.manifest, expectedWorkspace?.files);
+  const expectedFiles = markdownContentFiles(expectedWorkspace?.files ?? {});
+  const desiredFiles = markdownContentFiles(workspace.files);
+  const conflicts = changedFilePaths(expectedFiles, actual.workspace.files);
+  if (expectedWorkspace && stableSerialize(expectedWorkspace.manifest.workspace) !== stableSerialize(actual.workspace.manifest.workspace)) {
+    conflicts.push(manifestName);
+  }
+  if (conflicts.length) throw new LocalDirectoryConflictError(conflicts);
+  const diskFiles = (await scanMarkdownDirectory(handle)).files;
+  // A legacy JSON-only workspace has synthetic Markdown in its read snapshot.
+  const legacyOnly = manifestBefore !== null && Object.keys(diskFiles).length === 0
+    && parseLocalWorkspaceRecord(JSON.parse(manifestBefore)) !== null;
+  if (!legacyOnly) {
+    const changedDuringRead = changedFilePaths(expectedFiles, diskFiles);
+    if (changedDuringRead.length) throw new LocalDirectoryConflictError(changedDuringRead);
+  }
+  const changes = changedFilePaths(diskFiles, desiredFiles);
+  for (const path of changes) {
+    const current = await readDirectoryFileOrNull(handle, path);
+    // Check once more immediately before changing a file; external editors do not share our queue.
+    if (current !== (diskFiles[path] ?? null)) throw new LocalDirectoryConflictError([path]);
+    const next = desiredFiles[path];
+    if (next === undefined) await removeDirectoryFile(handle, path);
+    else await writeDirectoryFile(handle, path, next);
+  }
+  if (await readDirectoryFileOrNull(handle, manifestName) !== manifestBefore) {
+    throw new LocalDirectoryConflictError([manifestName]);
+  }
+  const serializedManifest = `${JSON.stringify(workspace.manifest, null, 2)}\n`;
+  if (serializedManifest !== manifestBefore) await writeDirectoryFile(handle, manifestName, serializedManifest);
+}
+
+function changedFilePaths(left: Record<string, string>, right: Record<string, string>) {
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])].filter((path) => left[path] !== right[path]);
+}
+
+function markdownContentFiles(files: Record<string, string>) {
+  return Object.fromEntries(Object.entries(files).filter(([path]) => !isCompanionPath(path)));
+}
+
+function isCompanionPath(path: string) {
+  return path === "workspace.json" || /^(?:attachments|_conflicts)\/.+/i.test(path);
+}
+
+function companionFiles(files: Record<string, VaultFile>) {
+  for (const path of Object.keys(files)) {
+    if (!validVaultPath(path)) throw new Error(`Invalid vault companion path: ${path}`);
+  }
+  return Object.fromEntries(Object.entries(files).filter(([path]) => isCompanionPath(path)));
+}
+
+export async function readLocalDirectoryCompanions(
+  userId: string,
+  knownFiles?: Record<string, VaultFile>,
+): Promise<Record<string, VaultFile> | null> {
+  const handle = await getStoredDirectoryHandle(userId);
+  if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
+  return readConnectedDirectoryCompanions(handle, knownFiles);
+}
+
+export function syncLocalDirectoryCompanions(
+  userId: string,
+  nextFiles: Record<string, VaultFile>,
+  expectedFiles: Record<string, VaultFile>,
+): Promise<Record<string, VaultFile> | null> {
   const write = directoryWriteQueue.then(async () => {
-    const status = await getLocalDirectoryStatus(userId);
-
-    if (status.permission !== "granted") {
-      return status;
-    }
-
     const handle = await getStoredDirectoryHandle(userId);
-
-    if (!handle) {
-      return getLocalDirectoryStatus(userId);
-    }
-
-    const previousManifest = await readMarkdownManifest(handle, status.fileName);
-    const workspace = createMarkdownWorkspace(record.state, record.savedAt);
-
-    await Promise.all(
-      Object.entries(workspace.files).map(([path, contents]) =>
-        writeDirectoryFile(handle, path, contents),
-      ),
-    );
-    await writeDirectoryFile(
-      handle,
-      status.fileName,
-      `${JSON.stringify(workspace.manifest, null, 2)}\n`,
-    );
-    await removeStaleMarkdownFiles(
-      handle,
-      previousManifest,
-      new Set(workspace.manifest.files.map((file) => file.path)),
-    );
-
-    return status;
+    if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
+    return syncConnectedDirectoryCompanions(handle, nextFiles, expectedFiles);
   });
-
-  directoryWriteQueue = write.then(
-    () => undefined,
-    () => undefined,
-  );
-
+  directoryWriteQueue = write.then(() => undefined, () => undefined);
   return write;
+}
+
+/** Scan managed namespaces and use prior file records as encoding/type hints. */
+export async function readConnectedDirectoryCompanions(
+  handle: FileSystemDirectoryHandle,
+  knownFiles?: Record<string, VaultFile>,
+): Promise<Record<string, VaultFile>> {
+  const known = knownFiles ? companionFiles(knownFiles) : null;
+  const paths: string[] = [...Object.keys(known ?? {}), "workspace.json"];
+  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
+  for await (const [name, entry] of entries.entries()) {
+    if (entry.kind === "directory" && /^(?:attachments|_conflicts)$/i.test(name)) {
+      await collectCompanionPaths(entry as FileSystemDirectoryHandle, name, paths);
+    }
+  }
+  const bytesByPath = new Map<string, Uint8Array>();
+  for (const path of new Set(paths)) {
+    if (!validVaultPath(path) || !isCompanionPath(path)) throw new Error(`Invalid vault companion path: ${path}`);
+    const bytes = await readDirectoryBytesOrNull(handle, path);
+    if (bytes !== null) bytesByPath.set(path, bytes);
+  }
+  const binaryCopies = new Set<string>();
+  for (const [path, bytes] of bytesByPath) {
+    if (!/^_conflicts\/[^/]+\/conflict\.json$/i.test(path)) continue;
+    try {
+      const descriptor = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      if (typeof descriptor.path === "string" && /^attachments\//i.test(descriptor.path)
+        && !/\/metadata\.json$/u.test(descriptor.path)
+        && typeof descriptor.copy === "string") binaryCopies.add(descriptor.copy);
+    } catch { /* Preserve unreadable conflict notes as files; they are not authoritative sync controls. */ }
+  }
+  const files: Record<string, VaultFile> = {};
+  for (const [path, bytes] of bytesByPath) {
+    const metadata = known?.[path];
+    const binary = metadata ? metadata.encoding === "base64" : binaryCopies.has(path)
+      || /^attachments\//i.test(path) && !/\/metadata\.json$/u.test(path) || !/\.(?:md|markdown|json|txt)$/i.test(path);
+    files[path] = {
+      content: binary ? bytesToBase64(bytes) : new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      ...(binary ? { encoding: "base64" as const } : {}),
+      ...(metadata?.contentType ? { contentType: metadata.contentType } : {}),
+    };
+  }
+  return files;
+}
+
+/** Reject changed bytes before a batch and again immediately before each mutation. */
+export async function syncConnectedDirectoryCompanions(
+  handle: FileSystemDirectoryHandle,
+  nextFiles: Record<string, VaultFile>,
+  expectedFiles: Record<string, VaultFile>,
+): Promise<Record<string, VaultFile>> {
+  const next = companionFiles(nextFiles);
+  const expected = companionFiles(expectedFiles);
+  const paths = [...new Set([...Object.keys(next), ...Object.keys(expected)])];
+  const expectedBytes = new Map(paths.map((path) => [path, expected[path] ? companionBytes(expected[path]) : null]));
+  const nextBytes = new Map(paths.map((path) => [path, next[path] ? companionBytes(next[path]) : null]));
+  const conflicts: string[] = [];
+  for (const path of paths) {
+    const current = await readDirectoryBytesOrNull(handle, path);
+    if (!sameBytes(current, expectedBytes.get(path)!)) conflicts.push(path);
+  }
+  if (conflicts.length) throw new LocalDirectoryConflictError(conflicts);
+  for (const path of paths) {
+    const bytes = nextBytes.get(path)!;
+    const previous = expectedBytes.get(path)!;
+    if (sameBytes(bytes, previous)) continue;
+    if (!sameBytes(await readDirectoryBytesOrNull(handle, path), previous)) throw new LocalDirectoryConflictError([path]);
+    if (bytes === null) await removeDirectoryFile(handle, path);
+    else await writeDirectoryBytes(handle, path, bytes);
+  }
+  return structuredClone(next);
+}
+
+async function collectCompanionPaths(handle: FileSystemDirectoryHandle, prefix: string, paths: string[]) {
+  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
+  for await (const [name, entry] of entries.entries()) {
+    const path = `${prefix}/${name}`;
+    if (!validVaultPath(path)) throw new Error(`Invalid vault companion path: ${path}`);
+    if (entry.kind === "directory") await collectCompanionPaths(entry as FileSystemDirectoryHandle, path, paths);
+    else paths.push(path);
+  }
+}
+
+function companionBytes(file: VaultFile): Uint8Array {
+  return file.encoding === "base64"
+    ? Uint8Array.from(atob(file.content), (character) => character.charCodeAt(0))
+    : new TextEncoder().encode(file.content);
+}
+
+function bytesToBase64(bytes: Uint8Array) {
+  let result = "";
+  for (let index = 0; index < bytes.length; index += 8192) result += String.fromCharCode(...bytes.subarray(index, index + 8192));
+  return btoa(result);
+}
+
+function sameBytes(left: Uint8Array | null, right: Uint8Array | null) {
+  return left === null || right === null ? left === right
+    : left.length === right.length && left.every((byte, index) => byte === right[index]);
+}
+
+async function readDirectoryBytesOrNull(handle: FileSystemDirectoryHandle, path: string): Promise<Uint8Array | null> {
+  try {
+    return new Uint8Array(await (await (await getNestedFileHandle(handle, path)).getFile()).arrayBuffer());
+  } catch (error) {
+    if (isDomExceptionNamed(error, "NotFoundError")) return null;
+    throw error;
+  }
+}
+
+async function writeDirectoryBytes(handle: FileSystemDirectoryHandle, path: string, bytes: Uint8Array) {
+  const segments = path.split("/");
+  const name = segments.pop()!;
+  let directory = handle;
+  for (const segment of segments) directory = await directory.getDirectoryHandle(segment, { create: true });
+  const file = await directory.getFileHandle(name, { create: true });
+  const writer = await file.createWritable();
+  try {
+    await writer.write(new Uint8Array(bytes).buffer);
+    await writer.close();
+  } catch (error) {
+    await writer.abort?.().catch(() => undefined);
+    throw error;
+  }
+}
+
+async function readDirectoryFileOrNull(handle: FileSystemDirectoryHandle, path: string) {
+  try {
+    return await (await (await getNestedFileHandle(handle, path)).getFile()).text();
+  } catch (error) {
+    if (isDomExceptionNamed(error, "NotFoundError")) return null;
+    throw error;
+  }
+}
+
+async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, prefix = "") {
+  const files: Record<string, string> = {};
+  let latestModified = 0;
+  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
+  for await (const [name, entry] of entries.entries()) {
+    if (name.startsWith(".")) continue;
+    const path = prefix ? `${prefix}/${name}` : name;
+    if (/^(?:attachments|_conflicts)(?:\/|$)/i.test(path)) continue;
+    if (entry.kind === "directory") {
+      const child = await scanMarkdownDirectory(entry as FileSystemDirectoryHandle, path);
+      Object.assign(files, child.files);
+      latestModified = Math.max(latestModified, child.latestModified);
+    } else if (isSafeMarkdownPath(path)) {
+      const file = await (entry as FileSystemFileHandle).getFile();
+      files[path] = await file.text();
+      latestModified = Math.max(latestModified, file.lastModified);
+    }
+  }
+  return { files, latestModified };
+}
+
+async function removeDirectoryFile(handle: FileSystemDirectoryHandle, path: string) {
+  const segments = path.split("/");
+  const name = segments.pop()!;
+  let directory = handle;
+  for (const segment of segments) directory = await directory.getDirectoryHandle(segment);
+  await directory.removeEntry(name);
 }
 
 function supportsDirectoryPicker() {
@@ -373,53 +624,6 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-async function readMarkdownManifest(
-  handle: FileSystemDirectoryHandle,
-  fileName: string,
-) {
-  try {
-    const fileHandle = await handle.getFileHandle(fileName);
-    const file = await fileHandle.getFile();
-    return parseMarkdownWorkspaceManifest(JSON.parse(await file.text()));
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError") || error instanceof SyntaxError) {
-      return null;
-    }
-
-    throw error;
-  }
-}
-
-async function readMarkdownFiles(
-  handle: FileSystemDirectoryHandle,
-  manifest: MarkdownWorkspaceManifest,
-) {
-  const entries = await Promise.all(
-    manifest.files.map(async ({ path }) => {
-      const fileHandle = await getNestedFileHandle(handle, path);
-      const file = await fileHandle.getFile();
-      return {
-        contents: await file.text(),
-        lastModified: file.lastModified,
-        path,
-      };
-    }),
-  );
-
-  const latestModified = Math.max(
-    ...entries.map((entry) => entry.lastModified).filter(Number.isFinite),
-    0,
-  );
-
-  return {
-    contents: Object.fromEntries(
-      entries.map((entry) => [entry.path, entry.contents]),
-    ),
-    latestModifiedAt:
-      latestModified > 0 ? new Date(latestModified).toISOString() : null,
-  };
-}
-
 async function writeDirectoryFile(
   handle: FileSystemDirectoryHandle,
   path: string,
@@ -458,32 +662,6 @@ async function getNestedFileHandle(
   }
 
   return directory.getFileHandle(fileName);
-}
-
-async function removeStaleMarkdownFiles(
-  handle: FileSystemDirectoryHandle,
-  previousManifest: MarkdownWorkspaceManifest | null,
-  currentPaths: Set<string>,
-) {
-  if (!previousManifest) return;
-
-  for (const { path } of previousManifest.files) {
-    if (currentPaths.has(path)) continue;
-
-    const segments = path.split("/");
-    const fileName = segments.pop();
-    if (!fileName) continue;
-
-    try {
-      let directory = handle;
-      for (const segment of segments) {
-        directory = await directory.getDirectoryHandle(segment);
-      }
-      await directory.removeEntry(fileName);
-    } catch (error) {
-      if (!isDomExceptionNamed(error, "NotFoundError")) throw error;
-    }
-  }
 }
 
 function isDomExceptionNamed(error: unknown, name: string) {

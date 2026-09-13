@@ -34,6 +34,9 @@ import {
   deleteDocument,
   failDocument,
   findRelevantDocumentChunks,
+  getVaultAttachment,
+  listVaultAttachments,
+  restoreVaultAttachment,
 } from "./documentRepository.mjs";
 import { wrapStorageError } from "./errors.mjs";
 import { hasStatusCode } from "../lib/errors.mjs";
@@ -160,6 +163,45 @@ export function createAppDatabase(env) {
     return withClient((client) => findRelevantDocumentChunks(client, args));
   }
 
+  async function listVaultAttachmentsRecord(userId) {
+    return withClient((client) => listVaultAttachments(client, userId));
+  }
+
+  async function getVaultAttachmentRecord(args) {
+    return withClient((client) => getVaultAttachment(client, args));
+  }
+
+  async function restoreVaultAttachmentRecord(args) {
+    return withClient((client) => restoreVaultAttachment(client, args));
+  }
+
+  async function projectVaultState(
+    userId,
+    payload,
+    vaultRevision,
+    { force = false, attachments = [], deletedAttachmentIds = [] } = {},
+  ) {
+    const normalizedState = payload === null ? null : normalizeAppState(payload);
+    return withClient((client) =>
+      writeState(client, userId, normalizedState, {
+        vaultRevision,
+        forceVaultProjection: force,
+        vaultAttachments: attachments,
+        deletedVaultAttachmentIds: deletedAttachmentIds,
+      }),
+    );
+  }
+
+  async function getVaultProjectionRevision(userId) {
+    return withClient(async (client) => {
+      const result = await client.query(
+        "select vault_revision from marginchat_vault_projections where user_id = $1",
+        [userId],
+      );
+      return result.rowCount ? Number(result.rows[0].vault_revision) : null;
+    });
+  }
+
   async function loadState(userId) {
     return withClient((client) => readState(client, userId));
   }
@@ -258,13 +300,18 @@ export function createAppDatabase(env) {
     findUserForLogin: findUserForLoginRecord,
     findRelevantDocumentChunks: findRelevantDocumentChunksRecord,
     getUserBillingAccount: getUserBillingAccountRecord,
+    getVaultAttachment: getVaultAttachmentRecord,
+    getVaultProjectionRevision,
     getHealth,
     getUserByAuthSession: getUserByAuthSessionRecord,
     incrementTrialApiCallsUsed: incrementTrialApiCallsUsedRecord,
     listUserApiKeys: listUserApiKeysRecord,
+    listVaultAttachments: listVaultAttachmentsRecord,
     loadState,
     loadWorkspace,
     ready,
+    projectVaultState,
+    restoreVaultAttachment: restoreVaultAttachmentRecord,
     resetPasswordWithToken: resetPasswordWithTokenRecord,
     refundHostedRequest: refundHostedRequestRecord,
     saveState,

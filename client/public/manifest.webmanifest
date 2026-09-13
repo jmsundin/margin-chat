@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "Margin Chat",
+  "short_name": "Margin Chat",
+  "description": "Your conversations and notes, saved as Markdown and available offline.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4ecdf",
+  "theme_color": "#f4ecdf",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

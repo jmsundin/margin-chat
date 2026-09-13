@@ -2,6 +2,7 @@ import type {
   AppState,
   Conversation,
   ConversationNote,
+  ConversationDocument,
   Message,
 } from "../types";
 import {
@@ -10,6 +11,7 @@ import {
   WORKSPACE_DOCUMENT_SCHEMA_VERSION,
   type WorkspaceDocumentMetadata,
 } from "./workspaceModel";
+import { DEFAULT_BACKEND_SERVICE_ID, getDefaultModelIdForService } from "./services";
 
 export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 3;
 
@@ -17,6 +19,7 @@ export interface MarkdownWorkspaceFileRecord {
   id: string;
   path: string;
   type: "conversation" | "note";
+  aliases?: string[];
 }
 
 export interface MarkdownWorkspaceManifest {
@@ -24,6 +27,11 @@ export interface MarkdownWorkspaceManifest {
   formatVersion: number;
   savedAt: string;
   workspace: WorkspaceDocumentMetadata;
+}
+
+export interface MarkdownWorkspace {
+  files: Record<string, string>;
+  manifest: MarkdownWorkspaceManifest;
 }
 
 type ConversationFileMetadata = {
@@ -65,23 +73,57 @@ type ParsedNoteFile = {
 export function createMarkdownWorkspace(
   state: AppState,
   savedAt = new Date().toISOString(),
-): {
-  files: Record<string, string>;
-  manifest: MarkdownWorkspaceManifest;
-} {
+  previousWorkspace?: MarkdownWorkspace,
+): MarkdownWorkspace {
+  const result = renderMarkdownWorkspace(state, savedAt, previousWorkspace?.manifest);
+  if (!previousWorkspace) return result;
+  for (const [path, source] of Object.entries(previousWorkspace.files)) {
+    if (isAuxiliaryMarkdownPath(path)) result.files[path] = source;
+  }
+  const previousState = parseMarkdownWorkspace(previousWorkspace.manifest, previousWorkspace.files);
+  if (!previousState) throw new Error("Existing Markdown could not be parsed. Its files were preserved.");
+  const representedIds = new Set(Object.values(previousState.conversations).flatMap((conversation) => [conversation.id, ...(conversation.notes ?? []).map((note) => note.id)]));
+  // A temporarily missing parent must not cause its standalone annotation file to disappear.
+  for (const record of previousWorkspace.manifest.files) {
+    if (!representedIds.has(record.id) && previousWorkspace.files[record.path] !== undefined) {
+      result.files[record.path] = previousWorkspace.files[record.path];
+      result.manifest.files.push(record);
+    }
+  }
+  result.manifest.files.sort((left, right) => left.path.localeCompare(right.path));
+  const previousRendered = renderMarkdownWorkspace(previousState, savedAt, previousWorkspace.manifest);
+  for (const record of result.manifest.files) {
+    const raw = previousWorkspace.files[record.path];
+    const canonical = previousRendered.files[record.path];
+    if (raw === undefined || canonical === undefined) continue;
+    if (result.files[record.path] === canonical) {
+      result.files[record.path] = raw;
+    } else {
+      result.files[record.path] = preserveMarkdownEdits(raw, canonical, result.files[record.path], record);
+    }
+  }
+  return result;
+}
+
+function renderMarkdownWorkspace(
+  state: AppState,
+  savedAt: string,
+  previousManifest?: MarkdownWorkspaceManifest,
+): MarkdownWorkspace {
+  const previousRecords = new Map(previousManifest?.files.map((record) => [record.id, record]));
   const conversationPathById = new Map<string, string>();
   const annotationPathById = new Map<string, string>();
 
   for (const conversation of Object.values(state.conversations)) {
     conversationPathById.set(
       conversation.id,
-      getConversationMarkdownPath(conversation),
+      previousRecords.get(conversation.id)?.path ?? getConversationMarkdownPath(conversation),
     );
 
     const primaryNote = getPrimaryStandaloneNote(conversation);
     for (const note of conversation.notes ?? []) {
       if (note !== primaryNote) {
-        annotationPathById.set(note.id, getAnnotationMarkdownPath(note.id));
+        annotationPathById.set(note.id, previousRecords.get(note.id)?.path ?? getAnnotationMarkdownPath(note.id));
       }
     }
   }
@@ -125,6 +167,7 @@ export function createMarkdownWorkspace(
     });
     const title = sanitizeHeading(conversation.title);
     const contextMessages = renderMessages(conversation.messages);
+    const attachments = renderAttachments(conversation.documents ?? [], path);
     const body =
       conversation.kind === "note"
         ? [
@@ -132,6 +175,7 @@ export function createMarkdownWorkspace(
             serializeMetadata(metadata),
             `# ${title}`,
             relationships,
+            attachments,
             contextMessages ? `## Context messages\n\n${contextMessages}` : "",
             "## Note",
             primaryNote?.content ?? "",
@@ -143,6 +187,7 @@ export function createMarkdownWorkspace(
             serializeMetadata(metadata),
             `# ${title}`,
             relationships,
+            attachments,
             "## Messages",
             contextMessages,
           ]
@@ -150,7 +195,7 @@ export function createMarkdownWorkspace(
             .join("\n\n");
 
     files[path] = body;
-    fileRecords.push({ id: conversation.id, path, type: "conversation" });
+    fileRecords.push({ ...previousRecords.get(conversation.id), id: conversation.id, path, type: "conversation" });
 
     for (const [index, note] of (conversation.notes ?? []).entries()) {
       if (note === primaryNote) continue;
@@ -174,17 +219,23 @@ export function createMarkdownWorkspace(
         "## Note",
         note.content,
       ].join("\n\n");
-      fileRecords.push({ id: note.id, path: notePath, type: "note" });
+      fileRecords.push({ ...previousRecords.get(note.id), id: note.id, path: notePath, type: "note" });
     }
   }
 
   return {
     files,
     manifest: {
+      ...previousManifest,
       files: fileRecords.sort((left, right) => left.path.localeCompare(right.path)),
       formatVersion: MARKDOWN_WORKSPACE_FORMAT_VERSION,
       savedAt,
-      workspace: createWorkspaceDocumentMetadata(state),
+      workspace: {
+        ...previousManifest?.workspace,
+        ...createWorkspaceDocumentMetadata(state),
+        preferences: { ...previousManifest?.workspace.preferences, ...createWorkspaceDocumentMetadata(state).preferences },
+        view: { ...previousManifest?.workspace.view, ...createWorkspaceDocumentMetadata(state).view },
+      },
     },
   };
 }
@@ -211,11 +262,85 @@ export function parseMarkdownWorkspaceManifest(
   if (files.length !== candidate.files.length) return null;
 
   return {
+    ...candidate,
     files,
     formatVersion: MARKDOWN_WORKSPACE_FORMAT_VERSION,
     savedAt: candidate.savedAt,
     workspace: candidate.workspace as WorkspaceDocumentMetadata,
   };
+}
+
+/** Rebuild the file registry from actual Markdown, never from absent-file assumptions. */
+export function discoverMarkdownWorkspace(
+  files: Record<string, string>,
+  fallbackManifest?: MarkdownWorkspaceManifest,
+  previousFiles: Record<string, string> = {},
+): MarkdownWorkspace {
+  const previousByPath = new Map(fallbackManifest?.files.map((record) => [record.path, record]));
+  const records: MarkdownWorkspaceFileRecord[] = [];
+  const ids = new Set<string>();
+  for (const [path, source] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+    if (!isSafeMarkdownPath(path) || isAuxiliaryMarkdownPath(path)) continue;
+    let metadata: EntityMetadata | null;
+    try {
+      metadata = parseMetadata(source);
+    } catch {
+      throw new Error(`Invalid Markdown metadata in ${path}. The file was preserved.`);
+    }
+    if (!metadata && /<!--\s*margin-chat-metadata\b/.test(source)) {
+      throw new Error(`Invalid Markdown metadata in ${path}. The file was preserved.`);
+    }
+    const exactRenames = [...previousByPath.values()].filter((record) =>
+      files[record.path] === undefined && previousFiles[record.path] === source,
+    );
+    const previous = previousByPath.get(path) ?? (exactRenames.length === 1 ? exactRenames[0] : undefined);
+    const id = metadata?.entityType === "conversation" ? metadata.conversation.id
+      : metadata?.entityType === "note" ? metadata.note.id
+      : parseFrontmatterString(source, "margin-chat-id") || previous?.id || `markdown-${safeFileId(path)}`;
+    if (typeof id !== "string" || !id || ids.has(id)) {
+      throw new Error(`Duplicate or invalid Markdown identity in ${path}. Both files were preserved.`);
+    }
+    ids.add(id);
+    const matchingPrevious = previous ?? fallbackManifest?.files.find((record) => record.id === id);
+    const aliases = [...new Set([
+      ...(matchingPrevious?.aliases ?? []),
+      ...(matchingPrevious && matchingPrevious.path !== path ? [matchingPrevious.path] : []),
+    ])].filter((alias) => alias !== path);
+    records.push({ id, path, type: metadata?.entityType === "note" ? "note" : "conversation", ...(aliases.length ? { aliases } : {}) });
+  }
+  const defaultServiceId = DEFAULT_BACKEND_SERVICE_ID;
+  const workspace = fallbackManifest?.workspace ?? {
+    schemaVersion: WORKSPACE_DOCUMENT_SCHEMA_VERSION,
+    preferences: { defaultServiceId, defaultModelId: getDefaultModelIdForService(defaultServiceId) },
+    view: { activeItemId: "", activeRootId: "", graphLayouts: {}, groups: {}, pinnedItemIds: [], railOpen: false },
+  };
+  return {
+    files: Object.fromEntries(Object.entries(files).filter(([path]) => isSafeMarkdownPath(path))),
+    manifest: {
+      ...fallbackManifest,
+      files: records,
+      formatVersion: MARKDOWN_WORKSPACE_FORMAT_VERSION,
+      savedAt: fallbackManifest?.savedAt ?? "1970-01-01T00:00:00.000Z",
+      workspace,
+    },
+  };
+}
+
+/** Plain imports gain a portable identity before synchronization; their body stays untouched. */
+export function assignMarkdownFileIdentities(workspace: MarkdownWorkspace): MarkdownWorkspace {
+  const files = { ...workspace.files };
+  for (const record of workspace.manifest.files) {
+    const source = files[record.path];
+    if (source === undefined || parseMetadata(source) || parseFrontmatterString(source, "margin-chat-id") === record.id) continue;
+    const newline = source.includes("\r\n") ? "\r\n" : "\n";
+    const field = `margin-chat-id: ${JSON.stringify(record.id)}`;
+    if (/^---\r?\n/.test(source) && /^---\r?\n[\s\S]*?\r?\n---/.test(source)) {
+      files[record.path] = source.replace(/^---\r?\n/, (opening) => `${opening}${field}${newline}`);
+    } else {
+      files[record.path] = `---${newline}${field}${newline}---${newline}${source}`;
+    }
+  }
+  return { ...workspace, files };
 }
 
 export function parseMarkdownWorkspace(
@@ -225,7 +350,7 @@ export function parseMarkdownWorkspace(
   try {
     const recordByTarget = new Map<string, MarkdownWorkspaceFileRecord>();
     for (const record of manifest.files) {
-      for (const target of getLinkTargetAliases(record.path)) {
+      for (const target of [record.path, ...(record.aliases ?? [])].flatMap(getLinkTargetAliases)) {
         recordByTarget.set(target, record);
       }
     }
@@ -241,11 +366,11 @@ export function parseMarkdownWorkspace(
       if (typeof source !== "string") return null;
 
       if (record.type === "conversation") {
-        const parsed = parseConversationFile(source);
+        const parsed = parseConversationFile(source.replace(/\r\n/g, "\n"), record, manifest.workspace);
         if (!parsed || parsed.conversation.id !== record.id) return null;
         parsedConversations.set(record.id, parsed);
       } else {
-        const parsed = parseNoteFile(source);
+        const parsed = parseNoteFile(source.replace(/\r\n/g, "\n"));
         if (!parsed || parsed.note.id !== record.id) return null;
         parsedNotes.push({ file: parsed, record });
       }
@@ -347,15 +472,23 @@ export function parseMarkdownWorkspace(
       ];
     }
 
-    return createAppStateFromWorkspaceMetadata(manifest.workspace, conversations);
+    const state = createAppStateFromWorkspaceMetadata(manifest.workspace, conversations);
+    const firstId = Object.values(conversations).find((conversation) => !conversation.parentId)?.id ?? Object.keys(conversations)[0] ?? "";
+    if (!conversations[state.activeConversationId]) state.activeConversationId = firstId;
+    if (!conversations[state.rootId]) state.rootId = firstId;
+    state.graphLayouts ??= {};
+    state.groups ??= {};
+    state.pinnedThreadIds ??= [];
+    return state;
   } catch {
     return null;
   }
 }
 
-function parseConversationFile(source: string): ParsedConversationFile | null {
+function parseConversationFile(source: string, record: MarkdownWorkspaceFileRecord, workspace: WorkspaceDocumentMetadata): ParsedConversationFile | null {
   const metadata = parseMetadata(source);
-  if (!metadata || metadata.entityType !== "conversation") return null;
+  if (!metadata) return /<!--\s*margin-chat-metadata\b/.test(source) ? null : parsePlainMarkdownNote(source, record, workspace);
+  if (metadata.entityType !== "conversation") return null;
 
   const relationships = parseRelationships(source);
   const isNote = metadata.conversation.kind === "note";
@@ -402,7 +535,7 @@ function parseNoteFile(source: string): ParsedNoteFile | null {
 }
 
 function parseMetadata(source: string): EntityMetadata | null {
-  const match = /^<!-- margin-chat-metadata (.+) -->$/m.exec(source);
+  const match = /^<!-- margin-chat-metadata (.+) -->\r?$/m.exec(source);
   if (!match) return null;
 
   const parsed = JSON.parse(match[1]) as EntityMetadata;
@@ -491,9 +624,14 @@ function parseMessages(source: string): Message[] | null {
 }
 
 function parseNoteBody(source: string) {
-  const marker = "\n## Note\n\n";
-  const index = source.lastIndexOf(marker);
-  return index === -1 ? "" : source.slice(index + marker.length);
+  const marker = /^## Note\r?\n\r?\n/gm;
+  const messageRanges = messageBlocks(source).map((block) => [block.start, block.end]);
+  for (const match of source.matchAll(marker)) {
+    if (!messageRanges.some(([start, end]) => match.index >= start && match.index <= end)) {
+      return source.slice(match.index + match[0].length);
+    }
+  }
+  return "";
 }
 
 function parseFrontmatterString(source: string, key: string) {
@@ -508,6 +646,169 @@ function parseFrontmatterString(source: string, key: string) {
   } catch {
     return match[1].trim().replace(/^['"]|['"]$/g, "");
   }
+}
+
+function parsePlainMarkdownNote(
+  source: string,
+  record: MarkdownWorkspaceFileRecord,
+  workspace: WorkspaceDocumentMetadata,
+): ParsedConversationFile {
+  const createdAt = validDate(parseFrontmatterString(source, "created")) ?? "1970-01-01T00:00:00.000Z";
+  const updatedAt = validDate(parseFrontmatterString(source, "updated")) ?? createdAt;
+  const content = source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n)?/, "");
+  const title = parseFrontmatterString(source, "title") || /^#\s+(.+)$/m.exec(content)?.[1]?.trim()
+    || record.path.split("/").at(-1)!.replace(/\.md$/i, "");
+  return {
+    childTargets: [], noteTargets: [], parentTarget: null, primaryNoteIndex: 0,
+    conversation: {
+      id: record.id, kind: "note", title, parentId: null, childIds: [], branchAnchor: null,
+      serviceId: workspace.preferences.defaultServiceId,
+      modelId: workspace.preferences.defaultModelId,
+      createdAt, updatedAt, messages: [], documents: [],
+      notes: [{ id: `${record.id}-body`, kind: "standalone", content, createdAt, updatedAt,
+        sourceMessageId: null, startOffset: null, endOffset: null, quote: null }],
+    },
+  };
+}
+
+function validDate(value: string | null) {
+  return value && Number.isFinite(Date.parse(value)) ? value : null;
+}
+
+/** Preserve the user's bytes outside the app fields that actually changed. */
+function preserveMarkdownEdits(raw: string, before: string, after: string, record: MarkdownWorkspaceFileRecord) {
+  if (!parseMetadata(raw)) {
+    // An ordinary Markdown note acquires stable identity only when edited in-app.
+    return mergeFrontmatter(raw, after, before);
+  }
+  let result = raw;
+  const beforeMeta = /^<!-- margin-chat-metadata .+ -->$/m.exec(before)?.[0];
+  const afterMeta = /^<!-- margin-chat-metadata .+ -->$/m.exec(after)?.[0];
+  if (beforeMeta !== afterMeta && afterMeta) result = result.replace(/^<!-- margin-chat-metadata .+ -->\r?$/m, () => afterMeta);
+  const beforeTitle = parseFrontmatterString(before, "title");
+  const afterTitle = parseFrontmatterString(after, "title");
+  if (beforeTitle !== afterTitle && afterTitle) result = result.replace(/^# .+$/m, () => `# ${sanitizeHeading(afterTitle)}`);
+  result = mergeFrontmatter(raw, result, before, after);
+  const beforeAttachments = attachmentSection(before);
+  const afterAttachments = attachmentSection(after);
+  if (beforeAttachments !== afterAttachments) {
+    const existing = attachmentSection(result);
+    if (existing) result = result.replace(existing, () => afterAttachments);
+    else if (afterAttachments) result = insertAttachmentSection(result, afterAttachments);
+  }
+
+  const beforeRelationships = parseRelationships(before);
+  const afterRelationships = parseRelationships(after);
+  if (JSON.stringify(beforeRelationships) !== JSON.stringify(afterRelationships)) {
+    const newLines = relationshipLines(after);
+    const start = result.indexOf("## Relationships");
+    if (start !== -1) {
+      const tail = result.slice(start);
+      const endOffset = tail.search(/\n## (?!Relationships\b)/);
+      const end = endOffset === -1 ? result.length : start + endOffset;
+      const section = result.slice(start, end).replace(/^- (?:Parent|Child|Note):.*(?:\r?\n|$)/gm, "");
+      result = result.slice(0, start) + section.replace(/^## Relationships\r?\n/, () => `## Relationships\n${newLines}\n`) + result.slice(end);
+    }
+  }
+  const beforeMessages = messageBlocks(before);
+  const afterMessages = messageBlocks(after);
+  const rawMessages = messageBlocks(result);
+  for (const block of [...rawMessages].reverse()) {
+    const next = afterMessages.find((candidate) => candidate.id === block.id);
+    const previous = beforeMessages.find((candidate) => candidate.id === block.id);
+    if (!next) result = result.slice(0, block.start) + result.slice(block.end);
+    else if (next.text !== previous?.text) result = result.slice(0, block.start) + next.text + result.slice(block.end);
+  }
+  const additions = afterMessages.filter((block) => !beforeMessages.some((previous) => previous.id === block.id));
+  if (additions.length) {
+    const existing = messageBlocks(result);
+    const noteBody = parseNoteBody(result);
+    const noteStart = result.length - noteBody.length;
+    const insertion = existing.at(-1)?.end ?? (record.type === "note" || parseMetadata(result)?.entityType === "conversation" && (parseMetadata(result) as ConversationFileMetadata).conversation.kind === "note"
+      ? Math.max(0, result.lastIndexOf("## Note", noteStart)) : result.length);
+    const text = additions.map((block) => block.text).join("\n\n");
+    result = result.slice(0, insertion) + `\n\n${text}\n\n` + result.slice(insertion);
+  }
+  const oldBody = parseNoteBody(before);
+  const newBody = parseNoteBody(after);
+  if (oldBody !== newBody) {
+    const currentBody = parseNoteBody(result);
+    if (/^## Note\r?$/m.test(result)) result = result.slice(0, result.length - currentBody.length) + newBody;
+  }
+  return result;
+}
+
+function relationshipLines(source: string) {
+  const start = source.indexOf("## Relationships");
+  if (start === -1) return "";
+  const endOffset = source.slice(start).search(/\n## (?!Relationships\b)/);
+  const section = source.slice(start, endOffset === -1 ? undefined : start + endOffset);
+  return section.split(/\r?\n/).filter((line) => /^- (?:Parent|Child|Note):/.test(line)).join("\n");
+}
+
+export function getAttachmentVaultPath(document: Pick<ConversationDocument, "id" | "filename">) {
+  if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(document.id)) return null;
+  const filename = String(document.filename ?? "attachment").replace(/[\\/\u0000-\u001f%:#?]/gu, "_").replace(/^\.+$/u, "attachment").slice(0, 180) || "attachment";
+  return `Attachments/${document.id}/${filename === "metadata.json" ? "original-metadata.json" : filename}`;
+}
+
+function renderAttachments(documents: ConversationDocument[], sourcePath: string) {
+  const prefix = "../".repeat(Math.max(0, sourcePath.split("/").length - 1));
+  const links = documents.flatMap((document) => {
+    const path = getAttachmentVaultPath(document);
+    if (!path) return [];
+    const href = prefix + path.split("/").map((segment) => encodeURIComponent(segment).replaceAll("(", "%28").replaceAll(")", "%29")).join("/");
+    const label = document.filename.replace(/[\\\[\]]/g, (character) => `\\${character}`).replace(/\r?\n/g, " ");
+    return [`- [${label}](${href})`];
+  });
+  return links.length ? `<!-- margin-chat-attachments -->\n## Attachments\n${links.join("\n")}\n<!-- margin-chat-attachments-end -->` : "";
+}
+
+function attachmentSection(source: string) {
+  return /<!-- margin-chat-attachments -->\r?\n[\s\S]*?<!-- margin-chat-attachments-end -->/.exec(source)?.[0] ?? "";
+}
+
+function insertAttachmentSection(source: string, section: string) {
+  const content = source.search(/^## (?:Messages|Context messages|Note)\r?$/m);
+  return content === -1 ? `${source}\n\n${section}` : `${source.slice(0, content)}${section}\n\n${source.slice(content)}`;
+}
+
+function messageBlocks(source: string) {
+  const blocks: Array<{ id: string; start: number; end: number; text: string }> = [];
+  const marker = /^<!-- margin-chat-message (.+) -->\r?$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(source))) {
+    const metadata = JSON.parse(match[1]);
+    const endMarker = "<!-- margin-chat-message-end -->";
+    const contentStart = marker.lastIndex + (source[marker.lastIndex] === "\r" ? 2 : 1);
+    const expectedEnd = contentStart + metadata.contentLength + 1;
+    const endStart = Number.isFinite(expectedEnd) && source.startsWith(endMarker, expectedEnd) ? expectedEnd : source.indexOf(endMarker, marker.lastIndex);
+    if (endStart === -1) break;
+    const precedingHeading = /### [^\n]+\r?\n$/.exec(source.slice(0, match.index));
+    const start = precedingHeading?.index ?? match.index;
+    const end = endStart + endMarker.length;
+    blocks.push({ id: metadata.id, start, end, text: source.slice(start, end) });
+    marker.lastIndex = end;
+  }
+  return blocks;
+}
+
+function mergeFrontmatter(raw: string, result: string, before: string, after = result) {
+  const pattern = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/;
+  const original = pattern.exec(raw);
+  const next = pattern.exec(after);
+  if (!next) return result;
+  const lines = original ? original[1].split(/\r?\n/) : [];
+  for (const line of next[1].split(/\r?\n/)) {
+    const key = /^([^:#\s][^:]*):/.exec(line)?.[1];
+    if (!key) continue;
+    const index = lines.findIndex((entry) => entry.startsWith(`${key}:`));
+    const changed = parseFrontmatterString(before, key) !== parseFrontmatterString(after, key);
+    if (index === -1) lines.push(line);
+    else if (changed) lines[index] = line;
+  }
+  const frontmatter = `---\n${lines.join("\n")}\n---\n`;
+  return pattern.test(result) ? result.replace(pattern, () => frontmatter) : frontmatter + result;
 }
 
 function renderConversationRelationships(args: {
@@ -674,9 +975,19 @@ function isMarkdownWorkspaceFileRecord(
     typeof record.id === "string" &&
     Boolean(record.id) &&
     typeof record.path === "string" &&
-    /^(?:Chats|Notes)\/[^/]+\.md$/u.test(record.path) &&
+    isSafeMarkdownPath(record.path) &&
+    (record.aliases === undefined || Array.isArray(record.aliases) && record.aliases.every((alias) => typeof alias === "string" && isSafeMarkdownPath(alias))) &&
     (record.type === "conversation" || record.type === "note")
   );
+}
+
+export function isSafeMarkdownPath(path: string) {
+  return Boolean(path) && /\.md$/i.test(path) && !/[\\\u0000-\u001f]/u.test(path)
+    && path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".." && !segment.startsWith("."));
+}
+
+function isAuxiliaryMarkdownPath(path: string) {
+  return /^(?:_conflicts|attachments)\//i.test(path);
 }
 
 function getLinkTargetAliases(path: string) {

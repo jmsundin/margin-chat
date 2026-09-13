@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useRef,
   useState,
   type MouseEvent,
   type PointerEvent,
@@ -33,55 +32,15 @@ export default function StandaloneNotePanel({
 }) {
   const note = getStandaloneNote(conversation);
   const [title, setTitle] = useState(conversation.title);
-  const [draft, setDraft] = useState(note?.content ?? "");
-  const draftRef = useRef(draft);
-  const noteContentRef = useRef(note?.content ?? "");
-  const onUpdateRef = useRef(onUpdate);
-  const saveTimeoutRef = useRef<number | null>(null);
-
-  draftRef.current = draft;
-  noteContentRef.current = note?.content ?? "";
-  onUpdateRef.current = onUpdate;
 
   useEffect(() => {
     setTitle(conversation.title);
   }, [conversation.id, conversation.title]);
 
-  useEffect(() => {
-    setDraft(note?.content ?? "");
-  }, [note?.id]);
-
-  useEffect(() => {
-    if (!note || draft === note.content) return undefined;
-    const timeoutId = window.setTimeout(() => {
-      saveTimeoutRef.current = null;
-      onUpdate(conversation.id, note.id, draft);
-    }, 320);
-    saveTimeoutRef.current = timeoutId;
-    return () => {
-      window.clearTimeout(timeoutId);
-      if (saveTimeoutRef.current === timeoutId) saveTimeoutRef.current = null;
-    };
-  }, [conversation.id, draft, note, onUpdate]);
-
-  useEffect(() => () => {
-    if (!note || draftRef.current === noteContentRef.current) return;
-    onUpdateRef.current(conversation.id, note.id, draftRef.current);
-  }, [conversation.id, note?.id]);
-
-  function flushDraft() {
-    if (!note || draftRef.current === note.content) return;
-    if (saveTimeoutRef.current !== null) {
-      window.clearTimeout(saveTimeoutRef.current);
-      saveTimeoutRef.current = null;
-    }
-    onUpdate(conversation.id, note.id, draftRef.current);
-  }
-
   function commitTitle() {
     const nextTitle = title.trim() || "Untitled note";
     setTitle(nextTitle);
-    onRename(conversation.id, nextTitle);
+    if (nextTitle !== conversation.title) onRename(conversation.id, nextTitle);
   }
 
   function isInteractiveNoteTarget(target: EventTarget) {
@@ -144,17 +103,16 @@ export default function StandaloneNotePanel({
         {note ? (
           <LiveMarkdownEditor
             ariaLabel={`Edit ${conversation.title}`}
-            autoFocus={isActive && !draft}
+            autoFocus={isActive && !note.content}
             className="is-standalone-note"
-            onBlur={flushDraft}
-            onChange={setDraft}
+            onChange={(content) => onUpdate(conversation.id, note.id, content)}
             placeholder="Capture an idea, collect research, or sketch a line of thought…"
             readingSelectionContext={{
               conversationId: conversation.id,
               messageId: getStandaloneNoteContextMessageId(note.id),
               noteId: note.id,
             }}
-            value={draft}
+            value={note.content}
           />
         ) : (
           <p className="standalone-note-missing">This note could not be loaded.</p>

@@ -19,3 +19,6 @@ extension/releases/
 *.log
 .vercel
 .env*.local
+
+# Local Markdown vault object store (VAULT_STORAGE_DIR example).
+.margin-chat-vault/

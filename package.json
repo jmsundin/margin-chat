@@ -16,16 +16,19 @@
     "db:start": "docker compose up -d postgres",
     "db:stop": "docker compose down",
     "migrate:workspace": "bun scripts/migrate-workspace-json-to-markdown.ts",
-    "build": "bun run --cwd client build",
+    "build": "bun run build:vault-codec && bun run --cwd client build",
     "build:extension": "bun run --cwd extension build",
     "release:extension": "bun run --cwd extension release",
     "preview": "bun run --cwd client preview",
     "start:server": "node server/index.mjs",
-    "test": "bun test"
+    "test": "bun run build:vault-codec && bun test",
+    "build:vault-codec": "bun scripts/build-vault-codec.mjs"
   },
   "dependencies": {
     "@margin-chat/capture-contracts": "workspace:*",
     "@neondatabase/serverless": "^1.1.0",
+    "@vercel/blob": "^2.8.0",
+    "fflate": "^0.8.3",
     "mammoth": "^1.10.0",
     "pdf-parse": "1.1.1",
     "pg": "^8.20.0",

@@ -39,6 +39,14 @@ create table if not exists marginchat_users (
   updated_at timestamptz not null default now()
 );
 
+-- Rebuildable content projection checkpoint. The Markdown vault and its cloud
+-- manifest remain authoritative; this marker is committed with the indexes.
+create table if not exists marginchat_vault_projections (
+  user_id text primary key references marginchat_users(id) on delete cascade,
+  vault_revision bigint not null check (vault_revision >= 0),
+  projected_at timestamptz not null default now()
+);
+
 -- Capture storage is independent of whole-workspace replacement and deletion.
 create table if not exists marginchat_capture_tokens (
   user_id text primary key references marginchat_users(id) on delete cascade,

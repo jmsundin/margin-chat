@@ -10,6 +10,7 @@ import { createAppDatabase } from "./db/index.mjs";
 import { createDocumentService } from "./documents/index.mjs";
 import { createApiHandler } from "./routes/api.mjs";
 import { createCaptureService } from "./captures/index.mjs";
+import { createVaultService } from "./vault/index.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -35,9 +36,11 @@ function buildAppContext() {
     database,
     env: process.env,
   });
+  const vaultService = createVaultService({ database, env: process.env });
   const documentService = createDocumentService({
     database,
     env: process.env,
+    vaultService,
   });
   const chatService = createChatService({
     apiKeyService,
@@ -55,6 +58,7 @@ function buildAppContext() {
     database,
     documentService,
     runtimeConfig,
+    vaultService,
   });
 
   return {
@@ -66,6 +70,7 @@ function buildAppContext() {
     database,
     documentService,
     runtimeConfig,
+    vaultService,
   };
 }
 

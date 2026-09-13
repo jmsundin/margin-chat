@@ -12198,3 +12198,7 @@ body .live-markdown-editor {
   border-color: var(--danger-border);
   color: var(--danger);
 }
+
+.vault-conflict-versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; width: 100%; }
+.vault-conflict-versions label { display: grid; gap: 8px; min-width: 0; }
+.vault-conflict-versions textarea { width: 100%; min-height: 180px; max-height: 350px; resize: vertical; font: 12px/1.5 monospace; color: inherit; background: transparent; border: 1px solid var(--border-color, #7775); border-radius: 8px; padding: 8px; box-sizing: border-box; }

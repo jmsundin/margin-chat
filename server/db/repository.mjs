@@ -5,6 +5,7 @@ import {
 import { getWorkspaceSessionId, VALID_SERVICE_IDS } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
 import { createStatusError } from "../lib/errors.mjs";
+import { deleteDocument, restoreVaultAttachment } from "./documentRepository.mjs";
 
 const WORKSPACE_ENTITY_ID_SEPARATOR = "::";
 
@@ -318,13 +319,65 @@ export async function writeState(
   client,
   userId,
   normalizedState,
-  { expectedRevision = null } = {},
+  {
+    expectedRevision = null,
+    vaultRevision = null,
+    forceVaultProjection = false,
+    vaultAttachments = [],
+    deletedVaultAttachmentIds = [],
+  } = {},
 ) {
+  if (
+    vaultRevision !== null &&
+    (!Number.isSafeInteger(vaultRevision) || vaultRevision < 0)
+  ) {
+    throw createStateError("Vault revision must be a non-negative safe integer.");
+  }
   const requestedSessionId = getWorkspaceSessionId(userId);
 
   await client.query("begin");
 
   try {
+    if (vaultRevision !== null) {
+      // The lock covers both checking the marker and rebuilding the projection.
+      // Its transaction lifetime also prevents a failed rebuild publishing a marker.
+      await client.query(
+        "select pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`marginchat-vault-projection:${userId}`],
+      );
+      const projectionResult = await client.query(
+        "select vault_revision from marginchat_vault_projections where user_id = $1",
+        [userId],
+      );
+      const indexedRevision = projectionResult.rowCount
+        ? Number(projectionResult.rows[0].vault_revision)
+        : -1;
+      if (indexedRevision > vaultRevision || (indexedRevision === vaultRevision && !forceVaultProjection)) {
+        await client.query("commit");
+        return { projected: false, vaultRevision: indexedRevision };
+      }
+      for (const documentId of deletedVaultAttachmentIds) {
+        await deleteDocument(client, { userId, documentId });
+      }
+      for (const { attachment, bytes } of vaultAttachments) {
+        await restoreVaultAttachment(client, { userId, attachment, bytes });
+      }
+      if (normalizedState === null) {
+        // An intentionally empty vault has no synthetic conversation. Removing
+        // the session clears its dependent content indexes through foreign keys.
+        await client.query("delete from marginchat_app_sessions where user_id = $1", [userId]);
+        await client.query(
+          `insert into marginchat_vault_projections (user_id, vault_revision)
+           values ($1, $2)
+           on conflict (user_id) do update set
+             vault_revision = excluded.vault_revision,
+             projected_at = now()`,
+          [userId, vaultRevision],
+        );
+        await client.query("commit");
+        return { projected: true, vaultRevision };
+      }
+    }
     const sessionResult = await client.query(
       `
         select id, revision
@@ -650,8 +703,20 @@ export async function writeState(
       [sessionId, conversationIds],
     );
 
+    if (vaultRevision !== null) {
+      await client.query(
+        `insert into marginchat_vault_projections (user_id, vault_revision)
+         values ($1, $2)
+         on conflict (user_id) do update set
+           vault_revision = excluded.vault_revision,
+           projected_at = now()`,
+        [userId, vaultRevision],
+      );
+    }
     await client.query("commit");
-    return nextRevision;
+    return vaultRevision === null
+      ? nextRevision
+      : { projected: true, vaultRevision };
   } catch (error) {
     await client.query("rollback");
     throw error;

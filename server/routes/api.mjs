@@ -20,6 +20,13 @@ export function canUseCloudWorkspaceStorage(user) {
   );
 }
 
+function requireExpectedVaultAccount(request, user) {
+  const expectedUser = request.headers["x-margin-vault-user"];
+  if (expectedUser !== undefined && expectedUser !== String(user.id)) {
+    throw new HttpError(409, "The signed-in account changed. Reload Margin Chat before synchronizing this device's vault.");
+  }
+}
+
 export function createApiHandler({
   captureService,
   apiKeyService,
@@ -29,6 +36,7 @@ export function createApiHandler({
   database,
   documentService,
   runtimeConfig,
+  vaultService,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
@@ -288,12 +296,75 @@ export function createApiHandler({
         return;
       }
 
+      if (url.pathname === "/api/vault" || url.pathname.startsWith("/api/vault/")) {
+        requireExpectedVaultAccount(request, authContext.user);
+        if (!canUseCloudWorkspaceStorage(authContext.user)) {
+          throw new HttpError(403, "Cloud workspace sync requires a paid plan or an admin account.");
+        }
+        if (!vaultService) throw new HttpError(503, "Cloud Markdown storage is not configured.");
+        const userId = authContext.user.id;
+        if (request.method === "GET" && url.pathname === "/api/vault") {
+          sendJson(response, 200, await vaultService.status(userId), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (request.method === "GET" && url.pathname === "/api/vault/file") {
+          const file = await vaultService.readFile({ userId, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
+          response.writeHead(200, {
+            "Cache-Control": "private, no-store",
+            "Content-Type": file.contentType,
+            "Content-Length": file.bytes.length,
+            "Content-Disposition": "attachment",
+            "X-Content-Type-Options": "nosniff",
+            ETag: `"${file.revision}"`,
+          });
+          response.end(file.bytes);
+          return;
+        }
+        if (request.method === "PUT" && url.pathname === "/api/vault/file") {
+          if (request.headers["x-margin-vault-write"] !== "1" || request.headers["sec-fetch-site"] === "cross-site") {
+            throw new HttpError(403, "Upload vault files from Margin Chat.");
+          }
+          const result = await vaultService.commitBinary(userId, {
+            path: url.searchParams.get("path"),
+            baseRevision: url.searchParams.get("baseRevision") || null,
+            contentType: String(request.headers["content-type"] ?? "application/octet-stream"),
+            bytes: await readRawBody(request, 4 * 1024 * 1024),
+          });
+          sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (request.method === "POST" && ["/api/vault/commit", "/api/vault/rebuild"].includes(url.pathname)) {
+          if (request.headers["sec-fetch-site"] === "cross-site" ||
+              !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+            throw new HttpError(403, "Update your vault from Margin Chat.");
+          }
+          const body = await readJsonBody(request, 4 * 1024 * 1024);
+          const result = url.pathname === "/api/vault/commit"
+            ? await vaultService.commit(userId, body?.changes)
+            : await vaultService.rebuild(userId);
+          sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          return;
+        }
+      }
+
       if (request.method === "GET" && url.pathname === "/api/state") {
         if (!canUseCloudWorkspaceStorage(authContext.user)) {
           throw new HttpError(
             403,
             "Cloud workspace sync requires a paid plan or an admin account.",
           );
+        }
+
+        if (vaultService?.configured) {
+          const { manifest } = await vaultService.status(authContext.user.id);
+          const state = await vaultService.readWorkspace(authContext.user.id, manifest);
+          if (!state) throw new HttpError(404, "No persisted Markdown workspace was found.");
+          sendJson(response, 200, { revision: manifest.revision, workspace: createWorkspaceDocument(state) }, { "Cache-Control": "private, no-store" });
+          return;
+        }
+
+        if ((await database?.getVaultProjectionRevision?.(authContext.user.id)) != null) {
+          throw new HttpError(503, "This workspace's Markdown storage is unavailable. Restore its private Blob configuration before reading cloud content.");
         }
 
         const storedWorkspace = await database.loadWorkspace(authContext.user.id);
@@ -333,6 +404,30 @@ export function createApiHandler({
         return;
       }
 
+      const originalMatch = url.pathname.match(/^\/api\/documents\/([^/]+)\/original$/u);
+      if (request.method === "GET" && originalMatch) {
+        requireExpectedVaultAccount(request, authContext.user);
+        const documentId = decodeURIComponent(originalMatch[1]);
+        const original = vaultService?.configured
+          ? await vaultService.readAttachment({ userId: authContext.user.id, documentId })
+          : await database.getVaultAttachment({ userId: authContext.user.id, documentId });
+        if (!original) throw new HttpError(404, "Document original not found.");
+        if (url.searchParams.get("metadata") === "1") {
+          const { bytes: _bytes, ...attachment } = original;
+          sendJson(response, 200, { attachment }, { "Cache-Control": "private, no-store" });
+          return;
+        }
+        response.writeHead(200, {
+          "Cache-Control": "private, no-store",
+          "Content-Type": original.mimeType || "application/octet-stream",
+          "Content-Length": original.bytes.length,
+          "Content-Disposition": "attachment",
+          "X-Content-Type-Options": "nosniff",
+        });
+        response.end(original.bytes);
+        return;
+      }
+
       const documentMatch = url.pathname.match(/^\/api\/documents\/([^/]+)$/u);
 
       if (request.method === "DELETE" && documentMatch) {
@@ -355,6 +450,10 @@ export function createApiHandler({
             403,
             "Cloud workspace sync requires a paid plan or an admin account.",
           );
+        }
+
+        if (vaultService?.configured || (await database?.getVaultProjectionRevision?.(authContext.user.id)) != null) {
+          throw new HttpError(409, "This workspace uses Markdown file sync. Reload Margin Chat to update this older client. Whole-workspace uploads are disabled.");
         }
 
         const body = await readJsonBody(request);
@@ -511,6 +610,7 @@ export function createApiHandler({
       if (error instanceof HttpError || hasStatusCode(error)) {
         sendJson(response, error.statusCode, {
           error: error.message,
+          ...(Array.isArray(error.conflicts) ? { conflicts: error.conflicts, manifest: error.manifest } : {}),
         });
         return;
       }

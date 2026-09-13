@@ -1,7 +1,7 @@
 import { HttpError } from "../lib/errors.mjs";
 
 export const jsonHeaders = Object.freeze({
-  "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Margin-Capture-Settings",
+  "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Margin-Capture-Settings,X-Margin-Vault-Write,X-Margin-Vault-User",
   "Access-Control-Allow-Methods": "DELETE,GET,POST,PUT,OPTIONS",
   "Access-Control-Allow-Origin": "*",
   "Content-Type": "application/json; charset=utf-8",

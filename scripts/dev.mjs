@@ -1,4 +1,16 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+
+// The server reads the same Markdown codec as the browser. Refresh the checked-in
+// generated module before starting either development process.
+const codecBuild = spawnSync("bun", ["run", "build:vault-codec"], {
+  cwd: process.cwd(),
+  env: process.env,
+  stdio: "inherit",
+});
+if (codecBuild.error || codecBuild.status !== 0) {
+  if (codecBuild.error) console.error("Unable to build the Markdown codec.", codecBuild.error);
+  process.exit(codecBuild.status ?? 1);
+}
 
 const children = [
   {

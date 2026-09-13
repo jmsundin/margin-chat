@@ -403,6 +403,8 @@ export function persistStoredStateWithProgress(
 export async function requestAuthSession(): Promise<AuthenticatedUser | null> {
   const response = await fetch("/api/auth/session", {
     credentials: "same-origin",
+    cache: "no-store",
+    signal: AbortSignal.timeout(5_000),
   });
   const payload = (await readJson(response)) as AuthSessionResponse | ErrorPayload | null;
 

@@ -35,8 +35,6 @@ import {
   requestCreateCheckoutSession,
   requestConfirmCheckoutSession,
   requestDeleteDocument,
-  persistStoredState,
-  persistStoredStateWithProgress,
   requestAuthSession,
   requestChatReply,
   requestChatTitle,
@@ -45,7 +43,6 @@ import {
   requestPasswordReset,
   requestPasswordResetConfirm,
   requestSignup,
-  requestStoredState,
   requestUploadDocument,
   requestUpdateProfile,
   requestUpdateApiKeys,
@@ -74,19 +71,9 @@ import {
   getHorizontalWheelDelta,
   isProfileDialogWheelTarget,
 } from "./lib/wheelGestures";
-import {
-  areWorkspaceStatesEqual,
-  canSyncWorkspaceToCloud,
-  chooseLocalDirectory,
-  clearLocalDirectory,
-  createLocalWorkspaceRecord,
-  getLocalDirectoryStatus,
-  getLocalWorkspaceFileName,
-  isRecoverableCloudSyncError,
-  readLocalDirectoryState,
-  writeLocalDirectoryState,
-  type LocalDirectoryStatus,
-} from "./lib/workspaceStorage";
+import { canSyncWorkspaceToCloud } from "./lib/workspaceStorage";
+import { useMarkdownVault } from "./lib/useMarkdownVault";
+import { rememberOfflineUser, loadOfflineUser, forgetOfflineUser } from "./lib/offlineSession";
 import {
   getBackendServiceLabel,
   resolveBackendServiceModelId,
@@ -697,17 +684,10 @@ function WorkspaceApp({
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
-  const [storageMode, setStorageMode] = useState<StorageMode>("loading");
-  const [cloudBackupMatchesLocal, setCloudBackupMatchesLocal] = useState(false);
-  const [localStorageReady, setLocalStorageReady] = useState(false);
-  const [cloudSyncReady, setCloudSyncReady] = useState(false);
-  const [localDirectoryStatus, setLocalDirectoryStatus] =
-    useState<LocalDirectoryStatus>({
-      directoryName: null,
-      fileName: getLocalWorkspaceFileName(user.id),
-      permission: "unselected",
-      supported: false,
-    });
+  const vault = useMarkdownVault({ user, state, setState, legacyHasState: initialStoredStateRef.current.hasStoredState });
+  const storageMode = vault.storageMode;
+  const cloudBackupMatchesLocal = vault.matchesCloud;
+  const localDirectoryStatus = vault.localDirectoryStatus;
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
   const [graphFocusRequest, setGraphFocusRequest] = useState<{
     conversationId: string;
@@ -737,6 +717,7 @@ function WorkspaceApp({
   const [selectionIntent, setSelectionIntent] = useState<"branch" | "note">("branch");
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage">("account");
   const [captureInboxOpen, setCaptureInboxOpen] = useState(() => new URLSearchParams(window.location.search).has("inbox"));
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
@@ -763,16 +744,7 @@ function WorkspaceApp({
   const pendingTreeLaneFocusRef = useRef<string | null>(null);
   const typingProgressByMessageIdRef = useRef<Record<string, number>>({});
   const currentStateRef = useRef(state);
-  const localSavedAtRef = useRef(initialStoredStateRef.current.savedAt);
-  const localStateRevisionRef = useRef(0);
-  const hadLocalMasterAtStartupRef = useRef(
-    initialStoredStateRef.current.hasStoredState,
-  );
-  const pendingPersistStateRef = useRef<AppState | null>(null);
-  const persistenceInFlightRef = useRef(false);
-  const persistenceIdleWaitersRef = useRef<Array<() => void>>([]);
-  const cloudSyncPausedRef = useRef(false);
-  const cloudRevisionRef = useRef<number | null>(null);
+  currentStateRef.current = state;
   const activeChatStreamsRef = useRef<Map<string, ActiveChatStream>>(new Map());
   const workspaceMountedRef = useRef(true);
   const selectionSyncFrameRef = useRef(0);
@@ -934,181 +906,6 @@ function WorkspaceApp({
   }, [recentModelSelectionsStorageKey]);
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function hydrateLocalDirectory() {
-      try {
-        const status = await getLocalDirectoryStatus(user.id);
-        const directoryRecord =
-          status.permission === "granted"
-            ? await readLocalDirectoryState(user.id)
-            : null;
-
-        if (cancelled) {
-          return;
-        }
-
-        setLocalDirectoryStatus(status);
-
-        if (directoryRecord) {
-          const directoryState = hydratePersistedState(directoryRecord.state);
-
-          if (directoryState) {
-            hadLocalMasterAtStartupRef.current = true;
-            const browserSavedAt = initialStoredStateRef.current?.savedAt;
-            const directoryIsNewer =
-              !initialStoredStateRef.current?.hasStoredState ||
-              !browserSavedAt ||
-              Date.parse(directoryRecord.savedAt) > Date.parse(browserSavedAt);
-
-            if (directoryIsNewer) {
-              localSavedAtRef.current = directoryRecord.savedAt;
-              currentStateRef.current = directoryState;
-              setState(directoryState);
-            }
-          }
-        }
-      } catch (error) {
-        console.warn("Unable to read the local workspace directory.", error);
-      } finally {
-        if (!cancelled) {
-          setLocalStorageReady(true);
-        }
-      }
-    }
-
-    void hydrateLocalDirectory();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user.id]);
-
-  useEffect(() => {
-    currentStateRef.current = state;
-    setCloudBackupMatchesLocal(false);
-
-    if (!localStorageReady) {
-      return undefined;
-    }
-
-    localStateRevisionRef.current += 1;
-
-    const timeoutId = window.setTimeout(() => {
-      const savedAt = new Date().toISOString();
-      localSavedAtRef.current = savedAt;
-
-      try {
-        window.localStorage.setItem(stateStorageKey, JSON.stringify(state));
-        window.localStorage.setItem(stateSavedAtStorageKey, savedAt);
-      } catch (error) {
-        console.warn("Unable to save the local browser workspace.", error);
-      }
-    }, 320);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [localStorageReady, state, stateSavedAtStorageKey, stateStorageKey]);
-
-  useEffect(() => {
-    if (!localStorageReady) return undefined;
-
-    function flushBrowserWorkspace() {
-      const savedAt = new Date().toISOString();
-      localSavedAtRef.current = savedAt;
-
-      try {
-        window.localStorage.setItem(
-          stateStorageKey,
-          JSON.stringify(currentStateRef.current),
-        );
-        window.localStorage.setItem(stateSavedAtStorageKey, savedAt);
-      } catch (error) {
-        console.warn("Unable to flush the local browser workspace.", error);
-      }
-    }
-
-    window.addEventListener("pagehide", flushBrowserWorkspace);
-    return () => window.removeEventListener("pagehide", flushBrowserWorkspace);
-  }, [localStorageReady, stateSavedAtStorageKey, stateStorageKey]);
-
-  useEffect(() => {
-    if (!localStorageReady) {
-      return undefined;
-    }
-
-    function adoptNewerLocalTabState(event: StorageEvent) {
-      if (event.key !== stateSavedAtStorageKey || !event.newValue) {
-        return;
-      }
-
-      const incomingSavedAt = event.newValue;
-      const currentSavedAt = localSavedAtRef.current;
-
-      if (
-        Number.isNaN(Date.parse(incomingSavedAt)) ||
-        (currentSavedAt &&
-          Date.parse(incomingSavedAt) <= Date.parse(currentSavedAt))
-      ) {
-        return;
-      }
-
-      try {
-        const storedValue = window.localStorage.getItem(stateStorageKey);
-        const incomingState = storedValue
-          ? hydratePersistedState(JSON.parse(storedValue))
-          : null;
-
-        if (!incomingState) {
-          return;
-        }
-
-        localSavedAtRef.current = incomingSavedAt;
-
-        if (areWorkspaceStatesEqual(currentStateRef.current, incomingState)) {
-          return;
-        }
-
-        currentStateRef.current = incomingState;
-        setState(incomingState);
-      } catch (error) {
-        console.warn("Unable to adopt a newer local workspace copy.", error);
-      }
-    }
-
-    window.addEventListener("storage", adoptNewerLocalTabState);
-
-    return () => {
-      window.removeEventListener("storage", adoptNewerLocalTabState);
-    };
-  }, [localStorageReady, stateSavedAtStorageKey, stateStorageKey]);
-
-  useEffect(() => {
-    if (
-      !localStorageReady ||
-      localDirectoryStatus.permission !== "granted"
-    ) {
-      return undefined;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      const record = createLocalWorkspaceRecord(
-        state,
-        localSavedAtRef.current ?? new Date().toISOString(),
-      );
-
-      void writeLocalDirectoryState(user.id, record)
-        .then(setLocalDirectoryStatus)
-        .catch((error) => {
-          console.warn("Unable to save the local workspace file.", error);
-        });
-    }, 320);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [localDirectoryStatus.permission, localStorageReady, state, user.id]);
-
-  useEffect(() => {
     window.localStorage.setItem(
       recentModelSelectionsStorageKey,
       JSON.stringify(recentModelSelections),
@@ -1130,86 +927,6 @@ function WorkspaceApp({
       graphLayouts: normalizedGraphLayouts,
     }));
   }, [state.conversations, state.graphLayouts]);
-
-  useEffect(() => {
-    if (!localStorageReady) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    setCloudSyncReady(false);
-
-    if (!cloudSyncEnabled) {
-      pendingPersistStateRef.current = null;
-      setCloudBackupMatchesLocal(false);
-      setStorageMode("local");
-      setCloudSyncReady(true);
-      return undefined;
-    }
-
-    async function initializeCloudSync() {
-      const revisionAtStart = localStateRevisionRef.current;
-
-      try {
-        const persistedWorkspace = await requestStoredState();
-
-        if (cancelled) {
-          return;
-        }
-
-        cloudRevisionRef.current = persistedWorkspace?.revision ?? 0;
-
-        if (
-          !hadLocalMasterAtStartupRef.current &&
-          persistedWorkspace &&
-          revisionAtStart === localStateRevisionRef.current
-        ) {
-          const hydratedState = hydratePersistedState(
-            persistedWorkspace.state,
-          );
-
-          if (hydratedState) {
-            currentStateRef.current = hydratedState;
-            setState(hydratedState);
-          }
-        }
-
-        if (!cancelled) {
-          cloudSyncPausedRef.current = false;
-          setStorageMode("server");
-        }
-      } catch (error) {
-        if (isApiErrorStatus(error, 401)) {
-          onAuthExpired();
-          return;
-        }
-
-        if (!cancelled) {
-          const cloudAccessDenied = isApiErrorStatus(error, 403);
-          cloudSyncPausedRef.current = !cloudAccessDenied;
-          setCloudBackupMatchesLocal(false);
-          setStorageMode(cloudAccessDenied ? "local" : "fallback");
-        }
-
-        if (
-          !isApiErrorStatus(error, 403) &&
-          !isRecoverableCloudSyncError(error)
-        ) {
-          console.warn("Cloud workspace sync is temporarily unavailable.", error);
-        }
-      } finally {
-        if (!cancelled) {
-          setCloudSyncReady(true);
-        }
-      }
-    }
-
-    void initializeCloudSync();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [cloudSyncEnabled, localStorageReady, onAuthExpired]);
 
   useEffect(() => {
     try {
@@ -1351,193 +1068,6 @@ function WorkspaceApp({
       activeChatStreamsRef.current.clear();
     };
   }, []);
-
-  function resolvePersistenceIdleWaiters() {
-    const waiters = persistenceIdleWaitersRef.current;
-    persistenceIdleWaitersRef.current = [];
-
-    for (const resolve of waiters) {
-      resolve();
-    }
-  }
-
-  function waitForCloudPersistenceIdle() {
-    if (!persistenceInFlightRef.current) {
-      return Promise.resolve();
-    }
-
-    return new Promise<void>((resolve) => {
-      persistenceIdleWaitersRef.current.push(resolve);
-    });
-  }
-
-  const persistLatestState = useEffectEvent(async () => {
-    if (
-      !cloudSyncEnabled ||
-      cloudSyncPausedRef.current ||
-      persistenceInFlightRef.current
-    ) {
-      return;
-    }
-
-    persistenceInFlightRef.current = true;
-
-    try {
-      while (pendingPersistStateRef.current) {
-        const nextState = pendingPersistStateRef.current;
-        pendingPersistStateRef.current = null;
-
-        try {
-          const revision = await persistStoredState(
-            nextState,
-            cloudRevisionRef.current,
-          );
-          cloudRevisionRef.current = revision;
-          cloudSyncPausedRef.current = false;
-          setCloudBackupMatchesLocal(
-            areWorkspaceStatesEqual(currentStateRef.current, nextState),
-          );
-          setStorageMode("server");
-        } catch (error) {
-          if (isApiErrorStatus(error, 401)) {
-            pendingPersistStateRef.current = null;
-            setCloudBackupMatchesLocal(false);
-            onAuthExpired();
-            return;
-          }
-
-          if (isApiErrorStatus(error, 403)) {
-            pendingPersistStateRef.current = null;
-            cloudSyncPausedRef.current = false;
-            setCloudBackupMatchesLocal(false);
-            setStorageMode("local");
-            return;
-          }
-
-          if (isApiErrorStatus(error, 409)) {
-            cloudRevisionRef.current = null;
-            pendingPersistStateRef.current = currentStateRef.current;
-            cloudSyncPausedRef.current = true;
-            setCloudBackupMatchesLocal(false);
-            setStorageMode("fallback");
-            return;
-          }
-
-          pendingPersistStateRef.current = currentStateRef.current;
-          cloudSyncPausedRef.current = true;
-          setCloudBackupMatchesLocal(false);
-
-          if (!isRecoverableCloudSyncError(error)) {
-            console.warn("Unable to update the cloud workspace copy.", error);
-          }
-
-          setStorageMode("fallback");
-          return;
-        }
-      }
-    } finally {
-      persistenceInFlightRef.current = false;
-      resolvePersistenceIdleWaiters();
-    }
-  });
-
-  useEffect(() => {
-    if (!cloudSyncEnabled || !cloudSyncReady) {
-      pendingPersistStateRef.current = null;
-      return undefined;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      pendingPersistStateRef.current = state;
-      void persistLatestState();
-    }, 240);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [cloudSyncEnabled, cloudSyncReady, persistLatestState, state]);
-
-  const reconcileCloudState = useEffectEvent(async () => {
-    if (
-      !cloudSyncEnabled ||
-      !cloudSyncReady ||
-      persistenceInFlightRef.current
-    ) {
-      return;
-    }
-
-    try {
-      const persistedWorkspace = await requestStoredState();
-      const localState = currentStateRef.current;
-      const persistedState = persistedWorkspace?.state ?? null;
-
-      cloudRevisionRef.current = persistedWorkspace?.revision ?? 0;
-
-      if (
-        !persistedState ||
-        !areWorkspaceStatesEqual(localState, persistedState)
-      ) {
-        setCloudBackupMatchesLocal(false);
-        pendingPersistStateRef.current = localState;
-        cloudSyncPausedRef.current = false;
-        await persistLatestState();
-        return;
-      }
-
-      pendingPersistStateRef.current = null;
-      cloudSyncPausedRef.current = false;
-      setCloudBackupMatchesLocal(true);
-      setStorageMode("server");
-    } catch (error) {
-      if (isApiErrorStatus(error, 401)) {
-        setCloudBackupMatchesLocal(false);
-        onAuthExpired();
-        return;
-      }
-
-      if (isApiErrorStatus(error, 403)) {
-        pendingPersistStateRef.current = null;
-        cloudSyncPausedRef.current = false;
-        setCloudBackupMatchesLocal(false);
-        setStorageMode("local");
-        return;
-      }
-
-      cloudSyncPausedRef.current = true;
-      setCloudBackupMatchesLocal(false);
-
-      if (!isRecoverableCloudSyncError(error)) {
-        console.warn("Unable to reconcile the cloud workspace copy.", error);
-      }
-
-      setStorageMode("fallback");
-    }
-  });
-
-  useEffect(() => {
-    if (!cloudSyncEnabled || !cloudSyncReady) {
-      return undefined;
-    }
-
-    const intervalId = window.setInterval(() => {
-      void reconcileCloudState();
-    }, CLOUD_RECONCILIATION_INTERVAL_MS);
-    const handleOnline = () => void reconcileCloudState();
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        void reconcileCloudState();
-      }
-    };
-
-    window.addEventListener("online", handleOnline);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener("online", handleOnline);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [cloudSyncEnabled, cloudSyncReady, reconcileCloudState]);
 
   useEffect(() => {
     if (mainViewMode !== "chat") {
@@ -3841,128 +3371,18 @@ function WorkspaceApp({
     }
   }
 
-  async function handleChooseLocalDirectory() {
-    const status = await chooseLocalDirectory(user.id);
-    setLocalDirectoryStatus(status);
+  const handleChooseLocalDirectory = vault.chooseDirectory;
+  const handleClearLocalDirectory = vault.clearDirectory;
+  const handleManualCloudBackup = vault.syncNow;
 
-    if (status.permission !== "granted") {
-      return;
-    }
-
-    const directoryRecord = await readLocalDirectoryState(user.id);
-    const directoryState = directoryRecord
-      ? hydratePersistedState(directoryRecord.state)
-      : null;
-    const currentSavedAt = localSavedAtRef.current;
-
-    if (
-      directoryRecord &&
-      directoryState &&
-      (!currentSavedAt ||
-        Date.parse(directoryRecord.savedAt) > Date.parse(currentSavedAt))
-    ) {
-      localSavedAtRef.current = directoryRecord.savedAt;
-      currentStateRef.current = directoryState;
-      setState(directoryState);
-      return;
-    }
-
-    const savedAt = currentSavedAt ?? new Date().toISOString();
-    const nextStatus = await writeLocalDirectoryState(
-      user.id,
-      createLocalWorkspaceRecord(currentStateRef.current, savedAt),
-    );
-    setLocalDirectoryStatus(nextStatus);
-  }
-
-  async function handleClearLocalDirectory() {
-    await clearLocalDirectory(user.id);
-    setLocalDirectoryStatus(await getLocalDirectoryStatus(user.id));
-  }
-
-  async function handleManualCloudBackup(
-    onProgress: Parameters<typeof persistStoredStateWithProgress>[1],
-  ) {
-    if (!cloudSyncEnabled) {
-      throw new Error(
-        "Cloud backup requires a paid plan or admin access.",
-      );
-    }
-
-    while (persistenceInFlightRef.current) {
-      await waitForCloudPersistenceIdle();
-    }
-
-    const localMasterCopy = currentStateRef.current;
-    persistenceInFlightRef.current = true;
-    cloudSyncPausedRef.current = false;
-
-    try {
-      const revision = await persistStoredStateWithProgress(
-        localMasterCopy,
-        onProgress,
-        cloudRevisionRef.current,
-      );
-      cloudRevisionRef.current = revision;
-
-      const cloudMatchesLocal = areWorkspaceStatesEqual(
-        currentStateRef.current,
-        localMasterCopy,
-      );
-      pendingPersistStateRef.current = cloudMatchesLocal
-        ? null
-        : currentStateRef.current;
-      setCloudBackupMatchesLocal(cloudMatchesLocal);
-      setStorageMode("server");
-    } catch (error) {
-      if (isApiErrorStatus(error, 401)) {
-        pendingPersistStateRef.current = null;
-        setCloudBackupMatchesLocal(false);
-        onAuthExpired();
-        throw new Error(
-          "Your session expired. Sign in again to back up your work.",
-        );
-      }
-
-      if (isApiErrorStatus(error, 403)) {
-        pendingPersistStateRef.current = null;
-        cloudSyncPausedRef.current = false;
-        setCloudBackupMatchesLocal(false);
-        setStorageMode("local");
-        throw new Error(
-          "Cloud backup requires a paid plan or admin access.",
-        );
-      }
-
-      if (isApiErrorStatus(error, 409)) {
-        cloudRevisionRef.current = null;
-        pendingPersistStateRef.current = currentStateRef.current;
-        cloudSyncPausedRef.current = true;
-        setCloudBackupMatchesLocal(false);
-        setStorageMode("fallback");
-        throw new Error(
-          "The cloud copy changed during backup. Margin Chat will reconcile it before retrying.",
-        );
-      }
-
-      pendingPersistStateRef.current = currentStateRef.current;
-      cloudSyncPausedRef.current = true;
-      setCloudBackupMatchesLocal(false);
-      setStorageMode("fallback");
-      throw error;
-    } finally {
-      persistenceInFlightRef.current = false;
-      resolvePersistenceIdleWaiters();
-
-      if (pendingPersistStateRef.current && !cloudSyncPausedRef.current) {
-        void persistLatestState();
-      }
-    }
-  }
-
-  function handleWorkspaceLogout() {
+  async function handleWorkspaceLogout() {
     abortAllChatStreams();
-    onLogout();
+    try {
+      await vault.flushLocal();
+      onLogout();
+    } catch (error) {
+      setProfileSaveError(getErrorText(error, "Your latest edit could not be saved. Download your vault before signing out."));
+    }
   }
 
   const selectionTooltipLayout =
@@ -4191,6 +3611,14 @@ function WorkspaceApp({
     );
   }
 
+  if (!vault.ready) {
+    return <div className="auth-shell"><section className="thread-dialog" role="status">
+      <h2>Opening your Markdown vault</h2>
+      <p>{vault.message ?? "Reading the files saved on this device…"}</p>
+      {vault.message ? <button className="thread-dialog-button" onClick={() => window.location.reload()}>Try again</button> : null}
+    </section></div>;
+  }
+
   return (
     <div className="app-shell">
       <div className="app-chrome">
@@ -4205,6 +3633,10 @@ function WorkspaceApp({
             </button>
           </div>
         ) : null}
+        {(vault.message || vault.conflicts.length > 0) ? <div className="billing-return-notice is-info" role="status">
+          <span>{vault.conflicts.length ? `${vault.conflicts.length} conflicting ${vault.conflicts.length === 1 ? "edit is" : "edits are"} preserved for review.` : vault.message}</span>
+          <button type="button" onClick={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }}>Vault settings</button>
+        </div> : null}
         <div className="workspace-shell">
           <header className="workspace-session-bar">
             <div className="workspace-session-brand">
@@ -4716,6 +4148,8 @@ function WorkspaceApp({
           /> : null}
 
           <ProfileModal
+            initialTab={profileInitialTab}
+            vault={vault}
             billingErrorMessage={billingErrorMessage}
             billingSubmitting={billingSubmitting}
             cloudBackupMatchesLocal={cloudBackupMatchesLocal}
@@ -4798,6 +4232,7 @@ export default function App() {
       }
 
       try {
+        if (!navigator.onLine) throw new Error("You are offline. Opening the files saved on this device.");
         let user = await requestAuthSession();
         const checkoutParams = new URLSearchParams(window.location.search);
         const checkoutResult = checkoutParams.get("checkout");
@@ -4858,6 +4293,7 @@ export default function App() {
           return;
         }
 
+        if (user) rememberOfflineUser(user); else forgetOfflineUser();
         setAuthUser(user);
         setAuthStatus(user ? "authenticated" : "unauthenticated");
         setAuthError(null);
@@ -4866,9 +4302,10 @@ export default function App() {
           return;
         }
 
-        setAuthUser(null);
-        setAuthStatus("unauthenticated");
-        setAuthError(getErrorText(error, "Unable to verify your session."));
+        const offlineUser = loadOfflineUser();
+        setAuthUser(offlineUser);
+        setAuthStatus(offlineUser ? "authenticated" : "unauthenticated");
+        setAuthError(offlineUser ? null : getErrorText(error, "Unable to verify your session."));
       }
     }
 
@@ -4882,6 +4319,7 @@ export default function App() {
   function handleAuthExpired(
     message = "Your session expired. Sign in again to continue.",
   ) {
+    forgetOfflineUser();
     setAuthUser(null);
     setAuthStatus("unauthenticated");
     setAuthSubmitting(false);
@@ -4912,6 +4350,7 @@ export default function App() {
 
     try {
       const user = await requestLogin(args);
+      rememberOfflineUser(user);
       setAuthUser(user);
       setAuthStatus("authenticated");
     } catch (error) {
@@ -4932,6 +4371,7 @@ export default function App() {
 
     try {
       const user = await requestSignup(args);
+      rememberOfflineUser(user);
       setAuthUser(user);
       setAuthStatus("authenticated");
     } catch (error) {
@@ -4971,6 +4411,7 @@ export default function App() {
   }
 
   async function handleLogout() {
+    forgetOfflineUser();
     try {
       await requestLogout();
     } catch (error) {
@@ -4991,6 +4432,7 @@ export default function App() {
     email: string;
   }) {
     const user = await requestUpdateProfile(args);
+    rememberOfflineUser(user);
     setAuthUser(user);
     setAuthStatus("authenticated");
     return user;

@@ -1,4 +1,5 @@
 import { HttpError } from "../lib/errors.mjs";
+import { randomUUID } from "node:crypto";
 import { chunkDocumentSections } from "./chunking.mjs";
 import {
   createEmbeddings,
@@ -48,7 +49,24 @@ function buildRetrievedContext(chunks) {
   ].join("\n\n");
 }
 
-export function createDocumentService({ database, env }) {
+export function createDocumentService({ database, env, vaultService = null }) {
+  async function indexDocument({ buffer, context, documentId, filename, mimeType, userId }) {
+    const sections = await extractDocumentText({ buffer, filename, mimeType });
+    const chunks = chunkDocumentSections(sections);
+    const embeddings = await createEmbeddings({
+      apiKey: getEmbeddingApiKey(context, env),
+      inputs: chunks.map((chunk) => chunk.content),
+      userId,
+    });
+    return database.completeDocument({
+      chunks: chunks.map((chunk, index) => ({ ...chunk, embedding: embeddings[index] })),
+      documentId,
+      embeddingModel: DOCUMENT_EMBEDDING_MODEL,
+      sourceBytes: buffer,
+      userId,
+    });
+  }
+
   async function upload({ context, file, userId }) {
     if (!file || typeof file.arrayBuffer !== "function") {
       throw new HttpError(400, "A document file is required.");
@@ -65,30 +83,37 @@ export function createDocumentService({ database, env }) {
     const filename = sanitizeFilename(file.name);
     const mimeType = String(file.type || "application/octet-stream").slice(0, 160);
     const buffer = Buffer.from(await file.arrayBuffer());
-    const document = await database.createDocument({
-      bytes: buffer,
+    const attachment = {
+      id: `document-${randomUUID()}`,
+      createdAt: new Date().toISOString(),
+      error: null,
       filename,
       mimeType,
       sizeBytes: buffer.length,
-      userId,
-    });
+      status: "processing",
+    };
 
+    // A feature-index failure must never discard the user's original file.
+    // Save the portable bytes and descriptor before creating any derived rows.
+    if (vaultService) {
+      await vaultService.persistAttachment({ userId, attachment, bytes: buffer });
+    }
+
+    let document = null;
     try {
-      const sections = await extractDocumentText({ buffer, filename, mimeType });
-      const chunks = chunkDocumentSections(sections);
-      const embeddings = await createEmbeddings({
-        apiKey: getEmbeddingApiKey(context, env),
-        inputs: chunks.map((chunk) => chunk.content),
-        userId,
-      });
-
-      const completedDocument = await database.completeDocument({
-        chunks: chunks.map((chunk, index) => ({
-          ...chunk,
-          embedding: embeddings[index],
-        })),
+      document = vaultService
+        ? await database.restoreVaultAttachment({ userId, attachment, bytes: buffer })
+        : await database.createDocument({
+            ...attachment,
+            bytes: buffer,
+            userId,
+          });
+      const completedDocument = await indexDocument({
+        buffer,
+        context,
         documentId: document.id,
-        embeddingModel: DOCUMENT_EMBEDDING_MODEL,
+        filename,
+        mimeType,
         userId,
       });
 
@@ -96,13 +121,32 @@ export function createDocumentService({ database, env }) {
         throw new HttpError(404, "The uploaded document is no longer available.");
       }
 
+      // Processing status belongs to the feature index. Do not rewrite the
+      // original after indexing: another device may have edited or deleted it.
       return completedDocument;
     } catch (error) {
+      if (vaultService) {
+        const failedAttachment = {
+          ...attachment,
+          status: "failed",
+          error: "The original file is saved. Its search index could not be built yet.",
+        };
+        if (document) {
+          await database.failDocument({
+            documentId: document.id,
+            userId,
+            error: failedAttachment.error,
+          }).catch(() => undefined);
+        }
+        return failedAttachment;
+      }
       // Ingestion is synchronous, so a failed record would be unreachable by
       // the client and become permanent storage debris. Clean it up eagerly.
-      await database
-        .deleteDocument({ documentId: document.id, userId })
-        .catch(() => undefined);
+      if (document) {
+        await database
+          .deleteDocument({ documentId: document.id, userId })
+          .catch(() => undefined);
+      }
       throw error;
     }
   }
@@ -124,6 +168,24 @@ export function createDocumentService({ database, env }) {
       return { chunks: [], instruction: null };
     }
 
+    // Restoring a vault also restores originals. Rebuild missing embeddings on
+    // demand using the current user's permitted embedding credentials.
+    if (vaultService && database.getVaultAttachment) {
+      for (const documentId of documentIds) {
+        const attachment = await database.getVaultAttachment({ documentId, userId: context.userId });
+        if (attachment && attachment.status !== "ready") {
+          await indexDocument({
+            buffer: attachment.bytes,
+            context,
+            documentId,
+            filename: attachment.filename,
+            mimeType: attachment.mimeType,
+            userId: context.userId,
+          });
+        }
+      }
+    }
+
     const [embedding] = await createEmbeddings({
       apiKey: getEmbeddingApiKey(context, env),
       inputs: [latestUserMessage.content],
@@ -140,8 +202,12 @@ export function createDocumentService({ database, env }) {
   }
 
   return {
-    delete: (documentId, userId) =>
-      database.deleteDocument({ documentId, userId }),
+    delete: async (documentId, userId) => {
+      if (vaultService) {
+        await vaultService.deleteAttachment({ documentId, userId });
+      }
+      return database.deleteDocument({ documentId, userId });
+    },
     retrieveContext,
     upload,
   };

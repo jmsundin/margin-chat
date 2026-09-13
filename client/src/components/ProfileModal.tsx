@@ -1,3 +1,5 @@
+import VaultPanel from "./VaultPanel";
+import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { useEffect, useRef, useState } from "react";
 import type {
   ApiKeyProvider,
@@ -12,6 +14,8 @@ import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import type { StateUploadProgress } from "../lib/api";
 
 interface ProfileModalProps {
+  initialTab?: "account" | "storage";
+  vault: ReturnType<typeof useMarkdownVault>;
   billingErrorMessage: string | null;
   billingSubmitting: boolean;
   cloudSyncEnabled: boolean;
@@ -108,6 +112,8 @@ function getInitials(displayName: string) {
 }
 
 export default function ProfileModal({
+  initialTab = "account",
+  vault,
   billingErrorMessage,
   billingSubmitting,
   cloudSyncEnabled,
@@ -164,11 +170,11 @@ export default function ProfileModal({
     setDirtyApiKeyProviders([]);
     setApiKeySettings(user.apiKeys);
     setApiKeyError(null);
-    setActiveTab("account");
+    setActiveTab(initialTab);
     setStorageError(null);
     setCloudBackupResult(null);
     setCloudBackupProgress(null);
-  }, [isOpen, user.apiKeys, user.displayName, user.email]);
+  }, [isOpen, initialTab, user.apiKeys, user.displayName, user.email]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -295,7 +301,7 @@ export default function ProfileModal({
       await onBackupToCloud(setCloudBackupProgress);
       setCloudBackupResult({
         kind: "success",
-        message: "Cloud backup completed from your local master copy.",
+        message: "Vault synchronized.",
       });
     } catch (error) {
       setCloudBackupResult({
@@ -347,7 +353,7 @@ export default function ProfileModal({
           {([
             ["account", "Account"],
             ["api-keys", "API keys"],
-            ["storage", "Local Storage / Cloud"],
+            ["storage", "Markdown vault"],
           ] as const).map(([tabId, label]) => (
             <button
               aria-controls={`profile-panel-${tabId}`}
@@ -594,153 +600,7 @@ export default function ProfileModal({
               id="profile-panel-storage"
               role="tabpanel"
             >
-              <div>
-                <p className="eyebrow">Local master copy</p>
-                <h3>Keep your work on this computer</h3>
-                <p className="thread-dialog-copy">
-                  Margin Chat saves every change in this browser first. A chosen
-                  directory also receives Obsidian-compatible Markdown files: one
-                  file per chat and note, with parent, child, and note backlinks.
-                </p>
-              </div>
-
-              <div className="profile-storage-status-list">
-                <div className="profile-storage-status">
-                  <span>Browser storage</span>
-                  <strong>Saving automatically</strong>
-                  <small>Authoritative local copy</small>
-                </div>
-                <div className="profile-storage-status">
-                  <span>Cloud copy</span>
-                  <strong>
-                    {!cloudSyncEnabled
-                      ? "Local only"
-                      : cloudSyncStatus === "server"
-                        ? cloudBackupMatchesLocal
-                          ? "Cloud copy current"
-                          : "Syncing changes"
-                        : cloudSyncStatus === "fallback"
-                          ? "Retrying cloud sync"
-                          : cloudSyncStatus === "loading"
-                            ? "Connecting"
-                            : "Cloud unavailable"}
-                  </strong>
-                  <small>
-                    {!cloudSyncEnabled
-                      ? "Cloud sync requires a paid plan or admin access"
-                      : cloudSyncStatus === "fallback"
-                        ? "Your local master is safe while Margin Chat reconnects or reconciles changes"
-                        : "Automatic and manual backups use your signed-in account"}
-                  </small>
-                </div>
-              </div>
-
-              <div className="profile-storage-directory-card">
-                <div>
-                  <span>Manual cloud backup</span>
-                  <strong>Back up the local master copy</strong>
-                  <small>
-                    {cloudSyncEnabled
-                      ? "Upload what is on this computer now. This action never pulls cloud data down."
-                      : "Manual cloud backup requires a paid plan or admin access."}
-                  </small>
-                </div>
-
-                <div className="profile-storage-directory-actions">
-                  <button
-                    className={`thread-dialog-button is-primary${
-                      cloudBackupMatchesLocal ? " is-cloud-current" : ""
-                    }`}
-                    disabled={!cloudSyncEnabled || cloudBackupBusy}
-                    onClick={() => void backupLocalMasterToCloud()}
-                    type="button"
-                  >
-                    {cloudBackupBusy
-                      ? "Backing up..."
-                      : "Back up to cloud now"}
-                  </button>
-
-                  <div
-                    aria-live="polite"
-                    className="profile-storage-upload-progress"
-                  >
-                    <span>
-                      {formatByteCount(
-                        displayedCloudBackupProgress.uploadedBytes,
-                      )}{" "}
-                      / {formatByteCount(displayedCloudBackupProgress.totalBytes)}
-                    </span>
-                    <progress
-                      aria-label="Cloud backup upload progress"
-                      max={Math.max(displayedCloudBackupProgress.totalBytes, 1)}
-                      value={displayedCloudBackupProgress.uploadedBytes}
-                    />
-                  </div>
-                </div>
-
-                {cloudBackupResult ? (
-                  <p
-                    className={`profile-storage-backup-result is-${cloudBackupResult.kind}`}
-                    role={
-                      cloudBackupResult.kind === "error" ? "alert" : "status"
-                    }
-                  >
-                    {cloudBackupResult.message}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="profile-storage-directory-card">
-                <div>
-                  <span>Storage directory</span>
-                  <strong>
-                    {localDirectoryStatus.directoryName ?? "No directory chosen"}
-                  </strong>
-                  <small>
-                    {localDirectoryStatus.permission === "granted"
-                      ? `Writing Chats/, Notes/, and ${localDirectoryStatus.fileName}`
-                      : localDirectoryStatus.supported
-                        ? "Choose a folder for an additional local copy"
-                        : "Directory selection is not supported by this browser"}
-                  </small>
-                </div>
-
-                <div className="profile-storage-directory-actions">
-                  <button
-                    className="thread-dialog-button is-primary"
-                    disabled={!localDirectoryStatus.supported || storageBusy}
-                    onClick={() => void chooseStorageDirectory()}
-                    type="button"
-                  >
-                    {storageBusy
-                      ? "Updating..."
-                      : localDirectoryStatus.directoryName
-                        ? "Change directory"
-                        : "Choose directory"}
-                  </button>
-                  {localDirectoryStatus.directoryName ? (
-                    <button
-                      className="thread-dialog-button"
-                      disabled={storageBusy}
-                      onClick={() => void clearStorageDirectory()}
-                      type="button"
-                    >
-                      Stop using folder
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-
-              {storageError ? (
-                <p className="profile-dialog-error" role="alert">
-                  {storageError}
-                </p>
-              ) : null}
-
-              <p className="profile-storage-footnote">
-                Periodic cloud checks only push this local master copy outward;
-                they never replace it with an older cloud copy.
-              </p>
+              <VaultPanel vault={vault} cloudSyncEnabled={cloudSyncEnabled} />
             </section>
           ) : null}
         </div>

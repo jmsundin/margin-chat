@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import LiveMarkdownEditor from "./LiveMarkdownEditor";
 import { excerpt } from "../lib/tree";
 import type { ConversationNote } from "../types";
@@ -49,24 +49,9 @@ export default function MarginNoteTreeNode({
   onUpdate,
   onUse,
 }: MarginNoteTreeNodeProps) {
-  const [draft, setDraft] = useState(note.content);
   const [expanded, setExpanded] = useState(false);
 
-  useEffect(() => setDraft(note.content), [note.content]);
-
-  function save() {
-    if (!draft.trim()) {
-      setDraft(note.content);
-      return;
-    }
-
-    if (draft !== note.content) {
-      onUpdate(conversationId, note.id, draft);
-    }
-  }
-
   function closeEditor() {
-    save();
     setExpanded(false);
   }
 
@@ -113,9 +98,8 @@ export default function MarginNoteTreeNode({
             ariaLabel="Edit margin note"
             autoFocus
             className="is-compact"
-            onBlur={save}
-            onChange={setDraft}
-            value={draft}
+            onChange={(content) => onUpdate(conversationId, note.id, content)}
+            value={note.content}
           />
           <div className="margin-note-tree-actions">
             <button
@@ -128,7 +112,7 @@ export default function MarginNoteTreeNode({
             {onUse ? (
               <button
                 onClick={() =>
-                  onUse(conversationId, draft.trim() || note.content)
+                  onUse(conversationId, note.content)
                 }
                 type="button"
               >
