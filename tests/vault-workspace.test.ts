@@ -35,6 +35,18 @@ function authoredContents(state: AppState) {
 }
 
 describe("vault workspace source of truth", () => {
+  test("the first content added to an empty saved note survives reopening and later edits", () => {
+    const state = createEmptyState();
+    const note = createStandaloneNoteConversation({ id: "first-note", noteId: "first-body", createdAt: "2026-09-13T00:00:00.000Z" });
+    state.conversations[note.id] = note;
+    let files = stateToVaultFiles(state, {});
+    for (const content of ["# First content\n\nCafé, 日本語.", "", "Second edit after clearing."]) {
+      note.notes![0].content = content;
+      files = stateToVaultFiles(state, files);
+      expect(vaultToState(files, state).conversations[note.id].notes![0].content).toBe(content);
+    }
+  });
+
   test("reconstructs chats, notes, relationships and settings without a file registry", () => {
     const state = authoredWorkspace();
     const files = stateToVaultFiles(state, {});

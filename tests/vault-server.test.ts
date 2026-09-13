@@ -207,13 +207,18 @@ describe("Markdown vault synchronization", () => {
       async get(key: string, options: any) {
         calls.push({ kind: "get", key, options });
         const bytes = objects.get(key);
-        return bytes ? { statusCode: 200, stream: new Blob([bytes]).stream(), blob: { etag: digest(bytes) } } : null;
+        // Blob weakens response ETags when HTTP compression is negotiated;
+        // those validators cannot be used for an If-Match replacement.
+        const etag = bytes && `"${digest(bytes)}"`;
+        return bytes ? { statusCode: 200, stream: new Blob([bytes]).stream(), blob: {
+          etag: options.headers?.["accept-encoding"] === "identity" ? etag : `W/${etag}`,
+        } } : null;
       },
       async put(key: string, bytes: Buffer, options: any) {
         calls.push({ kind: "put", key, options });
         const old = objects.get(key);
         if (old && !options.allowOverwrite) throw new Error("already exists");
-        if (options.ifMatch && (!old || digest(old) !== options.ifMatch)) throw new BlobPreconditionFailedError();
+        if (options.ifMatch && (!old || `"${digest(old)}"` !== options.ifMatch)) throw new BlobPreconditionFailedError();
         objects.set(key, Buffer.from(bytes));
       },
     };

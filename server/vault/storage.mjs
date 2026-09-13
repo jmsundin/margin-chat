@@ -83,9 +83,15 @@ export function createBlobVaultStorage(env = process.env, sdkOverride) {
   const sdk = () => sdkOverride ?? (sdkPromise ??= import("@vercel/blob"));
   async function read(key) {
     const api = await sdk();
-    const result = await api.get(key, { ...options, access: "private", useCache: false });
+    // Compressed HTTP responses carry weak ETags, which cannot satisfy If-Match.
+    // Read the uncompressed representation so bytes and its strong validator
+    // come from the same response (a separate head() would introduce a race).
+    const result = await api.get(key, {
+      ...options, access: "private", useCache: false,
+      headers: { "accept-encoding": "identity" },
+    });
     if (!result) return null;
-    if (result.statusCode !== 200 || !result.stream || !result.blob.etag) {
+    if (result.statusCode !== 200 || !result.stream || !result.blob.etag || result.blob.etag.startsWith("W/")) {
       throw new Error("The vault store returned an invalid response.");
     }
     return { bytes: Buffer.from(await new Response(result.stream).arrayBuffer()), etag: result.blob.etag };

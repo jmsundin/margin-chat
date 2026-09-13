@@ -821,8 +821,12 @@ ${text}
   const newBody = parseNoteBody(after);
   if (oldBody !== newBody) {
     const currentBody = parseNoteBody(result);
-    if (/^## Note\r?$/m.test(result))
-      result = result.slice(0, result.length - currentBody.length) + newBody;
+    if (/^## Note\r?$/m.test(result)) {
+      const prefix = result.slice(0, result.length - currentBody.length);
+      result = prefix.replace(/(^|\r?\n)## Note(?:\r?\n)*$/, `$1## Note
+
+`) + newBody;
+    }
   }
   return result;
 }

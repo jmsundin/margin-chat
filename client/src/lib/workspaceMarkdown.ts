@@ -733,7 +733,12 @@ function preserveMarkdownEdits(raw: string, before: string, after: string, recor
   const newBody = parseNoteBody(after);
   if (oldBody !== newBody) {
     const currentBody = parseNoteBody(result);
-    if (/^## Note\r?$/m.test(result)) result = result.slice(0, result.length - currentBody.length) + newBody;
+    if (/^## Note\r?$/m.test(result)) {
+      const prefix = result.slice(0, result.length - currentBody.length);
+      // Empty generated notes end at the heading. A first edit must introduce
+      // the same separator as a newly rendered nonempty note before its body.
+      result = prefix.replace(/(^|\r?\n)## Note(?:\r?\n)*$/, "$1## Note\n\n") + newBody;
+    }
   }
   return result;
 }

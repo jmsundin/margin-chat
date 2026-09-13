@@ -18,6 +18,14 @@ Keep the existing Postgres configuration for authentication and features. With n
 
 Use `bun run dev` for normal development. It regenerates the shared Markdown codec before starting the server and client. `bun run build` and `bun run test` also regenerate it. The generated `server/vault/codec.generated.mjs` remains checked in for direct server startup; after editing `client/src/lib/workspaceMarkdown.ts`, run `bun run build:vault-codec` before using `dev:server` or `start:server` directly.
 
+### Verify cloud activation
+
+`bun scripts/test-cloud-vault.mjs` is an opt-in test against the configured private Blob store. It uses the actual storage adapter and sync engine with two simulated devices, checks concurrent saves, conflicts, history, deletions, binary files, and private access, then deletes its own uniquely prefixed test objects. It does not read application accounts or access Postgres. This is separate from `bun run test`, which runs without cloud credentials.
+
+For OIDC, the store must allow the environment represented by the token. Pulling Preview environment variables locally does not make a Development token eligible for Preview access. Run the test in an authorized environment; do not commit credentials. The exported `runCloudVaultTest` function can also be bundled into a temporary authenticated Preview function for testing. Remove that deployment afterward.
+
+The adapter requests uncompressed, uncached responses so each manifest body arrives with its strong ETag. Compressed Blob responses may return weak ETags, which cause conditional saves to fail even without competing edits. Keep the body and ETag from the same read; a separate metadata lookup can pair an old body with a newer validator.
+
 ## Portable files and derived data
 
 The logical vault contains:
