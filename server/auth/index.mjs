@@ -70,7 +70,7 @@ export function createAuthService({
     };
   }
 
-  async function login(payload) {
+  async function authenticateCredentials(payload) {
     const input = normalizeLoginPayload(payload);
     const user = await database.findUserForLogin(input.email);
 
@@ -78,17 +78,20 @@ export function createAuthService({
       throw createStatusError(401, "Email or password is incorrect.");
     }
 
-    const cookie = await createSessionForUser(user.id);
-
     return {
-      cookie,
-      user: await decorateUser({
         billing: user.billing,
         displayName: user.displayName,
         email: user.email,
         id: user.id,
         role: user.role,
-      }),
+    };
+  }
+
+  async function login(payload) {
+    const user = await authenticateCredentials(payload);
+    return {
+      cookie: await createSessionForUser(user.id),
+      user: await decorateUser(user),
     };
   }
 
@@ -200,6 +203,7 @@ export function createAuthService({
   }
 
   return {
+    authenticateCredentials,
     buildClearedSessionCookie,
     getAuthContext,
     login,

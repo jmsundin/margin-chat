@@ -56,6 +56,18 @@ create table if not exists marginchat_capture_tokens (
   last_used_at timestamptz
 );
 
+-- Each signed-in browser has an independent, capture-only session.
+create table if not exists marginchat_extension_sessions (
+  token_hash text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  last_used_at timestamptz
+);
+
+create index if not exists marginchat_extension_sessions_user_idx
+  on marginchat_extension_sessions(user_id);
+
 create table if not exists marginchat_captures (
   id text primary key,
   user_id text not null references marginchat_users(id) on delete cascade,

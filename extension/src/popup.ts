@@ -47,7 +47,7 @@ async function showPending() {
     ? "Your source link and note are saved with the capture."
     : sameConnection
       ? "If the connection was interrupted, retrying checks the same save without creating a duplicate."
-      : "This draft belongs to a previous connection. Reconnect that account or start a new capture.";
+      : "This draft belongs to a previous connection. Sign in to that account in Settings or start a new capture.";
   el<HTMLButtonElement>("retry").hidden =
     Boolean(pending.receipt) || !sameConnection;
   el<HTMLButtonElement>("new").textContent = pending.receipt
@@ -168,7 +168,7 @@ async function send(type: "save" | "retry", capture?: CaptureInput) {
   el<HTMLButtonElement>("new").disabled = true;
   report("Saving to your Cloud Inbox…");
   try {
-    const result = await chrome.runtime.sendMessage({ type, capture });
+    const result = await chrome.runtime.sendMessage({ type, capture, connectionId: settings?.connectionId });
     await showPending();
     if (result?.error) report(result.error, true);
   } catch (error) {

@@ -76,7 +76,7 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
       sender = { id: "test-extension", url },
     ): Promise<any> {
       return new Promise((resolve) => {
-        const keepOpen = listener(message, sender, resolve);
+        const keepOpen = listener({ connectionId: storage.connection?.connectionId, ...(message as object) }, sender, resolve);
         if (!keepOpen) resolve(undefined);
       });
     },
@@ -84,6 +84,14 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
 }
 
 describe("extension upload lifecycle", () => {
+  test("a popup opened before an account switch cannot upload to the new account", async () => {
+    const storage = { connection: connection() };
+    let uploads = 0;
+    const worker = createWorker(storage, (async () => { uploads++; return Response.json({}); }) as typeof fetch);
+    const result = await worker.dispatch({ type: "save", capture: capture(), connectionId: "previous-account" });
+    expect(result.error).toContain("account changed");
+    expect(uploads).toBe(0);
+  });
   test("server permissions remain stable when switching local development ports", () => {
     expect(serverPermissionPattern("http://localhost:5173")).toBe(
       "http://localhost/*",

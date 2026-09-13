@@ -3,7 +3,6 @@ import {
   captureToMarkdown,
   type Capture,
   type CapturePage,
-  type CaptureTokenSummary,
 } from "@margin-chat/capture-contracts";
 import { createStandaloneNoteConversation } from "../initialState";
 import type { AppState } from "../types";
@@ -28,18 +27,6 @@ export const loadCapture = (id: string) =>
   request<{ capture: Capture }>(
     `${CAPTURE_API_PATH}/${encodeURIComponent(id)}`,
   );
-export const getCaptureToken = () =>
-  request<{ summary: CaptureTokenSummary | null }>(
-    "/api/settings/capture-token",
-  );
-export const createCaptureToken = () =>
-  request<{ token: string; summary: CaptureTokenSummary }>(
-    "/api/settings/capture-token",
-    "POST",
-  );
-export const revokeCaptureToken = () =>
-  request<{ revoked: boolean }>("/api/settings/capture-token", "DELETE");
-
 export function openCaptureAsNote(state: AppState, capture: Capture): AppState {
   const id = `web-capture-${capture.id}`;
   // Reopening an imported capture preserves all edits and branches on that note.

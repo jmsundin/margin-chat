@@ -1,6 +1,7 @@
 // Version 1 is additive: keep these fields and routes compatible with installed clippers.
 export const CAPTURE_API_PATH = "/api/v1/captures";
 export const CONNECTION_API_PATH = "/api/v1/capture-connection";
+export const EXTENSION_SESSION_API_PATH = "/api/v1/extension-session";
 export const CAPTURE_LIMITS = Object.freeze({
   title: 300,
   url: 4096,

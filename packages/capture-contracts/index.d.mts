@@ -24,7 +24,13 @@ export interface CaptureReceipt {
   capture: { id: string; createdAt: string };
 }
 export interface CaptureConnection {
+  userId?: string;
   displayName: string;
+  expiresAt: string;
+}
+export interface ExtensionSession {
+  token: string;
+  user: { id: string; displayName: string; email: string };
   expiresAt: string;
 }
 export interface CaptureTokenSummary {
@@ -34,6 +40,7 @@ export interface CaptureTokenSummary {
 }
 export const CAPTURE_API_PATH: "/api/v1/captures";
 export const CONNECTION_API_PATH: "/api/v1/capture-connection";
+export const EXTENSION_SESSION_API_PATH: "/api/v1/extension-session";
 export const CAPTURE_LIMITS: Readonly<{
   title: number;
   url: number;

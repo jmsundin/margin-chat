@@ -12,9 +12,9 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
   }
   return <>
     <div><p className="eyebrow">Markdown vault</p><h3>Your files, on every device</h3>
-      <p className="thread-dialog-copy">Edits save on this device first. Sync exchanges changed files when Margin Chat is open or resumes. Conflicting edits are kept for review.</p></div>
+      <p className="thread-dialog-copy">Edits save in this browser’s private storage on your device first. No folder connection is needed. Cloud sync exchanges changes with your other devices when Margin Chat is open or resumes.</p></div>
     <div className="profile-storage-status-list">
-      <div className="profile-storage-status"><span>On this device</span><strong>{vault.localSaveError ? "Save needs attention" : vault.saving ? "Saving…" : "Markdown saved locally"}</strong><small>Download your vault to keep a portable copy.</small></div>
+      <div className="profile-storage-status"><span>Browser storage · this device</span><strong>{vault.localSaveError ? "Save needs attention" : vault.saving ? "Saving in this browser…" : "Saved in this browser"}</strong><small>Markdown files are stored in space reserved for Margin Chat on this device. These files aren’t visible in Finder or Files.</small></div>
       <div className="profile-storage-status"><span>Other devices</span><strong>{!cloudSyncEnabled ? "Local only" : vault.matchesCloud ? "Up to date" : vault.storageMode === "server" ? "Changes waiting to sync" : "Waiting to sync"}</strong>
         <small>{vault.conflicts.length ? "Saved versions need review below." : cloudSyncEnabled ? "Open Margin Chat on another device to receive changes." : "Cloud sync requires a paid plan or admin access."}</small></div>
     </div>
@@ -29,8 +29,12 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
       }} />
     </div>
     <div className="profile-storage-directory-card">
-      <div><span>Connected folder</span><strong>{vault.localDirectoryStatus.directoryName ?? "No folder connected"}</strong>
-        <small>{vault.localDirectoryStatus.supported ? "Markdown edits in this folder are checked before saving and when the app resumes." : "This browser keeps files privately. Download a vault to open them in Files or another editor."}</small></div>
+      <div><span>Optional folder connection</span><strong>{vault.localDirectoryStatus.directoryName ?? "No folder connected"}</strong>
+        <small>{vault.localDirectoryStatus.directoryName
+          ? "This folder also holds Markdown files you can open in other apps. Folder edits are checked before saving and when Margin Chat resumes."
+          : vault.localDirectoryStatus.supported
+            ? "Choose a folder to also keep your Markdown files somewhere you can open in other apps. Saving in this browser works without a connected folder."
+            : "Folder connections aren’t available in this browser. Files still save in its private storage. Use Download vault to get a copy you can open in other apps."}</small></div>
       <div className="profile-storage-directory-actions">
         <button className="thread-dialog-button" disabled={busy || !vault.localDirectoryStatus.supported} onClick={() => void run(vault.chooseDirectory)}>Choose folder</button>
         {vault.localDirectoryStatus.directoryName ? <button className="thread-dialog-button" disabled={busy} onClick={() => void run(vault.clearDirectory)}>Disconnect folder</button> : null}
@@ -51,6 +55,6 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
         </div>
       </details>)}
     </div> : null}
-    <p className="profile-storage-footnote">Browser-private files are removed if you clear this site’s data. Download a vault for an independent copy, especially before clearing storage. Files already synchronized remain in the cloud.</p>
+    <p className="profile-storage-footnote">Clearing Margin Chat’s site data removes the files saved in this browser. Use Download vault to keep an independent copy. Files already synchronized remain in the cloud, and a connected folder’s files stay in that folder.</p>
   </>;
 }

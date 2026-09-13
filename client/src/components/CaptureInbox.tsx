@@ -3,14 +3,10 @@ import {
   captureToMarkdown,
   type Capture,
   type CaptureSummary,
-  type CaptureTokenSummary,
 } from "@margin-chat/capture-contracts";
 import {
-  createCaptureToken,
-  getCaptureToken,
   listCaptures,
   loadCapture,
-  revokeCaptureToken,
 } from "../lib/captures";
 import { renderMarkdownToHtml } from "../lib/markdown";
 
@@ -22,53 +18,13 @@ const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Unable to reach your Cloud Inbox.";
 
 function ExtensionConnection() {
-  const [summary, setSummary] = useState<CaptureTokenSummary | null>(null);
-  const [token, setToken] = useState("");
-  const [busy, setBusy] = useState(true);
-  const [message, setMessage] = useState("");
-  useEffect(() => {
-    let active = true;
-    void getCaptureToken()
-      .then((result) => {
-        if (active) setSummary(result.summary);
-      })
-      .catch((error) => {
-        if (active) setMessage(errorText(error));
-      })
-      .finally(() => {
-        if (active) setBusy(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-  async function changeKey(revoke = false) {
-    setBusy(true);
-    setMessage("");
-    try {
-      if (revoke) {
-        await revokeCaptureToken();
-        setToken("");
-        setSummary(null);
-        setMessage("Capture key revoked.");
-      } else {
-        const result = await createCaptureToken();
-        setToken(result.token);
-        setSummary(result.summary);
-      }
-    } catch (error) {
-      setMessage(errorText(error));
-    } finally {
-      setBusy(false);
-    }
-  }
   return (
     <div className="capture-connection">
       <p className="eyebrow">Save to Margin · Chrome extension</p>
       <h3>Bring the web into your notes.</h3>
       <p>
-        In the extension’s Settings, enter this website address and a capture
-        key. Your key only allows saving captures and checking the connection.
+        Open the extension’s Settings and enter this website address.
+        Sign in with the same email and password you use for Margin Chat.
       </p>
       <label htmlFor="capture-website">Margin Chat website</label>
       <input
@@ -77,77 +33,11 @@ function ExtensionConnection() {
         value={window.location.origin}
         onFocus={(event) => event.target.select()}
       />
-      {summary ? (
-        <p className="capture-muted">
-          Current key expires {new Date(summary.expiresAt).toLocaleDateString()}
-          .
-          {summary.lastUsedAt
-            ? ` Last used ${new Date(summary.lastUsedAt).toLocaleString()}.`
-            : " Not used yet."}
-        </p>
-      ) : null}
-      {token ? (
-        <>
-          <label htmlFor="capture-key">
-            Capture key · shown only this time
-          </label>
-          <input
-            id="capture-key"
-            readOnly
-            type="password"
-            value={token}
-            onFocus={(event) => event.target.select()}
-          />
-          <button
-            className="thread-dialog-button"
-            type="button"
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(token)
-                .then(() =>
-                  setMessage(
-                    "Key copied. Paste it into the extension settings.",
-                  ),
-                )
-                .catch(() =>
-                  setMessage("Select the key field and copy it manually."),
-                )
-            }
-          >
-            Copy key
-          </button>
-        </>
-      ) : null}
-      {summary ? (
-        <p className="capture-muted">
-          Replacing or revoking the key disconnects extensions using it.
-        </p>
-      ) : null}
-      <div className="capture-actions">
-        <button
-          className="thread-dialog-button is-primary"
-          disabled={busy}
-          onClick={() => void changeKey()}
-          type="button"
-        >
-          {busy
-            ? "Please wait…"
-            : summary
-              ? "Replace capture key"
-              : "Create capture key"}
-        </button>
-        {summary ? (
-          <button
-            className="thread-dialog-button is-danger"
-            disabled={busy}
-            onClick={() => void changeKey(true)}
-            type="button"
-          >
-            Revoke key
-          </button>
-        ) : null}
-      </div>
-      <p role="status">{message}</p>
+      <p className="capture-muted">
+        The extension remembers your session without storing your password.
+        You can sign out from its Settings. Resetting your password signs out
+        every extension connected to your account.
+      </p>
     </div>
   );
 }

@@ -18,23 +18,43 @@ export function createCaptureService({ database }) {
       const authorization = request.headers.authorization;
       if (
         typeof authorization !== "string" ||
-        !/^Bearer mc_capture_[A-Za-z0-9_-]{43}$/u.test(authorization)
+        !/^Bearer mc_(capture|extension)_[A-Za-z0-9_-]{43}$/u.test(authorization)
       ) {
         throw new HttpError(
           401,
-          "Connect the extension with a valid capture key from your Cloud Inbox.",
+          "Sign in to Margin Chat in the extension settings.",
         );
       }
-      const user = await database.authenticateCaptureToken(
-        hash(authorization.slice(7)),
-      );
+      const token = authorization.slice(7);
+      const user = token.startsWith("mc_extension_")
+        ? await database.authenticateExtensionSession(hash(token))
+        : await database.authenticateCaptureToken(hash(token));
       if (!user)
         throw new HttpError(
           401,
-          "Your capture key expired or was revoked. Reconnect in extension settings.",
+          "Your session expired or was revoked. Sign in again in the extension settings, then retry your save.",
         );
       requireCaptureAccess(user);
       return user;
+    },
+    async issueSession(user, ttlMs) {
+      requireCaptureAccess(user);
+      const token = `mc_extension_${randomBytes(32).toString("base64url")}`;
+      const expiresAt = new Date(Date.now() + ttlMs);
+      await database.createExtensionSession({ userId: user.id, tokenHash: hash(token), expiresAt });
+      return {
+        token,
+        expiresAt: expiresAt.toISOString(),
+        user: { id: user.id, displayName: user.displayName, email: user.email },
+      };
+    },
+    async signOut(request) {
+      const authorization = request.headers.authorization;
+      if (typeof authorization !== "string" || !/^Bearer mc_extension_[A-Za-z0-9_-]{43}$/u.test(authorization)) {
+        throw new HttpError(401, "A valid extension session is required to sign out.");
+      }
+      // Idempotent, even if expired, already revoked, or the account lost cloud access.
+      await database.deleteExtensionSession(hash(authorization.slice(7)));
     },
     async issueToken(userId) {
       const token = `mc_capture_${randomBytes(32).toString("base64url")}`;

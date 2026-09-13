@@ -7,9 +7,11 @@ import {
   test,
 } from "bun:test";
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import {
   CAPTURE_API_PATH,
   CONNECTION_API_PATH,
+  EXTENSION_SESSION_API_PATH,
   normalizeCapture,
   normalizeServerUrl,
   captureToMarkdown,
@@ -18,6 +20,7 @@ import { createCaptureTestDatabase } from "./helpers/captureDatabase.mjs";
 import { createCaptureService } from "../server/captures/index.mjs";
 import { createApiHandler } from "../server/routes/api.mjs";
 import { createAuthService } from "../server/auth/index.mjs";
+import { hashPassword } from "../server/auth/passwords.mjs";
 import { createRuntimeConfig } from "../server/config/runtime.mjs";
 import { createEmptyState } from "../client/src/initialState";
 import { openCaptureAsNote } from "../client/src/lib/captures";
@@ -98,8 +101,11 @@ describe("cloud capture API and Postgres storage", () => {
   let service: ReturnType<typeof createCaptureService>;
   let server: ReturnType<typeof createServer>;
   let origin: string;
+  let passwordHash: string;
+  const password = "test-password-for-clipper";
   const cookie = "margin_chat_session=test-session";
   beforeAll(async () => {
+    passwordHash = await hashPassword(password);
     fixtureDb = await createCaptureTestDatabase();
     const config = createRuntimeConfig({});
     service = createCaptureService({ database: fixtureDb.database });
@@ -136,7 +142,7 @@ describe("cloud capture API and Postgres storage", () => {
         role,
         email: `${id}@example.test`,
         displayName: id,
-        passwordHash: "not-a-login-password",
+        passwordHash,
       });
     }
     await fixtureDb.database.createAuthSession({
@@ -150,6 +156,102 @@ describe("cloud capture API and Postgres storage", () => {
   async function issue() {
     return service.issueToken("owner");
   }
+
+  const login = (email = "owner@example.test", pass = password) => api(EXTENSION_SESSION_API_PATH, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password: pass }),
+  });
+  const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
+
+  test("password sign-in creates an expiring, hashed, capture-only session without a web cookie", async () => {
+    const response = await login(" OWNER@example.test ");
+    expect(response.status).toBe(201);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    const session = await response.json();
+    expect(session.user).toEqual({ id: "owner", displayName: "owner", email: "owner@example.test" });
+    expect(session.token).toMatch(/^mc_extension_[A-Za-z0-9_-]{43}$/);
+    expect(Date.parse(session.expiresAt)).toBeGreaterThan(Date.now());
+    expect(JSON.stringify(session)).not.toContain("password");
+    const rows = await fixtureDb.pg.query("select * from marginchat_extension_sessions");
+    expect(rows.rows[0].token_hash).toBe(createHash("sha256").update(session.token).digest("hex"));
+    expect(JSON.stringify(rows.rows)).not.toContain(session.token);
+    const connection = await (await api(CONNECTION_API_PATH, { headers: bearer(session.token) })).json();
+    expect(connection).toMatchObject({ userId: "owner", displayName: "owner", expiresAt: session.expiresAt });
+    const saved = await api(CAPTURE_API_PATH, {
+      method: "POST", headers: bearer(session.token), body: JSON.stringify(fixture()),
+    });
+    expect(saved.status).toBe(201);
+    const capture = (await saved.json()).capture;
+    for (const path of [CAPTURE_API_PATH, `${CAPTURE_API_PATH}/${capture.id}`, "/api/state", "/api/settings/capture-token"]) {
+      expect((await api(path, { headers: bearer(session.token) })).status).toBe(401);
+    }
+    expect((await api("/api/chat", { method: "POST", headers: bearer(session.token), body: "{}" })).status).toBe(401);
+    expect((await (await api("/api/auth/session", { headers: bearer(session.token) })).json()).user).toBeNull();
+    expect((await api("/api/state", { headers: { Cookie: `margin_chat_session=${session.token}` } })).status).toBe(401);
+  });
+
+  test("rejects incorrect credentials, missing fields, oversized bodies and accounts without cloud access", async () => {
+    for (const [email, pass] of [["owner@example.test", "wrong"], ["missing@example.test", password]]) {
+      const response = await login(email, pass);
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: "Email or password is incorrect." });
+    }
+    expect((await login("owner@example.test", "")).status).toBe(400);
+    expect((await login("other@example.test")).status).toBe(403);
+    expect((await api(EXTENSION_SESSION_API_PATH, { method: "POST", body: "x".repeat(17000) })).status).toBe(413);
+    expect((await fixtureDb.pg.query("select * from marginchat_extension_sessions")).rows).toHaveLength(0);
+  });
+
+  test("browser sessions coexist and signing out revokes only that browser", async () => {
+    const first = await (await login()).json();
+    const second = await (await login()).json();
+    expect(first.token).not.toBe(second.token);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect((await api(EXTENSION_SESSION_API_PATH, { method: "DELETE", headers: bearer(first.token) })).status).toBe(200);
+    }
+    expect((await api(CONNECTION_API_PATH, { headers: bearer(first.token) })).status).toBe(401);
+    expect((await api(CONNECTION_API_PATH, { headers: bearer(second.token) })).status).toBe(200);
+    // Website credentials cannot be confused with an extension session.
+    expect((await api(EXTENSION_SESSION_API_PATH, { method: "DELETE", headers: { Cookie: cookie } })).status).toBe(401);
+    await fixtureDb.pg.exec("update marginchat_extension_sessions set expires_at = now() - interval '1 second'");
+    expect((await api(CONNECTION_API_PATH, { headers: bearer(second.token) })).status).toBe(401);
+  });
+
+  test("password resets revoke every browser session and legacy key, and allow the new password", async () => {
+    const first = await (await login()).json();
+    const second = await (await login()).json();
+    const legacy = await issue();
+    const resetToken = "r".repeat(43);
+    await fixtureDb.database.createPasswordResetToken({
+      userId: "owner", tokenHash: createHash("sha256").update(resetToken).digest("hex"),
+      expiresAt: new Date(Date.now() + 60000),
+    });
+    const response = await api("/api/auth/password-reset/confirm", {
+      method: "POST", body: JSON.stringify({ token: resetToken, password: "new-clipper-password" }),
+    });
+    expect(response.status).toBe(200);
+    for (const { token } of [first, second, legacy]) {
+      expect((await api(CONNECTION_API_PATH, { headers: bearer(token) })).status).toBe(401);
+    }
+    expect((await login()).status).toBe(401);
+    expect((await login("owner@example.test", "new-clipper-password")).status).toBe(201);
+    const webLogin = await api("/api/auth/login", {
+      method: "POST", body: JSON.stringify({ email: "owner@example.test", password: "new-clipper-password" }),
+    });
+    expect(webLogin.status).toBe(200);
+    expect(webLogin.headers.get("set-cookie")).toContain("margin_chat_session=");
+  });
+
+  test("existing sessions lose capture access after a downgrade and can still sign out", async () => {
+    await fixtureDb.pg.exec("update marginchat_users set billing_status = 'active' where id = 'other'");
+    const session = await (await login("other@example.test")).json();
+    expect((await api(CONNECTION_API_PATH, { headers: bearer(session.token) })).status).toBe(200);
+    await fixtureDb.pg.exec("update marginchat_users set billing_status = 'canceled' where id = 'other'");
+    expect((await api(CAPTURE_API_PATH, { method: "POST", headers: bearer(session.token), body: JSON.stringify(fixture()) })).status).toBe(403);
+    expect((await api(EXTENSION_SESSION_API_PATH, { method: "DELETE", headers: bearer(session.token) })).status).toBe(200);
+  });
 
   test("the migration can run twice against the existing schema", async () => {
     await fixtureDb.pg.exec(fixtureDb.schema);

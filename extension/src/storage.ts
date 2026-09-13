@@ -7,7 +7,13 @@ export interface ConnectionSettings {
   token: string;
   connectionId: string;
   displayName: string;
+  userId?: string;
+  email?: string;
+  expiresAt?: string;
 }
+// Stable across sign-out and renewal, distinct for every account and server.
+export const connectionIdentity = (serverUrl: string, userId: string) =>
+  JSON.stringify([serverUrl, userId]);
 export interface PendingSave {
   capture: CaptureInput;
   connectionId: string;

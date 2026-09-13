@@ -66,6 +66,39 @@ export async function authenticateCaptureToken(client, tokenHash) {
     : null;
 }
 
+export async function createExtensionSession(client, { userId, tokenHash, expiresAt }) {
+  await client.query(
+    "delete from marginchat_extension_sessions where user_id = $1 and expires_at <= now()",
+    [userId],
+  );
+  await client.query(
+    "insert into marginchat_extension_sessions (user_id, token_hash, expires_at) values ($1, $2, $3)",
+    [userId, tokenHash, expiresAt],
+  );
+}
+
+export async function deleteExtensionSession(client, tokenHash) {
+  await client.query("delete from marginchat_extension_sessions where token_hash = $1", [tokenHash]);
+}
+
+export async function authenticateExtensionSession(client, tokenHash) {
+  const result = await client.query(
+    `update marginchat_extension_sessions s set last_used_at = now()
+     from marginchat_users u
+     where s.token_hash = $1 and s.expires_at > now() and u.id = s.user_id
+     returning u.id, u.display_name, u.role, u.billing_status, s.expires_at`,
+    [tokenHash],
+  );
+  const row = result.rows[0];
+  return row ? {
+    id: row.id,
+    displayName: row.display_name,
+    role: row.role,
+    billing: mapBillingRow(row),
+    expiresAt: row.expires_at.toISOString(),
+  } : null;
+}
+
 export async function createCapture(client, { userId, capture, payloadHash }) {
   // One stable ID per save attempt; retries return the receipt even after the popup closes.
   const result = await client.query(

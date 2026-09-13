@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Connect Save to Margin</title>
+    <title>Sign in to Save to Margin</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="options">
@@ -14,17 +14,11 @@
         >
       </div>
       <h1>A place for what you find.</h1>
-      <p>Connect this browser to your Margin Chat Cloud Inbox.</p>
-      <ol>
-        <li>
-          Open Margin Chat and choose
-          <strong>Cloud Inbox → Connect extension</strong>.
-        </li>
-        <li>
-          Create a capture key, then enter your website address and paste the
-          key below.
-        </li>
-      </ol>
+      <p>Sign in with the email and password you use for Margin Chat.</p>
+      <div id="connected" hidden>
+        <p id="account"></p>
+        <button id="disconnect" type="button">Sign out of this browser</button>
+      </div>
       <form id="connection-form">
         <label for="server-url">Margin Chat website</label
         ><input
@@ -33,25 +27,28 @@
           placeholder="https://your-margin-chat-website"
           required
           autocomplete="url"
-        /><label for="token">Capture key</label
+        /><label for="email">Email address</label
         ><input
-          id="token"
-          type="password"
-          placeholder="mc_capture_…"
+          id="email"
+          type="email"
           required
-          autocomplete="off"
+          maxlength="320"
+          autocomplete="username"
+          autocapitalize="none"
           spellcheck="false"
-        /><button id="connect" class="primary" type="submit">Connect</button>
+        /><label for="password">Password</label
+        ><input
+          id="password"
+          type="password"
+          required
+          maxlength="200"
+          autocomplete="current-password"
+        /><button id="connect" class="primary" type="submit">Sign in</button>
       </form>
-      <div id="connected" hidden>
-        <p id="account"></p>
-        <button id="disconnect" type="button">Disconnect this browser</button>
-      </div>
       <p id="status" role="status" aria-live="polite"></p>
       <p class="fine-print">
-        Your key can save captures and check the connection. It cannot read your
-        Inbox, notes, or chats. Captures are sent only when you save. Keys
-        expire after 90 days and can be revoked in Margin Chat.
+        The extension remembers your session, never your password. Captures are
+        sent only when you save. Cloud Inbox requires a paid plan or an admin account.
       </p>
     </main>
     <script type="module" src="options.js"></script>

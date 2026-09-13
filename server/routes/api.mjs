@@ -6,7 +6,7 @@ import {
   sendJson,
 } from "../http/json.mjs";
 import { randomUUID } from "node:crypto";
-import { CAPTURE_API_PATH, CONNECTION_API_PATH } from "@margin-chat/capture-contracts";
+import { CAPTURE_API_PATH, CONNECTION_API_PATH, EXTENSION_SESSION_API_PATH } from "@margin-chat/capture-contracts";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
@@ -83,12 +83,25 @@ export function createApiHandler({
         return;
       }
 
+      if (url.pathname === EXTENSION_SESSION_API_PATH && ["POST", "DELETE"].includes(request.method)) {
+        response.setHeader("Cache-Control", "no-store");
+        if (request.method === "POST") {
+          const user = await authService.authenticateCredentials(await readJsonBody(request, 16_384));
+          const session = await captureService.issueSession(user, runtimeConfig.authSessionTtlMs);
+          sendJson(response, 201, session);
+        } else {
+          await captureService.signOut(request);
+          sendJson(response, 200, { ok: true });
+        }
+        return;
+      }
+
       // Capture credentials never authenticate workspace, chat, or account endpoints.
       if ((request.method === "POST" && url.pathname === CAPTURE_API_PATH) ||
           (request.method === "GET" && url.pathname === CONNECTION_API_PATH)) {
         const user = await captureService.connect(request);
         if (request.method === "GET") {
-          sendJson(response, 200, { displayName: user.displayName, expiresAt: user.expiresAt }, { "Cache-Control": "no-store" });
+          sendJson(response, 200, { userId: user.id, displayName: user.displayName, expiresAt: user.expiresAt }, { "Cache-Control": "no-store" });
         } else {
           const capture = await captureService.save(user.id, await readJsonBody(request, 1_500_000));
           sendJson(response, 201, { capture }, { "Cache-Control": "no-store" });

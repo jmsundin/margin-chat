@@ -106,6 +106,8 @@ export async function resetPasswordWithToken(
       [passwordHash, userId],
     );
     await client.query("delete from marginchat_user_sessions where user_id = $1", [userId]);
+    await client.query("delete from marginchat_extension_sessions where user_id = $1", [userId]);
+    await client.query("delete from marginchat_capture_tokens where user_id = $1", [userId]);
     await client.query("delete from marginchat_password_reset_tokens where user_id = $1", [userId]);
     await client.query("commit");
   } catch (error) {

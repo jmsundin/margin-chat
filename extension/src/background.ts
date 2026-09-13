@@ -42,7 +42,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 let saving = false;
-async function save(input: unknown, retry: boolean) {
+async function save(input: unknown, retry: boolean, expectedConnection: unknown) {
   if (saving)
     throw new Error(
       "A capture is already being saved. Reopen the popup to check its status.",
@@ -52,7 +52,9 @@ async function save(input: unknown, retry: boolean) {
     await trustedStorage();
     const settings = await getSettings();
     if (!settings)
-      throw new Error("Connect your account in extension settings first.");
+      throw new Error("Sign in to your account in extension settings first.");
+    if (expectedConnection !== settings.connectionId)
+      throw new Error("The signed-in account changed. Reopen the popup before saving.");
     let pending: PendingSave | null = await getPending();
     if (retry) {
       if (!pending) throw new Error("There is no saved draft to retry.");
@@ -120,7 +122,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .remove("pendingSave")
       .then(() => sendResponse({ ok: true }));
   } else {
-    void save(message.capture, message.type === "retry")
+    void save(message.capture, message.type === "retry", message.connectionId)
       .then((receipt) => sendResponse({ receipt }))
       .catch((error) => sendResponse({ error: errorText(error) }));
   }
