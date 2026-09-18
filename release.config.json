@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "vercel": {
+    "projectId": "prj_3Mys9ICundhlBDbEIoFGhRWwzljS",
+    "orgId": "team_Dkpc6SZMWGVpdTFa85y9jaGB"
+  },
+  "neon": {
+    "projectId": "shy-smoke-93365150",
+    "productionBranchId": "br-purple-silence-a6byy1bz",
+    "databaseName": "verceldb",
+    "roleName": "default",
+    "recoveryBranchProtected": false
+  },
+  "productionUrl": "https://www.marginchat.com",
+  "blob": {
+    "productionStoreId": "zpu8sfll6epb26hg",
+    "backupStoreId": "0mglzehtokdbvne3",
+    "rehearsalStoreId": "xaaujts0exxeqjxy"
+  },
+  "jobs": [],
+  "compatibility": {
+    "oldApplication": true,
+    "oldClients": true,
+    "automaticAppRollback": false
+  },
+  "observation": {
+    "checks": 3,
+    "intervalSeconds": 10
+  }
+}

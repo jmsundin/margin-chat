@@ -1,588 +1,172 @@
 import { HttpError } from "../lib/errors.mjs";
 import { extractConversationMessages } from "./systemPrompt.mjs";
-import {
-  parseProviderErrorResponse,
-  parseServerSentEvents,
-  parseStreamJson,
-} from "./streaming.mjs";
+import { parseProviderErrorResponse, parseServerSentEvents, parseStreamJson } from "./streaming.mjs";
+import { normalizeProviderUsage, runMeteredProviderOperation } from "../billing/usage.mjs";
 
-async function ensureStreamingResponse(response, fallbackError) {
-  if (response.ok) {
-    return;
-  }
-
-  const payload = await parseProviderErrorResponse(response);
-
-  throw new HttpError(
-    response.status,
-    extractApiErrorMessage(payload) ?? fallbackError,
-  );
+const outputLimit = (body) => body.max_output_tokens ?? body.max_tokens ?? body.generationConfig?.maxOutputTokens;
+function assertKey(apiKey, provider) {
+  if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
 }
 
-export async function requestResponsesApiStream({
-  apiKey,
-  body,
-  fallbackError,
-  onDelta,
-  onReady,
-  url,
-}) {
-  const response = await fetch(url, {
-    body: JSON.stringify({ ...body, stream: true }),
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
+export async function requestProviderJson({ apiKey, body, provider, url, signal, usageMeter, kind = "generation", fallbackError = `${provider} request failed.`, headers = {} }) {
+  return runMeteredProviderOperation(usageMeter, {
+    provider, model: body.model, body, kind, signal,
+    maxOutputTokens: kind === "embedding" ? 0 : outputLimit(body),
+  }, async (tracker) => {
+    signal?.throwIfAborted();
+    tracker.markDispatched();
+    const response = await fetch(url, {
+      body: JSON.stringify(body), method: "POST", signal,
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", ...headers },
+    });
+    if (!response.ok) tracker.markRejected();
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new HttpError(response.status, extractApiErrorMessage(payload) ?? fallbackError);
+    tracker.recordUsage(payload);
+    return payload;
   });
-
-  await ensureStreamingResponse(response, fallbackError);
-  await onReady?.();
-
-  let completedPayload = null;
-  let reply = "";
-
-  for await (const data of parseServerSentEvents(response.body)) {
-    const event = parseStreamJson(data);
-
-    if (!event) {
-      continue;
-    }
-
-    if (
-      (event.type === "response.output_text.delta" ||
-        event.type === "response.refusal.delta") &&
-      typeof event.delta === "string"
-    ) {
-      reply += event.delta;
-      await onDelta?.(event.delta);
-    } else if (event.type === "response.completed") {
-      completedPayload = event.response ?? null;
-    } else if (
-      event.type === "response.failed" ||
-      event.type === "response.incomplete" ||
-      event.type === "error"
-    ) {
-      throw new HttpError(
-        502,
-        extractApiErrorMessage(event.response ?? event) ?? fallbackError,
-      );
-    }
-  }
-
-  return { completedPayload, reply };
 }
 
-export async function requestOpenAIResponseStream({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  onDelta,
-  onReady,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "OpenAI API is not configured. Add OPENAI_API_KEY to your environment.",
-    );
-  }
-
-  const result = await requestResponsesApiStream({
-    apiKey,
-    body: {
-      input: extractConversationMessages(chatRequest.messages).map((message) => ({
-        content: message.content,
-        role: message.role,
-      })),
-      instructions: systemInstruction,
-      max_output_tokens: maxOutputTokens,
-      model,
-    },
-    fallbackError: "OpenAI request failed.",
-    onDelta,
-    onReady,
-    url: "https://api.openai.com/v1/responses",
+export async function requestResponsesApiStream({ apiKey, body, fallbackError, onDelta, onReady, url, signal, usageMeter }) {
+  const provider = new URL(url).hostname === "api.x.ai" ? "xai" : "openai";
+  const requestBody = { ...body, stream: true };
+  return runMeteredProviderOperation(usageMeter, {
+    provider, model: body.model, body: requestBody, maxOutputTokens: outputLimit(body), signal,
+  }, async (tracker) => {
+    signal?.throwIfAborted();
+    tracker.markDispatched();
+    const response = await fetch(url, {
+      body: JSON.stringify(requestBody), headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, method: "POST", signal,
+    });
+    if (!response.ok) {
+      tracker.markRejected();
+      throw new HttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? fallbackError);
+    }
+    await onReady?.();
+    let completedPayload = null;
+    let reply = "";
+    for await (const data of parseServerSentEvents(response.body, signal)) {
+      const event = parseStreamJson(data);
+      if (!event) continue;
+      if ((event.type === "response.output_text.delta" || event.type === "response.refusal.delta") && typeof event.delta === "string") {
+        reply += event.delta;
+        await onDelta?.(event.delta);
+      } else if (event.type === "response.completed") {
+        completedPayload = event.response ?? null;
+        tracker.recordUsage(completedPayload);
+      } else if (["response.failed", "response.incomplete", "error"].includes(event.type)) {
+        tracker.recordUsage(event.response ?? event);
+        throw new HttpError(502, extractApiErrorMessage(event.response ?? event) ?? fallbackError);
+      }
+    }
+    if (!completedPayload) throw new HttpError(502, `${provider} stream ended before completion.`);
+    return { completedPayload, reply, usage: normalizeProviderUsage(provider, completedPayload) };
   });
+}
 
-  if (!result.reply.trim()) {
-    throw new HttpError(502, "OpenAI returned a response without assistant text.");
-  }
+function responsesBody(args, provider) {
+  const messages = extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content }));
+  return provider === "openai"
+    ? { input: messages, instructions: args.systemInstruction, max_output_tokens: args.maxOutputTokens, model: args.model }
+    : { input: [{ content: args.systemInstruction, role: "system" }, ...messages], max_output_tokens: args.maxOutputTokens, model: args.model };
+}
 
+async function responsesReply(args, provider, stream) {
+  assertKey(args.apiKey, provider);
+  const body = responsesBody(args, provider);
+  const url = provider === "openai" ? "https://api.openai.com/v1/responses" : "https://api.x.ai/v1/responses";
+  const result = stream
+    ? await requestResponsesApiStream({ ...args, body, url, fallbackError: `${provider} request failed.` })
+    : { completedPayload: await requestProviderJson({ ...args, body, url, provider }) };
+  const payload = result.completedPayload;
+  const reply = stream ? result.reply : extractOpenAIReply(payload);
+  if (!reply?.trim()) throw new HttpError(502, `${provider} returned a response without assistant text.`);
+  return { model: typeof payload?.model === "string" && payload.model.trim() ? payload.model : args.model, reply, usage: normalizeProviderUsage(provider, payload) };
+}
+
+export const requestOpenAIResponse = (args) => responsesReply(args, "openai", false);
+export const requestOpenAIResponseStream = (args) => responsesReply(args, "openai", true);
+export const requestXAIResponse = (args) => responsesReply(args, "xai", false);
+export const requestXAIResponseStream = (args) => responsesReply(args, "xai", true);
+export const requestOpenAIResponsesPayload = (args) => requestProviderJson({ ...args, provider: "openai", url: "https://api.openai.com/v1/responses" });
+
+function geminiBody(args) {
   return {
-    model:
-      typeof result.completedPayload?.model === "string" &&
-      result.completedPayload.model.trim()
-        ? result.completedPayload.model
-        : model,
-    reply: result.reply,
+    contents: extractConversationMessages(args.chatRequest.messages).map((message) => ({ parts: [{ text: message.content }], role: message.role === "assistant" ? "model" : "user" })),
+    generationConfig: { maxOutputTokens: args.maxOutputTokens, candidateCount: 1 },
+    system_instruction: { parts: [{ text: args.systemInstruction }] },
   };
 }
-
-export async function requestXAIResponseStream({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  onDelta,
-  onReady,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "xAI API is not configured. Add XAI_API_KEY to your environment.",
-    );
-  }
-
-  const result = await requestResponsesApiStream({
-    apiKey,
-    body: {
-      input: [
-        { content: systemInstruction, role: "system" },
-        ...extractConversationMessages(chatRequest.messages).map((message) => ({
-          content: message.content,
-          role: message.role,
-        })),
-      ],
-      max_output_tokens: maxOutputTokens,
-      model,
-    },
-    fallbackError: "xAI request failed.",
-    onDelta,
-    onReady,
-    url: "https://api.x.ai/v1/responses",
-  });
-
-  if (!result.reply.trim()) {
-    throw new HttpError(502, "xAI returned a response without assistant text.");
-  }
-
+function huggingFaceBody(args, stream) {
   return {
-    model:
-      typeof result.completedPayload?.model === "string" &&
-      result.completedPayload.model.trim()
-        ? result.completedPayload.model
-        : model,
-    reply: result.reply,
+    messages: [{ content: args.systemInstruction, role: "system" }, ...extractConversationMessages(args.chatRequest.messages).map(({ content, role }) => ({ content, role }))],
+    model: args.model, max_tokens: args.maxOutputTokens,
+    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
   };
 }
-
-export async function requestGeminiResponseStream({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  onDelta,
-  onReady,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "Gemini API is not configured. Add GEMINI_API_KEY to your environment.",
-    );
-  }
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model,
-    )}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`,
-    {
-      body: JSON.stringify({
-        contents: extractConversationMessages(chatRequest.messages).map(
-          (message) => ({
-            parts: [{ text: message.content }],
-            role: message.role === "assistant" ? "model" : "user",
-          }),
-        ),
-        generationConfig: { maxOutputTokens },
-        system_instruction: { parts: [{ text: systemInstruction }] },
-      }),
-      headers: { "Content-Type": "application/json" },
-      method: "POST",
-    },
-  );
-
-  await ensureStreamingResponse(response, "Gemini request failed.");
-  await onReady?.();
-
-  let reply = "";
-
-  for await (const data of parseServerSentEvents(response.body)) {
-    const payload = parseStreamJson(data);
-
-    if (!payload) {
-      continue;
-    }
-
-    if (payload.error) {
-      throw new HttpError(
-        502,
-        extractApiErrorMessage(payload) ?? "Gemini request failed.",
-      );
-    }
-
-    const delta = (payload.candidates?.[0]?.content?.parts ?? [])
-      .map((part) => (typeof part.text === "string" ? part.text : ""))
-      .join("");
-
-    if (delta) {
-      reply += delta;
-      await onDelta?.(delta);
-    }
-  }
-
-  if (!reply.trim()) {
-    throw new HttpError(502, "Gemini returned a response without assistant text.");
-  }
-
-  return { model, reply };
+function streamText(provider, payload) {
+  if (provider === "gemini") return (payload.candidates?.[0]?.content?.parts ?? []).filter((part) => !part.thought).map((part) => typeof part.text === "string" ? part.text : "").join("");
+  const content = payload.choices?.[0]?.delta?.content;
+  return typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => typeof part === "string" ? part : typeof part?.text === "string" ? part.text : "").join("") : "";
 }
 
-export async function requestHuggingFaceResponseStream({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  onDelta,
-  onReady,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "Hugging Face API is not configured. Add HUGGINGFACE_API_KEY or HF_TOKEN to your environment.",
-    );
-  }
-
-  const response = await fetch("https://router.huggingface.co/v1/chat/completions", {
-    body: JSON.stringify({
-      messages: [
-        { content: systemInstruction, role: "system" },
-        ...extractConversationMessages(chatRequest.messages).map((message) => ({
-          content: message.content,
-          role: message.role,
-        })),
-      ],
-      model,
-      max_tokens: maxOutputTokens,
-      stream: true,
-    }),
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
+async function otherProviderReply(args, provider, stream) {
+  assertKey(args.apiKey, provider);
+  const body = provider === "gemini" ? geminiBody(args) : huggingFaceBody(args, stream);
+  const url = provider === "gemini"
+    ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:${stream ? "streamGenerateContent?alt=sse&" : "generateContent?"}key=${encodeURIComponent(args.apiKey)}`
+    : "https://router.huggingface.co/v1/chat/completions";
+  const description = { provider, model: args.model, body, maxOutputTokens: args.maxOutputTokens, signal: args.signal };
+  return runMeteredProviderOperation(args.usageMeter, description, async (tracker) => {
+    args.signal?.throwIfAborted();
+    tracker.markDispatched();
+    const response = await fetch(url, {
+      body: JSON.stringify(body), method: "POST", signal: args.signal,
+      headers: { "Content-Type": "application/json", ...(provider === "huggingface" ? { Authorization: `Bearer ${args.apiKey}` } : {}) },
+    });
+    if (!response.ok) {
+      tracker.markRejected();
+      throw new HttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? `${provider} request failed.`);
+    }
+    let reply = "";
+    let resolvedModel = args.model;
+    let usage = null;
+    if (stream) {
+      await args.onReady?.();
+      for await (const data of parseServerSentEvents(response.body, args.signal)) {
+        const payload = parseStreamJson(data);
+        if (!payload) continue;
+        if (payload.error) throw new HttpError(502, extractApiErrorMessage(payload) ?? `${provider} request failed.`);
+        const model = provider === "gemini" ? payload.modelVersion : payload.model;
+        if (typeof model === "string" && model.trim()) resolvedModel = model;
+        const reported = normalizeProviderUsage(provider, payload);
+        if (reported) {
+          usage = reported;
+          const complete = provider === "gemini"
+            ? Boolean(payload.candidates?.some((candidate) => candidate.finishReason)) || !payload.candidates?.length
+            : !payload.choices?.length || payload.choices.some((choice) => choice.finish_reason);
+          tracker.recordUsage(payload, Boolean(complete));
+        }
+        const delta = streamText(provider, payload);
+        if (delta) { reply += delta; await args.onDelta?.(delta); }
+      }
+    } else {
+      const payload = await response.json().catch(() => null);
+      tracker.recordUsage(payload);
+      usage = normalizeProviderUsage(provider, payload);
+      reply = provider === "gemini" ? extractGeminiReply(payload) : extractHuggingFaceReply(payload);
+      const model = provider === "gemini" ? payload?.modelVersion : payload?.model;
+      if (typeof model === "string" && model.trim()) resolvedModel = model;
+    }
+    if (!reply.trim()) throw new HttpError(502, `${provider} returned a response without assistant text.`);
+    return { model: resolvedModel, reply, usage };
   });
-
-  await ensureStreamingResponse(response, "Hugging Face request failed.");
-  await onReady?.();
-
-  let reply = "";
-  let resolvedModel = model;
-
-  for await (const data of parseServerSentEvents(response.body)) {
-    const payload = parseStreamJson(data);
-
-    if (!payload) {
-      continue;
-    }
-
-    if (payload.error) {
-      throw new HttpError(
-        502,
-        extractApiErrorMessage(payload) ?? "Hugging Face request failed.",
-      );
-    }
-
-    if (typeof payload.model === "string" && payload.model.trim()) {
-      resolvedModel = payload.model;
-    }
-
-    const content = payload.choices?.[0]?.delta?.content;
-    const delta =
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content
-              .map((part) =>
-                typeof part === "string"
-                  ? part
-                  : typeof part?.text === "string"
-                    ? part.text
-                    : "",
-              )
-              .join("")
-          : "";
-
-    if (delta) {
-      reply += delta;
-      await onDelta?.(delta);
-    }
-  }
-
-  if (!reply.trim()) {
-    throw new HttpError(
-      502,
-      "Hugging Face returned a response without assistant text.",
-    );
-  }
-
-  return { model: resolvedModel, reply };
 }
 
-export async function requestOpenAIResponse({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "OpenAI API is not configured. Add OPENAI_API_KEY to your environment.",
-    );
-  }
-
-  const payload = await requestOpenAIResponsesPayload({
-    apiKey,
-    body: {
-      input: extractConversationMessages(chatRequest.messages).map((message) => ({
-        content: message.content,
-        role: message.role,
-      })),
-      instructions: systemInstruction,
-      max_output_tokens: maxOutputTokens,
-      model,
-    },
-  });
-
-  const reply = extractOpenAIReply(payload);
-
-  if (!reply) {
-    throw new HttpError(
-      502,
-      "OpenAI returned a response without assistant text.",
-    );
-  }
-
-  return {
-    model,
-    reply,
-  };
-}
-
-export async function requestOpenAIResponsesPayload({ apiKey, body }) {
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    body: JSON.stringify(body),
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
-  });
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new HttpError(
-      response.status,
-      extractApiErrorMessage(payload) ?? "OpenAI request failed.",
-    );
-  }
-
-  return payload;
-}
-
-export async function requestXAIResponse({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "xAI API is not configured. Add XAI_API_KEY to your environment.",
-    );
-  }
-
-  const response = await fetch("https://api.x.ai/v1/responses", {
-    body: JSON.stringify({
-      input: [
-        {
-          content: systemInstruction,
-          role: "system",
-        },
-        ...extractConversationMessages(chatRequest.messages).map((message) => ({
-          content: message.content,
-          role: message.role,
-        })),
-      ],
-      max_output_tokens: maxOutputTokens,
-      model,
-    }),
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
-  });
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new HttpError(
-      response.status,
-      extractApiErrorMessage(payload) ?? "xAI request failed.",
-    );
-  }
-
-  const reply = extractOpenAIReply(payload);
-
-  if (!reply) {
-    throw new HttpError(
-      502,
-      "xAI returned a response without assistant text.",
-    );
-  }
-
-  return {
-    model:
-      typeof payload?.model === "string" && payload.model.trim()
-        ? payload.model
-        : model,
-    reply,
-  };
-}
-
-export async function requestGeminiResponse({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "Gemini API is not configured. Add GEMINI_API_KEY to your environment.",
-    );
-  }
-
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model,
-    )}:generateContent?key=${encodeURIComponent(apiKey)}`,
-    {
-      body: JSON.stringify({
-        contents: extractConversationMessages(chatRequest.messages).map(
-          (message) => ({
-            parts: [{ text: message.content }],
-            role: message.role === "assistant" ? "model" : "user",
-          }),
-        ),
-        generationConfig: { maxOutputTokens },
-        system_instruction: {
-          parts: [{ text: systemInstruction }],
-        },
-      }),
-      headers: {
-        "Content-Type": "application/json",
-      },
-      method: "POST",
-    },
-  );
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new HttpError(
-      response.status,
-      extractApiErrorMessage(payload) ?? "Gemini request failed.",
-    );
-  }
-
-  const reply = extractGeminiReply(payload);
-
-  if (!reply) {
-    throw new HttpError(
-      502,
-      "Gemini returned a response without assistant text.",
-    );
-  }
-
-  return {
-    model,
-    reply,
-  };
-}
-
-export async function requestHuggingFaceResponse({
-  apiKey,
-  chatRequest,
-  maxOutputTokens,
-  model,
-  systemInstruction,
-}) {
-  if (!apiKey) {
-    throw new HttpError(
-      503,
-      "Hugging Face API is not configured. Add HUGGINGFACE_API_KEY or HF_TOKEN to your environment.",
-    );
-  }
-
-  const response = await fetch("https://router.huggingface.co/v1/chat/completions", {
-    body: JSON.stringify({
-      messages: [
-        {
-          content: systemInstruction,
-          role: "system",
-        },
-        ...extractConversationMessages(chatRequest.messages).map((message) => ({
-          content: message.content,
-          role: message.role,
-        })),
-      ],
-      model,
-      max_tokens: maxOutputTokens,
-    }),
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    method: "POST",
-  });
-
-  const payload = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new HttpError(
-      response.status,
-      extractApiErrorMessage(payload) ?? "Hugging Face request failed.",
-    );
-  }
-
-  const reply = extractHuggingFaceReply(payload);
-
-  if (!reply) {
-    throw new HttpError(
-      502,
-      "Hugging Face returned a response without assistant text.",
-    );
-  }
-
-  return {
-    model:
-      typeof payload?.model === "string" && payload.model.trim()
-        ? payload.model
-        : model,
-    reply,
-  };
-}
+export const requestGeminiResponse = (args) => otherProviderReply(args, "gemini", false);
+export const requestGeminiResponseStream = (args) => otherProviderReply(args, "gemini", true);
+export const requestHuggingFaceResponse = (args) => otherProviderReply(args, "huggingface", false);
+export const requestHuggingFaceResponseStream = (args) => otherProviderReply(args, "huggingface", true);
 
 export function extractOpenAIReply(payload) {
   if (
@@ -617,7 +201,8 @@ export function extractOpenAIReply(payload) {
 function extractGeminiReply(payload) {
   const parts =
     payload?.candidates?.[0]?.content?.parts
-      ?.map((part) => (typeof part.text === "string" ? part.text.trim() : ""))
+      ?.filter((part) => !part.thought)
+      .map((part) => (typeof part.text === "string" ? part.text.trim() : ""))
       .filter(Boolean) ?? [];
 
   return parts.join("\n\n").trim();

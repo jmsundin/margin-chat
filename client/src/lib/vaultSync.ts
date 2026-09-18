@@ -2,22 +2,27 @@ import {
   emptyVault, sameVaultFile, validVaultPath,
   type VaultChange, type VaultFile, type VaultSnapshot, type VaultStore, type VaultTransport,
 } from "./vaultTypes";
+import { reconcileVaultImportPaths, validateVaultWorkspace, workspaceFromVault } from "./vaultWorkspace";
 
 function assignFile(snapshot: VaultSnapshot, path: string, file: VaultFile | null | undefined) {
   if (file) snapshot.files[path] = file;
   else delete snapshot.files[path];
 }
 
-function preserveConflict(snapshot: VaultSnapshot, path: string, local: VaultFile | null, remote: VaultFile | null) {
+function preserveConflict(snapshot: VaultSnapshot, path: string, local: VaultFile | null, remote: VaultFile | null, sourcePath?: string) {
   if (snapshot.conflicts.some((conflict) => conflict.path === path
     && sameVaultFile(conflict.local, local) && sameVaultFile(conflict.remote, remote))) return;
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  snapshot.conflicts.push({ id, path, local, remote, createdAt });
+  snapshot.conflicts.push({ id, path, local, remote, createdAt, ...(sourcePath ? { sourcePath } : {}) });
   const backupPath = `_conflicts/${id}/local/${path.split("/").pop()}`;
+  const remotePath = `_conflicts/${id}/remote/${path.split("/").pop()}`;
   if (local) snapshot.files[backupPath] = { ...local };
+  if (remote) snapshot.files[remotePath] = { ...remote };
   snapshot.files[`_conflicts/${id}/conflict.json`] = {
-    content: JSON.stringify({ path, createdAt, localDeleted: !local, remoteDeleted: !remote, copy: local ? backupPath : null }, null, 2),
+    content: JSON.stringify({ path, createdAt, localDeleted: !local, remoteDeleted: !remote, copy: local ? backupPath : null,
+      remoteCopy: remote ? remotePath : null, localEncoding: local?.encoding ?? "utf8", remoteEncoding: remote?.encoding ?? "utf8",
+      ...(sourcePath ? { sourcePath } : {}) }, null, 2),
     contentType: "application/json",
   };
 }
@@ -35,9 +40,126 @@ export function pendingVaultChanges(snapshot: VaultSnapshot): VaultChange[] {
     });
 }
 
+function nextVaultBatch(snapshot: VaultSnapshot): VaultChange[] {
+  const changes = pendingVaultChanges(snapshot);
+  const byPath = new Map(changes.map((change) => [change.path, change]));
+  const previousFiles = Object.fromEntries(Object.entries(snapshot.base)
+    .flatMap(([path, entry]) => entry.file ? [[path, entry.file]] : []));
+  const previousById = new Map(workspaceFromVault(previousFiles).manifest.files.map((record) => [record.id, record.path]));
+  const neighbors = new Map<string, Set<string>>();
+  for (const record of workspaceFromVault(snapshot.files).manifest.files) {
+    const previousPath = previousById.get(record.id);
+    if (!previousPath || previousPath === record.path || !byPath.has(previousPath) || !byPath.has(record.path)) continue;
+    // Swaps and rename chains connect more than two paths. Every connected
+    // component must publish together, regardless of alphabetical ordering.
+    if (!neighbors.has(previousPath)) neighbors.set(previousPath, new Set());
+    if (!neighbors.has(record.path)) neighbors.set(record.path, new Set());
+    neighbors.get(previousPath)!.add(record.path);
+    neighbors.get(record.path)!.add(previousPath);
+  }
+  const batch: VaultChange[] = [];
+  const visited = new Set<string>();
+  let bytes = 0;
+  for (const change of changes) {
+    if (visited.has(change.path)) continue;
+    const paths = [change.path];
+    const group: VaultChange[] = [];
+    while (paths.length) {
+      const path = paths.pop()!;
+      if (visited.has(path)) continue;
+      visited.add(path);
+      group.push(byPath.get(path)!);
+      paths.push(...neighbors.get(path) ?? []);
+    }
+    const size = group.reduce((total, item) => total + new TextEncoder().encode(JSON.stringify(item)).length, 0);
+    if (batch.length && (bytes + size > 3_000_000 || batch.length + group.length > 40)) break;
+    // A binary singleton may use the larger raw-upload endpoint. A connected
+    // Markdown rename must fit one JSON commit; splitting it corrupts identity.
+    if (group.length > 1) {
+      const decodedBytes = group.reduce((total, item) => total + (item.content === null ? 0 : item.encoding === "base64"
+        ? item.content.length * 3 / 4 - (item.content.endsWith("==") ? 2 : item.content.endsWith("=") ? 1 : 0)
+        : new TextEncoder().encode(item.content).length), 0);
+      const bodyBytes = new TextEncoder().encode(JSON.stringify({ changes: group })).length;
+      if (decodedBytes > 3 * 1024 * 1024 || bodyBytes > 4 * 1024 * 1024 || group.length > 1000) {
+        throw new Error("These linked Markdown renames are too large to sync together. Your files remain saved locally; sync fewer renames at once.");
+      }
+    }
+    batch.push(...group);
+    bytes += size;
+  }
+  return batch;
+}
+
+/** Conflicts follow the document's surviving cloud identity, not an obsolete filename. */
+function reconcileRemoteRenames(snapshot: VaultSnapshot, remoteFiles: Record<string, VaultFile>) {
+  const previousFiles = Object.fromEntries(Object.entries(snapshot.base)
+    .flatMap(([path, entry]) => entry.file ? [[path, entry.file]] : []));
+  const localById = new Map(workspaceFromVault(snapshot.files).manifest.files.map((record) => [record.id, record.path]));
+  const remoteById = new Map(workspaceFromVault(remoteFiles).manifest.files.map((record) => [record.id, record.path]));
+  const moves: Array<{ sourcePath?: string; targetPath: string; local: VaultFile | null; remote: VaultFile | null }> = [];
+  const previousRecords = workspaceFromVault(previousFiles).manifest.files;
+  for (const previous of previousRecords) {
+    const localPath = localById.get(previous.id);
+    const remotePath = remoteById.get(previous.id);
+    if (localPath === remotePath) continue;
+    // An external editor can replace/remove identity metadata without moving
+    // the file. Let normal same-path reconciliation keep its real remote body.
+    if (!remotePath && localPath === previous.path && remoteFiles[previous.path]) continue;
+    const local = localPath ? snapshot.files[localPath] : null;
+    const remote = remotePath ? remoteFiles[remotePath] : null;
+    const localChanged = localPath !== previous.path || !sameVaultFile(local, previousFiles[previous.path]);
+    const remoteChanged = remotePath !== previous.path || !sameVaultFile(remote, previousFiles[previous.path]);
+    if (!localChanged || !remoteChanged) continue;
+    moves.push({ sourcePath: localPath, targetPath: remotePath ?? localPath!, local, remote });
+  }
+  // Independently restored devices may share an identity without a common
+  // revision. Preserve both copies instead of committing duplicate documents.
+  const previousIds = new Set(previousRecords.map((record) => record.id));
+  for (const [id, localPath] of localById) {
+    const remotePath = remoteById.get(id);
+    if (previousIds.has(id) || !remotePath || localPath === remotePath) continue;
+    moves.push({ sourcePath: localPath, targetPath: remotePath, local: snapshot.files[localPath], remote: remoteFiles[remotePath] });
+  }
+  // Capture every version before moving anything, including crossed renames.
+  const movedSources = new Set(moves.map((move) => move.sourcePath));
+  for (const move of moves) {
+    preserveConflict(snapshot, move.targetPath, move.local, move.remote, move.sourcePath);
+    const occupied = snapshot.files[move.targetPath];
+    if (occupied && !movedSources.has(move.targetPath) && !sameVaultFile(occupied, previousFiles[move.targetPath])
+      && !sameVaultFile(occupied, move.local) && !sameVaultFile(occupied, move.remote)) {
+      preserveConflict(snapshot, move.targetPath, occupied, move.remote);
+    }
+  }
+  for (const move of moves) if (move.sourcePath) delete snapshot.files[move.sourcePath];
+  for (const move of moves) assignFile(snapshot, move.targetPath, move.remote);
+}
+
 /** Apply edits relative to the files the editor actually displayed, not the latest disk revision. */
 export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, VaultFile>, expected: Record<string, VaultFile>): VaultSnapshot {
   const result = structuredClone(snapshot);
+  next = { ...next };
+  expected = { ...expected };
+  const nextById = new Map(workspaceFromVault(next).manifest.files.map((record) => [record.id, record.path]));
+  // Move the latest local version with a recognized folder rename. Content edits
+  // are then reconciled at its new path, so a concurrent local edit is not lost
+  // or left behind as a second document carrying the same identity.
+  for (const record of workspaceFromVault(expected).manifest.files) {
+    const movedPath = nextById.get(record.id);
+    if (!movedPath || movedPath === record.path || next[record.path] || expected[movedPath]) continue;
+    const current = result.files[record.path];
+    if (!current && !result.files[movedPath]) {
+      // A rename on disk must not silently reverse a deletion made in the app.
+      preserveConflict(result, movedPath, next[movedPath], null, record.path);
+      delete next[movedPath];
+      continue;
+    }
+    if (!current || result.files[movedPath]) continue;
+    if (workspaceFromVault({ [record.path]: current }).manifest.files[0]?.id !== record.id) continue;
+    result.files[movedPath] = current;
+    delete result.files[record.path];
+    expected[movedPath] = expected[record.path];
+    delete expected[record.path];
+  }
   for (const path of new Set([...Object.keys(next), ...Object.keys(expected)])) {
     if (!validVaultPath(path)) throw new Error("The vault contains an invalid file path.");
     const previous = expected[path] ?? null;
@@ -55,10 +177,45 @@ export class VaultSync {
 
   read() { return this.store.lock(async () => (await this.store.read()) ?? emptyVault()); }
 
-  edit(next: Record<string, VaultFile>, expected: Record<string, VaultFile>) {
+  private async write(snapshot: VaultSnapshot) {
+    validateVaultWorkspace(snapshot.files);
+    await this.store.write(snapshot);
+  }
+
+  edit(next: Record<string, VaultFile>, expected: Record<string, VaultFile>, directory?: {
+    id: string; baseline: NonNullable<VaultSnapshot["directoryBaselines"]>[string];
+  }) {
     return this.store.lock(async () => {
       const snapshot = applyVaultEdits((await this.store.read()) ?? emptyVault(), next, expected);
-      await this.store.write(snapshot);
+      if (directory) snapshot.directoryBaselines = { ...snapshot.directoryBaselines, [directory.id]: structuredClone(directory.baseline) };
+      await this.write(snapshot);
+      return snapshot;
+    });
+  }
+
+  rememberDirectory(id: string, baseline: NonNullable<VaultSnapshot["directoryBaselines"]>[string]) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      snapshot.directoryBaselines = { ...snapshot.directoryBaselines, [id]: structuredClone(baseline) };
+      await this.write(snapshot);
+      return snapshot;
+    });
+  }
+
+  import(files: Record<string, VaultFile>, directory?: {
+    id: string; baseline: NonNullable<VaultSnapshot["directoryBaselines"]>[string];
+  }) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      validateVaultWorkspace(files);
+      for (const { path, sourcePath, file } of reconcileVaultImportPaths(files, snapshot.files)) {
+        if (!validVaultPath(path) || !validVaultPath(sourcePath)) throw new Error("The imported vault contains an invalid path.");
+        const current = snapshot.files[path];
+        if (!current) snapshot.files[path] = file;
+        else if (!sameVaultFile(current, file)) preserveConflict(snapshot, path, file, current, sourcePath);
+      }
+      if (directory) snapshot.directoryBaselines = { ...snapshot.directoryBaselines, [directory.id]: structuredClone(directory.baseline) };
+      await this.write(snapshot);
       return snapshot;
     });
   }
@@ -74,7 +231,7 @@ export class VaultSync {
       }
       if (choice === "local") assignFile(snapshot, conflict.path, conflict.local);
       snapshot.conflicts = snapshot.conflicts.filter((item) => item.id !== id);
-      await this.store.write(snapshot);
+      await this.write(snapshot);
       return snapshot;
     });
   }
@@ -117,6 +274,14 @@ export class VaultSync {
         // Another tab may have committed or pulled while we fetched. Discard
         // that older response rather than treating it as a cloud history reset.
         if (snapshot.remoteRevision > remote.revision) return null;
+        const remoteFiles: Record<string, VaultFile> = {};
+        for (const [path, entry] of entries) {
+          const base = snapshot.base[path];
+          if (base?.revision !== entry.revision && !incoming.has(path)) return null;
+          const file = base?.revision === entry.revision ? base.file : incoming.get(path);
+          if (file) remoteFiles[path] = file;
+        }
+        reconcileRemoteRenames(snapshot, remoteFiles);
         for (const [path, entry] of entries) {
           const base = snapshot.base[path];
           if (base?.revision === entry.revision) continue;
@@ -133,15 +298,8 @@ export class VaultSync {
         }
         snapshot.remoteRevision = remote.revision;
         // Persist downloads/conflict copies before publishing further changes.
-        await this.store.write(snapshot);
-        const batch: VaultChange[] = [];
-        let bytes = 0;
-        for (const change of pendingVaultChanges(snapshot)) {
-          const size = new TextEncoder().encode(JSON.stringify(change)).length;
-          if (batch.length && (bytes + size > 3_000_000 || batch.length >= 40)) break;
-          batch.push(change);
-          bytes += size;
-        }
+        await this.write(snapshot);
+        const batch = nextVaultBatch(snapshot);
         return { snapshot, batch };
       });
       if (!prepared) { races += 1; continue; }
@@ -179,7 +337,7 @@ export class VaultSync {
           }
         }
         snapshot.remoteRevision = Math.max(snapshot.remoteRevision, committed.revision);
-        await this.store.write(snapshot);
+        await this.write(snapshot);
         return snapshot;
       });
       if (!pendingVaultChanges(acknowledged).length) return acknowledged;

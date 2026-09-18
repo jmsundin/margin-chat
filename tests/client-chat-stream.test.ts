@@ -316,7 +316,7 @@ describe("client chat stream", () => {
     globalThis.fetch = (async (input, init) => {
       requestUrl = String(input);
       requestBody = JSON.parse(String(init?.body));
-      return Response.json({ confirmed: true, status: "active" });
+      return Response.json({ confirmed: true, status: "active", purchaseKind: "subscription" });
     }) as typeof fetch;
 
     const confirmation =
@@ -324,6 +324,6 @@ describe("client chat stream", () => {
 
     expect(requestUrl).toBe("/api/billing/checkout/confirm");
     expect(requestBody).toEqual({ sessionId: "cs_test_marginchat" });
-    expect(confirmation).toEqual({ confirmed: true, status: "active" });
+    expect(confirmation).toEqual({ confirmed: true, status: "active", purchaseKind: "subscription" });
   });
 });

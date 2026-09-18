@@ -17,14 +17,15 @@ describe("vault attachment originals", () => {
     const service = createDocumentService({
       env: {},
       database: {
-        restoreVaultAttachment: async ({ attachment }: any) => {
+        getVaultAttachment: async () => {
           events.push("database");
-          return attachment;
+          return { ...saved[0].attachment, bytes: saved[0].bytes };
         },
         failDocument: async () => undefined,
         deleteDocument: async () => { removed = true; },
       },
       vaultService: {
+        status: async () => ({ projection: { status: "ready" } }),
         persistAttachment: async (value: any) => {
           events.push("vault");
           saved.push(value);
@@ -65,5 +66,28 @@ describe("vault attachment originals", () => {
     });
     expect(await service.delete("document-1", "owner")).toBe(true);
     expect(events).toEqual(["vault", "database"]);
+  });
+
+  test("deleting a saved original succeeds even when its feature row was never created", async () => {
+    const service = createDocumentService({
+      env: {},
+      database: { deleteDocument: async () => false },
+      vaultService: { deleteAttachment: async () => true },
+    });
+    expect(await service.delete("saved-original", "owner")).toBe(true);
+  });
+
+  test("a provider restriction prevents document embedding and indexing calls", async () => {
+    let calls = 0;
+    const service = createDocumentService({ env: {}, database: {
+      getVaultAttachment: async () => { calls++; },
+      findRelevantDocumentChunks: async () => { calls++; },
+    }, vaultService: {} });
+    const result = await service.retrieveContext({
+      allowedProviders: ["gemini"], context: {},
+      chatRequest: { conversation: { documents: [{ id: "doc" }] }, messages: [{ role: "user", content: "Summarize it" }] },
+    });
+    expect(calls).toBe(0);
+    expect(result).toEqual({ chunks: [], instruction: null, sources: [], warnings: ["Document search was skipped because its embedding provider is not allowed."] });
   });
 });

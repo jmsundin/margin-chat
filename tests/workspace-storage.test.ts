@@ -312,9 +312,14 @@ describe("portable folder companions", () => {
       "_conflicts/offline/conflict.json": JSON.stringify({ path: "Attachments/doc/Source.md", copy: "_conflicts/offline/Source.md" }),
       "_conflicts/nested/local/conflict.json": new Uint8Array([0, 255]),
       "_conflicts/nested/conflict.json": JSON.stringify({ path: "Attachments/doc/conflict.json", copy: "_conflicts/nested/local/conflict.json" }),
+      "_conflicts/binary/local/document.md": new Uint8Array([0, 255]),
+      "_conflicts/binary/remote/document.md": new Uint8Array([255, 0]),
+      "_conflicts/binary/conflict.json": JSON.stringify({ path: "Other/document.md", copy: "_conflicts/binary/local/document.md", remoteCopy: "_conflicts/binary/remote/document.md", localEncoding: "base64", remoteEncoding: "base64" }),
     });
     const files = await readConnectedDirectoryCompanions(folder.handle);
     expect(files["_conflicts/offline/Source.md"]).toEqual({ content: "//4=", encoding: "base64" });
     expect(files["_conflicts/nested/local/conflict.json"]).toEqual({ content: "AP8=", encoding: "base64" });
+    expect(files["_conflicts/binary/local/document.md"]).toEqual({ content: "AP8=", encoding: "base64" });
+    expect(files["_conflicts/binary/remote/document.md"]).toEqual({ content: "/wA=", encoding: "base64" });
   });
 });

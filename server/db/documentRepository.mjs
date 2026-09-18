@@ -199,15 +199,16 @@ export async function completeDocument(
   }
 }
 
-export async function failDocument(client, { documentId, error, userId }) {
+export async function failDocument(client, { documentId, error, userId, sourceBytes }) {
   const result = await client.query(
     `
       update marginchat_documents
       set status = 'failed', error_message = $3, updated_at = now()
       where id = $1 and user_id = $2
+        and ($4::bytea is null or original_bytes = $4)
       returning id, filename, mime_type, size_bytes, status, error_message, created_at
     `,
-    [documentId, userId, String(error).slice(0, 500)],
+    [documentId, userId, String(error).slice(0, 500), sourceBytes ? Buffer.from(sourceBytes) : null],
   );
 
   return result.rowCount ? toDocument(result.rows[0]) : null;

@@ -12,27 +12,13 @@ import { createPortal } from "react-dom";
 import type { MermaidConfig } from "mermaid";
 import { renderMarkdownToHtml } from "../lib/markdown";
 import { getHeadingOutlineId } from "../lib/chatOutline";
+import {
+  buildMessageDecorations,
+  getMessageDecorationKey,
+  partitionDecoratedText,
+  type MessageDecoration,
+} from "../lib/messageDecorations";
 import type { ConversationNote, MessageAnchorLink, SelectionDraft } from "../types";
-
-type Decoration =
-  | {
-      type: "anchor";
-      startOffset: number;
-      endOffset: number;
-      branchConversationId: string;
-      title: string;
-    }
-  | {
-      type: "preview";
-      startOffset: number;
-      endOffset: number;
-    }
-  | {
-      type: "note";
-      startOffset: number;
-      endOffset: number;
-      noteId: string;
-    };
 
 interface MarkdownMessageProps {
   anchors: MessageAnchorLink[];
@@ -84,18 +70,6 @@ type MermaidViewerDragState = {
 
 function buildMermaidRenderId(messageId: string, index: number) {
   return `mermaid-${messageId.replace(/[^a-z0-9_-]/gi, "-")}-${index}`;
-}
-
-function buildDecorationKey(decorations: Decoration[]) {
-  return decorations
-    .map((decoration) =>
-      decoration.type === "anchor"
-        ? `a:${decoration.startOffset}:${decoration.endOffset}:${decoration.branchConversationId}`
-        : decoration.type === "note"
-          ? `n:${decoration.startOffset}:${decoration.endOffset}:${decoration.noteId}`
-          : `p:${decoration.startOffset}:${decoration.endOffset}`,
-    )
-    .join("|");
 }
 
 function clampMermaidScale(scale: number) {
@@ -229,51 +203,9 @@ function setMermaidStatus(block: HTMLElement, message: string | null) {
   }
 }
 
-function buildDecorations(
-  anchors: MessageAnchorLink[],
-  notes: ConversationNote[],
-  pendingSelection: SelectionDraft | null,
-) {
-  const canRenderPendingSelection =
-    pendingSelection &&
-    pendingSelection.endOffset > pendingSelection.startOffset &&
-    !anchors.some(
-      (link) =>
-        pendingSelection.startOffset < link.anchor.endOffset &&
-        pendingSelection.endOffset > link.anchor.startOffset,
-    );
-  const decorations: Decoration[] = anchors.map((link) => ({
-    type: "anchor",
-    startOffset: link.anchor.startOffset,
-    endOffset: link.anchor.endOffset,
-    branchConversationId: link.branchConversationId,
-    title: link.title,
-  }));
-
-  for (const note of notes) {
-    if (note.startOffset === null || note.endOffset === null) continue;
-    decorations.push({
-      type: "note",
-      startOffset: note.startOffset,
-      endOffset: note.endOffset,
-      noteId: note.id,
-    });
-  }
-
-  if (canRenderPendingSelection) {
-    decorations.push({
-      type: "preview",
-      startOffset: pendingSelection.startOffset,
-      endOffset: pendingSelection.endOffset,
-    });
-  }
-
-  return decorations.sort((left, right) => left.startOffset - right.startOffset);
-}
-
 function applyDecorations(
   root: HTMLDivElement,
-  decorations: Decoration[],
+  decorations: MessageDecoration[],
   registerAnchorRef: (
     branchConversationId: string,
     element: HTMLSpanElement | null,
@@ -302,34 +234,13 @@ function applyDecorations(
 
   for (const textNode of textNodes) {
     const text = textNode.textContent ?? "";
-    const textLength = text.length;
-    const nodeStart = globalOffset;
-    const nodeEnd = nodeStart + textLength;
-    const overlappingDecorations = decorations.filter(
-      (decoration) =>
-        decoration.startOffset < nodeEnd && decoration.endOffset > nodeStart,
-    );
+    const segments = partitionDecoratedText(text, decorations, globalOffset);
+    globalOffset += text.length;
 
-    globalOffset = nodeEnd;
-
-    if (!overlappingDecorations.length) {
-      continue;
-    }
+    if (!segments.some((segment) => segment.active.length)) continue;
 
     const fragment = document.createDocumentFragment();
-    const boundaries = [...new Set([0, textLength, ...overlappingDecorations.flatMap((item) => [
-      Math.max(0, item.startOffset - nodeStart),
-      Math.min(textLength, item.endOffset - nodeStart),
-    ])])].sort((left, right) => left - right);
-
-    for (let index = 0; index < boundaries.length - 1; index += 1) {
-      const localStart = boundaries[index];
-      const localEnd = boundaries[index + 1];
-      const active = overlappingDecorations.filter((item) =>
-        item.startOffset < nodeStart + localEnd && item.endOffset > nodeStart + localStart,
-      );
-      const value = text.slice(localStart, localEnd);
-
+    for (const { active, value } of segments) {
       if (!active.length) {
         fragment.append(value);
         continue;
@@ -397,7 +308,7 @@ export default function MarkdownMessage({
   theme,
 }: MarkdownMessageProps) {
   const contentRef = useRef<HTMLDivElement>(null);
-  const decorationsRef = useRef<Decoration[]>([]);
+  const decorationsRef = useRef<MessageDecoration[]>([]);
   const registerAnchorRefRef = useRef(registerAnchorRef);
   const registerNoteAnchorRefRef = useRef(registerNoteAnchorRef);
   const registeredAnchorIdsRef = useRef<string[]>([]);
@@ -420,8 +331,8 @@ export default function MarkdownMessage({
     y: 0,
   });
   const renderedHtml = renderMarkdownToHtml(content);
-  const decorations = buildDecorations(anchors, notes, pendingSelection);
-  const decorationsKey = buildDecorationKey(decorations);
+  const decorations = buildMessageDecorations(anchors, notes, pendingSelection);
+  const decorationsKey = getMessageDecorationKey(decorations);
 
   decorationsRef.current = decorations;
   registerAnchorRefRef.current = registerAnchorRef;

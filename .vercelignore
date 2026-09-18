@@ -1,0 +1,6 @@
+.env*
+client/.env*
+.codex-artifacts/
+.margin-chat-vault/
+extension/releases/
+*.log

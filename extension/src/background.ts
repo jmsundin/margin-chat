@@ -1,7 +1,7 @@
 import {
   CAPTURE_API_PATH,
   normalizeCapture,
-  type CaptureReceipt,
+  parseCaptureReceipt,
 } from "@margin-chat/capture-contracts";
 import {
   getPending,
@@ -76,15 +76,12 @@ async function save(input: unknown, retry: boolean, expectedConnection: unknown)
     // Persist before sending. A closed popup, interrupted worker, or lost response is retryable.
     await chrome.storage.local.set({ pendingSave: pending });
     try {
-      const result = await captureRequest<CaptureReceipt>(
+      const result = await captureRequest(
         settings,
         CAPTURE_API_PATH,
+        parseCaptureReceipt,
         pending.capture,
       );
-      if (!result.capture?.id || !result.capture.createdAt)
-        throw new Error(
-          "The server did not confirm the save. Retry to check it.",
-        );
       await chrome.storage.local.set({
         pendingSave: { ...pending, receipt: result.capture, error: undefined },
       });

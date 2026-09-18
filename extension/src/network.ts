@@ -1,9 +1,10 @@
-import { EXTENSION_SESSION_API_PATH, normalizeServerUrl, type ExtensionSession } from "@margin-chat/capture-contracts";
+import { EXTENSION_SESSION_API_PATH, normalizeServerUrl, parseExtensionSession } from "@margin-chat/capture-contracts";
 
 async function request<T>(
   serverUrl: string,
   path: string,
   method: string,
+  parse: (input: unknown) => T,
   body?: unknown,
   token?: string,
 ): Promise<T> {
@@ -25,33 +26,24 @@ async function request<T>(
   const result = await response.json().catch(() => null);
   if (!response.ok)
     throw new Error(
-      result?.error ?? `Margin Chat returned an error (${response.status}).`,
+      typeof result?.error === "string" ? result.error : `Margin Chat returned an error (${response.status}).`,
     );
-  if (!result || typeof result !== "object")
-    throw new Error(
-      "The server returned an invalid response. Check your Margin Chat address.",
-    );
-  return result as T;
+  return parse(result);
 }
 
-export function captureRequest<T>(settings: { serverUrl: string; token: string }, path: string, body?: unknown) {
-  return request<T>(settings.serverUrl, path, body === undefined ? "GET" : "POST", body, settings.token);
+export function captureRequest<T>(settings: { serverUrl: string; token: string }, path: string, parse: (input: unknown) => T, body?: unknown) {
+  return request(settings.serverUrl, path, body === undefined ? "GET" : "POST", parse, body, settings.token);
 }
 
-export async function signIn(serverUrl: string, email: string, password: string) {
-  const session = await request<ExtensionSession>(serverUrl, EXTENSION_SESSION_API_PATH, "POST", { email, password });
-  if (typeof session.token !== "string" || !/^mc_extension_[A-Za-z0-9_-]{43}$/u.test(session.token) ||
-      typeof session.user?.id !== "string" || !session.user.id ||
-      typeof session.user?.displayName !== "string" || !session.user.displayName ||
-      typeof session.user?.email !== "string" || !session.user.email ||
-      !Number.isFinite(Date.parse(session.expiresAt)) || Date.parse(session.expiresAt) <= Date.now()) {
-    throw new Error("This server did not return a valid session. Update your Margin Chat server and try again.");
-  }
-  return session;
+export function signIn(serverUrl: string, email: string, password: string) {
+  return request(serverUrl, EXTENSION_SESSION_API_PATH, "POST", parseExtensionSession, { email, password });
 }
 
 export function signOut(settings: { serverUrl: string; token: string }) {
-  return request(settings.serverUrl, EXTENSION_SESSION_API_PATH, "DELETE", undefined, settings.token);
+  return request(settings.serverUrl, EXTENSION_SESSION_API_PATH, "DELETE", (input) => {
+    if (!input || typeof input !== "object" || Array.isArray(input))
+      throw new Error("The server returned an invalid response. Check your Margin Chat address.");
+  }, undefined, settings.token);
 }
 
 export function errorText(error: unknown, fallback = "Could not reach Margin Chat. Your capture is kept here; retry when you’re online.") {

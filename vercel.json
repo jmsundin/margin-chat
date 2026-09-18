@@ -1,20 +1,21 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "installCommand": "bun install",
+  "installCommand": "bun install --frozen-lockfile",
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
   "functions": {
     "api/*.mjs": {
-      "includeFiles": "server/db/schema.sql",
-      "maxDuration": 60
-    },
-    "api/**/*.mjs": {
-      "includeFiles": "server/db/schema.sql",
+      "includeFiles": "server/db/**",
       "maxDuration": 60
     }
   },
+  "git": { "deploymentEnabled": false },
   "rewrites": [
+    {
+      "source": "/api/:__margin_api_path*",
+      "destination": "/api/handler?__margin_api_path=:__margin_api_path"
+    },
     {
       "source": "/:path((?!api/).*)",
       "destination": "/index.html"

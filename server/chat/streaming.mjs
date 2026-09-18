@@ -1,41 +1,58 @@
 import { HttpError } from "../lib/errors.mjs";
 
-export async function* parseServerSentEvents(body) {
+export async function* parseServerSentEvents(body, signal) {
   if (!body) {
     throw new HttpError(502, "The model provider returned an empty stream.");
   }
 
   const decoder = new TextDecoder();
   let buffer = "";
-
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true });
-
+  const reader = body.getReader();
+  let finished = false;
+  const onAbort = () => { void reader.cancel(signal.reason).catch(() => undefined); };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  try {
     while (true) {
-      const boundary = buffer.match(/\r?\n\r?\n/);
-
-      if (!boundary || boundary.index === undefined) {
+      signal?.throwIfAborted();
+      const { done, value: chunk } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) {
+        finished = true;
         break;
       }
+      buffer += decoder.decode(chunk, { stream: true });
 
-      const block = buffer.slice(0, boundary.index);
-      buffer = buffer.slice(boundary.index + boundary[0].length);
-      const data = getEventData(block);
+      while (true) {
+        const boundary = buffer.match(/\r?\n\r?\n/);
+
+        if (!boundary || boundary.index === undefined) {
+          break;
+        }
+
+        const block = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
+        const data = getEventData(block);
+
+        if (data !== null) {
+          signal?.throwIfAborted();
+          yield data;
+        }
+      }
+    }
+
+    buffer += decoder.decode();
+
+    if (buffer.trim()) {
+      const data = getEventData(buffer);
 
       if (data !== null) {
         yield data;
       }
     }
-  }
-
-  buffer += decoder.decode();
-
-  if (buffer.trim()) {
-    const data = getEventData(buffer);
-
-    if (data !== null) {
-      yield data;
-    }
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (!finished) await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 

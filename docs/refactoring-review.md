@@ -1,32 +1,40 @@
-# Refactoring review
+# Refactoring implementation — September 18, 2026
 
-Reviewed the client orchestration, workspace serialization and recovery, API routing, chat streaming, and existing tests. This pass preserves the work already in progress on Markdown workspaces, cloud revisions, and the sidebar.
+Implemented the first pass across the eight areas identified in the review. The changes separate state transitions, request lifecycles, shared formats, and interaction logic while retaining existing Markdown recovery and paid-request behavior.
 
-The largest maintenance problem is the concentration of unrelated responsibilities in `client/src/App.tsx`. Its 5,783 lines mixed authentication, saved-state recovery, search, model context, streaming, persistence, and layout. This pass reduces it to 5,072 lines and introduces independently testable boundaries.
+## Changes
 
-## Changes made
-
-| Finding | Change |
+| Area | Result |
 | --- | --- |
-| Saved-state recovery was embedded in the React entry point. | Moved hydration, account-specific storage keys, and stored-state loading to `client/src/lib/appState.ts`. Preserved legacy defaults, root selection, and note content. |
-| Thread summaries scanned all conversations again for each root; search also ran while its dialog was closed. | Moved queries and their result type to `client/src/lib/conversationSearch.ts`. Group conversations by root once per summary build, skip closed-dialog search, and reuse summaries for empty queries. |
-| Building model context depended on a function closed over component state. | Added `client/src/lib/chatContext.ts` with explicit conversation inputs. Tests cover ancestor cutoffs, new branches, standalone notes, and exclusion of private margin annotations. |
-| The stream reader kept its lock after completion and did not cancel the response after parsing or callback failures. | Added `client/src/lib/chatStream.ts`, cancellation on failure, and unconditional lock release. Kept the original error if cancellation also fails. Existing imports of `ApiError` and `ChatReplyResponse` remain compatible. |
-| Unused layout code obscured the active implementation. | Removed the unused anchor-alignment helper, graph-layout application path, associated merge helper, and unused imports/constants from `App.tsx`. Moved tree recovery/traversal helpers to `client/src/lib/tree.ts`. |
+| API routing | `server/routes/registry.mjs` defines 32 routes for the shared handler. One `api/handler.mjs` deployment adapter and an explicit nested-path rewrite replace 24 wrappers. Request bodies remain intact for uploads and signed webhooks. |
+| Workspace orchestration | `App.tsx` now contains the authentication/billing shell and loads `WorkspaceApp.tsx` lazily. `workspaceCommands.ts` provides pure transitions for creating roots and children, deleting threads, and appending messages. Summaries are memoized; backup-size calculation runs only while the profile is open. |
+| Chat lifecycle | `chatExecution.ts` owns pending requests, buffered deltas, stop/delete/unmount cleanup, and stale-callback protection. Server execution separates HTTP streaming from credit reservation, refunds, and trial accounting. Cancellation reaches provider requests, stream readers, agent rounds, and retrieval embeddings. |
+| Workspace formats | `packages/workspace-contracts` owns the JSON and Markdown codecs and domain types. Client recovery and strict server validation use explicit policies. The generated server codec and its build step are removed. |
+| Persistence | The incremental renderer reuses unchanged documents between immutable editor snapshots. Navigation alone no longer triggers authored-file saves. Local storage reuses verified blobs and hashes within a locked operation, then clears that cache so later operations still detect corruption. BOM-prefixed text has a regression test for byte identity. |
+| Graph interaction | A controller owns pan, node drag, and marquee gestures, coalesces pointer updates, and handles cancellation. Drag previews use bounded spatial neighborhoods; release retains the full layout settle. |
+| Message annotations | Plain-text and Markdown adapters share decoration types, overlap partitioning, and invalidation keys. Branch-title changes update labels; note identifiers remain distinct from branch identifiers. |
+| Capture contracts | Client and extension responses pass through shared runtime parsers. Malformed session data is rejected, malformed capture receipts remain retryable, and supported legacy optional fields and additive response fields remain compatible. |
 
-## Recommended next steps
+Development commands still use Bun. `bun run dev:server` starts Node's watch mode because Node's HTTP disconnect events match the production runtime; cancellation is verified against a real local Node server.
 
-1. **Extract workspace persistence.** `WorkspaceApp` still coordinates startup recovery, a pending-save queue, cloud revisions, reconciliation, and manual backup through shared refs. Put that lifecycle behind a dedicated hook/controller. First add deterministic tests for editing during reconciliation, concurrent writes, revision conflicts, and logout during a pending request. Preserve the current local-master policy explicitly.
-2. **Share workspace transformations.** `client/src/lib/workspaceModel.ts` and `server/db/workspaceDocument.mjs` implement overlapping document conversions. A shared runtime module with a typed client interface would reduce contract drift. Extend the existing parity tests before moving this code, especially around annotation ordering and invalid documents.
-3. **Separate authentication from workspace loading.** The production entry bundle remains about 1.11 MB minified (359 KB gzip). Profile a lazy workspace boundary and editor/view boundaries. ELK and Mermaid already use dynamic imports, so further splitting should target the remaining entry bundle and be measured against login and first-open behavior.
+## Validation
 
-## Verification
+- **359 tests passed**, with 1,692 assertions across 59 files; the baseline was 265 tests.
+- Production client build and extension build passed. The client build includes its configured TypeScript check.
+- An isolated Vercel build confirmed that the rewrite matches every registered API path, including nested routes. No deployment or cloud configuration was changed.
+- Browser checks using a local fixture covered login, lazy workspace loading, streamed replies, stopping output, note editing, graph dragging, and saved-note recovery after reload.
+- Golden comparisons cover incremental versus full Markdown output, external edits and renames, custom YAML and CRLF, existing relationship aliases, annotation changes, malformed metadata recovery, and binary companions.
+- Graph tests cover final pointer coordinates, cleanup, and bounded preview work with 10,000 distant nodes. Annotation tests exercise both rendering adapters, keyboard actions, and title-only updates.
+- `git diff --check` passed.
 
-- Baseline: 126 tests passed and the production build succeeded.
-- After refactoring: 142 tests passed, including 16 new tests; the production build succeeded.
-- The three new stream cleanup tests failed against the old reader and passed after the fix.
-- Compared original and refactored search behavior in 300 checks across 50 generated workspaces, including nested branches, tied timestamps, standalone notes, and empty searches. Results matched.
-- `git diff --check` passed. The build's existing large-chunk warning remains.
-- An optional `tsc --noUnusedLocals` audit still reports existing unused symbols in `ChatPanel.tsx`, `ConversationGraphView.tsx`, and `graphAutoLayout.ts`; the project's configured TypeScript check passes.
+## Measurements and remaining boundaries
 
-Validation was local and automated. Live browser interactions, provider calls, and external database operations were not exercised.
+The production entry bundle decreased from **1,152.48 kB to 217.44 kB minified**, or **375.64 kB to 67.46 kB gzip**. The workspace is now a separate **938.66 kB** chunk. This reduces the entry bundle's parsing work; the service worker still precaches application assets for offline use, so this is not a claim about total downloaded bytes. The existing large-chunk warning remains, including the ELK chunk.
+
+A local synthetic benchmark with 1,000 chats, 10,000 messages, and 9.23 MB of Markdown measured a single-conversation edit at a median **2.03 ms** for incremental rendering versus **32.60 ms** for full rendering. These are renderer-only timings after warmup, not end-to-end save latency.
+
+External snapshots, conversation structure/title changes, and workspaces containing managed plain Markdown use the full recovery path. These conservative fallbacks preserve source formatting and inherited settings. Incremental rendering assumes the application's immutable state updates.
+
+`WorkspaceApp.tsx` still coordinates substantial UI behavior. Further work can extract focused feature controllers and split editor/view chunks after measuring first-open latency. Full graph settling on release remains proportional to the complete scene and is a separate optimization opportunity.
+
+Live provider calls, production deployment, and external database operations were not exercised. No commits or deployments were made.

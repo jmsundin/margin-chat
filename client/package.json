@@ -23,7 +23,8 @@
     "marked": "^17.0.4",
     "mermaid": "^11.13.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "@margin-chat/workspace-contracts": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^19.0.10",

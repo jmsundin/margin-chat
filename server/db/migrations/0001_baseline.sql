@@ -1,0 +1,807 @@
+create extension if not exists vector;
+
+do $$
+begin
+  if to_regclass('marginchat_users') is null
+    and to_regclass('marginchat_user_accounts') is not null then
+    alter table marginchat_user_accounts rename to marginchat_users;
+  end if;
+
+  if to_regclass('marginchat_app_sessions') is null
+    and to_regclass('app_sessions') is not null then
+    alter table app_sessions rename to marginchat_app_sessions;
+  end if;
+
+  if to_regclass('marginchat_conversations') is null
+    and to_regclass('conversations') is not null then
+    alter table conversations rename to marginchat_conversations;
+  end if;
+
+  if to_regclass('marginchat_messages') is null
+    and to_regclass('messages') is not null then
+    alter table messages rename to marginchat_messages;
+  end if;
+
+  if to_regclass('marginchat_branch_anchors') is null
+    and to_regclass('branch_anchors') is not null then
+    alter table branch_anchors rename to marginchat_branch_anchors;
+  end if;
+end
+$$;
+
+create table if not exists marginchat_users (
+  id text primary key,
+  email text not null unique,
+  password_hash text not null,
+  display_name text not null,
+  role text not null default 'member',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Rebuildable content projection checkpoint. The Markdown vault and its cloud
+-- manifest remain authoritative; this marker is committed with the indexes.
+create table if not exists marginchat_vault_projections (
+  user_id text primary key references marginchat_users(id) on delete cascade,
+  vault_revision bigint not null check (vault_revision >= 0),
+  projected_at timestamptz not null default now()
+);
+
+-- Capture storage is independent of whole-workspace replacement and deletion.
+create table if not exists marginchat_capture_tokens (
+  user_id text primary key references marginchat_users(id) on delete cascade,
+  token_hash text not null unique,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  last_used_at timestamptz
+);
+
+-- Each signed-in browser has an independent, capture-only session.
+create table if not exists marginchat_extension_sessions (
+  token_hash text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null,
+  last_used_at timestamptz
+);
+
+create index if not exists marginchat_extension_sessions_user_idx
+  on marginchat_extension_sessions(user_id);
+
+create table if not exists marginchat_captures (
+  id text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  client_capture_id text not null,
+  payload jsonb not null,
+  payload_hash text not null,
+  created_at timestamptz(3) not null default now(),
+  unique (user_id, client_capture_id)
+);
+
+create index if not exists marginchat_captures_inbox_idx
+  on marginchat_captures(user_id, created_at desc, id desc);
+
+create unique index if not exists marginchat_user_accounts_email_idx
+  on marginchat_users (email);
+
+alter table marginchat_users
+  add column if not exists role text;
+
+update marginchat_users
+set role = 'member'
+where role is null or role not in ('member', 'admin');
+
+alter table marginchat_users
+  alter column role set default 'member';
+
+alter table marginchat_users
+  alter column role set not null;
+
+alter table marginchat_users
+  drop constraint if exists marginchat_user_accounts_role_check;
+
+alter table marginchat_users
+  add constraint marginchat_user_accounts_role_check check (
+    role in ('member', 'admin')
+  );
+
+alter table marginchat_users
+  add column if not exists stripe_customer_id text;
+
+alter table marginchat_users
+  add column if not exists stripe_subscription_id text;
+
+alter table marginchat_users
+  add column if not exists billing_status text not null default 'inactive';
+
+alter table marginchat_users
+  add column if not exists billing_price_id text;
+
+alter table marginchat_users
+  add column if not exists billing_current_period_end timestamptz;
+
+alter table marginchat_users
+  add column if not exists billing_cancel_at_period_end boolean not null default false;
+
+alter table marginchat_users
+  add column if not exists trial_api_calls_used integer not null default 0;
+
+alter table marginchat_users
+  add column if not exists trial_api_calls_limit integer not null default 100;
+
+alter table marginchat_users
+  add column if not exists hosted_credit_balance_micros bigint not null default 0;
+
+alter table marginchat_users
+  drop constraint if exists marginchat_users_hosted_credit_balance_check;
+
+alter table marginchat_users
+  add constraint marginchat_users_hosted_credit_balance_check check (
+    hosted_credit_balance_micros >= 0
+  );
+
+update marginchat_users
+set trial_api_calls_used = greatest(coalesce(trial_api_calls_used, 0), 0);
+
+update marginchat_users
+set trial_api_calls_limit = greatest(coalesce(trial_api_calls_limit, 100), 1);
+
+update marginchat_users
+set billing_status = 'inactive'
+where billing_status not in (
+  'active',
+  'canceled',
+  'inactive',
+  'incomplete',
+  'incomplete_expired',
+  'past_due',
+  'paused',
+  'trialing',
+  'unpaid'
+);
+
+alter table marginchat_users
+  drop constraint if exists marginchat_user_accounts_billing_status_check;
+
+alter table marginchat_users
+  add constraint marginchat_user_accounts_billing_status_check check (
+    billing_status in (
+      'active',
+      'canceled',
+      'inactive',
+      'incomplete',
+      'incomplete_expired',
+      'past_due',
+      'paused',
+      'trialing',
+      'unpaid'
+    )
+  );
+
+alter table marginchat_users
+  drop constraint if exists marginchat_user_accounts_trial_api_calls_used_check;
+
+alter table marginchat_users
+  add constraint marginchat_user_accounts_trial_api_calls_used_check check (
+    trial_api_calls_used >= 0
+  );
+
+alter table marginchat_users
+  drop constraint if exists marginchat_user_accounts_trial_api_calls_limit_check;
+
+alter table marginchat_users
+  add constraint marginchat_user_accounts_trial_api_calls_limit_check check (
+    trial_api_calls_limit > 0
+  );
+
+update marginchat_users
+set role = 'admin'
+where lower(email) = 'sundinjon@gmail.com';
+
+create unique index if not exists marginchat_user_accounts_stripe_customer_id_idx
+  on marginchat_users (stripe_customer_id)
+  where stripe_customer_id is not null;
+
+create unique index if not exists marginchat_user_accounts_stripe_subscription_id_idx
+  on marginchat_users (stripe_subscription_id)
+  where stripe_subscription_id is not null;
+
+create table if not exists marginchat_user_api_keys (
+  user_id text not null references marginchat_users(id) on delete cascade,
+  provider text not null,
+  encrypted_api_key text not null,
+  key_hint text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (user_id, provider),
+  constraint marginchat_user_api_keys_provider_check check (
+    provider in ('openai', 'gemini', 'huggingface', 'xai')
+  )
+);
+
+create table if not exists marginchat_billing_ledger (
+  id text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  amount_micros bigint not null,
+  entry_type text not null,
+  stripe_checkout_session_id text,
+  request_id text,
+  created_at timestamptz not null default now(),
+  constraint marginchat_billing_ledger_entry_type_check check (
+    entry_type in ('stripe_credit_purchase', 'hosted_request', 'hosted_request_refund')
+  )
+);
+
+create unique index if not exists marginchat_billing_ledger_stripe_session_idx
+  on marginchat_billing_ledger (stripe_checkout_session_id)
+  where stripe_checkout_session_id is not null;
+
+create unique index if not exists marginchat_billing_ledger_request_charge_idx
+  on marginchat_billing_ledger (request_id)
+  where request_id is not null and entry_type = 'hosted_request';
+
+create unique index if not exists marginchat_billing_ledger_request_refund_idx
+  on marginchat_billing_ledger (request_id)
+  where request_id is not null and entry_type = 'hosted_request_refund';
+
+create table if not exists marginchat_user_sessions (
+  id text primary key,
+  user_id text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+
+create table if not exists marginchat_password_reset_tokens (
+  token_hash text primary key,
+  user_id text not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists marginchat_password_reset_tokens_user_id_idx
+  on marginchat_password_reset_tokens (user_id);
+
+create index if not exists marginchat_password_reset_tokens_expires_at_idx
+  on marginchat_password_reset_tokens (expires_at);
+
+alter table marginchat_user_sessions
+  drop constraint if exists auth_sessions_user_id_fkey;
+
+alter table marginchat_user_sessions
+  drop constraint if exists marginchat_user_sessions_user_id_fkey;
+
+alter table marginchat_user_sessions
+  alter column user_id type text using user_id::text;
+
+create index if not exists marginchat_user_sessions_user_id_idx
+  on marginchat_user_sessions (user_id);
+
+create index if not exists marginchat_user_sessions_expires_at_idx
+  on marginchat_user_sessions (expires_at);
+
+create table if not exists marginchat_app_sessions (
+  id text primary key,
+  user_id text,
+  root_conversation_id text,
+  active_conversation_id text,
+  rail_open boolean not null default true,
+  pinned_thread_ids text[] not null default '{}'::text[],
+  graph_layouts jsonb not null default '{}'::jsonb,
+  conversation_groups jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table marginchat_app_sessions
+  add column if not exists pinned_thread_ids text[] not null default '{}'::text[];
+
+alter table marginchat_app_sessions
+  add column if not exists user_id text;
+
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_user_id_fkey;
+
+alter table marginchat_app_sessions
+  drop constraint if exists marginchat_app_sessions_user_id_fkey;
+
+alter table marginchat_app_sessions
+  alter column user_id type text using user_id::text;
+
+alter table marginchat_app_sessions
+  add column if not exists graph_layouts jsonb not null default '{}'::jsonb;
+
+alter table marginchat_app_sessions
+  add column if not exists conversation_groups jsonb not null default '{}'::jsonb;
+
+alter table marginchat_app_sessions
+  add column if not exists revision bigint not null default 0;
+
+alter table marginchat_app_sessions
+  drop constraint if exists marginchat_app_sessions_revision_check;
+
+alter table marginchat_app_sessions
+  add constraint marginchat_app_sessions_revision_check check (revision >= 0);
+
+alter table marginchat_app_sessions
+  add column if not exists default_service_id text;
+
+alter table marginchat_app_sessions
+  add column if not exists default_model_id text;
+
+-- Remove paired service/model constraints before normalizing either column.
+-- Existing constraints can otherwise reject the migration's intermediate rows.
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_default_service_id_check;
+
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_default_model_id_check;
+
+update marginchat_app_sessions
+set default_service_id = null
+where
+  default_service_id is not null
+  and (
+    btrim(default_service_id) = ''
+    or default_service_id not in (
+      'backend-services',
+      'openai-api',
+      'openai-agent',
+      'gemini-api',
+      'huggingface-api',
+      'xai-api'
+    )
+  );
+
+update marginchat_app_sessions
+set default_model_id = null
+where default_service_id is null and default_model_id is not null;
+
+update marginchat_app_sessions
+set default_model_id = case default_service_id
+  when 'backend-services' then 'smart-routing'
+  when 'openai-api' then 'gpt-5.6'
+  when 'openai-agent' then 'gpt-5.6'
+  when 'gemini-api' then 'gemini-3.1-pro-preview'
+  when 'huggingface-api' then 'openai/gpt-oss-120b'
+  when 'xai-api' then 'grok-4.5'
+  else null
+end
+where
+  default_service_id is not null
+  and (
+    default_model_id is null
+    or btrim(default_model_id) = ''
+    or (default_service_id = 'backend-services' and default_model_id not in ('smart-routing'))
+    or (
+      default_service_id = 'openai-api'
+      and default_model_id not in (
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
+      )
+    )
+    or (
+      default_service_id = 'openai-agent'
+      and default_model_id not in (
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
+      )
+    )
+    or (
+      default_service_id = 'gemini-api'
+      and default_model_id not in (
+        'gemini-3.1-pro-preview',
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite'
+      )
+    )
+    or (
+      default_service_id = 'huggingface-api'
+      and default_model_id not in (
+        'moonshotai/Kimi-K3',
+        'openai/gpt-oss-120b',
+        'deepseek-ai/DeepSeek-R1',
+        'Qwen/Qwen3-Coder-480B-A35B-Instruct'
+      )
+    )
+    or (
+      default_service_id = 'xai-api'
+      and default_model_id not in (
+        'grok-4.5',
+        'grok-4.3'
+      )
+    )
+  );
+
+alter table marginchat_app_sessions
+  alter column default_service_id set default 'backend-services';
+
+alter table marginchat_app_sessions
+  alter column default_model_id set default 'smart-routing';
+
+alter table marginchat_app_sessions
+  add constraint app_sessions_default_service_id_check check (
+    default_service_id is null
+    or default_service_id in (
+      'backend-services',
+      'openai-api',
+      'openai-agent',
+      'gemini-api',
+      'huggingface-api',
+      'xai-api'
+    )
+  );
+
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_default_model_id_check;
+
+alter table marginchat_app_sessions
+  add constraint app_sessions_default_model_id_check check (
+    (default_service_id is null and default_model_id is null)
+    or (default_service_id = 'backend-services' and default_model_id in ('smart-routing'))
+    or (
+      default_service_id = 'openai-api'
+      and default_model_id in (
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
+      )
+    )
+    or (
+      default_service_id = 'openai-agent'
+      and default_model_id in (
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
+      )
+    )
+    or (
+      default_service_id = 'gemini-api'
+      and default_model_id in (
+        'gemini-3.1-pro-preview',
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite'
+      )
+    )
+    or (
+      default_service_id = 'huggingface-api'
+      and default_model_id in (
+        'moonshotai/Kimi-K3',
+        'openai/gpt-oss-120b',
+        'deepseek-ai/DeepSeek-R1',
+        'Qwen/Qwen3-Coder-480B-A35B-Instruct'
+      )
+    )
+    or (
+      default_service_id = 'xai-api'
+      and default_model_id in (
+        'grok-4.5',
+        'grok-4.3'
+      )
+    )
+  );
+
+create unique index if not exists app_sessions_user_id_idx
+  on marginchat_app_sessions (user_id)
+  where user_id is not null;
+
+create table if not exists marginchat_conversations (
+  id text primary key,
+  session_id text not null references marginchat_app_sessions(id) on delete cascade,
+  title text not null,
+  conversation_kind text not null default 'chat',
+  parent_id text references marginchat_conversations(id) on delete cascade,
+  service_id text not null,
+  model_id text not null,
+  created_at timestamptz not null,
+  updated_at timestamptz not null
+);
+
+alter table marginchat_conversations
+  add column if not exists conversation_kind text not null default 'chat';
+
+alter table marginchat_conversations
+  add column if not exists ai_settings jsonb;
+
+alter table marginchat_conversations
+  drop constraint if exists marginchat_conversations_kind_check;
+
+alter table marginchat_conversations
+  add constraint marginchat_conversations_kind_check check (
+    conversation_kind in ('chat', 'note')
+  );
+
+alter table marginchat_conversations
+  add column if not exists model_id text;
+
+alter table marginchat_conversations
+  drop constraint if exists conversations_service_id_check;
+
+alter table marginchat_conversations
+  add constraint conversations_service_id_check check (
+    service_id in (
+      'backend-services',
+      'openai-api',
+      'openai-agent',
+      'gemini-api',
+      'huggingface-api',
+      'xai-api'
+    )
+  );
+
+alter table marginchat_conversations
+  drop constraint if exists conversations_model_id_check;
+
+update marginchat_conversations
+set model_id = case
+  when service_id = 'gemini-api' and model_id = 'gemini-3.1-pro-preview-03-25'
+    then 'gemini-3.1-pro-preview'
+  when service_id = 'gemini-api' and model_id = 'gemini-3-flash-preview-06-17'
+    then 'gemini-3.5-flash'
+  when service_id = 'gemini-api' and model_id = 'gemini-3.1-flash-lite-preview-06-17'
+    then 'gemini-3.1-flash-lite'
+  when service_id = 'openai-api' and model_id = 'gpt-5.2'
+    then 'gpt-5.6'
+  when service_id = 'openai-api' and model_id = 'gpt-5.2-pro'
+    then 'gpt-5.6-terra'
+  when service_id = 'openai-api' and model_id = 'gpt-5-mini'
+    then 'gpt-5.6-luna'
+  when service_id in ('openai-api', 'openai-agent') and model_id = 'gpt-5.4'
+    then 'gpt-5.6'
+  when service_id in ('openai-api', 'openai-agent') and model_id in ('gpt-5.4-pro', 'gpt-5-chat-latest')
+    then 'gpt-5.6-terra'
+  when service_id in ('openai-api', 'openai-agent') and model_id in ('gpt-5.4-mini', 'gpt-5.4-nano')
+    then 'gpt-5.6-luna'
+  when service_id = 'gemini-api' and model_id = 'gemini-3-flash-preview'
+    then 'gemini-3.5-flash'
+  when service_id = 'gemini-api' and model_id = 'gemini-3.1-flash-lite-preview'
+    then 'gemini-3.1-flash-lite'
+  when service_id = 'xai-api' and model_id = 'grok-4.20-beta-latest-non-reasoning'
+    then 'grok-4.5'
+  when service_id = 'xai-api' and model_id in (
+    'grok-4',
+    'grok-4-fast',
+    'grok-4-fast-non-reasoning',
+    'grok-4-1-fast-reasoning',
+    'grok-4-1-fast-non-reasoning'
+  )
+    then 'grok-4.3'
+  when service_id = 'backend-services' and model_id = 'smart-routing'
+    then 'smart-routing'
+  when service_id = 'openai-api' and model_id in ('gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna')
+    then model_id
+  when service_id = 'openai-agent' and model_id in ('gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna')
+    then model_id
+  when service_id = 'gemini-api' and model_id in ('gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite')
+    then model_id
+  when service_id = 'huggingface-api' and model_id in ('moonshotai/Kimi-K3', 'openai/gpt-oss-120b', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen3-Coder-480B-A35B-Instruct')
+    then model_id
+  when service_id = 'xai-api' and model_id in (
+    'grok-4.5',
+    'grok-4.3'
+  )
+    then model_id
+  else case service_id
+  when 'backend-services' then 'smart-routing'
+  when 'openai-api' then 'gpt-5.6'
+  when 'openai-agent' then 'gpt-5.6'
+  when 'gemini-api' then 'gemini-3.1-pro-preview'
+  when 'huggingface-api' then 'openai/gpt-oss-120b'
+  when 'xai-api' then 'grok-4.5'
+  else 'smart-routing'
+end
+end
+where
+  model_id is null
+  or btrim(model_id) = ''
+  or (service_id = 'backend-services' and model_id not in ('smart-routing'))
+  or (
+    service_id = 'openai-api'
+    and model_id not in (
+      'gpt-5.6',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    )
+  )
+  or (
+    service_id = 'openai-agent'
+    and model_id not in (
+      'gpt-5.6',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    )
+  )
+  or (
+    service_id = 'gemini-api'
+    and model_id not in (
+      'gemini-3.1-pro-preview',
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite'
+    )
+  )
+  or (
+    service_id = 'huggingface-api'
+    and model_id not in (
+      'moonshotai/Kimi-K3',
+      'openai/gpt-oss-120b',
+      'deepseek-ai/DeepSeek-R1',
+      'Qwen/Qwen3-Coder-480B-A35B-Instruct'
+    )
+  )
+  or (
+    service_id = 'xai-api'
+    and model_id not in (
+      'grok-4.5',
+      'grok-4.3'
+    )
+  );
+
+alter table marginchat_conversations
+  alter column model_id set default 'smart-routing';
+
+alter table marginchat_conversations
+  alter column model_id set not null;
+
+alter table marginchat_conversations
+  add constraint conversations_model_id_check check (
+    (service_id = 'backend-services' and model_id in ('smart-routing'))
+    or (
+      service_id = 'openai-api'
+      and model_id in (
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
+      )
+    )
+    or (
+      service_id = 'openai-agent'
+      and model_id in (
+        'gpt-5.6',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna'
+      )
+    )
+    or (
+      service_id = 'gemini-api'
+      and model_id in (
+        'gemini-3.1-pro-preview',
+        'gemini-3.5-flash',
+        'gemini-3.1-flash-lite'
+      )
+    )
+    or (
+      service_id = 'huggingface-api'
+      and model_id in (
+        'moonshotai/Kimi-K3',
+        'openai/gpt-oss-120b',
+        'deepseek-ai/DeepSeek-R1',
+        'Qwen/Qwen3-Coder-480B-A35B-Instruct'
+      )
+    )
+    or (
+      service_id = 'xai-api'
+      and model_id in (
+        'grok-4.5',
+        'grok-4.3'
+      )
+    )
+  );
+
+create table if not exists marginchat_messages (
+  id text primary key,
+  conversation_id text not null references marginchat_conversations(id) on delete cascade,
+  role text not null check (role in ('system', 'user', 'assistant')),
+  content text not null,
+  created_at timestamptz not null
+);
+
+alter table marginchat_messages
+  add column if not exists execution_metadata jsonb;
+
+create table if not exists marginchat_documents (
+  id text primary key,
+  user_id text not null references marginchat_users(id) on delete cascade,
+  filename text not null,
+  mime_type text not null,
+  size_bytes bigint not null check (size_bytes > 0),
+  original_bytes bytea not null,
+  status text not null default 'processing',
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint marginchat_documents_status_check check (
+    status in ('processing', 'ready', 'failed')
+  )
+);
+
+create table if not exists marginchat_document_chunks (
+  id text primary key,
+  document_id text not null references marginchat_documents(id) on delete cascade,
+  chunk_index integer not null check (chunk_index >= 0),
+  page_number integer check (page_number is null or page_number > 0),
+  content text not null,
+  token_count integer not null check (token_count > 0),
+  embedding_model text not null,
+  embedding vector(1536) not null,
+  unique (document_id, chunk_index)
+);
+
+create table if not exists marginchat_conversation_documents (
+  conversation_id text not null references marginchat_conversations(id) on delete cascade,
+  document_id text not null references marginchat_documents(id) on delete cascade,
+  attached_at timestamptz not null default now(),
+  primary key (conversation_id, document_id)
+);
+
+create table if not exists marginchat_branch_anchors (
+  id text primary key,
+  conversation_id text not null unique references marginchat_conversations(id) on delete cascade,
+  source_conversation_id text not null references marginchat_conversations(id) on delete cascade,
+  source_message_id text not null references marginchat_messages(id) on delete cascade,
+  start_offset integer not null check (start_offset >= 0),
+  end_offset integer not null check (end_offset > start_offset),
+  quote text not null,
+  prompt text not null,
+  created_at timestamptz not null
+);
+
+create table if not exists marginchat_conversation_notes (
+  id text primary key,
+  conversation_id text not null references marginchat_conversations(id) on delete cascade,
+  source_message_id text references marginchat_messages(id) on delete cascade,
+  content text not null,
+  note_kind text not null default 'comment',
+  start_offset integer,
+  end_offset integer,
+  quote text,
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  constraint marginchat_conversation_notes_anchor_check check (
+    (source_message_id is null and start_offset is null and end_offset is null and quote is null)
+    or
+    (source_message_id is not null and start_offset is null and end_offset is null and quote is null)
+    or
+    (source_message_id is not null and start_offset is not null and end_offset is not null and quote is not null and end_offset > start_offset)
+  )
+);
+
+alter table marginchat_conversation_notes
+  add column if not exists note_kind text not null default 'comment';
+
+alter table marginchat_conversation_notes
+  drop constraint if exists marginchat_conversation_notes_kind_check;
+
+alter table marginchat_conversation_notes
+  add constraint marginchat_conversation_notes_kind_check check (
+    note_kind in ('comment', 'side-chat', 'standalone')
+  );
+
+create index if not exists conversations_session_parent_created_idx
+  on marginchat_conversations (session_id, parent_id, created_at);
+
+create index if not exists messages_conversation_created_idx
+  on marginchat_messages (conversation_id, created_at);
+
+create index if not exists documents_user_created_idx
+  on marginchat_documents (user_id, created_at desc);
+
+create index if not exists conversation_documents_document_idx
+  on marginchat_conversation_documents (document_id);
+
+create index if not exists document_chunks_document_idx
+  on marginchat_document_chunks (document_id, chunk_index);
+
+create index if not exists document_chunks_embedding_hnsw_idx
+  on marginchat_document_chunks using hnsw (embedding vector_cosine_ops);
+
+create index if not exists branch_anchors_source_message_idx
+  on marginchat_branch_anchors (source_conversation_id, source_message_id);
+
+create index if not exists conversation_notes_conversation_created_idx
+  on marginchat_conversation_notes (conversation_id, created_at);
+
+create index if not exists conversation_notes_source_message_idx
+  on marginchat_conversation_notes (source_message_id)
+  where source_message_id is not null;

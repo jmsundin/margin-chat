@@ -10,7 +10,6 @@ import {
   type ReactNode,
 } from "react";
 import {
-  buildConversationGraphNodeSpatialIndex,
   buildConversationForestGraphScene,
   getConversationGraphViewportBounds,
   graphPlacementIntersectsBounds,
@@ -25,7 +24,6 @@ import { ConversationGroupSelect } from "./ConversationGroupControls";
 import {
   excerpt,
   getConversationPath,
-  getConversationRootId,
 } from "../lib/tree";
 import {
   getStandaloneNote,
@@ -37,6 +35,15 @@ import {
   resolveGraphSelectionReflow,
 } from "../lib/graphAutoLayout";
 import { getWheelGestureAxis } from "../lib/wheelGestures";
+import { buildGraphDragPreviewIndex, resolveGraphDragPreview } from "../lib/graphDragPreview";
+import {
+  getGraphNodesInSelectionBounds,
+  type GraphNodeMove,
+  type GraphSelectionBounds,
+  type GraphViewport,
+} from "../lib/graphInteractions";
+import { useGraphInteractions } from "../lib/useGraphInteractions";
+export { getGraphNodesInSelectionBounds } from "../lib/graphInteractions";
 import type {
   Conversation,
   ConversationGroup,
@@ -66,63 +73,6 @@ function getGraphSemanticLevel(scale: number): ConversationGraphSemanticLevel {
   }
 
   return "detail";
-}
-
-type GraphViewport = {
-  scale: number;
-  x: number;
-  y: number;
-};
-
-type PanInteraction = {
-  originX: number;
-  originY: number;
-  pointerId: number;
-  startClientX: number;
-  startClientY: number;
-};
-
-type NodeMoveInteraction = {
-  conversationId: string;
-  conversationIds: string[];
-  currentDeltaX: number;
-  currentDeltaY: number;
-  pointerId: number;
-  startClientX: number;
-  startClientY: number;
-};
-
-type MarqueeInteraction = {
-  additive: boolean;
-  initialConversationIds: Set<string>;
-  pointerId: number;
-  startX: number;
-  startY: number;
-};
-
-type GraphSelectionBounds = {
-  height: number;
-  width: number;
-  x: number;
-  y: number;
-};
-
-export function getGraphNodesInSelectionBounds(
-  placements: ConversationGraphNodePlacement[],
-  bounds: GraphSelectionBounds,
-) {
-  const right = bounds.x + bounds.width;
-  const bottom = bounds.y + bounds.height;
-
-  return placements
-    .filter(
-      (placement) =>
-        placement.x < right &&
-        placement.x + placement.width > bounds.x &&
-        placement.y < bottom &&
-        placement.y + placement.height > bounds.y,
-    )
-    .map((placement) => placement.conversationId);
 }
 
 interface ConversationGraphViewProps {
@@ -661,9 +611,6 @@ export default function ConversationGraphView({
   renderExpandedConversation,
 }: ConversationGraphViewProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
-  const panInteractionRef = useRef<PanInteraction | null>(null);
-  const nodeMoveInteractionRef = useRef<NodeMoveInteraction | null>(null);
-  const marqueeInteractionRef = useRef<MarqueeInteraction | null>(null);
   const viewportStateRef = useRef<GraphViewport>({ scale: 1, x: 0, y: 0 });
   const positionedInitialSceneRef = useRef(false);
   const revealedSelectionKeyRef = useRef<string | null>(null);
@@ -691,12 +638,11 @@ export default function ConversationGraphView({
   const [isAutoArranging, setIsAutoArranging] = useState(false);
   const [autoArrangeError, setAutoArrangeError] = useState<string | null>(null);
   const [fitAfterArrange, setFitAfterArrange] = useState(false);
-  const [movingNodePosition, setMovingNodePosition] = useState<{
-    conversationId: string;
-    conversationIds: string[];
-    deltaX: number;
-    deltaY: number;
-  } | null>(null);
+  const [movingNodePosition, setMovingNodePosition] = useState<GraphNodeMove | null>(null);
+  const movingConversationIds = useMemo(
+    () => new Set(movingNodePosition?.conversationIds),
+    [movingNodePosition?.conversationIds],
+  );
   const activeConversation = conversations[activeConversationId];
   const selectedConversation = selectedConversationId
     ? conversations[selectedConversationId] ?? null
@@ -728,8 +674,12 @@ export default function ConversationGraphView({
       semanticLevel,
     ],
   );
-  const nodeSpatialIndex = useMemo(
-    () => buildConversationGraphNodeSpatialIndex(scene.nodes),
+  const {
+    spatialIndex: nodeSpatialIndex,
+    placementsById: placementByConversationId,
+    orderById: placementOrderByConversationId,
+  } = useMemo(
+    () => buildGraphDragPreviewIndex(scene.nodes),
     [scene.nodes],
   );
   const viewportBounds = useMemo(
@@ -779,53 +729,20 @@ export default function ConversationGraphView({
       ),
     [hiddenConversationIds, nearbyNodePlacements],
   );
-  const reflowedSceneNodes = useMemo(
+  const previewPlacementByConversationId = useMemo(
     () =>
       movingNodePosition
-        ? movingNodePosition.conversationIds.length > 1
-          ? resolveGraphSelectionReflow({
-              conversationIds: movingNodePosition.conversationIds,
-              deltaX: movingNodePosition.deltaX,
-              deltaY: movingNodePosition.deltaY,
-              placements: scene.nodes,
-            })
-          : (() => {
-              const placement = scene.nodes.find(
-                (candidate) =>
-                  candidate.conversationId === movingNodePosition.conversationId,
-              );
-
-              return placement
-                ? resolveGraphNodeReflow({
-                    anchorConversationId: movingNodePosition.conversationId,
-                    placements: scene.nodes,
-                    x: placement.x + movingNodePosition.deltaX,
-                    y: placement.y + movingNodePosition.deltaY,
-                  })
-                : scene.nodes;
-            })()
-        : scene.nodes,
-    [movingNodePosition, scene.nodes],
+        ? resolveGraphDragPreview({
+            move: movingNodePosition,
+            placementsById: placementByConversationId,
+            orderById: placementOrderByConversationId,
+            spatialIndex: nodeSpatialIndex,
+          }).placements
+        : new Map<string, ConversationGraphNodePlacement>(),
+    [movingNodePosition, nodeSpatialIndex, placementByConversationId, placementOrderByConversationId],
   );
-  const reflowedPlacementByConversationId = useMemo(() => {
-    const placements = new Map<string, ConversationGraphNodePlacement>();
-
-    for (const placement of reflowedSceneNodes) {
-      placements.set(placement.conversationId, placement);
-    }
-
-    return placements;
-  }, [reflowedSceneNodes]);
   const renderedNodePlacements = useMemo(() => {
     if (!movingNodePosition) {
-      return baseRenderedNodePlacements;
-    }
-
-    const movingPlacement = reflowedPlacementByConversationId.get(
-      movingNodePosition.conversationId,
-    );
-
-    if (!movingPlacement) {
       return baseRenderedNodePlacements;
     }
 
@@ -836,19 +753,28 @@ export default function ConversationGraphView({
     );
     const placements = baseRenderedNodePlacements.map(
       (placement) =>
-        reflowedPlacementByConversationId.get(placement.conversationId) ??
+        previewPlacementByConversationId.get(placement.conversationId) ??
         placement,
     );
 
-    if (!visibleConversationIds.has(movingNodePosition.conversationId)) {
-      placements.push(movingPlacement);
+    for (const placement of previewPlacementByConversationId.values()) {
+      if (
+        !visibleConversationIds.has(placement.conversationId) &&
+        !hiddenConversationIds.has(placement.conversationId) &&
+        (placement.conversationId === movingNodePosition.conversationId ||
+          graphPlacementIntersectsBounds(placement, viewportBounds))
+      ) {
+        placements.push(placement);
+      }
     }
 
     return placements;
   }, [
     baseRenderedNodePlacements,
     movingNodePosition,
-    reflowedPlacementByConversationId,
+    previewPlacementByConversationId,
+    hiddenConversationIds,
+    viewportBounds,
   ]);
   const renderedGroupPlacements = useMemo(
     () =>
@@ -880,12 +806,12 @@ export default function ConversationGraphView({
         continue;
       }
 
-      const parentPlacement = reflowedPlacementByConversationId.get(
+      const parentPlacement = previewPlacementByConversationId.get(
         edge.parentConversationId,
-      );
-      const childPlacement = reflowedPlacementByConversationId.get(
+      ) ?? placementByConversationId.get(edge.parentConversationId);
+      const childPlacement = previewPlacementByConversationId.get(
         edge.childConversationId,
-      );
+      ) ?? placementByConversationId.get(edge.childConversationId);
 
       if (!parentPlacement || !childPlacement) {
         continue;
@@ -905,7 +831,8 @@ export default function ConversationGraphView({
   }, [
     edgeByChildConversationId,
     hiddenConversationIds,
-    reflowedPlacementByConversationId,
+    previewPlacementByConversationId,
+    placementByConversationId,
     renderedNodePlacements,
     scene.edges,
   ]);
@@ -971,6 +898,26 @@ export default function ConversationGraphView({
     viewportStateRef.current = nextViewport;
     setViewport(nextViewport);
   }, []);
+
+  const interactions = useGraphInteractions({
+    getViewport: () => viewportStateRef.current,
+    toWorld: (point) => clientPointToWorld(point.clientX, point.clientY),
+    getSelection: (bounds) => getGraphNodesInSelectionBounds(
+      queryConversationGraphNodeSpatialIndex(nodeSpatialIndex, {
+        left: bounds.x,
+        top: bounds.y,
+        right: bounds.x + bounds.width,
+        bottom: bounds.y + bounds.height,
+      }),
+      bounds,
+    ).filter((id) => !hiddenConversationIds.has(id)),
+    onViewport: applyViewport,
+    onPanning: setIsPanning,
+    onNodePreview: setMovingNodePosition,
+    onNodeCommit: commitNodeMove,
+    onMarquee: setMarqueeBounds,
+    onSelection: setMultiSelectedConversationIds,
+  });
 
   const fitGraph = useCallback(() => {
     const viewportElement = viewportRef.current;
@@ -1151,8 +1098,9 @@ export default function ConversationGraphView({
         return;
       }
 
+      if (interactions.cancel()) return;
+
       if (isMultiSelectActive) {
-        marqueeInteractionRef.current = null;
         setMarqueeBounds(null);
         setMultiSelectedConversationIds(new Set());
         setIsMultiSelectActive(false);
@@ -1181,6 +1129,7 @@ export default function ConversationGraphView({
     detailLevel,
     dockedConversationId,
     isMultiSelectActive,
+    interactions,
     selectedConversationId,
   ]);
 
@@ -1313,180 +1262,83 @@ export default function ConversationGraphView({
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
     if (
-      nodeMoveInteractionRef.current ||
+      interactions.isActive() ||
       event.button !== 0 ||
       (event.target as HTMLElement).closest(
         "button, .conversation-graph-node, [data-graph-reader-scroll], [data-graph-ui]",
       )
-    ) {
-      return;
-    }
-
-    if (isMultiSelectActive) {
-      startMarqueeSelection(event);
-      return;
-    }
+    ) return;
 
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    const current = viewportStateRef.current;
-    panInteractionRef.current = {
-      originX: current.x,
-      originY: current.y,
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-    };
-    setIsPanning(true);
+    if (isMultiSelectActive) {
+      interactions.startMarquee(event, event.shiftKey, multiSelectedConversationIds);
+    } else {
+      interactions.startPan(event);
+    }
   }
 
   function startNodeMove(
     event: ReactPointerEvent<HTMLButtonElement>,
     conversationId: string,
   ) {
-    if (event.button !== 0) {
-      return;
-    }
-
+    if (event.button !== 0 || interactions.isActive()) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
     const conversationIds = multiSelectedConversationIds.has(conversationId)
       ? [...multiSelectedConversationIds].filter((id) => conversations[id])
       : [conversationId];
-    nodeMoveInteractionRef.current = {
-      conversationId,
-      conversationIds,
-      currentDeltaX: 0,
-      currentDeltaY: 0,
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-    };
-    setMovingNodePosition({
-      conversationId,
-      conversationIds,
-      deltaX: 0,
-      deltaY: 0,
-    });
+    interactions.startNode(event, conversationId, conversationIds);
   }
 
-  function continueNodeMove(event: ReactPointerEvent<HTMLDivElement>) {
-    const interaction = nodeMoveInteractionRef.current;
-
-    if (!interaction || interaction.pointerId !== event.pointerId) {
-      return false;
-    }
-
-    event.preventDefault();
-    const scale = Math.max(viewportStateRef.current.scale, 0.001);
-    interaction.currentDeltaX =
-      (event.clientX - interaction.startClientX) / scale;
-    interaction.currentDeltaY =
-      (event.clientY - interaction.startClientY) / scale;
-    setMovingNodePosition({
-      conversationId: interaction.conversationId,
-      conversationIds: interaction.conversationIds,
-      deltaX: interaction.currentDeltaX,
-      deltaY: interaction.currentDeltaY,
-    });
-    return true;
-  }
-
-  function endNodeMove(
-    event: ReactPointerEvent<HTMLDivElement>,
-    commit: boolean,
-  ) {
-    const interaction = nodeMoveInteractionRef.current;
-
-    if (!interaction || interaction.pointerId !== event.pointerId) {
-      return false;
-    }
-
-    nodeMoveInteractionRef.current = null;
-    setMovingNodePosition(null);
-
-    if (commit) {
-      const anchorPlacement = scene.nodes.find(
-        (placement) =>
-          placement.conversationId === interaction.conversationId,
-      );
-      const reflowedNodes =
-        interaction.conversationIds.length > 1
-          ? resolveGraphSelectionReflow({
-              conversationIds: interaction.conversationIds,
-              deltaX: interaction.currentDeltaX,
-              deltaY: interaction.currentDeltaY,
-              placements: scene.nodes,
-            })
-          : anchorPlacement
-            ? resolveGraphNodeReflow({
-                anchorConversationId: interaction.conversationId,
-                placements: scene.nodes,
-                x: anchorPlacement.x + interaction.currentDeltaX,
-                y: anchorPlacement.y + interaction.currentDeltaY,
-              })
-            : scene.nodes;
-      const currentNodeById = new Map(
-        scene.nodes.map((placement) => [placement.conversationId, placement]),
-      );
-      const nextLayouts = Object.fromEntries(
-        reflowedNodes
-          .filter((placement) => {
-            const currentPlacement = currentNodeById.get(
-              placement.conversationId,
-            );
-
-            return (
-              !currentPlacement ||
-              Math.abs(currentPlacement.x - placement.x) >= 0.5 ||
-              Math.abs(currentPlacement.y - placement.y) >= 0.5
-            );
+  function commitNodeMove(move: GraphNodeMove) {
+    const anchorPlacement = placementByConversationId.get(move.conversationId);
+    // Preview work is bounded, but release always settles the complete scene.
+    const reflowedNodes = move.conversationIds.length > 1
+      ? resolveGraphSelectionReflow({
+          conversationIds: move.conversationIds,
+          deltaX: move.deltaX,
+          deltaY: move.deltaY,
+          placements: scene.nodes,
+        })
+      : anchorPlacement
+        ? resolveGraphNodeReflow({
+            anchorConversationId: move.conversationId,
+            placements: scene.nodes,
+            x: anchorPlacement.x + move.deltaX,
+            y: anchorPlacement.y + move.deltaY,
           })
-          .map((placement) => [
-            placement.conversationId,
-            {
-              positioned: true,
-              x: Math.round(placement.x),
-              y: Math.round(placement.y),
-            },
-          ]),
-      );
-
-      onUpdateGraphNodeLayouts?.(nextLayouts);
-    }
-
-    return true;
+        : scene.nodes;
+    const nextLayouts = Object.fromEntries(
+      reflowedNodes.filter((placement) => {
+        const current = placementByConversationId.get(placement.conversationId);
+        return !current || Math.abs(current.x - placement.x) >= 0.5 || Math.abs(current.y - placement.y) >= 0.5;
+      }).map((placement) => [placement.conversationId, {
+        positioned: true,
+        x: Math.round(placement.x),
+        y: Math.round(placement.y),
+      }]),
+    );
+    onUpdateGraphNodeLayouts?.(nextLayouts);
   }
 
   function handleViewportPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!continueNodeMove(event) && !continueMarqueeSelection(event)) {
-      continuePan(event);
-    }
+    if (interactions.move(event)) event.preventDefault();
   }
 
   function handleViewportPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!endNodeMove(event, true) && !endMarqueeSelection(event)) {
-      endPan(event);
-    }
+    interactions.end(event);
   }
 
-  function handleViewportPointerCancel(
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) {
-    if (!endNodeMove(event, false) && !endMarqueeSelection(event, true)) {
-      endPan(event);
-    }
+  function handleViewportPointerCancel(event: ReactPointerEvent<HTMLDivElement>) {
+    interactions.end(event, false);
   }
 
   function clientPointToWorld(clientX: number, clientY: number) {
     const viewportElement = viewportRef.current;
     const current = viewportStateRef.current;
-
-    if (!viewportElement) {
-      return { x: 0, y: 0 };
-    }
-
+    if (!viewportElement) return { x: 0, y: 0 };
     const rect = viewportElement.getBoundingClientRect();
     return {
       x: (clientX - rect.left - current.x) / current.scale,
@@ -1494,109 +1346,15 @@ export default function ConversationGraphView({
     };
   }
 
-  function startMarqueeSelection(event: ReactPointerEvent<HTMLDivElement>) {
-    const point = clientPointToWorld(event.clientX, event.clientY);
-
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    marqueeInteractionRef.current = {
-      additive: event.shiftKey,
-      initialConversationIds: new Set(multiSelectedConversationIds),
-      pointerId: event.pointerId,
-      startX: point.x,
-      startY: point.y,
-    };
-    setMarqueeBounds({ height: 0, width: 0, x: point.x, y: point.y });
-    if (!event.shiftKey) {
-      setMultiSelectedConversationIds(new Set());
-    }
-  }
-
-  function continueMarqueeSelection(
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) {
-    const interaction = marqueeInteractionRef.current;
-
-    if (!interaction || interaction.pointerId !== event.pointerId) {
-      return false;
-    }
-
-    event.preventDefault();
-    const point = clientPointToWorld(event.clientX, event.clientY);
-    const bounds = {
-      height: Math.abs(point.y - interaction.startY),
-      width: Math.abs(point.x - interaction.startX),
-      x: Math.min(point.x, interaction.startX),
-      y: Math.min(point.y, interaction.startY),
-    };
-    const selectedIds = new Set(
-      interaction.additive ? interaction.initialConversationIds : [],
-    );
-
-    for (const conversationId of getGraphNodesInSelectionBounds(
-      scene.nodes,
-      bounds,
-    )) {
-      if (!hiddenConversationIds.has(conversationId)) {
-        selectedIds.add(conversationId);
-      }
-    }
-
-    setMarqueeBounds(bounds);
-    setMultiSelectedConversationIds(selectedIds);
-    return true;
-  }
-
-  function endMarqueeSelection(
-    event: ReactPointerEvent<HTMLDivElement>,
-    cancelled = false,
-  ) {
-    const interaction = marqueeInteractionRef.current;
-
-    if (!interaction || interaction.pointerId !== event.pointerId) {
-      return false;
-    }
-
-    marqueeInteractionRef.current = null;
-    setMarqueeBounds(null);
-    if (cancelled) {
-      setMultiSelectedConversationIds(interaction.initialConversationIds);
-    }
-    return true;
-  }
-
   function toggleMultiSelect() {
+    interactions.cancel();
     setIsMultiSelectActive((active) => {
       if (active) {
         setMultiSelectedConversationIds(new Set());
         setMarqueeBounds(null);
       }
-
       return !active;
     });
-  }
-
-  function continuePan(event: ReactPointerEvent<HTMLDivElement>) {
-    const interaction = panInteractionRef.current;
-
-    if (!interaction || interaction.pointerId !== event.pointerId) {
-      return;
-    }
-
-    applyViewport({
-      ...viewportStateRef.current,
-      x: interaction.originX + event.clientX - interaction.startClientX,
-      y: interaction.originY + event.clientY - interaction.startClientY,
-    });
-  }
-
-  function endPan(event: ReactPointerEvent<HTMLDivElement>) {
-    if (panInteractionRef.current?.pointerId !== event.pointerId) {
-      return;
-    }
-
-    panInteractionRef.current = null;
-    setIsPanning(false);
   }
 
   function selectConversation(conversationId: string) {
@@ -1718,6 +1476,7 @@ export default function ConversationGraphView({
               ? "conversation-graph-viewport is-panning"
               : "conversation-graph-viewport"
           }
+          onLostPointerCapture={handleViewportPointerCancel}
           onPointerCancel={handleViewportPointerCancel}
           onPointerDown={startPan}
           onPointerMove={handleViewportPointerMove}
@@ -1847,10 +1606,7 @@ export default function ConversationGraphView({
                   }
                   group={group}
                   groups={groups}
-                  isMoving={
-                    movingNodePosition?.conversationIds.includes(conversation.id) ??
-                    false
-                  }
+                  isMoving={movingConversationIds.has(conversation.id)}
                   isMultiSelected={multiSelectedConversationIds.has(
                     conversation.id,
                   )}

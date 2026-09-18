@@ -137,6 +137,19 @@ export function createVaultStorage(env = process.env) {
     if (env.VERCEL) throw new Error("VAULT_STORAGE_DIR is for durable local development disks, not Vercel functions. Configure a private Blob store.");
     return createFileVaultStorage(env.VAULT_STORAGE_DIR);
   }
-  if (env.BLOB_READ_WRITE_TOKEN || env.BLOB_STORE_ID) return createBlobVaultStorage(env);
+  if (env.BLOB_READ_WRITE_TOKEN || env.BLOB_STORE_ID) {
+    const storage = createBlobVaultStorage(env);
+    const prefix = env.VAULT_STORAGE_PREFIX ?? "";
+    if (!prefix) return storage;
+    if (!/^[a-zA-Z0-9_-]+(?:\/[a-zA-Z0-9_-]+)*\/$/u.test(prefix)) {
+      throw new Error("VAULT_STORAGE_PREFIX must be a relative directory prefix ending in /.");
+    }
+    return {
+      kind: storage.kind,
+      read: (key) => storage.read(prefix + key),
+      putImmutable: (key, bytes, type) => storage.putImmutable(prefix + key, bytes, type),
+      compareAndSwap: (key, bytes, etag) => storage.compareAndSwap(prefix + key, bytes, etag),
+    };
+  }
   return null;
 }

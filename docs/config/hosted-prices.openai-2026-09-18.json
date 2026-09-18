@@ -1,0 +1,24 @@
+{
+  "openai:gpt-5.6": {
+    "inputMicrosPerMillionTokens": 4000000,
+    "cachedInputMicrosPerMillionTokens": 400000,
+    "cacheWriteInputMicrosPerMillionTokens": 5000000,
+    "outputMicrosPerMillionTokens": 20000000
+  },
+  "openai:gpt-5.6-luna": {
+    "inputMicrosPerMillionTokens": 200000,
+    "cachedInputMicrosPerMillionTokens": 20000,
+    "cacheWriteInputMicrosPerMillionTokens": 250000,
+    "outputMicrosPerMillionTokens": 1200000
+  },
+  "openai:text-embedding-3-small": {
+    "inputMicrosPerMillionTokens": 20000,
+    "outputMicrosPerMillionTokens": 0
+  },
+  "openai:gpt-5.6-terra": {
+    "inputMicrosPerMillionTokens": 2000000,
+    "cachedInputMicrosPerMillionTokens": 200000,
+    "cacheWriteInputMicrosPerMillionTokens": 2500000,
+    "outputMicrosPerMillionTokens": 12000000
+  }
+}

@@ -1,3 +1,5 @@
+import type { MarkdownWorkspaceManifest } from "./workspaceMarkdown";
+
 export interface VaultFile {
   content: string;
   encoding?: "base64";
@@ -23,6 +25,7 @@ export interface VaultConflict {
   local: VaultFile | null;
   remote: VaultFile | null;
   createdAt: string;
+  sourcePath?: string;
 }
 
 export interface VaultSnapshot {
@@ -31,6 +34,11 @@ export interface VaultSnapshot {
   base: Record<string, { revision: string; file: VaultFile | null }>;
   conflicts: VaultConflict[];
   remoteRevision: number;
+  /** Device-only observations, keyed by the identity of the selected directory handle. */
+  directoryBaselines?: Record<string, {
+    files: Record<string, VaultFile>;
+    manifest: MarkdownWorkspaceManifest;
+  }>;
 }
 
 export interface VaultChange {

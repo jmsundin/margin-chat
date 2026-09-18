@@ -58,6 +58,174 @@ async function replace(device: VaultSync, path: string, content: string | null) 
 }
 
 describe("multi-device Markdown sync", () => {
+  const identified = (id: string, content: string) => file(`---\nmargin-chat-id: ${id}\n---\n${content}`);
+
+  test("an older-path archive preserves the live document and both conflict copies without duplicating its identity", async () => {
+    const remote = cloud(); const device = remote.device();
+    const latest = identified("stable-note", "Latest user writing.");
+    const older = identified("stable-note", "Older exported writing.");
+    await device.edit({ "Notes/renamed.md": latest }, {});
+    const imported = await device.import({ "Notes/original.md": older, "Attachments/original.bin": { content: "AP8B", encoding: "base64" } });
+    expect(imported.files["Notes/renamed.md"]).toEqual(latest);
+    expect(imported.files["Notes/original.md"]).toBeUndefined();
+    expect(imported.conflicts).toHaveLength(1);
+    expect(imported.conflicts[0]).toMatchObject({ path: "Notes/renamed.md", sourcePath: "Notes/original.md", local: older, remote: latest });
+    const exported = importVault(exportVault(imported));
+    const descriptor = JSON.parse(exported[`_conflicts/${imported.conflicts[0].id}/conflict.json`].content);
+    expect(exported[descriptor.copy]).toEqual(older);
+    expect(exported[descriptor.remoteCopy]).toEqual(latest);
+    expect(exported["Attachments/original.bin"].content).toBe("AP8B");
+    await device.resolve(imported.conflicts[0].id, "local");
+    await device.sync();
+    expect((await device.read()).files["Notes/renamed.md"]).toEqual(older);
+  });
+
+  test("a directory rename moves concurrent local edits and preserves divergent disk edits as conflicts", async () => {
+    const remote = cloud(); const device = remote.device();
+    const initial = identified("moving", "Original.");
+    const latest = identified("moving", "Unsynced local writing.");
+    const external = identified("moving", "External folder writing.");
+    await device.edit({ "Old.md": initial }, {});
+    await device.edit({ "Old.md": latest }, { "Old.md": initial });
+    const merged = await device.edit({ "New.md": external }, { "Old.md": initial });
+    expect(merged.files["Old.md"]).toBeUndefined();
+    expect(merged.files["New.md"]).toEqual(latest);
+    expect(merged.conflicts[0]).toMatchObject({ path: "New.md", local: external, remote: latest });
+  });
+
+  test("an invalid complete working set never replaces a durable valid snapshot", async () => {
+    const remote = cloud(); const storage = store(); const device = new VaultSync(storage, remote.transport);
+    const original = identified("duplicate", "Keep original.");
+    await device.edit({ "Original.md": original }, {});
+    const before = await device.read();
+    await expect(device.edit({ "Copied.md": original }, {})).rejects.toThrow("Duplicate");
+    expect(await device.read()).toEqual(before);
+    const invalidCloud = new VaultSync(storage, {
+      async manifest() { return { schemaVersion: 1, revision: 1, files: { "Original.md": { revision: "copy", deleted: false }, "Copied.md": { revision: "copy", deleted: false } } }; },
+      async read() { return original; },
+      async commit() { throw new Error("Invalid files must not upload"); },
+    });
+    await expect(invalidCloud.sync()).rejects.toThrow("Duplicate");
+    expect(await device.read()).toEqual(before);
+  });
+
+  test("a folder rename cannot silently resurrect a locally deleted document", async () => {
+    const device = cloud().device();
+    const original = identified("deleted", "Recoverable renamed document.");
+    await device.edit({ "Old.md": original }, {});
+    await device.edit({}, { "Old.md": original });
+    const merged = await device.edit({ "New.md": original }, { "Old.md": original });
+    expect(merged.files["Old.md"]).toBeUndefined();
+    expect(merged.files["New.md"]).toBeUndefined();
+    expect(merged.conflicts[0]).toMatchObject({ path: "New.md", local: original, remote: null });
+    expect((await device.resolve(merged.conflicts[0].id, "local")).files["New.md"]).toEqual(original);
+  });
+
+  test("every cloud batch keeps a renamed document's old and new paths atomic", async () => {
+    const remote = cloud();
+    const observer = remote.device();
+    const commits: string[][] = [];
+    const device = new VaultSync(store(), { ...remote.transport, async commit(changes) {
+      const committed = await remote.transport.commit(changes);
+      commits.push(changes.map((change) => change.path));
+      // A second device can observe every manifest, including between batches.
+      await observer.sync();
+      return committed;
+    } });
+    const original = identified("renamed-across-batch", "Do not duplicate this identity.");
+    await device.edit({ "Z-original.md": original }, {});
+    await device.sync();
+    commits.length = 0;
+    const previous = (await device.read()).files;
+    await device.edit({
+      "A-renamed.md": original,
+      ...Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`M-${String(index).padStart(2, "0")}.md`, identified(`other-${index}`, "Other note")])),
+    }, previous);
+    await device.sync();
+    expect(commits.length).toBeGreaterThan(1);
+    for (const paths of commits) expect(paths.includes("A-renamed.md")).toBe(paths.includes("Z-original.md"));
+    expect((await observer.read()).files["Z-original.md"]).toBeUndefined();
+    expect((await observer.read()).files["A-renamed.md"].content).toBe(original.content);
+    expect((await observer.read()).conflicts).toHaveLength(0);
+  });
+
+  test("a connected cycle of renames stays atomic when it exceeds the usual batch count", async () => {
+    const remote = cloud(); const observer = remote.device();
+    const sizes: number[] = [];
+    const device = new VaultSync(store(), { ...remote.transport, async commit(changes) {
+      const committed = await remote.transport.commit(changes);
+      sizes.push(changes.length);
+      await observer.sync();
+      return committed;
+    } });
+    const notes = Array.from({ length: 41 }, (_, index) => identified(`cycle-${index}`, `Note ${index}.`));
+    await device.edit(Object.fromEntries(notes.map((note, index) => [`Note-${index}.md`, note])), {});
+    await device.sync();
+    sizes.length = 0;
+    await device.edit(Object.fromEntries(notes.map((_, index) => [`Note-${index}.md`, notes[(index + 1) % notes.length]])), (await device.read()).files);
+    await device.sync();
+    expect(sizes).toEqual([41]);
+    expect((await observer.read()).files["Note-0.md"].content).toBe(notes[1].content);
+    expect((await observer.read()).conflicts).toHaveLength(0);
+  });
+
+  test("a cloud rename keeps an offline edit resolvable at the surviving document path", async () => {
+    const remote = cloud(); const cloudDevice = remote.device(); const offlineDevice = remote.device();
+    const original = identified("cloud-move", "Original.");
+    const local = identified("cloud-move", "Offline writing.");
+    await cloudDevice.edit({ "Old.md": original }, {});
+    await cloudDevice.sync(); await offlineDevice.sync();
+    await offlineDevice.edit({ "Old.md": local }, (await offlineDevice.read()).files);
+    await cloudDevice.edit({ "Renamed.md": original }, (await cloudDevice.read()).files);
+    await cloudDevice.sync();
+    const merged = await offlineDevice.sync();
+    expect(merged.files["Old.md"]).toBeUndefined();
+    expect(merged.conflicts[0]).toMatchObject({ path: "Renamed.md", local, remote: { content: original.content } });
+    await offlineDevice.resolve(merged.conflicts[0].id, "local");
+    await offlineDevice.sync(); await cloudDevice.sync();
+    expect((await cloudDevice.read()).files["Renamed.md"].content).toBe(local.content);
+  });
+
+  test("a local rename and a cloud edit preserve both versions without duplicate identities", async () => {
+    const remote = cloud(); const cloudDevice = remote.device(); const offlineDevice = remote.device();
+    const original = identified("local-move", "Original.");
+    const updated = identified("local-move", "Updated on another device.");
+    await cloudDevice.edit({ "Old.md": original }, {});
+    await cloudDevice.sync(); await offlineDevice.sync();
+    await offlineDevice.edit({ "Renamed.md": original }, (await offlineDevice.read()).files);
+    await cloudDevice.edit({ "Old.md": updated }, (await cloudDevice.read()).files);
+    await cloudDevice.sync();
+    const merged = await offlineDevice.sync();
+    expect(merged.files["Renamed.md"]).toBeUndefined();
+    expect(merged.files["Old.md"].content).toBe(updated.content);
+    expect(merged.conflicts[0]).toMatchObject({ path: "Old.md", local: { content: original.content }, remote: { content: updated.content } });
+    await offlineDevice.resolve(merged.conflicts[0].id, "local");
+    await offlineDevice.sync();
+  });
+
+  test("a cloud deletion conflicts with an offline rename instead of resurrecting the document", async () => {
+    const remote = cloud(); const first = remote.device(); const second = remote.device();
+    const original = identified("deleted-during-rename", "Original.");
+    await first.edit({ "Old.md": original }, {}); await first.sync(); await second.sync();
+    await second.edit({ "Renamed.md": original }, (await second.read()).files);
+    await first.edit({}, (await first.read()).files); await first.sync();
+    const merged = await second.sync();
+    expect(merged.files["Renamed.md"]).toBeUndefined();
+    expect(merged.conflicts[0]).toMatchObject({ path: "Renamed.md", local: { content: original.content }, remote: null });
+    expect((await remote.transport.manifest()).files["Renamed.md"]).toBeUndefined();
+  });
+
+  test("a restored device reconciles shared identities at different paths without a common base", async () => {
+    const remote = cloud(); const first = remote.device(); const restored = remote.device();
+    await first.edit({ "Cloud.md": identified("restored", "Cloud copy.") }, {}); await first.sync();
+    await restored.edit({ "Archive.md": identified("restored", "Older archive copy.") }, {});
+    const merged = await restored.sync();
+    expect(merged.files["Archive.md"]).toBeUndefined();
+    expect(merged.files["Cloud.md"].content).toContain("Cloud copy.");
+    expect(merged.conflicts[0]).toMatchObject({ path: "Cloud.md", local: { content: identified("restored", "Older archive copy.").content } });
+    await restored.resolve(merged.conflicts[0].id, "local"); await restored.sync();
+  });
+
   test("offline edits to different notes converge without replacing the other device's files", async () => {
     const remote = cloud(); const computer = remote.device(); const phone = remote.device();
     await computer.edit({ "a.md": file("A0"), "b.md": file("B0") }, {});

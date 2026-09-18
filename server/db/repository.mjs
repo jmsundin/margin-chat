@@ -20,11 +20,12 @@ export function fromWorkspaceEntityId(sessionId, storedEntityId) {
     : storedEntityId;
 }
 
-export async function readState(client, userId) {
+async function readWorkspaceSnapshot(client, userId) {
   const sessionResult = await client.query(
     `
       select
         id,
+        revision,
         user_id,
         root_conversation_id,
         active_conversation_id,
@@ -56,6 +57,7 @@ export async function readState(client, userId) {
         parent_id,
         model_id,
         service_id,
+        ai_settings,
         created_at,
         updated_at
       from marginchat_conversations
@@ -77,6 +79,7 @@ export async function readState(client, userId) {
         conversation_id,
         role,
         content,
+        execution_metadata,
         created_at
       from marginchat_messages
       where conversation_id = any($1::text[])
@@ -158,6 +161,7 @@ export async function readState(client, userId) {
       serviceId: row.service_id,
       title: row.title,
       updatedAt: toIsoString(row.updated_at),
+      ...(row.ai_settings ? { ai: row.ai_settings } : {}),
     };
   }
 
@@ -173,6 +177,7 @@ export async function readState(client, userId) {
       createdAt: toIsoString(row.created_at),
       id: fromStorageId(row.id),
       role: row.role,
+      ...(row.execution_metadata ? { execution: row.execution_metadata } : {}),
     });
   }
 
@@ -267,7 +272,7 @@ export async function readState(client, userId) {
       serviceId: session.default_service_id,
     });
 
-  return {
+  const state = {
     activeConversationId,
     conversations,
     defaultModelId,
@@ -294,25 +299,25 @@ export async function readState(client, userId) {
     railOpen: Boolean(session.rail_open),
     rootId: rootConversationId,
   };
+  return { revision: Number(session.revision), state };
+}
+
+export async function readState(client, userId) {
+  return (await readWorkspace(client, userId))?.state ?? null;
 }
 
 export async function readWorkspace(client, userId) {
-  const state = await readState(client, userId);
-  if (!state) return null;
-
-  const revisionResult = await client.query(
-    `
-      select revision
-      from marginchat_app_sessions
-      where user_id = $1
-    `,
-    [userId],
-  );
-
-  return {
-    revision: Number(revisionResult.rows[0]?.revision ?? 0),
-    state,
-  };
+  // Every table and the revision must belong to one committed workspace. A
+  // revision fetched after these reads could otherwise legitimize stale edits.
+  await client.query("begin isolation level repeatable read read only");
+  try {
+    const workspace = await readWorkspaceSnapshot(client, userId);
+    await client.query("commit");
+    return workspace;
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
 }
 
 export async function writeState(
@@ -464,10 +469,11 @@ export async function writeState(
             parent_id,
             model_id,
             service_id,
+            ai_settings,
             created_at,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           on conflict (id) do update set
             session_id = excluded.session_id,
             title = excluded.title,
@@ -475,6 +481,7 @@ export async function writeState(
             parent_id = excluded.parent_id,
             model_id = excluded.model_id,
             service_id = excluded.service_id,
+            ai_settings = excluded.ai_settings,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at
         `,
@@ -486,6 +493,7 @@ export async function writeState(
           conversation.parentId ? toStorageId(conversation.parentId) : null,
           conversation.modelId,
           conversation.serviceId,
+          conversation.ai ?? null,
           conversation.createdAt,
           conversation.updatedAt,
         ],
@@ -501,13 +509,15 @@ export async function writeState(
               conversation_id,
               role,
               content,
+              execution_metadata,
               created_at
             )
-            values ($1, $2, $3, $4, $5)
+            values ($1, $2, $3, $4, $5, $6)
             on conflict (id) do update set
               conversation_id = excluded.conversation_id,
               role = excluded.role,
               content = excluded.content,
+              execution_metadata = excluded.execution_metadata,
               created_at = excluded.created_at
           `,
           [
@@ -515,6 +525,7 @@ export async function writeState(
             toStorageId(conversation.id),
             message.role,
             message.content,
+            message.execution ?? null,
             message.createdAt,
           ],
         );

@@ -16,7 +16,7 @@ The directory is a durable local object store, relative to the server's working 
 
 Keep the existing Postgres configuration for authentication and features. With no vault storage configured, local Markdown saving still works, but cloud file synchronization reports that setup is required. Legacy state writes remain available only for accounts that have not migrated and while vault storage is unconfigured. Removing Blob configuration does not re-enable them for migrated accounts. Cloud synchronization retains the existing paid-plan/admin requirement; local editing and vault export are available to other signed-in users.
 
-Use `bun run dev` for normal development. It regenerates the shared Markdown codec before starting the server and client. `bun run build` and `bun run test` also regenerate it. The generated `server/vault/codec.generated.mjs` remains checked in for direct server startup; after editing `client/src/lib/workspaceMarkdown.ts`, run `bun run build:vault-codec` before using `dev:server` or `start:server` directly.
+Use `bun run dev` for normal development. The browser, Node development and production servers, and Vercel build import the canonical native ESM codec from `packages/workspace-contracts`. Edit that package directly; no generated server copy or codec build step is required. Both `dev:server` and `start:server` use Node; the development command enables watch mode. See `packages/workspace-contracts/README.md` for its explicit strict and recovery document-read policies.
 
 ### Verify cloud activation
 
@@ -49,7 +49,11 @@ Different legacy copies have no proven common base. Divergent content is preserv
 
 Each edit retains its actual base revision. Independent file edits synchronize separately. Competing changes to the same file preserve both versions and require a choice in the vault panel; automatic text/CRDT merging is not implemented. Deletions create tombstones so an offline device cannot silently resurrect a file. Immutable history currently has no automatic pruning policy.
 
+Markdown renames retain their stable document identity. The old-path change and new-path change are published in the same cloud commit, including connected swaps or rename chains, so another device never sees half of a rename. Competing edits and renames preserve both versions for review at the surviving cloud path. A connected set of renames that exceeds a single server commit's limits remains local until it can be synchronized safely.
+
 The app checks for changes while open and on focus/reconnection, and scans a connected folder before writing it. Folder access is limited to browsers supporting the directory picker. External changes discovered during a write are preserved and reported for reconciliation.
+
+The browser retains each connected folder's last incorporated Markdown and companion-file snapshot in its atomic local vault index. The baseline follows the actual directory handle, not its name, and survives reopening: external renames and deletions are reconciled against the last observed files. Switching folders selects a separate baseline; a new empty folder is an output destination. Existing connections with no stored baseline are conservatively imported on their first scan. These directory baselines stay on the device and are excluded from cloud synchronization and ZIP exports.
 
 ## Offline use, export, and limits
 
@@ -58,6 +62,8 @@ Production builds include a service worker that caches only the application shel
 Local Markdown uses OPFS and Web Locks. The app requests persistent browser storage, but a browser may decline or evict data. On iPhone these files are private to the site, not a shared Files/Obsidian folder. Clearing site data removes the local vault and cached identity. Local files can reopen with a remembered account while offline; server requests still require a valid session. There is no background synchronization promise while the app is closed, and model calls/new server-side document ingestion require connectivity.
 
 **Download vault** exports current Markdown, companion metadata, available originals, and recovery copies to ZIP. It attempts to fetch any referenced original that has not yet been cached; a missing original blocks a supposedly complete export. **Import vault** adds/reconciles files and preserves collisions. ZIP exports contain current files and recovery copies, not every historical cloud revision or a replica of account data.
+
+Imports match stable Markdown identities to existing documents even when an older archive uses a different filename. Current writing remains current; divergent imported text becomes a reviewable conflict instead of a second document with a duplicate identity. Both conflict versions are preserved in portable recovery files. The complete prospective workspace is validated before a local durable index is replaced, including imports, folder scans, conflict resolution, and downloaded cloud changes.
 
 Current limits are 3 MiB of decoded content per JSON commit (4 MiB HTTP JSON-body cap), 4 MiB per raw binary upload, and 10,000 manifest paths including retained tombstones. The client sends smaller batches. ZIP imports allow 100 MB compressed, 200 MB expanded, and 20 MB per entry; importing a larger individual file does not make it eligible for cloud upload.
 

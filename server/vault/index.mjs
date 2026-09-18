@@ -75,7 +75,7 @@ function prepareChanges(changes, trusted = false) {
 export function createVaultService({ database, env = process.env, storage = createVaultStorage(env), codec: codecOverride } = {}) {
   const configured = Boolean(storage);
   let codecPromise;
-  const codec = () => codecOverride ?? (codecPromise ??= import("./codec.generated.mjs"));
+  const codec = () => codecOverride ?? (codecPromise ??= import("@margin-chat/workspace-contracts/markdown"));
   const prefix = (userId) => `vaults/v1/${digest(String(userId))}`;
   const manifestKey = (userId) => `${prefix(userId)}/manifest.json`;
   const bodyKey = (userId, path, revision) => `${prefix(userId)}/files/${digest(path)}/${revision}`;
@@ -152,21 +152,24 @@ export function createVaultService({ database, env = process.env, storage = crea
 
   async function migrateLegacy(userId) {
     const current = await snapshot(userId);
-    if (current.manifest.revision !== 0 || !database?.loadWorkspace) return current.manifest;
-    const legacy = await database.loadWorkspace(userId);
-    if (!legacy?.state || !Object.keys(legacy.state.conversations ?? {}).length) return current.manifest;
-    const conversations = Object.values(legacy.state.conversations);
+    if (current.manifest.revision !== 0) return current.manifest;
+    const legacy = await database?.loadWorkspace?.(userId);
+    const conversations = Object.values(legacy?.state?.conversations ?? {});
     const onlyDraft = conversations.length === 1 && conversations[0].kind !== "note" &&
       conversations[0].title === "New chat" && !conversations[0].messages?.length &&
       !conversations[0].notes?.length && !conversations[0].documents?.length &&
       !Object.keys(legacy.state.groups ?? {}).length && !legacy.state.pinnedThreadIds?.length;
-    if (onlyDraft) return current.manifest;
-    const { createMarkdownWorkspace } = await codec();
-    const workspace = createMarkdownWorkspace(legacy.state);
-    const metadata = { ...workspace.manifest, files: [], workspace: { ...workspace.manifest.workspace, view: { ...workspace.manifest.workspace.view, activeItemId: "", activeRootId: "", railOpen: false } } };
-    const changes = Object.entries({ ...workspace.files, "workspace.json": JSON.stringify(metadata, null, 2) })
-      .map(([path, content]) => ({ path, content, baseRevision: null }));
-    const attachments = await database.listVaultAttachments?.(userId) ?? [];
+    const changes = [];
+    if (conversations.length && !onlyDraft) {
+      const { createMarkdownWorkspace } = await codec();
+      const workspace = createMarkdownWorkspace(legacy.state);
+      const metadata = { ...workspace.manifest, files: [], workspace: { ...workspace.manifest.workspace, view: { ...workspace.manifest.workspace.view, activeItemId: "", activeRootId: "", railOpen: false } } };
+      changes.push(...Object.entries({ ...workspace.files, "workspace.json": JSON.stringify(metadata, null, 2) })
+        .map(([path, content]) => ({ path, content, baseRevision: null })));
+    }
+    // Originals can belong to a workspace retained only on a device. Preserve
+    // them even when there is no meaningful server-side conversation to copy.
+    const attachments = await database?.listVaultAttachments?.(userId) ?? [];
     for (const attachment of attachments) changes.push(...attachmentChanges(attachment, attachment.bytes));
     return commitFiles(userId, changes, { trusted: true, onlyInitialize: true });
   }

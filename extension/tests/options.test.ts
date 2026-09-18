@@ -152,12 +152,12 @@ describe("extension password sign-in", () => {
   });
 
   test("migrates a legacy pending draft only when its owner is verified", async () => {
-    for (const userId of ["reader", "someone-else"]) {
+    for (const userId of ["reader", "someone-else", undefined, 42]) {
       const storage = {
         connection: { serverUrl: "https://margin.example", token: `mc_capture_${"B".repeat(43)}`, connectionId: "legacy-connection", displayName: "Reader" },
         pendingSave: { connectionId: "legacy-connection", capture: { title: "Legacy draft" } },
       };
-      const app = await createOptions((async (url) => Response.json(String(url).endsWith("capture-connection") ? { userId } : response())) as typeof fetch, storage);
+      const app = await createOptions((async (url) => Response.json(String(url).endsWith("capture-connection") ? { userId, displayName: "Reader", expiresAt: response().expiresAt } : response())) as typeof fetch, storage);
       await app.login();
       expect(app.storage.pendingSave.connectionId).toBe(userId === "reader" ? app.storage.connection.connectionId : "legacy-connection");
     }

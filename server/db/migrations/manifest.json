@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "migrations": [
+    {
+      "id": "0001_baseline",
+      "file": "0001_baseline.sql",
+      "transaction": true
+    },
+    {
+      "id": "0002_prepaid_billing",
+      "file": "0002_prepaid_billing.sql",
+      "transaction": true
+    }
+  ]
+}

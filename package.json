@@ -11,18 +11,28 @@
     "dev": "bun scripts/dev.mjs",
     "dev:client": "bun run --cwd client dev",
     "dev:full": "bun scripts/dev.mjs",
-    "dev:server": "bun --watch server/index.mjs",
+    "dev:server": "node --watch server/index.mjs",
     "db:logs": "docker compose logs -f postgres",
     "db:start": "docker compose up -d postgres",
     "db:stop": "docker compose down",
     "migrate:workspace": "bun scripts/migrate-workspace-json-to-markdown.ts",
-    "build": "bun run build:vault-codec && bun run --cwd client build",
+    "db:status": "bun --no-env-file scripts/database.mjs status",
+    "db:migrate": "bun --no-env-file scripts/database.mjs migrate",
+    "persistence:status": "bun --no-env-file scripts/persistence-jobs.mjs status",
+    "persistence:run": "bun --no-env-file scripts/persistence-jobs.mjs run",
+    "release:plan": "bun --no-env-file scripts/release.mjs plan",
+    "release:production": "bun --no-env-file scripts/release.mjs production",
+    "release:status": "bun --no-env-file scripts/release.mjs status",
+    "vercel:plan": "bun --no-env-file scripts/release.mjs vercel-plan",
+    "vercel:sync": "bun --no-env-file scripts/release.mjs vercel-sync",
+    "build": "bun run --cwd client build",
     "build:extension": "bun run --cwd extension build",
     "release:extension": "bun run --cwd extension release",
     "preview": "bun run --cwd client preview",
     "start:server": "node server/index.mjs",
-    "test": "bun run build:vault-codec && bun test",
-    "build:vault-codec": "bun scripts/build-vault-codec.mjs"
+    "stripe:test": "node scripts/stripe-test.mjs .env.stripe-test.local",
+    "stripe:test:listen": "bun --no-env-file scripts/stripe-test-listen.mjs .env.stripe-test.local",
+    "test": "bun test"
   },
   "dependencies": {
     "@margin-chat/capture-contracts": "workspace:*",
@@ -33,7 +43,8 @@
     "pdf-parse": "1.1.1",
     "pg": "^8.20.0",
     "stripe": "^20.4.1",
-    "vercel": "^58.9.4"
+    "vercel": "^58.9.4",
+    "@margin-chat/workspace-contracts": "workspace:*"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

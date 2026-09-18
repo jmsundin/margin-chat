@@ -1,4 +1,4 @@
-import { CONNECTION_API_PATH, normalizeServerUrl, type CaptureConnection } from "@margin-chat/capture-contracts";
+import { CONNECTION_API_PATH, normalizeServerUrl, parseCaptureConnection } from "@margin-chat/capture-contracts";
 import { connectionIdentity, getPending, getSettings, trustedStorage } from "./storage";
 import { captureRequest, errorText, signIn, signOut } from "./network";
 import { serverPermissionPattern } from "./permissions";
@@ -50,7 +50,7 @@ el("connection-form").addEventListener("submit", async (event) => {
 
     // Preserve a v0.1 draft only when the server proves its old connection owns the same account.
     if (previous?.serverUrl === serverUrl && !previous.userId) {
-      const oldAccount = await captureRequest<CaptureConnection>(previous, CONNECTION_API_PATH).catch(() => null);
+      const oldAccount = await captureRequest(previous, CONNECTION_API_PATH, parseCaptureConnection).catch(() => null);
       const pending = await getPending();
       if (oldAccount?.userId === session.user.id && pending?.connectionId === previous.connectionId) {
         await chrome.storage.local.set({ pendingSave: { ...pending, connectionId } });

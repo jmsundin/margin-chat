@@ -5,8 +5,10 @@ import {
   readRawBody,
   sendJson,
 } from "../http/json.mjs";
-import { randomUUID } from "node:crypto";
-import { CAPTURE_API_PATH, CONNECTION_API_PATH, EXTENSION_SESSION_API_PATH } from "@margin-chat/capture-contracts";
+import { createChatExecutionService } from "../chat/execution.mjs";
+import { validateAIOptions } from "../chat/validation.mjs";
+import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
+import { matchApiRoute } from "./registry.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
@@ -40,10 +42,7 @@ export function createApiHandler({
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
-  function writeChatStreamEvent(response, event) {
-    response.write(`${JSON.stringify(event)}\n`);
-    response.flush?.();
-  }
+  const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
 
   return async function handleRequest(request, response) {
     try {
@@ -58,18 +57,29 @@ export function createApiHandler({
         `http://${request.headers.host ?? fallbackHost}`,
       );
 
-      if (request.method === "GET" && url.pathname === "/api/health") {
+      const route = matchApiRoute(request.method, url.pathname);
+
+      if (route?.id === "health") {
         try {
           await database.ready();
         } catch {
           // Health responses should still return the degraded payload.
         }
 
-        sendJson(response, 200, chatService.buildHealthPayload(database.getHealth()));
+        const databaseHealth = database.checkHealth
+          ? await database.checkHealth()
+          : database.getHealth();
+        const payload = chatService.buildHealthPayload(databaseHealth);
+        payload.storage = { ...payload.storage, vault: {
+          configured: Boolean(vaultService?.configured),
+          kind: vaultService?.storageKind ?? null,
+        } };
+        payload.release = process.env.MARGIN_RELEASE_SHA ?? null;
+        sendJson(response, databaseHealth.ready ? 200 : 503, payload, { "Cache-Control": "no-store" });
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/billing/webhook") {
+      if (route?.id === "billingWebhook") {
         const stripeSignature = request.headers["stripe-signature"];
         const signature = Array.isArray(stripeSignature)
           ? stripeSignature[0]
@@ -83,7 +93,7 @@ export function createApiHandler({
         return;
       }
 
-      if (url.pathname === EXTENSION_SESSION_API_PATH && ["POST", "DELETE"].includes(request.method)) {
+      if (route?.id === "extensionSession") {
         response.setHeader("Cache-Control", "no-store");
         if (request.method === "POST") {
           const user = await authService.authenticateCredentials(await readJsonBody(request, 16_384));
@@ -97,8 +107,7 @@ export function createApiHandler({
       }
 
       // Capture credentials never authenticate workspace, chat, or account endpoints.
-      if ((request.method === "POST" && url.pathname === CAPTURE_API_PATH) ||
-          (request.method === "GET" && url.pathname === CONNECTION_API_PATH)) {
+      if (route?.id === "captureCreate" || route?.id === "captureConnection") {
         const user = await captureService.connect(request);
         if (request.method === "GET") {
           sendJson(response, 200, { userId: user.id, displayName: user.displayName, expiresAt: user.expiresAt }, { "Cache-Control": "no-store" });
@@ -116,7 +125,7 @@ export function createApiHandler({
           }
         : undefined;
 
-      if (request.method === "GET" && url.pathname === "/api/auth/session") {
+      if (route?.id === "authSession") {
         sendJson(
           response,
           200,
@@ -128,7 +137,7 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/auth/signup") {
+      if (route?.id === "authSignup") {
         const body = await readJsonBody(request);
         const result = await authService.signup(body);
 
@@ -145,7 +154,7 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/auth/login") {
+      if (route?.id === "authLogin") {
         const body = await readJsonBody(request);
         const result = await authService.login(body);
 
@@ -162,20 +171,14 @@ export function createApiHandler({
         return;
       }
 
-      if (
-        request.method === "POST" &&
-        url.pathname === "/api/auth/password-reset/request"
-      ) {
+      if (route?.id === "passwordResetRequest") {
         const result = await authService.requestPasswordReset(await readJsonBody(request));
 
         sendJson(response, 200, result);
         return;
       }
 
-      if (
-        request.method === "POST" &&
-        url.pathname === "/api/auth/password-reset/confirm"
-      ) {
+      if (route?.id === "passwordResetConfirm") {
         const result = await authService.resetPassword(await readJsonBody(request));
 
         sendJson(response, 200, result, {
@@ -184,7 +187,7 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+      if (route?.id === "authLogout") {
         const result = await authService.logout(request);
 
         sendJson(
@@ -212,7 +215,18 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/billing/checkout") {
+      if (["documentUpload", "documentDelete", "chat", "chatTitle"].includes(route?.id)) {
+        requireExpectedVaultAccount(request, authContext.user);
+      }
+
+      if (["billingCheckout", "billingTopUp", "billingDashboard", "billingConfirm", "billingPortal"].includes(route?.id)) {
+        const expectedUser = request.headers["x-margin-billing-user"];
+        if (expectedUser !== undefined && expectedUser !== String(authContext.user.id)) {
+          throw new HttpError(409, "The signed-in account changed. Reload Margin Chat before continuing with billing.");
+        }
+      }
+
+      if (route?.id === "billingCheckout") {
         const result = await billingService.createSubscriptionCheckoutSession({
           request,
           user: authContext.user,
@@ -222,7 +236,23 @@ export function createApiHandler({
         return;
       }
 
-      if (url.pathname === "/api/settings/capture-token") {
+      if (route?.id === "billingTopUp") {
+        const body = await readJsonBody(request, 4096);
+        const result = await billingService.createTopUpCheckoutSession({
+          request, user: authContext.user, amountCents: body?.amountCents,
+        });
+        sendJson(response, 200, result, { "Cache-Control": "no-store" });
+        return;
+      }
+
+      if (route?.id === "billingDashboard") {
+        const dashboard = await billingService.getBillingDashboard(authContext.user.id);
+        const fresh = await authService.getAuthContext(request);
+        sendJson(response, 200, { ...dashboard, user: fresh.user }, { "Cache-Control": "no-store" });
+        return;
+      }
+
+      if (route?.id === "captureToken") {
         const userId = authContext.user.id;
         if (request.method === "GET") {
           sendJson(response, 200, { summary: await database.getCaptureToken(userId) }, { "Cache-Control": "no-store" });
@@ -244,35 +274,32 @@ export function createApiHandler({
         }
       }
 
-      if (request.method === "GET" && url.pathname === CAPTURE_API_PATH) {
+      if (route?.id === "captureList") {
         requireCaptureAccess(authContext.user);
         sendJson(response, 200, await captureService.list(authContext.user.id, url.searchParams.get("cursor")), { "Cache-Control": "no-store" });
         return;
       }
-      const captureMatch = url.pathname.match(/^\/api\/v1\/captures\/([0-9a-f-]{36})$/u);
-      if (request.method === "GET" && captureMatch) {
+      if (route?.id === "captureGet") {
         requireCaptureAccess(authContext.user);
-        const capture = await database.getCapture({ userId: authContext.user.id, id: captureMatch[1] });
+        const capture = await database.getCapture({ userId: authContext.user.id, id: route.params.id });
         if (!capture) throw new HttpError(404, "Capture not found.");
         sendJson(response, 200, { capture }, { "Cache-Control": "no-store" });
         return;
       }
 
-      if (
-        request.method === "POST" &&
-        url.pathname === "/api/billing/checkout/confirm"
-      ) {
+      if (route?.id === "billingConfirm") {
         const body = await readJsonBody(request);
-        const result = await billingService.confirmSubscriptionCheckout({
+        const result = await billingService.confirmCheckout({
           sessionId: body?.sessionId,
           user: authContext.user,
         });
 
-        sendJson(response, 200, result);
+        const fresh = await authService.getAuthContext(request);
+        sendJson(response, 200, { ...result, user: fresh.user }, { "Cache-Control": "no-store" });
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/billing/portal") {
+      if (route?.id === "billingPortal") {
         const result = await billingService.createBillingPortalSession({
           request,
           user: authContext.user,
@@ -282,7 +309,7 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "PUT" && url.pathname === "/api/auth/profile") {
+      if (route?.id === "authProfile") {
         const body = await readJsonBody(request);
         const user = await authService.updateProfile(authContext.user.id, body);
 
@@ -292,14 +319,14 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "GET" && url.pathname === "/api/settings/api-keys") {
+      if (route?.id === "apiKeysRead") {
         sendJson(response, 200, {
           apiKeys: await apiKeyService.getSummaries(authContext.user.id),
         });
         return;
       }
 
-      if (request.method === "PUT" && url.pathname === "/api/settings/api-keys") {
+      if (route?.id === "apiKeysWrite") {
         sendJson(response, 200, {
           apiKeys: await apiKeyService.updateKeys(
             authContext.user.id,
@@ -316,11 +343,11 @@ export function createApiHandler({
         }
         if (!vaultService) throw new HttpError(503, "Cloud Markdown storage is not configured.");
         const userId = authContext.user.id;
-        if (request.method === "GET" && url.pathname === "/api/vault") {
+        if (route?.id === "vaultStatus") {
           sendJson(response, 200, await vaultService.status(userId), { "Cache-Control": "private, no-store" });
           return;
         }
-        if (request.method === "GET" && url.pathname === "/api/vault/file") {
+        if (route?.id === "vaultFileRead") {
           const file = await vaultService.readFile({ userId, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
           response.writeHead(200, {
             "Cache-Control": "private, no-store",
@@ -333,7 +360,7 @@ export function createApiHandler({
           response.end(file.bytes);
           return;
         }
-        if (request.method === "PUT" && url.pathname === "/api/vault/file") {
+        if (route?.id === "vaultFileWrite") {
           if (request.headers["x-margin-vault-write"] !== "1" || request.headers["sec-fetch-site"] === "cross-site") {
             throw new HttpError(403, "Upload vault files from Margin Chat.");
           }
@@ -346,13 +373,13 @@ export function createApiHandler({
           sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
         }
-        if (request.method === "POST" && ["/api/vault/commit", "/api/vault/rebuild"].includes(url.pathname)) {
+        if (route?.id === "vaultCommit" || route?.id === "vaultRebuild") {
           if (request.headers["sec-fetch-site"] === "cross-site" ||
               !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
             throw new HttpError(403, "Update your vault from Margin Chat.");
           }
           const body = await readJsonBody(request, 4 * 1024 * 1024);
-          const result = url.pathname === "/api/vault/commit"
+          const result = route.id === "vaultCommit"
             ? await vaultService.commit(userId, body?.changes)
             : await vaultService.rebuild(userId);
           sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
@@ -360,7 +387,7 @@ export function createApiHandler({
         }
       }
 
-      if (request.method === "GET" && url.pathname === "/api/state") {
+      if (route?.id === "stateRead") {
         if (!canUseCloudWorkspaceStorage(authContext.user)) {
           throw new HttpError(
             403,
@@ -396,31 +423,40 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/documents") {
+      if (route?.id === "documentUpload") {
         const form = await readMultipartForm(request, 4 * 1024 * 1024 + 64 * 1024);
         const file = form.get("file");
 
         if (!file || typeof file === "string") {
           throw new HttpError(400, "A document file is required.");
         }
+        const aiField = form.get("ai");
+        let aiInput;
+        if (aiField !== null) {
+          if (typeof aiField !== "string") throw new HttpError(400, "Document AI settings must be JSON text.");
+          try { aiInput = JSON.parse(aiField); }
+          catch { throw new HttpError(400, "Document AI settings must contain valid JSON."); }
+        }
+        const ai = validateAIOptions(aiInput);
 
-        const document = await documentService.upload({
-          context: {
-            allowHosted: authContext.user.billing.hasAccess,
-            apiKeys: await apiKeyService.getDecryptedKeys(authContext.user.id),
-          },
-          file,
-          userId: authContext.user.id,
-        });
-
-        sendJson(response, 201, { document });
+        const scope = createRequestAbortScope(request, response);
+        try {
+          const context = await executeChatReply.createUsageContext({
+            user: authContext.user, signal: scope.signal, operation: "document-upload",
+          });
+          const document = await documentService.upload({
+            context: { ...context, allowedProviders: ai.allowedProviders }, file, userId: authContext.user.id,
+          });
+          sendJson(response, 201, { document });
+        } finally {
+          scope.dispose();
+        }
         return;
       }
 
-      const originalMatch = url.pathname.match(/^\/api\/documents\/([^/]+)\/original$/u);
-      if (request.method === "GET" && originalMatch) {
+      if (route?.id === "documentOriginal") {
         requireExpectedVaultAccount(request, authContext.user);
-        const documentId = decodeURIComponent(originalMatch[1]);
+        const documentId = decodeURIComponent(route.params.id);
         const original = vaultService?.configured
           ? await vaultService.readAttachment({ userId: authContext.user.id, documentId })
           : await database.getVaultAttachment({ userId: authContext.user.id, documentId });
@@ -441,11 +477,9 @@ export function createApiHandler({
         return;
       }
 
-      const documentMatch = url.pathname.match(/^\/api\/documents\/([^/]+)$/u);
-
-      if (request.method === "DELETE" && documentMatch) {
+      if (route?.id === "documentDelete") {
         const deleted = await documentService.delete(
-          decodeURIComponent(documentMatch[1]),
+          decodeURIComponent(route.params.id),
           authContext.user.id,
         );
 
@@ -457,7 +491,7 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "PUT" && url.pathname === "/api/state") {
+      if (route?.id === "stateWrite") {
         if (!canUseCloudWorkspaceStorage(authContext.user)) {
           throw new HttpError(
             403,
@@ -496,100 +530,22 @@ export function createApiHandler({
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/chat") {
-        const body = await readJsonBody(request);
-        const apiKeys = await apiKeyService.getDecryptedKeys(authContext.user.id);
-        const chatContext = {
-          allowHosted: authContext.user.billing.hasAccess,
-          apiKeys,
-          userId: authContext.user.id,
-        };
-        const plannedCredentialSource = chatService.getPlannedCredentialSource(
-          body,
-          chatContext,
-        );
-        if (plannedCredentialSource === "hosted") {
-          chatContext.hostedMaxOutputTokens =
-            billingService.getHostedUsageLimits(body).maxOutputTokens;
-        }
-        const requestId = randomUUID();
-        const reservation =
-          plannedCredentialSource === "hosted" &&
-          authContext.user.billing.accessKind === "credits"
-            ? await billingService.reserveHostedRequest({
-                requestId,
-                userId: authContext.user.id,
-              })
-            : null;
-        let providerStarted = false;
-        let chatResponse;
-
-        try {
-          chatResponse = await chatService.requestReplyStream(
-            body,
-            chatContext,
-            {
-              onDelta(delta) {
-                writeChatStreamEvent(response, { delta, type: "delta" });
-              },
-              onReady(metadata) {
-                providerStarted = true;
-
-                if (!response.headersSent) {
-                  response.writeHead(200, {
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "no-cache, no-transform",
-                    "Content-Type": "application/x-ndjson; charset=utf-8",
-                    "X-Accel-Buffering": "no",
-                  });
-                  response.flushHeaders?.();
-                }
-
-                writeChatStreamEvent(response, { metadata, type: "metadata" });
-              },
-            },
-          );
-        } catch (error) {
-          if (reservation && !providerStarted) {
-            await billingService.refundHostedRequest({
-              amountMicros: reservation.amountMicros,
-              requestId,
-              userId: authContext.user.id,
-            });
-          }
-
-          throw error;
-        }
-
-        if (
-          authContext.user.billing.accessKind === "trial" &&
-          chatResponse.metadata.credentialSource === "hosted"
-        ) {
-          await database.incrementTrialApiCallsUsed(authContext.user.id);
-        }
-
-        writeChatStreamEvent(response, {
-          metadata: chatResponse.metadata,
-          type: "done",
-        });
-        response.end();
+      if (route?.id === "chat") {
+        await handleChatRequest({ request, response, user: authContext.user, executeChatReply });
         return;
       }
 
-      if (request.method === "POST" && url.pathname === "/api/chat/title") {
+      if (route?.id === "chatTitle") {
         const body = await readJsonBody(request);
-        const titleResponse = await chatService.generateTitle(
-          body,
-          {
-            allowHosted: authContext.user.billing.hasAccess,
-            apiKeys: await apiKeyService.getDecryptedKeys(authContext.user.id),
-            hostedMaxOutputTokens:
-              billingService.getHostedUsageLimits(body).maxOutputTokens,
-            userId: authContext.user.id,
-          },
-        );
-
-        sendJson(response, 200, titleResponse);
+        const scope = createRequestAbortScope(request, response);
+        try {
+          const titleResponse = await executeChatReply({
+            payload: body, user: authContext.user, signal: scope.signal, operation: "title",
+          });
+          sendJson(response, 200, titleResponse);
+        } finally {
+          scope.dispose();
+        }
         return;
       }
 

@@ -6,6 +6,7 @@
       "name": "chatgpt-v2-workspace",
       "dependencies": {
         "@margin-chat/capture-contracts": "workspace:*",
+        "@margin-chat/workspace-contracts": "workspace:*",
         "@neondatabase/serverless": "^1.1.0",
         "@vercel/blob": "^2.8.0",
         "fflate": "^0.8.3",
@@ -31,6 +32,7 @@
         "@codemirror/view": "^6.43.8",
         "@lezer/markdown": "^1.7.2",
         "@margin-chat/capture-contracts": "workspace:*",
+        "@margin-chat/workspace-contracts": "workspace:*",
         "@vercel/analytics": "^2.0.1",
         "dompurify": "^3.3.3",
         "elkjs": "^0.12.0",
@@ -50,7 +52,7 @@
     },
     "extension": {
       "name": "margin-chat-extension",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@margin-chat/capture-contracts": "workspace:*",
         "@mozilla/readability": "^0.6.0",
@@ -66,6 +68,10 @@
     },
     "packages/capture-contracts": {
       "name": "@margin-chat/capture-contracts",
+      "version": "1.0.0",
+    },
+    "packages/workspace-contracts": {
+      "name": "@margin-chat/workspace-contracts",
       "version": "1.0.0",
     },
   },
@@ -255,6 +261,8 @@
     "@mapbox/node-pre-gyp": ["@mapbox/node-pre-gyp@2.0.3", "", { "dependencies": { "consola": "^3.2.3", "detect-libc": "^2.0.0", "https-proxy-agent": "^7.0.5", "node-fetch": "^2.6.7", "nopt": "^8.0.0", "semver": "^7.5.3", "tar": "^7.4.0" }, "bin": { "node-pre-gyp": "bin/node-pre-gyp" } }, "sha512-uwPAhccfFJlsfCxMYTwOdVfOz3xqyj8xYL3zJj8f0pb30tLohnnFPhLuqp4/qoEz8sNxe4SESZedcBojRefIzg=="],
 
     "@margin-chat/capture-contracts": ["@margin-chat/capture-contracts@workspace:packages/capture-contracts"],
+
+    "@margin-chat/workspace-contracts": ["@margin-chat/workspace-contracts@workspace:packages/workspace-contracts"],
 
     "@marijn/find-cluster-break": ["@marijn/find-cluster-break@1.0.3", "", {}, "sha512-FY+MKLBoTsLNJF/eLWaOsXGdz6uh3Iu1axjPf6TUq92IYumcTcXWHoS747JARLkcdlJ/Waiaxc5wQfFO8jC6NA=="],
 

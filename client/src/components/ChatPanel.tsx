@@ -9,8 +9,11 @@ import {
   type FormEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import MarkdownMessage from "./MarkdownMessage";
+import AIResponseDetails from "./AIResponseDetails";
+import { buildMessageDecorations, partitionDecoratedText } from "../lib/messageDecorations";
 import LiveMarkdownEditor from "./LiveMarkdownEditor";
 import {
   buildChatOutline,
@@ -46,30 +49,6 @@ const COMPOSER_MAX_HEIGHT_PX = 250;
 const COMPOSER_MIN_TEXTAREA_HEIGHT_PX = 44;
 const PANEL_AUTO_SCROLL_THRESHOLD_PX = 48;
 const PANEL_SCROLL_EDGE_TOLERANCE_PX = 1;
-const AGENT_STATUS_STAGE_INTERVAL_MS = 1800;
-
-const AGENT_PENDING_STAGES = [
-  {
-    description:
-      "Deciding whether this request needs workspace tools or a direct answer.",
-    label: "Planning the run",
-  },
-  {
-    description:
-      "Looking through saved threads, branches, and anchor text for relevant context.",
-    label: "Searching your workspace",
-  },
-  {
-    description:
-      "Opening the strongest matching conversation context before answering.",
-    label: "Reading the best match",
-  },
-  {
-    description:
-      "Composing the final reply from the context it found.",
-    label: "Writing the response",
-  },
-] as const;
 
 function PlusIcon() {
   return (
@@ -203,27 +182,10 @@ function TypingIndicator() {
 }
 
 function AgentStatusIndicator() {
-  const [stageIndex, setStageIndex] = useState(0);
-  const stage = AGENT_PENDING_STAGES[stageIndex];
-
-  useEffect(() => {
-    setStageIndex(0);
-
-    const intervalId = window.setInterval(() => {
-      setStageIndex((current) =>
-        Math.min(current + 1, AGENT_PENDING_STAGES.length - 1),
-      );
-    }, AGENT_STATUS_STAGE_INTERVAL_MS);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, []);
-
   return (
     <div
       aria-atomic="true"
-      aria-label={`Agent is working: ${stage.label}`}
+      aria-label="Agent is working with permitted context"
       aria-live="polite"
       className="message-content is-agent-status"
       role="status"
@@ -231,7 +193,7 @@ function AgentStatusIndicator() {
       <div className="agent-status-card">
         <div className="agent-status-head">
           <span className="agent-status-badge">
-            Stage {stageIndex + 1} of {AGENT_PENDING_STAGES.length}
+            Agent
           </span>
           <span aria-hidden="true" className="typing-indicator">
             <span className="typing-indicator-dot" />
@@ -239,8 +201,8 @@ function AgentStatusIndicator() {
             <span className="typing-indicator-dot" />
           </span>
         </div>
-        <strong className="agent-status-title">{stage.label}</strong>
-        <p className="agent-status-description">{stage.description}</p>
+        <strong className="agent-status-title">Working with permitted context</strong>
+        <p className="agent-status-description">The model and context details will appear with the response.</p>
       </div>
     </div>
   );
@@ -410,6 +372,7 @@ function MarginNotesLayer({
 }
 
 interface ChatPanelProps {
+  aiControls?: ReactNode;
   anchorsByMessageId: Record<string, MessageAnchorLink[]>;
   conversation: Conversation;
   draft: string;
@@ -611,60 +574,9 @@ function renderMessageContent(
   pendingSelection: SelectionDraft | null,
   onOpenBranch: (conversationId: string) => void,
 ) {
-  const canRenderPendingSelection =
-    pendingSelection &&
-    pendingSelection.endOffset > pendingSelection.startOffset &&
-    !anchors.some(
-      (link) =>
-        pendingSelection.startOffset < link.anchor.endOffset &&
-        pendingSelection.endOffset > link.anchor.startOffset,
-    );
-  const decorations: Array<{
-    type: "anchor" | "note" | "preview";
-    startOffset: number;
-    endOffset: number;
-    branchConversationId?: string;
-  }> = anchors.map((link) => ({
-    type: "anchor",
-    startOffset: link.anchor.startOffset,
-    endOffset: link.anchor.endOffset,
-    branchConversationId: link.branchConversationId,
-  }));
-
-  for (const note of notes) {
-    if (note.startOffset === null || note.endOffset === null) continue;
-    decorations.push({
-      type: "note",
-      startOffset: note.startOffset,
-      endOffset: note.endOffset,
-      branchConversationId: note.id,
-    });
-  }
-
-  if (canRenderPendingSelection) {
-    decorations.push({
-      type: "preview",
-      startOffset: pendingSelection.startOffset,
-      endOffset: pendingSelection.endOffset,
-    });
-  }
-
-  if (!decorations.length) {
-    return message.content;
-  }
-
-  const boundaries = [...new Set([0, message.content.length, ...decorations.flatMap((item) => [item.startOffset, item.endOffset])])]
-    .filter((offset) => offset >= 0 && offset <= message.content.length)
-    .sort((left, right) => left - right);
-  const segments = boundaries.slice(0, -1).map((start, index) => {
-    const end = boundaries[index + 1];
-    return {
-      start,
-      end,
-      value: message.content.slice(start, end),
-      active: decorations.filter((item) => item.startOffset < end && item.endOffset > start),
-    };
-  });
+  const decorations = buildMessageDecorations(anchors, notes, pendingSelection);
+  if (!decorations.length) return message.content;
+  const segments = partitionDecoratedText(message.content, decorations);
 
   return segments.map((segment, index) => {
     if (!segment.active.length) {
@@ -678,7 +590,7 @@ function renderMessageContent(
 
     return (
       <mark
-        aria-label={branch ? `Open branch ${anchors.find((link) => link.branchConversationId === branch.branchConversationId)?.title ?? "conversation"}` : hasNote ? "Text with a margin note" : undefined}
+        aria-label={branch ? `Open branch ${branch.title}` : hasNote ? "Text with a margin note" : undefined}
         key={`${message.id}-decoration-${segment.start}`}
         className={`message-anchor${hasNote ? " is-note-anchor" : ""}${hasPreview ? " is-pending-selection" : ""}`}
         onClick={() => {
@@ -710,7 +622,7 @@ function renderMessageContent(
             }
 
             for (const note of activeNotes) {
-              registerNoteAnchorRef(note.branchConversationId!, element);
+              registerNoteAnchorRef(note.noteId, element);
             }
           }}
         >
@@ -903,6 +815,7 @@ function MessageContent({
 }
 
 export default function ChatPanel({
+  aiControls,
   anchorsByMessageId,
   conversation,
   draft,
@@ -1792,6 +1705,7 @@ export default function ChatPanel({
                           theme={theme}
                           typingProgressByMessageId={typingProgressByMessageId}
                         />
+                        {message.role === "assistant" && message.execution ? <AIResponseDetails execution={message.execution} isStreaming={isSubmitting && latestMessage?.id === message.id} onOpenSource={onOpenBranch} /> : null}
                         {messageNoteTargetId === message.id ? (
                           <div className="message-note-composer">
                             <div className="personal-note-head">
@@ -2044,6 +1958,7 @@ export default function ChatPanel({
             </button>
           </div>
         </div>
+        {aiControls}
       </form>
 
       {sideNotesOpen ? (

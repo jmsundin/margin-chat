@@ -76,18 +76,16 @@ export function mapBillingRow(row) {
       ? "admin"
       : billingStatusHasAccess(status)
         ? "subscription"
-        : trialCallsRemaining > 0
-          ? "trial"
-          : creditBalanceMicros > 0
-            ? "credits"
-            : "none";
+        : creditBalanceMicros > 0
+          ? "credits"
+          : "none";
 
   return {
     accessKind,
     cancelAtPeriodEnd: Boolean(row?.billing_cancel_at_period_end),
     creditBalanceMicros,
     currentPeriodEnd: serializeBillingPeriodEnd(row?.billing_current_period_end),
-    hasAccess: accessKind !== "none",
+    hasAccess: row?.role === "admin" || creditBalanceMicros > 0,
     hasCustomer: Boolean(row?.stripe_customer_id),
     priceId:
       typeof row?.billing_price_id === "string" && row.billing_price_id

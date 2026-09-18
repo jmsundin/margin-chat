@@ -233,8 +233,8 @@ describe("authoritative Markdown files", () => {
     expect(isSafeMarkdownPath("Notes\\escape.md")).toBe(false);
   });
 
-  test("the generated server codec reconstructs the same authoritative files", async () => {
-    const server = await import("../server/vault/codec.generated.mjs");
+  test("the shared server codec reconstructs the same authoritative files", async () => {
+    const server = await import("@margin-chat/workspace-contracts/server");
     const files = { "Shared.md": "---\ntitle: Shared\n---\nText\n\n## Note\n\nKeep this." };
     const local = discoverMarkdownWorkspace(files);
     const remote = server.discoverMarkdownWorkspace(files);

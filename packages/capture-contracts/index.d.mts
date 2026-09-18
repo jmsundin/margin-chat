@@ -23,6 +23,9 @@ export interface CapturePage {
 export interface CaptureReceipt {
   capture: { id: string; createdAt: string };
 }
+export interface CaptureDetail {
+  capture: Capture;
+}
 export interface CaptureConnection {
   userId?: string;
   displayName: string;
@@ -49,6 +52,12 @@ export const CAPTURE_LIMITS: Readonly<{
 }>;
 export const CAPTURE_KINDS: readonly CaptureKind[];
 export function normalizeCapture(input: unknown): CaptureInput;
+export function parseCaptureReceipt(input: unknown): CaptureReceipt;
+export function parseExtensionSession(input: unknown): ExtensionSession;
+export function parseCaptureConnection(input: unknown): CaptureConnection;
+export function parseCapture(input: unknown): Capture;
+export function parseCaptureDetail(input: unknown): CaptureDetail;
+export function parseCapturePage(input: unknown): CapturePage;
 export function normalizeServerUrl(value: string): string;
 export function escapeMarkdown(value: string): string;
 export function captureToMarkdown(capture: CaptureInput): string;

@@ -1,604 +1,238 @@
 import { HttpError } from "../lib/errors.mjs";
-import { getRuntimeDefaultModelForService } from "../lib/backendModels.mjs";
+import { requestOpenAIAgentResponse, requestOpenAIAgentResponseStream } from "./openaiAgent.mjs";
 import {
-  requestOpenAIAgentResponse,
-  requestOpenAIAgentResponseStream,
-} from "./openaiAgent.mjs";
-import {
-  requestGeminiResponse,
-  requestGeminiResponseStream,
-  requestHuggingFaceResponse,
-  requestHuggingFaceResponseStream,
-  requestOpenAIResponse,
-  requestOpenAIResponseStream,
-  requestXAIResponse,
-  requestXAIResponseStream,
+  requestGeminiResponse, requestGeminiResponseStream,
+  requestHuggingFaceResponse, requestHuggingFaceResponseStream,
+  requestOpenAIResponse, requestOpenAIResponseStream,
+  requestXAIResponse, requestXAIResponseStream,
 } from "./providers.mjs";
-import {
-  buildOpenAIAgentInstruction,
-  buildSystemInstruction,
-} from "./systemPrompt.mjs";
-import {
-  buildChatTitleInstruction,
-  sanitizeGeneratedChatTitle,
-  validateChatTitleRequest,
-} from "./title.mjs";
-import { validateChatRequest } from "./validation.mjs";
+import { buildOpenAIAgentInstruction, buildSystemInstruction } from "./systemPrompt.mjs";
+import { buildChatTitleInstruction, sanitizeGeneratedChatTitle, validateChatTitleRequest } from "./title.mjs";
+import { validateAIOptions, validateChatRequest } from "./validation.mjs";
+import { prepareChatContext } from "./context.mjs";
+import { isProviderAllowed, planRoutes, providerName } from "./routing.mjs";
+import { PROFILE_EVIDENCE } from "./modelProfiles.mjs";
+import { createHostedUsageMeter } from "../billing/usage.mjs";
+
+const PROVIDERS = Object.freeze({
+  "openai-agent": { reply: requestOpenAIAgentResponse, stream: requestOpenAIAgentResponseStream },
+  "openai-api": { reply: requestOpenAIResponse, stream: requestOpenAIResponseStream },
+  "gemini-api": { reply: requestGeminiResponse, stream: requestGeminiResponseStream },
+  "huggingface-api": { reply: requestHuggingFaceResponse, stream: requestHuggingFaceResponseStream },
+  "xai-api": { reply: requestXAIResponse, stream: requestXAIResponseStream },
+});
+const PREPAID_BALANCE_REQUIRED = "Your prepaid AI balance is empty. Add money in Billing or subscribe for $20/month to use hosted models. You can also use your own provider API key.";
 
 export function createChatService({ database, documentService, env, runtimeConfig }) {
-  const automaticServicePriority = [
-    runtimeConfig.defaultBackendProvider,
-    "openai-api",
-    "gemini-api",
-    "huggingface-api",
-    "xai-api",
-  ];
-
-  function getHuggingFaceApiKey() {
-    return env.HUGGINGFACE_API_KEY ?? env.HF_TOKEN ?? null;
-  }
-
-  function getXaiApiKey() {
-    return env.XAI_API_KEY ?? null;
-  }
-
-  function getPersonalApiKey(serviceId, context = {}) {
-    if (serviceId === "openai-api" || serviceId === "openai-agent") {
-      return context.apiKeys?.openai ?? null;
-    }
-
-    if (serviceId === "gemini-api") {
-      return context.apiKeys?.gemini ?? null;
-    }
-
-    if (serviceId === "huggingface-api") {
-      return context.apiKeys?.huggingface ?? null;
-    }
-
-    if (serviceId === "xai-api") {
-      return context.apiKeys?.xai ?? null;
-    }
-
-    return null;
-  }
+  const automaticServicePriority = [...new Set([
+    runtimeConfig.defaultBackendProvider, "openai-api", "gemini-api", "huggingface-api", "xai-api",
+  ])].filter((id) => PROVIDERS[id] && id !== "openai-agent");
 
   function getHostedApiKey(serviceId) {
-    if (serviceId === "openai-api" || serviceId === "openai-agent") {
-      return env.OPENAI_API_KEY ?? null;
-    }
-
-    if (serviceId === "gemini-api") {
-      return env.GEMINI_API_KEY ?? null;
-    }
-
-    if (serviceId === "huggingface-api") {
-      return getHuggingFaceApiKey();
-    }
-
-    if (serviceId === "xai-api") {
-      return getXaiApiKey();
-    }
-
+    const provider = providerName(serviceId);
+    if (provider === "openai") return env.OPENAI_API_KEY;
+    if (provider === "gemini") return env.GEMINI_API_KEY;
+    if (provider === "huggingface") return env.HUGGINGFACE_API_KEY ?? env.HF_TOKEN;
+    if (provider === "xai") return env.XAI_API_KEY;
     return null;
   }
 
   function getProviderCredential(serviceId, context = {}) {
-    const personalApiKey = getPersonalApiKey(serviceId, context);
-
-    if (personalApiKey) {
-      return { apiKey: personalApiKey, source: "personal" };
-    }
-
-    const hostedApiKey =
-      context.allowHosted === false ? null : getHostedApiKey(serviceId);
-
-    return hostedApiKey
-      ? { apiKey: hostedApiKey, source: "hosted" }
-      : { apiKey: null, source: null };
+    const personal = context.apiKeys?.[providerName(serviceId)];
+    if (personal) return { apiKey: personal, source: "personal" };
+    const hosted = context.allowHosted === false ? null : getHostedApiKey(serviceId);
+    return hosted ? { apiKey: hosted, source: "hosted" } : { apiKey: null, source: null };
   }
 
-  function isServiceConfigured(serviceId, context = {}) {
-    return Boolean(getProviderCredential(serviceId, context).apiKey);
-  }
-
-  function getAutomaticServiceIds(context = {}) {
-    const serviceIds = [...new Set(automaticServicePriority)];
-    const personalServiceIds = serviceIds.filter((serviceId) =>
-      Boolean(getPersonalApiKey(serviceId, context)),
-    );
-
-    if (personalServiceIds.length) {
-      return personalServiceIds;
-    }
-
-    return serviceIds.filter((serviceId) =>
-      isServiceConfigured(serviceId, context),
-    );
-  }
-
-  function resolveServiceId(requestedServiceId, context = {}) {
-    if (
-      requestedServiceId !== "backend-services" &&
-      !isServiceConfigured(requestedServiceId, context)
-    ) {
-      const providerLabel =
-        requestedServiceId === "openai-agent"
-          ? "OpenAI Agent"
-          : requestedServiceId === "openai-api"
-            ? "OpenAI"
-            : requestedServiceId === "gemini-api"
-              ? "Gemini"
-              : requestedServiceId === "huggingface-api"
-                ? "Hugging Face"
-                : "xAI";
-
-      throw new HttpError(
-        context.allowHosted === false ? 402 : 503,
-        `${providerLabel} is selected, but no personal key is saved and hosted access is unavailable.`,
-      );
-    }
-
-    if (requestedServiceId !== "backend-services") {
-      return requestedServiceId;
-    }
-
-    return getAutomaticServiceIds(context)[0] ?? null;
-  }
-
-  async function requestProviderReply(
-    chatRequest,
-    resolvedServiceId,
-    context,
-    systemInstructionOverride = null,
-    documentInstruction = null,
-  ) {
-    const credential = getProviderCredential(resolvedServiceId, context);
-    const maxOutputTokens =
-      credential.source === "hosted" ? context.hostedMaxOutputTokens : undefined;
-    const resolvedModel =
-      chatRequest.serviceId === resolvedServiceId
-        ? chatRequest.modelId
-        : getRuntimeDefaultModelForService(runtimeConfig, resolvedServiceId);
-    const baseSystemInstruction =
-      systemInstructionOverride ??
-      (resolvedServiceId === "openai-agent"
-        ? buildOpenAIAgentInstruction(chatRequest)
-        : buildSystemInstruction(chatRequest));
-    const systemInstruction = documentInstruction
-      ? `${baseSystemInstruction}\n\n${documentInstruction}`
-      : baseSystemInstruction;
-    let result;
-
-    if (resolvedServiceId === "openai-agent") {
-      result = await requestOpenAIAgentResponse({
-        apiKey: credential.apiKey,
-        chatRequest,
-        database,
-        maxOutputTokens,
-        model: resolvedModel,
-        systemInstruction,
-        userId: context.userId,
-      });
-    } else if (resolvedServiceId === "openai-api") {
-      result = await requestOpenAIResponse({
-        apiKey: credential.apiKey,
-        chatRequest,
-        maxOutputTokens,
-        model: resolvedModel,
-        systemInstruction,
-      });
-    } else if (resolvedServiceId === "gemini-api") {
-      result = await requestGeminiResponse({
-        apiKey: credential.apiKey,
-        chatRequest,
-        maxOutputTokens,
-        model: resolvedModel,
-        systemInstruction,
-      });
-    } else if (resolvedServiceId === "xai-api") {
-      result = await requestXAIResponse({
-        apiKey: credential.apiKey,
-        chatRequest,
-        maxOutputTokens,
-        model: resolvedModel,
-        systemInstruction,
-      });
-    } else {
-      result = await requestHuggingFaceResponse({
-        apiKey: credential.apiKey,
-        chatRequest,
-        maxOutputTokens,
-        model: resolvedModel,
-        systemInstruction,
-      });
-    }
-
-    return {
-      model: result.model,
-      reply: result.reply,
-      resolvedServiceId,
-      credentialSource: credential.source,
-    };
-  }
-
-  async function requestAutomaticReply(
-    chatRequest,
-    context,
-    systemInstructionOverride = null,
-    documentInstruction = null,
-  ) {
-    const serviceIds = getAutomaticServiceIds(context);
-
-    if (!serviceIds.length) {
-      throw new HttpError(
-        context.allowHosted === false ? 402 : 503,
-        context.allowHosted === false
-          ? "Hosted access is unavailable. Add a personal API key in Profile settings or use Stripe billing."
-          : "No backend provider is configured. Add a provider API key.",
-      );
-    }
-
-    const failures = [];
-
-    for (const serviceId of serviceIds) {
-      try {
-        return await requestProviderReply(
-          chatRequest,
-          serviceId,
-          context,
-          systemInstructionOverride,
-          documentInstruction,
-        );
-      } catch (error) {
-        failures.push({ error, serviceId });
+  function getRoutes(chatRequest, context) {
+    if (chatRequest.serviceId !== "backend-services") {
+      if (!isProviderAllowed(chatRequest.serviceId, chatRequest.ai)) {
+        throw new HttpError(403, "The selected provider is excluded by your AI provider settings.");
       }
-    }
-
-    if (failures.length === 1) {
-      throw failures[0].error;
-    }
-
-    const failureSummary = failures
-      .map(({ error, serviceId }) => `${serviceId}: ${error?.message ?? "request failed"}`)
-      .join("; ");
-
-    throw new HttpError(
-      502,
-      `Automatic routing tried every configured provider without success. ${failureSummary}`,
-    );
-  }
-
-  async function requestProviderReplyStream(
-    chatRequest,
-    resolvedServiceId,
-    context,
-    handlers,
-    documentInstruction = null,
-  ) {
-    const credential = getProviderCredential(resolvedServiceId, context);
-    const maxOutputTokens =
-      credential.source === "hosted" ? context.hostedMaxOutputTokens : undefined;
-    const resolvedModel =
-      chatRequest.serviceId === resolvedServiceId
-        ? chatRequest.modelId
-        : getRuntimeDefaultModelForService(runtimeConfig, resolvedServiceId);
-    const baseSystemInstruction =
-      resolvedServiceId === "openai-agent"
-        ? buildOpenAIAgentInstruction(chatRequest)
-        : buildSystemInstruction(chatRequest);
-    const systemInstruction = documentInstruction
-      ? `${baseSystemInstruction}\n\n${documentInstruction}`
-      : baseSystemInstruction;
-    const streamMetadata = {
-      credentialSource: credential.source,
-      model: resolvedModel,
-      requestedModelId: chatRequest.modelId,
-      requestedServiceId: chatRequest.serviceId,
-      resolvedServiceId,
-    };
-    let clientStreamReady = false;
-
-    const ensureClientStreamReady = async () => {
-      if (clientStreamReady) {
-        return;
-      }
-
-      clientStreamReady = true;
-      await handlers.onReady?.(streamMetadata);
-    };
-    const providerArgs = {
-      chatRequest,
-      maxOutputTokens,
-      model: resolvedModel,
-      onDelta: async (delta) => {
-        await ensureClientStreamReady();
-        await handlers.onDelta?.(delta);
-      },
-      systemInstruction,
-    };
-    let result;
-
-    if (resolvedServiceId === "openai-agent") {
-      result = await requestOpenAIAgentResponseStream({
-        ...providerArgs,
-        apiKey: credential.apiKey,
-        database,
-        userId: context.userId,
-      });
-    } else if (resolvedServiceId === "openai-api") {
-      result = await requestOpenAIResponseStream({
-        ...providerArgs,
-        apiKey: credential.apiKey,
-      });
-    } else if (resolvedServiceId === "gemini-api") {
-      result = await requestGeminiResponseStream({
-        ...providerArgs,
-        apiKey: credential.apiKey,
-      });
-    } else if (resolvedServiceId === "xai-api") {
-      result = await requestXAIResponseStream({
-        ...providerArgs,
-        apiKey: credential.apiKey,
-      });
-    } else {
-      result = await requestHuggingFaceResponseStream({
-        ...providerArgs,
-        apiKey: credential.apiKey,
-      });
-    }
-
-    await ensureClientStreamReady();
-
-    return {
-      model: result.model,
-      reply: result.reply,
-      resolvedServiceId,
-      credentialSource: credential.source,
-    };
-  }
-
-  async function requestAutomaticReplyStream(
-    chatRequest,
-    context,
-    handlers,
-    documentInstruction = null,
-  ) {
-    const serviceIds = getAutomaticServiceIds(context);
-
-    if (!serviceIds.length) {
-      throw new HttpError(
-        context.allowHosted === false ? 402 : 503,
-        context.allowHosted === false
-          ? "Hosted access is unavailable. Add a personal API key in Profile settings or use Stripe billing."
-          : "No backend provider is configured. Add a provider API key.",
-      );
-    }
-
-    const failures = [];
-
-    for (const serviceId of serviceIds) {
-      let streamStarted = false;
-
-      try {
-        return await requestProviderReplyStream(
-          chatRequest,
-          serviceId,
-          context,
-          {
-            ...handlers,
-            onReady: async (metadata) => {
-              streamStarted = true;
-              await handlers.onReady?.(metadata);
-            },
-          },
-          documentInstruction,
-        );
-      } catch (error) {
-        if (streamStarted) {
-          throw error;
+      if (!getProviderCredential(chatRequest.serviceId, context).apiKey) {
+        if (context.allowHosted === false && getHostedApiKey(chatRequest.serviceId)) {
+          throw new HttpError(402, PREPAID_BALANCE_REQUIRED);
         }
-
-        failures.push({ error, serviceId });
+        throw new HttpError(context.allowHosted === false ? 402 : 503,
+          "The selected provider has no personal key and hosted access is unavailable.");
       }
+      return planRoutes(chatRequest, [chatRequest.serviceId], runtimeConfig);
     }
-
-    if (failures.length === 1) {
-      throw failures[0].error;
+    const allowed = automaticServicePriority.filter((id) => isProviderAllowed(id, chatRequest.ai));
+    const personal = allowed.filter((id) => context.apiKeys?.[providerName(id)]);
+    // Keep one billing source for the whole execution. A personal request must
+    // never fall through to an unreserved paid hosted request.
+    const eligible = personal.length ? personal : allowed.filter((id) => getProviderCredential(id, context).apiKey);
+    const routes = planRoutes(chatRequest, eligible, runtimeConfig);
+    if (!routes.length && context.allowHosted === false && allowed.some((id) => getHostedApiKey(id))) {
+      throw new HttpError(402, PREPAID_BALANCE_REQUIRED);
     }
-
-    const failureSummary = failures
-      .map(({ error, serviceId }) => `${serviceId}: ${error?.message ?? "request failed"}`)
-      .join("; ");
-
-    throw new HttpError(
-      502,
-      `Automatic routing tried every configured provider without success. ${failureSummary}`,
-    );
-  }
-
-  async function requestReply(payload, context = {}) {
-    const chatRequest = validateChatRequest(payload);
-    const documentContext = await getDocumentContext(chatRequest, context);
-    const result =
-      chatRequest.serviceId === "backend-services"
-        ? await requestAutomaticReply(
-            chatRequest,
-            context,
-            null,
-            documentContext.instruction,
-          )
-        : await requestProviderReply(
-            chatRequest,
-            resolveServiceId(chatRequest.serviceId, context),
-            context,
-            null,
-            documentContext.instruction,
-          );
-
-    return {
-      metadata: {
-        credentialSource: result.credentialSource,
-        model: result.model,
-        requestedModelId: chatRequest.modelId,
-        requestedServiceId: chatRequest.serviceId,
-        resolvedServiceId: result.resolvedServiceId,
-      },
-      reply: result.reply,
-    };
-  }
-
-  function getPlannedCredentialSource(payload, context = {}) {
-    const chatRequest = validateChatRequest(payload);
-    const resolvedServiceId =
-      chatRequest.serviceId === "backend-services"
-        ? getAutomaticServiceIds(context)[0] ?? null
-        : resolveServiceId(chatRequest.serviceId, context);
-
-    if (!resolvedServiceId) {
-      throw new HttpError(
-        context.allowHosted === false ? 402 : 503,
-        "No model provider is available for this request.",
-      );
-    }
-
-    return getProviderCredential(resolvedServiceId, context).source;
-  }
-
-  async function generateTitle(payload, context = {}) {
-    const titleRequest = validateChatTitleRequest(payload);
-    const titleServiceId =
-      titleRequest.serviceId === "openai-agent"
-        ? "openai-api"
-        : titleRequest.serviceId;
-    const chatRequest = {
-      conversation: {
-        ancestorContext: [],
-        branchAnchor: null,
-        id: "title-generation",
-        parentId: null,
-        title: "New chat",
-      },
-      messages: [
-        {
-          content: titleRequest.prompt,
-          createdAt: new Date().toISOString(),
-          id: "title-prompt",
-          role: "user",
-        },
-      ],
-      modelId: titleRequest.modelId,
-      serviceId: titleServiceId,
-    };
-    const titleInstruction = buildChatTitleInstruction();
-    const result =
-      titleServiceId === "backend-services"
-        ? await requestAutomaticReply(chatRequest, context, titleInstruction)
-        : await requestProviderReply(
-            chatRequest,
-            resolveServiceId(titleServiceId, context),
-            context,
-            titleInstruction,
-          );
-    const title = sanitizeGeneratedChatTitle(result.reply);
-
-    if (!title) {
-      throw new HttpError(502, "The model returned an empty chat title.");
-    }
-
-    return { title };
-  }
-
-  async function requestReplyStream(payload, context = {}, handlers = {}) {
-    const chatRequest = validateChatRequest(payload);
-    const documentContext = await getDocumentContext(chatRequest, context);
-    const result =
-      chatRequest.serviceId === "backend-services"
-        ? await requestAutomaticReplyStream(
-            chatRequest,
-            context,
-            handlers,
-            documentContext.instruction,
-          )
-        : await requestProviderReplyStream(
-            chatRequest,
-            resolveServiceId(chatRequest.serviceId, context),
-            context,
-            handlers,
-            documentContext.instruction,
-          );
-
-    return {
-      metadata: {
-        credentialSource: result.credentialSource,
-        model: result.model,
-        requestedModelId: chatRequest.modelId,
-        requestedServiceId: chatRequest.serviceId,
-        resolvedServiceId: result.resolvedServiceId,
-      },
-      reply: result.reply,
-    };
+    if (!routes.length) throw new HttpError(context.allowHosted === false ? 402 : 503,
+      "No model provider is available within your AI provider settings. Add an allowed provider key or enable hosted access.");
+    return routes;
   }
 
   async function getDocumentContext(chatRequest, context) {
-    if (!chatRequest.conversation.documents.length) {
-      return { chunks: [], instruction: null };
+    context.signal?.throwIfAborted();
+    if (!chatRequest.conversation.documents.length) return { chunks: [], instruction: null, sources: [] };
+    // Enforce the embedding-provider policy here as well as in documentService,
+    // so a replacement retrieval adapter cannot silently send data to OpenAI.
+    if (chatRequest.ai.allowedProviders && !chatRequest.ai.allowedProviders.includes("openai")) {
+      return { chunks: [], instruction: null, sources: [], warnings: ["Document search was skipped because its embedding provider is not allowed."] };
     }
+    if (!documentService) throw new HttpError(503, "Document retrieval is not configured.");
+    return documentService.retrieveContext({ chatRequest, context, allowedProviders: chatRequest.ai.allowedProviders });
+  }
 
-    if (!documentService) {
-      throw new HttpError(503, "Document retrieval is not configured.");
+  async function execute(chatRequest, context, handlers = null, instructionOverride = null) {
+    context.signal?.throwIfAborted();
+    const startedAt = Date.now();
+    const routes = getRoutes(chatRequest, context);
+    const budgetOptions = { maxInputCharacters: context.hostedMaxInputCharacters };
+    // Validate the latest prompt before starting embedding or provider calls.
+    const initialContext = prepareChatContext(chatRequest, {}, budgetOptions);
+    const documentContext = await getDocumentContext(initialContext.chatRequest, context);
+    context.signal?.throwIfAborted();
+    const prepared = documentContext.instruction || documentContext.warnings?.length
+      ? prepareChatContext(chatRequest, documentContext, budgetOptions) : initialContext;
+    const fallbacks = [];
+    const failures = [];
+    for (const route of routes) {
+      context.signal?.throwIfAborted();
+      const credential = getProviderCredential(route.serviceId, context);
+      const receipt = {
+        schemaVersion: 1,
+        status: "streaming",
+        model: route.model,
+        provider: route.serviceId,
+        mode: route.mode,
+        task: route.task,
+        reason: route.reason,
+        profileVersion: route.profileVersion,
+        sources: prepared.sources,
+        truncated: prepared.truncated,
+        fallbacks: [...fallbacks],
+        warnings: [...prepared.warnings, ...(chatRequest.serviceId === "backend-services" ? [PROFILE_EVIDENCE.limitation] : [])],
+      };
+      const metadata = {
+        credentialSource: credential.source,
+        model: route.model,
+        requestedModelId: chatRequest.modelId,
+        requestedServiceId: chatRequest.serviceId,
+        resolvedServiceId: route.serviceId,
+        execution: receipt,
+      };
+      let streamStarted = false;
+      const ensureReady = async () => {
+        context.signal?.throwIfAborted();
+        if (streamStarted) return;
+        streamStarted = true;
+        await handlers?.onReady?.(metadata);
+      };
+      const args = {
+        apiKey: credential.apiKey,
+        chatRequest: prepared.chatRequest,
+        database,
+        maxOutputTokens: credential.source === "hosted" ? context.hostedMaxOutputTokens : undefined,
+        maxInputCharacters: prepared.chatRequest.contextCharacterBudget,
+        model: route.model,
+        signal: context.signal,
+        systemInstruction: instructionOverride ?? (route.serviceId === "openai-agent"
+          ? buildOpenAIAgentInstruction(prepared.chatRequest)
+          : buildSystemInstruction(prepared.chatRequest)),
+        userId: context.userId,
+        usageMeter: credential.source === "hosted" ? context.usageMeter : null,
+      };
+      const inputSize = JSON.stringify({
+        instructions: args.systemInstruction,
+        messages: prepared.chatRequest.messages.map(({ role, content }) => ({ role, content })),
+      }).length;
+      if (inputSize > args.maxInputCharacters) {
+        throw new HttpError(413, "The prepared conversation exceeds the allowed context budget. Shorten the conversation or select less context.");
+      }
+      try {
+        const provider = PROVIDERS[route.serviceId];
+        const result = handlers ? await provider.stream({
+          ...args,
+          // A provider connection opening alone does not expose a client
+          // stream. Once any delta is exposed, retries would corrupt a reply.
+          onDelta: async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); },
+        }) : await provider.reply(args);
+        context.signal?.throwIfAborted();
+        if (handlers) await ensureReady();
+        const toolTruncated = result.steps?.some((step) => step.output?.truncated || step.output?.conversation?.truncated);
+        return {
+          metadata: {
+            ...metadata,
+            model: result.model,
+            ...(context.usageMeter ? { billing: context.usageMeter.summary() } : {}),
+            execution: {
+              ...receipt,
+              model: result.model,
+              status: "complete",
+              truncated: receipt.truncated || Boolean(toolTruncated),
+              warnings: toolTruncated ? [...receipt.warnings, "Workspace tool results were shortened to fit the context budget."] : receipt.warnings,
+              completedAt: new Date().toISOString(),
+              durationMs: Date.now() - startedAt,
+            },
+          },
+          reply: result.reply,
+        };
+      } catch (error) {
+        if (context.signal?.aborted || error?.name === "AbortError" || error?.billingFailure || error?.statusCode === 402 || streamStarted || chatRequest.serviceId !== "backend-services") throw error;
+        failures.push(error);
+        fallbacks.push({ provider: route.serviceId, model: route.model,
+          reason: `Provider request failed${error?.statusCode ? ` (HTTP ${error.statusCode})` : ""} before any response text was delivered.` });
+      }
     }
+    if (failures.length === 1) throw failures[0];
+    throw new HttpError(502, "Automatic routing tried every permitted, configured provider without success.");
+  }
 
-    return documentService.retrieveContext({ chatRequest, context });
+  function getPlannedCredentialSource(payload, context = {}) {
+    const [route] = getRoutes(validateChatRequest(payload), context);
+    return getProviderCredential(route.serviceId, context).source;
+  }
+
+  function titleChatRequest(payload) {
+    const title = validateChatTitleRequest(payload);
+    return {
+      ai: validateAIOptions(payload.ai),
+      workspaceContext: [],
+      conversation: { ancestorContext: [], branchAnchor: null, documents: [], id: "title-generation", parentId: null, title: "New chat" },
+      messages: [{ content: title.prompt, createdAt: new Date().toISOString(), id: "title-prompt", role: "user" }],
+      modelId: title.modelId,
+      serviceId: title.serviceId === "openai-agent" ? "openai-api" : title.serviceId,
+    };
+  }
+
+  async function generateTitle(payload, context = {}) {
+    const result = await execute(titleChatRequest(payload), context, null, buildChatTitleInstruction());
+    const generated = sanitizeGeneratedChatTitle(result.reply);
+    if (!generated) throw new HttpError(502, "The model returned an empty chat title.");
+    return { title: generated, ...(context.usageMeter ? { billing: context.usageMeter.summary() } : {}) };
   }
 
   function buildHealthPayload(databaseHealth) {
-    const services = {
-      "backend-services": {
-        configured: Boolean(
-          env.OPENAI_API_KEY ||
-            env.GEMINI_API_KEY ||
-            getXaiApiKey() ||
-            getHuggingFaceApiKey(),
-        ),
-      },
-      "gemini-api": {
-        configured: Boolean(env.GEMINI_API_KEY),
-        model: runtimeConfig.geminiModel,
-      },
-      "huggingface-api": {
-        configured: Boolean(getHuggingFaceApiKey()),
-        model: runtimeConfig.huggingFaceModel,
-      },
-      "openai-api": {
-        configured: Boolean(env.OPENAI_API_KEY),
-        model: runtimeConfig.openaiModel,
-      },
-      "openai-agent": {
-        configured: Boolean(env.OPENAI_API_KEY),
-        model: runtimeConfig.openaiModel,
-      },
-      "xai-api": {
-        configured: Boolean(getXaiApiKey()),
-        model: runtimeConfig.xaiModel,
-      },
-    };
-    const aiConfigured = services["backend-services"].configured;
-
-    return {
-      defaultBackendProvider: runtimeConfig.defaultBackendProvider,
-      services,
-      status: aiConfigured && databaseHealth.ready ? "ok" : "degraded",
-      storage: {
-        postgres: databaseHealth,
-      },
-    };
+    const services = Object.fromEntries(Object.keys(PROVIDERS).map((serviceId) => [serviceId, {
+      configured: Boolean(getHostedApiKey(serviceId)),
+      model: serviceId.startsWith("openai") ? runtimeConfig.openaiModel
+        : serviceId === "gemini-api" ? runtimeConfig.geminiModel
+        : serviceId === "huggingface-api" ? runtimeConfig.huggingFaceModel : runtimeConfig.xaiModel,
+    }]));
+    const aiConfigured = Object.values(services).some((service) => service.configured);
+    services["backend-services"] = { configured: aiConfigured };
+    return { defaultBackendProvider: runtimeConfig.defaultBackendProvider, services,
+      status: aiConfigured && databaseHealth.ready ? "ok" : "degraded", storage: { postgres: databaseHealth } };
   }
 
   return {
     buildHealthPayload,
     generateTitle,
+    createUsageMeter: (options) => createHostedUsageMeter({ env, ...options }),
+    getPlannedTitleCredentialSource: (payload, context = {}) => getProviderCredential(getRoutes(titleChatRequest(payload), context)[0].serviceId, context).source,
     getPlannedCredentialSource,
-    requestReply,
-    requestReplyStream,
+    requestReply: (payload, context = {}) => execute(validateChatRequest(payload), context),
+    requestReplyStream: (payload, context = {}, handlers = {}) => execute(validateChatRequest(payload), context, handlers),
   };
 }

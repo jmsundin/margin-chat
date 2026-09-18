@@ -57,14 +57,14 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
   {
     id: "backend-services",
     label: "Automatic",
-    description: "Let Margin Chat pick the best configured backend for the conversation.",
+    description: "Choose a model for the task, your context, and your speed preference. Each answer explains the selection.",
     iconLabel: "MC",
     keywords: ["automatic", "smart routing", "default", "orchestration", "backend"],
     modeLabel: "Auto",
     models: [
       {
         description:
-          "Let Margin Chat choose the best configured backend for the conversation.",
+          "Match the task to an available model, with saved selection and context details for every answer.",
         id: "smart-routing",
         label: "Smart routing",
       },

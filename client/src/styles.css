@@ -4352,6 +4352,8 @@ button {
 
 .composer {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   flex-shrink: 0;
   justify-content: center;
   margin-top: auto;
@@ -6506,7 +6508,7 @@ button {
   display: grid;
   flex: 0 0 auto;
   gap: 4px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 4px;
 }
 
@@ -12202,3 +12204,232 @@ body .live-markdown-editor {
 .vault-conflict-versions { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; width: 100%; }
 .vault-conflict-versions label { display: grid; gap: 8px; min-width: 0; }
 .vault-conflict-versions textarea { width: 100%; min-height: 180px; max-height: 350px; resize: vertical; font: 12px/1.5 monospace; color: inherit; background: transparent; border: 1px solid var(--border-color, #7775); border-radius: 8px; padding: 8px; box-sizing: border-box; }
+.ai-controls {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  width: min(100%, 768px);
+  margin: 0 auto;
+  min-width: 0;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ai-controls > summary, .ai-response-details > summary { cursor: pointer; }
+.ai-controls-body { display: grid; gap: 12px; padding: 12px 0 6px; max-height: min(50dvh, 440px); overflow-y: auto; }
+.ai-controls-body > label { display: grid; gap: 5px; font-weight: 500; }
+.ai-controls select, .ai-context-picker > input {
+  box-sizing: border-box; width: 100%; min-width: 0; padding: 8px;
+  border: 1px solid var(--line-strong); border-radius: 8px;
+  color: var(--ink); background: var(--bg); font: inherit;
+}
+.ai-provider-options { display: flex; flex-wrap: wrap; gap: 8px 14px; border: 0; padding: 0; margin: 0; }
+.ai-provider-options legend { margin-bottom: 7px; }
+.ai-provider-options label, .ai-context-options label { display: flex; align-items: center; gap: 6px; }
+.ai-context-picker { display: grid; gap: 7px; }
+.ai-context-options { max-height: 180px; overflow-y: auto; display: grid; gap: 8px; }
+.ai-context-options small { margin-left: auto; }
+.ai-context-help { margin: 0; font-size: 11px; line-height: 1.5; }
+.ai-response-details { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; line-height: 1.5; }
+.ai-response-details > summary { color: var(--muted); overflow-wrap: anywhere; }
+.ai-response-details > summary > span + span { margin-left: 12px; }
+.ai-response-details strong { font-weight: 550; }
+.ai-response-body { padding: 6px 0; }
+.ai-response-body dl { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.ai-response-body dl div { display: grid; gap: 2px; }
+.ai-response-body dt, .ai-response-body small { opacity: .7; }
+.ai-response-body dd { margin: 0; }
+.ai-used-sources ul, .ai-response-body ul { padding-left: 18px; }
+.ai-used-sources li { margin: 8px 0; }
+.ai-used-sources li small { display: block; }
+.ai-used-sources li p { white-space: pre-wrap; margin: 4px 0; }
+.ai-used-sources button { padding: 0; border: 0; background: transparent; color: inherit; text-decoration: underline; font: inherit; cursor: pointer; }
+.ai-detail-warning { color: var(--muted); }
+
+/* Prepaid billing dashboard */
+.profile-dialog.is-billing {
+  width: min(100%, 880px);
+}
+
+.billing-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.billing-dashboard h2,
+.billing-dashboard h3,
+.billing-dashboard p,
+.billing-dashboard dl {
+  margin: 0;
+}
+
+.billing-dashboard-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.billing-dashboard-heading h2 {
+  font-size: 1.5rem;
+  margin-top: 4px;
+}
+
+.billing-balance-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+}
+
+.billing-balance-card,
+.billing-funding-card {
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.billing-balance-card.is-available {
+  border-color: var(--accent);
+}
+
+.billing-balance-card dt,
+.billing-balance-card small,
+.billing-budget-help,
+.billing-funding-card p,
+.billing-funding-card small,
+.billing-history-empty {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.billing-balance-card dd {
+  color: var(--ink);
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}
+
+.billing-funding-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.billing-funding-card {
+  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.billing-funding-card h3 {
+  color: var(--ink);
+  font-size: 1.4rem;
+}
+
+.billing-funding-card h3 span {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 400;
+}
+
+.billing-funding-card .thread-dialog-field {
+  width: 100%;
+}
+
+.billing-funding-card .thread-dialog-button {
+  margin-top: auto;
+  width: 100%;
+}
+
+.billing-funding-card .billing-plan-status {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.billing-history {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.billing-history-scroll {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow-x: auto;
+}
+
+.billing-history-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: left;
+  width: 100%;
+}
+
+.billing-history-table th,
+.billing-history-table td {
+  padding: 12px 14px;
+  vertical-align: top;
+}
+
+.billing-history-table th {
+  background: var(--panel-strong);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.billing-history-table td {
+  border-top: 1px solid var(--line);
+}
+
+.billing-history-table td:nth-child(3) {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.billing-history-table a,
+.billing-history-table .is-credit {
+  color: var(--accent);
+}
+
+.billing-dashboard .sr-only {
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
+@media (max-width: 620px) {
+  .billing-funding-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .billing-balance-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .billing-balance-card {
+    padding: 12px;
+  }
+
+  .billing-dashboard-heading > .thread-dialog-button {
+    width: 100%;
+  }
+}
+
+.billing-usage-estimate {
+  color: var(--muted);
+  display: block;
+  font-size: 0.76rem;
+  margin-top: 4px;
+}

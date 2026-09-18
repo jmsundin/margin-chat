@@ -200,4 +200,25 @@ describe("extension upload lifecycle", () => {
     expect(storage.pendingSave.capture).toBeDefined();
     expect(storage.pendingSave.receipt).toBeUndefined();
   });
+  test("malformed receipts remain retryable with the original capture ID", async () => {
+    const receipt = { id: "saved-id", createdAt: "2026-09-12T10:00:00.000Z" };
+    for (const malformed of [
+      { ...receipt, id: 42 },
+      { ...receipt, createdAt: "not-a-date" },
+      { ...receipt, createdAt: 2026 },
+    ]) {
+      const storage: Record<string, any> = { connection: connection() };
+      const draft = capture();
+      const worker = createWorker(storage, (async () => Response.json({ capture: malformed })) as typeof fetch);
+      expect((await worker.dispatch({ type: "save", capture: draft })).error).toContain("did not confirm");
+      expect(storage.pendingSave.capture).toEqual(draft);
+      expect(storage.pendingSave.receipt).toBeUndefined();
+      const resumed = createWorker(storage, (async (_url, init) => {
+        expect(JSON.parse(String(init?.body))).toEqual(draft);
+        return Response.json({ capture: receipt, futureOptionalField: true });
+      }) as typeof fetch);
+      expect((await resumed.dispatch({ type: "retry" })).receipt).toEqual(receipt);
+      expect(storage.pendingSave.error).toBeUndefined();
+    }
+  });
 });

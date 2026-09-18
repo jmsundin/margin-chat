@@ -1,5 +1,7 @@
 import type { BackendServiceId } from "../types";
 import { ApiError } from "./apiError";
+import { normalizeAIExecution } from "@margin-chat/workspace-contracts";
+import type { AIExecutionRecord } from "../types";
 
 export interface ChatReplyResponse {
   metadata: {
@@ -8,6 +10,7 @@ export interface ChatReplyResponse {
     requestedModelId?: string;
     requestedServiceId: BackendServiceId;
     resolvedServiceId: BackendServiceId;
+    execution?: AIExecutionRecord;
   };
   reply: string;
 }
@@ -23,12 +26,14 @@ interface ChatStreamEvent {
 export async function readChatReplyStream(
   body: ReadableStream<Uint8Array>,
   onDelta?: (delta: string) => void,
+  onMetadata?: (metadata: ChatReplyResponse["metadata"]) => void,
 ): Promise<ChatReplyResponse> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   let metadata: ChatReplyResponse["metadata"] | null = null;
   let reply = "";
+  let completed = false;
 
   const handleLine = (line: string) => {
     if (!line.trim()) {
@@ -51,13 +56,15 @@ export async function readChatReplyStream(
     }
 
     if (event.metadata) {
-      metadata = event.metadata;
+      metadata = { ...event.metadata, execution: normalizeAIExecution(event.metadata.execution) };
+      onMetadata?.(metadata);
     }
 
     if (event.type === "delta" && typeof event.delta === "string") {
       reply += event.delta;
       onDelta?.(event.delta);
     }
+    if (event.type === "done") completed = true;
   };
 
   try {
@@ -82,6 +89,9 @@ export async function readChatReplyStream(
 
     if (!metadata || !reply.trim()) {
       throw new Error("Backend returned an empty assistant reply.");
+    }
+    if (!completed) {
+      throw new Error("The assistant stream ended before the reply was complete.");
     }
 
     return { metadata, reply };

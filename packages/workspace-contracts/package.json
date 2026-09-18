@@ -1,0 +1,28 @@
+{
+  "name": "@margin-chat/workspace-contracts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.mts",
+      "default": "./index.mjs"
+    },
+    "./browser": {
+      "types": "./browser.d.mts",
+      "default": "./browser.mjs"
+    },
+    "./server": {
+      "types": "./index.d.mts",
+      "default": "./index.mjs"
+    },
+    "./markdown": {
+      "types": "./markdown.d.mts",
+      "default": "./markdown.mjs"
+    },
+    "./model": {
+      "types": "./workspaceModel.d.mts",
+      "default": "./workspaceModel.mjs"
+    }
+  }
+}

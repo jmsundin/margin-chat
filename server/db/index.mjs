@@ -1,7 +1,5 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import pg from "pg";
+import { assertMigrationsReady, loadMigrations, migrateDatabase } from "./migrations.mjs";
 import {
   createAuthSession,
   createPasswordResetToken,
@@ -19,6 +17,8 @@ import {
 } from "./apiKeyRepository.mjs";
 import {
   chargeHostedRequest,
+  settleHostedRequest,
+  getBillingDashboard,
   creditHostedBalance,
   getUserBillingAccount,
   incrementTrialApiCallsUsed,
@@ -46,20 +46,28 @@ import * as captures from "./captureRepository.mjs";
 
 const { Pool } = pg;
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const schemaSql = readFileSync(resolve(__dirname, "schema.sql"), "utf8");
+export function resolveSchemaMode(env, requestedMode) {
+  const production = env.NODE_ENV === "production" || Boolean(env.VERCEL);
+  const schemaMode = requestedMode ?? env.DB_SCHEMA_MODE ?? (production ? "verify" : "migrate");
+  if (!["verify", "migrate"].includes(schemaMode)) throw new Error("DB_SCHEMA_MODE must be verify or migrate.");
+  if (production && schemaMode !== "verify") throw new Error("Production applications must use DB_SCHEMA_MODE=verify; run migrations separately before deploying.");
+  return schemaMode;
+}
 
-export function createAppDatabase(env) {
+export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
+  const schemaMode = resolveSchemaMode(env, requestedMode);
   const connectionOptions = buildConnectionOptions(env);
   const connectionMetadata = getConnectionMetadata(env);
   const pool = new Pool({
     ...connectionOptions,
+    connectionTimeoutMillis: 10_000,
     max: 10,
   });
 
   let initializationError = null;
   let initializationState = "pending";
   let initializationPromise = null;
+  let migrations = null;
 
   async function ready() {
     if (!initializationPromise) {
@@ -74,7 +82,20 @@ export function createAppDatabase(env) {
 
   async function initialize() {
     try {
-      await pool.query(schemaSql);
+      migrations ??= await loadMigrations();
+      const client = await pool.connect();
+      let clientError;
+      try {
+        if (schemaMode === "migrate") await migrateDatabase(client, { migrations });
+        else await assertMigrationsReady(client, { migrations });
+      } catch (error) {
+        clientError = error;
+        throw error;
+      } finally {
+        // Discard failed migration sessions so a failed unlock or lost COMMIT
+        // cannot return a connection with uncertain state to the application.
+        client.release(clientError);
+      }
       initializationError = null;
       initializationState = "ready";
     } catch (error) {
@@ -250,16 +271,13 @@ export function createAppDatabase(env) {
     const normalizedState = normalizeAppState(payload);
 
     return withClient(async (client) => {
-      const revision = await writeState(
+      await writeState(
         client,
         userId,
         normalizedState,
         options,
       );
-      return {
-        revision,
-        state: await readState(client, userId),
-      };
+      return readWorkspace(client, userId);
     });
   }
 
@@ -274,7 +292,25 @@ export function createAppDatabase(env) {
       host: connectionMetadata.host,
       port: connectionMetadata.port,
       ready: initializationState === "ready",
+      schemaMode,
+      migration: migrations?.at(-1)?.id ?? null,
     };
+  }
+
+  async function checkHealth() {
+    try {
+      await ready();
+      const client = await pool.connect();
+      try {
+        await client.query("select 1");
+        await assertMigrationsReady(client, { migrations });
+      } finally {
+        client.release();
+      }
+      return { ...getHealth(), ready: true, error: null };
+    } catch (error) {
+      return { ...getHealth(), ready: false, error: error.message };
+    }
   }
 
   void ready().catch((error) => {
@@ -282,10 +318,13 @@ export function createAppDatabase(env) {
   });
 
   return {
+    checkHealth,
     ...Object.fromEntries(Object.entries(captures).map(([name, operation]) => [
       name, (args) => withClient((client) => operation(client, args)),
     ])),
     chargeHostedRequest: chargeHostedRequestRecord,
+    settleHostedRequest: (args) => withClient((client) => settleHostedRequest(client, args)),
+    getBillingDashboard: (userId) => withClient((client) => getBillingDashboard(client, userId)),
     close,
     createAuthSession: createAuthSessionRecord,
     createPasswordResetToken: createPasswordResetTokenRecord,

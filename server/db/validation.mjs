@@ -7,6 +7,7 @@ import {
   VALID_SERVICE_IDS,
 } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
+import { normalizeAISettings, normalizeAIExecution } from "@margin-chat/workspace-contracts";
 
 const DEFAULT_SERVICE_ID = "backend-services";
 
@@ -554,6 +555,7 @@ function normalizeConversation(expectedId, input) {
         ? []
         : normalizeNotes(expectedId, input.notes),
     modelId,
+    ...(input.ai ? { ai: normalizeAISettings(input.ai) } : {}),
     parentId:
       input.parentId === null || input.parentId === undefined
         ? null
@@ -765,6 +767,7 @@ function normalizeMessage(conversationId, index, input) {
       `Message ${index} in conversation "${conversationId}" id`,
     ),
     role: input.role,
+    ...(normalizeAIExecution(input.execution) ? { execution: normalizeAIExecution(input.execution) } : {}),
   };
 }
 

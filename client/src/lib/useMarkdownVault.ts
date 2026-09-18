@@ -5,10 +5,10 @@ import { getStateSavedAtStorageKey, getStateStorageKey } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { bytesToBase64, createBrowserVaultStore, exportVault, importVault } from "./vaultLocal";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
-import { sameVaultFile, type VaultFile, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
-import { normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
+import { type VaultFile, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
+import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import {
-  canSyncWorkspaceToCloud, chooseLocalDirectory, clearLocalDirectory, getLocalDirectoryStatus,
+  canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, clearLocalDirectory, getLocalDirectoryStatus,
   getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectoryWorkspace,
   readLocalDirectoryCompanions, syncLocalDirectoryCompanions,
   type LocalDirectoryStatus,
@@ -44,7 +44,9 @@ export function useMarkdownVault(args: {
   const engine = engineRef.current;
   const displayedFiles = useRef<Record<string, VaultFile>>({});
   const displayedState = useRef(args.state);
+  const [renderFiles] = useState(createVaultFileRenderer);
   const folder = useRef<MarkdownWorkspace | null>(null);
+  const folderId = useRef<string | null>(null);
   const folderCompanions = useRef<Record<string, VaultFile>>({});
   const mounted = useRef(true);
   const queue = useRef(Promise.resolve());
@@ -104,13 +106,17 @@ export function useMarkdownVault(args: {
 
   async function saveLatestAppState() {
     if (stateRef.current === displayedState.current) return engine.read();
+    if (hasSameAuthoredState(stateRef.current, displayedState.current)) {
+      displayedState.current = stateRef.current;
+      return engine.read();
+    }
     // A pristine empty editor is UI, not a new document resurrected after a remote deletion.
     const conversations = Object.values(stateRef.current.conversations);
     const pristine = conversations.length === 1 && conversations[0].kind !== "note" && conversations[0].title === "New chat"
       && !conversations[0].messages.length && !conversations[0].notes?.length && !conversations[0].documents?.length;
     if (!hasVaultContent.current && pristine) { displayedState.current = stateRef.current; return engine.read(); }
     const editingState = stateRef.current;
-    const next = stateToVaultFiles(editingState, displayedFiles.current);
+    const next = renderFiles(editingState, displayedFiles.current);
     const snapshot = await engine.edit(next, displayedFiles.current);
     displayedFiles.current = next;
     displayedState.current = editingState;
@@ -133,27 +139,59 @@ export function useMarkdownVault(args: {
   async function readFolder() {
     const status = await getLocalDirectoryStatus(user.id);
     if (mounted.current) setDirectoryStatus(status);
-    if (status.permission !== "granted") return;
-    const incoming = await readLocalDirectoryWorkspace(user.id, folder.current?.manifest);
+    if (status.permission !== "granted" || !status.directoryId) {
+      folderId.current = null; folder.current = null; folderCompanions.current = {};
+      return;
+    }
+    if (folderId.current !== status.directoryId) {
+      const baseline = (await engine.read()).directoryBaselines?.[status.directoryId];
+      folder.current = baseline ? {
+        manifest: baseline.manifest,
+        files: Object.fromEntries(Object.entries(baseline.files)
+          .filter(([path, file]) => /\.md$/i.test(path) && !/^(?:attachments|_conflicts)\//i.test(path) && !file.encoding)
+          .map(([path, file]) => [path, file.content])),
+      } : null;
+      folderCompanions.current = baseline ? Object.fromEntries(Object.entries(baseline.files)
+        .filter(([path]) => path === "workspace.json" || /^(?:attachments|_conflicts)\//i.test(path))) : {};
+      folderId.current = status.directoryId;
+    }
+    const incoming = await readLocalDirectoryWorkspace(user.id, folder.current?.manifest, folder.current?.files, status.directoryId);
     if (!incoming) return;
-    const companions = await readLocalDirectoryCompanions(user.id, folderCompanions.current) ?? {};
+    const companions = await readLocalDirectoryCompanions(user.id, folderCompanions.current, status.directoryId);
+    if (!companions) return;
     // Settings are parsed/canonicalized with Markdown; preserve raw companion bytes for disk checks.
     const withoutSettings = (files: Record<string, VaultFile>) => Object.fromEntries(Object.entries(files).filter(([path]) => path !== "workspace.json"));
     const next = { ...workspaceVaultFiles(incoming.workspace), ...withoutSettings(companions) };
     const expected = { ...(folder.current ? workspaceVaultFiles(folder.current) : {}), ...withoutSettings(folderCompanions.current) };
+    const baseline = folderBaseline(incoming.workspace, companions);
+    const directory = { id: status.directoryId, baseline };
     // An empty newly chosen directory is an output destination, not deletion of the vault.
-    if (folder.current || Object.keys(incoming.workspace.files).length || Object.keys(companions).length) await engine.edit(next, expected);
+    if (folder.current) await engine.edit(next, expected, directory);
+    else if (Object.keys(incoming.workspace.files).length || Object.keys(companions).length) await engine.import(next, directory);
+    else await engine.rememberDirectory(directory.id, baseline);
     folder.current = incoming.workspace;
     folderCompanions.current = companions;
   }
 
+  function folderBaseline(workspace: MarkdownWorkspace, companions: Record<string, VaultFile>) {
+    return { manifest: workspace.manifest, files: {
+      ...Object.fromEntries(Object.entries(workspace.files)
+        .filter(([path]) => !/^(?:attachments|_conflicts)\//i.test(path))
+        .map(([path, content]) => [path, { content, contentType: "text/markdown; charset=utf-8" }])),
+      ...companions,
+    } };
+  }
+
   async function writeFolder(snapshot: VaultSnapshot) {
-    if (!folder.current) return;
+    if (!folder.current || !folderId.current) return;
     const workspace = workspaceFromVault(snapshot.files, folder.current);
-    const status = await writeLocalDirectoryWorkspace(user.id, workspace, folder.current);
+    const status = await writeLocalDirectoryWorkspace(user.id, workspace, folder.current, folderId.current);
+    if (status.permission !== "granted") return;
+    const companions = await syncLocalDirectoryCompanions(user.id, snapshot.files, folderCompanions.current, folderId.current);
+    if (!companions) return;
+    await engine.rememberDirectory(folderId.current, folderBaseline(workspace, companions));
     folder.current = workspace;
-    const companions = await syncLocalDirectoryCompanions(user.id, snapshot.files, folderCompanions.current);
-    if (companions) folderCompanions.current = companions;
+    folderCompanions.current = companions;
     if (mounted.current) setDirectoryStatus(status);
   }
 
@@ -292,13 +330,17 @@ export function useMarkdownVault(args: {
     async flushLocal() { await saveAppState(); },
     async chooseDirectory() {
       // The chooser must run directly in the user gesture, before asynchronous queue work.
-      const status = await chooseLocalDirectory(user.id);
-      setDirectoryStatus(status);
-      if (status.permission !== "granted") return;
-      await enqueue(async () => { folder.current = null; folderCompanions.current = {}; await saveAndRefresh(false); });
+      const handle = await pickLocalDirectory();
+      if (!handle) return;
+      await enqueue(async () => {
+        const status = await connectLocalDirectory(user.id, handle);
+        setDirectoryStatus(status);
+        folderId.current = null; folder.current = null; folderCompanions.current = {};
+        if (status.permission === "granted") await saveAndRefresh(false);
+      });
     },
     async clearDirectory() {
-      await enqueue(async () => { await clearLocalDirectory(user.id); folder.current = null; folderCompanions.current = {}; setDirectoryStatus(await getLocalDirectoryStatus(user.id)); });
+      await enqueue(async () => { await clearLocalDirectory(user.id); folderId.current = null; folder.current = null; folderCompanions.current = {}; setDirectoryStatus(await getLocalDirectoryStatus(user.id)); });
     },
     async syncNow(onProgress?: (progress: StateUploadProgress) => void) {
       onProgress?.({ uploadedBytes: 0, totalBytes: 1 });
@@ -324,9 +366,7 @@ export function useMarkdownVault(args: {
       workspaceFromVault(files);
       await enqueue(async () => {
         await saveAppState();
-        const current = await engine.read();
-        const expected = Object.fromEntries(Object.entries(current.files).filter(([path, value]) => !files[path] || sameVaultFile(value, files[path])));
-        await engine.edit({ ...current.files, ...files }, expected);
+        await engine.import(files);
         await persistAndPublish();
         await saveAndRefresh(true);
       });

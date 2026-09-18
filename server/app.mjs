@@ -17,36 +17,34 @@ const projectRoot = resolve(__dirname, "..");
 
 let cachedAppContext = null;
 
-function buildAppContext() {
-  loadProjectEnv(projectRoot, process.env);
-
-  const runtimeConfig = createRuntimeConfig(process.env);
-  const database = createAppDatabase(process.env);
+export function createAppContext(env = process.env) {
+  const runtimeConfig = createRuntimeConfig(env);
+  const database = createAppDatabase(env);
   const apiKeyService = createApiKeyService({
     database,
-    env: process.env,
+    env,
   });
   const authService = createAuthService({
     apiKeyService,
     database,
-    env: process.env,
+    env,
     runtimeConfig,
   });
   const billingService = createBillingService({
     database,
-    env: process.env,
+    env,
   });
-  const vaultService = createVaultService({ database, env: process.env });
+  const vaultService = createVaultService({ database, env });
   const documentService = createDocumentService({
     database,
-    env: process.env,
+    env,
     vaultService,
   });
   const chatService = createChatService({
     apiKeyService,
     database,
     documentService,
-    env: process.env,
+    env,
     runtimeConfig,
   });
   const apiHandler = createApiHandler({
@@ -76,7 +74,8 @@ function buildAppContext() {
 
 export function getAppContext() {
   if (!cachedAppContext) {
-    cachedAppContext = buildAppContext();
+    loadProjectEnv(projectRoot, process.env);
+    cachedAppContext = createAppContext(process.env);
   }
 
   return cachedAppContext;

@@ -1,411 +1,108 @@
-function clipText(value, maxLength = 220) {
-  if (typeof value !== "string") {
-    return "";
-  }
-
-  const normalized = value.replace(/\s+/g, " ").trim();
-
-  if (!normalized) {
-    return "";
-  }
-
-  return normalized.length <= maxLength
-    ? normalized
-    : `${normalized.slice(0, maxLength - 1).trimEnd()}…`;
+function clipText(value, maximum = 220) {
+  const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  return text.length <= maximum ? text : `${text.slice(0, maximum - 1)}…`;
 }
 
-function buildConversationPreview(conversation) {
-  for (let index = conversation.messages.length - 1; index >= 0; index -= 1) {
-    const content = clipText(conversation.messages[index]?.content ?? "", 160);
-
-    if (content) {
-      return content;
-    }
-  }
-
-  const standaloneNote = (conversation.notes ?? []).find(
-    (note) => note.kind === "standalone",
-  );
-
-  if (standaloneNote?.content) {
-    return clipText(standaloneNote.content, 160);
-  }
-
-  return conversation.branchAnchor?.quote
-    ? clipText(conversation.branchAnchor.quote, 160)
-    : "No messages yet.";
-}
-
-function getRootConversationId(conversations, conversationId) {
-  if (!conversationId) {
-    return null;
-  }
-
-  const visited = new Set();
-  let current = conversations[conversationId];
-
-  while (current && !visited.has(current.id)) {
-    if (current.parentId === null) {
-      return current.id;
-    }
-
-    visited.add(current.id);
-    current = conversations[current.parentId];
-  }
-
-  return null;
-}
-
-function buildConversationSearchText(conversation) {
-  return [
-    conversation.title,
-    conversation.branchAnchor?.quote ?? "",
-    conversation.branchAnchor?.prompt ?? "",
-    ...conversation.messages.slice(-8).map((message) => message.content),
-    ...(conversation.notes ?? []).map((note) => note.content),
-  ]
-    .join("\n")
-    .toLowerCase();
-}
-
-function scoreConversationMatch(conversation, normalizedQuery) {
-  if (!normalizedQuery) {
-    return 0;
-  }
-
-  const title = conversation.title.toLowerCase();
-  const anchorQuote = conversation.branchAnchor?.quote?.toLowerCase() ?? "";
-  const anchorPrompt = conversation.branchAnchor?.prompt?.toLowerCase() ?? "";
-  const haystack = buildConversationSearchText(conversation);
-  let score = 0;
-
-  if (title.includes(normalizedQuery)) {
-    score += 12;
-  }
-
-  if (anchorQuote.includes(normalizedQuery) || anchorPrompt.includes(normalizedQuery)) {
-    score += 7;
-  }
-
-  if (haystack.includes(normalizedQuery)) {
-    score += 4;
-  }
-
-  for (const token of normalizedQuery.split(/\s+/).filter(Boolean)) {
-    if (title.includes(token)) {
-      score += 3;
-    }
-
-    if (haystack.includes(token)) {
-      score += 1;
-    }
-  }
-
-  return score;
-}
-
-function summarizeConversation(conversations, conversation) {
+function safeSnapshot(item) {
+  const note = typeof item.content === "string";
   return {
-    conversation_id: conversation.id,
-    kind: conversation.kind ?? "chat",
-    title: conversation.title,
-    parent_id: conversation.parentId,
-    root_conversation_id:
-      getRootConversationId(conversations, conversation.id) ?? conversation.id,
-    updated_at: conversation.updatedAt,
-    branch_anchor_quote: conversation.branchAnchor?.quote ?? null,
-    message_count: conversation.messages.length,
-    preview: buildConversationPreview(conversation),
-    service_id: conversation.serviceId,
+    id: item.id,
+    title: String(item.title ?? ""),
+    kind: note ? "note" : "chat",
+    parentId: item.parentId ?? null,
+    updatedAt: item.updatedAt ?? "",
+    branchAnchor: item.branchAnchor ? { quote: item.branchAnchor.quote, prompt: item.branchAnchor.prompt } : null,
+    messages: note ? [{ id: `${item.id}-body`, role: "user", content: item.content }] : (item.messages ?? [])
+      .filter((message) => message.role !== "system")
+      .map(({ id, role, content }) => ({ id, role, content })),
   };
 }
 
-function buildCurrentConversationSnapshot(chatRequest, existingConversation) {
-  const firstMessage = chatRequest.messages[0];
-  const lastMessage = chatRequest.messages[chatRequest.messages.length - 1];
-  const now = new Date().toISOString();
-
-  return {
-    branchAnchor:
-      chatRequest.conversation.branchAnchor ?? existingConversation?.branchAnchor ?? null,
-    childIds: existingConversation?.childIds ?? [],
-    createdAt:
-      existingConversation?.createdAt ??
-      firstMessage?.createdAt ??
-      lastMessage?.createdAt ??
-      now,
-    id: chatRequest.conversation.id,
-    documents: chatRequest.conversation.documents ?? [],
-    messages: chatRequest.messages.map((message) => ({
-      content: message.content,
-      createdAt: message.createdAt,
-      id: message.id,
-      role: message.role,
-    })),
-    modelId: chatRequest.modelId,
-    parentId: chatRequest.conversation.parentId,
-    serviceId: chatRequest.serviceId,
-    title: chatRequest.conversation.title,
-    updatedAt: lastMessage?.createdAt ?? existingConversation?.updatedAt ?? now,
-  };
+function permittedSnapshots(chatRequest) {
+  const ai = chatRequest.ai ?? { contextScope: "conversation", selectedConversationIds: [] };
+  const selected = new Set(ai.selectedConversationIds ?? []);
+  const workspace = (chatRequest.workspaceContext ?? []).filter((item) => chatRequest.contextPrepared ||
+    ai.contextScope === "workspace" || (ai.contextScope === "selected" && selected.has(item.id)));
+  const items = [
+    ...workspace,
+    ...(chatRequest.conversation.ancestorContext ?? []),
+    { ...chatRequest.conversation, messages: chatRequest.messages },
+  ];
+  // Local request state is authoritative. Never load the database as a fallback:
+  // a missing snapshot does not grant access to the rest of a user's workspace.
+  return new Map(items.map((item) => [item.id, safeSnapshot(item)]));
 }
 
-function mergeWorkspaceState({ chatRequest, persistedState }) {
-  const conversations = {
-    ...(persistedState?.conversations ?? {}),
-  };
-  const existingConversation = conversations[chatRequest.conversation.id];
-  const currentConversation = buildCurrentConversationSnapshot(
-    chatRequest,
-    existingConversation,
-  );
-
-  conversations[currentConversation.id] = currentConversation;
-
-  if (
-    currentConversation.parentId &&
-    conversations[currentConversation.parentId] &&
-    !conversations[currentConversation.parentId].childIds.includes(currentConversation.id)
-  ) {
-    conversations[currentConversation.parentId] = {
-      ...conversations[currentConversation.parentId],
-      childIds: [
-        ...conversations[currentConversation.parentId].childIds,
-        currentConversation.id,
-      ],
-      updatedAt: currentConversation.updatedAt,
-    };
-  }
-
-  const rootId =
-    getRootConversationId(conversations, currentConversation.id) ??
-    persistedState?.rootId ??
-    currentConversation.id;
-
+function summarize(item) {
   return {
-    activeConversationId: currentConversation.id,
-    conversations,
-    defaultModelId: persistedState?.defaultModelId ?? currentConversation.modelId,
-    defaultServiceId:
-      persistedState?.defaultServiceId ?? currentConversation.serviceId,
-    graphLayouts: persistedState?.graphLayouts ?? {},
-    groups: persistedState?.groups ?? {},
-    pinnedThreadIds: persistedState?.pinnedThreadIds ?? [],
-    railOpen: persistedState?.railOpen ?? false,
-    rootId,
+    conversation_id: item.id,
+    kind: item.kind,
+    title: item.title,
+    parent_id: item.parentId,
+    updated_at: item.updatedAt,
+    message_count: item.messages.length,
+    preview: clipText(item.messages.at(-1)?.content, 160),
   };
 }
 
 export const OPENAI_AGENT_TOOL_DEFINITIONS = [
   {
-    type: "function",
-    name: "search_conversations",
-    description:
-      "Search the current user's saved Margin Chat conversations by title, branch anchor text, and recent message content.",
+    type: "function", name: "search_conversations",
+    description: "Search only the permitted local conversation and note snapshot supplied for this request. Private margin annotations are excluded.",
     strict: true,
-    parameters: {
-      type: "object",
-      properties: {
-        query: {
-          type: "string",
-          description: "Search phrase to match against saved conversations.",
-        },
-      },
-      required: ["query"],
-      additionalProperties: false,
-    },
+    parameters: { type: "object", properties: { query: { type: "string", description: "Text to find in permitted titles and content." } }, required: ["query"], additionalProperties: false },
   },
   {
-    type: "function",
-    name: "list_recent_conversations",
-    description:
-      "List the user's most recently updated conversations when you need to browse the workspace before answering.",
+    type: "function", name: "list_recent_conversations",
+    description: "List recent conversations and notes within this request's permitted local snapshot.",
     strict: true,
-    parameters: {
-      type: "object",
-      properties: {
-        limit: {
-          type: "integer",
-          description: "How many conversations to return, between 1 and 10.",
-        },
-      },
-      required: ["limit"],
-      additionalProperties: false,
-    },
+    parameters: { type: "object", properties: { limit: { type: "integer", description: "Number of items, from 1 to 10." } }, required: ["limit"], additionalProperties: false },
   },
   {
-    type: "function",
-    name: "get_conversation",
-    description:
-      "Retrieve a saved conversation, including recent messages, branch anchor details, and child branches.",
+    type: "function", name: "get_conversation",
+    description: "Read a conversation or note from this request's permitted local snapshot. Other content is unavailable.",
     strict: true,
-    parameters: {
-      type: "object",
-      properties: {
-        conversation_id: {
-          type: "string",
-          description: "Exact Margin Chat conversation id to inspect.",
-        },
-      },
-      required: ["conversation_id"],
-      additionalProperties: false,
-    },
+    parameters: { type: "object", properties: { conversation_id: { type: "string", description: "Exact permitted conversation or note ID." } }, required: ["conversation_id"], additionalProperties: false },
   },
 ];
 
-export function createOpenAIAgentToolExecutor({
-  chatRequest,
-  database,
-  userId,
-}) {
-  let workspaceStatePromise = null;
+export function createOpenAIAgentToolExecutor({ chatRequest }) {
+  const snapshots = permittedSnapshots(chatRequest);
+  let remainingCharacters = chatRequest.ai?.mode === "fast" ? 6_000 : chatRequest.ai?.mode === "thorough" ? 24_000 : 12_000;
 
-  async function getWorkspaceState() {
-    if (!workspaceStatePromise) {
-      workspaceStatePromise = database
-        .loadState(userId)
-        .then((persistedState) =>
-          mergeWorkspaceState({
-            chatRequest,
-            persistedState,
-          }),
-        );
-    }
-
-    return workspaceStatePromise;
-  }
-
-  async function searchConversations({ query }) {
-    const state = await getWorkspaceState();
-    const normalizedQuery = String(query ?? "").trim().toLowerCase();
-    const conversations = Object.values(state.conversations);
-
-    if (!normalizedQuery) {
-      return {
-        matches: [],
-        query: "",
-        total_matches: 0,
-      };
-    }
-
-    const matches = conversations
-      .map((conversation) => ({
-        conversation,
-        score: scoreConversationMatch(conversation, normalizedQuery),
-      }))
-      .filter((entry) => entry.score > 0)
-      .sort((left, right) => {
-        if (right.score !== left.score) {
-          return right.score - left.score;
-        }
-
-        return right.conversation.updatedAt.localeCompare(left.conversation.updatedAt);
-      })
-      .slice(0, 6)
-      .map((entry) => summarizeConversation(state.conversations, entry.conversation));
-
-    return {
-      matches,
-      query: normalizedQuery,
-      total_matches: matches.length,
-    };
-  }
-
-  async function listRecentConversations({ limit }) {
-    const state = await getWorkspaceState();
-    const nextLimit = Math.min(10, Math.max(1, Number(limit) || 5));
-    const conversations = Object.values(state.conversations)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .slice(0, nextLimit)
-      .map((conversation) => summarizeConversation(state.conversations, conversation));
-
-    return {
-      conversations,
-      total_returned: conversations.length,
-    };
-  }
-
-  async function getConversation({ conversation_id: conversationId }) {
-    const state = await getWorkspaceState();
-    const conversation = state.conversations[String(conversationId ?? "")];
-
-    if (!conversation) {
-      return {
-        conversation_id: String(conversationId ?? ""),
-        found: false,
-      };
-    }
-
-    const childConversations = conversation.childIds
-      .map((childId) => state.conversations[childId])
-      .filter(Boolean)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((childConversation) => ({
-        branch_anchor_quote: childConversation.branchAnchor?.quote ?? null,
-        conversation_id: childConversation.id,
-        title: childConversation.title,
-        updated_at: childConversation.updatedAt,
-      }));
-    const visibleMessages = conversation.messages.slice(-12).map((message) => ({
-      content: clipText(message.content, 700),
-      created_at: message.createdAt,
-      id: message.id,
-      role: message.role,
-    }));
-
-    return {
-      conversation: {
-        branch_anchor: conversation.branchAnchor
-          ? {
-              prompt: conversation.branchAnchor.prompt,
-              quote: conversation.branchAnchor.quote,
-              source_conversation_id: conversation.branchAnchor.sourceConversationId,
-              source_message_id: conversation.branchAnchor.sourceMessageId,
-            }
-          : null,
-        child_conversations: childConversations,
-        id: conversation.id,
-        message_count: conversation.messages.length,
-        messages: visibleMessages,
-        model_id: conversation.modelId,
-        parent_id: conversation.parentId,
-        root_conversation_id:
-          getRootConversationId(state.conversations, conversation.id) ?? conversation.id,
-        service_id: conversation.serviceId,
-        title: conversation.title,
-        truncated_message_count: Math.max(0, conversation.messages.length - visibleMessages.length),
-        updated_at: conversation.updatedAt,
-      },
-      found: true,
-    };
-  }
-
-  return async function executeTool(name, args) {
-    try {
-      if (name === "search_conversations") {
-        return await searchConversations(args);
+  return async function executeTool(name, args = {}) {
+    let result;
+    if (name === "search_conversations") {
+      const query = String(args.query ?? "").trim().toLowerCase();
+      const tokens = query.split(/\s+/).filter(Boolean);
+      const matches = query ? [...snapshots.values()].map((item) => {
+        const title = item.title.toLowerCase();
+        const text = [title, item.branchAnchor?.quote, item.branchAnchor?.prompt, ...item.messages.map((message) => message.content)].join("\n").toLowerCase();
+        const score = tokens.reduce((sum, token) => sum + (title.includes(token) ? 3 : text.includes(token) ? 1 : 0), 0);
+        return { item, score };
+      }).filter(({ score }) => score > 0).sort((a, b) => b.score - a.score) : [];
+      result = { query, matches: matches.slice(0, 6).map(({ item }) => summarize(item)), total_matches: matches.length, truncated: matches.length > 6 };
+    } else if (name === "list_recent_conversations") {
+      const count = Math.max(1, Math.min(10, Math.floor(Number(args.limit)) || 5));
+      const items = [...snapshots.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      result = { conversations: items.slice(0, count).map(summarize), total_returned: Math.min(count, items.length), truncated: items.length > count };
+    } else if (name === "get_conversation") {
+      const item = snapshots.get(String(args.conversation_id ?? ""));
+      if (!item) result = { conversation_id: String(args.conversation_id ?? ""), found: false };
+      else {
+        const messages = item.messages.slice(-12).map((message) => ({ ...message, content: clipText(message.content, 700) }));
+        const truncated = messages.length < item.messages.length || item.messages.slice(-12).some((message) => message.content.length > 700);
+        result = { found: true, conversation: {
+          id: item.id, kind: item.kind, title: item.title, parent_id: item.parentId,
+          updated_at: item.updatedAt, branch_anchor: item.branchAnchor,
+          messages, message_count: item.messages.length,
+          truncated_message_count: item.messages.length - messages.length, truncated,
+        } };
       }
-
-      if (name === "list_recent_conversations") {
-        return await listRecentConversations(args);
-      }
-
-      if (name === "get_conversation") {
-        return await getConversation(args);
-      }
-
-      return {
-        error: `Unknown tool "${name}".`,
-        ok: false,
-      };
-    } catch (error) {
-      return {
-        error:
-          error instanceof Error && error.message
-            ? error.message
-            : "The workspace tool failed unexpectedly.",
-        ok: false,
-      };
-    }
+    } else result = { ok: false, error: "Unknown workspace tool." };
+    const size = JSON.stringify(result).length;
+    if (size > remainingCharacters) return { ok: false, truncated: true, error: "The context budget for workspace tools is exhausted. Answer from the supplied context and disclose any missing information." };
+    remainingCharacters -= size;
+    return result;
   };
 }

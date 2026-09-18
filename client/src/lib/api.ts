@@ -1,12 +1,16 @@
 import { ApiError } from "./apiError";
 import { readChatReplyStream, type ChatReplyResponse } from "./chatStream";
 import type { ConversationContext } from "./chatContext";
+import type { WorkspaceContextItem } from "./aiContext";
+import type { AISettings } from "../types";
 import type {
   AppState,
   ApiKeyProvider,
   ApiKeySettings,
   AuthenticatedUser,
   BackendServiceId,
+  BillingDashboardData,
+  CheckoutConfirmation,
   ConversationDocument,
   Message,
 } from "../types";
@@ -42,11 +46,6 @@ export interface PasswordResetRequestResponse {
 
 interface RedirectSessionResponse {
   url: string;
-}
-
-interface CheckoutConfirmationResponse {
-  confirmed: boolean;
-  status: string;
 }
 
 interface ApiKeySettingsResponse {
@@ -129,20 +128,35 @@ function ensureOk(
 }
 
 export async function requestChatReply(args: {
+  expectedUserId?: string;
+  ai?: AISettings;
+  workspaceContext?: WorkspaceContextItem[];
+  workspaceContextTruncated?: boolean;
   conversation: ConversationContext;
   messages: Message[];
   modelId: string;
   onDelta?: (delta: string) => void;
+  onMetadata?: (metadata: ChatReplyResponse["metadata"]) => void;
   serviceId: BackendServiceId;
   signal?: AbortSignal;
 }): Promise<ChatReplyResponse> {
-  const { onDelta, signal, ...requestBody } = args;
+  const { onDelta, onMetadata, signal, expectedUserId, ...requestBody } = args;
+  const promptMessage = ({ id, role, content, createdAt }: Message) => ({ id, role, content, createdAt });
   const response = await fetch("/api/chat", {
-    body: JSON.stringify(requestBody),
+    // Receipts belong in persistence, not a new prompt's transport payload.
+    body: JSON.stringify({
+      ...requestBody,
+      messages: requestBody.messages.map(promptMessage),
+      conversation: {
+        ...requestBody.conversation,
+        ancestorContext: requestBody.conversation.ancestorContext.map((ancestor) => ({ ...ancestor, messages: ancestor.messages.map(promptMessage) })),
+      },
+    }),
     credentials: "same-origin",
     headers: {
       Accept: "application/x-ndjson",
       "Content-Type": "application/json",
+      ...(expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {}),
     },
     method: "POST",
     signal,
@@ -164,6 +178,7 @@ export async function requestChatReply(args: {
     }
 
     onDelta?.(payload.reply);
+    onMetadata?.(payload.metadata);
     return payload;
   }
 
@@ -171,19 +186,23 @@ export async function requestChatReply(args: {
     throw new Error("Backend returned an empty assistant stream.");
   }
 
-  return readChatReplyStream(response.body, onDelta);
+  return readChatReplyStream(response.body, onDelta, onMetadata);
 }
 
 export async function requestChatTitle(args: {
+  ai?: AISettings;
+  expectedUserId?: string;
   modelId: string;
   prompt: string;
   serviceId: BackendServiceId;
 }): Promise<string> {
+  const { expectedUserId, ...body } = args;
   const response = await fetch("/api/chat/title", {
-    body: JSON.stringify(args),
+    body: JSON.stringify(body),
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
+      ...(expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {}),
     },
     method: "POST",
   });
@@ -206,10 +225,14 @@ export async function requestChatTitle(args: {
 
 export async function requestUploadDocument(
   file: File,
+  expectedUserId?: string,
+  ai?: AISettings,
 ): Promise<ConversationDocument> {
   const form = new FormData();
   form.set("file", file);
+  if (ai) form.set("ai", JSON.stringify(ai));
   const response = await fetch("/api/documents", {
+    headers: expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {},
     body: form,
     credentials: "same-origin",
     method: "POST",
@@ -233,10 +256,11 @@ export async function requestUploadDocument(
   return payload.document;
 }
 
-export async function requestDeleteDocument(documentId: string): Promise<void> {
+export async function requestDeleteDocument(documentId: string, expectedUserId?: string): Promise<void> {
   const response = await fetch(
     `/api/documents/${encodeURIComponent(documentId)}`,
     {
+      headers: expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {},
       credentials: "same-origin",
       method: "DELETE",
     },
@@ -570,9 +594,10 @@ export async function requestUpdateApiKeys(args: {
   return payload.apiKeys;
 }
 
-export async function requestCreateCheckoutSession(): Promise<string> {
+export async function requestCreateCheckoutSession(expectedUserId?: string): Promise<string> {
   const response = await fetch("/api/billing/checkout", {
     credentials: "same-origin",
+    headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
     method: "POST",
   });
   const payload = (await readJson(response)) as RedirectSessionResponse | ErrorPayload | null;
@@ -588,38 +613,87 @@ export async function requestCreateCheckoutSession(): Promise<string> {
 
 export async function requestConfirmCheckoutSession(
   sessionId: string,
-): Promise<CheckoutConfirmationResponse> {
+  expectedUserId?: string,
+): Promise<CheckoutConfirmation> {
   const response = await fetch("/api/billing/checkout/confirm", {
     body: JSON.stringify({ sessionId }),
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
+      ...(expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : {}),
     },
     method: "POST",
   });
   const payload = (await readJson(response)) as
-    | CheckoutConfirmationResponse
+    | CheckoutConfirmation
     | ErrorPayload
     | null;
 
-  ensureOk(response, payload, "Unable to confirm the Stripe subscription.");
+  ensureOk(response, payload, "Unable to verify the Checkout payment. Refresh billing to check its status.");
 
   if (
     !payload ||
+    typeof payload !== "object" ||
     !("confirmed" in payload) ||
     typeof payload.confirmed !== "boolean" ||
     !("status" in payload) ||
-    typeof payload.status !== "string"
+    typeof payload.status !== "string" ||
+    !("purchaseKind" in payload) ||
+    (payload.purchaseKind !== "subscription" && payload.purchaseKind !== "hosted_credits")
   ) {
-    throw new Error("Backend returned an invalid subscription confirmation.");
+    throw new Error("Backend returned an invalid payment confirmation.");
   }
 
+  if (expectedUserId && payload.user?.id !== expectedUserId) {
+    throw new ApiError(409, "Your signed-in account changed. Reload the page before checking this payment.");
+  }
   return payload;
 }
 
-export async function requestCreateBillingPortalSession(): Promise<string> {
+export async function requestBillingDashboard(expectedUserId?: string): Promise<BillingDashboardData> {
+  const response = await fetch("/api/billing/dashboard", {
+    credentials: "same-origin", cache: "no-store",
+    headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
+  });
+  const payload = await readJson<BillingDashboardData & ErrorPayload>(response);
+  ensureOk(response, payload, "Unable to refresh billing. Your last displayed balance may be out of date.");
+  const amount = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  if (!payload || !amount(payload.balanceMicros) || !amount(payload.usageThisMonthMicros) ||
+      !amount(payload.totalPurchasedMicros) || (payload.reservedMicros !== undefined && !amount(payload.reservedMicros)) ||
+      !payload.subscription || typeof payload.subscription.status !== "string" ||
+      typeof payload.subscription.cancelAtPeriodEnd !== "boolean" ||
+      (payload.subscription.currentPeriodEnd !== null && typeof payload.subscription.currentPeriodEnd !== "string") ||
+      !payload.plan || !amount(payload.plan.monthlyAmountMicros) || payload.plan.currency !== "usd" || typeof payload.plan.rollover !== "boolean" ||
+      !Array.isArray(payload.transactions) || !payload.transactions.every((entry) => entry &&
+        typeof entry.id === "string" && Number.isSafeInteger(entry.amountMicros) &&
+        typeof entry.type === "string" && typeof entry.createdAt === "string" && typeof entry.description === "string" &&
+        (entry.receiptUrl === null || typeof entry.receiptUrl === "string"))) {
+    throw new Error("Backend returned invalid billing information.");
+  }
+  if (expectedUserId && payload.user?.id !== expectedUserId) {
+    throw new ApiError(409, "Your signed-in account changed. Reload the page to view its billing information.");
+  }
+  return payload;
+}
+
+export async function requestCreateTopUpSession(amountCents: number, expectedUserId?: string): Promise<string> {
+  if (!Number.isInteger(amountCents) || amountCents < 500 || amountCents > 50000) {
+    throw new Error("Enter an amount from $5 to $500, with no more than two decimal places.");
+  }
+  const response = await fetch("/api/billing/topup", {
+    body: JSON.stringify({ amountCents }), credentials: "same-origin", method: "POST",
+    headers: { "Content-Type": "application/json", ...(expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : {}) },
+  });
+  const payload = await readJson<RedirectSessionResponse & ErrorPayload>(response);
+  ensureOk(response, payload, "Unable to open Checkout to add money.");
+  if (!isRedirectSessionResponse(payload)) throw new Error("Backend returned an invalid Checkout response.");
+  return payload.url;
+}
+
+export async function requestCreateBillingPortalSession(expectedUserId?: string): Promise<string> {
   const response = await fetch("/api/billing/portal", {
     credentials: "same-origin",
+    headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
     method: "POST",
   });
   const payload = (await readJson(response)) as RedirectSessionResponse | ErrorPayload | null;

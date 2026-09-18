@@ -1,4 +1,22 @@
-export type Role = "system" | "user" | "assistant";
+import type { BranchAnchor } from "@margin-chat/workspace-contracts";
+export type {
+  AISettings,
+  AIProvider,
+  AutoMode,
+  AIExecutionRecord,
+  AIContextSource,
+  Role,
+  BackendServiceId,
+  Message,
+  ConversationDocument,
+  ConversationNote,
+  BranchAnchor,
+  Conversation,
+  GraphNodeLayout,
+  ConversationGroup,
+  AppState,
+} from "@margin-chat/workspace-contracts";
+
 export type UserRole = "member" | "admin";
 export type BillingStatus =
   | "active"
@@ -25,13 +43,6 @@ export type ApiKeySettings = {
   hasAny: boolean;
 };
 export type MainViewMode = "chat" | "tiles" | "graph";
-export type BackendServiceId =
-  | "backend-services"
-  | "openai-api"
-  | "openai-agent"
-  | "gemini-api"
-  | "huggingface-api"
-  | "xai-api";
 export type ThreadCategoryId =
   | "coding"
   | "research"
@@ -41,92 +52,6 @@ export type ThreadCategoryId =
   | "data"
   | "personal"
   | "general";
-
-export interface Message {
-  id: string;
-  role: Role;
-  content: string;
-  createdAt: string;
-}
-
-export interface ConversationDocument {
-  createdAt: string;
-  error: string | null;
-  filename: string;
-  id: string;
-  mimeType: string;
-  sizeBytes: number;
-  status: "processing" | "ready" | "failed";
-}
-
-export interface ConversationNote {
-  id: string;
-  content: string;
-  kind?: "comment" | "side-chat" | "standalone";
-  sourceMessageId: string | null;
-  startOffset: number | null;
-  endOffset: number | null;
-  quote: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface BranchAnchor {
-  id: string;
-  sourceConversationId: string;
-  sourceMessageId: string;
-  startOffset: number;
-  endOffset: number;
-  quote: string;
-  prompt: string;
-  createdAt: string;
-}
-
-export interface Conversation {
-  id: string;
-  kind?: "chat" | "note";
-  title: string;
-  parentId: string | null;
-  serviceId: BackendServiceId;
-  modelId: string;
-  branchAnchor: BranchAnchor | null;
-  childIds: string[];
-  documents?: ConversationDocument[];
-  messages: Message[];
-  notes?: ConversationNote[];
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface GraphNodeLayout {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  positioned?: boolean;
-  treeOriginX?: number;
-  treeOriginY?: number;
-}
-
-export interface ConversationGroup {
-  id: string;
-  name: string;
-  color: string;
-  collapsed: boolean;
-  conversationIds: string[];
-}
-
-export interface AppState {
-  rootId: string;
-  activeConversationId: string;
-  defaultServiceId: BackendServiceId;
-  defaultModelId: string;
-  railOpen: boolean;
-  pinnedThreadIds: string[];
-  graphLayouts: Record<string, GraphNodeLayout>;
-  groups: Record<string, ConversationGroup>;
-  conversations: Record<string, Conversation>;
-}
 
 export interface AuthenticatedUser {
   apiKeys: ApiKeySettings;
@@ -149,6 +74,40 @@ export interface UserBilling {
   trialCallsLimit: number;
   trialCallsRemaining: number;
   trialCallsUsed: number;
+}
+
+export interface BillingTransaction {
+  id: string;
+  amountMicros: number;
+  type: string;
+  createdAt: string;
+  description: string;
+  receiptUrl: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface BillingDashboardData {
+  /** Spendable balance; in-flight reservations have already been deducted. */
+  balanceMicros: number;
+  reservedMicros?: number;
+  usageThisMonthMicros: number;
+  totalPurchasedMicros: number;
+  transactions: BillingTransaction[];
+  subscription: Pick<UserBilling, "status" | "cancelAtPeriodEnd" | "currentPeriodEnd">;
+  plan: { monthlyAmountMicros: number; currency: "usd"; rollover: boolean };
+  user?: AuthenticatedUser;
+}
+
+export interface CheckoutConfirmation {
+  confirmed: boolean;
+  status: string;
+  purchaseKind: "subscription" | "hosted_credits";
+  user?: AuthenticatedUser;
+}
+
+export interface BillingNotice {
+  kind: "error" | "info" | "success";
+  message: string;
 }
 
 export interface ThreadSummary {

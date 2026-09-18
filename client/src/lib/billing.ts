@@ -1,4 +1,4 @@
-import type { UserBilling } from "../types";
+import type { BillingNotice, CheckoutConfirmation, UserBilling } from "../types";
 
 export function getBillingStatusLabel(status: UserBilling["status"]) {
   switch (status) {
@@ -24,23 +24,10 @@ export function getBillingStatusLabel(status: UserBilling["status"]) {
 }
 
 export function getBillingDisplayLabel(billing: UserBilling) {
-  if (billing.accessKind === "admin") {
-    return "Admin access";
-  }
-
-  if (billing.accessKind === "trial") {
-    return "Free trial";
-  }
-
-  if (billing.accessKind === "credits") {
-    return `${formatCreditBalance(billing.creditBalanceMicros)} hosted credits`;
-  }
-
-  if (billing.accessKind === "none" && billing.trialCallsRemaining === 0) {
-    return "Trial exhausted";
-  }
-
-  return getBillingStatusLabel(billing.status);
+  if (billing.accessKind === "admin") return "Admin access";
+  if (billing.status === "active" || billing.status === "trialing") return "Monthly prepaid plan";
+  if (billing.creditBalanceMicros > 0) return `${formatCreditBalance(billing.creditBalanceMicros)} available`;
+  return "Prepaid AI usage";
 }
 
 export function formatCreditBalance(micros: number) {
@@ -67,67 +54,60 @@ export function formatBillingPeriodEnd(value: string | null) {
 }
 
 export function getBillingStatusCopy(billing: UserBilling) {
-  const formattedPeriodEnd = formatBillingPeriodEnd(billing.currentPeriodEnd);
-
-  if (billing.accessKind === "admin") {
-    return "This admin account bypasses subscription requirements and can access the hosted models without Stripe.";
+  const periodEnd = formatBillingPeriodEnd(billing.currentPeriodEnd);
+  const balance = formatCreditBalance(billing.creditBalanceMicros);
+  if (billing.accessKind === "admin") return "This admin account has hosted model access. Personal provider keys are billed by their provider.";
+  if (billing.status === "active" || billing.status === "trialing") {
+    const renewal = billing.cancelAtPeriodEnd
+      ? `Monthly funding ends${periodEnd ? ` on ${periodEnd}` : " at the end of this period"}. Your unused credits remain available.`
+      : `$20 per month adds $20 to your AI budget.${periodEnd ? ` Next renewal: ${periodEnd}.` : ""} Unused credits carry over.`;
+    return `${renewal} Available balance: ${balance}.`;
   }
-
-  if (billing.accessKind === "trial") {
-    const prepaidCopy = billing.creditBalanceMicros > 0
-      ? ` You also have ${formatCreditBalance(billing.creditBalanceMicros)} in hosted credits ready when the trial ends.`
-      : " Start a subscription any time to avoid losing hosted access when the trial is used up.";
-
-    return `You have ${billing.trialCallsRemaining} of ${billing.trialCallsLimit} free model calls remaining.${prepaidCopy}`;
+  if (["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(billing.status)) {
+    return `Your monthly payment needs attention in Stripe. You can still use your ${balance} remaining prepaid balance.`;
   }
+  if (billing.status === "canceled") return `Your monthly plan has ended. Your ${balance} unused balance remains available; add money whenever you need it.`;
+  return "Add money for hosted AI use, or subscribe for $20 in credit each month. Unused credits carry over. Personal API keys are billed directly by their provider.";
+}
 
-  if (billing.accessKind === "credits") {
-    return `You have ${formatCreditBalance(billing.creditBalanceMicros)} in prepaid hosted usage. Personal API keys are used instead whenever you save one for the selected provider.`;
+/** Parse decimal dollars without floating-point rounding or silently accepting extra cents. */
+export function parseTopUpAmountCents(value: string): number | null {
+  const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(value.trim());
+  if (!match) return null;
+  const cents = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"));
+  return Number.isSafeInteger(cents) && cents >= 500 && cents <= 50000 ? cents : null;
+}
+
+export function formatUsageCost(micros: number) {
+  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 })
+    .format(Math.max(micros, 0) / 1_000_000);
+}
+
+export function getCheckoutReturn(params: URLSearchParams) {
+  const result = params.get("checkout");
+  if (["subscription_success", "success", "topup_success"].includes(result ?? "")) {
+    return { kind: "success" as const, sessionId: params.get("session_id") };
   }
-
-  if (billing.accessKind === "none" && billing.trialCallsRemaining === 0) {
-    return `You have used all ${billing.trialCallsLimit} free model calls. Start a subscription or save a personal provider key to keep chatting.`;
+  if (["subscription_canceled", "canceled", "topup_canceled"].includes(result ?? "")) {
+    return { kind: "canceled" as const, sessionId: null };
   }
+  return null;
+}
 
-  if (billing.status === "active") {
-    if (billing.cancelAtPeriodEnd && formattedPeriodEnd) {
-      return `Your paid access stays active until ${formattedPeriodEnd}, then your account will stop calling the hosted models.`;
-    }
+export function getCheckoutConfirmationNotice(confirmation: CheckoutConfirmation): BillingNotice {
+  if (!confirmation.confirmed) return {
+    kind: "info", message: "Your payment is not confirmed yet. Refresh billing shortly to check your balance, or open Stripe for the payment status.",
+  };
+  return {
+    kind: "success",
+    message: confirmation.purchaseKind === "subscription"
+      ? "Your subscription payment is confirmed. Your monthly credit is available, and unused credit carries over."
+      : "Your payment is confirmed and the money has been added to your AI balance.",
+  };
+}
 
-    if (formattedPeriodEnd) {
-      return `Your paid access is active. The current billing period renews around ${formattedPeriodEnd}.`;
-    }
-
-    return "Your paid access is active and this account can use the hosted models.";
-  }
-
-  if (billing.status === "trialing") {
-    if (formattedPeriodEnd) {
-      return `Your trial is active through ${formattedPeriodEnd}. Upgrade status will stay in sync after Stripe events arrive.`;
-    }
-
-    return "Your trial is active and this account can use the hosted models.";
-  }
-
-  if (billing.status === "past_due") {
-    return "Your subscription needs attention in Stripe before this account can keep using the hosted models.";
-  }
-
-  if (billing.status === "canceled") {
-    return "Your previous subscription has ended. Start a new plan to restore model access.";
-  }
-
-  if (billing.status === "unpaid") {
-    return "Stripe marked the most recent invoice unpaid. Update billing to restore model access.";
-  }
-
-  if (billing.status === "incomplete" || billing.status === "incomplete_expired") {
-    return "Stripe does not have a completed subscription for this account yet. Start the paid plan to unlock model access.";
-  }
-
-  if (billing.status === "paused") {
-    return "Your subscription is paused. Resume it in Stripe before this account can use the hosted models.";
-  }
-
-  return "Start a subscription to use the hosted model keys, or save your own provider key below.";
+export function getReceiptUrl(value: string | null) {
+  if (!value) return null;
+  try { const url = new URL(value); return url.protocol === "https:" ? url.href : null; }
+  catch { return null; }
 }

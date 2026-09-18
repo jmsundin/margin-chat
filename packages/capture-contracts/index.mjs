@@ -27,7 +27,7 @@ function textField(input, name, limit, required = false) {
   return text;
 }
 
-export function normalizeCapture(input) {
+function normalizeCaptureMetadata(input) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new Error("A capture is required.");
   if (input.schemaVersion !== 1)
@@ -65,6 +65,19 @@ export function normalizeCapture(input) {
     kind: input.kind,
     title: textField(input, "title", CAPTURE_LIMITS.title, true),
     sourceUrl: url.href,
+    capturedAt: new Date(capturedAt).toISOString(),
+  };
+}
+
+export function normalizeCapture(input) {
+  const metadata = normalizeCaptureMetadata(input);
+  // Keep the serialized field order stable: the server hashes this payload for retries.
+  return {
+    schemaVersion: metadata.schemaVersion,
+    clientCaptureId: metadata.clientCaptureId,
+    kind: metadata.kind,
+    title: metadata.title,
+    sourceUrl: metadata.sourceUrl,
     content: textField(
       input,
       "content",
@@ -72,8 +85,94 @@ export function normalizeCapture(input) {
       input.kind !== "bookmark",
     ),
     comment: textField(input, "comment", CAPTURE_LIMITS.comment),
-    capturedAt: new Date(capturedAt).toISOString(),
+    capturedAt: metadata.capturedAt,
   };
+}
+
+const isRecord = (value) =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+const isText = (value) =>
+  typeof value === "string" && Boolean(value.trim()) && !value.includes("\0");
+const isDate = (value) =>
+  typeof value === "string" && Number.isFinite(Date.parse(value));
+
+function requireResponse(valid, message) {
+  if (!valid) throw new Error(message);
+}
+
+// Responses are additive within v1. Validate known fields without removing or
+// rejecting new fields supplied by a newer server.
+export function parseCaptureReceipt(input) {
+  requireResponse(
+    isRecord(input) && isRecord(input.capture) &&
+      isText(input.capture.id) && isDate(input.capture.createdAt),
+    "The server did not confirm the save. Retry to check it.",
+  );
+  return input;
+}
+
+export function parseExtensionSession(input) {
+  requireResponse(
+    isRecord(input) && typeof input.token === "string" &&
+      /^mc_extension_[A-Za-z0-9_-]{43}$/u.test(input.token) &&
+      isRecord(input.user) && isText(input.user.id) &&
+      isText(input.user.displayName) && isText(input.user.email) &&
+      isDate(input.expiresAt) && Date.parse(input.expiresAt) > Date.now(),
+    "This server did not return a valid session. Update your Margin Chat server and try again.",
+  );
+  return input;
+}
+
+export function parseCaptureConnection(input) {
+  requireResponse(
+    isRecord(input) && isText(input.displayName) && isDate(input.expiresAt) &&
+      (input.userId === undefined || isText(input.userId)),
+    "The server returned an invalid capture connection.",
+  );
+  return input;
+}
+
+export function parseCapture(input) {
+  const message = "The server returned an invalid capture.";
+  requireResponse(
+    isRecord(input) && isText(input.id) && isDate(input.createdAt) &&
+      typeof input.content === "string" && typeof input.comment === "string",
+    message,
+  );
+  try {
+    normalizeCapture(input);
+  } catch {
+    throw new Error(message);
+  }
+  return input;
+}
+
+export function parseCaptureDetail(input) {
+  requireResponse(isRecord(input), "The server returned an invalid capture.");
+  parseCapture(input.capture);
+  return input;
+}
+
+export function parseCapturePage(input) {
+  const message = "The server returned an invalid Cloud Inbox page.";
+  requireResponse(
+    isRecord(input) && Array.isArray(input.captures) &&
+      (input.nextCursor === null || isText(input.nextCursor)),
+    message,
+  );
+  for (const capture of input.captures) {
+    requireResponse(
+      isRecord(capture) && isText(capture.id) && isDate(capture.createdAt) &&
+        typeof capture.excerpt === "string",
+      message,
+    );
+    try {
+      normalizeCaptureMetadata(capture);
+    } catch {
+      throw new Error(message);
+    }
+  }
+  return input;
 }
 
 export function normalizeServerUrl(value) {

@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { createBrowserVaultStore } from "../client/src/lib/vaultLocal";
 import { emptyVault, type VaultSnapshot } from "../client/src/lib/vaultTypes";
+import { workspaceFromVault } from "../client/src/lib/vaultWorkspace";
 
 /** Models OPFS's empty create:true entry and atomic writable close/abort. */
 function simulatedOpfs() {
   const files = new Map<string, Uint8Array>();
   const directories = new Set([""]);
   const closes: string[] = [];
+  const reads: string[] = [];
   let failure: { stage: "write" | "close"; matches: (path: string) => boolean } | null = null;
   let failRemovals = false;
   const missing = () => new DOMException("Missing file", "NotFoundError");
@@ -40,6 +42,7 @@ function simulatedOpfs() {
         return {
           kind: "file", name,
           async getFile() {
+            reads.push(path);
             const bytes = files.get(path);
             if (!bytes) throw missing();
             return new File([bytes.slice().buffer], name);
@@ -58,7 +61,7 @@ function simulatedOpfs() {
   }
   const lockTails = new Map<string, Promise<unknown>>();
   return {
-    files, closes,
+    files, closes, reads,
     failOnce(stage: "write" | "close", matches: (path: string) => boolean) { failure = { stage, matches }; },
     preventCleanup(value: boolean) { failRemovals = value; },
     navigator: {
@@ -89,6 +92,57 @@ function snapshot(content: string): VaultSnapshot {
 const objectPath = (content: string) => `margin-chat-vaults/alice/history/${createHash("sha256").update(content).digest("hex")}.md`;
 
 describe("durable OPFS Markdown storage", () => {
+  test("directory observations reopen with exact companion bytes and advance atomically with the vault", async () => withOpfs(async (opfs) => {
+    const original = snapshot("Previously observed folder note");
+    original.directoryBaselines = { "directory-identity": {
+      manifest: workspaceFromVault(original.files).manifest,
+      files: { ...original.files, "Attachments/original.md": { content: "AP8BAg==", encoding: "base64", contentType: "application/octet-stream" } },
+    } };
+    const store = createBrowserVaultStore("alice");
+    await store.write(original);
+    expect(await createBrowserVaultStore("alice").read()).toEqual(original);
+    const updated = structuredClone(original);
+    updated.files["Note.md"].content = "New folder note";
+    updated.directoryBaselines!["directory-identity"].files["Note.md"].content = "New folder note";
+    opfs.failOnce("close", (path) => path.endsWith("/vault-state.json"));
+    await expect(store.write(updated)).rejects.toMatchObject({ name: "QuotaExceededError" });
+    expect(await createBrowserVaultStore("alice").read()).toEqual(original);
+    const index = JSON.parse(new TextDecoder().decode(opfs.files.get("margin-chat-vaults/alice/vault-state.json")));
+    expect(index.directoryBaselines["directory-identity"].files["Note.md"].content).toBeUndefined();
+    expect(index.directoryBaselines["directory-identity"].files["Note.md"].object).toMatch(/\.md$/);
+  }));
+
+  test("decoded text with a consumed BOM cannot alias a different immutable object's bytes", async () => withOpfs(async (opfs) => {
+    const store = createBrowserVaultStore("alice");
+    const original = emptyVault();
+    original.files = { "plain.md": { content: "same text" }, "bom.md": { content: "\uFEFFsame text" } };
+    await store.write(original);
+    await store.lock(async () => {
+      const decoded = (await store.read())!;
+      expect(decoded.files["plain.md"].content).toBe(decoded.files["bom.md"].content);
+      await store.write(decoded);
+    });
+    const index = JSON.parse(new TextDecoder().decode(opfs.files.get("margin-chat-vaults/alice/vault-state.json")));
+    const expected = `${createHash("sha256").update("same text").digest("hex")}.md`;
+    expect(index.files["plain.md"].object).toBe(expected);
+    expect(index.files["bom.md"].object).toBe(expected);
+  }));
+
+  test("one locked save verifies unchanged objects once and does not trust them in the next operation", async () => withOpfs(async (opfs) => {
+    const store = createBrowserVaultStore("alice");
+    const original = snapshot("Unchanged large note");
+    await store.write(original);
+    opfs.reads.length = 0;
+    await store.lock(async () => {
+      const current = (await store.read())!;
+      current.files["Other.md"] = { content: "Changed document" };
+      await store.write(current);
+    });
+    expect(opfs.reads.filter((path) => path === objectPath("Unchanged large note"))).toHaveLength(1);
+    opfs.files.set(objectPath("Unchanged large note"), new Uint8Array());
+    await expect(store.lock(() => store.read())).rejects.toThrow("incomplete or damaged");
+  }));
+
   test("an interrupted history write is repaired on retry before its reference is committed", async () => withOpfs(async (opfs) => {
     const first = createBrowserVaultStore("alice");
     const original = snapshot("Previously committed Markdown");

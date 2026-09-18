@@ -1,10 +1,13 @@
 import VaultPanel from "./VaultPanel";
+import BillingDashboard from "./BillingDashboard";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { useEffect, useRef, useState } from "react";
 import type {
   ApiKeyProvider,
   ApiKeySettings,
   AuthenticatedUser,
+  BillingDashboardData,
+  BillingNotice,
 } from "../types";
 import {
   getBillingDisplayLabel,
@@ -14,7 +17,13 @@ import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import type { StateUploadProgress } from "../lib/api";
 
 interface ProfileModalProps {
-  initialTab?: "account" | "storage";
+  initialTab?: "account" | "storage" | "billing";
+  billingDashboard: BillingDashboardData | null;
+  billingDashboardLoading: boolean;
+  billingDashboardError: string | null;
+  billingNotice: BillingNotice | null;
+  onRefreshBilling: () => void | Promise<void>;
+  onAddMoney: (amountCents: number) => void | Promise<void>;
   vault: ReturnType<typeof useMarkdownVault>;
   billingErrorMessage: string | null;
   billingSubmitting: boolean;
@@ -113,6 +122,7 @@ function getInitials(displayName: string) {
 
 export default function ProfileModal({
   initialTab = "account",
+  billingDashboard, billingDashboardLoading, billingDashboardError, billingNotice, onRefreshBilling, onAddMoney,
   vault,
   billingErrorMessage,
   billingSubmitting,
@@ -147,8 +157,8 @@ export default function ProfileModal({
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
-    "account" | "api-keys" | "storage"
-  >("account");
+    "account" | "api-keys" | "storage" | "billing"
+  >(initialTab);
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
@@ -174,7 +184,7 @@ export default function ProfileModal({
     setStorageError(null);
     setCloudBackupResult(null);
     setCloudBackupProgress(null);
-  }, [isOpen, initialTab, user.apiKeys, user.displayName, user.email]);
+  }, [isOpen, initialTab, user.id]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -212,9 +222,6 @@ export default function ProfileModal({
   const trimmedEmail = email.trim().toLowerCase();
   const hasChanges =
     trimmedDisplayName !== user.displayName || trimmedEmail !== user.email;
-  const showBillingAction = user.role !== "admin";
-  const useManageBillingAction =
-    user.billing.hasCustomer && user.billing.status !== "inactive";
   const displayedCloudBackupProgress =
     cloudBackupBusy && cloudBackupProgress
       ? cloudBackupProgress
@@ -325,7 +332,7 @@ export default function ProfileModal({
       <section
         aria-labelledby="profile-dialog-title"
         aria-modal="true"
-        className="thread-dialog profile-dialog"
+        className={`thread-dialog profile-dialog${activeTab === "billing" ? " is-billing" : ""}`}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
       >
@@ -352,6 +359,7 @@ export default function ProfileModal({
         >
           {([
             ["account", "Account"],
+            ["billing", "Billing"],
             ["api-keys", "API keys"],
             ["storage", "Markdown vault"],
           ] as const).map(([tabId, label]) => (
@@ -401,24 +409,9 @@ export default function ProfileModal({
                   <span>{getBillingStatusCopy(user.billing)}</span>
                 </div>
 
-                {showBillingAction ? (
-                  <button
-                    className="thread-dialog-button is-primary"
-                    disabled={billingSubmitting}
-                    onClick={() => {
-                      void (useManageBillingAction
-                        ? onManageBilling()
-                        : onStartSubscription());
-                    }}
-                    type="button"
-                  >
-                    {billingSubmitting
-                      ? "Opening Stripe..."
-                      : useManageBillingAction
-                        ? "Manage billing"
-                        : "Start subscription"}
-                  </button>
-                ) : null}
+                <button className="thread-dialog-button is-primary" onClick={() => setActiveTab("billing")} type="button">
+                  Open billing dashboard
+                </button>
               </section>
 
               <form
@@ -494,6 +487,15 @@ export default function ProfileModal({
                 </div>
               </form>
             </div>
+          ) : null}
+
+          {activeTab === "billing" ? (
+            <section aria-labelledby="profile-tab-billing" className="profile-dialog-panel" id="profile-panel-billing" role="tabpanel">
+              <BillingDashboard data={billingDashboard} loading={billingDashboardLoading} errorMessage={billingDashboardError}
+                notice={billingNotice}
+                checkoutErrorMessage={billingErrorMessage} isSubmitting={billingSubmitting} onRefresh={onRefreshBilling}
+                onAddMoney={onAddMoney} onStartSubscription={onStartSubscription} onManageBilling={onManageBilling} user={user} />
+            </section>
           ) : null}
 
           {activeTab === "api-keys" ? (

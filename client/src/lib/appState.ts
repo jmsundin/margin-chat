@@ -1,4 +1,5 @@
 import { createEmptyState } from "../initialState";
+import { normalizeAISettings, normalizeAIExecution } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { normalizeConversationGroups } from "./conversationGroups";
 import { normalizeGraphLayouts } from "./graphLayout";
@@ -90,6 +91,10 @@ export function hydratePersistedState(input: unknown): AppState | null {
 
               return {
                 ...conversation,
+                ...(conversation.ai ? { ai: normalizeAISettings(conversation.ai) } : {}),
+                messages: (conversation.messages ?? []).map((message) => ({ ...message,
+                  ...(message.execution ? { execution: normalizeAIExecution(message.execution) } : {}),
+                })),
                 documents: Array.isArray(conversation.documents)
                   ? conversation.documents
                   : [],

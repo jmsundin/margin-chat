@@ -1,8 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createCaptureTestDatabase } from "./helpers/captureDatabase.mjs";
-import { readState, writeState } from "../server/db/repository.mjs";
+import { readState, readWorkspace, writeState } from "../server/db/repository.mjs";
 import { normalizeAppState } from "../server/db/validation.mjs";
-import { completeDocument, getVaultAttachment, listVaultAttachments, restoreVaultAttachment } from "../server/db/documentRepository.mjs";
+import { completeDocument, failDocument, getVaultAttachment, listVaultAttachments, restoreVaultAttachment } from "../server/db/documentRepository.mjs";
+import { createVaultService } from "../server/vault/index.mjs";
+import { digest } from "../server/vault/storage.mjs";
+import { createDocumentService } from "../server/documents/index.mjs";
+import { normalizeAISettings, normalizeAIExecution } from "@margin-chat/workspace-contracts";
 import { createEmptyState } from "../client/src/initialState";
 
 describe("vault-derived Postgres projections", () => {
@@ -140,4 +144,114 @@ describe("vault-derived Postgres projections", () => {
     })).toBeNull();
     expect((await getVaultAttachment(fixture.client, { userId, documentId: attachment.id })).status).toBe("processing");
   });
+
+  test("a late ingestion failure cannot mark a replacement original failed", async () => {
+    const userId = await user();
+    const attachment = { id: crypto.randomUUID(), filename: "edited.txt", mimeType: "text/plain" };
+    await restoreVaultAttachment(fixture.client, { userId, attachment, bytes: Buffer.from("new bytes") });
+    expect(await failDocument(fixture.client, {
+      userId, documentId: attachment.id, error: "Old extraction failed", sourceBytes: Buffer.from("old bytes"),
+    })).toBeNull();
+    expect((await getVaultAttachment(fixture.client, { userId, documentId: attachment.id })).status).toBe("processing");
+  });
+
+  test("AI settings and execution receipts round-trip without inventing absent metadata", async () => {
+    const userId = await user();
+    const normalized = state("AI metadata");
+    const conversation = normalized.conversations[0];
+    const ai = normalizeAISettings({ mode: "thorough", contextScope: "selected", selectedConversationIds: ["source-note"], allowedProviders: ["gemini"] });
+    const execution = normalizeAIExecution({ schemaVersion: 1, provider: "gemini", model: "gemini-3.1-pro-preview", mode: "thorough", reason: "Selected for this task", sources: [{ kind: "note", id: "source-note", title: "Research" }] });
+    conversation.ai = ai;
+    conversation.messages = [{ id: "answer", role: "assistant", content: "Saved answer", createdAt: new Date().toISOString(), execution }];
+    const revision = await writeState(fixture.client, userId, normalized);
+    const restored = await readWorkspace(fixture.client, userId);
+    expect(restored.revision).toBe(revision);
+    expect(restored.state.conversations[conversation.id].ai).toEqual(ai);
+    expect(restored.state.conversations[conversation.id].messages[0].execution).toEqual(execution);
+    delete conversation.ai;
+    delete conversation.messages[0].execution;
+    await writeState(fixture.client, userId, normalized);
+    const plain = (await readState(fixture.client, userId)).conversations[conversation.id];
+    expect(Object.hasOwn(plain, "ai")).toBe(false);
+    expect(Object.hasOwn(plain.messages[0], "execution")).toBe(false);
+  });
+
+  test("a delayed upload cannot undo a newer projected original", async () => {
+    const userId = await user();
+    const objects = new Map<string, Buffer>();
+    const storage = {
+      kind: "memory",
+      async read(key: string) { const bytes = objects.get(key); return bytes ? { bytes, etag: digest(bytes) } : null; },
+      async putImmutable(key: string, bytes: Buffer) { objects.set(key, Buffer.from(bytes)); },
+      async compareAndSwap(key: string, bytes: Buffer, expected: string | null) {
+        if ((objects.has(key) ? digest(objects.get(key)) : null) !== expected) return false;
+        objects.set(key, Buffer.from(bytes)); return true;
+      },
+    };
+    const database = {
+      async getVaultProjectionRevision(id: string) {
+        const result = await fixture.client.query("select vault_revision from marginchat_vault_projections where user_id = $1", [id]);
+        return result.rows[0]?.vault_revision ?? null;
+      },
+      async projectVaultState(id: string, source: any, revision: number, options: any) {
+        return writeState(fixture.client, id, source === null ? null : normalizeAppState(source), {
+          vaultRevision: revision, forceVaultProjection: options.force,
+          vaultAttachments: options.attachments, deletedVaultAttachmentIds: options.deletedAttachmentIds,
+        });
+      },
+      getVaultAttachment: (args: any) => getVaultAttachment(fixture.client, args),
+      failDocument: (args: any) => failDocument(fixture.client, args),
+    };
+    const vault = createVaultService({ storage, database });
+    let enter!: () => void;
+    let resume!: () => void;
+    const paused = new Promise<void>((resolve) => { enter = resolve; });
+    const release = new Promise<void>((resolve) => { resume = resolve; });
+    const service = createDocumentService({ env: {}, database, vaultService: {
+      ...vault,
+      async status(id: string) { enter(); await release; return vault.status(id); },
+    } });
+    const upload = service.upload({ userId, context: { allowHosted: false, apiKeys: {} }, file: new File(["initial original"], "source.txt", { type: "text/plain" }) });
+    await paused;
+    try {
+      const before = (await vault.snapshot(userId)).manifest;
+      const path = Object.keys(before.files).find((path) => path.endsWith("/source.txt"))!;
+      const documentId = path.split("/")[1];
+      await vault.commitBinary(userId, { path, baseRevision: before.files[path].revision, bytes: Buffer.from("new original"), contentType: "text/plain" });
+      resume();
+      await upload;
+      expect((await database.getVaultAttachment({ userId, documentId })).bytes.toString()).toBe("new original");
+      expect((await vault.status(userId)).projection).toEqual({ status: "ready", revision: 2 });
+      expect((await database.getVaultAttachment({ userId, documentId })).bytes.toString()).toBe("new original");
+    } finally { resume(); await upload; }
+  });
+});
+
+test("workspace reads keep one revision while another connection publishes changes", async () => {
+  // Model MVCC at the connection boundary: a commit occurs immediately after
+  // the session row is read, so later queries must retain the first snapshot.
+  let current = 1;
+  let snapshot: number | null = null;
+  const date = new Date("2026-09-18T00:00:00Z");
+  const client = { async query(sql: string) {
+    const query = sql.trim().replace(/\s+/g, " ");
+    if (query === "begin isolation level repeatable read read only") snapshot = current;
+    const visible = snapshot ?? current;
+    let rows: any[] = [];
+    if (query.includes("from marginchat_app_sessions")) {
+      rows = [{ id: "session", revision: visible, root_conversation_id: "root", active_conversation_id: "root", default_service_id: "openai-api", default_model_id: "gpt-5.6" }];
+      current = 2;
+    } else if (query.includes("from marginchat_conversations")) {
+      rows = [{ id: "root", title: `Version ${visible}`, conversation_kind: "chat", parent_id: null, model_id: "gpt-5.6", service_id: "openai-api", created_at: date, updated_at: date }];
+    } else if (query.includes("from marginchat_messages")) {
+      rows = [{ id: "message", conversation_id: "root", role: "user", content: `Content ${visible}`, created_at: date }];
+    }
+    if (query === "commit" || query === "rollback") snapshot = null;
+    return { rows, rowCount: rows.length };
+  } };
+  const workspace = await readWorkspace(client, "owner");
+  expect(current).toBe(2);
+  expect(workspace.revision).toBe(1);
+  expect(workspace.state.conversations.root.title).toBe("Version 1");
+  expect(workspace.state.conversations.root.messages[0].content).toBe("Content 1");
 });

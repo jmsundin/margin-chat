@@ -11,6 +11,7 @@ import {
 } from "./extraction.mjs";
 
 const MAX_RETRIEVED_CHUNKS = 8;
+const INDEXING_PAUSED = "The original file is saved. Search indexing is paused because OpenAI is not permitted. Allow OpenAI to use this document in AI replies.";
 
 function sanitizeFilename(value) {
   const filename = String(value ?? "document")
@@ -21,6 +22,7 @@ function sanitizeFilename(value) {
 }
 
 function getEmbeddingApiKey(context, env) {
+  if (context.allowedProviders && !context.allowedProviders.includes("openai")) return null;
   if (context.apiKeys?.openai) {
     return context.apiKeys.openai;
   }
@@ -51,13 +53,18 @@ function buildRetrievedContext(chunks) {
 
 export function createDocumentService({ database, env, vaultService = null }) {
   async function indexDocument({ buffer, context, documentId, filename, mimeType, userId }) {
+    context.signal?.throwIfAborted();
     const sections = await extractDocumentText({ buffer, filename, mimeType });
+    context.signal?.throwIfAborted();
     const chunks = chunkDocumentSections(sections);
     const embeddings = await createEmbeddings({
       apiKey: getEmbeddingApiKey(context, env),
       inputs: chunks.map((chunk) => chunk.content),
       userId,
+      signal: context.signal,
+      usageMeter: context.apiKeys?.openai ? null : context.usageMeter,
     });
+    context.signal?.throwIfAborted();
     return database.completeDocument({
       chunks: chunks.map((chunk, index) => ({ ...chunk, embedding: embeddings[index] })),
       documentId,
@@ -100,20 +107,46 @@ export function createDocumentService({ database, env, vaultService = null }) {
     }
 
     let document = null;
+    let sourceBytes = buffer;
     try {
-      document = vaultService
-        ? await database.restoreVaultAttachment({ userId, attachment, bytes: buffer })
-        : await database.createDocument({
+      if (vaultService) {
+        // Only the vault's revision-guarded projection may restore originals.
+        // A delayed upload must not overwrite a newer edit or deletion.
+        const result = await vaultService.status(userId);
+        if (result.projection?.status !== "ready") {
+          throw new HttpError(503, "The saved original is waiting to be indexed.");
+        }
+        document = await database.getVaultAttachment({ userId, documentId: attachment.id });
+        if (!document) throw new HttpError(404, "The uploaded document is no longer available.");
+        sourceBytes = document.bytes;
+      } else {
+        document = await database.createDocument({
             ...attachment,
             bytes: buffer,
             userId,
           });
+      }
+      if (context.allowedProviders && !context.allowedProviders.includes("openai")) {
+        // Retain originals in both storage modes. This is a deliberate policy
+        // pause, so the ordinary failed-ingestion cleanup must not delete them.
+        const paused = {
+          ...attachment, id: document.id,
+          filename: document.filename ?? filename,
+          mimeType: document.mimeType ?? mimeType,
+          sizeBytes: sourceBytes.length,
+          status: "failed", error: INDEXING_PAUSED,
+        };
+        try {
+          await database.failDocument?.({ documentId: document.id, userId, error: INDEXING_PAUSED, sourceBytes });
+        } catch { /* The retained original remains available for a later retry. */ }
+        return paused;
+      }
       const completedDocument = await indexDocument({
-        buffer,
+        buffer: sourceBytes,
         context,
         documentId: document.id,
-        filename,
-        mimeType,
+        filename: document.filename ?? filename,
+        mimeType: document.mimeType ?? mimeType,
         userId,
       });
 
@@ -136,6 +169,7 @@ export function createDocumentService({ database, env, vaultService = null }) {
             documentId: document.id,
             userId,
             error: failedAttachment.error,
+            sourceBytes,
           }).catch(() => undefined);
         }
         return failedAttachment;
@@ -151,13 +185,21 @@ export function createDocumentService({ database, env, vaultService = null }) {
     }
   }
 
-  async function retrieveContext({ chatRequest, context }) {
+  async function retrieveContext({ chatRequest, context, allowedProviders }) {
+    context.signal?.throwIfAborted();
+    const permittedProviders = allowedProviders ?? context.allowedProviders;
+    if (permittedProviders && !permittedProviders.includes("openai")) {
+      return {
+        chunks: [], instruction: null, sources: [],
+        warnings: ["Document search was skipped because its embedding provider is not allowed."],
+      };
+    }
     const documentIds = chatRequest.conversation.documents.map(
       (document) => document.id,
     );
 
     if (!documentIds.length) {
-      return { chunks: [], instruction: null };
+      return { chunks: [], instruction: null, sources: [] };
     }
 
     const latestUserMessage = [...chatRequest.messages]
@@ -165,14 +207,16 @@ export function createDocumentService({ database, env, vaultService = null }) {
       .find((message) => message.role === "user");
 
     if (!latestUserMessage) {
-      return { chunks: [], instruction: null };
+      return { chunks: [], instruction: null, sources: [] };
     }
 
-    // Restoring a vault also restores originals. Rebuild missing embeddings on
-    // demand using the current user's permitted embedding credentials.
-    if (vaultService && database.getVaultAttachment) {
+    // Restored and deliberately deferred originals can be indexed on demand,
+    // including originals retained by the legacy database-only storage mode.
+    if (database.getVaultAttachment) {
       for (const documentId of documentIds) {
+        context.signal?.throwIfAborted();
         const attachment = await database.getVaultAttachment({ documentId, userId: context.userId });
+        context.signal?.throwIfAborted();
         if (attachment && attachment.status !== "ready") {
           await indexDocument({
             buffer: attachment.bytes,
@@ -190,7 +234,10 @@ export function createDocumentService({ database, env, vaultService = null }) {
       apiKey: getEmbeddingApiKey(context, env),
       inputs: [latestUserMessage.content],
       userId: context.userId,
+      signal: context.signal,
+      usageMeter: context.apiKeys?.openai ? null : context.usageMeter,
     });
+    context.signal?.throwIfAborted();
     const chunks = await database.findRelevantDocumentChunks({
       documentIds,
       embedding,
@@ -198,15 +245,21 @@ export function createDocumentService({ database, env, vaultService = null }) {
       userId: context.userId,
     });
 
-    return { chunks, instruction: buildRetrievedContext(chunks) };
+    const sources = [...new Map(chunks.map((chunk) => [chunk.documentId, {
+      kind: "document", id: chunk.documentId, title: chunk.filename,
+      excerpt: String(chunk.content ?? "").slice(0, 240),
+    }])).values()];
+    return { chunks, instruction: buildRetrievedContext(chunks), sources };
   }
 
   return {
     delete: async (documentId, userId) => {
+      let vaultDeleted = false;
       if (vaultService) {
-        await vaultService.deleteAttachment({ documentId, userId });
+        vaultDeleted = await vaultService.deleteAttachment({ documentId, userId });
       }
-      return database.deleteDocument({ documentId, userId });
+      const projectionDeleted = await database.deleteDocument({ documentId, userId });
+      return vaultDeleted || projectionDeleted;
     },
     retrieveContext,
     upload,

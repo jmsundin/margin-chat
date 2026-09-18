@@ -225,7 +225,6 @@ export function resolveGraphNodeReflow(args: {
             ? false
             : rightDistance >= leftDistance;
         const nodeToMove = moveRight ? right : left;
-        const stationaryNode = moveRight ? left : right;
         const movingCenter = moveRight ? rightCenter : leftCenter;
         const stationaryCenter = moveRight ? leftCenter : rightCenter;
 
@@ -266,7 +265,14 @@ export function resolveGraphSelectionReflow(args: {
   gapX?: number;
   gapY?: number;
   placements: ConversationGraphNodePlacement[];
+  maxIterations?: number;
+  maxPairChecks?: number;
+  work?: { iterations: number; pairChecks: number };
 }) {
+  if (args.work) {
+    args.work.iterations = 0;
+    args.work.pairChecks = 0;
+  }
   const selectedConversationIds = new Set(args.conversationIds);
 
   if (!selectedConversationIds.size) {
@@ -299,9 +305,11 @@ export function resolveGraphSelectionReflow(args: {
     }),
     { x: 0, y: 0 },
   );
-  const maximumIterations = Math.min(Math.max(nodes.length * 6, 12), 1200);
+  const maximumIterations = args.maxIterations ?? Math.min(Math.max(nodes.length * 6, 12), 1200);
+  let pairChecks = 0;
 
   for (let iteration = 0; iteration < maximumIterations; iteration += 1) {
+    if (args.work) args.work.iterations = iteration + 1;
     let movedNode = false;
 
     for (let leftIndex = 0; leftIndex < nodes.length; leftIndex += 1) {
@@ -310,6 +318,11 @@ export function resolveGraphSelectionReflow(args: {
         rightIndex < nodes.length;
         rightIndex += 1
       ) {
+        // Interactive previews have a work budget; committed layouts use the
+        // complete solver and its original convergence limit.
+        if (pairChecks >= (args.maxPairChecks ?? Infinity)) return nodes;
+        pairChecks += 1;
+        if (args.work) args.work.pairChecks = pairChecks;
         const left = nodes[leftIndex];
         const right = nodes[rightIndex];
         const leftIsSelected = selectedConversationIds.has(left.conversationId);

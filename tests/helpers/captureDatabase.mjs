@@ -5,6 +5,7 @@ import * as captures from "../../server/db/captureRepository.mjs";
 import * as auth from "../../server/db/authRepository.mjs";
 import { readWorkspace, writeState } from "../../server/db/repository.mjs";
 import { normalizeAppState } from "../../server/db/validation.mjs";
+import { loadMigrations, migrateDatabase } from "../../server/db/migrations.mjs";
 
 // Runs the real schema and repository queries in isolated Postgres, without .env or a cloud account.
 export async function createCaptureTestDatabase() {
@@ -13,16 +14,18 @@ export async function createCaptureTestDatabase() {
     new URL("../../server/db/schema.sql", import.meta.url),
     "utf8",
   );
-  await pg.exec(schema);
   const client = {
     async query(sql, params) {
-      const result = await pg.query(sql, params);
+      const result = params === undefined && sql.includes(";")
+        ? (await pg.exec(sql)).at(-1) ?? { rows: [] }
+        : await pg.query(sql, params);
       return {
         ...result,
         rowCount: result.rows.length || result.affectedRows || 0,
       };
     },
   };
+  await migrateDatabase(client, { migrations: await loadMigrations() });
   const database = {
     ...Object.fromEntries(
       Object.entries({ ...captures, ...auth }).map(([name, operation]) => [

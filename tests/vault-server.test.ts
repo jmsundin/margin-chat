@@ -123,6 +123,19 @@ describe("Markdown vault synchronization", () => {
     expect(projected[0].revision).toBe(1);
   });
 
+  test("migrates originals independently of a missing or untouched server workspace", async () => {
+    for (const state of [null, createEmptyState()]) {
+      const server = createVaultService({ storage: memoryStorage(), database: {
+        async loadWorkspace() { return state ? { state } : null; },
+        async listVaultAttachments() { return [{ id: "local-doc", filename: "source.txt", mimeType: "text/plain", bytes: Buffer.from("Original on the server") }]; },
+      } });
+      const first = await server.status("alice");
+      expect(Object.keys(first.manifest.files).sort()).toEqual(["Attachments/local-doc/metadata.json", "Attachments/local-doc/source.txt"]);
+      await server.commit("alice", [edit("device-note.md", "# Locally retained note")]);
+      expect((await server.readAttachment({ userId: "alice", documentId: "local-doc" })).bytes.toString()).toBe("Original on the server");
+    }
+  });
+
   test("deleting the last note clears its feature projection while conflict and attachment Markdown remain files", async () => {
     const projected: any[] = [];
     const server = createVaultService({ storage: memoryStorage(), database: {
@@ -263,6 +276,10 @@ describe("authenticated vault API", () => {
         ["POST", "/api/vault/rebuild"],
         ["GET", "/api/documents/document-1/original"],
         ["GET", "/api/documents/document-1/original?metadata=1"],
+        ["POST", "/api/documents"],
+        ["DELETE", "/api/documents/document-1"],
+        ["POST", "/api/chat"],
+        ["POST", "/api/chat/title"],
       ]) {
         const response = await fetch(`${base}${path}`, {
           method, headers: { ...writeHeaders, cookie: "account=bob" },

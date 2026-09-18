@@ -1,10 +1,12 @@
 import { HttpError } from "../lib/errors.mjs";
+import { requestProviderJson } from "../chat/providers.mjs";
 
 export const DOCUMENT_EMBEDDING_MODEL = "text-embedding-3-small";
 export const DOCUMENT_EMBEDDING_DIMENSIONS = 1536;
 const EMBEDDING_BATCH_SIZE = 64;
 
-export async function createEmbeddings({ apiKey, inputs, userId }) {
+export async function createEmbeddings({ apiKey, inputs, userId, signal, usageMeter }) {
+  signal?.throwIfAborted();
   if (!apiKey) {
     throw new HttpError(
       503,
@@ -15,28 +17,24 @@ export async function createEmbeddings({ apiKey, inputs, userId }) {
   const embeddings = [];
 
   for (let start = 0; start < inputs.length; start += EMBEDDING_BATCH_SIZE) {
+    signal?.throwIfAborted();
     const batch = inputs.slice(start, start + EMBEDDING_BATCH_SIZE);
-    const response = await fetch("https://api.openai.com/v1/embeddings", {
-      body: JSON.stringify({
+    const payload = await requestProviderJson({
+      apiKey,
+      provider: "openai",
+      kind: "embedding",
+      url: "https://api.openai.com/v1/embeddings",
+      usageMeter,
+      body: {
         dimensions: DOCUMENT_EMBEDDING_DIMENSIONS,
         input: batch,
         model: DOCUMENT_EMBEDDING_MODEL,
         user: userId,
-      }),
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
       },
-      method: "POST",
+      signal,
+      fallbackError: "OpenAI embedding request failed.",
     });
-    const payload = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      throw new HttpError(
-        response.status,
-        payload?.error?.message ?? "OpenAI embedding request failed.",
-      );
-    }
+    signal?.throwIfAborted();
 
     const batchEmbeddings = [...(payload?.data ?? [])]
       .sort((left, right) => left.index - right.index)

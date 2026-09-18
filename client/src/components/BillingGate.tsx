@@ -30,40 +30,40 @@ export default function BillingGate({
   const canManageBilling =
     user.billing.hasCustomer && user.billing.status !== "inactive";
   const primaryAction = canManageBilling ? onManageBilling : onStartSubscription;
-  const primaryLabel = canManageBilling ? "Manage billing" : "Start paid plan";
+  const primaryLabel = canManageBilling ? "Manage billing" : "Subscribe for $20/month";
 
   return (
     <div className="auth-layout">
       <section className="auth-hero">
         <p className="eyebrow">Margin Chat</p>
-        <h1>Activate a paid plan before this workspace can talk to the models.</h1>
+        <h1>Fund your AI budget, then pay as you use it.</h1>
         <p className="auth-copy">
-          Your account is signed in, but hosted LLM access stays locked until Stripe
-          shows an active or trialing subscription.
+          Your $20 monthly payment adds $20 in prepaid credit for hosted AI.
+          Unused credits carry over, and you can add money whenever you need it.
         </p>
         <div className="auth-feature-grid">
           <article className="auth-feature-card">
-            <span className="auth-feature-kicker">Protected spend</span>
-            <strong>Only paid accounts can hit your API keys.</strong>
+            <span className="auth-feature-kicker">Prepaid usage</span>
+            <strong>Know what you have available.</strong>
             <p>
-              The server checks subscription status before any chat request reaches
-              the upstream LLM provider.
+              Your billing dashboard tracks your available balance, running
+              requests, and settled API usage.
             </p>
           </article>
           <article className="auth-feature-card">
-            <span className="auth-feature-kicker">Stripe-backed</span>
-            <strong>Status sync comes from webhooks, not client trust.</strong>
+            <span className="auth-feature-kicker">Credits carry over</span>
+            <strong>Your unused budget stays yours to use.</strong>
             <p>
-              Checkout, renewal, cancellation, and payment recovery all flow back
-              into the workspace account record.
+              Monthly credits and one-time top-ups remain available, including
+              after you cancel monthly funding.
             </p>
           </article>
           <article className="auth-feature-card">
-            <span className="auth-feature-kicker">Ready for launch</span>
-            <strong>Use test mode now, then swap in live keys later.</strong>
+            <span className="auth-feature-kicker">Simple billing</span>
+            <strong>Secure Checkout and emailed receipts.</strong>
             <p>
-              You can finish the access control and billing flow before exposing any
-              production LLM secrets.
+              Pay through Stripe, manage your subscription, and find receipts
+              from your billing dashboard.
             </p>
           </article>
         </div>

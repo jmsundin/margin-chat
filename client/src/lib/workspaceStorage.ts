@@ -30,6 +30,7 @@ type DirectoryPickerWindow = Window & {
 };
 
 export interface LocalDirectoryStatus {
+  directoryId?: string;
   directoryName: string | null;
   fileName: string;
   permission: FileSystemPermissionState | "unselected" | "unsupported";
@@ -136,7 +137,8 @@ export async function getLocalDirectoryStatus(
     };
   }
 
-  const handle = await getStoredDirectoryHandle(userId);
+  const selection = await getStoredDirectorySelection(userId);
+  const handle = selection?.handle;
 
   if (!handle) {
     return {
@@ -147,25 +149,36 @@ export async function getLocalDirectoryStatus(
     };
   }
 
-  return buildDirectoryStatus(handle, fileName);
+  return buildDirectoryStatus(handle, fileName, selection!.id);
 }
 
-export async function chooseLocalDirectory(
-  userId: string,
-): Promise<LocalDirectoryStatus> {
-  if (!supportsDirectoryPicker()) {
-    return getLocalDirectoryStatus(userId);
-  }
-
-  const handle = await (
+/** Invoke directly in the click handler; selecting it is separately serialized with folder I/O. */
+export async function pickLocalDirectory(): Promise<FileSystemDirectoryHandle | null> {
+  if (!supportsDirectoryPicker()) return null;
+  return (
     window as unknown as DirectoryPickerWindow
   ).showDirectoryPicker({
     id: "margin-chat-workspaces",
     mode: "readwrite",
   });
+}
 
-  await setStoredDirectoryHandle(userId, handle);
-  return buildDirectoryStatus(handle, getLocalWorkspaceFileName(userId));
+export async function connectLocalDirectory(userId: string, handle: FileSystemDirectoryHandle): Promise<LocalDirectoryStatus> {
+  const previous = await getStoredDirectorySelection(userId);
+  const directories = previous?.directories ?? (previous ? [{ id: previous.id, handle: previous.handle }] : []);
+  let known: DirectoryIdentity | undefined;
+  for (const entry of directories) {
+    if (entry.handle === handle || await entry.handle.isSameEntry?.(handle)) { known = entry; break; }
+  }
+  const selected = known ?? { id: crypto.randomUUID(), handle };
+  await setStoredDirectorySelection(userId, { ...selected, directories: known ? directories : [...directories, selected] });
+  observedDirectoryWorkspaces.delete(userId);
+  return buildDirectoryStatus(handle, getLocalWorkspaceFileName(userId), selected.id);
+}
+
+export async function chooseLocalDirectory(userId: string): Promise<LocalDirectoryStatus> {
+  const handle = await pickLocalDirectory();
+  return handle ? connectLocalDirectory(userId, handle) : getLocalDirectoryStatus(userId);
 }
 
 export async function clearLocalDirectory(userId: string) {
@@ -190,10 +203,12 @@ export async function clearLocalDirectory(userId: string) {
 export async function readLocalDirectoryWorkspace(
   userId: string,
   fallbackManifest?: MarkdownWorkspaceManifest,
+  previousFiles?: Record<string, string>,
+  directoryId?: string,
 ): Promise<LocalDirectoryWorkspace | null> {
-  const handle = await getStoredDirectoryHandle(userId);
+  const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  const snapshot = await readDirectoryWorkspace(handle, userId, fallbackManifest ?? observedDirectoryWorkspaces.get(userId)?.manifest, observedDirectoryWorkspaces.get(userId)?.files);
+  const snapshot = await readDirectoryWorkspace(handle, userId, fallbackManifest ?? observedDirectoryWorkspaces.get(userId)?.manifest, previousFiles ?? observedDirectoryWorkspaces.get(userId)?.files);
   observedDirectoryWorkspaces.set(userId, snapshot.workspace);
   return snapshot;
 }
@@ -212,11 +227,12 @@ export function writeLocalDirectoryWorkspace(
   userId: string,
   workspace: MarkdownWorkspace,
   expectedWorkspace: MarkdownWorkspace | null,
+  directoryId?: string,
 ): Promise<LocalDirectoryStatus> {
   const write = directoryWriteQueue.then(async () => {
     const status = await getLocalDirectoryStatus(userId);
     if (status.permission !== "granted") return status;
-    const handle = await getStoredDirectoryHandle(userId);
+    const handle = await getStoredDirectoryHandle(userId, directoryId);
     if (!handle) return getLocalDirectoryStatus(userId);
     await writeConnectedDirectoryWorkspace(handle, userId, workspace, expectedWorkspace);
     observedDirectoryWorkspaces.set(userId, workspace);
@@ -336,8 +352,9 @@ function companionFiles(files: Record<string, VaultFile>) {
 export async function readLocalDirectoryCompanions(
   userId: string,
   knownFiles?: Record<string, VaultFile>,
+  directoryId?: string,
 ): Promise<Record<string, VaultFile> | null> {
-  const handle = await getStoredDirectoryHandle(userId);
+  const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
   return readConnectedDirectoryCompanions(handle, knownFiles);
 }
@@ -346,9 +363,10 @@ export function syncLocalDirectoryCompanions(
   userId: string,
   nextFiles: Record<string, VaultFile>,
   expectedFiles: Record<string, VaultFile>,
+  directoryId?: string,
 ): Promise<Record<string, VaultFile> | null> {
   const write = directoryWriteQueue.then(async () => {
-    const handle = await getStoredDirectoryHandle(userId);
+    const handle = await getStoredDirectoryHandle(userId, directoryId);
     if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
     return syncConnectedDirectoryCompanions(handle, nextFiles, expectedFiles);
   });
@@ -380,9 +398,13 @@ export async function readConnectedDirectoryCompanions(
     if (!/^_conflicts\/[^/]+\/conflict\.json$/i.test(path)) continue;
     try {
       const descriptor = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      if (descriptor.localEncoding === "base64" && typeof descriptor.copy === "string") binaryCopies.add(descriptor.copy);
+      if (descriptor.remoteEncoding === "base64" && typeof descriptor.remoteCopy === "string") binaryCopies.add(descriptor.remoteCopy);
       if (typeof descriptor.path === "string" && /^attachments\//i.test(descriptor.path)
         && !/\/metadata\.json$/u.test(descriptor.path)
-        && typeof descriptor.copy === "string") binaryCopies.add(descriptor.copy);
+      ) {
+        for (const copy of [descriptor.copy, descriptor.remoteCopy]) if (typeof copy === "string") binaryCopies.add(copy);
+      }
     } catch { /* Preserve unreadable conflict notes as files; they are not authoritative sync controls. */ }
   }
   const files: Record<string, VaultFile> = {};
@@ -529,8 +551,10 @@ function supportsDirectoryPicker() {
 async function buildDirectoryStatus(
   handle: FileSystemDirectoryHandle,
   fileName: string,
+  directoryId?: string,
 ): Promise<LocalDirectoryStatus> {
   return {
+    directoryId,
     directoryName: handle.name,
     fileName,
     permission: await queryDirectoryPermission(handle),
@@ -552,35 +576,51 @@ async function queryDirectoryPermission(
 
 async function getStoredDirectoryHandle(
   userId: string,
+  expectedId?: string,
 ): Promise<FileSystemDirectoryHandle | null> {
+  const selection = await getStoredDirectorySelection(userId);
+  if (expectedId && selection?.id !== expectedId) throw new Error("The connected folder changed. Read the selected folder before saving.");
+  return selection?.handle ?? null;
+}
+
+interface DirectoryIdentity { id: string; handle: FileSystemDirectoryHandle }
+interface DirectorySelection extends DirectoryIdentity { directories: DirectoryIdentity[] }
+
+async function getStoredDirectorySelection(userId: string): Promise<DirectorySelection | null> {
   if (!supportsDirectoryPicker()) {
     return null;
   }
 
   const database = await openDirectoryDatabase();
-  const handle = await new Promise<FileSystemDirectoryHandle | null>(
+  const stored = await new Promise<FileSystemDirectoryHandle | DirectorySelection | null>(
     (resolve, reject) => {
       const transaction = database.transaction(DIRECTORY_HANDLE_STORE, "readonly");
       const request = transaction.objectStore(DIRECTORY_HANDLE_STORE).get(userId);
       request.onsuccess = () =>
-        resolve((request.result as FileSystemDirectoryHandle | undefined) ?? null);
+        resolve(request.result ?? null);
       request.onerror = () => reject(request.error);
     },
   );
 
   database.close();
-  return handle;
+  if (!stored) return null;
+  if ("handle" in stored) return stored;
+  // Upgrade old saved handles without inventing a baseline for unseen disk content.
+  const identity = { id: crypto.randomUUID(), handle: stored };
+  const selection = { ...identity, directories: [identity] };
+  await setStoredDirectorySelection(userId, selection);
+  return selection;
 }
 
-async function setStoredDirectoryHandle(
+async function setStoredDirectorySelection(
   userId: string,
-  handle: FileSystemDirectoryHandle,
+  selection: DirectorySelection,
 ) {
   const database = await openDirectoryDatabase();
 
   await new Promise<void>((resolve, reject) => {
     const transaction = database.transaction(DIRECTORY_HANDLE_STORE, "readwrite");
-    transaction.objectStore(DIRECTORY_HANDLE_STORE).put(handle, userId);
+    transaction.objectStore(DIRECTORY_HANDLE_STORE).put(selection, userId);
     transaction.oncomplete = () => resolve();
     transaction.onerror = () => reject(transaction.error);
     transaction.onabort = () => reject(transaction.error);

@@ -21,8 +21,11 @@ let writeEntered: ReturnType<typeof deferred> | null = null;
 let failLocalWrites = false;
 function directory(name: string): any {
   const entries = new Map<string, any>();
+  const identity = Symbol(name);
   return {
     name, kind: "directory",
+    fixtureIdentity: identity,
+    async isSameEntry(other: any) { return other.fixtureIdentity === identity; },
     queryPermission: async () => "granted",
     async *entries() { yield* entries.entries(); },
     async removeEntry(child: string) { entries.delete(child); },
@@ -204,6 +207,21 @@ try {
   assert(Object.values(current.state.conversations).some((conversation: any) => conversation.title === "Imported note"), "Imported note disappeared while reconciling concurrent typing.");
   assert(Object.values(current.state.conversations).some((conversation: any) => conversation.messages.some((message: any) => message.content === "Typing continued while a vault was importing.")), "Import replaced concurrent editor typing.");
 
+  const olderExport = emptyVault();
+  olderExport.files = { "Notes/older-name.md": structuredClone((await local.read())!.files["Notes/imported.md"]) };
+  await act(async () => {
+    current.setState((state: any) => ({ ...state, conversations: Object.fromEntries(Object.entries(state.conversations).map(([id, conversation]: [string, any]) => [id,
+      conversation.title === "Imported note" ? { ...conversation, notes: conversation.notes.map((note: any) => ({ ...note, content: "Newer writing must survive an older archive." })) } : conversation,
+    ])) }));
+    await current.vault.flushLocal();
+  });
+  await act(async () => { await current.vault.importArchive(new File([exportVault(olderExport)], "older.zip")); });
+  const importConflict = (await local.read())!.conflicts.find((conflict: any) => conflict.sourcePath === "Notes/older-name.md");
+  assert(importConflict, "An older-path archive did not preserve its divergent version for review.");
+  assert.equal((await local.read())!.files["Notes/older-name.md"], undefined, "Import persisted a duplicate document identity.");
+  assert((await local.read())!.files["Notes/imported.md"].content.includes("Newer writing must survive an older archive."));
+  await act(async () => { await current.vault.resolveConflict(importConflict.id, "current"); });
+
   let exportsCreated = 0;
   const createObjectURL = URL.createObjectURL;
   URL.createObjectURL = (() => { exportsCreated++; return "blob:fixture-export"; }) as typeof URL.createObjectURL;
@@ -229,6 +247,43 @@ try {
   await act(async () => { await current.vault.syncNow(); });
   assert.equal(JSON.parse((await local.read())!.files["workspace.json"].content).workspace.preferences.externalSetting, "Retain external companion changes",
     "A connected folder settings edit was overwritten during synchronization.");
+
+  const originalDirectoryId = current.vault.localDirectoryStatus.directoryId;
+  assert(originalDirectoryId && (await local.read())!.directoryBaselines?.[originalDirectoryId], "Folder baseline was not durable.");
+  await act(async () => { root.unmount(); });
+  const noteDirectory = await connectedFolder.getDirectoryHandle("Notes");
+  const renamedWriter = await (await noteDirectory.getFileHandle("renamed.md", { create: true })).createWritable();
+  await renamedWriter.write(await (await (await noteDirectory.getFileHandle("imported.md")).getFile()).text());
+  await renamedWriter.close();
+  await noteDirectory.removeEntry("imported.md");
+  current = null;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Folder rename prevented reopening the vault.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal((await local.read())!.files["Notes/imported.md"], undefined, "Reopening retained a renamed document's old path.");
+  assert((await local.read())!.files["Notes/renamed.md"].content.includes("Newer writing must survive an older archive."));
+
+  await act(async () => { root.unmount(); });
+  await noteDirectory.removeEntry("renamed.md");
+  await attachmentFolder.removeEntry("raw.bin");
+  current = null;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Folder deletions prevented reopening the vault.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal((await local.read())!.files["Notes/renamed.md"], undefined, "Reopening resurrected a deleted note.");
+  assert.equal((await local.read())!.files["Attachments/raw.bin"], undefined, "Reopening resurrected a deleted companion.");
+
+  const anotherFolder = directory(connectedFolder.name);
+  (browser as any).showDirectoryPicker = async () => anotherFolder;
+  const beforeSwitch = Object.keys((await local.read())!.files);
+  await act(async () => { await current.vault.chooseDirectory(); });
+  assert.notEqual(current.vault.localDirectoryStatus.directoryId, originalDirectoryId, "Different folders with the same name reused a deletion baseline.");
+  for (const path of beforeSwitch) assert((await local.read())!.files[path], "Switching to an empty folder deleted vault content.");
+  (browser as any).showDirectoryPicker = async () => ({ ...connectedFolder });
+  await act(async () => { await current.vault.chooseDirectory(); });
+  assert.equal(current.vault.localDirectoryStatus.directoryId, originalDirectoryId, "Reselecting the same folder lost its identity.");
   await act(async () => { await current.vault.clearDirectory(); });
 
   const normalFetch = globalThis.fetch;
@@ -289,7 +344,7 @@ try {
   await until(() => current?.vault.ready, "Offline reopen did not hydrate the durable local vault.");
   assert(Object.values(current.state.conversations).some((conversation: any) => conversation.messages.some((message: any) => message.content === "Preserve this local version as a conflict.")),
     "Offline reopen lost the previously persisted Markdown.");
-  console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs"] }));
+  console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
 } finally {
   initialNetwork.resolve();
   writeGate?.resolve();
