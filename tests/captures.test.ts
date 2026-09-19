@@ -17,6 +17,7 @@ import {
   captureToMarkdown,
 } from "@margin-chat/capture-contracts";
 import { createCaptureTestDatabase } from "./helpers/captureDatabase.mjs";
+import { loadMigrations, migrateDatabase } from "../server/db/migrations.mjs";
 import { createCaptureService } from "../server/captures/index.mjs";
 import { createApiHandler } from "../server/routes/api.mjs";
 import { createAuthService } from "../server/auth/index.mjs";
@@ -253,8 +254,9 @@ describe("cloud capture API and Postgres storage", () => {
     expect((await api(EXTENSION_SESSION_API_PATH, { method: "DELETE", headers: bearer(session.token) })).status).toBe(200);
   });
 
-  test("the migration can run twice against the existing schema", async () => {
-    await fixtureDb.pg.exec(fixtureDb.schema);
+  test("the migration runner can run twice against the existing schema", async () => {
+    const result = await migrateDatabase(fixtureDb.client, { migrations: await loadMigrations() });
+    expect(result.executed).toEqual([]);
     expect(
       (await fixtureDb.pg.query("select count(*) from marginchat_users"))
         .rows[0],

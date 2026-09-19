@@ -9,8 +9,8 @@ for (const name of ["window", "document", "navigator", "localStorage", "HTMLElem
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value });
 }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const { act, createElement } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement } = await import("react");
+const { createRoot } = await import("react-dom/client");
 let workspace: any;
 let auth: any;
 mock.module("../../client/src/WorkspaceApp", () => ({ default(props: any) { workspace = props; return createElement("div", null, props.user.id); } }));

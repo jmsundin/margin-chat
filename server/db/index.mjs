@@ -40,7 +40,7 @@ import {
 } from "./documentRepository.mjs";
 import { wrapStorageError } from "./errors.mjs";
 import { hasStatusCode } from "../lib/errors.mjs";
-import { readState, readWorkspace, writeState } from "./repository.mjs";
+import { readState, readVaultProjectionCheckpoint, readWorkspace, writeState } from "./repository.mjs";
 import { normalizeAppState } from "./validation.mjs";
 import * as captures from "./captureRepository.mjs";
 
@@ -200,7 +200,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     userId,
     payload,
     vaultRevision,
-    { force = false, attachments = [], deletedAttachmentIds = [] } = {},
+    { force = false, attachments = [], deletedAttachmentIds = [], attachmentRevisions = {}, expectedProjectionRevision } = {},
   ) {
     const normalizedState = payload === null ? null : normalizeAppState(payload);
     return withClient((client) =>
@@ -209,6 +209,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
         forceVaultProjection: force,
         vaultAttachments: attachments,
         deletedVaultAttachmentIds: deletedAttachmentIds,
+        attachmentRevisions,
+        expectedVaultProjectionRevision: expectedProjectionRevision,
       }),
     );
   }
@@ -221,6 +223,10 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
       );
       return result.rowCount ? Number(result.rows[0].vault_revision) : null;
     });
+  }
+
+  async function getVaultProjectionCheckpoint(userId) {
+    return withClient((client) => readVaultProjectionCheckpoint(client, userId));
   }
 
   async function loadState(userId) {
@@ -341,6 +347,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     getUserBillingAccount: getUserBillingAccountRecord,
     getVaultAttachment: getVaultAttachmentRecord,
     getVaultProjectionRevision,
+    getVaultProjectionCheckpoint,
     getHealth,
     getUserByAuthSession: getUserByAuthSessionRecord,
     incrementTrialApiCallsUsed: incrementTrialApiCallsUsedRecord,

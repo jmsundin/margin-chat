@@ -86,7 +86,8 @@ describe("vault-derived Postgres projections", () => {
     expect((await listVaultAttachments(fixture.client, owner))[0].bytes).toEqual(bytes);
     expect(await listVaultAttachments(fixture.client, other)).toEqual([]);
     expect(await getVaultAttachment(fixture.client, { userId: other, documentId: attachment.id })).toBeNull();
-    await expect(restoreVaultAttachment(fixture.client, { userId: other, attachment, bytes })).rejects.toThrow("unavailable");
+    await restoreVaultAttachment(fixture.client, { userId: other, attachment, bytes: Buffer.from("independent import") });
+    expect((await getVaultAttachment(fixture.client, { userId: other, documentId: attachment.id })).bytes.toString()).toBe("independent import");
     expect((await getVaultAttachment(fixture.client, { userId: owner, documentId: attachment.id })).bytes).toEqual(bytes);
   });
 

@@ -10,6 +10,26 @@
       "id": "0002_prepaid_billing",
       "file": "0002_prepaid_billing.sql",
       "transaction": true
+    },
+    {
+      "id": "0003_model_catalog_refresh",
+      "file": "0003_model_catalog_refresh.sql",
+      "transaction": true
+    },
+    {
+      "id": "0004_conversation_grouping",
+      "file": "0004_conversation_grouping.sql",
+      "transaction": true
+    },
+    {
+      "id": "0005_attachment_projection_identity",
+      "file": "0005_attachment_projection_identity.sql",
+      "transaction": true
+    },
+    {
+      "id": "0006_attachment_checkpoint_revision",
+      "file": "0006_attachment_checkpoint_revision.sql",
+      "transaction": true
     }
   ]
 }

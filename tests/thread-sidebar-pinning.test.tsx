@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderToStaticMarkup } from "../client/node_modules/react-dom/server";
+import { renderToStaticMarkup } from "react-dom/server";
 import ThreadSidebar from "../client/src/components/ThreadSidebar";
 import {
   getSidebarThreadDropAction,

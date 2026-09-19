@@ -254,12 +254,13 @@ export function createDocumentService({ database, env, vaultService = null }) {
 
   return {
     delete: async (documentId, userId) => {
-      let vaultDeleted = false;
       if (vaultService) {
-        vaultDeleted = await vaultService.deleteAttachment({ documentId, userId });
+        // Cloud originals and their derived rows are deleted together through
+        // the revision-guarded projection. A later direct SQL delete could erase
+        // a newer restoration after the cloud deletion has already completed.
+        return vaultService.deleteAttachment({ documentId, userId });
       }
-      const projectionDeleted = await database.deleteDocument({ documentId, userId });
-      return vaultDeleted || projectionDeleted;
+      return database.deleteDocument({ documentId, userId });
     },
     retrieveContext,
     upload,

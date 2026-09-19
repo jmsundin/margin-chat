@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { createStatusError } from "../lib/errors.mjs";
 
+function storageDocumentId(userId, documentId) {
+  return `vault-document:${Buffer.from(JSON.stringify([userId, documentId])).toString("base64url")}`;
+}
+
 function toDocument(row) {
   return {
     createdAt: new Date(row.created_at).toISOString(),
@@ -21,7 +25,7 @@ function toVaultAttachment(row) {
 // support one-time migration and restore; their results are not public URLs.
 export async function listVaultAttachments(client, userId) {
   const result = await client.query(
-    `select id, filename, mime_type, size_bytes, original_bytes,
+    `select coalesce(public_id, id) as id, filename, mime_type, size_bytes, original_bytes,
             status, error_message, created_at
      from marginchat_documents where user_id = $1 order by created_at, id`,
     [userId],
@@ -31,9 +35,9 @@ export async function listVaultAttachments(client, userId) {
 
 export async function getVaultAttachment(client, { documentId, userId }) {
   const result = await client.query(
-    `select id, filename, mime_type, size_bytes, original_bytes,
+    `select coalesce(public_id, id) as id, filename, mime_type, size_bytes, original_bytes,
             status, error_message, created_at
-     from marginchat_documents where id = $1 and user_id = $2`,
+     from marginchat_documents where coalesce(public_id, id) = $1 and user_id = $2`,
     [documentId, userId],
   );
   return result.rowCount ? toVaultAttachment(result.rows[0]) : null;
@@ -49,9 +53,9 @@ export async function restoreVaultAttachment(
   }
   const result = await client.query(
     `insert into marginchat_documents (
-       id, user_id, filename, mime_type, size_bytes, original_bytes, status, created_at
-     ) values ($1, $2, $3, $4, $5, $6, 'processing', $7)
-     on conflict (id) do update set
+       id, user_id, filename, mime_type, size_bytes, original_bytes, status, created_at, public_id
+     ) values ($1, $2, $3, $4, $5, $6, 'processing', $7, $8)
+     on conflict (user_id, (coalesce(public_id, id))) do update set
        filename = excluded.filename,
        mime_type = excluded.mime_type,
        size_bytes = excluded.size_bytes,
@@ -65,15 +69,16 @@ export async function restoreVaultAttachment(
        created_at = excluded.created_at,
        updated_at = now()
      where marginchat_documents.user_id = excluded.user_id
-     returning id, filename, mime_type, size_bytes, status, error_message, created_at`,
+     returning coalesce(public_id, id) as id, filename, mime_type, size_bytes, status, error_message, created_at`,
     [
-      attachment.id,
+      storageDocumentId(userId, attachment.id),
       userId,
       attachment.filename,
       attachment.mimeType || "application/octet-stream",
       originalBytes.length,
       originalBytes,
       attachment.createdAt || new Date().toISOString(),
+      attachment.id,
     ],
   );
   if (!result.rowCount) {
@@ -98,12 +103,13 @@ export async function createDocument(
         size_bytes,
         original_bytes,
         status,
-        created_at
+        created_at,
+        public_id
       )
-      values ($1, $2, $3, $4, $5, $6, 'processing', $7)
-      returning id, filename, mime_type, size_bytes, status, error_message, created_at
+      values ($1, $2, $3, $4, $5, $6, 'processing', $7, $8)
+      returning coalesce(public_id, id) as id, filename, mime_type, size_bytes, status, error_message, created_at
     `,
-    [id, userId, filename, mimeType, sizeBytes, bytes, createdAt],
+    [storageDocumentId(userId, id), userId, filename, mimeType, sizeBytes, bytes, createdAt, id],
   );
 
   return toDocument(result.rows[0]);
@@ -120,7 +126,7 @@ export async function completeDocument(
       `
         select id, original_bytes
         from marginchat_documents
-        where id = $1 and user_id = $2
+        where coalesce(public_id, id) = $1 and user_id = $2
         for update
       `,
       [documentId, userId],
@@ -138,9 +144,11 @@ export async function completeDocument(
       return null;
     }
 
+    const storedDocumentId = ownerResult.rows[0].id;
+
     await client.query(
       "delete from marginchat_document_chunks where document_id = $1",
-      [documentId],
+      [storedDocumentId],
     );
 
     const chunkParameters = [];
@@ -148,7 +156,7 @@ export async function completeDocument(
       const parameter = index * 8;
       chunkParameters.push(
         `chunk-${randomUUID()}`,
-        documentId,
+        storedDocumentId,
         chunk.index,
         chunk.pageNumber,
         chunk.content,
@@ -186,9 +194,9 @@ export async function completeDocument(
         update marginchat_documents
         set status = 'ready', error_message = null, updated_at = now()
         where id = $1 and user_id = $2
-        returning id, filename, mime_type, size_bytes, status, error_message, created_at
+        returning coalesce(public_id, id) as id, filename, mime_type, size_bytes, status, error_message, created_at
       `,
-      [documentId, userId],
+      [storedDocumentId, userId],
     );
 
     await client.query("commit");
@@ -204,9 +212,9 @@ export async function failDocument(client, { documentId, error, userId, sourceBy
     `
       update marginchat_documents
       set status = 'failed', error_message = $3, updated_at = now()
-      where id = $1 and user_id = $2
+      where coalesce(public_id, id) = $1 and user_id = $2
         and ($4::bytea is null or original_bytes = $4)
-      returning id, filename, mime_type, size_bytes, status, error_message, created_at
+      returning coalesce(public_id, id) as id, filename, mime_type, size_bytes, status, error_message, created_at
     `,
     [documentId, userId, String(error).slice(0, 500), sourceBytes ? Buffer.from(sourceBytes) : null],
   );
@@ -216,7 +224,7 @@ export async function failDocument(client, { documentId, error, userId, sourceBy
 
 export async function deleteDocument(client, { documentId, userId }) {
   const result = await client.query(
-    "delete from marginchat_documents where id = $1 and user_id = $2",
+    "delete from marginchat_documents where coalesce(public_id, id) = $1 and user_id = $2",
     [documentId, userId],
   );
 
@@ -234,7 +242,7 @@ export async function findRelevantDocumentChunks(
   const result = await client.query(
     `
       select
-        c.document_id,
+        coalesce(d.public_id, d.id) as document_id,
         c.chunk_index,
         c.page_number,
         c.content,
@@ -244,7 +252,7 @@ export async function findRelevantDocumentChunks(
       join marginchat_documents d on d.id = c.document_id
       where d.user_id = $1
         and d.status = 'ready'
-        and d.id = any($2::text[])
+        and coalesce(d.public_id, d.id) = any($2::text[])
       order by c.embedding <=> $3::vector
       limit $4
     `,

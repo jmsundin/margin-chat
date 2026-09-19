@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderToStaticMarkup } from "../client/node_modules/react-dom/server";
+import { renderToStaticMarkup } from "react-dom/server";
 import BranchRail from "../client/src/components/BranchRail";
 import type { Conversation } from "../client/src/types";
 

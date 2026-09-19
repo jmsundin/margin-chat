@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { renderToStaticMarkup } from "../client/node_modules/react-dom/server.node.js";
+import { renderToStaticMarkup } from "react-dom/server";
 import BillingDashboard from "../client/src/components/BillingDashboard";
 import {
   getBillingDisplayLabel, getBillingStatusCopy, getCheckoutConfirmationNotice,

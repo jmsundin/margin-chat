@@ -57,7 +57,7 @@ describe("vault attachment originals", () => {
     expect(created).toBe(false);
   });
 
-  test("deletion records reach the authoritative vault before removing derived records", async () => {
+  test("cloud deletion delegates derived records to the revision-guarded vault projection", async () => {
     const events: string[] = [];
     const service = createDocumentService({
       env: {},
@@ -65,7 +65,16 @@ describe("vault attachment originals", () => {
       vaultService: { deleteAttachment: async () => { events.push("vault"); return true; } },
     });
     expect(await service.delete("document-1", "owner")).toBe(true);
-    expect(events).toEqual(["vault", "database"]);
+    expect(events).toEqual(["vault"]);
+  });
+
+  test("database-only deletion remains available for legacy storage", async () => {
+    const deleted: unknown[] = [];
+    const service = createDocumentService({ env: {}, database: {
+      deleteDocument: async (value: unknown) => { deleted.push(value); return true; },
+    } });
+    expect(await service.delete("document-1", "owner")).toBe(true);
+    expect(deleted).toEqual([{ documentId: "document-1", userId: "owner" }]);
   });
 
   test("deleting a saved original succeeds even when its feature row was never created", async () => {
