@@ -146,13 +146,13 @@ export default function BranchRail({
   return (
     <>
       <button
-        aria-label="Close conversation map"
+        aria-label="Close branches"
         className="branch-map-backdrop"
         onClick={onClose}
         type="button"
       />
       <aside
-        aria-label="Conversation map"
+        aria-label="Branches"
         className="branch-map"
         data-testid="branch-rail"
         id="branch-navigation-map"
@@ -160,10 +160,10 @@ export default function BranchRail({
         <div className="branch-map-head">
           <div>
             <p className="eyebrow">Overview</p>
-            <h2>Conversation map</h2>
+            <h2>Branches</h2>
           </div>
           <button
-            aria-label="Hide conversation map"
+            aria-label="Hide branches"
             className="branch-map-close"
             onClick={onClose}
             type="button"

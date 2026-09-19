@@ -15,6 +15,10 @@ extension/releases/
 
 # Local tooling artifacts
 .codex-artifacts/
+# Generated hook contains a machine-specific Python executable path.
+/.codex/hooks.json
+# Rebuildable knowledge graph, caches, query history, and local path metadata.
+/graphify-out/
 .DS_Store
 *.log
 .vercel

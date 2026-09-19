@@ -40,7 +40,7 @@ describe("AI routing and execution receipts", () => {
   test("task and mode select distinct eligible routes, while manual selections remain exact", async () => {
     const calls: any[] = []; mockReplies(calls); const chat = service();
     const summary = await chat.requestReply(payload({ messages: [{ role: "user", content: "Summarize these notes." }] }));
-    expect(summary.metadata.execution).toMatchObject({ provider: "gemini-api", task: "summary", mode: "balanced", model: "gemini-3.5-flash", schemaVersion: 1, status: "complete" });
+    expect(summary.metadata.execution).toMatchObject({ provider: "gemini-api", task: "summary", mode: "balanced", model: "gemini-3.8-flash", schemaVersion: 1, status: "complete" });
     const coding = await chat.requestReply(payload({ ai: { mode: "fast" }, messages: [{ role: "user", content: "Debug this TypeScript code." }] }));
     expect(calls[1].body.model).toBe("gpt-5.6-luna");
     expect(coding.metadata.execution).toMatchObject({ provider: "openai-api", task: "coding", model: "gpt-5.6-luna-resolved" });

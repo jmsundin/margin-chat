@@ -66,7 +66,7 @@ export function emptyVault(): VaultSnapshot {
 }
 
 export function validVaultPath(path: string): boolean {
-  return path.length > 0 && path.length <= 512 && !/[\\\u0000-\u001f\u007f]/u.test(path)
+  return path.length > 0 && path.length <= 512 && !/[\\\u0000-\u001f\u007f\ud800-\udfff]/u.test(path)
     && !path.startsWith("/") && path.split("/").every((part) => part && part !== "." && part !== "..")
     && !path.split("/").some((part) => ["__proto__", "constructor", "prototype"].includes(part));
 }

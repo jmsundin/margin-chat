@@ -533,6 +533,7 @@ function normalizeConversation(expectedId, input) {
       `Conversation "${expectedId}" createdAt`,
     ),
     id: input.id,
+    ...(input.grouping === "manual" || input.grouping === "automatic" ? { grouping: input.grouping } : {}),
     kind:
       input.kind === undefined || input.kind === null
         ? "chat"

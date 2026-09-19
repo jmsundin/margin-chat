@@ -70,7 +70,7 @@ describe("branch drawer", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="Conversation map"');
+    expect(markup).toContain('aria-label="Branches"');
     expect(markup).toContain('class="branch-map"');
     expect(markup).toContain("Launch planning");
     expect(markup).toContain("Priority ordering");

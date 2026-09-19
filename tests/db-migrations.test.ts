@@ -12,6 +12,9 @@ import {
 } from "../server/db/migrations.mjs";
 import { resolveSchemaMode } from "../server/db/index.mjs";
 import { parseDatabaseArguments, validateDatabaseTarget } from "../scripts/database.mjs";
+import { createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
+import { readState, writeState } from "../server/db/repository.mjs";
+import { normalizeAppState } from "../server/db/validation.mjs";
 
 const databases: PGlite[] = [];
 const directories: string[] = [];
@@ -67,6 +70,97 @@ describe("versioned database releases", () => {
       { id: "retained-user", password_hash: "retained-hash", role: "member", billing_status: "inactive" },
     ]);
     expect((await pg.query("select to_regclass('marginchat_user_accounts') as old_table")).rows[0]).toEqual({ old_table: null });
+  }, 30_000);
+
+  test("catalog refresh preserves saved choices and accepts new models only for their providers", async () => {
+    const { client, pg } = database();
+    const migrations = await loadMigrations();
+    const refreshIndex = migrations.findIndex(({ id }) => id === "0003_model_catalog_refresh");
+    expect(refreshIndex).toBeGreaterThan(0);
+    await migrateDatabase(client, { migrations: migrations.slice(0, refreshIndex) });
+
+    const previousModels: Record<string, string[]> = {
+      "backend-services": ["smart-routing"],
+      "openai-api": ["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
+      "openai-agent": ["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
+      "gemini-api": ["gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-3.1-flash-lite"],
+      "huggingface-api": ["moonshotai/Kimi-K3", "openai/gpt-oss-120b", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen3-Coder-480B-A35B-Instruct"],
+      "xai-api": ["grok-4.5", "grok-4.3"],
+    };
+    let sequence = 0;
+    async function insertSelection(serviceId: string, modelId: string) {
+      const id = `selection-${++sequence}`;
+      await pg.query("insert into marginchat_app_sessions (id, default_service_id, default_model_id) values ($1, $2, $3)", [id, serviceId, modelId]);
+      await pg.query(`insert into marginchat_conversations (id, session_id, title, service_id, model_id, created_at, updated_at)
+        values ($1, $1, 'Retained title', $2, $3, '2026-09-18T00:00:00Z', '2026-09-18T00:00:00Z')`, [id, serviceId, modelId]);
+      return id;
+    }
+    for (const [serviceId, models] of Object.entries(previousModels)) {
+      for (const modelId of models) await insertSelection(serviceId, modelId);
+    }
+    const oldSessions = (await pg.query("select * from marginchat_app_sessions order by id")).rows;
+    const oldConversations = (await pg.query("select * from marginchat_conversations order by id")).rows;
+    const result = await migrateDatabase(client, { migrations: migrations.filter(({ id }) => id <= "0003_model_catalog_refresh") });
+    expect(result.executed).toEqual(["0003_model_catalog_refresh"]);
+    expect((await pg.query("select * from marginchat_app_sessions order by id")).rows).toEqual(oldSessions);
+    expect((await pg.query("select * from marginchat_conversations order by id")).rows).toEqual(oldConversations);
+
+    const refreshedModels: Record<string, string[]> = {
+      "openai-api": ["gpt-6-astra"],
+      "openai-agent": ["gpt-6-astra"],
+      "gemini-api": ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
+      "huggingface-api": [
+        "deepseek-ai/DeepSeek-V4.1-Flash", "deepseek-ai/DeepSeek-V4-Pro-0813",
+        "Qwen/Qwen3.8-27B", "zai-org/GLM-5.3", "Qwen/Qwen3.8-2.4T-A95B", "MiniMaxAI/MiniMax-M3",
+      ],
+      "xai-api": ["grok-4.6"],
+    };
+    for (const [serviceId, models] of Object.entries(refreshedModels)) {
+      for (const modelId of models) {
+        const id = await insertSelection(serviceId, modelId);
+        expect((await pg.query("select default_service_id, default_model_id from marginchat_app_sessions where id=$1", [id])).rows[0])
+          .toEqual({ default_service_id: serviceId, default_model_id: modelId });
+        expect((await pg.query("select service_id, model_id from marginchat_conversations where id=$1", [id])).rows[0])
+          .toEqual({ service_id: serviceId, model_id: modelId });
+        const wrongProvider = serviceId === "xai-api" ? "openai-api" : "xai-api";
+        await expect(pg.query("update marginchat_app_sessions set default_service_id=$1 where id=$2", [wrongProvider, id]))
+          .rejects.toMatchObject({ code: "23514" });
+        await expect(pg.query("update marginchat_conversations set service_id=$1 where id=$2", [wrongProvider, id]))
+          .rejects.toMatchObject({ code: "23514" });
+      }
+    }
+    await expect(pg.query("update marginchat_app_sessions set default_model_id='unknown-model' where id='selection-1'"))
+      .rejects.toMatchObject({ code: "23514" });
+    await expect(pg.query("update marginchat_conversations set model_id='unknown-model' where id='selection-1'"))
+      .rejects.toMatchObject({ code: "23514" });
+    await pg.query("insert into marginchat_app_sessions (id) values ('automatic-default')");
+    await pg.query(`insert into marginchat_conversations (id, session_id, title, service_id, created_at, updated_at)
+      values ('automatic-default', 'automatic-default', 'Automatic', 'backend-services', now(), now())`);
+    expect((await pg.query("select default_service_id, default_model_id from marginchat_app_sessions where id='automatic-default'")).rows[0])
+      .toEqual({ default_service_id: "backend-services", default_model_id: "smart-routing" });
+    expect((await pg.query("select model_id from marginchat_conversations where id='automatic-default'")).rows[0])
+      .toEqual({ model_id: "smart-routing" });
+  }, 30_000);
+
+  test("manual and automatic grouping survive database writes, including explicit ungrouped chats", async () => {
+    const { client, pg } = database();
+    await migrateDatabase(client, { migrations: await loadMigrations() });
+    await pg.query("insert into marginchat_users (id,email,password_hash,display_name) values ('grouping-user','grouping@example.test','hash','Grouping')");
+    const state = createEmptyState();
+    state.conversations[state.rootId].grouping = "manual";
+    const note = createStandaloneNoteConversation({ id: "grouped-note", noteId: "grouped-note-body" });
+    state.conversations[note.id] = { ...note, grouping: "automatic" };
+    state.groups.design = { id: "design", name: "Design", color: "#4fbf9f", collapsed: false, conversationIds: [note.id] };
+    const repositoryClient = { query: async (sql: string, values?: unknown[]) => {
+      const result = await client.query(sql, values);
+      return { ...result, rowCount: result.rows.length || (result as { affectedRows?: number }).affectedRows || 0 };
+    } };
+    await writeState(repositoryClient, "grouping-user", normalizeAppState(state));
+    const restored = await readState(repositoryClient, "grouping-user");
+    expect(restored.conversations[state.rootId].grouping).toBe("manual");
+    expect(restored.conversations[note.id].grouping).toBe("automatic");
+    expect(restored.groups.design.conversationIds).toEqual([note.id]);
+    await expect(pg.query("update marginchat_conversations set grouping_mode = 'invalid'")).rejects.toThrow();
   }, 30_000);
 
   test("adopting the existing unversioned schema preserves billing data and reruns only once", async () => {

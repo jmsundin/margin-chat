@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { MainViewMode } from "../types";
+import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 
 type ThemeMode = "light" | "dark";
 
@@ -10,6 +11,9 @@ interface AppSettingsModalProps {
   onSetMainViewMode: (mode: MainViewMode) => void;
   onSetTheme: (theme: ThemeMode) => void;
   theme: ThemeMode;
+  jevEnabled?: boolean;
+  jevStatus?: JevStatus;
+  onSetJevEnabled?: (enabled: boolean) => void;
 }
 
 export default function AppSettingsModal({
@@ -19,6 +23,9 @@ export default function AppSettingsModal({
   onSetMainViewMode,
   onSetTheme,
   theme,
+  jevEnabled = false,
+  jevStatus = "off",
+  onSetJevEnabled,
 }: AppSettingsModalProps) {
   useEffect(() => {
     if (!isOpen) {
@@ -151,6 +158,16 @@ export default function AppSettingsModal({
             </button>
           </div>
         </div>
+
+        {onSetJevEnabled ? <div className="app-settings-section jev-settings-section">
+          <div className="app-settings-copy">
+            <label className="app-settings-label" htmlFor="jev-assistance">Jev assistance</label>
+            <p className="app-settings-description" id="jev-assistance-disclosure">{JEV_DISCLOSURE}</p>
+            <p className="app-settings-description">Improves topic categories, related items, chat context selection, and Auto routing. Saved for this account on this device.</p>
+            {jevEnabled && (jevStatus === "unconfigured" || jevStatus === "unavailable") ? <p className="app-settings-description" role="status">{jevStatus === "unconfigured" ? "Jev is not configured on this server." : "Jev is temporarily unavailable."} The usual chat and categories remain available.</p> : null}
+          </div>
+          <input id="jev-assistance" type="checkbox" role="switch" aria-describedby="jev-assistance-disclosure" checked={jevEnabled} onChange={(event) => onSetJevEnabled(event.target.checked)} />
+        </div> : null}
 
         <div className="thread-dialog-actions">
           <button

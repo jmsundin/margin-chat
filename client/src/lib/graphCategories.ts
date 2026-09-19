@@ -424,6 +424,8 @@ export function buildCategoryOrganizedGraphLayouts(args: {
           ...currentLayout,
           x: currentLayout.x + deltaX,
           y: currentLayout.y + deltaY,
+          treeOriginX: currentLayout.treeOriginX === undefined ? undefined : currentLayout.treeOriginX + deltaX,
+          treeOriginY: currentLayout.treeOriginY === undefined ? undefined : currentLayout.treeOriginY + deltaY,
         });
       }
 

@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useDeferredValue,
   useMemo,
   useRef,
   useState,
@@ -11,6 +12,8 @@ import {
 } from "react";
 import {
   buildConversationForestGraphScene,
+  getConversationGraphNodeDimensions,
+  replaceConversationGraphNodes,
   getConversationGraphViewportBounds,
   graphPlacementIntersectsBounds,
   queryConversationGraphNodeSpatialIndex,
@@ -20,6 +23,18 @@ import {
   type ConversationGraphScene,
   type ConversationGraphSemanticLevel,
 } from "../lib/conversationGraph";
+import GraphExplorationPanel, { type GraphExplorationOverviewItem } from "./GraphExplorationPanel";
+import GraphOverviewCanvas from "./GraphOverviewCanvas";
+import {
+  aggregateGraphEdges, getGraphScopeConversationIds, getGraphWorldBounds,
+  getGraphConceptConversationIds, readGraphConcepts, writeGraphConcepts,
+  searchGraphSources, resolveGraphEvidence,
+  type GraphConcept, type GraphEvidenceRef, type GraphScope, type GraphAggregatedEdge,
+} from "../lib/graphExploration";
+import { useGraphExplorationNavigation } from "../lib/useGraphExplorationNavigation";
+import { resolveGraphFocusLayout } from "../lib/graphFocusLayout";
+import "./GraphMapExploration.css";
+import "./GraphFocusLayout.css";
 import { ConversationGroupSelect } from "./ConversationGroupControls";
 import {
   excerpt,
@@ -43,14 +58,18 @@ import {
   type GraphViewport,
 } from "../lib/graphInteractions";
 import { useGraphInteractions } from "../lib/useGraphInteractions";
+import { buildThreadSummaries } from "../lib/conversationSearch";
+import { buildCategoryOrganizedGraphLayouts } from "../lib/graphCategories";
+import { getConversationRootId } from "../lib/tree";
 export { getGraphNodesInSelectionBounds } from "../lib/graphInteractions";
 import type {
   Conversation,
   ConversationGroup,
   GraphNodeLayout,
+  ThreadSummary,
 } from "../types";
 
-const GRAPH_SCALE_MIN = 0.38;
+const GRAPH_SCALE_MIN = 0.02;
 const GRAPH_SCALE_MAX = 2.2;
 const GRAPH_ZOOM_STEP = 1.14;
 const GRAPH_PINCH_ZOOM_SENSITIVITY = 0.008;
@@ -58,6 +77,7 @@ const GRAPH_PINCH_ZOOM_MAX_FACTOR = 1.28;
 const GRAPH_GRID_SIZE = 22;
 const GRAPH_MINIMAP_MAX_EDGES = 320;
 const GRAPH_MINIMAP_MAX_NODES = 280;
+const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
 
 function getGraphSemanticLevel(scale: number): ConversationGraphSemanticLevel {
   if (scale < 0.52) {
@@ -76,8 +96,13 @@ function getGraphSemanticLevel(scale: number): ConversationGraphSemanticLevel {
 }
 
 interface ConversationGraphViewProps {
+  workspaceKey?: string;
+  onFocusRequestHandled?: (requestId: number) => void;
+  relatedItems?: Array<{ id: string; score: number }>;
+  relatedStatus?: string;
   activeConversationId: string;
   conversations: Record<string, Conversation>;
+  threads?: ThreadSummary[];
   focusRequest?: {
     conversationId: string;
     requestId: number;
@@ -92,7 +117,7 @@ interface ConversationGraphViewProps {
   onUpdateGraphNodeLayouts?: (
     nextLayouts: Record<string, Partial<GraphNodeLayout>>,
   ) => void;
-  renderDockedConversation?: (conversationId: string) => ReactNode;
+  renderDockedConversation?: (conversationId: string, source?: GraphEvidenceRef) => ReactNode;
   renderExpandedConversation?: (conversationId: string) => ReactNode;
 }
 
@@ -199,22 +224,35 @@ function getSourceQuote(conversation: Conversation) {
   );
 }
 
-function calculateFitViewport(
+export function calculateFitViewport(
   scene: ConversationGraphScene,
-  viewportElement: HTMLDivElement,
+  viewportElement: Pick<HTMLDivElement, "clientWidth" | "clientHeight">,
 ): GraphViewport {
   const availableWidth = Math.max(240, viewportElement.clientWidth - 56);
   const availableHeight = Math.max(220, viewportElement.clientHeight - 48);
+  // Saved and topic-organized positions may be negative. Stage dimensions only
+  // describe its positive extent, so fit the authored geometry itself.
+  const placements = [...scene.nodes, ...scene.groups];
+  const bounds = placements.length ? placements.reduce((current, item) => ({
+    left: Math.min(current.left, item.x),
+    top: Math.min(current.top, item.y),
+    right: Math.max(current.right, item.x + item.width),
+    bottom: Math.max(current.bottom, item.y + item.height),
+  }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity }) : {
+    left: 0, top: 0, right: scene.width, bottom: scene.height,
+  };
+  const width = Math.max(1, bounds.right - bounds.left);
+  const height = Math.max(1, bounds.bottom - bounds.top);
   const scale = clamp(
-    Math.min(availableWidth / scene.width, availableHeight / scene.height),
-    GRAPH_SCALE_MIN,
+    Math.min(availableWidth / width, availableHeight / height),
+    Number.EPSILON,
     0.96,
   );
 
   return {
     scale,
-    x: (viewportElement.clientWidth - scene.width * scale) / 2,
-    y: (viewportElement.clientHeight - scene.height * scale) / 2,
+    x: viewportElement.clientWidth / 2 - (bounds.left + width / 2) * scale,
+    y: viewportElement.clientHeight / 2 - (bounds.top + height / 2) * scale,
   };
 }
 
@@ -304,6 +342,7 @@ function GraphNodeAction({
 
 function GraphNode({
   activeConversationId,
+  categoryLabel,
   conversation,
   detailLevel,
   group,
@@ -319,6 +358,8 @@ function GraphNode({
   onDock,
   onExpand,
   onMakeMain,
+  onFocus,
+  onSource,
   onMoveStart,
   onOpen,
   onSelect,
@@ -327,6 +368,7 @@ function GraphNode({
   semanticLevel,
 }: {
   activeConversationId: string;
+  categoryLabel?: string;
   conversation: Conversation;
   detailLevel: ConversationGraphDetail;
   group: ConversationGroup | null;
@@ -342,6 +384,8 @@ function GraphNode({
   onDock: (conversationId: string) => void;
   onExpand: (conversationId: string) => void;
   onMakeMain: (conversationId: string) => void;
+  onFocus: (conversationId: string) => void;
+  onSource: (conversationId: string) => void;
   onMoveStart: (
     event: ReactPointerEvent<HTMLButtonElement>,
     conversationId: string,
@@ -416,6 +460,7 @@ function GraphNode({
         <span className="conversation-graph-node-head">
           <span className="conversation-graph-node-kicker">
             <span>{nodeType}</span>
+            {categoryLabel ? <span className="conversation-graph-node-category">{categoryLabel}</span> : null}
             {group ? (
               <span className="conversation-graph-node-group">
                 <span
@@ -507,11 +552,13 @@ function GraphNode({
 
       {isPreview ? (
         <div className="conversation-graph-node-preview">
-          <span className="conversation-graph-node-source-label">
-            Branched from
-          </span>
+          <span className="conversation-graph-node-source-label">{conversation.parentId ? "Branched from" : isNote ? "Workspace note" : "Discussion"}</span>
           <blockquote>{getSourceQuote(conversation)}</blockquote>
           <p>{getConversationPreview(conversation)}</p>
+          <div className="graph-map-preview-actions">
+            <button type="button" onClick={() => onFocus(conversation.id)}>Focus here</button>
+            {conversation.parentId ? <button type="button" onClick={() => onSource(conversation.id)}>Show source</button> : null}
+          </div>
         </div>
       ) : null}
 
@@ -558,14 +605,14 @@ function GraphGroupRegion({
     return (
       <article className="conversation-graph-group-node" style={style}>
         <button
-          onClick={() => (group.collapsed ? onToggle(group.id) : onOpen(placement))}
+          onClick={() => onOpen(placement)}
           type="button"
         >
           <span className="conversation-graph-group-node-kicker">
             Group · {placement.conversationIds.length} chats
           </span>
           <strong>{group.name}</strong>
-          <span>{group.collapsed ? "Expand group" : "Zoom in to explore"}</span>
+          <span>Explore group</span>
         </button>
       </article>
     );
@@ -596,8 +643,13 @@ function GraphGroupRegion({
 }
 
 export default function ConversationGraphView({
+  workspaceKey,
+  onFocusRequestHandled,
+  relatedItems = EMPTY_RELATED_ITEMS,
+  relatedStatus = "off",
   activeConversationId,
   conversations,
+  threads,
   focusRequest = null,
   graphLayouts = {},
   groups,
@@ -610,26 +662,30 @@ export default function ConversationGraphView({
   renderDockedConversation,
   renderExpandedConversation,
 }: ConversationGraphViewProps) {
+  const navigation = useGraphExplorationNavigation(workspaceKey);
+  const { scope, selectedConversationId, detailLevel, dockedConversationId, viewport, source, query, expandedGroups, showRelated } = navigation.state;
+  const setSelectedConversationId = (id: string | null) => navigation.update({ selectedConversationId: id });
+  const setDetailLevel = (value: ConversationGraphDetail) => navigation.update({ detailLevel: value });
+  const setDockedConversationId = (id: string | null) => navigation.update({ dockedConversationId: id, source: null });
+  const setViewport = navigation.update;
+  const [concepts, setConcepts] = useState<GraphConcept[]>(() => workspaceKey ? readGraphConcepts(workspaceKey) : []);
+  const [conceptSaveError, setConceptSaveError] = useState(false);
+  const [inspectedEdge, setInspectedEdge] = useState<GraphAggregatedEdge | null>(null);
+  const [inspectedOverviewSources, setInspectedOverviewSources] = useState<string[]>([]);
+  const [explorerOpen, setExplorerOpen] = useState(true);
+  const deferredQuery = useDeferredValue(query);
+  const dockBodyRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
-  const viewportStateRef = useRef<GraphViewport>({ scale: 1, x: 0, y: 0 });
-  const positionedInitialSceneRef = useRef(false);
-  const revealedSelectionKeyRef = useRef<string | null>(null);
+  const viewportStateRef = useRef<GraphViewport>(viewport);
+  viewportStateRef.current = viewport;
+  const positionedInitialSceneRef = useRef(navigation.restored);
+  const revealedSelectionKeyRef = useRef<string | null>(navigation.restored && selectedConversationId ? `${selectedConversationId}:${detailLevel}` : null);
   const handledFocusRequestIdRef = useRef<number | null>(null);
-  const [selectedConversationId, setSelectedConversationId] = useState<
-    string | null
-  >(null);
-  const [detailLevel, setDetailLevel] =
-    useState<ConversationGraphDetail>("compact");
-  const [dockedConversationId, setDockedConversationId] = useState<
-    string | null
-  >(null);
-  const [viewport, setViewport] = useState<GraphViewport>({
-    scale: 1,
-    x: 0,
-    y: 0,
-  });
+  const restoringHistoryRef = useRef(false);
+  const [restoreRevision, setRestoreRevision] = useState(0);
   const [viewportSize, setViewportSize] = useState({ height: 0, width: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const backgroundPressRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const [isMultiSelectActive, setIsMultiSelectActive] = useState(false);
   const [multiSelectedConversationIds, setMultiSelectedConversationIds] =
     useState<Set<string>>(() => new Set());
@@ -654,11 +710,13 @@ export default function ConversationGraphView({
     sceneConversationId,
   );
   const semanticLevel = getGraphSemanticLevel(viewport.scale);
-  const scene = useMemo(
+  const categorizedThreads = useMemo(() => threads ?? buildThreadSummaries(conversations), [threads, conversations]);
+  const categoryLabels = useMemo(() => new Map(categorizedThreads.map((thread) => [thread.id, thread.categoryLabel])), [categorizedThreads]);
+  const completeScene = useMemo(
     () =>
       buildConversationForestGraphScene({
         conversations,
-        detailLevel: selectedConversation ? detailLevel : "compact",
+        detailLevel: "compact",
         groups,
         semanticLevel,
         selectedConversationId: sceneConversationId,
@@ -666,14 +724,76 @@ export default function ConversationGraphView({
       }),
     [
       conversations,
-      detailLevel,
       graphLayouts,
       groups,
       sceneConversationId,
-      selectedConversation,
       semanticLevel,
     ],
   );
+  const scopedIds = useMemo(() => {
+    const ids = getGraphScopeConversationIds({ scope, conversations, groups, threads: categorizedThreads, concepts });
+    if (showRelated && scope.kind === "focus" && scope.conversationId === activeConversationId) {
+      for (const item of relatedItems) if (conversations[item.id]) ids.add(item.id);
+    }
+    return ids;
+  }, [scope, conversations, groups, categorizedThreads, concepts, showRelated, relatedItems, activeConversationId]);
+  const unfocusedScene = useMemo(() => {
+    if (scope.kind === "all") return completeScene;
+    const nodes = completeScene.nodes.filter((node) => scopedIds.has(node.conversationId));
+    const edges = completeScene.edges.filter((edge) => scopedIds.has(edge.parentConversationId) && scopedIds.has(edge.childConversationId));
+    const groupPlacements = completeScene.groups.flatMap((group) => {
+      const members = nodes.filter((node) => group.conversationIds.includes(node.conversationId));
+      if (!members.length) return [];
+      const bounds = getGraphWorldBounds(members, 24);
+      return [{ ...group, conversationIds: members.map((node) => node.conversationId), x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height }];
+    });
+    return { ...completeScene, nodes, edges, groups: groupPlacements };
+  }, [completeScene, scope.kind, scopedIds]);
+  const scene = useMemo(() => {
+    if (!selectedConversation || detailLevel === "compact") return unfocusedScene;
+    const placements = unfocusedScene.nodes.map((node) => node.conversationId === selectedConversation.id ? {
+      ...node,
+      ...getConversationGraphNodeDimensions({ conversation: selectedConversation, detailLevel, isSelected: true, mode: "overview", semanticLevel }),
+    } : node);
+    return replaceConversationGraphNodes(unfocusedScene, resolveGraphFocusLayout({
+      placements, selectedConversationId: selectedConversation.id,
+    }));
+  }, [unfocusedScene, selectedConversation, detailLevel, semanticLevel]);
+  const worldBounds = useMemo(() => getGraphWorldBounds([...scene.nodes, ...scene.groups], 24), [scene]);
+  const sourceItems = useMemo(() => searchGraphSources(conversations, deferredQuery).filter((item) => scopedIds.has(item.evidence.conversationId)), [conversations, deferredQuery, query, scopedIds]);
+  const overviewItems = useMemo<GraphExplorationOverviewItem[]>(() => {
+    const items: GraphExplorationOverviewItem[] = [];
+    for (const concept of concepts) {
+      const ids = [...getGraphConceptConversationIds(concept, conversations)];
+      items.push({ id: `concept:${concept.id}`, label: concept.label, kind: "Concept", count: ids.length, description: concept.description, examples: ids.slice(0, 2).map((id) => conversations[id].title) });
+    }
+    for (const group of Object.values(groups)) {
+      const ids = [...new Set(group.conversationIds.filter((id) => conversations[id]))];
+      items.push({ id: `group:${group.id}`, label: group.name, kind: "Group", count: ids.length, examples: ids.slice(0, 2).map((id) => conversations[id].title) });
+    }
+    const ungrouped = [...getGraphScopeConversationIds({ scope: { kind: "ungrouped" }, conversations, groups })];
+    if (ungrouped.length) items.push({ id: "ungrouped", label: "Ungrouped", kind: "Ungrouped", count: ungrouped.length, examples: ungrouped.slice(0, 2).map((id) => conversations[id].title) });
+    const seen = new Set<string>();
+    for (const thread of categorizedThreads) {
+      if (seen.has(thread.categoryId)) continue;
+      seen.add(thread.categoryId);
+      const ids = [...getGraphScopeConversationIds({ scope: { kind: "category", categoryId: thread.categoryId }, conversations, threads: categorizedThreads })];
+      items.push({ id: `category:${thread.categoryId}`, label: thread.categoryLabel, kind: "Category", count: ids.length, description: "Activity category", examples: ids.slice(0, 2).map((id) => conversations[id].title) });
+    }
+    return items;
+  }, [concepts, conversations, groups, categorizedThreads]);
+  const overviewMemberships = useMemo(() => Object.fromEntries(overviewItems.map((item) => {
+    const [kind, ...parts] = item.id.split(":");
+    const id = parts.join(":");
+    const itemScope: GraphScope = kind === "group" ? { kind, groupId: id }
+      : kind === "concept" ? { kind, conceptId: id }
+      : kind === "category" ? { kind, categoryId: categorizedThreads.find((thread) => thread.categoryId === id)!.categoryId }
+      : { kind: "ungrouped" };
+    return [item.id, [...getGraphScopeConversationIds({ scope: itemScope, conversations, groups, concepts, threads: categorizedThreads })]];
+  })), [overviewItems, conversations, groups, concepts, categorizedThreads]);
+  const showThemeOverview = scope.kind === "all" && !selectedConversation && navigation.state.overviewPresentation === "themes";
+  const scopeLabel = scope.kind === "all" ? "All discussions" : scope.kind === "ungrouped" ? "Ungrouped" : scope.kind === "focus" ? `Around ${conversations[scope.conversationId]?.title ?? "removed discussion"}` : overviewItems.find((item) => item.id === `${scope.kind}:${scope.kind === "group" ? scope.groupId : scope.kind === "concept" ? scope.conceptId : scope.categoryId}`)?.label ?? "Unavailable collection";
+  const resolvedSource = useMemo(() => source ? resolveGraphEvidence(conversations, source) : null, [conversations, source]);
   const {
     spatialIndex: nodeSpatialIndex,
     placementsById: placementByConversationId,
@@ -702,10 +822,10 @@ export default function ConversationGraphView({
     () =>
       scene.groups.filter(
         (placement) =>
-          groups[placement.groupId]?.collapsed ||
-          semanticLevel === "territory",
+          scope.kind === "all" && !expandedGroups.includes(placement.groupId) &&
+          (groups[placement.groupId]?.collapsed || semanticLevel === "territory"),
       ),
-    [groups, scene.groups, semanticLevel],
+    [groups, scene.groups, semanticLevel, scope.kind, expandedGroups],
   );
   const hiddenConversationIds = useMemo(
     () => {
@@ -836,6 +956,20 @@ export default function ConversationGraphView({
     renderedNodePlacements,
     scene.edges,
   ]);
+  const groupedEdges = useMemo(() => aggregateGraphEdges(scene, collapsedGroupPlacements).filter((edge) => edge.source.kind === "group" || edge.target.kind === "group"), [scene, collapsedGroupPlacements]);
+  const aggregateEdges = useMemo(() => groupedEdges.filter((edge) =>
+    graphPlacementIntersectsBounds({ x: Math.min(edge.startX, edge.endX) - 150, y: Math.min(edge.startY, edge.endY) - 30, width: Math.abs(edge.endX - edge.startX) + 300, height: Math.abs(edge.endY - edge.startY) + 60 }, viewportBounds)
+  ), [groupedEdges, viewportBounds]);
+  const relatedEdges = useMemo(() => {
+    if (!showRelated || relatedStatus !== "ready") return [];
+    const origin = placementByConversationId.get(activeConversationId);
+    if (!origin || hiddenConversationIds.has(activeConversationId)) return [];
+    return relatedItems.flatMap((item) => {
+      const target = placementByConversationId.get(item.id);
+      if (!target || hiddenConversationIds.has(item.id) || target.conversationId === activeConversationId) return [];
+      return [{ id: item.id, startX: origin.x + origin.width, startY: origin.y + origin.height / 2, endX: target.x, endY: target.y + target.height / 2 }];
+    });
+  }, [showRelated, relatedStatus, activeConversationId, relatedItems, placementByConversationId, hiddenConversationIds]);
   const conversationGroupByConversationId = useMemo(() => {
     const groupByConversationId = new Map<string, ConversationGroup>();
 
@@ -896,8 +1030,8 @@ export default function ConversationGraphView({
 
   const applyViewport = useCallback((nextViewport: GraphViewport) => {
     viewportStateRef.current = nextViewport;
-    setViewport(nextViewport);
-  }, []);
+    setViewport({ viewport: nextViewport });
+  }, [setViewport]);
 
   const interactions = useGraphInteractions({
     getViewport: () => viewportStateRef.current,
@@ -970,13 +1104,7 @@ export default function ConversationGraphView({
       return;
     }
 
-    const fitScale = calculateFitViewport(scene, viewportElement).scale;
-    const preferredScale = detailLevel === "reader" ? 0.9 : 0.82;
-    const scale = clamp(
-      Math.max(fitScale, Math.min(viewportStateRef.current.scale, preferredScale)),
-      GRAPH_SCALE_MIN,
-      preferredScale,
-    );
+    const scale = detailLevel === "reader" ? 0.9 : Math.max(0.82, Math.min(viewportStateRef.current.scale, 1.12));
 
     applyViewport({
       scale,
@@ -1007,9 +1135,12 @@ export default function ConversationGraphView({
 
     handledFocusRequestIdRef.current = focusRequest.requestId;
     revealedSelectionKeyRef.current = null;
-    setSelectedConversationId(focusRequest.conversationId);
-    setDetailLevel("preview");
-  }, [conversations, focusRequest]);
+    navigation.navigate({
+      scope: { kind: "all" }, selectedConversationId: focusRequest.conversationId, detailLevel: "preview", query: "",
+      expandedGroups: Object.values(groups).filter((group) => group.conversationIds.includes(focusRequest.conversationId)).map((group) => group.id),
+    });
+    onFocusRequestHandled?.(focusRequest.requestId);
+  }, [conversations, focusRequest, groups, navigation.navigate, onFocusRequestHandled]);
 
   useEffect(() => {
     if (dockedConversationId && !dockedConversation) {
@@ -1049,6 +1180,11 @@ export default function ConversationGraphView({
       ? `${selectedConversation.id}:${detailLevel}`
       : null;
 
+    if (restoringHistoryRef.current) {
+      restoringHistoryRef.current = false;
+      revealedSelectionKeyRef.current = selectionKey;
+      return;
+    }
     if (!selectionKey) {
       revealedSelectionKeyRef.current = null;
       return;
@@ -1068,7 +1204,22 @@ export default function ConversationGraphView({
     detailLevel,
     revealSelectedConversation,
     selectedConversation,
+    navigation.state,
   ]);
+
+  useEffect(() => {
+    if (!dockedConversationId) return;
+    const saved = navigation.state.readerScroll;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        if (!saved) return;
+        const scroller = dockBodyRef.current?.querySelector<HTMLElement>(".panel-body, .conversation-graph-dock-fallback");
+        if (scroller) scroller.scrollTop = saved;
+      });
+    });
+    return () => { window.cancelAnimationFrame(firstFrame); window.cancelAnimationFrame(secondFrame); };
+  }, [dockedConversationId, source, restoreRevision]);
 
   useEffect(() => {
     const viewportElement = viewportRef.current;
@@ -1135,7 +1286,7 @@ export default function ConversationGraphView({
 
   function setScaleAtPoint(nextScale: number, localX: number, localY: number) {
     const current = viewportStateRef.current;
-    const scale = clamp(nextScale, GRAPH_SCALE_MIN, GRAPH_SCALE_MAX);
+    const scale = clamp(nextScale, Math.min(GRAPH_SCALE_MIN, current.scale), GRAPH_SCALE_MAX);
 
     if (Math.abs(scale - current.scale) < 0.001) {
       return;
@@ -1274,6 +1425,7 @@ export default function ConversationGraphView({
     if (isMultiSelectActive) {
       interactions.startMarquee(event, event.shiftKey, multiSelectedConversationIds);
     } else {
+      backgroundPressRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
       interactions.startPan(event);
     }
   }
@@ -1293,26 +1445,35 @@ export default function ConversationGraphView({
   }
 
   function commitNodeMove(move: GraphNodeMove) {
-    const anchorPlacement = placementByConversationId.get(move.conversationId);
+    if (Math.abs(move.deltaX) < 0.5 && Math.abs(move.deltaY) < 0.5) return;
+    // Focus spacing is transient. A deliberate drag starts at the displayed
+    // position, but collision settlement and persistence use the authored map.
+    const originalPlacements = new Map(unfocusedScene.nodes.map((node) => [node.conversationId, node]));
+    const movedIds = new Set(move.conversationIds);
+    const commitPlacements = unfocusedScene.nodes.map((node) => {
+      const displayed = placementByConversationId.get(node.conversationId);
+      return movedIds.has(node.conversationId) && displayed ? { ...node, x: displayed.x, y: displayed.y } : node;
+    });
+    const anchorPlacement = commitPlacements.find((node) => node.conversationId === move.conversationId);
     // Preview work is bounded, but release always settles the complete scene.
     const reflowedNodes = move.conversationIds.length > 1
       ? resolveGraphSelectionReflow({
           conversationIds: move.conversationIds,
           deltaX: move.deltaX,
           deltaY: move.deltaY,
-          placements: scene.nodes,
+          placements: commitPlacements,
         })
       : anchorPlacement
         ? resolveGraphNodeReflow({
             anchorConversationId: move.conversationId,
-            placements: scene.nodes,
+            placements: commitPlacements,
             x: anchorPlacement.x + move.deltaX,
             y: anchorPlacement.y + move.deltaY,
           })
-        : scene.nodes;
+        : commitPlacements;
     const nextLayouts = Object.fromEntries(
       reflowedNodes.filter((placement) => {
-        const current = placementByConversationId.get(placement.conversationId);
+        const current = originalPlacements.get(placement.conversationId);
         return !current || Math.abs(current.x - placement.x) >= 0.5 || Math.abs(current.y - placement.y) >= 0.5;
       }).map((placement) => [placement.conversationId, {
         positioned: true,
@@ -1324,14 +1485,22 @@ export default function ConversationGraphView({
   }
 
   function handleViewportPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const press = backgroundPressRef.current;
+    if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) press.moved = true;
     if (interactions.move(event)) event.preventDefault();
   }
 
   function handleViewportPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const press = backgroundPressRef.current;
+    backgroundPressRef.current = null;
     interactions.end(event);
+    if (press?.pointerId === event.pointerId && !press.moved && Math.hypot(event.clientX - press.x, event.clientY - press.y) <= 4 && selectedConversationId) {
+      navigation.navigate({ selectedConversationId: null, detailLevel: "compact" });
+    }
   }
 
   function handleViewportPointerCancel(event: ReactPointerEvent<HTMLDivElement>) {
+    backgroundPressRef.current = null;
     interactions.end(event, false);
   }
 
@@ -1378,11 +1547,12 @@ export default function ConversationGraphView({
     }
 
     if (selectedConversationId === conversationId) {
+      navigation.navigate({ selectedConversationId: null, detailLevel: "compact" });
       return;
     }
 
-    setSelectedConversationId(conversationId);
-    setDetailLevel("preview");
+    setInspectedEdge(null);
+    navigation.navigate({ selectedConversationId: conversationId, detailLevel: "preview", source: null });
   }
 
   function expandConversation(conversationId: string) {
@@ -1390,8 +1560,7 @@ export default function ConversationGraphView({
       return;
     }
 
-    setSelectedConversationId(conversationId);
-    setDetailLevel("reader");
+    navigation.navigate({ selectedConversationId: conversationId, detailLevel: "reader", source: null });
   }
 
   function dockConversation(conversationId: string) {
@@ -1399,9 +1568,7 @@ export default function ConversationGraphView({
       return;
     }
 
-    setDockedConversationId(conversationId);
-    setSelectedConversationId(conversationId);
-    setDetailLevel("preview");
+    navigation.navigate({ dockedConversationId: conversationId, selectedConversationId: conversationId, detailLevel: "preview", source: null, readerScroll: 0 });
   }
 
   function addChildConversation(parentConversationId: string) {
@@ -1413,35 +1580,78 @@ export default function ConversationGraphView({
       return;
     }
 
-    setSelectedConversationId(childConversationId);
-    setDetailLevel("preview");
+    navigation.navigate({ scope: { kind: "all" }, selectedConversationId: childConversationId, detailLevel: "preview", expandedGroups: [] });
+  }
+
+  function changeScope(nextScope: GraphScope) {
+    setInspectedEdge(null);
+    setInspectedOverviewSources([]);
+    setMultiSelectedConversationIds(new Set());
+    setIsMultiSelectActive(false);
+    navigation.navigate({ scope: nextScope, query: "", selectedConversationId: null, detailLevel: "compact", expandedGroups: [], overviewPresentation: "themes" });
+    setFitAfterArrange(true);
   }
 
   function openGroup(placement: ConversationGraphGroupPlacement) {
-    const viewportElement = viewportRef.current;
+    changeScope({ kind: "group", groupId: placement.groupId });
+  }
 
-    if (!viewportElement) {
-      return;
+  function openOverviewItem(id: string) {
+    if (id === "ungrouped") return changeScope({ kind: "ungrouped" });
+    const separator = id.indexOf(":");
+    const kind = id.slice(0, separator);
+    const value = id.slice(separator + 1);
+    if (kind === "concept") changeScope({ kind, conceptId: value });
+    if (kind === "group") changeScope({ kind, groupId: value });
+    if (kind === "category") {
+      const category = categorizedThreads.find((thread) => thread.categoryId === value);
+      if (category) changeScope({ kind, categoryId: category.categoryId });
     }
+  }
 
-    const scale = Math.max(viewportStateRef.current.scale, 0.68);
-
-    applyViewport({
-      scale,
-      x:
-        viewportElement.clientWidth / 2 -
-        (placement.x + placement.width / 2) * scale,
-      y:
-        viewportElement.clientHeight / 2 -
-        (placement.y + placement.height / 2) * scale,
+  function openEvidence(evidence: GraphEvidenceRef) {
+    if (!conversations[evidence.conversationId]) return;
+    setInspectedEdge(null);
+    setInspectedOverviewSources([]);
+    revealedSelectionKeyRef.current = null;
+    navigation.navigate({
+      scope: scopedIds.has(evidence.conversationId) ? scope : { kind: "all" },
+      selectedConversationId: evidence.conversationId, dockedConversationId: evidence.conversationId,
+      detailLevel: "preview", source: evidence, readerScroll: 0,
+      expandedGroups: [...new Set([...expandedGroups, ...Object.values(groups).filter((group) => group.conversationIds.includes(evidence.conversationId)).map((group) => group.id)])],
     });
+  }
+
+  function branchEvidence(conversation: Conversation): GraphEvidenceRef | null {
+    const anchor = conversation.branchAnchor;
+    return anchor ? { conversationId: anchor.sourceConversationId, sourceKind: "message", messageId: anchor.sourceMessageId, quote: anchor.quote, startOffset: anchor.startOffset, endOffset: anchor.endOffset } : conversation.parentId ? { conversationId: conversation.parentId, sourceKind: "conversation" } : null;
+  }
+
+  function saveConcepts(next: GraphConcept[]) {
+    setConcepts(next);
+    setConceptSaveError(workspaceKey ? !writeGraphConcepts(workspaceKey, next) : true);
+  }
+
+  function addSelectionToConcept(id: string) {
+    if (!selectedConversation) return;
+    const member: GraphEvidenceRef = source?.conversationId === selectedConversation.id ? source : { conversationId: selectedConversation.id, sourceKind: "conversation" };
+    saveConcepts(concepts.map((concept) => concept.id !== id || concept.members.some((item) => JSON.stringify(item) === JSON.stringify(member)) ? concept : { ...concept, members: [...concept.members, member] }));
+  }
+
+  function restoreHistory(direction: "back" | "forward") {
+    setInspectedEdge(null);
+    setInspectedOverviewSources([]);
+    setFitAfterArrange(false);
+    restoringHistoryRef.current = true;
+    setRestoreRevision((value) => value + 1);
+    if (direction === "back") navigation.back(); else navigation.forward();
   }
 
   if (!activeConversation) {
     return null;
   }
 
-  const minimapScale = Math.min(112 / scene.width, 66 / scene.height);
+  const minimapScale = Math.min(112 / Math.max(1, worldBounds.width), 66 / Math.max(1, worldBounds.height));
   const worldViewport = {
     height: viewportSize.height / viewport.scale,
     width: viewportSize.width / viewport.scale,
@@ -1450,32 +1660,59 @@ export default function ConversationGraphView({
   };
   const minimapViewport = {
     height:
-      Math.min(scene.height, worldViewport.y + worldViewport.height) -
-      Math.max(0, worldViewport.y),
+      Math.min(worldBounds.bottom, worldViewport.y + worldViewport.height) -
+      Math.max(worldBounds.top, worldViewport.y),
     width:
-      Math.min(scene.width, worldViewport.x + worldViewport.width) -
-      Math.max(0, worldViewport.x),
-    x: Math.max(0, worldViewport.x),
-    y: Math.max(0, worldViewport.y),
+      Math.min(worldBounds.right, worldViewport.x + worldViewport.width) -
+      Math.max(worldBounds.left, worldViewport.x),
+    x: Math.max(worldBounds.left, worldViewport.x),
+    y: Math.max(worldBounds.top, worldViewport.y),
   };
   const showMinimapViewport =
     minimapViewport.height > 0 && minimapViewport.width > 0;
 
   return (
-    <section className="conversation-graph" aria-label="Conversation graph">
+    <section className="conversation-graph graph-map-exploration" aria-label="Conversation graph">
+      <div className="graph-map-navigation" role="toolbar" aria-label="Map exploration">
+        <button type="button" aria-label="Back in map" disabled={!navigation.canGoBack} onClick={() => restoreHistory("back")}>← Back</button>
+        <button type="button" aria-label="Forward in map" disabled={!navigation.canGoForward} onClick={() => restoreHistory("forward")}>Forward →</button>
+        <button type="button" onClick={() => changeScope({ kind: "all" })}>Overview</button>
+        {scope.kind === "all" && !selectedConversation ? <button type="button" onClick={() => { setInspectedOverviewSources([]); navigation.navigate({ overviewPresentation: showThemeOverview ? "map" : "themes" }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
+        <span className="graph-map-scope" aria-live="polite">{scopeLabel} · {scopedIds.size} of {Object.keys(conversations).length} sources</span>
+        <button type="button" aria-expanded={explorerOpen} aria-controls="graph-exploration-panel" onClick={() => setExplorerOpen((open) => !open)}>{explorerOpen ? "Hide explorer" : "Explore & search"}</button>
+      </div>
       <div
         className={
-          dockedConversation
-            ? "conversation-graph-workspace has-docked-chat"
-            : "conversation-graph-workspace"
+          `conversation-graph-workspace${dockedConversation ? " has-docked-chat" : ""}${explorerOpen ? " has-explorer" : ""}`
         }
       >
+        {explorerOpen ? <div id="graph-exploration-panel" className="graph-map-explorer">
+          <GraphExplorationPanel
+            overviewItems={overviewItems} sourceItems={scope.kind === "concept" && !query.trim() ? (concepts.find((concept) => concept.id === scope.conceptId)?.members ?? []).map((evidence, index) => {
+              const resolved = resolveGraphEvidence(conversations, evidence);
+              return { id: `member-${index}`, title: conversations[evidence.conversationId]?.title ?? "Removed source", preview: evidence.quote || excerpt(resolved.content ?? "This source is no longer available.", 180), sourceLabel: resolved.status === "missing" || resolved.status === "stale" ? "Source needs review" : "Discusses concept · added by you", evidence };
+            }) : sourceItems}
+            concepts={concepts} scopeLabel={scopeLabel} scopeKind={scope.kind} scopeKey={JSON.stringify(scope)}
+            selectedConversationTitle={selectedConversation?.title}
+            selectedConceptId={scope.kind === "concept" ? scope.conceptId : undefined}
+            query={query} onQueryChange={(value) => navigation.update({ query: value })}
+            onOpenOverviewItem={openOverviewItem} onSelectSource={openEvidence}
+            onCreateConcept={(label, description) => {
+              const members: GraphEvidenceRef[] = selectedConversation ? [source?.conversationId === selectedConversation.id ? source : { conversationId: selectedConversation.id, sourceKind: "conversation" }] : [];
+              const concept = { id: crypto.randomUUID(), label, description, members };
+              saveConcepts([...concepts, concept]);
+              changeScope({ kind: "concept", conceptId: concept.id });
+            }}
+            onUpdateConcept={(concept) => saveConcepts(concepts.map((item) => item.id === concept.id ? concept : item))}
+            onDeleteConcept={(id) => { saveConcepts(concepts.filter((concept) => concept.id !== id)); if (scope.kind === "concept" && scope.conceptId === id) changeScope({ kind: "all" }); }}
+            onAddSelectionToConcept={addSelectionToConcept}
+            onFocusSelection={() => { if (selectedConversation) changeScope({ kind: "focus", conversationId: selectedConversation.id, depth: 1 }); }}
+            onShowBranchSource={selectedConversation?.parentId ? () => { const evidence = branchEvidence(selectedConversation); if (evidence) openEvidence(evidence); } : undefined}
+          />
+          {conceptSaveError ? <p className="graph-map-storage-error" role="status">Concept changes could not be saved on this device. Keep this view open to retain them.</p> : null}
+        </div> : null}
         <div
-          className={
-            isPanning
-              ? "conversation-graph-viewport is-panning"
-              : "conversation-graph-viewport"
-          }
+          className={`conversation-graph-viewport${isPanning ? " is-panning" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
           onLostPointerCapture={handleViewportPointerCancel}
           onPointerCancel={handleViewportPointerCancel}
           onPointerDown={startPan}
@@ -1484,6 +1721,12 @@ export default function ConversationGraphView({
           ref={viewportRef}
           style={viewportStyle}
         >
+          {showThemeOverview ? <GraphOverviewCanvas items={overviewItems} memberships={overviewMemberships} conversations={conversations} selectedTopicId={navigation.state.overviewTopicId} onSelectTopic={(id) => navigation.update({ overviewTopicId: id })} onOpen={openOverviewItem} onInspectConnection={setInspectedOverviewSources} /> : null}
+          <div className="graph-map-context-controls" data-graph-ui="true">
+            {scope.kind === "focus" ? <button type="button" onClick={() => { navigation.navigate({ scope: { ...scope, depth: scope.depth + 1 } }); setFitAfterArrange(true); }}>Expand branches · depth {scope.depth}</button> : null}
+            {relatedStatus === "ready" && relatedItems.length > 0 ? <label><input type="checkbox" checked={showRelated} onChange={(event) => { navigation.update({ showRelated: event.target.checked }); setFitAfterArrange(true); }} /> Possibly related to {conversations[activeConversationId]?.title}</label> : null}
+            {showRelated && relatedStatus === "ready" ? <small>Suggestions from up to 40 recent items; relevance is not a factual relationship.</small> : null}
+          </div>
           <nav
             aria-label="Graph node hierarchy"
             className="conversation-graph-node-breadcrumbs"
@@ -1542,12 +1785,15 @@ export default function ConversationGraphView({
               return group ? (
                 <GraphGroupRegion
                   collapsed={
-                    group.collapsed || semanticLevel === "territory"
+                    collapsedGroupPlacements.some((item) => item.groupId === group.id)
                   }
                   group={group}
                   key={group.id}
                   onOpen={openGroup}
-                  onToggle={onToggleGroup}
+                  onToggle={(id) => {
+                    navigation.navigate({ scope: { kind: "all" }, expandedGroups: expandedGroups.filter((item) => item !== id) });
+                    if (!groups[id]?.collapsed || !expandedGroups.includes(id)) onToggleGroup(id);
+                  }}
                   placement={placement}
                 />
               ) : null;
@@ -1562,8 +1808,15 @@ export default function ConversationGraphView({
               width={scene.width}
             >
               <title>Chat branch relationships</title>
+              {aggregateEdges.map((edge) => <g key={edge.id} className="graph-map-aggregate-edge" data-graph-ui="true" role="button" tabIndex={0} aria-label={`Inspect ${edge.count} branch relationship${edge.count === 1 ? "" : "s"}`} onClick={() => setInspectedEdge(edge)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedEdge(edge); } }}>
+                <path className="conversation-graph-edge" d={buildConnectorPath(edge)} />
+                <path className="graph-map-edge-hit" d={buildConnectorPath(edge)} />
+                <text x={(edge.startX + edge.endX) / 2} y={(edge.startY + edge.endY) / 2 - 8}>{edge.count} branch{edge.count === 1 ? "" : "es"}</text>
+              </g>)}
+              {relatedEdges.map((edge) => <g key={`related-${edge.id}`} className="graph-map-related-edge"><path d={buildConnectorPath(edge)} /><title>Possibly related: {conversations[edge.id].title}</title></g>)}
               {renderedEdges.map((edge) => (
                 <g key={`${edge.parentConversationId}-${edge.childConversationId}`}>
+                  <path className="graph-map-edge-hit" data-graph-ui="true" d={buildConnectorPath(edge)} role="button" tabIndex={0} aria-label={`Show branch source for ${conversations[edge.childConversationId]?.title}`} onClick={() => { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); }} onKeyDown={(event) => { if (event.key === "Enter") { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); } }} />
                   <path
                     className={
                       edge.isSelectedPath
@@ -1598,6 +1851,7 @@ export default function ConversationGraphView({
               return conversation ? (
                 <GraphNode
                   activeConversationId={activeConversationId}
+                  categoryLabel={categoryLabels.get(getConversationRootId(conversations, conversation.id) ?? conversation.id)}
                   conversation={conversation}
                   detailLevel={
                     conversation.id === selectedConversation?.id
@@ -1620,6 +1874,8 @@ export default function ConversationGraphView({
                   onDock={dockConversation}
                   onExpand={expandConversation}
                   onMakeMain={onActivateConversation}
+                  onFocus={(id) => changeScope({ kind: "focus", conversationId: id, depth: 1 })}
+                  onSource={(id) => { const evidence = branchEvidence(conversations[id]); if (evidence) openEvidence(evidence); }}
                   onMoveStart={startNodeMove}
                   onOpen={onOpenConversation}
                   onSelect={selectConversation}
@@ -1636,6 +1892,17 @@ export default function ConversationGraphView({
             })}
           </div>
 
+          {inspectedEdge ? <section className="graph-map-edge-inspector" data-graph-ui="true" aria-label="Branch connection details">
+            <header><strong>{inspectedEdge.count} branch relationship{inspectedEdge.count === 1 ? "" : "s"}</strong><button type="button" aria-label="Close connection details" onClick={() => setInspectedEdge(null)}>×</button></header>
+            {inspectedEdge.memberEdges.map((edge) => <button type="button" key={`${edge.parentConversationId}-${edge.childConversationId}`} onClick={() => { const child = conversations[edge.childConversationId]; const evidence = child && branchEvidence(child); if (evidence) openEvidence(evidence); }}>
+              {conversations[edge.parentConversationId]?.title ?? "Removed source"} → {conversations[edge.childConversationId]?.title ?? "Removed discussion"}<small>Branched from · show source</small>
+            </button>)}
+          </section> : null}
+          {inspectedOverviewSources.length ? <section className="graph-map-edge-inspector graph-map-overview-inspector" data-graph-ui="true" aria-label="Sources behind this connection">
+            <header><strong>Sources behind this connection</strong><button type="button" aria-label="Close connection sources" onClick={() => setInspectedOverviewSources([])}>×</button></header>
+            {inspectedOverviewSources.map((id) => conversations[id] ? <button type="button" key={id} onClick={() => openEvidence({ conversationId: id, sourceKind: "conversation" })}>{conversations[id].title}<small>Open original source</small></button> : null)}
+          </section> : null}
+          {scene.nodes.length === 0 ? <p className="graph-map-empty">{scope.kind === "concept" ? "Add a source to this concept from the overview or search results." : "No discussions in this view. Return to Overview to explore."}</p> : null}
           <p className="conversation-graph-pan-hint">
             {isMultiSelectActive
               ? multiSelectedConversationIds.size
@@ -1697,6 +1964,18 @@ export default function ConversationGraphView({
               <span>{isAutoArranging ? "Arranging…" : "Auto-arrange"}</span>
             </button>
             <button
+              aria-label="Organize graph by topic"
+              disabled={isAutoArranging || !scene.nodes.length || !onUpdateGraphNodeLayouts}
+              onClick={() => {
+                onUpdateGraphNodeLayouts?.(buildCategoryOrganizedGraphLayouts({ conversations, graphLayouts, threads: categorizedThreads }));
+                setFitAfterArrange(true);
+              }}
+              title="Arrange threads using their topic categories"
+              type="button"
+            >
+              Topics
+            </button>
+            <button
               aria-label="Zoom out"
               onClick={() => zoomByStep("out")}
               type="button"
@@ -1720,12 +1999,17 @@ export default function ConversationGraphView({
           ) : null}
 
           {showMinimap ? (
-            <div className="conversation-graph-minimap" aria-label="Discussion minimap">
+            <div className="conversation-graph-minimap" aria-label="Discussion minimap" data-graph-ui="true" onClick={(event) => {
+              const rect = event.currentTarget.getBoundingClientRect();
+              const x = worldBounds.left + ((event.clientX - rect.left) / rect.width) * worldBounds.width;
+              const y = worldBounds.top + ((event.clientY - rect.top) / rect.height) * worldBounds.height;
+              applyViewport({ scale: viewport.scale, x: viewportSize.width / 2 - x * viewport.scale, y: viewportSize.height / 2 - y * viewport.scale });
+            }}>
               <svg
                 aria-hidden="true"
-                height={Math.max(28, scene.height * minimapScale)}
-                viewBox={`0 0 ${scene.width} ${scene.height}`}
-                width={Math.max(48, scene.width * minimapScale)}
+                height={Math.max(28, worldBounds.height * minimapScale)}
+                viewBox={`${worldBounds.left} ${worldBounds.top} ${worldBounds.width} ${worldBounds.height}`}
+                width={Math.max(48, worldBounds.width * minimapScale)}
               >
                 {minimapEdges.map((edge) => (
                   <path
@@ -1782,8 +2066,15 @@ export default function ConversationGraphView({
                 ×
               </button>
             </header>
-            <div className="conversation-graph-dock-body">
-              {renderDockedConversation?.(dockedConversation.id) ?? (
+            {source && resolvedSource ? <section className="graph-map-evidence" aria-label="Source passage">
+              <div><strong>{source.sourceKind === "message" ? "Source message" : source.sourceKind === "standalone-note" ? "Source note" : "Selected discussion"}</strong><button type="button" onClick={() => navigation.update({ source: null })}>Close passage</button></div>
+              {resolvedSource.status === "missing" || resolvedSource.status === "stale" ? <p role="status">{resolvedSource.status === "missing" ? "The source has been removed." : "The quoted passage has changed. Review the current text; the old quote is not highlighted."}</p> : null}
+              {resolvedSource.status === "recovered" ? <p>Passage found at its updated position.</p> : null}
+              {source.quote && !resolvedSource.highlight ? <blockquote>{source.quote}</blockquote> : null}
+              {resolvedSource.content ? <p className="graph-map-source-text">{resolvedSource.highlight ? <>{resolvedSource.content.slice(Math.max(0, resolvedSource.highlight.startOffset - 180), resolvedSource.highlight.startOffset)}<mark>{resolvedSource.content.slice(resolvedSource.highlight.startOffset, resolvedSource.highlight.endOffset)}</mark>{resolvedSource.content.slice(resolvedSource.highlight.endOffset, resolvedSource.highlight.endOffset + 220)}</> : excerpt(resolvedSource.content, 460)}</p> : null}
+            </section> : null}
+            <div className="conversation-graph-dock-body" ref={dockBodyRef} onScrollCapture={(event) => { if (event.target instanceof HTMLElement) navigation.update({ readerScroll: event.target.scrollTop }); }}>
+              {renderDockedConversation?.(dockedConversation.id, source ?? undefined) ?? (
                 <div className="conversation-graph-dock-fallback">
                   {dockedConversation.messages.map((message) => (
                     <p key={message.id}>{message.content}</p>

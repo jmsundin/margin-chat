@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import "./AuthLanding.css";
 
 type AuthMode = "forgot" | "login" | "reset" | "signup";
 type ThemeMode = "light" | "dark";
@@ -131,40 +132,41 @@ export default function AuthLanding({
   const activeError = localError ?? (showParentError ? errorMessage : null);
 
   return (
-    <div className="auth-layout">
+    <div className="auth-layout auth-welcome-layout">
       <section className="auth-hero">
         <p className="eyebrow">Margin Chat</p>
-        <h1>Bring every branch of the conversation into one workspace.</h1>
+        <h1>Follow an idea without losing your place.</h1>
         <p className="auth-copy">
-          Sign in to keep chats private to your account, pick up where you left
-          off, and branch ideas without leaking threads across users.
+          Highlight a passage to explore it in a branch. Keep notes beside the
+          conversation, and return to the main thread whenever you’re ready.
         </p>
-        <div className="auth-feature-grid">
-          <article className="auth-feature-card">
-            <span className="auth-feature-kicker">Protected</span>
-            <strong>Each workspace is isolated per account.</strong>
-            <p>
-              Conversations, pinned threads, and future sessions stay scoped to
-              the person who owns them.
-            </p>
-          </article>
-          <article className="auth-feature-card">
-            <span className="auth-feature-kicker">Persistent</span>
-            <strong>Server-backed history with local cache fallback.</strong>
-            <p>
-              Your layout and thread graph come back after refresh without
-              relying on a shared browser state.
-            </p>
-          </article>
-          <article className="auth-feature-card">
-            <span className="auth-feature-kicker">Branchable</span>
-            <strong>Highlight, fork, and compare lines of thought.</strong>
-            <p>
-              Keep the main thread moving while side explorations remain tied to
-              the original message context.
-            </p>
-          </article>
-        </div>
+        <figure className="auth-conversation-example">
+          <figcaption>A conversation with room to explore</figcaption>
+          <div className="auth-example-panels">
+            <div className="auth-example-main">
+              <div className="auth-example-title"><span className="auth-example-dot" />A better reading habit</div>
+              <p className="auth-example-speaker">You</p>
+              <p>How can I remember more of what I read?</p>
+              <p className="auth-example-speaker">Margin</p>
+              <p>Keep one idea from each article. A <mark>weekly reflection</mark> can help you connect the dots.</p>
+              <span className="auth-example-branch-label">↳ 1 branch</span>
+            </div>
+            <div className="auth-example-branch">
+              <div className="auth-example-title"><span aria-hidden="true">↳</span>Weekly reflection</div>
+              <blockquote>“weekly reflection”</blockquote>
+              <p className="auth-example-speaker">You</p>
+              <p>What would a five-minute version look like?</p>
+              <p className="auth-example-speaker">Margin</p>
+              <p>Revisit three highlights. Choose one and write why it stayed with you.</p>
+            </div>
+          </div>
+          <p className="auth-example-caption">Explore the tangent. Keep the original thought in view.</p>
+        </figure>
+        <ul className="auth-welcome-benefits" aria-label="Ways to use Margin Chat">
+          <li><span aria-hidden="true">↳</span> Explore a tangent</li>
+          <li><span aria-hidden="true">✎</span> Keep a note</li>
+          <li><span aria-hidden="true">↩</span> Pick up where you left off</li>
+        </ul>
       </section>
 
       <section className="auth-card" aria-label="Authentication">
@@ -187,9 +189,9 @@ export default function AuthLanding({
         </div>
 
         {mode === "signup" || mode === "login" ? (
-        <div className="auth-mode-switch" role="tablist" aria-label="Auth mode">
+        <div className="auth-mode-switch" role="group" aria-label="Account access">
           <button
-            aria-selected={mode === "signup"}
+            aria-pressed={mode === "signup"}
             className={mode === "signup" ? "secondary-button is-active" : "secondary-button"}
             onClick={() => switchMode("signup")}
             type="button"
@@ -197,7 +199,7 @@ export default function AuthLanding({
             Sign up
           </button>
           <button
-            aria-selected={mode === "login"}
+            aria-pressed={mode === "login"}
             className={mode === "login" ? "secondary-button is-active" : "secondary-button"}
             onClick={() => switchMode("login")}
             type="button"
@@ -256,7 +258,7 @@ export default function AuthLanding({
               />
             </label>
 
-            {activeError ? <p className="auth-error">{activeError}</p> : null}
+            {activeError ? <p className="auth-error" role="alert">{activeError}</p> : null}
 
             <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
               {isSubmitting ? "Creating account..." : "Create account"}
@@ -287,8 +289,8 @@ export default function AuthLanding({
               />
             </label>
 
-            {activeError ? <p className="auth-error">{activeError}</p> : null}
-            {notice ? <p className="auth-notice">{notice}</p> : null}
+            {activeError ? <p className="auth-error" role="alert">{activeError}</p> : null}
+            {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
 
             <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
               {isSubmitting ? "Signing in..." : "Log in"}
@@ -321,8 +323,8 @@ export default function AuthLanding({
                 value={resetEmail}
               />
             </label>
-            {activeError ? <p className="auth-error">{activeError}</p> : null}
-            {notice ? <p className="auth-notice">{notice}</p> : null}
+            {activeError ? <p className="auth-error" role="alert">{activeError}</p> : null}
+            {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
             <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
               {isSubmitting ? "Creating reset link..." : "Continue"}
             </button>
@@ -354,8 +356,8 @@ export default function AuthLanding({
                 value={confirmNewPassword}
               />
             </label>
-            {activeError ? <p className="auth-error">{activeError}</p> : null}
-            {notice ? <p className="auth-notice">{notice}</p> : null}
+            {activeError ? <p className="auth-error" role="alert">{activeError}</p> : null}
+            {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
             <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
               {isSubmitting ? "Updating password..." : "Update password"}
             </button>

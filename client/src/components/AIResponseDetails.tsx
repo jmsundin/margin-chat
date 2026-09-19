@@ -1,18 +1,42 @@
+import { getBackendServiceModel, isBackendServiceId } from "../lib/services";
 import type { AIExecutionRecord } from "../types";
+import "./AIResponseDetails.css";
 
 const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
+const routingLabels = {
+  jev: "Auto · selected by Jev",
+  "jev-task": "Auto · Jev task matching",
+  rules: "Auto · standard routing",
+  manual: "Selected by you",
+};
+
+function modelLabel(provider: string, model: string) {
+  // Never substitute the catalog default for an unknown resolved model ID.
+  return (isBackendServiceId(provider) ? getBackendServiceModel(provider, model)?.label : undefined) ?? model;
+}
 
 export default function AIResponseDetails({ execution, onOpenSource, isStreaming = false }: {
   execution: AIExecutionRecord;
   onOpenSource?: (id: string) => void;
   isStreaming?: boolean;
 }) {
-  return <details className="ai-response-details">
-    <summary><span>{execution.status === "streaming" ? isStreaming ? "Responding with" : "Partial response from" : "Answered by"} <strong>{execution.model}</strong></span><span>{execution.sources.length} {execution.sources.length === 1 ? "source" : "sources"} · Details</span></summary>
+  const method = execution.routing?.method;
+  const isPartial = execution.status === "stopped" || execution.status === "failed" || execution.status === "streaming" && !isStreaming;
+  const statusLabel = execution.status === "streaming" && isStreaming ? "Responding with" : isPartial ? "Partial response from" : "Answered by";
+  return <section className="ai-response-details" aria-label="Model selection">
+    <details className="ai-response-more">
+    <summary>
+      <span className="ai-routing-model">{statusLabel} <strong>{modelLabel(execution.provider, execution.model)}</strong><span> · {providers[execution.provider] ?? execution.provider}</span></span>
+      {execution.fallbacks.length ? <span className="ai-routing-fallback-label">Fallback used</span> : null}
+      <span className="ai-routing-trigger">Why this model?<svg aria-hidden="true" viewBox="0 0 16 16" fill="none"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
+    </summary>
     <div className="ai-response-body">
-      <p>{execution.reason || "Selected for this request."}</p>
+      <p className="ai-routing-label">{method ? routingLabels[method] : "Selection details"}</p>
+      <p className="ai-routing-reason"><strong>Why:</strong> {execution.reason || "No selection reason was recorded for this reply."}</p>
       <dl>
-        <div><dt>Provider</dt><dd>{providers[execution.provider] ?? execution.provider}</dd></div>
+        <div><dt>Service</dt><dd>{providers[execution.provider] ?? execution.provider}</dd></div>
+        <div><dt>Model ID</dt><dd>{execution.model}</dd></div>
+        {execution.routing && execution.routing.selectedModel !== execution.model ? <div><dt>Requested model ID</dt><dd>{execution.routing.selectedModel}</dd></div> : null}
         <div><dt>Preference</dt><dd>{execution.mode}</dd></div>
         <div><dt>Task</dt><dd>{execution.task}</dd></div>
         {execution.durationMs !== undefined ? <div><dt>Time</dt><dd>{(execution.durationMs / 1000).toFixed(1)} seconds</dd></div> : null}
@@ -28,5 +52,6 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
       {execution.warnings.map((warning, index) => <p className="ai-detail-warning" key={index}>{warning}</p>)}
       {execution.profileVersion ? <small>Selection policy: {execution.profileVersion}</small> : null}
     </div>
-  </details>;
+    </details>
+  </section>;
 }

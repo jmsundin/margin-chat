@@ -115,6 +115,7 @@ function readWorkspaceDocument(input, mode) {
       createdAt: item.createdAt,
       documents: item.documents ?? [],
       id: item.id,
+      ...(item.grouping === "manual" || item.grouping === "automatic" ? { grouping: item.grouping } : {}),
       kind: item.kind,
       messages: (item.messages ?? []).map((message) => ({ ...message,
         ...(message.execution ? { execution: normalizeAIExecution(message.execution) } : {}),

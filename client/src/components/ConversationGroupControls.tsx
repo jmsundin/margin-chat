@@ -1,43 +1,58 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import GroupPickerModal, { type GroupPickerSuggestion } from "./GroupPickerModal";
 import { getConversationGroupId } from "../lib/conversationGroups";
 import type { ConversationGroup } from "../types";
+
+export interface ConversationGroupPickerContextValue {
+  getSuggestion?: (conversationId: string) => GroupPickerSuggestion | null;
+  isSuggesting?: boolean;
+  status?: string;
+  onCreateAndAssign?: (conversationId: string, name: string) => void;
+}
+
+export const ConversationGroupPickerContext = createContext<ConversationGroupPickerContextValue>({});
 
 export function ConversationGroupSelect({
   className = "",
   conversationId,
   groups,
   onAssign,
+  getSuggestion,
+  isSuggesting,
+  status,
+  onCreateAndAssign,
 }: {
   className?: string;
   conversationId: string;
   groups: Record<string, ConversationGroup>;
   onAssign: (conversationId: string, groupId: string | null) => void;
-}) {
-  const groupId = getConversationGroupId(groups, conversationId) ?? "";
+} & ConversationGroupPickerContextValue) {
+  const [open, setOpen] = useState(false);
+  const context = useContext(ConversationGroupPickerContext);
+  const groupId = getConversationGroupId(groups, conversationId);
+  const groupName = groupId ? groups[groupId].name : "Ungrouped";
+  const suggestion = (getSuggestion ?? context.getSuggestion)?.(conversationId) ?? null;
+  const createAndAssign = onCreateAndAssign ?? context.onCreateAndAssign;
 
   return (
-    <label
-      className={["conversation-group-select", className]
-        .filter(Boolean)
-        .join(" ")}
-      onClick={(event) => event.stopPropagation()}
-    >
+    <div className={["conversation-group-select", className].filter(Boolean).join(" ")}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}>
       <span>Group</span>
-      <select
-        aria-label={`Group for conversation ${conversationId}`}
-        onChange={(event) =>
-          onAssign(conversationId, event.target.value || null)
-        }
-        value={groupId}
-      >
-        <option value="">Ungrouped</option>
-        {Object.values(groups).map((group) => (
-          <option key={group.id} value={group.id}>
-            {group.name}
-          </option>
-        ))}
-      </select>
-    </label>
+      <button className="conversation-group-trigger" aria-label={`Group for conversation ${conversationId}: ${groupName}`}
+        aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)} title={`Group: ${groupName}`} type="button">
+        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
+        <span>{groupName}</span>
+        <svg aria-hidden="true" className="conversation-group-trigger-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m6 9 6 6 6-6" /></svg>
+      </button>
+      <GroupPickerModal isOpen={open} groups={groups} currentGroupId={groupId} suggestion={suggestion}
+        isSuggesting={isSuggesting ?? context.isSuggesting} status={status ?? context.status}
+        onSelect={(nextGroupId) => onAssign(conversationId, nextGroupId)}
+        onCreate={createAndAssign ? (name) => createAndAssign(conversationId, name) : undefined}
+        onClose={() => setOpen(false)} />
+    </div>
   );
 }
 

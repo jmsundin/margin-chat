@@ -1,8 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { createChildConversation, createEmptyState, createMainConversation, createStandaloneNoteConversation } from "../client/src/initialState";
-import { addChildConversation, addRootConversation, appendMessageDelta, deleteThread } from "../client/src/lib/workspaceCommands";
+import { addChildConversation, addRootConversation, appendMessageDelta, deleteThread, removeConversationDocument } from "../client/src/lib/workspaceCommands";
 
 describe("workspace commands", () => {
+  test("removing a shared attachment affects only the chosen chat", () => {
+    let state = createEmptyState();
+    const parent = state.conversations[state.rootId];
+    const document = { id: "shared", filename: "article.txt", mimeType: "text/plain", sizeBytes: 12, status: "ready" as const, createdAt: parent.createdAt, error: null };
+    parent.documents = [document];
+    const child = createChildConversation({ id: "branch", parentConversation: parent });
+    state = addChildConversation(state, child);
+    const next = removeConversationDocument(state, child.id, document.id, "2026-09-19T12:00:00Z");
+    expect(next.conversations[child.id].documents).toEqual([]);
+    expect(next.conversations[parent.id]).toBe(state.conversations[parent.id]);
+    expect(next.conversations[parent.id].documents).toEqual([document]);
+    expect(state.conversations[child.id].documents).toEqual([document]);
+    expect(removeConversationDocument(next, child.id, document.id, "later")).toBe(next);
+    expect(removeConversationDocument(next, "missing", document.id, "later")).toBe(next);
+  });
+
   test("creating a branch updates relationships, layout, group, and standalone note context atomically", () => {
     let state = createEmptyState();
     const parent = createStandaloneNoteConversation({ id: "note", noteId: "body" });

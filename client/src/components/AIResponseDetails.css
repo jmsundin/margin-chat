@@ -1,0 +1,83 @@
+section.ai-response-details {
+  margin: 10px 0 0;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.ai-routing-label {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.ai-routing-reason {
+  margin: 6px 0 10px;
+}
+
+.ai-response-more > summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-height: 32px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11px;
+  list-style: none;
+}
+
+.ai-response-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-routing-model {
+  min-width: 0;
+}
+
+.ai-routing-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-strong);
+}
+
+.ai-routing-trigger svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+.ai-response-more[open] .ai-routing-trigger svg {
+  transform: rotate(90deg);
+}
+
+.ai-response-more > summary:hover .ai-routing-trigger,
+.ai-response-more > summary:focus-visible .ai-routing-trigger {
+  color: var(--ink);
+}
+
+.ai-routing-fallback-label {
+  font-size: 10px;
+}
+
+.ai-response-more > .ai-response-body {
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--line);
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.ai-response-more > summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+  border-radius: 3px;
+}

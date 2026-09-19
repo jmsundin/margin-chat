@@ -10,7 +10,7 @@ import { buildOpenAIAgentInstruction, buildSystemInstruction } from "./systemPro
 import { buildChatTitleInstruction, sanitizeGeneratedChatTitle, validateChatTitleRequest } from "./title.mjs";
 import { validateAIOptions, validateChatRequest } from "./validation.mjs";
 import { prepareChatContext } from "./context.mjs";
-import { isProviderAllowed, planRoutes, providerName } from "./routing.mjs";
+import { applySemanticRouting, createSemanticRouteCandidates, isProviderAllowed, planRoutes, providerName, routingReasonForAttempt } from "./routing.mjs";
 import { PROFILE_EVIDENCE } from "./modelProfiles.mjs";
 import { createHostedUsageMeter } from "../billing/usage.mjs";
 
@@ -22,8 +22,32 @@ const PROVIDERS = Object.freeze({
   "xai-api": { reply: requestXAIResponse, stream: requestXAIResponseStream },
 });
 const PREPAID_BALANCE_REQUIRED = "Your prepaid AI balance is empty. Add money in Billing or subscribe for $20/month to use hosted models. You can also use your own provider API key.";
+const SEMANTIC_CONTEXT_LIMIT = 24;
+const SEMANTIC_EXCERPT_CHARACTERS = 1_200;
 
-export function createChatService({ database, documentService, env, runtimeConfig }) {
+function scopedWorkspaceCandidates(chatRequest) {
+  const ai = chatRequest.ai;
+  if (ai.contextScope === "conversation") return [];
+  const selected = new Set(ai.selectedConversationIds);
+  const inherited = new Set([chatRequest.conversation.id, ...(chatRequest.conversation.ancestorContext ?? []).map((item) => item.id)]);
+  return (chatRequest.workspaceContext ?? []).filter((item) => !inherited.has(item.id) &&
+    (ai.contextScope === "workspace" || selected.has(item.id)));
+}
+
+function semanticWorkspaceExcerpt(item) {
+  const source = { id: item.id, title: item.title.slice(0, 300), updatedAt: item.updatedAt, messages: [] };
+  if (item.content !== undefined) return { ...source, content: item.content.slice(0, SEMANTIC_EXCERPT_CHARACTERS) };
+  let remaining = SEMANTIC_EXCERPT_CHARACTERS;
+  for (const message of [...item.messages].reverse()) {
+    if (message.role === "system" || remaining <= 0) continue;
+    const content = message.content.slice(0, remaining);
+    source.messages.unshift({ id: message.id, role: message.role, content });
+    remaining -= content.length;
+  }
+  return source;
+}
+
+export function createChatService({ database, documentService, env, runtimeConfig, semanticService }) {
   const automaticServicePriority = [...new Set([
     runtimeConfig.defaultBackendProvider, "openai-api", "gemini-api", "huggingface-api", "xai-api",
   ])].filter((id) => PROVIDERS[id] && id !== "openai-agent");
@@ -87,14 +111,55 @@ export function createChatService({ database, documentService, env, runtimeConfi
   async function execute(chatRequest, context, handlers = null, instructionOverride = null) {
     context.signal?.throwIfAborted();
     const startedAt = Date.now();
-    const routes = getRoutes(chatRequest, context);
+    let routes = getRoutes(chatRequest, context);
     const budgetOptions = { maxInputCharacters: context.hostedMaxInputCharacters };
     // Validate the latest prompt before starting embedding or provider calls.
     const initialContext = prepareChatContext(chatRequest, {}, budgetOptions);
+    let orderedRequest = chatRequest;
+    const semanticWarnings = [];
+    // Titles and credential preflight remain deterministic. A reply has one
+    // semantic pass, shared by every eligible provider attempt.
+    if (!instructionOverride && chatRequest.ai.jevEnabled === true) {
+      const workspaceCandidates = scopedWorkspaceCandidates(chatRequest);
+      const semanticRequest = {
+        ...initialContext.chatRequest,
+        // Rank excerpts before the final first-fit packing, including candidates
+        // the original ordering could not fit. Never expand the selected scope.
+        workspaceContext: workspaceCandidates.slice(0, SEMANTIC_CONTEXT_LIMIT).map(semanticWorkspaceExcerpt),
+      };
+      const candidates = createSemanticRouteCandidates(chatRequest, routes, runtimeConfig);
+      let analysis = null;
+      try {
+        analysis = await semanticService?.analyzeChat({
+          chatRequest: semanticRequest, routes: candidates, signal: context.signal, userId: context.userId,
+        });
+      } catch {
+        context.signal?.throwIfAborted();
+      }
+      context.signal?.throwIfAborted();
+      if (!analysis) semanticWarnings.push("Jev is unavailable; used standard context ordering and routing.");
+      if (Array.isArray(analysis?.warnings)) {
+        semanticWarnings.push(...analysis.warnings.filter((warning) => typeof warning === "string").slice(0, 8).map((warning) => warning.slice(0, 500)));
+      }
+      routes = applySemanticRouting(chatRequest, routes, runtimeConfig, analysis, candidates);
+      const permittedIds = new Set(semanticRequest.workspaceContext.map((item) => item.id));
+      const ordering = new Map();
+      for (const id of Array.isArray(analysis?.contextOrder) ? analysis.contextOrder : []) {
+        if (typeof id === "string" && permittedIds.has(id) && !ordering.has(id)) ordering.set(id, ordering.size);
+      }
+      if (ordering.size) orderedRequest = {
+        ...chatRequest,
+        workspaceContext: [...workspaceCandidates].sort((a, b) =>
+          (ordering.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (ordering.get(b.id) ?? Number.MAX_SAFE_INTEGER)),
+      };
+      if (analysis && workspaceCandidates.length > SEMANTIC_CONTEXT_LIMIT) {
+        semanticWarnings.push(`Jev considered the first ${SEMANTIC_CONTEXT_LIMIT} permitted workspace sources; other sources retained their original order.`);
+      }
+    }
     const documentContext = await getDocumentContext(initialContext.chatRequest, context);
     context.signal?.throwIfAborted();
-    const prepared = documentContext.instruction || documentContext.warnings?.length
-      ? prepareChatContext(chatRequest, documentContext, budgetOptions) : initialContext;
+    const prepared = orderedRequest !== chatRequest || documentContext.instruction || documentContext.warnings?.length
+      ? prepareChatContext(orderedRequest, documentContext, budgetOptions) : initialContext;
     const fallbacks = [];
     const failures = [];
     for (const route of routes) {
@@ -107,12 +172,13 @@ export function createChatService({ database, documentService, env, runtimeConfi
         provider: route.serviceId,
         mode: route.mode,
         task: route.task,
-        reason: route.reason,
+        reason: routingReasonForAttempt(route, fallbacks),
+        routing: route.routing,
         profileVersion: route.profileVersion,
         sources: prepared.sources,
         truncated: prepared.truncated,
         fallbacks: [...fallbacks],
-        warnings: [...prepared.warnings, ...(chatRequest.serviceId === "backend-services" ? [PROFILE_EVIDENCE.limitation] : [])],
+        warnings: [...prepared.warnings, ...semanticWarnings, ...(chatRequest.serviceId === "backend-services" ? [PROFILE_EVIDENCE.limitation] : [])],
       };
       const metadata = {
         credentialSource: credential.source,

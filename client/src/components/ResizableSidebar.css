@@ -1,0 +1,12 @@
+.workspace-sidebar-pane { flex-shrink: 0; height: 100%; min-height: 0; position: relative; }
+.workspace-sidebar-pane.is-collapsed { display: none; }
+.workspace-sidebar-pane > .thread-sidebar { height: 100%; width: 100%; flex-basis: 100%; transition: none; }
+.sidebar-resize-handle { align-items: center; cursor: col-resize; display: flex; height: 100%; justify-content: center; position: absolute; right: -6px; top: 0; touch-action: none; user-select: none; width: 12px; z-index: 25; }
+.sidebar-resize-handle > span { background: var(--muted); border: 3px solid var(--panel-strong); border-radius: 8px; box-sizing: content-box; height: 54px; opacity: .7; width: 2px; }
+.sidebar-resize-handle:hover > span, .sidebar-resize-handle:focus-visible > span, .workspace-sidebar-pane.is-resizing .sidebar-resize-handle > span { background: var(--accent); opacity: 1; }
+.sidebar-resize-handle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+@media (max-width: 900px) {
+  .workspace-sidebar-pane, .workspace-sidebar-pane.is-collapsed { display: contents; }
+  .workspace-sidebar-pane > .thread-sidebar { width: min(340px, 88vw); height: auto; }
+  .sidebar-resize-handle { display: none; }
+}

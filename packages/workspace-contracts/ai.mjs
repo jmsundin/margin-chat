@@ -1,6 +1,7 @@
 export const AI_MODES = Object.freeze(["balanced", "fast", "thorough"]);
 export const AI_PROVIDERS = Object.freeze(["openai", "gemini", "huggingface", "xai"]);
 const scopes = new Set(["conversation", "selected", "workspace"]);
+const routingMethods = new Set(["jev", "jev-task", "rules", "manual"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value, limit) => typeof value === "string" ? value.slice(0, limit) : "";
 
@@ -12,6 +13,7 @@ export function normalizeAISettings(input) {
     contextScope: scopes.has(value.contextScope) ? value.contextScope : "conversation",
     selectedConversationIds: [...new Set(Array.isArray(value.selectedConversationIds)
       ? value.selectedConversationIds.filter((id) => typeof id === "string" && id.length > 0 && id.length <= 256) : [])].slice(0, 100),
+    ...(value.jevEnabled === true ? { jevEnabled: true } : {}),
     ...(Array.isArray(value.allowedProviders) ? {
       allowedProviders: [...new Set(value.allowedProviders.filter((provider) => AI_PROVIDERS.includes(provider)))],
     } : {}),
@@ -42,6 +44,11 @@ export function normalizeAIExecution(input) {
     warnings: (Array.isArray(input.warnings) ? input.warnings : []).filter((warning) => typeof warning === "string").slice(0, 20).map((warning) => warning.slice(0, 1000)),
   };
   if (Number.isFinite(input.durationMs) && input.durationMs >= 0) result.durationMs = Math.round(input.durationMs);
+  const routing = record(input.routing) ? input.routing : null;
+  const selectedModel = typeof routing?.selectedModel === "string" ? routing.selectedModel.trim().slice(0, 200) : "";
+  if (routingMethods.has(routing?.method) && selectedModel) {
+    result.routing = { method: routing.method, selectedModel };
+  }
   if (typeof input.completedAt === "string" && Number.isFinite(Date.parse(input.completedAt))) result.completedAt = input.completedAt;
   if (["streaming", "complete", "stopped", "failed"].includes(input.status)) result.status = input.status;
   return result;

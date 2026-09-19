@@ -7,7 +7,6 @@ import type {
   ApiKeySettings,
   AuthenticatedUser,
   BillingDashboardData,
-  BillingNotice,
 } from "../types";
 import {
   getBillingDisplayLabel,
@@ -21,7 +20,6 @@ interface ProfileModalProps {
   billingDashboard: BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
-  billingNotice: BillingNotice | null;
   onRefreshBilling: () => void | Promise<void>;
   onAddMoney: (amountCents: number) => void | Promise<void>;
   vault: ReturnType<typeof useMarkdownVault>;
@@ -122,7 +120,7 @@ function getInitials(displayName: string) {
 
 export default function ProfileModal({
   initialTab = "account",
-  billingDashboard, billingDashboardLoading, billingDashboardError, billingNotice, onRefreshBilling, onAddMoney,
+  billingDashboard, billingDashboardLoading, billingDashboardError, onRefreshBilling, onAddMoney,
   vault,
   billingErrorMessage,
   billingSubmitting,
@@ -492,7 +490,6 @@ export default function ProfileModal({
           {activeTab === "billing" ? (
             <section aria-labelledby="profile-tab-billing" className="profile-dialog-panel" id="profile-panel-billing" role="tabpanel">
               <BillingDashboard data={billingDashboard} loading={billingDashboardLoading} errorMessage={billingDashboardError}
-                notice={billingNotice}
                 checkoutErrorMessage={billingErrorMessage} isSubmitting={billingSubmitting} onRefresh={onRefreshBilling}
                 onAddMoney={onAddMoney} onStartSubscription={onStartSubscription} onManageBilling={onManageBilling} user={user} />
             </section>

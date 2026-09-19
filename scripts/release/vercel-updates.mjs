@@ -66,6 +66,16 @@ export function assertDeployedCommit(deployment, projectId, sha) {
   }
 }
 
+export async function assertProductionAlias({ api, productionUrl, projectId, deploymentId }) {
+  const domain = new URL(productionUrl).hostname;
+  // Project target.alias is a snapshot and can omit domains assigned later.
+  // Read the live routing record before accepting the production origin.
+  const alias = await api(`/v4/aliases/${encodeURIComponent(domain)}`);
+  if (alias.alias !== domain || alias.projectId !== projectId || alias.deploymentId !== deploymentId || alias.redirect) {
+    throw new Error("productionUrl must route directly to this project's current production deployment.");
+  }
+}
+
 export function createVercelApi({ config, token, fetchImpl = fetch }) {
   return async (path, { method = "GET", body } = {}) => {
     const url = new URL(path, "https://api.vercel.com");

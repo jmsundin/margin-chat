@@ -12,6 +12,9 @@ export function validateAIOptions(input) {
     throw new HttpError(400, "ai must be an object.");
   }
   const ai = input ?? {};
+  if (ai.jevEnabled !== undefined && typeof ai.jevEnabled !== "boolean") {
+    throw new HttpError(400, "jevEnabled must be a boolean.");
+  }
   const mode = ai.mode ?? "balanced";
   const contextScope = ai.contextScope ?? "conversation";
   if (!["fast", "balanced", "thorough"].includes(mode)) throw new HttpError(400, "Unsupported AI mode.");
@@ -29,6 +32,7 @@ export function validateAIOptions(input) {
     mode,
     contextScope,
     selectedConversationIds: [...new Set(selectedConversationIds)],
+    ...(ai.jevEnabled === true ? { jevEnabled: true } : {}),
     ...(ai.allowedProviders === undefined ? {} : { allowedProviders: [...new Set(ai.allowedProviders)] }),
   };
 }

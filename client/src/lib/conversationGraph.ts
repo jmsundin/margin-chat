@@ -169,7 +169,7 @@ export function getFocusedConversationGraphIds(
   return focusedIds;
 }
 
-function getNodeDimensions(args: {
+export function getConversationGraphNodeDimensions(args: {
   conversation: Conversation;
   detailLevel: ConversationGraphDetail;
   isSelected: boolean;
@@ -427,7 +427,7 @@ export function buildConversationGraphScene(args: {
     }
 
     const conversation = args.conversations[conversationId];
-    const dimensions = getNodeDimensions({
+    const dimensions = getConversationGraphNodeDimensions({
       conversation,
       detailLevel,
       isSelected: conversationId === args.selectedConversationId,
@@ -618,4 +618,34 @@ export function buildConversationForestGraphScene(args: {
   );
 
   return { edges, groups, height, nodes, width };
+}
+
+/** Keep every scene representation aligned with temporary node positions. */
+export function replaceConversationGraphNodes(
+  scene: ConversationGraphScene,
+  nodes: ConversationGraphNodePlacement[],
+): ConversationGraphScene {
+  const byId = new Map(nodes.map((node) => [node.conversationId, node]));
+  const edges = scene.edges.flatMap((edge) => {
+    const parent = byId.get(edge.parentConversationId);
+    const child = byId.get(edge.childConversationId);
+    return parent && child ? [{
+      ...edge, startX: parent.x + parent.width, startY: parent.y + parent.height / 2,
+      endX: child.x, endY: child.y + Math.min(child.height / 2, 44),
+    }] : [];
+  });
+  const groups = scene.groups.flatMap((group) => {
+    const members = group.conversationIds.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
+    if (!members.length) return [];
+    const left = Math.min(...members.map((node) => node.x)) - 18;
+    const top = Math.min(...members.map((node) => node.y)) - 18;
+    const right = Math.max(...members.map((node) => node.x + node.width)) + 18;
+    const bottom = Math.max(...members.map((node) => node.y + node.height)) + 18;
+    return [{ ...group, x: left, y: top, width: right - left, height: bottom - top }];
+  });
+  return {
+    nodes, edges, groups,
+    width: nodes.reduce((maximum, node) => Math.max(maximum, node.x + node.width + 54), 520),
+    height: nodes.reduce((maximum, node) => Math.max(maximum, node.y + node.height + 42), 280),
+  };
 }

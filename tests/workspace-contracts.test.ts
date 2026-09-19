@@ -30,6 +30,23 @@ function documentFixture() {
 }
 
 describe("shared workspace document policies", () => {
+  test("manual and automatic grouping survive document and Markdown round trips", () => {
+    const document = documentFixture();
+    const rootId = document.view.activeRootId;
+    document.items[rootId].grouping = "manual";
+    document.items["contract-note"].grouping = "automatic";
+    const state = browser.createAppStateFromWorkspaceDocument(document)!;
+    expect(state.conversations[rootId].grouping).toBe("manual");
+    expect(state.conversations["contract-note"].grouping).toBe("automatic");
+    const normalized = readServerDocument(browser.createWorkspaceDocument(state))!;
+    expect(normalized.conversations[rootId].grouping).toBe("manual");
+    expect(normalized.conversations["contract-note"].grouping).toBe("automatic");
+    const markdown = browser.createMarkdownWorkspace(state);
+    const restored = server.parseMarkdownWorkspace(markdown.manifest, markdown.files)!;
+    expect(restored.conversations[rootId].grouping).toBe("manual");
+    expect(restored.conversations["contract-note"].grouping).toBe("automatic");
+  });
+
   const malformed: Array<[string, (document: any) => unknown]> = [
     ["null", () => null],
     ["array", () => []],

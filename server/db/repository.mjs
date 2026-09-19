@@ -20,6 +20,23 @@ export function fromWorkspaceEntityId(sessionId, storedEntityId) {
     : storedEntityId;
 }
 
+export async function readVaultProjectionCheckpoint(client, userId) {
+  const result = await client.query(
+    "select vault_revision, attachment_revisions, attachment_checkpoint_revision from marginchat_vault_projections where user_id = $1",
+    [userId],
+  );
+  if (!result.rowCount) return null;
+  const row = result.rows[0];
+  const revision = Number(row.vault_revision);
+  // A request from the previous release can still complete after promotion.
+  // Its projection writes do not update the attachment checkpoint columns.
+  return {
+    revision,
+    attachments: row.attachment_checkpoint_revision !== null && Number(row.attachment_checkpoint_revision) === revision
+      ? row.attachment_revisions : {},
+  };
+}
+
 async function readWorkspaceSnapshot(client, userId) {
   const sessionResult = await client.query(
     `
@@ -58,6 +75,7 @@ async function readWorkspaceSnapshot(client, userId) {
         model_id,
         service_id,
         ai_settings,
+        grouping_mode,
         created_at,
         updated_at
       from marginchat_conversations
@@ -91,7 +109,7 @@ async function readWorkspaceSnapshot(client, userId) {
     `
       select
         cd.conversation_id,
-        d.id,
+        coalesce(d.public_id, d.id) as id,
         d.filename,
         d.mime_type,
         d.size_bytes,
@@ -162,6 +180,7 @@ async function readWorkspaceSnapshot(client, userId) {
       title: row.title,
       updatedAt: toIsoString(row.updated_at),
       ...(row.ai_settings ? { ai: row.ai_settings } : {}),
+      ...(row.grouping_mode ? { grouping: row.grouping_mode } : {}),
     };
   }
 
@@ -330,6 +349,8 @@ export async function writeState(
     forceVaultProjection = false,
     vaultAttachments = [],
     deletedVaultAttachmentIds = [],
+    attachmentRevisions = {},
+    expectedVaultProjectionRevision,
   } = {},
 ) {
   if (
@@ -361,6 +382,9 @@ export async function writeState(
         await client.query("commit");
         return { projected: false, vaultRevision: indexedRevision };
       }
+      if (expectedVaultProjectionRevision !== undefined && indexedRevision !== expectedVaultProjectionRevision) {
+        throw createStatusError(409, "The attachment projection changed while this vault revision was being prepared. Retry from the current checkpoint.");
+      }
       for (const documentId of deletedVaultAttachmentIds) {
         await deleteDocument(client, { userId, documentId });
       }
@@ -372,12 +396,14 @@ export async function writeState(
         // the session clears its dependent content indexes through foreign keys.
         await client.query("delete from marginchat_app_sessions where user_id = $1", [userId]);
         await client.query(
-          `insert into marginchat_vault_projections (user_id, vault_revision)
-           values ($1, $2)
+          `insert into marginchat_vault_projections (user_id, vault_revision, attachment_revisions, attachment_checkpoint_revision)
+           values ($1, $2, $3::jsonb, $2)
            on conflict (user_id) do update set
              vault_revision = excluded.vault_revision,
+             attachment_revisions = excluded.attachment_revisions,
+             attachment_checkpoint_revision = excluded.attachment_checkpoint_revision,
              projected_at = now()`,
-          [userId, vaultRevision],
+          [userId, vaultRevision, JSON.stringify(attachmentRevisions)],
         );
         await client.query("commit");
         return { projected: true, vaultRevision };
@@ -470,10 +496,11 @@ export async function writeState(
             model_id,
             service_id,
             ai_settings,
+            grouping_mode,
             created_at,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
           on conflict (id) do update set
             session_id = excluded.session_id,
             title = excluded.title,
@@ -482,6 +509,7 @@ export async function writeState(
             model_id = excluded.model_id,
             service_id = excluded.service_id,
             ai_settings = excluded.ai_settings,
+            grouping_mode = excluded.grouping_mode,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at
         `,
@@ -494,6 +522,7 @@ export async function writeState(
           conversation.modelId,
           conversation.serviceId,
           conversation.ai ?? null,
+          conversation.grouping ?? null,
           conversation.createdAt,
           conversation.updatedAt,
         ],
@@ -543,7 +572,7 @@ export async function writeState(
             )
             select $1, id, $4
             from marginchat_documents
-            where id = $2 and user_id = $3
+            where coalesce(public_id, id) = $2 and user_id = $3
             on conflict (conversation_id, document_id) do update set
               attached_at = excluded.attached_at
           `,
@@ -689,9 +718,12 @@ export async function writeState(
         `
           delete from marginchat_conversation_documents
           where conversation_id = $1
-            and not (document_id = any($2::text[]))
+            and document_id not in (
+              select id from marginchat_documents
+              where user_id = $3 and coalesce(public_id, id) = any($2::text[])
+            )
         `,
-        [toStorageId(conversation.id), documentIds],
+        [toStorageId(conversation.id), documentIds, userId],
       );
     }
 
@@ -716,12 +748,14 @@ export async function writeState(
 
     if (vaultRevision !== null) {
       await client.query(
-        `insert into marginchat_vault_projections (user_id, vault_revision)
-         values ($1, $2)
+        `insert into marginchat_vault_projections (user_id, vault_revision, attachment_revisions, attachment_checkpoint_revision)
+         values ($1, $2, $3::jsonb, $2)
          on conflict (user_id) do update set
            vault_revision = excluded.vault_revision,
+           attachment_revisions = excluded.attachment_revisions,
+           attachment_checkpoint_revision = excluded.attachment_checkpoint_revision,
            projected_at = now()`,
-        [userId, vaultRevision],
+        [userId, vaultRevision, JSON.stringify(attachmentRevisions)],
       );
     }
     await client.query("commit");

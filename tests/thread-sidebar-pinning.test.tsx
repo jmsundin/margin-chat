@@ -83,11 +83,28 @@ describe("thread sidebar pinning", () => {
     expect(markup).not.toContain('aria-label="Pin Recent conversation"');
   });
 
-  test("shows an empty pinned drop target when nothing is pinned", () => {
+  test("keeps empty drop targets out of the sidebar until a drag starts", () => {
     const markup = renderSidebar([]);
 
-    expect(markup).toContain("Drop here to pin");
+    expect(markup).not.toContain("Drop here to pin");
+    expect(markup).not.toContain('aria-label="Pinned chats and notes"');
     expect(markup).toContain("Ungrouped");
+
+    const emptyMarkup = renderSidebar([], new Set(), []);
+    expect(emptyMarkup).not.toContain('aria-label="Ungrouped chats and notes"');
+    expect(emptyMarkup).not.toContain("Drop here to ungroup");
+  });
+
+  test("labels workspace views and search while keeping secondary actions tucked away", () => {
+    const markup = renderSidebar([]);
+
+    expect(markup).toContain("<span>Chat</span>");
+    expect(markup).toContain("<span>Tiles</span>");
+    expect(markup).toContain("<span>Map</span>");
+    expect(markup).toContain("<span>Search chats</span>");
+    expect(markup).toContain('aria-label="More workspace actions"');
+    expect(markup).not.toContain('aria-label="New group"');
+    expect(markup).not.toContain("<span>New note</span>");
   });
 
   test("marks a background thread while its response is streaming", () => {
@@ -136,7 +153,7 @@ describe("thread sidebar pinning", () => {
       />,
     );
 
-    expect(markup).toContain('aria-label="New note"');
+    expect(markup).toContain('aria-label="More workspace actions"');
     expect(markup).toContain("Research scratchpad");
     expect(markup).toContain("thread-item is-active is-note");
     expect(markup).not.toContain("Expand outline for Research scratchpad");

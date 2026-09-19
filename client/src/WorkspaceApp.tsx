@@ -1,4 +1,7 @@
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
+import "./workspace-improvements.css";
+import { getChatPanelLayout, resizeChatPanels } from "./lib/chatPanelLayout";
+import { getConversationAnnotationPreview } from "./lib/annotationPreview";
 import {
   startTransition,
   type Dispatch,
@@ -17,21 +20,32 @@ import {
 import AppSettingsModal from "./components/AppSettingsModal";
 import BranchRail from "./components/BranchRail";
 import ChatPanel from "./components/ChatPanel";
+import NotificationToast from "./components/NotificationToast";
 import AIControls from "./components/AIControls";
+import JevRelatedItems from "./components/JevRelatedItems";
+import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
+import { applyJevCategories, withJevConsent } from "./lib/jevAssistance";
+import { applyJevGroupSuggestions } from "./lib/jevGrouping";
+import { getThreadCategoryLabel } from "./lib/threadCategories";
 import { normalizeAISettings } from "@margin-chat/workspace-contracts";
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import ConversationTreeNode from "./components/ConversationTreeNode";
 import ConversationGraphView from "./components/ConversationGraphView";
-import { ConversationGroupSelect } from "./components/ConversationGroupControls";
+import GraphSourceFocus from "./components/GraphSourceFocus";
+import { ConversationGroupSelect, ConversationGroupPickerContext } from "./components/ConversationGroupControls";
 import MainChatTileView from "./components/MainChatTileView";
 import MarginNoteTreeNode from "./components/MarginNoteTreeNode";
 import ProfileModal from "./components/ProfileModal";
 import CaptureInbox from "./components/CaptureInbox";
 import { openCaptureAsNote } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
+import SearchSourceFocus from "./components/SearchSourceFocus";
+import { resolveSearchSource } from "./lib/searchSource";
+import type { SearchEvidenceRef } from "./lib/conversationSearch";
 import StandaloneNotePanel from "./components/StandaloneNotePanel";
 import ThreadSidebar from "./components/ThreadSidebar";
+import ResizableSidebar from "./components/ResizableSidebar";
 import {
   ApiError,
   requestDeleteDocument,
@@ -48,7 +62,7 @@ import {
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
 import { useChatStreams } from "./lib/useChatStreams";
-import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread } from "./lib/workspaceCommands";
+import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument } from "./lib/workspaceCommands";
 import { buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
   CONVERSATION_GROUP_COLORS,
@@ -127,7 +141,6 @@ const CHAT_PANEL_DEFAULT_WIDTH_PX = 760;
 const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
 const CHAT_PANEL_MAX_WIDTH_PX = 980;
 const CHAT_PANEL_MIN_WIDTH_PX = 320;
-const CHAT_PANEL_VIEWPORT_MARGIN_PX = 180;
 const MOBILE_PANEL_RESIZE_BREAKPOINT_PX = 900;
 
 function normalizeWheelDelta(
@@ -240,19 +253,10 @@ function loadInitialLeftSidebarOpen(): boolean {
 }
 
 function getChatPanelWidthBounds() {
-  if (typeof window === "undefined") {
-    return {
-      max: CHAT_PANEL_MAX_WIDTH_PX,
-      min: CHAT_PANEL_MIN_WIDTH_PX,
-    };
-  }
-
+  // This is the saved desktop preference. The current canvas separately limits
+  // the rendered width, so visiting a phone never shrinks the desktop setting.
   return {
-    max: clamp(
-      window.innerWidth - CHAT_PANEL_VIEWPORT_MARGIN_PX,
-      CHAT_PANEL_MIN_WIDTH_PX,
-      CHAT_PANEL_MAX_WIDTH_PX,
-    ),
+    max: CHAT_PANEL_MAX_WIDTH_PX,
     min: CHAT_PANEL_MIN_WIDTH_PX,
   };
 }
@@ -560,6 +564,7 @@ function getAnchorsByMessageId(
       branchConversationId: conversation.id,
       title: conversation.title,
       anchor: conversation.branchAnchor,
+      preview: getConversationAnnotationPreview(conversation),
     });
 
     links[messageId] = bucket;
@@ -572,11 +577,13 @@ function hasOverlappingAnchor(
   conversations: Record<string, Conversation>,
   selectionDraft: SelectionDraft,
 ): boolean {
+  // A zero-length range represents the whole message, without a passage highlight.
+  if (selectionDraft.endOffset <= selectionDraft.startOffset) return false;
   return Object.values(conversations).some((conversation) => {
     const anchor = conversation.branchAnchor;
 
     if (
-      !anchor ||
+      !anchor || anchor.endOffset <= anchor.startOffset ||
       anchor.sourceConversationId !== selectionDraft.conversationId ||
       anchor.sourceMessageId !== selectionDraft.messageId
     ) {
@@ -634,17 +641,20 @@ export default function WorkspaceApp({
   const cloudBackupMatchesLocal = vault.matchesCloud;
   const localDirectoryStatus = vault.localDirectoryStatus;
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
+  const [noteOpenRequest, setNoteOpenRequest] = useState<{ noteId: string; sequence: number } | null>(null);
   const [graphFocusRequest, setGraphFocusRequest] = useState<{
     conversationId: string;
     requestId: number;
   } | null>(null);
+  const graphFocusRequestCounterRef = useRef(0);
   const [leftSidebarOpen, setLeftSidebarOpen] =
     useState(INITIAL_LEFT_SIDEBAR_OPEN);
   const [isMobileViewport, setIsMobileViewport] = useState(() =>
     getIsMobileViewport(),
   );
-  const [chatPanelWidth, setChatPanelWidth] = useState(INITIAL_CHAT_PANEL_WIDTH);
+  const [chatPanelWidth] = useState(INITIAL_CHAT_PANEL_WIDTH);
   const [isResizingChatPanel, setIsResizingChatPanel] = useState(false);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const [resizingChatPanelConversationId, setResizingChatPanelConversationId] =
     useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -659,6 +669,7 @@ export default function WorkspaceApp({
   );
   const [selectionIntent, setSelectionIntent] = useState<"branch" | "note">("branch");
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
+  const [jevEnabled, setJevEnabled] = useJevPreference(user.id);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage" | "billing">("account");
   const previousPendingChats = useRef(pendingConversationIds);
@@ -678,6 +689,7 @@ export default function WorkspaceApp({
   const [profileSaving, setProfileSaving] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchSourceRequest, setSearchSourceRequest] = useState<{ source: SearchEvidenceRef; sequence: number } | null>(null);
   const [activeOutlineItemId, setActiveOutlineItemId] = useState<string | null>(
     null,
   );
@@ -687,6 +699,8 @@ export default function WorkspaceApp({
     ConnectorOcclusionRect[]
   >([]);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const [canvasWidth, setCanvasWidth] = useState(0);
+  const [resizedPanelWidths, setResizedPanelWidths] = useState<Record<string, number>>({});
   const toolbarRef = useRef<HTMLFormElement>(null);
   const panelRefs = useRef<Record<string, HTMLElement | null>>({});
   const anchorRefs = useRef<Record<string, HTMLSpanElement | null>>({});
@@ -705,6 +719,14 @@ export default function WorkspaceApp({
     conversationId: string;
     originWidth: number;
     startClientX: number;
+    direction: 1 | -1;
+    companionId?: string;
+    companionWidth?: number;
+    maxWidth: number;
+    pointerId: number;
+    handle: HTMLDivElement;
+    previousCursor: string;
+    previousUserSelect: string;
   } | null>(null);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const cloudSyncEnabled = canSyncWorkspaceToCloud(user);
@@ -734,13 +756,52 @@ export default function WorkspaceApp({
     .join("|");
   const isTileView = mainViewMode === "tiles";
   const isGraphView = mainViewMode === "graph";
+  const chatPanelLayout = getChatPanelLayout({
+    availableWidth: canvasWidth,
+    preferredWidth: chatPanelWidth,
+    hasParent: Boolean(parentConversation),
+    hasSideItems: conversationTreeLanes.length > 0,
+    mobile: isMobileViewport,
+  });
+  const panelMaximumWidth = Math.max(CHAT_PANEL_MIN_WIDTH_PX, Math.min(CHAT_PANEL_MAX_WIDTH_PX, canvasWidth - 48));
+  function getRenderedPanelWidth(conversationId: string) {
+    if (isMobileViewport) return chatPanelLayout.width;
+    return Math.min(resizedPanelWidths[conversationId] ?? chatPanelLayout.width, panelMaximumWidth);
+  }
+  function getPanelResizeInfo(conversation: Conversation) {
+    const width = getRenderedPanelWidth(conversation.id);
+    const pathIndex = path.findIndex((item) => item.id === conversation.id);
+    const companion = conversation.parentId
+      ? state.conversations[conversation.parentId]
+      : path[pathIndex + 1];
+    const companionWidth = companion ? getRenderedPanelWidth(companion.id) : undefined;
+    return {
+      width,
+      companionId: companion?.id,
+      companionWidth,
+      direction: (companion && conversation.parentId ? -1 : 1) as 1 | -1,
+      maxWidth: panelMaximumWidth,
+    };
+  }
   const summaryMinute = Math.floor(Date.now() / 60_000);
+  const jev = useJevAssistance({
+    userId: user.id, enabled: jevEnabled, ready: vault.ready,
+    conversations: state.conversations, currentId: activeConversation.id,
+    groups: state.groups,
+    pending: Object.values(pendingConversationIds).some(Boolean),
+  });
+  const jevCategoryKey = JSON.stringify(jev.categories);
+  const jevGroupSuggestionKey = JSON.stringify(jev.groupSuggestions);
+  useEffect(() => {
+    if (jev.status !== "ready") return;
+    setState((current) => applyJevGroupSuggestions(current, jev.categories, jev.groupSuggestions));
+  }, [jev.status, jevCategoryKey, jevGroupSuggestionKey]);
   const threadSummaries = useMemo(
-    () => buildThreadSummaries(state.conversations).map((thread) => ({
+    () => applyJevCategories(buildThreadSummaries(state.conversations), jev.categories).map((thread) => ({
         ...thread,
         groupId: getConversationGroupId(state.groups, thread.id),
       })),
-    [state.conversations, state.groups, summaryMinute],
+    [state.conversations, state.groups, summaryMinute, jevCategoryKey],
   );
   const threadSummaryById = new Map(
     threadSummaries.map((thread) => [thread.id, thread] as const),
@@ -855,6 +916,13 @@ export default function WorkspaceApp({
   }, [branchAccessEnabled, state.railOpen]);
 
   useEffect(() => {
+    if (!vault.ready || mainViewMode !== "chat" || !branchAccessEnabled) return;
+    setState((current) => current.railOpen ? current : { ...current, railOpen: true });
+    // Reopen for a new context or newly created branches; respect a manual close
+    // until the user changes context again.
+  }, [vault.ready, mainViewMode, state.activeConversationId, branchNavigationCount]);
+
+  useEffect(() => {
     setRecentModelSelections(
       loadRecentModelSelections(recentModelSelectionsStorageKey),
     );
@@ -906,35 +974,19 @@ export default function WorkspaceApp({
   }, [chatPanelWidth]);
 
   useEffect(() => {
-    function syncChatPanelWidthToViewport() {
-      setChatPanelWidth((current) => {
-        const bounds = getChatPanelWidthBounds();
-        const nextWidth = clamp(current, bounds.min, bounds.max);
-        return nextWidth === current ? current : nextWidth;
-      });
-    }
-
-    syncChatPanelWidthToViewport();
-    window.addEventListener("resize", syncChatPanelWidthToViewport);
-
-    return () => {
-      window.removeEventListener("resize", syncChatPanelWidthToViewport);
-    };
-  }, []);
-
-  useEffect(() => {
-    function stopChatPanelResize() {
+    function stopChatPanelResize(event?: PointerEvent | Event) {
       const resizeState = panelResizeStateRef.current;
 
-      if (!resizeState) {
+      if (!resizeState || (event instanceof PointerEvent && event.pointerId !== resizeState.pointerId)) {
         return;
       }
 
       panelResizeStateRef.current = null;
       setIsResizingChatPanel(false);
       setResizingChatPanelConversationId(null);
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
+      if (resizeState.handle.hasPointerCapture?.(resizeState.pointerId)) resizeState.handle.releasePointerCapture(resizeState.pointerId);
+      document.body.style.cursor = resizeState.previousCursor;
+      document.body.style.userSelect = resizeState.previousUserSelect;
 
       panelRefs.current[resizeState.conversationId]?.scrollIntoView({
         behavior: "smooth",
@@ -946,33 +998,45 @@ export default function WorkspaceApp({
     function handleChatPanelResizePointerMove(event: PointerEvent) {
       const resizeState = panelResizeStateRef.current;
 
-      if (!resizeState) {
+      if (!resizeState || event.pointerId !== resizeState.pointerId) {
         return;
       }
 
       event.preventDefault();
-      const bounds = getChatPanelWidthBounds();
-      const nextWidth = clamp(
-        resizeState.originWidth + (event.clientX - resizeState.startClientX),
-        bounds.min,
-        bounds.max,
-      );
-
-      setChatPanelWidth((current) =>
-        current === nextWidth ? current : nextWidth,
-      );
+      const next = resizeChatPanels({
+        width: resizeState.originWidth,
+        companionWidth: resizeState.companionWidth,
+        delta: (event.clientX - resizeState.startClientX) * resizeState.direction,
+        maxWidth: resizeState.maxWidth,
+      });
+      setResizedPanelWidths((current) => ({
+        ...current,
+        [resizeState.conversationId]: next.width,
+        ...(resizeState.companionId && next.companionWidth !== undefined ? { [resizeState.companionId]: next.companionWidth } : {}),
+      }));
     }
 
     window.addEventListener("pointermove", handleChatPanelResizePointerMove);
     window.addEventListener("pointerup", stopChatPanelResize);
     window.addEventListener("pointercancel", stopChatPanelResize);
+    window.addEventListener("lostpointercapture", stopChatPanelResize);
     window.addEventListener("blur", stopChatPanelResize);
+    window.addEventListener("resize", stopChatPanelResize);
 
     return () => {
       window.removeEventListener("pointermove", handleChatPanelResizePointerMove);
       window.removeEventListener("pointerup", stopChatPanelResize);
       window.removeEventListener("pointercancel", stopChatPanelResize);
+      window.removeEventListener("lostpointercapture", stopChatPanelResize);
       window.removeEventListener("blur", stopChatPanelResize);
+      window.removeEventListener("resize", stopChatPanelResize);
+      const resizing = panelResizeStateRef.current;
+      if (resizing) {
+        panelResizeStateRef.current = null;
+        if (resizing.handle.hasPointerCapture?.(resizing.pointerId)) resizing.handle.releasePointerCapture(resizing.pointerId);
+        document.body.style.cursor = resizing.previousCursor;
+        document.body.style.userSelect = resizing.previousUserSelect;
+      }
     };
   }, []);
 
@@ -981,11 +1045,13 @@ export default function WorkspaceApp({
       return;
     }
 
+    const resizing = panelResizeStateRef.current;
     panelResizeStateRef.current = null;
     setIsResizingChatPanel(false);
     setResizingChatPanelConversationId(null);
-    document.body.style.removeProperty("cursor");
-    document.body.style.removeProperty("user-select");
+    if (resizing.handle.hasPointerCapture?.(resizing.pointerId)) resizing.handle.releasePointerCapture(resizing.pointerId);
+    document.body.style.cursor = resizing.previousCursor;
+    document.body.style.userSelect = resizing.previousUserSelect;
   }, [mainViewMode]);
 
   useEffect(() => {
@@ -1009,23 +1075,40 @@ export default function WorkspaceApp({
     };
   }, []);
 
-  useEffect(() => {
-    if (mainViewMode !== "chat") {
-      return;
-    }
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || mainViewMode !== "chat") return;
+    const measure = () => setCanvasWidth(canvas.clientWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [mainViewMode, vault.ready]);
 
+  useEffect(() => {
+    if (mainViewMode !== "chat" || !vault.ready || panelResizeStateRef.current || isResizingSidebar) return;
     if (suppressNextChatAutoCenterRef.current) {
       suppressNextChatAutoCenterRef.current = false;
       return;
     }
 
     const panel = panelRefs.current[state.activeConversationId];
+    const parentPanel = parentConversation && panelRefs.current[parentConversation.id];
+    const canvas = canvasRef.current;
+    if (canvas && panel && parentPanel && chatPanelLayout.fitsPair &&
+      getRenderedPanelWidth(activeConversation.id) + getRenderedPanelWidth(parentConversation!.id) + 80 <= canvasWidth + 1) {
+      canvas.scrollTo({
+        left: canvas.scrollLeft + parentPanel.getBoundingClientRect().left - canvas.getBoundingClientRect().left - 24,
+        behavior: "smooth",
+      });
+      return;
+    }
     panel?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
       inline: "center",
     });
-  }, [mainViewMode, state.activeConversationId]);
+  }, [mainViewMode, state.activeConversationId, canvasWidth, chatPanelLayout.width, chatPanelLayout.fitsPair, vault.ready, isResizingSidebar]);
 
   useLayoutEffect(() => {
     const parentConversationId = pendingTreeLaneFocusRef.current;
@@ -1341,6 +1424,8 @@ export default function WorkspaceApp({
     };
   }, [
     chatPanelWidth,
+    chatPanelLayout.width,
+    resizedPanelWidths,
     isMobileViewport,
     leftSidebarOpen,
     mainViewMode,
@@ -1349,21 +1434,14 @@ export default function WorkspaceApp({
     state.railOpen,
   ]);
 
-  function handleSetChatPanelWidth(nextWidth: number) {
-    const bounds = getChatPanelWidthBounds();
-
-    setChatPanelWidth((current) => {
-      const clampedWidth = clamp(nextWidth, bounds.min, bounds.max);
-      return current === clampedWidth ? current : clampedWidth;
+  function handleResetChatPanelWidth(conversation: Conversation) {
+    const { companionId } = getPanelResizeInfo(conversation);
+    setResizedPanelWidths((current) => {
+      const next = { ...current };
+      delete next[conversation.id];
+      if (companionId) delete next[companionId];
+      return next;
     });
-  }
-
-  function handleResetChatPanelWidth() {
-    const bounds = getChatPanelWidthBounds();
-
-    handleSetChatPanelWidth(
-      clamp(CHAT_PANEL_DEFAULT_WIDTH_PX, bounds.min, bounds.max),
-    );
   }
 
   function handleChatPanelResizePointerDown(
@@ -1371,7 +1449,7 @@ export default function WorkspaceApp({
     event: ReactPointerEvent<HTMLDivElement>,
   ) {
     if (
-      event.button !== 0 ||
+      event.button !== 0 || !event.isPrimary ||
       window.matchMedia(
         `(max-width: ${MOBILE_PANEL_RESIZE_BREAKPOINT_PX}px)`,
       ).matches
@@ -1381,11 +1459,23 @@ export default function WorkspaceApp({
 
     event.preventDefault();
     event.stopPropagation();
+    const conversation = state.conversations[conversationId];
+    if (!conversation) return;
+    const info = getPanelResizeInfo(conversation);
+    event.currentTarget.setPointerCapture(event.pointerId);
 
     panelResizeStateRef.current = {
       conversationId,
-      originWidth: chatPanelWidth,
+      originWidth: info.width,
       startClientX: event.clientX,
+      direction: info.direction,
+      companionId: info.companionId,
+      companionWidth: info.companionWidth,
+      maxWidth: info.maxWidth,
+      pointerId: event.pointerId,
+      handle: event.currentTarget,
+      previousCursor: document.body.style.cursor,
+      previousUserSelect: document.body.style.userSelect,
     };
     setIsResizingChatPanel(true);
     setResizingChatPanelConversationId(conversationId);
@@ -1394,32 +1484,21 @@ export default function WorkspaceApp({
   }
 
   function handleChatPanelResizeKeyDown(
+    conversation: Conversation,
     event: ReactKeyboardEvent<HTMLDivElement>,
   ) {
-    const bounds = getChatPanelWidthBounds();
-
-    if (event.key === "ArrowLeft") {
-      event.preventDefault();
-      handleSetChatPanelWidth(chatPanelWidth - CHAT_PANEL_KEYBOARD_STEP_PX);
-      return;
-    }
-
-    if (event.key === "ArrowRight") {
-      event.preventDefault();
-      handleSetChatPanelWidth(chatPanelWidth + CHAT_PANEL_KEYBOARD_STEP_PX);
-      return;
-    }
-
-    if (event.key === "Home") {
-      event.preventDefault();
-      handleSetChatPanelWidth(bounds.min);
-      return;
-    }
-
-    if (event.key === "End") {
-      event.preventDefault();
-      handleSetChatPanelWidth(bounds.max);
-    }
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const info = getPanelResizeInfo(conversation);
+    const delta = event.key === "Home" ? -info.maxWidth
+      : event.key === "End" ? info.maxWidth
+        : (event.key === "ArrowRight" ? 1 : -1) * info.direction * CHAT_PANEL_KEYBOARD_STEP_PX;
+    const next = resizeChatPanels({ ...info, delta });
+    setResizedPanelWidths((current) => ({
+      ...current,
+      [conversation.id]: next.width,
+      ...(info.companionId && next.companionWidth !== undefined ? { [info.companionId]: next.companionWidth } : {}),
+    }));
   }
 
   function handleDraftChange(conversationId: string, value: string) {
@@ -1540,6 +1619,7 @@ export default function WorkspaceApp({
       createdAt: new Date().toISOString(),
       request: (onDelta, signal, onMetadata) => requestChatReply({
         ...prepareAIContext(state.conversations, conversation, messages),
+        ai: withJevConsent(conversation.ai, jevEnabled),
         expectedUserId: user.id,
         conversation: getConversationRequestPayload(state.conversations, conversation),
         messages,
@@ -1561,7 +1641,7 @@ export default function WorkspaceApp({
     });
   }
 
-  function handleSubmit(conversationId: string, value: string) {
+  function handleSubmit(conversationId: string, value: string, options: { preserveDraft?: boolean } = {}) {
     const trimmed = value.trim();
 
     if (
@@ -1572,7 +1652,7 @@ export default function WorkspaceApp({
       return;
     }
 
-    const conversation = state.conversations[conversationId];
+    const conversation = currentStateRef.current.conversations[conversationId];
 
     if (!conversation) {
       return;
@@ -1595,10 +1675,9 @@ export default function WorkspaceApp({
       createdAt,
     };
 
-    setDrafts((current) => ({
-      ...current,
-      [conversationId]: "",
-    }));
+    if (!options.preserveDraft) {
+      setDrafts((current) => ({ ...current, [conversationId]: "" }));
+    }
 
     setState((current) => {
       const currentConversation = current.conversations[conversationId];
@@ -1668,6 +1747,12 @@ export default function WorkspaceApp({
       },
       [...conversation.messages, userMessage],
     );
+  }
+
+  function handleResubmitPrompt(conversationId: string, messageId: string) {
+    const message = currentStateRef.current.conversations[conversationId]?.messages.find((item) => item.id === messageId);
+    if (message?.role !== "user") return;
+    handleSubmit(conversationId, message.content, { preserveDraft: true });
   }
 
   async function handleUploadDocuments(
@@ -1783,6 +1868,17 @@ export default function WorkspaceApp({
         },
       }));
     }
+  }
+
+  function handleRemoveDocument(conversationId: string, documentId: string) {
+    setState((current) => removeConversationDocument(current, conversationId, documentId, new Date().toISOString()));
+  }
+
+  function handleBranchFromMessage(draft: SelectionDraft) {
+    window.getSelection()?.removeAllRanges();
+    setSelectionDraft(draft);
+    setSelectionIntent("branch");
+    window.requestAnimationFrame(() => document.getElementById("branch-prompt")?.focus());
   }
 
   function handleModelChange(
@@ -2429,12 +2525,21 @@ export default function WorkspaceApp({
 
   function handleCloseSearch() {
     setSearchModalOpen(false);
-    setSearchQuery("");
+  }
+
+  function handleOpenSearchSource(source: SearchEvidenceRef) {
+    if (resolveSearchSource(state.conversations, source).status === "missing") return;
+    setSearchModalOpen(false);
+    handleSelectConversation(source.conversationId, { nextViewMode: "chat" });
+    if (source.sourceKind === "annotation" && source.noteId) {
+      setNoteOpenRequest((current) => ({ noteId: source.noteId!, sequence: (current?.sequence ?? 0) + 1 }));
+    }
+    setSearchSourceRequest((current) => ({ source, sequence: (current?.sequence ?? 0) + 1 }));
   }
 
   function handleSelectSearchResult(conversationId: string) {
     handleCloseSearch();
-    handleSelectConversation(conversationId);
+    handleRevealConversation(conversationId);
   }
 
   function handleSelectConversation(
@@ -2476,12 +2581,12 @@ export default function WorkspaceApp({
     }
   }
 
-  function handleSelectSidebarConversation(conversationId: string) {
+  function handleRevealConversation(conversationId: string) {
     if (mainViewMode === "graph") {
-      setGraphFocusRequest((current) => ({
+      setGraphFocusRequest({
         conversationId,
-        requestId: (current?.requestId ?? 0) + 1,
-      }));
+        requestId: ++graphFocusRequestCounterRef.current,
+      });
     }
 
     handleSelectConversation(conversationId);
@@ -2604,7 +2709,36 @@ export default function WorkspaceApp({
         current.groups,
       );
 
-      return groups === current.groups ? current : { ...current, groups };
+      const conversations = { ...current.conversations };
+      let changed = groups !== current.groups;
+      for (const id of conversationIds) {
+        if (conversations[id].grouping === "manual") continue;
+        conversations[id] = { ...conversations[id], grouping: "manual" };
+        changed = true;
+      }
+      return changed ? { ...current, groups, conversations } : current;
+    });
+  }
+
+  function handleCreateAndAssignGroup(conversationId: string, name: string) {
+    const nextName = name.trim().slice(0, 48);
+    if (!nextName) return;
+    const newGroupId = createId("group");
+    setState((current) => {
+      if (!current.conversations[conversationId]) return current;
+      const existing = Object.values(current.groups).find((group) => group.name.toLocaleLowerCase() === nextName.toLocaleLowerCase());
+      const groupId = existing?.id ?? newGroupId;
+      let groups = existing ? current.groups : {
+        ...current.groups,
+        [groupId]: { id: groupId, name: nextName, collapsed: false,
+          color: CONVERSATION_GROUP_COLORS[Object.keys(current.groups).length % CONVERSATION_GROUP_COLORS.length], conversationIds: [] },
+      };
+      const conversations = { ...current.conversations };
+      for (const id of collectConversationTreeIds(current.conversations, conversationId)) {
+        groups = assignConversationToGroup(groups, id, groupId);
+        conversations[id] = { ...conversations[id], grouping: "manual" };
+      }
+      return { ...current, groups, conversations };
     });
   }
 
@@ -2877,9 +3011,8 @@ export default function WorkspaceApp({
     top: `${selectionTooltipLayout.top}px`,
   } as CSSProperties;
   const conversationCanvasStyle = {
-    "--chat-panel-width": `${chatPanelWidth}px`,
+    "--chat-panel-width": `${chatPanelLayout.width}px`,
   } as CSSProperties;
-  const chatPanelWidthBounds = getChatPanelWidthBounds();
 
   function renderConversationChatPanel(conversation: Conversation) {
     if (conversation.kind === "note") {
@@ -2899,7 +3032,8 @@ export default function WorkspaceApp({
 
     return (
       <ChatPanel
-        aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={conversation.id !== activeConversation.id || Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
+        aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
+        groupControl={<ConversationGroupSelect className="is-composer-group" conversationId={conversation.id} groups={state.groups} onAssign={handleAssignConversationGroup} />}
         anchorsByMessageId={getAnchorsByMessageId(
           state.conversations,
           conversation.id,
@@ -2918,16 +3052,21 @@ export default function WorkspaceApp({
         }
         onCreateNote={handleCreateNote}
         onDeleteNote={handleDeleteNote}
-        onDeleteDocument={handleDeleteDocument}
+        onBranchFromMessage={handleBranchFromMessage}
+        onDeleteDocument={(documentId) => handleRemoveDocument(conversation.id, documentId)}
+        onDeleteDocumentEverywhere={handleDeleteDocument}
         onDraftChange={(value) => handleDraftChange(conversation.id, value)}
         onModelChange={handleModelChange}
         onOpenBranch={handleSelectConversation}
+        onOpenNote={(noteId) => setNoteOpenRequest((current) => ({ noteId, sequence: (current?.sequence ?? 0) + 1 }))}
+        openNoteRequest={noteOpenRequest}
         onScrollPositionChange={(conversationId, scrollTop) => {
           panelScrollPositionsRef.current[conversationId] = scrollTop;
         }}
         onStopStreaming={stopChatStream}
         onStopTypewriter={handleStopTypewriter}
         onSubmit={handleSubmit}
+        onResubmitPrompt={handleResubmitPrompt}
         onUploadDocuments={handleUploadDocuments}
         onTypewriterComplete={handleTypewriterComplete}
         onTypewriterProgress={handleTypewriterProgress}
@@ -2963,6 +3102,7 @@ export default function WorkspaceApp({
             : null
         }
         showBranchMargin={false}
+        showMarginNotes={false}
         theme={theme}
         typingMessageIds={typingMessageIds}
         typingProgressByMessageId={typingProgressByMessageIdRef.current}
@@ -2974,6 +3114,9 @@ export default function WorkspaceApp({
     conversation: Conversation,
     allowMinimize: boolean,
   ) {
+    const resizeInfo = getPanelResizeInfo(conversation);
+    const resizeMinimum = resizeChatPanels({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
+    const resizeMaximum = resizeChatPanels({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
     const isResizing =
       conversation.id === resizingChatPanelConversationId &&
       isResizingChatPanel;
@@ -2993,6 +3136,7 @@ export default function WorkspaceApp({
         }
         data-expanded-conversation-id={conversation.id}
         key={conversation.id}
+        style={{ "--chat-panel-width": `${resizeInfo.width}px` } as CSSProperties}
       >
         {contextLabel !== "Current chat" || (allowMinimize && conversation.parentId) ? (
           <div className="panel-context-header">
@@ -3009,6 +3153,7 @@ export default function WorkspaceApp({
                   handleSelectConversation(conversation.parentId!);
                 }}
                 type="button"
+                title="Minimize this side chat"
               >
                 <svg
                   aria-hidden="true"
@@ -3020,26 +3165,28 @@ export default function WorkspaceApp({
                 >
                   <path d="M6 12h12" />
                 </svg>
+                <span>Minimize</span>
               </button>
             ) : null}
           </div>
         ) : null}
         {renderConversationChatPanel(conversation)}
         <div
-          aria-label="Resize chat panel width"
+          aria-label={conversation.parentId ? "Resize side chat panel width" : "Resize chat panel width"}
           aria-orientation="vertical"
-          aria-valuemax={chatPanelWidthBounds.max}
-          aria-valuemin={chatPanelWidthBounds.min}
-          aria-valuenow={Math.round(chatPanelWidth)}
-          aria-valuetext={`${Math.round(chatPanelWidth)} pixels wide`}
-          className="panel-resize-handle"
-          onDoubleClick={handleResetChatPanelWidth}
-          onKeyDown={handleChatPanelResizeKeyDown}
+          aria-valuemax={resizeMaximum}
+          aria-valuemin={resizeMinimum}
+          aria-valuenow={Math.round(resizeInfo.width)}
+          aria-valuetext={`${Math.round(resizeInfo.width)} pixels wide`}
+          className={`panel-resize-handle is-visible${resizeInfo.direction === -1 ? " is-left-edge" : ""}`}
+          onDoubleClick={() => handleResetChatPanelWidth(conversation)}
+          onKeyDown={(event) => handleChatPanelResizeKeyDown(conversation, event)}
           onPointerDown={(event) =>
             handleChatPanelResizePointerDown(conversation.id, event)
           }
           role="separator"
           tabIndex={0}
+          title={`Drag to resize ${conversation.title}. Double-click to reset.`}
         >
           <span className="panel-resize-handle-grip" />
         </div>
@@ -3048,6 +3195,21 @@ export default function WorkspaceApp({
   }
 
   function renderChatTreeNavigation() {
+    if (isMobileViewport) {
+      return (
+        <nav aria-label="Conversation hierarchy" className="chat-tree-navigation mobile-chat-navigation">
+          {parentConversation ? (
+            <button className="mobile-parent-button" onClick={() => handleSelectConversation(parentConversation.id)}
+              title={`Back to ${parentConversation.title}`} type="button">
+              <span aria-hidden="true">←</span> Back to parent
+            </button>
+          ) : null}
+          <span aria-current="page" className="mobile-active-chat-title" title={activeConversation.title}>
+            {activeConversation.title}
+          </span>
+        </nav>
+      );
+    }
     return (
       <div className="chat-tree-navigation">
         <nav aria-label="Conversation hierarchy" className="canvas-breadcrumb">
@@ -3080,9 +3242,6 @@ export default function WorkspaceApp({
             </span>
           ))}
         </nav>
-        {activeConversation.kind !== "note" ? (
-          <span className="panel-context-label workspace-current-chat-label">Current chat</span>
-        ) : null}
       </div>
     );
   }
@@ -3096,23 +3255,30 @@ export default function WorkspaceApp({
   }
 
   return (
+    <ConversationGroupPickerContext.Provider value={{
+      getSuggestion: (conversationId) => {
+        const match = jev.groupSuggestions[conversationId];
+        if (match && state.groups[match.groupId]) return { name: state.groups[match.groupId].name, groupId: match.groupId };
+        const category = jev.categories[conversationId];
+        return category ? { name: getThreadCategoryLabel(category) } : null;
+      },
+      isSuggesting: jev.status === "checking" || jev.status === "loading",
+      status: jev.status,
+      onCreateAndAssign: handleCreateAndAssignGroup,
+    }}>
     <div className="app-shell">
       <div className="app-chrome">
-        {billingNotice ? (
-          <div
-            className={`billing-return-notice is-${billingNotice.kind}`}
-            role={billingNotice.kind === "error" ? "alert" : "status"}
-          >
-            <span>{billingNotice.message}</span>
-            <button onClick={onDismissBillingNotice} type="button">
-              Dismiss
-            </button>
-          </div>
-        ) : null}
-        {(vault.message || vault.conflicts.length > 0) ? <div className="billing-return-notice is-info" role="status">
-          <span>{vault.conflicts.length ? `${vault.conflicts.length} conflicting ${vault.conflicts.length === 1 ? "edit is" : "edits are"} preserved for review.` : vault.message}</span>
-          <button type="button" onClick={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }}>Vault settings</button>
-        </div> : null}
+        <div className="workspace-notifications">
+          <NotificationToast
+            message={billingNotice?.message ?? null}
+            kind={billingNotice?.kind}
+            onDismiss={onDismissBillingNotice}
+          />
+          <NotificationToast
+            message={vault.conflicts.length ? `${vault.conflicts.length} conflicting ${vault.conflicts.length === 1 ? "edit is" : "edits are"} preserved for review.` : vault.message}
+            action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
+          />
+        </div>
         <div className="workspace-shell">
           <header className="workspace-session-bar">
             <div className="workspace-session-brand">
@@ -3133,16 +3299,7 @@ export default function WorkspaceApp({
               : null}
 
             <div className="workspace-session-actions">
-              {!isTileView && !isGraphView ? (
-                <ConversationGroupSelect
-                  className="is-chat-header"
-                  conversationId={activeConversation.id}
-                  groups={state.groups}
-                  onAssign={handleAssignConversationGroup}
-                />
-              ) : null}
-              {!isMobileViewport &&
-              !isTileView &&
+              {!isTileView &&
               !isGraphView &&
               branchAccessEnabled ? (
                 <button
@@ -3156,7 +3313,7 @@ export default function WorkspaceApp({
                   onClick={handleToggleRail}
                   type="button"
                 >
-                  <span>Map</span>
+                  <span>Branches</span>
                   <strong>{branchNavigationCount}</strong>
                 </button>
               ) : null}
@@ -3183,6 +3340,7 @@ export default function WorkspaceApp({
           ) : null}
 
           <main className="workspace">
+            <ResizableSidebar collapsed={!leftSidebarOpen} mobile={isMobileViewport} onResizingChange={setIsResizingSidebar}>
             <ThreadSidebar
               activeOutlineItemId={activeOutlineItemId}
               activeThreadId={activeRootConversation.id}
@@ -3207,7 +3365,7 @@ export default function WorkspaceApp({
               onRenameThread={handleRenameThread}
               onSelectOutlineItem={handleSelectOutlineItem}
               onSetMainViewMode={handleSetMainViewMode}
-              onSelectThread={handleSelectSidebarConversation}
+              onSelectThread={handleRevealConversation}
               onToggleCollapse={handleToggleLeftSidebar}
               onToggleGroup={handleToggleConversationGroup}
               onToggleTheme={() =>
@@ -3219,6 +3377,19 @@ export default function WorkspaceApp({
               theme={theme}
               threads={threadSummaries}
             />
+            </ResizableSidebar>
+
+            {!isTileView && !isGraphView ? (
+              <BranchRail
+                activeConversationId={activeConversation.id}
+                conversations={state.conversations}
+                onClose={handleCloseRail}
+                onSelectConversation={(conversationId) => handleSelectConversation(conversationId, { preserveRail: !isMobileViewport })}
+                open={state.railOpen}
+                registerTabRef={(conversationId, element) => { tabRefs.current[conversationId] = element; }}
+                rootId={activeRootConversation.id}
+              />
+            ) : null}
 
             <section
               className={
@@ -3229,6 +3400,7 @@ export default function WorkspaceApp({
                     : "canvas-section"
               }
             >
+              <JevRelatedItems status={jev.status} related={jev.related} warning={jev.warning} conversations={state.conversations} currentId={activeConversation.id} onSelect={handleRevealConversation} />
               {isMobileViewport && !isTileView && !isGraphView ? (
                 <div className="workspace-mobile-shell">
                   <div className="workspace-mobile-summary">
@@ -3316,11 +3488,17 @@ export default function WorkspaceApp({
                 />
               ) : isGraphView ? (
                 <ConversationGraphView
+                  key={`graph-${user.id}`}
+                  workspaceKey={user.id}
+                  threads={threadSummaries}
                   activeConversationId={activeConversation.id}
                   conversations={state.conversations}
                   focusRequest={graphFocusRequest}
+                  onFocusRequestHandled={(requestId) => setGraphFocusRequest((current) => current?.requestId === requestId ? null : current)}
                   graphLayouts={state.graphLayouts}
                   groups={state.groups}
+                  relatedItems={jev.related}
+                  relatedStatus={jev.status}
                   onActivateConversation={handleSelectConversation}
                   onAssignGroup={handleAssignConversationGroup}
                   onCreateChildConversation={handleAddGraphChildChat}
@@ -3331,11 +3509,17 @@ export default function WorkspaceApp({
                   }
                   onToggleGroup={handleToggleConversationGroup}
                   onUpdateGraphNodeLayouts={handleUpdateGraphNodeLayouts}
-                  renderDockedConversation={(conversationId) => {
+                  renderDockedConversation={(conversationId, source) => {
                     const conversation = state.conversations[conversationId];
 
                     return conversation
-                      ? renderConversationChatPanel(conversation)
+                      ? <>
+                          <GraphSourceFocus
+                            source={source}
+                            getPanelElement={() => panelRefs.current[conversationId] ?? null}
+                          />
+                          {renderConversationChatPanel(conversation)}
+                        </>
                       : null;
                   }}
                   renderExpandedConversation={(conversationId) => {
@@ -3350,9 +3534,7 @@ export default function WorkspaceApp({
                 <div className="chat-tree-workspace">
                   <div
                   className={
-                    isResizingChatPanel
-                      ? "conversation-canvas is-tree-browser is-resizing-panel"
-                      : "conversation-canvas is-tree-browser"
+                    `conversation-canvas is-tree-browser${conversationTreeLanes.length ? " has-tree-context" : ""}${isResizingChatPanel ? " is-resizing-panel" : ""}`
                   }
                   ref={canvasRef}
                   style={conversationCanvasStyle}
@@ -3388,6 +3570,7 @@ export default function WorkspaceApp({
                         data-tree-depth={laneIndex + 1}
                         data-tree-parent-id={lane.parentId}
                         key={lane.parentId}
+                        style={lane.selectedConversationId ? { "--chat-panel-width": `${getRenderedPanelWidth(lane.selectedConversationId)}px` } as CSSProperties : undefined}
                       >
                         <header className="conversation-tree-lane-head">
                           <span>Depth {laneIndex + 1}</span>
@@ -3450,6 +3633,7 @@ export default function WorkspaceApp({
                               conversationId={parentConversation.id}
                               key={note.id}
                               note={note}
+                              openRequest={noteOpenRequest?.noteId === note.id ? noteOpenRequest.sequence : undefined}
                               onDelete={handleDeleteNote}
                               onUpdate={handleUpdateNote}
                               onUse={
@@ -3467,24 +3651,6 @@ export default function WorkspaceApp({
                 </div>
               )}
             </section>
-
-          {!isTileView && !isGraphView ? (
-            <BranchRail
-              activeConversationId={activeConversation.id}
-              conversations={state.conversations}
-              onClose={handleCloseRail}
-              onSelectConversation={(conversationId) =>
-                handleSelectConversation(conversationId, {
-                  preserveRail: !isMobileViewport,
-                })
-              }
-              open={state.railOpen}
-              registerTabRef={(conversationId, element) => {
-                tabRefs.current[conversationId] = element;
-              }}
-              rootId={activeRootConversation.id}
-            />
-          ) : null}
 
           {!isTileView && !isGraphView && connections.length ? (
             <ConnectorOverlay
@@ -3604,12 +3770,23 @@ export default function WorkspaceApp({
           ) : null}
 
           <SearchModal
+            conversations={state.conversations}
+            currentConversation={activeConversation}
+            groups={state.groups}
+            categories={jev.categories}
+            jev={{ userId: user.id, enabled: jevEnabled, ready: vault.ready, serviceStatus: jev.status }}
+            onOpenSource={handleOpenSearchSource}
             isOpen={searchModalOpen}
             onClose={handleCloseSearch}
             onQueryChange={setSearchQuery}
             onSelectResult={handleSelectSearchResult}
             query={searchQuery}
             results={searchResults}
+          />
+          <SearchSourceFocus
+            request={searchSourceRequest}
+            conversations={state.conversations}
+            getPanelElement={(conversationId) => panelRefs.current[conversationId] ?? null}
           />
 
           {captureInboxOpen ? <CaptureInbox
@@ -3628,7 +3805,6 @@ export default function WorkspaceApp({
             billingDashboard={billingDashboard}
             billingDashboardLoading={billingDashboardLoading}
             billingDashboardError={billingDashboardError}
-            billingNotice={billingNotice}
             onRefreshBilling={onRefreshBilling}
             onAddMoney={onAddMoney}
             vault={vault}
@@ -3662,6 +3838,9 @@ export default function WorkspaceApp({
           />
 
           <AppSettingsModal
+            jevEnabled={jevEnabled}
+            jevStatus={jev.status}
+            onSetJevEnabled={setJevEnabled}
             isOpen={appSettingsOpen}
             mainViewMode={mainViewMode}
             onClose={() => setAppSettingsOpen(false)}
@@ -3673,5 +3852,6 @@ export default function WorkspaceApp({
         </div>
       </div>
     </div>
+    </ConversationGroupPickerContext.Provider>
   );
 }

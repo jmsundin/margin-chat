@@ -3,13 +3,16 @@ import { createVaultStorage, digest } from "./storage.mjs";
 
 const MAX_FILES = 10_000;
 const MAX_COMMIT_BYTES = 3 * 1024 * 1024;
+// A conflict response can repeat every existing path, or contain 1,000 new
+// paths. Leave room for both cases below the cloud's buffered response limit.
+const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const REVISION = /^[a-f0-9]{64}$/u;
 const emptyManifest = () => ({ schemaVersion: 1, revision: 0, files: {} });
 const missingConfiguration = () => new HttpError(503, "Cloud Markdown storage is not configured. Connect a private Vercel Blob store, or set VAULT_STORAGE_DIR for local development. Your local files remain saved.");
 
 export function validateVaultPath(path) {
   if (typeof path !== "string" || !path || path.length > 512 ||
-      /[\\\u0000-\u001f\u007f]/u.test(path) ||
+      /[\\\u0000-\u001f\u007f\ud800-\udfff]/u.test(path) ||
       path.split("/").some((part) => !part || [".", "..", "__proto__", "constructor", "prototype"].includes(part))) {
     throw new HttpError(400, "Vault paths must be safe relative file paths.");
   }
@@ -59,7 +62,10 @@ function prepareChanges(changes, trusted = false) {
     if (change.encoding !== undefined && change.encoding !== "base64" && change.encoding !== "utf8") throw new HttpError(400, "Unsupported file encoding.");
     const deleted = change.content === null;
     const encoding = change.encoding === "base64" ? "base64" : "utf8";
-    if (!deleted && encoding === "base64" && !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(change.content)) throw new HttpError(400, "Invalid base64 attachment.");
+    // A repeated four-character capture exhausts the JS regex stack on valid
+    // 4 MiB uploads. Check length and a simple alphabet/padding scan instead.
+    if (!deleted && encoding === "base64" && (change.content.length % 4 !== 0 ||
+        !/^[A-Za-z0-9+/]*={0,2}$/u.test(change.content))) throw new HttpError(400, "Invalid base64 attachment.");
     const contentType = change.contentType ?? (/\.md$/iu.test(path) ? "text/markdown; charset=utf-8" : path.endsWith(".json") ? "application/json" : "application/octet-stream");
     if (typeof contentType !== "string" || contentType.length > 160 || !/^[\w.+-]+\/[\w.+-]+(?:; ?charset=[\w-]+)?$/iu.test(contentType)) throw new HttpError(400, "Invalid file content type.");
     const bytes = deleted ? null : Buffer.from(change.content, encoding);
@@ -119,15 +125,16 @@ export function createVaultService({ database, env = process.env, storage = crea
       }
       if (conflicts.length) throw new VaultConflictError(conflicts, current.manifest);
       if (!effective.length) return current.manifest;
+      const next = { schemaVersion: 1, revision: current.manifest.revision + 1, files: { ...current.manifest.files } };
+      for (const change of effective) next.files[change.path] = change.entry;
+      if (Object.keys(next.files).length > MAX_FILES) throw new HttpError(413, "This vault has reached the current 10,000-file sync limit.");
+      const bytes = Buffer.from(JSON.stringify(next));
+      if (bytes.length > MAX_MANIFEST_BYTES) throw new HttpError(413, "This vault's file index has reached the cloud sync size limit. Your local files remain saved and available to export.");
       if (!uploaded) {
         await mapConcurrent(prepared.filter((change) => change.bytes), (change) =>
           storage.putImmutable(bodyKey(userId, change.path, change.entry.revision), change.bytes, change.entry.contentType));
         uploaded = true;
       }
-      const next = { schemaVersion: 1, revision: current.manifest.revision + 1, files: { ...current.manifest.files } };
-      for (const change of effective) next.files[change.path] = change.entry;
-      if (Object.keys(next.files).length > MAX_FILES) throw new HttpError(413, "This vault has reached the current 10,000-file sync limit.");
-      const bytes = Buffer.from(JSON.stringify(next));
       // History is written before publishing. Losing a CAS may leave an orphan,
       // but no manifest can ever reference an incompletely uploaded revision.
       await storage.putImmutable(`${prefix(userId)}/history/${digest(bytes)}.json`, bytes, "application/json");
@@ -205,20 +212,42 @@ export function createVaultService({ database, env = process.env, storage = crea
   async function projectLatest(userId, manifest, { force = false } = {}) {
     if (!database?.projectVaultState || !manifest.revision) return { status: "ready", revision: manifest.revision };
     try {
-      if (!force && (await database.getVaultProjectionRevision?.(userId) ?? -1) >= manifest.revision) return { status: "ready", revision: manifest.revision };
+      const checkpoint = database.getVaultProjectionCheckpoint
+        ? await database.getVaultProjectionCheckpoint(userId)
+        : { revision: await database.getVaultProjectionRevision?.(userId), attachments: {} };
+      if (!force && (checkpoint?.revision ?? -1) >= manifest.revision) return { status: "ready", revision: manifest.revision };
       const state = await readWorkspace(userId, manifest);
       const attachments = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && /^Attachments\/[^/]+\/metadata\.json$/u.test(path));
-      const originals = await mapConcurrent(attachments, async ([path, entry]) => {
+      const attachmentRevisions = {};
+      const originals = (await mapConcurrent(attachments, async ([path, entry]) => {
+          const previous = checkpoint?.attachments?.[path];
+          if (!force && previous?.metadataRevision === entry.revision &&
+              !manifest.files[previous.bodyPath]?.deleted &&
+              manifest.files[previous.bodyPath]?.revision === previous.bodyRevision) {
+            attachmentRevisions[path] = previous;
+            return null;
+          }
           const attachment = JSON.parse((await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8"));
           const bodyEntry = manifest.files[attachment.path];
           if (!bodyEntry || bodyEntry.deleted) throw new Error("An attachment original is missing from the vault.");
           const bytes = (await readFile({ userId, path: attachment.path, revision: bodyEntry.revision })).bytes;
+          attachmentRevisions[path] = { metadataRevision: entry.revision, bodyPath: attachment.path, bodyRevision: bodyEntry.revision };
           return { attachment, bytes };
-        });
+        })).filter(Boolean);
       const deletedAttachmentIds = Object.entries(manifest.files)
         .filter(([path, entry]) => entry.deleted && /^Attachments\/[^/]+\/metadata\.json$/u.test(path))
         .map(([path]) => path.split("/")[1]);
-      await database.projectVaultState(userId, state, manifest.revision, { force, attachments: originals, deletedAttachmentIds });
+      // Deleting an original is authoritative even while another device's
+      // Markdown still references it. Such stale links must not roll back the
+      // deletion or keep the entire feature projection pending.
+      const deletedIds = new Set(deletedAttachmentIds);
+      for (const conversation of Object.values(state?.conversations ?? {})) {
+        conversation.documents = (conversation.documents ?? []).filter((document) => !deletedIds.has(document.id));
+      }
+      await database.projectVaultState(userId, state, manifest.revision, {
+        force, attachments: originals, deletedAttachmentIds, attachmentRevisions,
+        ...(database.getVaultProjectionCheckpoint ? { expectedProjectionRevision: checkpoint?.revision ?? -1 } : {}),
+      });
       return { status: "ready", revision: manifest.revision };
     } catch (error) {
       console.error("Vault projection pending", error);
@@ -278,9 +307,12 @@ export function createVaultService({ database, env = process.env, storage = crea
       const changes = Object.entries(current.files)
         .filter(([path, entry]) => path.startsWith(`Attachments/${documentId}/`) && !entry.deleted)
         .map(([path, entry]) => ({ path, baseRevision: entry.revision, content: null }));
-      if (!changes.length) return false;
-      await commitFiles(userId, changes);
-      return true;
+      const manifest = await commitFiles(userId, changes);
+      const projection = await projectLatest(userId, manifest);
+      if (projection.status !== "ready") {
+        throw new HttpError(503, "The cloud deletion is saved, but its search index is still pending. Retry deleting this document to finish removing its derived data.");
+      }
+      return changes.length > 0 || current.files[`Attachments/${documentId}/metadata.json`]?.deleted === true;
     },
   };
 }

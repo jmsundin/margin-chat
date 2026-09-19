@@ -1,0 +1,190 @@
+.thread-sidebar.is-simplified .thread-sidebar-head {
+  padding: 0;
+}
+
+.thread-sidebar.is-simplified .thread-view-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+}
+
+.thread-sidebar.is-simplified .thread-view-button {
+  gap: 6px;
+  height: 38px;
+  padding: 0 7px;
+  width: auto;
+}
+
+.thread-sidebar.is-simplified .thread-view-button .sidebar-icon {
+  height: 16px;
+  width: 16px;
+}
+
+.thread-sidebar.is-simplified .thread-view-button span {
+  font-size: 0.78rem;
+  font-weight: 550;
+}
+
+.thread-sidebar.is-simplified .thread-sidebar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-create-row {
+  display: flex;
+  gap: 6px;
+  position: relative;
+}
+
+.sidebar-create-row .sidebar-action {
+  flex: 1;
+}
+
+.sidebar-more-button,
+.sidebar-search-button,
+.sidebar-workspace-action {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ink);
+  display: flex;
+  font-size: 0.85rem;
+  gap: 9px;
+  min-height: 40px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.sidebar-more-button {
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 8px;
+}
+
+.sidebar-more-button .thread-item-menu-icon {
+  height: 18px;
+  width: 18px;
+}
+
+.sidebar-search-button {
+  border: 1px solid var(--line);
+  color: var(--muted);
+  width: 100%;
+}
+
+.sidebar-search-button .sidebar-icon,
+.sidebar-workspace-action .sidebar-icon {
+  flex: 0 0 auto;
+  height: 17px;
+  width: 17px;
+}
+
+.sidebar-more-button:hover,
+.sidebar-more-button[aria-expanded="true"],
+.sidebar-search-button:hover,
+.sidebar-workspace-action:hover {
+  background: var(--button-active-surface);
+  color: var(--ink);
+}
+
+.sidebar-more-button:focus-visible,
+.sidebar-search-button:focus-visible,
+.sidebar-workspace-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sidebar-workspace-actions {
+  background: var(--rail-body-bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 22%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  width: min(256px, calc(100vw - 40px));
+  z-index: 30;
+}
+
+.thread-sidebar.is-simplified .sidebar-workspace-actions .conversation-group-create-form {
+  min-width: 0;
+  padding: 8px 4px;
+}
+
+.thread-sidebar.is-simplified .sidebar-workspace-actions .conversation-group-create-form input {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+}
+
+.thread-sidebar.is-simplified .thread-item-main {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 53px;
+  padding: 9px 10px 8px 25px;
+}
+
+.thread-sidebar.is-simplified .thread-item-title {
+  width: 100%;
+}
+
+.thread-sidebar.is-simplified .thread-item-meta {
+  font-size: 0.67rem;
+  line-height: 1.2;
+  margin-left: 0;
+}
+
+.thread-sidebar.is-simplified .thread-item:hover .thread-item-date,
+.thread-sidebar.is-simplified .thread-item:focus-within .thread-item-date {
+  display: inline;
+}
+
+.thread-sidebar.is-simplified .thread-item:hover .thread-item-main,
+.thread-sidebar.is-simplified .thread-item:focus-within .thread-item-main {
+  padding-right: 65px;
+}
+
+.thread-sidebar.is-simplified .thread-item.is-note:hover .thread-item-main,
+.thread-sidebar.is-simplified .thread-item.is-note:focus-within .thread-item-main {
+  padding-right: 37px;
+}
+
+@media (pointer: coarse) {
+  .thread-sidebar.is-simplified .thread-view-button,
+  .sidebar-more-button,
+  .sidebar-search-button,
+  .sidebar-workspace-action {
+    min-height: 44px;
+  }
+
+  .thread-sidebar.is-simplified .thread-item-main,
+  .thread-sidebar.is-simplified .thread-item:hover .thread-item-main,
+  .thread-sidebar.is-simplified .thread-item:focus-within .thread-item-main {
+    padding-right: 88px;
+  }
+
+  .thread-sidebar.is-simplified .thread-item.is-note .thread-item-main,
+  .thread-sidebar.is-simplified .thread-item.is-note:hover .thread-item-main,
+  .thread-sidebar.is-simplified .thread-item.is-note:focus-within .thread-item-main {
+    padding-right: 46px;
+  }
+
+  .thread-sidebar.is-simplified .thread-item-expand-trigger,
+  .thread-sidebar.is-simplified .thread-item-menu-trigger {
+    height: 44px;
+    opacity: 1;
+    top: 4px;
+    width: 40px;
+  }
+
+  .thread-sidebar.is-simplified .thread-item-expand-trigger {
+    right: 45px;
+  }
+}

@@ -14,7 +14,7 @@ import { runPersistenceJobs } from "../server/releases/jobs.mjs";
 import { PERSISTENCE_JOB_REGISTRY } from "../server/releases/job-registry.mjs";
 import { readReleaseConfig, configurationGaps, redact } from "./release/config.mjs";
 import { executeRelease, RELEASE_STEPS, VERCEL_SYNC_STEPS } from "./release/sequence.mjs";
-import { readVercelUpdates, describeVercelUpdates, assertDeployedCommit, createVercelApi, planVercelUpdates, applyVercelUpdates } from "./release/vercel-updates.mjs";
+import { readVercelUpdates, describeVercelUpdates, assertDeployedCommit, assertProductionAlias, createVercelApi, planVercelUpdates, applyVercelUpdates } from "./release/vercel-updates.mjs";
 import { checkReadiness, runPersistenceSmoke } from "./release/smoke.mjs";
 import { createNeonReleaseProvider, validateBlobStoreTokens, backupBlobStore, restoreBlobBackup } from "./release/providers.mjs";
 
@@ -154,8 +154,8 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         if (config.compatibility.automaticAppRollback && previous.meta?.marginPersistenceProtocol !== "1") {
           throw new Error("The previous deployment predates the migration protocol. Disable automaticAppRollback for the first transition release.");
         }
-        const domain = new URL(config.productionUrl).hostname;
-        if (!(target.alias ?? []).includes(domain)) throw new Error("productionUrl is not an alias of this project's current production deployment.");
+        await assertProductionAlias({ api: vercelApi, productionUrl: config.productionUrl,
+          projectId: config.vercel.projectId, deploymentId: target.id });
         // Validation never inherits production credentials or local dotenv files.
         const validationEnv = Object.fromEntries(["PATH", "HOME", "TMPDIR", "CI"].filter((key) => env[key]).map((key) => [key, env[key]]));
         await command("bun", ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts"], validationEnv);

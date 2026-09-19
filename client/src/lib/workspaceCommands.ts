@@ -46,7 +46,7 @@ export function addChildConversation(state: AppState, child: Conversation, optio
         messages: note ? upsertStandaloneNoteContextMessage(parent.messages, note, child.createdAt) : parent.messages,
         updatedAt: child.createdAt,
       },
-      [child.id]: child,
+      [child.id]: parent.grouping === "manual" ? { ...child, grouping: "manual" } : child,
     },
     graphLayouts: {
       ...state.graphLayouts,
@@ -88,6 +88,23 @@ export function appendMessage(state: AppState, conversationId: string, message: 
   return { ...state, conversations: { ...state.conversations, [conversationId]: {
     ...conversation, messages: [...conversation.messages, message], updatedAt: message.createdAt,
   } } };
+}
+
+/** Detaching an attachment must not delete its original or another chat's reference. */
+export function removeConversationDocument(state: AppState, conversationId: string, documentId: string, updatedAt: string): AppState {
+  const conversation = state.conversations[conversationId];
+  if (!conversation?.documents?.some((document) => document.id === documentId)) return state;
+  return {
+    ...state,
+    conversations: {
+      ...state.conversations,
+      [conversationId]: {
+        ...conversation,
+        documents: conversation.documents.filter((document) => document.id !== documentId),
+        updatedAt,
+      },
+    },
+  };
 }
 
 export function appendMessageDelta(state: AppState, conversationId: string, messageId: string, delta: string, createdAt: string): AppState {

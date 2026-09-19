@@ -7,6 +7,8 @@ export interface AISettings {
   contextScope: "conversation" | "selected" | "workspace";
   selectedConversationIds: string[];
   allowedProviders?: AIProvider[];
+  /** Explicit permission to send bounded context to TypeSafe for assistance. */
+  jevEnabled?: boolean;
 }
 export interface AIContextSource {
   kind: "conversation" | "note" | "document";
@@ -23,6 +25,11 @@ export interface AIExecutionRecord {
   task: string;
   reason: string;
   profileVersion: string;
+  /** Selection provenance; model may identify a different model after fallback. */
+  routing?: {
+    method: "jev" | "jev-task" | "rules" | "manual";
+    selectedModel: string;
+  };
   sources: AIContextSource[];
   truncated: boolean;
   fallbacks: Array<{ provider: string; model: string; reason: string }>;
@@ -83,6 +90,7 @@ export interface BranchAnchor {
 
 export interface Conversation {
   id: string;
+  grouping?: "manual" | "automatic";
   kind?: "chat" | "note";
   title: string;
   parentId: string | null;

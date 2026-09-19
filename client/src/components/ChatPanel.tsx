@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import MarkdownMessage from "./MarkdownMessage";
+import AnnotationPreview from "./AnnotationPreview";
 import AIResponseDetails from "./AIResponseDetails";
 import { buildMessageDecorations, partitionDecoratedText } from "../lib/messageDecorations";
 import LiveMarkdownEditor from "./LiveMarkdownEditor";
@@ -40,6 +41,7 @@ import type {
   MessageAnchorLink,
   SelectionDraft,
 } from "../types";
+import "./ChatPanelImprovements.css";
 
 const TYPEWRITER_MIN_DURATION_MS = 180;
 const TYPEWRITER_MAX_DURATION_MS = 900;
@@ -64,6 +66,26 @@ function PlusIcon() {
     >
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg aria-hidden="true" className="composer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      <path d="m8 12 6.7-6.7a3.5 3.5 0 0 1 5 5l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2" />
+      <path d="m6.9 13.1 7.8-7.8a1.5 1.5 0 0 1 2.1 2.1L9 15.2a1.5 1.5 0 0 1-2.1-2.1Z" />
+    </svg>
+  );
+}
+
+function BranchIcon() {
+  return (
+    <svg aria-hidden="true" className="composer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <path d="M6 7v10M6 14h5a7 7 0 0 0 7-6" />
     </svg>
   );
 }
@@ -141,6 +163,23 @@ function StopIcon() {
       strokeWidth="2"
     >
       <rect x="7.5" y="7.5" width="9" height="9" rx="1.6" />
+    </svg>
+  );
+}
+
+function ResendIcon() {
+  return (
+    <svg aria-hidden="true" className="prompt-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      <path d="M20 7v5h-5" />
+      <path d="M20 12a8 8 0 1 0-2.3 5.6" />
+    </svg>
+  );
+}
+
+function MinimizeIcon() {
+  return (
+    <svg aria-hidden="true" className="prompt-action-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="2">
+      <path d="M5 12h14" />
     </svg>
   );
 }
@@ -373,6 +412,7 @@ function MarginNotesLayer({
 
 interface ChatPanelProps {
   aiControls?: ReactNode;
+  groupControl?: ReactNode;
   anchorsByMessageId: Record<string, MessageAnchorLink[]>;
   conversation: Conversation;
   draft: string;
@@ -387,6 +427,7 @@ interface ChatPanelProps {
   initialScrollTop?: number;
   onActivate: () => void;
   onAddSideChat?: (conversationId: string) => void;
+  onBranchFromMessage?: (draft: SelectionDraft) => void;
   onDraftChange: (value: string) => void;
   onCreateNote: (args: {
     content: string;
@@ -396,6 +437,7 @@ interface ChatPanelProps {
   }) => string;
   onDeleteNote: (conversationId: string, noteId: string) => void;
   onDeleteDocument?: (documentId: string) => void;
+  onDeleteDocumentEverywhere?: (documentId: string) => void;
   onModelChange: (
     conversationId: string,
     serviceId: BackendServiceId,
@@ -403,10 +445,13 @@ interface ChatPanelProps {
   ) => void;
   onOpenBranch: (conversationId: string) => void;
   onStopStreaming: (conversationId: string) => void;
+  onOpenNote?: (noteId: string) => void;
+  openNoteRequest?: { noteId: string; sequence: number } | null;
   onUpdateNote: (conversationId: string, noteId: string, content: string) => void;
   onUseNote: (conversationId: string, content: string) => void;
   onStopTypewriter: (conversationId: string) => void;
   onSubmit: (conversationId: string, value: string) => void;
+  onResubmitPrompt?: (conversationId: string, messageId: string) => void;
   onUploadDocuments?: (conversationId: string, files: File[]) => void;
   onTypewriterProgress: (messageId: string, visibleCount: number) => void;
   onTypewriterComplete: (messageId: string) => void;
@@ -435,6 +480,7 @@ interface ChatPanelProps {
     element: HTMLElement | null,
   ) => void;
   showBranchMargin?: boolean;
+  showMarginNotes?: boolean;
 }
 
 function NoteIcon() {
@@ -593,6 +639,8 @@ function renderMessageContent(
         aria-label={branch ? `Open branch ${branch.title}` : hasNote ? "Text with a margin note" : undefined}
         key={`${message.id}-decoration-${segment.start}`}
         className={`message-anchor${hasNote ? " is-note-anchor" : ""}${hasPreview ? " is-pending-selection" : ""}`}
+        data-annotation-branches={branch ? JSON.stringify(segment.active.filter((item) => item.type === "anchor").map((item) => item.branchConversationId)) : undefined}
+        data-annotation-notes={hasNote ? JSON.stringify(activeNotes.map((item) => item.noteId)) : undefined}
         onClick={() => {
           if (!branch) return;
           const selection = window.getSelection();
@@ -612,8 +660,8 @@ function renderMessageContent(
           event.preventDefault();
           onOpenBranch(branch.branchConversationId!);
         }}
-        role={branch ? "link" : undefined}
-        tabIndex={branch ? 0 : undefined}
+        role={branch || hasNote ? "link" : undefined}
+        tabIndex={branch || hasNote ? 0 : undefined}
       >
         <span
           ref={(element) => {
@@ -816,6 +864,7 @@ function MessageContent({
 
 export default function ChatPanel({
   aiControls,
+  groupControl,
   anchorsByMessageId,
   conversation,
   draft,
@@ -830,15 +879,20 @@ export default function ChatPanel({
   initialScrollTop,
   onActivate,
   onAddSideChat,
+  onBranchFromMessage,
   onCreateNote,
   onDeleteNote,
   onDeleteDocument = () => undefined,
+  onDeleteDocumentEverywhere,
   onDraftChange,
   onModelChange,
   onOpenBranch,
   onStopStreaming,
+  onOpenNote,
+  openNoteRequest,
   onStopTypewriter,
   onSubmit,
+  onResubmitPrompt,
   onUploadDocuments = () => undefined,
   onTypewriterProgress,
   onTypewriterComplete,
@@ -851,6 +905,7 @@ export default function ChatPanel({
   registerAnchorRef,
   registerBranchOriginRef,
   showBranchMargin = true,
+  showMarginNotes = true,
 }: ChatPanelProps) {
   const [isServicePickerOpen, setServicePickerOpen] = useState(false);
   const [sideNotesOpen, setSideNotesOpen] = useState(false);
@@ -860,6 +915,11 @@ export default function ChatPanel({
   const [messageNoteDraft, setMessageNoteDraft] = useState("");
   const [messageNoteTargetId, setMessageNoteTargetId] = useState<string | null>(null);
   const [showJumpToTop, setShowJumpToTop] = useState(false);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [branchActionMessageId, setBranchActionMessageId] = useState<string | null>(null);
+  const [passageHintMessageId, setPassageHintMessageId] = useState<string | null>(null);
+  const [documentActionId, setDocumentActionId] = useState<string | null>(null);
+  const [expandedBranchOriginId, setExpandedBranchOriginId] = useState<string | null>(null);
   const [branchMarginPositions, setBranchMarginPositions] = useState<
     Record<string, BranchMarginPosition>
   >({});
@@ -887,7 +947,6 @@ export default function ChatPanel({
   const previousScrollTopRef = useRef(initialScrollTop ?? 0);
   const previousMessageCountRef = useRef(conversation.messages.length);
   const previousPendingAssistantRef = useRef(false);
-  const shouldFocusComposerOnActivateRef = useRef(false);
   const shouldStickToBottomRef = useRef(true);
   const hasActiveTypewriter = conversation.messages.some(
     (message) => typingMessageIds[message.id],
@@ -920,7 +979,7 @@ export default function ChatPanel({
     .join("|");
   const conversationNotes = conversation.notes ?? [];
   const commentNotes = conversationNotes.filter((note) => (note.kind ?? "comment") === "comment");
-  const marginNotes = commentNotes.filter((note) => note.sourceMessageId);
+  const marginNotes = showMarginNotes ? commentNotes.filter((note) => note.sourceMessageId) : [];
   const sideNotes = conversationNotes.filter((note) => note.kind === "side-chat");
   const activeSideNote = sideNotes.find((note) => note.id === activeSideNoteId) ?? null;
   const messageNotesById = commentNotes.reduce<Record<string, ConversationNote[]>>(
@@ -936,6 +995,16 @@ export default function ChatPanel({
   useEffect(() => {
     if (activeSideNote) setSideNoteEditorValue(activeSideNote.content);
   }, [activeSideNote?.id]);
+
+  useEffect(() => {
+    const note = openNoteRequest && sideNotes.find((item) => item.id === openNoteRequest.noteId);
+    if (!note) return;
+    flushSideNoteSave();
+    setActiveSideNoteId(note.id);
+    setSideNoteEditorValue(note.content);
+    setNewSideNoteMessageId(note.sourceMessageId);
+    setSideNotesOpen(true);
+  }, [openNoteRequest?.noteId, openNoteRequest?.sequence]);
 
   function flushSideNoteSave() {
     if (sideNoteSaveTimeoutRef.current !== null) {
@@ -963,6 +1032,14 @@ export default function ChatPanel({
     setSideNoteEditorValue("");
     setNewSideNoteMessageId(sourceMessageId);
     setSideNotesOpen(true);
+  }
+
+  function minimizeSideNotes() {
+    flushSideNoteSave();
+    setSideNotesOpen(false);
+    window.requestAnimationFrame(() => {
+      composerSurfaceRef.current?.querySelector<HTMLButtonElement>(".composer-notes-button")?.focus({ preventScroll: true });
+    });
   }
 
   function updateSideNote(value: string) {
@@ -1277,10 +1354,6 @@ export default function ChatPanel({
   }, [draft, syncComposerTextareaHeight]);
 
   const focusComposerTextarea = useEffectEvent(() => {
-    if (isSubmitting) {
-      return;
-    }
-
     const textarea = composerTextareaRef.current;
 
     if (!textarea) {
@@ -1291,15 +1364,6 @@ export default function ChatPanel({
     const cursorPosition = textarea.value.length;
     textarea.setSelectionRange(cursorPosition, cursorPosition);
   });
-
-  useLayoutEffect(() => {
-    if (!isActive || isSubmitting || !shouldFocusComposerOnActivateRef.current) {
-      return;
-    }
-
-    shouldFocusComposerOnActivateRef.current = false;
-    focusComposerTextarea();
-  }, [focusComposerTextarea, isActive, isSubmitting]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -1314,14 +1378,11 @@ export default function ChatPanel({
   }, [syncComposerTextareaHeight]);
 
   useEffect(() => {
-    if (isActive && !isSubmitting) {
-      return;
-    }
-
-    setServicePickerOpen(false);
-  }, [isActive, isSubmitting]);
+    if (isSubmitting) setServicePickerOpen(false);
+  }, [isSubmitting]);
 
   function submitDraft() {
+    if (isSubmitting || hasActiveTypewriter || !draft.trim()) return;
     onSubmit(conversation.id, draft);
   }
 
@@ -1331,16 +1392,7 @@ export default function ChatPanel({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (isSubmitting) {
-      onStopStreaming(conversation.id);
-      return;
-    }
-
-    if (hasActiveTypewriter) {
-      stopTypewriter();
-      return;
-    }
+    event.stopPropagation();
 
     submitDraft();
   }
@@ -1359,17 +1411,31 @@ export default function ChatPanel({
 
     event.preventDefault();
 
-    if (isSubmitting) {
-      onStopStreaming(conversation.id);
-      return;
-    }
-
-    if (hasActiveTypewriter) {
-      stopTypewriter();
-      return;
-    }
-
     submitDraft();
+  }
+
+  function branchFromWholeResponse(message: Message, button: HTMLButtonElement) {
+    const content = localMessageRefs.current[message.id]?.querySelector<HTMLElement>("[data-message-bubble='true']");
+    if (!content || !onBranchFromMessage) return;
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    const renderedText = range.toString();
+    const quote = renderedText.trim();
+    if (!quote) return;
+    const rect = button.getBoundingClientRect();
+    setBranchActionMessageId(null);
+    setPassageHintMessageId(null);
+    onBranchFromMessage({
+      conversationId: conversation.id,
+      messageId: message.id,
+      quote,
+      // Whole-response branches link to the message, without reserving a text range.
+      startOffset: 0,
+      endOffset: 0,
+      prompt: "",
+      rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+      sourceKind: "message",
+    });
   }
 
   function handleDocumentSelection(event: ChangeEvent<HTMLInputElement>) {
@@ -1382,12 +1448,7 @@ export default function ChatPanel({
   }
 
   function handlePanelClick(event: MouseEvent<HTMLElement>) {
-    if (
-      isActive &&
-      event.target === composerTextareaRef.current
-    ) {
-      return;
-    }
+    if ((event.target as HTMLElement).closest(".composer")) return;
 
     const selection = window.getSelection();
 
@@ -1399,39 +1460,18 @@ export default function ChatPanel({
       return;
     }
 
-    const composerPrimary = composerPrimaryRef.current;
-    const clickIsInsideComposerPrimary = (() => {
-      if (!composerPrimary) {
-        return false;
-      }
-
-      const { clientX, clientY } = event;
-      const rect = composerPrimary.getBoundingClientRect();
-
-      return (
-        clientX >= rect.left &&
-        clientX <= rect.right &&
-        clientY >= rect.top &&
-        clientY <= rect.bottom
-      );
-    })();
-
-    if (clickIsInsideComposerPrimary) {
-      if (isActive) {
-        focusComposerTextarea();
-        return;
-      }
-
-      shouldFocusComposerOnActivateRef.current = true;
-      onActivate();
-      return;
-    }
-
     if (isActive) {
       return;
     }
 
     onActivate();
+  }
+
+  function handleComposerClick(event: MouseEvent<HTMLFormElement>) {
+    event.stopPropagation();
+    if (event.target !== composerTextareaRef.current && composerPrimaryRef.current?.contains(event.target as Node)) {
+      focusComposerTextarea();
+    }
   }
 
   const handlePanelBodyWheel = useEffectEvent((event: WheelEvent) => {
@@ -1508,6 +1548,7 @@ export default function ChatPanel({
 
     const currentScrollTop = panelBody.scrollTop;
     shouldStickToBottomRef.current = isElementNearBottom(panelBody);
+    setShowJumpToLatest(!shouldStickToBottomRef.current);
     setShowJumpToTop((wasVisible) =>
       getJumpToTopVisibility({
         currentScrollTop,
@@ -1523,15 +1564,17 @@ export default function ChatPanel({
     }
 
     const panelRect = panelBody.getBoundingClientRect();
-    const readingLine = panelRect.top + Math.min(panelRect.height * 0.24, 120);
+    // Follow the section at the top of the reader, rather than a later heading
+    // that happens to fit within the first few lines after an outline jump.
+    const readingLine = panelRect.top + 32;
+    const outlineTargets = new Map(
+      Array.from(panelBody.querySelectorAll<HTMLElement>("[data-chat-outline-id]"))
+        .map((element) => [element.dataset.chatOutlineId, element] as const),
+    );
     let visibleOutlineItemId = outlineItems[0]?.id ?? null;
 
     for (const outlineItem of outlineItems) {
-      const target = Array.from(
-        panelBody.querySelectorAll<HTMLElement>("[data-chat-outline-id]"),
-      ).find(
-        (element) => element.dataset.chatOutlineId === outlineItem.id,
-      );
+      const target = outlineTargets.get(outlineItem.id);
 
       if (!target || target.getBoundingClientRect().top > readingLine) {
         break;
@@ -1574,6 +1617,32 @@ export default function ChatPanel({
     };
   }, [syncStickToBottomState]);
 
+  useEffect(() => {
+    const panelBody = panelBodyRef.current;
+    const messageList = messageListRef.current;
+    if (!panelBody || !messageList) return;
+    const observer = new ResizeObserver(() => {
+      setShowJumpToLatest(!isElementNearBottom(panelBody));
+    });
+    observer.observe(panelBody);
+    observer.observe(messageList);
+    return () => observer.disconnect();
+  }, [conversation.id]);
+
+  useEffect(() => {
+    if (selectionPreview) setPassageHintMessageId(null);
+  }, [selectionPreview]);
+
+  function handleJumpToLatest() {
+    const panelBody = panelBodyRef.current;
+    if (!panelBody) return;
+    panelBody.scrollTop = panelBody.scrollHeight;
+    previousScrollTopRef.current = panelBody.scrollTop;
+    shouldStickToBottomRef.current = true;
+    setShowJumpToLatest(false);
+    onScrollPositionChange?.(conversation.id, panelBody.scrollTop);
+  }
+
   function handleJumpToTop() {
     const panelBody = panelBodyRef.current;
 
@@ -1590,7 +1659,7 @@ export default function ChatPanel({
 
   return (
     <article
-      className={`chat-panel${branchMarginLinks.length || marginNotes.length ? " has-margin-rail" : ""}${isActive ? " is-active" : ""}${sideNotesOpen ? " has-side-note-panel" : ""}`}
+      className={`chat-panel chat-panel--improved${branchMarginLinks.length || marginNotes.length ? " has-margin-rail" : ""}${isActive ? " is-active" : ""}${sideNotesOpen ? " has-side-note-panel" : ""}`}
       onClick={handlePanelClick}
       ref={(element) => registerPanelRef(conversation.id, element)}
     >
@@ -1625,10 +1694,25 @@ export default function ChatPanel({
                 </button>
               ) : null}
             </div>
-            <blockquote>“{conversation.branchAnchor.quote}”</blockquote>
-            <p className="branch-context-prompt">
-              {conversation.branchAnchor.prompt}
-            </p>
+            <blockquote id={`branch-origin-quote-${conversation.id}`}>“{expandedBranchOriginId === conversation.id
+              ? conversation.branchAnchor.quote
+              : excerpt(conversation.branchAnchor.quote, 260)}”</blockquote>
+            {conversation.branchAnchor.quote.length > 260 ? (
+              <button
+                aria-controls={`branch-origin-quote-${conversation.id}`}
+                aria-expanded={expandedBranchOriginId === conversation.id}
+                className="branch-context-back"
+                onClick={() => setExpandedBranchOriginId((current) => current === conversation.id ? null : conversation.id)}
+                type="button"
+              >
+                {expandedBranchOriginId === conversation.id ? "Show less" : "Show full source quote"}
+              </button>
+            ) : null}
+            {conversation.branchAnchor.prompt.trim() && conversation.messages.find((message) => message.role === "user")?.content.trim() !== conversation.branchAnchor.prompt.trim() ? (
+              <p className="branch-context-prompt">
+                {conversation.branchAnchor.prompt}
+              </p>
+            ) : null}
           </section>
         ) : null}
 
@@ -1645,25 +1729,42 @@ export default function ChatPanel({
                 return (
                   <section
                     key={message.id}
-                    className={`message-row is-${message.role}`}
+                    className={`message-row is-${message.role}${message.role === "user" && onResubmitPrompt ? " has-prompt-actions" : ""}`}
                     data-message-row-id={message.id}
                     data-chat-outline-id={
-                      message.role === "user"
+                      message.role === "user" || message.role === "assistant"
                         ? getMessageOutlineId(message.id)
                         : undefined
                     }
                     tabIndex={-1}
                   >
-                    <div className={`message-with-margin is-${message.role}${messageNotes.length ? " has-notes" : ""}`}>
+                    <div className={`message-with-margin is-${message.role}${showMarginNotes && messageNotes.length ? " has-notes" : ""}`}>
                       <div
                         className={`message-bubble is-${message.role}`}
                         ref={(element) => {
                           localMessageRefs.current[message.id] = element;
+                          for (const link of anchors) {
+                            if (link.anchor.startOffset === link.anchor.endOffset) {
+                              handleRegisterAnchorRef(link.branchConversationId, element);
+                            }
+                          }
                         }}
                       >
                         <div className="message-meta">
                           <span>{message.role}</span>
-                          <div aria-label="Message note actions" className="message-note-actions" role="group">
+                          <div aria-label="Message actions" className="message-note-actions" role="group">
+                            {message.role === "assistant" && onBranchFromMessage ? (
+                              <button
+                                aria-expanded={branchActionMessageId === message.id}
+                                aria-controls={`branch-actions-${message.id}`}
+                                className="message-branch-button"
+                                disabled={Boolean(typingMessageIds[message.id]) || (isSubmitting && latestMessage?.id === message.id)}
+                                onClick={() => setBranchActionMessageId((current) => current === message.id ? null : message.id)}
+                                type="button"
+                              >
+                                <BranchIcon /><span>Branch</span>
+                              </button>
+                            ) : null}
                             <button
                               aria-label="Open a side note for this message"
                               className="message-note-add"
@@ -1672,6 +1773,7 @@ export default function ChatPanel({
                               type="button"
                             >
                               <SideNoteIcon />
+                              <span>Side note</span>
                             </button>
                             <button
                               aria-label="Add a margin note to this message"
@@ -1684,9 +1786,25 @@ export default function ChatPanel({
                               type="button"
                             >
                               <NoteIcon />
+                              <span>Margin note</span>
                             </button>
                           </div>
                         </div>
+                        {branchActionMessageId === message.id ? (
+                          <div className="message-branch-options" id={`branch-actions-${message.id}`} role="group" aria-label="Choose branch source">
+                            <p>Start a focused chat from this response.</p>
+                            <button onClick={(event) => branchFromWholeResponse(message, event.currentTarget)} type="button">Use entire response</button>
+                            <button onClick={() => {
+                              setBranchActionMessageId(null);
+                              setPassageHintMessageId(message.id);
+                              localMessageRefs.current[message.id]?.closest<HTMLElement>(".message-row")?.focus({ preventScroll: true });
+                            }} type="button">Select a passage</button>
+                            <button className="message-branch-cancel" onClick={() => setBranchActionMessageId(null)} type="button">Cancel</button>
+                          </div>
+                        ) : null}
+                        {passageHintMessageId === message.id ? (
+                          <p className="message-passage-hint" role="status">Highlight a passage below to branch from it. On touch screens, press and hold the text.</p>
+                        ) : null}
                         <MessageContent
                           anchors={anchors}
                           conversationId={conversation.id}
@@ -1728,6 +1846,21 @@ export default function ChatPanel({
                         ) : null}
                       </div>
                     </div>
+                    {message.role === "user" && onResubmitPrompt ? (
+                      <div className="user-message-actions">
+                        <button
+                          aria-label="Resend prompt"
+                          className="prompt-resend-button"
+                          disabled={isSubmitting || hasActiveTypewriter}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onResubmitPrompt(conversation.id, message.id);
+                          }}
+                          title="Resend prompt"
+                          type="button"
+                        ><ResendIcon /></button>
+                      </div>
+                    ) : null}
                   </section>
                 );
               })}
@@ -1757,15 +1890,28 @@ export default function ChatPanel({
           onOpenBranch={onOpenBranch}
           positions={branchMarginPositions}
         />
-        <MarginNotesLayer
+        {showMarginNotes ? <MarginNotesLayer
           notes={marginNotes}
           onDeleteNote={(noteId) => onDeleteNote(conversation.id, noteId)}
           onUseNote={(content) => onUseNote(conversation.id, content)}
           positions={marginNotePositions}
-        />
+        /> : null}
       </div>
 
-      <form className="composer" onSubmit={handleSubmit}>
+      <AnnotationPreview
+        anchors={Object.values(anchorsByMessageId).flat()}
+        containerRef={panelBodyRef}
+        key={conversation.id}
+        notes={commentNotes}
+        onOpenBranch={onOpenBranch}
+        onOpenNote={onOpenNote}
+      />
+      <form className="composer" onClick={handleComposerClick} onSubmit={handleSubmit}>
+        {isActive && showJumpToLatest ? (
+          <button className="chat-jump-to-latest" onClick={handleJumpToLatest} type="button">
+            {isSubmitting ? "Latest response" : "Jump to latest"}<span aria-hidden="true">↓</span>
+          </button>
+        ) : null}
         <div className="composer-hidden">
           <input
             accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json,.html,.htm,.xml,.yaml,.yml,.js,.jsx,.ts,.tsx,.mjs,.css,.py,.rb,.rs,.go,.java,.c,.cpp,.sql,text/*,application/pdf,application/json,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -1778,7 +1924,7 @@ export default function ChatPanel({
         </div>
 
         <div
-          className="composer-surface"
+          className={groupControl ? "composer-surface has-group-control" : "composer-surface"}
           data-composer-surface="true"
           data-conversation-id={conversation.id}
           ref={(element) => {
@@ -1799,11 +1945,21 @@ export default function ChatPanel({
                     <span className="composer-document-name" title={document.filename}>
                       {document.filename}
                     </span>
+                    {onDeleteDocumentEverywhere ? (
+                      <button
+                        aria-label={`More actions for ${document.filename}`}
+                        aria-expanded={documentActionId === document.id}
+                        aria-controls={`document-actions-${conversation.id}`}
+                        disabled={documentUploadState.uploading || isSubmitting}
+                        onClick={() => setDocumentActionId((current) => current === document.id ? null : document.id)}
+                        type="button"
+                      ><span aria-hidden="true">•••</span></button>
+                    ) : null}
                     <button
-                      aria-label={`Delete ${document.filename} from every chat`}
+                      aria-label={`Remove ${document.filename} from this chat`}
                       disabled={documentUploadState.uploading || isSubmitting}
                       onClick={() => onDeleteDocument(document.id)}
-                      title="Delete this document from every chat"
+                      title="Remove this document from this chat"
                       type="button"
                     >
                       <CloseIcon />
@@ -1816,6 +1972,19 @@ export default function ChatPanel({
                   </span>
                 ) : null}
               </div>
+              {documentActionId && onDeleteDocumentEverywhere ? (
+                <div aria-label="Document actions" className="composer-document-menu" id={`document-actions-${conversation.id}`} role="group">
+                  <button disabled={documentUploadState.uploading || isSubmitting} onClick={() => {
+                    const selectedDocument = conversation.documents?.find((document) => document.id === documentActionId);
+                    if (!selectedDocument) return;
+                    if (window.confirm(`Delete “${selectedDocument.filename}” from every chat? This permanently deletes the document and cannot be undone.`)) {
+                      onDeleteDocumentEverywhere(selectedDocument.id);
+                      setDocumentActionId(null);
+                    }
+                  }} type="button">Delete from every chat…</button>
+                  <button onClick={() => setDocumentActionId(null)} type="button">Cancel</button>
+                </div>
+              ) : null}
               {documentUploadState.error ? (
                 <p className="composer-document-error" role="alert">
                   {documentUploadState.error}
@@ -1827,22 +1996,14 @@ export default function ChatPanel({
           <div ref={composerPrimaryRef} className="composer-primary">
             <div className="composer-primary-scroll">
               <textarea
-                aria-label={
-                  isActive
-                    ? "Reply in this conversation"
-                    : "Activate this panel to reply"
-                }
+                aria-label="Reply in this conversation"
                 className="composer-textarea"
                 id={`composer-${conversation.id}`}
-                disabled={!isActive || isSubmitting}
+                aria-describedby={`composer-hint-${conversation.id}`}
                 onKeyDown={handleComposerKeyDown}
                 onChange={(event) => onDraftChange(event.target.value)}
                 placeholder={
-                  !isActive
-                    ? "Select this panel to write here."
-                    : isSubmitting
-                      ? "Waiting for the backend response..."
-                      : "Ask anything"
+                  isSubmitting ? "Draft your next message…" : "Ask anything"
                 }
                 ref={composerTextareaRef}
                 rows={1}
@@ -1856,7 +2017,6 @@ export default function ChatPanel({
               aria-label="Attach documents"
               className="composer-btn"
               disabled={
-                !isActive ||
                 isSubmitting ||
                 documentUploadState.uploading ||
                 (conversation.documents?.length ?? 0) >= 20
@@ -1864,7 +2024,7 @@ export default function ChatPanel({
               onClick={() => documentInputRef.current?.click()}
               type="button"
             >
-              <PlusIcon />
+              <PaperclipIcon />
             </button>
           </div>
 
@@ -1895,20 +2055,19 @@ export default function ChatPanel({
                 <button
                   aria-label="Add side chat"
                   className="composer-side-chat-button"
-                  disabled={!isActive}
                   onClick={() => onAddSideChat(conversation.id)}
                   title="Add side chat"
                   type="button"
                 >
-                  <PlusIcon />
+                  <BranchIcon />
                   <span>Add side chat</span>
                 </button>
               ) : null}
               <button
                 aria-expanded={sideNotesOpen}
-                aria-label="Open a new side note"
+                aria-label={sideNotesOpen ? "Minimize side notes" : "Open side notes"}
                 className="composer-notes-button"
-                onClick={() => openNewSideNote(null)}
+                onClick={() => sideNotesOpen ? minimizeSideNotes() : setSideNotesOpen(true)}
                 title="Side note"
                 type="button"
               >
@@ -1916,6 +2075,7 @@ export default function ChatPanel({
                 <span>Side note</span>
                 {sideNotes.length ? <strong>{sideNotes.length}</strong> : null}
               </button>
+              {groupControl ? <div className="composer-group-control">{groupControl}</div> : null}
             </div>
           </div>
 
@@ -1924,10 +2084,8 @@ export default function ChatPanel({
               aria-expanded={isServicePickerOpen}
               aria-haspopup="dialog"
               aria-label={`Choose AI model. Current selection: ${currentSelectionLabel}`}
-              className={
-                isActive ? "composer-service-pill" : "composer-service-pill is-disabled"
-              }
-              disabled={!isActive || isSubmitting}
+              className="composer-service-pill"
+              disabled={isSubmitting}
               onClick={() => setServicePickerOpen(true)}
               title={currentSelectionLabel}
               type="button"
@@ -1949,28 +2107,35 @@ export default function ChatPanel({
                   : "composer-action-button"
               }
               disabled={
-                !isActive ||
                 (!isSubmitting && !hasActiveTypewriter && !draft.trim())
               }
-              type="submit"
+              onClick={isSubmitting || hasActiveTypewriter ? () => {
+                if (isSubmitting) onStopStreaming(conversation.id);
+                else stopTypewriter();
+              } : undefined}
+              type={isSubmitting || hasActiveTypewriter ? "button" : "submit"}
             >
               {isSubmitting || hasActiveTypewriter ? <StopIcon /> : <ArrowUpIcon />}
             </button>
           </div>
         </div>
-        {aiControls}
+        <p className="composer-keyboard-hint" id={`composer-hint-${conversation.id}`}>
+          {isSubmitting || hasActiveTypewriter
+            ? "Responding… You can draft your next message."
+            : "Enter to send · Shift+Enter for a new line"}
+        </p>
       </form>
 
       {sideNotesOpen ? (
         <div className="side-note-panel-backdrop" onClick={() => setSideNotesOpen(false)} role="presentation">
-          <aside aria-label="Side notes" className="side-note-panel" onClick={(event) => event.stopPropagation()}>
+          <aside aria-label="Side notes" className="side-note-panel" data-side-note-id={activeSideNote?.id} onClick={(event) => event.stopPropagation()}>
             <header className="side-note-panel-head">
               <div>
                 <p className="eyebrow">Side note</p>
                 <h2>Notes beside the chat</h2>
                 <p>Private workspace · Not sent to AI</p>
               </div>
-              <button aria-label="Close side notes" className="notes-drawer-close" onClick={() => setSideNotesOpen(false)} type="button"><CloseIcon /></button>
+              <button aria-label="Minimize side notes" className="side-note-minimize-button" onClick={minimizeSideNotes} title="Minimize side notes" type="button"><MinimizeIcon /><span>Minimize</span></button>
             </header>
             <nav aria-label="Side note documents" className="side-note-tabs">
               <button
@@ -2053,6 +2218,7 @@ export default function ChatPanel({
       ) : null}
 
       <ServicePickerModal
+        contextControls={aiControls}
         currentModelId={conversation.modelId}
         currentServiceId={conversation.serviceId}
         isOpen={isServicePickerOpen}

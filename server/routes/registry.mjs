@@ -41,6 +41,9 @@ export const API_ROUTES = Object.freeze([
   { id: "stateWrite", methods: ["PUT"], path: "/api/state" },
   { id: "chat", methods: ["POST"], path: "/api/chat" },
   { id: "chatTitle", methods: ["POST"], path: "/api/chat/title" },
+  { id: "jevStatus", methods: ["GET"], path: "/api/jev/status" },
+  { id: "jevWorkspace", methods: ["POST"], path: "/api/jev/workspace" },
+  { id: "jevSearch", methods: ["POST"], path: "/api/jev/search" },
 ].map((route) => Object.freeze({ ...route, methods: Object.freeze(route.methods) })));
 
 const compiledRoutes = API_ROUTES.map((route) => {

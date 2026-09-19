@@ -1,0 +1,16 @@
+.graph-map-exploration .conversation-graph-node {
+  transition: left 220ms ease, top 220ms ease, width 220ms ease, height 220ms ease,
+    border-color 150ms ease, box-shadow 150ms ease, transform 150ms ease;
+}
+.graph-map-exploration .conversation-graph-group-hull,
+.graph-map-exploration .conversation-graph-group-node {
+  transition: left 220ms ease, top 220ms ease, width 220ms ease, height 220ms ease;
+}
+.graph-map-exploration .is-moving-nodes .conversation-graph-node,
+.graph-map-exploration .is-moving-nodes .conversation-graph-group-hull,
+.graph-map-exploration .is-moving-nodes .conversation-graph-group-node { transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .graph-map-exploration .conversation-graph-node,
+  .graph-map-exploration .conversation-graph-group-hull,
+  .graph-map-exploration .conversation-graph-group-node { transition: none; }
+}

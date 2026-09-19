@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyVercelUpdates, assertDeployedCommit, createVercelApi, describeVercelUpdates, parseVercelUpdates, planVercelUpdates } from "../scripts/release/vercel-updates.mjs";
+import { applyVercelUpdates, assertDeployedCommit, assertProductionAlias, createVercelApi, describeVercelUpdates, parseVercelUpdates, planVercelUpdates } from "../scripts/release/vercel-updates.mjs";
 import { executeRelease, VERCEL_SYNC_STEPS } from "../scripts/release/sequence.mjs";
 
 const recipe = (environment: any[] = [], project = {}) => ({ schemaVersion: 1, project, environment });
@@ -21,6 +21,19 @@ function provider(envs: any[] = [], initial = {}) {
 }
 
 describe("Vercel post-deployment updates", () => {
+  test("checks live alias ownership and routing even when the project snapshot omits a custom domain", async () => {
+    const good = { alias: "www.example.test", projectId: "prj_test", deploymentId: "dpl_current", redirect: null };
+    const options = { productionUrl: "https://www.example.test", projectId: "prj_test", deploymentId: "dpl_current" };
+    await assertProductionAlias({ ...options, api: async (path: string) => {
+      expect(path).toBe("/v4/aliases/www.example.test");
+      return good;
+    } });
+    for (const changed of [{ alias: "other.example.test" }, { projectId: "prj_other" },
+      { deploymentId: "dpl_old" }, { redirect: "https://other.example.test" }]) {
+      await expect(assertProductionAlias({ ...options, api: async () => ({ ...good, ...changed }) })).rejects.toThrow("route directly");
+    }
+  });
+
   test("uses committed Vercel build settings and never exposes resolved secrets in the local plan", () => {
     const updates = parseVercelUpdates(recipe([{ key: "SERVICE_TOKEN", fromEnv: "DEPLOY_VALUE" }], { nodeVersion: "24.x" }),
       { buildCommand: "bun run build", installCommand: "bun install --frozen-lockfile" }, { DEPLOY_VALUE: "private-value" });

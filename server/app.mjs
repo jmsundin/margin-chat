@@ -11,6 +11,7 @@ import { createDocumentService } from "./documents/index.mjs";
 import { createApiHandler } from "./routes/api.mjs";
 import { createCaptureService } from "./captures/index.mjs";
 import { createVaultService } from "./vault/index.mjs";
+import { createSemanticService } from "./semantic/index.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -35,6 +36,7 @@ export function createAppContext(env = process.env) {
     env,
   });
   const vaultService = createVaultService({ database, env });
+  const semanticService = createSemanticService({ env });
   const documentService = createDocumentService({
     database,
     env,
@@ -46,6 +48,7 @@ export function createAppContext(env = process.env) {
     documentService,
     env,
     runtimeConfig,
+    semanticService,
   });
   const apiHandler = createApiHandler({
     captureService: createCaptureService({ database }),
@@ -57,6 +60,7 @@ export function createAppContext(env = process.env) {
     documentService,
     runtimeConfig,
     vaultService,
+    semanticService,
   });
 
   return {
@@ -69,6 +73,7 @@ export function createAppContext(env = process.env) {
     documentService,
     runtimeConfig,
     vaultService,
+    semanticService,
   };
 }
 

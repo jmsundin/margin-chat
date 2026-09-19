@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import NotificationToast from "./NotificationToast";
 import type { AuthenticatedUser, BillingDashboardData, BillingNotice } from "../types";
 import {
   formatBillingPeriodEnd, formatCreditBalance, formatUsageCost, getBillingStatusLabel,
@@ -65,7 +66,7 @@ export default function BillingDashboard({
         </button>
       </header>
 
-      {notice ? <p className={`billing-return-notice is-${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.message}</p> : null}
+      <NotificationToast message={notice?.message ?? null} kind={notice?.kind} />
       {errorMessage ? <p className="profile-dialog-error" role="alert">{errorMessage}{data ? " The amounts below are from the last successful refresh." : ""}</p> : null}
       {checkoutErrorMessage ? <p className="profile-dialog-error" role="alert">{checkoutErrorMessage}</p> : null}
       {!data && loading ? <p role="status">Loading your balance and payments…</p> : null}

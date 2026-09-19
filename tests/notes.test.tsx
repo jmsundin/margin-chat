@@ -357,7 +357,7 @@ describe("personal notes", () => {
     expect(markup).toContain("This is the decision to revisit.");
     expect(markup).toContain('aria-label="Open a side note for this message"');
     expect(markup).toContain('aria-label="Add a margin note to this message"');
-    expect(markup).toContain('aria-label="Open a new side note"');
+    expect(markup).toContain('aria-label="Open side notes"');
     expect(markup).toContain('aria-label="Add side chat"');
   });
 
@@ -498,8 +498,8 @@ describe("personal notes", () => {
     expect(markup).toContain('data-note-id="body"');
   });
 
-  test("activates standalone editors before their click establishes the caret", () => {
-    expect(getStandaloneNoteActivationEvent(false, true)).toBe("pointerdown");
+  test("keeps ancestor note editing independent of conversation activation", () => {
+    expect(getStandaloneNoteActivationEvent(false, true)).toBeNull();
     expect(getStandaloneNoteActivationEvent(false, false)).toBe("click");
     expect(getStandaloneNoteActivationEvent(true, true)).toBeNull();
     expect(getStandaloneNoteActivationEvent(true, false)).toBeNull();

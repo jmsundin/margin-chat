@@ -16,6 +16,7 @@ export const DEFAULT_WORKSPACE_PREFERENCES: Readonly<{
 }>;
 
 interface WorkspaceItemBase {
+  grouping?: Conversation["grouping"];
   branchAnchor: BranchAnchor | null;
   createdAt: string;
   documents: ConversationDocument[];

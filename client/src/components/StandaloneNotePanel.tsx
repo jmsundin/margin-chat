@@ -46,25 +46,20 @@ export default function StandaloneNotePanel({
   function isInteractiveNoteTarget(target: EventTarget) {
     return (
       target instanceof Element &&
-      Boolean(target.closest("input, button, .live-markdown-editor"))
+      Boolean(target.closest("input, textarea, select, button, summary, a[href], [contenteditable='true'], .live-markdown-editor"))
     );
   }
 
   function handlePanelPointerDown(event: PointerEvent<HTMLElement>) {
-    if (
-      getStandaloneNoteActivationEvent(
-        isActive,
-        isInteractiveNoteTarget(event.target),
-      ) === "pointerdown"
-    ) {
-      onActivate();
-    }
+    if (isInteractiveNoteTarget(event.target)) event.stopPropagation();
   }
 
   function handlePanelClick(event: MouseEvent<HTMLElement>) {
-    // Activating from pointer-down lets the browser establish the editor's
-    // caret afterwards. Do not reactivate an already-active note, because the
-    // conversation selection path clears native DOM selections.
+    // Editing an ancestor note must preserve the open child path and the caret.
+    if (isInteractiveNoteTarget(event.target)) {
+      event.stopPropagation();
+      return;
+    }
     if (
       getStandaloneNoteActivationEvent(
         isActive,

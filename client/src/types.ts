@@ -167,4 +167,10 @@ export interface MessageAnchorLink {
   branchConversationId: string;
   title: string;
   anchor: BranchAnchor;
+  preview?: {
+    kind: "chat" | "note";
+    prompt?: string;
+    content: string;
+    messageCount?: number;
+  };
 }

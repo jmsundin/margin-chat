@@ -843,3 +843,116 @@ create table if not exists marginchat_usage_reservations (
 );
 create index if not exists marginchat_usage_reservations_pending_idx
   on marginchat_usage_reservations (user_id) where settled_at is null;
+
+-- Expand selectable models without rewriting saved choices or execution receipts.
+-- Retain the earlier catalog IDs so existing chats and older clients remain valid.
+alter table marginchat_app_sessions
+  drop constraint if exists app_sessions_default_model_id_check;
+alter table marginchat_app_sessions
+  add constraint app_sessions_default_model_id_check check (
+    (default_service_id is null and default_model_id is null)
+    or (default_service_id = 'backend-services' and default_model_id = 'smart-routing')
+    or (
+      default_service_id in ('openai-api', 'openai-agent')
+      and default_model_id in (
+        'gpt-6-astra', 'gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna'
+      )
+    )
+    or (
+      default_service_id = 'gemini-api'
+      and default_model_id in (
+        'gemini-3.8-flash', 'gemini-3.5-flash-lite',
+        'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'
+      )
+    )
+    or (
+      default_service_id = 'huggingface-api'
+      and default_model_id in (
+        'deepseek-ai/DeepSeek-V4.1-Flash',
+        'deepseek-ai/DeepSeek-V4-Pro-0813',
+        'Qwen/Qwen3.8-27B',
+        'zai-org/GLM-5.3',
+        'moonshotai/Kimi-K3',
+        'Qwen/Qwen3.8-2.4T-A95B',
+        'MiniMaxAI/MiniMax-M3',
+        'openai/gpt-oss-120b',
+        'deepseek-ai/DeepSeek-R1',
+        'Qwen/Qwen3-Coder-480B-A35B-Instruct'
+      )
+    )
+    or (
+      default_service_id = 'xai-api'
+      and default_model_id in ('grok-4.6', 'grok-4.5', 'grok-4.3')
+    )
+  );
+
+alter table marginchat_conversations
+  drop constraint if exists conversations_model_id_check;
+alter table marginchat_conversations
+  add constraint conversations_model_id_check check (
+    (service_id = 'backend-services' and model_id = 'smart-routing')
+    or (
+      service_id in ('openai-api', 'openai-agent')
+      and model_id in (
+        'gpt-6-astra', 'gpt-5.6', 'gpt-5.6-terra', 'gpt-5.6-luna'
+      )
+    )
+    or (
+      service_id = 'gemini-api'
+      and model_id in (
+        'gemini-3.8-flash', 'gemini-3.5-flash-lite',
+        'gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'
+      )
+    )
+    or (
+      service_id = 'huggingface-api'
+      and model_id in (
+        'deepseek-ai/DeepSeek-V4.1-Flash',
+        'deepseek-ai/DeepSeek-V4-Pro-0813',
+        'Qwen/Qwen3.8-27B',
+        'zai-org/GLM-5.3',
+        'moonshotai/Kimi-K3',
+        'Qwen/Qwen3.8-2.4T-A95B',
+        'MiniMaxAI/MiniMax-M3',
+        'openai/gpt-oss-120b',
+        'deepseek-ai/DeepSeek-R1',
+        'Qwen/Qwen3-Coder-480B-A35B-Instruct'
+      )
+    )
+    or (
+      service_id = 'xai-api'
+      and model_id in ('grok-4.6', 'grok-4.5', 'grok-4.3')
+    )
+  );
+
+-- The database defaults to Automatic. Per-provider defaults belong to the
+-- application catalog; a single column default cannot depend on service_id.
+alter table marginchat_app_sessions
+  alter column default_service_id set default 'backend-services',
+  alter column default_model_id set default 'smart-routing';
+alter table marginchat_conversations
+  alter column model_id set default 'smart-routing';
+
+-- Preserve manual grouping, including an explicit choice to stay ungrouped.
+alter table marginchat_conversations
+  add column if not exists grouping_mode text
+  check (grouping_mode in ('manual', 'automatic'));
+
+-- Preserve legacy internal identities and foreign keys while allowing the same
+-- portable attachment identity to belong to more than one account. The nullable
+-- column and coalesced index also accept writes from the serving older release.
+alter table marginchat_documents add column public_id text;
+update marginchat_documents set public_id = id;
+create unique index marginchat_documents_owner_public_id_idx
+  on marginchat_documents (user_id, (coalesce(public_id, id)));
+
+-- Committed with the content projection so incremental rebuilds can trust which
+-- metadata and body revisions have already reached the feature database.
+alter table marginchat_vault_projections
+  add column attachment_revisions jsonb not null default '{}'::jsonb;
+
+-- An older serving application can advance the projection revision without
+-- refreshing its attachment map. Bind new maps to the revision they describe;
+-- existing maps remain untrusted until the next successful projection.
+alter table marginchat_vault_projections
+  add column if not exists attachment_checkpoint_revision bigint;

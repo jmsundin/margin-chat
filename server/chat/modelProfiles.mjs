@@ -3,22 +3,27 @@ import { getRuntimeDefaultModelForService, isBackendModelIdForService, getDefaul
 // Application preferences, not measured rankings. Keep exact IDs in the existing
 // supported catalog; provider documentation is evidence of capabilities, not
 // evidence of comparative quality on this application's tasks.
-export const MODEL_PROFILE_VERSION = "heuristic-2026-09-18.1";
+export const MODEL_PROFILE_VERSION = "heuristic-2026-09-19.1";
 export const PROFILE_EVIDENCE = Object.freeze({
   kind: "heuristic",
-  reviewedAt: "2026-09-18",
+  reviewedAt: "2026-09-19",
   sources: [
     "https://developers.openai.com/api/docs/guides/model-selection",
     "https://ai.google.dev/gemini-api/docs/models",
     "https://docs.x.ai/developers/models",
+    "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash",
+    "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813",
+    "https://huggingface.co/zai-org/GLM-5.3",
+    "https://huggingface.co/Qwen/Qwen3.8-27B",
+    "https://huggingface.co/docs/inference-providers/index",
   ],
   limitation: "Task preferences are configurable heuristics; no application benchmark scores are available.",
 });
 
 const FAST_MODELS = {
   "openai-api": "gpt-5.6-luna",
-  "gemini-api": "gemini-3.1-flash-lite",
-  "huggingface-api": "openai/gpt-oss-120b",
+  "gemini-api": "gemini-3.5-flash-lite",
+  "huggingface-api": "Qwen/Qwen3.8-27B",
   "xai-api": "grok-4.3",
 };
 
@@ -26,11 +31,14 @@ export function selectProfileModel(serviceId, { mode, task }, runtimeConfig) {
   let model = getRuntimeDefaultModelForService(runtimeConfig, serviceId);
   if (mode === "fast") model = FAST_MODELS[serviceId] ?? model;
   if (serviceId === "huggingface-api" && mode !== "fast") {
-    if (task === "coding") model = "Qwen/Qwen3-Coder-480B-A35B-Instruct";
-    if (task === "reasoning") model = "deepseek-ai/DeepSeek-R1";
+    if (task === "coding") model = "zai-org/GLM-5.3";
+    if (task === "reasoning") model = "deepseek-ai/DeepSeek-V4-Pro-0813";
+  }
+  if (serviceId === "gemini-api" && mode !== "fast" && (task === "reasoning" || mode === "thorough")) {
+    model = "gemini-3.1-pro-preview";
   }
   if (mode === "balanced" && task === "summary") {
-    if (serviceId === "gemini-api") model = "gemini-3.5-flash";
+    if (serviceId === "gemini-api") model = "gemini-3.8-flash";
     if (serviceId === "openai-api") model = "gpt-5.6-terra";
   }
   return isBackendModelIdForService(serviceId, model) ? model : getDefaultModelIdForService(serviceId);

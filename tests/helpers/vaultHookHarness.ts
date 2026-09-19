@@ -113,7 +113,8 @@ const user: any = {
 };
 const storageDirectory = await mkdtemp(join(tmpdir(), "margin-chat-hook-test-"));
 const remote = createVaultService({ storage: createFileVaultStorage(storageDirectory), env: {} });
-await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+const emptySettingsScenario = process.argv.includes("--empty-settings");
+if (!emptySettingsScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -161,7 +162,74 @@ function type(content: string) {
     ] },
   } }));
 }
-try {
+async function checkEmptyWorkspaceSettings() {
+  networkReleased = true;
+  initialNetwork.resolve();
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Empty workspace did not become ready.");
+  await act(async () => { await current.vault.syncNow(); });
+  await act(async () => {
+    current.setState((state: any) => ({
+      ...state, defaultServiceId: "openai-api", defaultModelId: "gpt-6-astra",
+      groups: { drafts: { id: "drafts", name: "Drafts", color: "#4fbf9f", collapsed: false, conversationIds: [] } },
+      conversations: { ...state.conversations, [state.rootId]: {
+        ...state.conversations[state.rootId], serviceId: "openai-api", modelId: "gpt-6-astra",
+      } },
+    }));
+  });
+  // Exercise the real automatic debounce: no explicit save/sync hides a reset.
+  await act(async () => { await new Promise((done) => setTimeout(done, 1100)); });
+  await until(() => !current.vault.saving, "Automatic empty-workspace save did not finish.");
+  const assertSelection = () => {
+    assert.equal(current.state.defaultServiceId, "openai-api");
+    assert.equal(current.state.defaultModelId, "gpt-6-astra");
+    assert.equal(current.state.conversations[current.state.rootId].serviceId, "openai-api");
+    assert.equal(current.state.conversations[current.state.rootId].modelId, "gpt-6-astra");
+    assert.equal(current.state.groups.drafts.name, "Drafts");
+  };
+  const assertNoDocuments = async () => {
+    assert.equal(Object.keys((await local.read())!.files).filter((path) => /\.md$/i.test(path)).length, 0,
+      "Saving empty-workspace settings created a Markdown placeholder.");
+    const cloud = await remote.snapshot(user.id);
+    assert.equal(Object.entries(cloud.manifest.files).filter(([path, entry]: [string, any]) => /\.md$/i.test(path) && !entry.deleted).length, 0,
+      "A deleted or empty editor was published as a cloud document.");
+    const settings = JSON.parse((await remote.readFile({ userId: user.id, path: "workspace.json" })).bytes.toString());
+    assert.equal(settings.workspace.preferences.defaultServiceId, "openai-api");
+    assert.equal(settings.workspace.preferences.defaultModelId, "gpt-6-astra");
+  };
+  assertSelection();
+  await assertNoDocuments();
+
+  // Reopen from the durable settings while offline, before any cloud response.
+  await act(async () => { root.unmount(); });
+  const onlineFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new TypeError("Offline fixture"); }) as typeof fetch;
+  current = null;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Empty workspace settings did not hydrate offline.");
+  assertSelection();
+  globalThis.fetch = onlineFetch;
+  await act(async () => { await current.vault.syncNow(); });
+
+  await act(async () => { type("Create a document before deleting it from another device."); });
+  await act(async () => { await current.vault.syncNow(); });
+  const beforeDeletion = await remote.snapshot(user.id);
+  const deletions = Object.entries(beforeDeletion.manifest.files)
+    .filter(([path, entry]: [string, any]) => /\.md$/i.test(path) && !entry.deleted)
+    .map(([path, entry]: [string, any]) => ({ path, baseRevision: entry.revision, content: null }));
+  assert.equal(deletions.length, 1, "The real authored document was not saved.");
+  await remote.commit(user.id, deletions);
+  await act(async () => { await current.vault.syncNow(); });
+  assertSelection();
+  assert.equal(current.state.conversations[current.state.rootId].messages.length, 0);
+  await act(async () => { current.setState((state: any) => ({ ...state, railOpen: !state.railOpen })); });
+  await act(async () => { await new Promise((done) => setTimeout(done, 1100)); });
+  await until(() => !current.vault.saving, "Refresh after deletion did not finish.");
+  await assertNoDocuments();
+  console.log(JSON.stringify({ checks: ["empty settings survive automatic debounce", "settings sync without placeholder Markdown", "offline reopen restores selected provider and model", "empty groups survive reopening", "remote deletion does not resurrect placeholder"] }));
+}
+async function checkPopulatedWorkspace() {
   await act(async () => { root.render(createElement(Host)); });
   await until(() => current?.vault.ready, "Local editor waited for the cloud before becoming ready.");
   await networkEntered.promise;
@@ -345,6 +413,10 @@ try {
   assert(Object.values(current.state.conversations).some((conversation: any) => conversation.messages.some((message: any) => message.content === "Preserve this local version as a conflict.")),
     "Offline reopen lost the previously persisted Markdown.");
   console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
+}
+try {
+  if (emptySettingsScenario) await checkEmptyWorkspaceSettings();
+  else await checkPopulatedWorkspace();
 } finally {
   initialNetwork.resolve();
   writeGate?.resolve();

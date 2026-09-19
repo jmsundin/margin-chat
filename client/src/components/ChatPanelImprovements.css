@@ -1,0 +1,244 @@
+.chat-panel.chat-panel--improved .message-meta {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+.chat-panel.chat-panel--improved .message-note-actions {
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chat-panel.chat-panel--improved .message-row.has-prompt-actions {
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.chat-panel.chat-panel--improved .user-message-actions { display: flex; justify-content: flex-end; }
+.chat-panel.chat-panel--improved .prompt-resend-button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  padding: 7px;
+  width: 34px;
+}
+.chat-panel.chat-panel--improved .prompt-resend-button:hover:not(:disabled) { background: var(--button-surface); border-color: var(--line); color: var(--ink); }
+.chat-panel.chat-panel--improved .prompt-resend-button:disabled { cursor: not-allowed; opacity: .4; }
+.chat-panel.chat-panel--improved .prompt-action-icon { flex: 0 0 18px; height: 18px; width: 18px; }
+.chat-panel.chat-panel--improved .side-note-panel-head > div { min-width: 0; }
+.chat-panel.chat-panel--improved .side-note-minimize-button {
+  align-items: center;
+  background: var(--composer-send-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--composer-send-ink);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: .8rem;
+  font-weight: 600;
+  gap: 6px;
+  min-height: 38px;
+  padding: 8px 12px;
+}
+.chat-panel.chat-panel--improved .side-note-minimize-button:hover { filter: brightness(.9); }
+
+.chat-panel.chat-panel--improved .message-note-add,
+.chat-panel.chat-panel--improved .message-branch-button {
+  align-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 500;
+  gap: 5px;
+  height: auto;
+  min-height: 36px;
+  opacity: 1;
+  padding: 5px 8px;
+  width: auto;
+}
+
+.chat-panel.chat-panel--improved .message-branch-button {
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.chat-panel.chat-panel--improved .message-branch-button .composer-icon {
+  height: 16px;
+  width: 16px;
+}
+
+.chat-panel.chat-panel--improved .message-note-add:hover,
+.chat-panel.chat-panel--improved .message-branch-button:hover {
+  background: var(--button-surface);
+  color: var(--ink);
+}
+
+.chat-panel.chat-panel--improved .message-branch-button:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
+.chat-panel.chat-panel--improved .message-branch-options {
+  background: var(--button-surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 12px;
+  padding: 12px;
+}
+
+.chat-panel.chat-panel--improved .message-branch-options p {
+  color: var(--muted);
+  flex-basis: 100%;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.chat-panel.chat-panel--improved .message-branch-options button,
+.chat-panel.chat-panel--improved .composer-document-menu button {
+  background: var(--button-surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 40px;
+  padding: 6px 10px;
+}
+
+.chat-panel.chat-panel--improved .message-branch-options .message-branch-cancel {
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.chat-panel.chat-panel--improved .message-passage-hint {
+  background: var(--button-surface);
+  border-left: 3px solid var(--focus-ring);
+  border-radius: 4px;
+  color: var(--ink);
+  font-size: 0.85rem;
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+}
+
+.chat-panel.chat-panel--improved .composer {
+  position: relative;
+}
+
+.chat-panel.chat-panel--improved .composer-surface:focus-within {
+  border-color: var(--focus-ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 35%, transparent);
+}
+
+.chat-panel.chat-panel--improved button:focus-visible,
+.chat-panel.chat-panel--improved .composer-textarea:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.chat-panel.chat-panel--improved .composer-textarea:focus-visible {
+  border-radius: 4px;
+  outline-offset: 2px;
+}
+
+.chat-panel.chat-panel--improved .composer-keyboard-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  margin: 7px 0 0;
+  text-align: center;
+}
+
+.chat-panel.chat-panel--improved .chat-jump-to-latest {
+  align-items: center;
+  background: var(--button-surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 3px 12px rgb(0 0 0 / 12%);
+  color: var(--ink);
+  display: flex;
+  gap: 8px;
+  left: 50%;
+  min-height: 40px;
+  padding: 8px 14px;
+  position: absolute;
+  top: -40px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 3;
+}
+
+.chat-panel.chat-panel--improved .composer-document-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px;
+}
+
+.chat-panel.chat-panel--improved .composer-group-control {
+  flex: 0 0 120px;
+  min-width: 120px;
+}
+
+.chat-panel.chat-panel--improved .composer-group-control .conversation-group-select {
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+}
+
+.chat-panel.chat-panel--improved .composer-group-control .conversation-group-select > span {
+  display: none;
+}
+
+.chat-panel.chat-panel--improved .composer-group-control .conversation-group-trigger {
+  background: var(--button-surface);
+  border: 1px solid var(--button-border);
+  border-radius: 8px;
+  color: var(--composer-ink);
+  font-size: .75rem;
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 8px;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.chat-panel.chat-panel--improved .composer-group-control .conversation-group-trigger:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+@container (max-width: 560px) {
+  .chat-panel.chat-panel--improved .has-group-control .composer-service-pill { max-width: max(54px, 18cqw); }
+}
+
+@container (max-width: 380px) {
+  .chat-panel.chat-panel--improved .has-group-control .composer-footer-actions { grid-column: 1 / -1; grid-row: 4; }
+  .chat-panel.chat-panel--improved .has-group-control .composer-footer-scroll { justify-content: flex-start; }
+}
+
+@media (max-width: 600px), (hover: none), (pointer: coarse) {
+  .chat-panel.chat-panel--improved .composer-btn,
+  .chat-panel.chat-panel--improved .composer-action-button,
+  .chat-panel.chat-panel--improved .composer-service-pill,
+  .chat-panel.chat-panel--improved .composer-side-chat-button,
+  .chat-panel.chat-panel--improved .composer-notes-button,
+  .chat-panel.chat-panel--improved .composer-group-control .conversation-group-trigger,
+  .chat-panel.chat-panel--improved .message-note-add,
+  .chat-panel.chat-panel--improved .message-branch-button,
+  .chat-panel.chat-panel--improved .prompt-resend-button,
+  .chat-panel.chat-panel--improved .side-note-minimize-button,
+  .chat-panel.chat-panel--improved .composer-document-chip button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

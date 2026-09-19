@@ -16,7 +16,7 @@ export default function AIControls({ conversation, conversations, disabled, onCh
   const permitted = settings.allowedProviders ?? [...AI_PROVIDERS];
   const choices = Object.values(conversations).filter((item) => item.id !== conversation.id && item.title.toLowerCase().includes(query.toLowerCase()));
   return <details className="ai-controls">
-    <summary>{conversation.serviceId === "backend-services" ? `Auto · ${settings.mode[0].toUpperCase()}${settings.mode.slice(1)} · ` : "AI context · "}{scopes[settings.contextScope]}</summary>
+    <summary tabIndex={0}>{conversation.serviceId === "backend-services" ? `Auto · ${settings.mode[0].toUpperCase()}${settings.mode.slice(1)} · ` : "AI context · "}{scopes[settings.contextScope]}</summary>
     <div className="ai-controls-body">
       {conversation.serviceId === "backend-services" ? <label>Auto preference
         <select aria-label="Auto preference" disabled={disabled} value={settings.mode} onChange={(event) => onChange({ ...settings, mode: event.target.value as AISettings["mode"] })}>

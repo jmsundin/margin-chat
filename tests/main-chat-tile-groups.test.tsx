@@ -54,7 +54,8 @@ describe("main chat tile groups", () => {
     expect(markup).toContain("Ungrouped");
     expect(markup).toContain("Research thread");
     expect(markup).toContain("Other thread");
-    expect(markup).toContain('aria-label="Group for conversation root"');
+    expect(markup).toContain('aria-label="Group for conversation root: Learning"');
+    expect(markup).toContain('aria-haspopup="dialog"');
     expect(markup).toContain("New group");
   });
 });

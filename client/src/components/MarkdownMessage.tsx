@@ -248,8 +248,11 @@ function applyDecorations(
 
       const branch = active.find((item) => item.type === "anchor");
       const activeNotes = active.filter((item) => item.type === "note");
+      const activeBranches = active.filter((item) => item.type === "anchor");
       const mark = document.createElement("mark");
       mark.className = `message-anchor${active.some((item) => item.type === "note") ? " is-note-anchor" : ""}${active.some((item) => item.type === "preview") ? " is-pending-selection" : ""}`;
+      if (activeBranches.length) mark.dataset.annotationBranches = JSON.stringify(activeBranches.map((item) => item.branchConversationId));
+      if (activeNotes.length) mark.dataset.annotationNotes = JSON.stringify(activeNotes.map((item) => item.noteId));
 
       if (branch?.type === "anchor") {
         mark.dataset.branchConversationId = branch.branchConversationId;
@@ -258,6 +261,8 @@ function applyDecorations(
         mark.tabIndex = 0;
       } else if (active.some((item) => item.type === "note")) {
         mark.setAttribute("aria-label", "Text with a margin note");
+        mark.setAttribute("role", "link");
+        mark.tabIndex = 0;
       }
 
       const innerSpan = document.createElement("span");

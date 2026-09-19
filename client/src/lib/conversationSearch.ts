@@ -3,6 +3,12 @@ import { getStandaloneNote } from "./standaloneNotes";
 import { categorizeThread, getThreadCategoryLabel } from "./threadCategories";
 import { excerpt, getConversationRootId, getRootConversations } from "./tree";
 
+export { buildSearchExploration } from "./searchExploration";
+export type {
+  SearchDirection, SearchEvidenceRef, SearchExploration, SearchExplorationOptions,
+  SearchFacet, SearchFacetKind, SearchPassageResult, SearchPurposeId,
+} from "./searchExploration";
+
 export interface ChatSearchResult {
   conversationId: string;
   locationLabel: string;

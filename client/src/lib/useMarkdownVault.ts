@@ -110,17 +110,18 @@ export function useMarkdownVault(args: {
       displayedState.current = stateRef.current;
       return engine.read();
     }
-    // A pristine empty editor is UI, not a new document resurrected after a remote deletion.
+    // Keep settings durable without turning the empty editor into a document,
+    // including after the last authored document was deleted on another device.
     const conversations = Object.values(stateRef.current.conversations);
     const pristine = conversations.length === 1 && conversations[0].kind !== "note" && conversations[0].title === "New chat"
       && !conversations[0].messages.length && !conversations[0].notes?.length && !conversations[0].documents?.length;
-    if (!hasVaultContent.current && pristine) { displayedState.current = stateRef.current; return engine.read(); }
     const editingState = stateRef.current;
-    const next = renderFiles(editingState, displayedFiles.current);
+    const settingsOnly = !hasVaultContent.current && pristine;
+    const next = renderFiles(settingsOnly ? { ...editingState, conversations: {} } : editingState, displayedFiles.current);
     const snapshot = await engine.edit(next, displayedFiles.current);
     displayedFiles.current = next;
     displayedState.current = editingState;
-    hasVaultContent.current = true;
+    hasVaultContent.current = !settingsOnly;
     if (mounted.current) {
       setConflicts(snapshot.conflicts);
       setMatchesCloud(enabledRef.current && !pendingVaultChanges(snapshot).length);

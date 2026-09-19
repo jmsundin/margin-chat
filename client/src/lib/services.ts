@@ -31,7 +31,15 @@ const OPENAI_MODELS: BackendServiceModel[] = [
   {
     badgeLabel: "FLAGSHIP",
     description:
-      "OpenAI's flagship GPT-5.6 model for complex reasoning, coding, and professional work.",
+      "OpenAI's most capable model for demanding reasoning, coding, and professional work.",
+    featured: true,
+    id: "gpt-6-astra",
+    label: "GPT-6 Astra",
+  },
+  {
+    badgeLabel: "VERSATILE",
+    description:
+      "Strong general-purpose reasoning and coding with lower per-token cost than Astra.",
     featured: true,
     id: "gpt-5.6",
     label: "GPT-5.6 Sol",
@@ -66,7 +74,7 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
         description:
           "Match the task to an available model, with saved selection and context details for every answer.",
         id: "smart-routing",
-        label: "Smart routing",
+        label: "Auto",
       },
     ],
     provider: "Margin Chat",
@@ -111,24 +119,24 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
     modeLabel: "Direct",
     models: [
       {
-        badgeLabel: "NEW",
-        description: "Best for complex tasks that need broad world knowledge and advanced reasoning across modalities.",
+        badgeLabel: "STABLE",
+        description: "Google's latest stable Flash model for capable, responsive everyday chat and coding.",
         featured: true,
-        id: "gemini-3.1-pro-preview",
-        label: "Gemini 3.1 Pro",
+        id: "gemini-3.8-flash",
+        label: "Gemini 3.8 Flash",
       },
       {
-        badgeLabel: "STABLE",
-        description: "Google's stable frontier model for sustained agentic, coding, and long-horizon work at Flash speed.",
+        badgeLabel: "PREVIEW",
+        description: "Advanced Pro reasoning for complex tasks. Preview release with potentially changing availability and behavior.",
         featured: true,
-        id: "gemini-3.5-flash",
-        label: "Gemini 3.5 Flash",
+        id: "gemini-3.1-pro-preview",
+        label: "Gemini 3.1 Pro Preview",
       },
       {
         badgeLabel: "FAST",
-        description: "Stable high-volume Gemini 3 model optimized for latency and cost efficiency.",
-        id: "gemini-3.1-flash-lite",
-        label: "Gemini 3.1 Flash-Lite",
+        description: "Stable, economical Gemini model for quick responses and high-volume work.",
+        id: "gemini-3.5-flash-lite",
+        label: "Gemini 3.5 Flash-Lite",
       },
     ],
     provider: "Google",
@@ -136,7 +144,7 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
   {
     id: "huggingface-api",
     label: "Hugging Face",
-    description: "Route the conversation through Hugging Face's OpenAI-compatible inference router.",
+    description: "Open-source and custom-license open-weight models served through Hugging Face. License details appear on each choice.",
     iconLabel: "HF",
     keywords: [
       "hugging face",
@@ -144,38 +152,63 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
       "hf",
       "inference",
       "open models",
+      "open source",
+      "open weight",
+      "deepseek",
+      "qwen",
+      "glm",
+      "minimax",
       "kimi",
       "moonshot",
     ],
     modeLabel: "Direct",
     models: [
       {
-        badgeLabel: "POPULAR",
-        description: "Top open-weight general model choice through the Hugging Face router.",
+        badgeLabel: "MIT",
+        description: "Efficient general chat and reasoning from DeepSeek's latest Flash release. MIT-licensed weights.",
         featured: true,
-        id: "openai/gpt-oss-120b",
-        label: "gpt-oss-120b",
+        id: "deepseek-ai/DeepSeek-V4.1-Flash",
+        label: "DeepSeek V4.1 Flash",
       },
       {
-        badgeLabel: "NEW",
+        badgeLabel: "MIT",
+        description: "DeepSeek's flagship reasoning and coding release. MIT-licensed weights.",
+        featured: true,
+        id: "deepseek-ai/DeepSeek-V4-Pro-0813",
+        label: "DeepSeek V4 Pro",
+      },
+      {
+        badgeLabel: "APACHE 2.0",
+        description: "Compact, capable Qwen model for responsive everyday tasks. Apache 2.0-licensed weights.",
+        id: "Qwen/Qwen3.8-27B",
+        label: "Qwen3.8 27B",
+      },
+      {
+        badgeLabel: "OPEN-WEIGHT",
+        description: "Z.ai's flagship coding and agentic model. Custom GLM license; review terms before commercial use.",
+        featured: true,
+        id: "zai-org/GLM-5.3",
+        label: "GLM 5.3",
+      },
+      {
+        badgeLabel: "OPEN-WEIGHT",
         description:
-          "Moonshot AI's native multimodal agentic model for long-context reasoning, coding, and knowledge work.",
+          "Moonshot AI's flagship for long-context reasoning, coding, and knowledge work. Custom Kimi K3 license.",
         featured: true,
         id: "moonshotai/Kimi-K3",
         label: "Kimi K3",
       },
       {
-        badgeLabel: "REASONING",
-        description: "DeepSeek's strongest reasoning-focused open model for harder analytical work.",
-        featured: true,
-        id: "deepseek-ai/DeepSeek-R1",
-        label: "DeepSeek R1",
+        badgeLabel: "OPEN-WEIGHT",
+        description: "Large Qwen flagship for research, reasoning, and professional text work. Custom Qwen3.8-Max license.",
+        id: "Qwen/Qwen3.8-2.4T-A95B",
+        label: "Qwen3.8 2.4T",
       },
       {
-        badgeLabel: "CODING",
-        description: "Large open coding specialist with strong code generation and repo assistance.",
-        id: "Qwen/Qwen3-Coder-480B-A35B-Instruct",
-        label: "Qwen3 Coder 480B",
+        badgeLabel: "OPEN-WEIGHT",
+        description: "Efficient long-context reasoning and general work. Custom MiniMax Community license.",
+        id: "MiniMaxAI/MiniMax-M3",
+        label: "MiniMax M3",
       },
     ],
     provider: "Hugging Face",
@@ -192,8 +225,8 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
         badgeLabel: "FLAGSHIP",
         description: "xAI's flagship model for code, agentic tool use, configurable reasoning, and general chat.",
         featured: true,
-        id: "grok-4.5",
-        label: "Grok 4.5",
+        id: "grok-4.6",
+        label: "Grok 4.6",
       },
       {
         badgeLabel: "BALANCED",
@@ -207,7 +240,24 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
   },
 ];
 
-const FALLBACK_MODEL_LABEL = "Smart routing";
+// Keep saved chats and recent selections intact without promoting older models
+// in the fresh model catalog. Provider availability may still change over time.
+const LEGACY_MODELS: Partial<Record<BackendServiceId, BackendServiceModel[]>> = {
+  "gemini-api": [
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", description: "Previous Flash release, retained for saved chats." },
+    { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", description: "Previous Flash-Lite release, retained for saved chats." },
+  ],
+  "huggingface-api": [
+    { id: "openai/gpt-oss-120b", label: "gpt-oss-120b", description: "Previous open-weight selection, retained for saved chats." },
+    { id: "deepseek-ai/DeepSeek-R1", label: "DeepSeek R1", description: "Previous reasoning selection, retained for saved chats." },
+    { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B", description: "Previous coding selection, retained for saved chats." },
+  ],
+  "xai-api": [
+    { id: "grok-4.5", label: "Grok 4.5", description: "Previous Grok flagship, retained for saved chats." },
+  ],
+};
+
+const FALLBACK_MODEL_LABEL = "Auto";
 
 const BACKEND_SERVICE_OPTIONS_BY_ID = new Map(
   BACKEND_SERVICE_OPTIONS.map((service) => [service.id, service]),
@@ -236,7 +286,8 @@ export function getBackendServiceModel(
   serviceId: BackendServiceId,
   modelId: string,
 ): BackendServiceModel | undefined {
-  return getBackendServiceOption(serviceId)?.models.find((model) => model.id === modelId);
+  return getBackendServiceOption(serviceId)?.models.find((model) => model.id === modelId)
+    ?? LEGACY_MODELS[serviceId]?.find((model) => model.id === modelId);
 }
 
 export function isBackendServiceModelId(

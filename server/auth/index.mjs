@@ -15,14 +15,6 @@ import {
   normalizeSignupPayload,
 } from "./validation.mjs";
 
-const ADMIN_EMAILS = new Set(["sundinjon@gmail.com"]);
-
-function resolveUserRole(email) {
-  return ADMIN_EMAILS.has(String(email).trim().toLowerCase())
-    ? "admin"
-    : "member";
-}
-
 export function createAuthService({
   apiKeyService = null,
   database,
@@ -60,7 +52,9 @@ export function createAuthService({
       email: input.email,
       id: randomUUID(),
       passwordHash,
-      role: resolveUserRole(input.email),
+      // Signup does not prove ownership of the supplied email address. Admin
+      // access is provisioned separately on a verified existing account.
+      role: "member",
     });
     const cookie = await createSessionForUser(user.id);
 

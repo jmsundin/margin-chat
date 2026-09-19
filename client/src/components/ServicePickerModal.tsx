@@ -1,17 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
   BACKEND_SERVICE_OPTIONS,
   type BackendServiceModel,
   type BackendServiceOption,
   getBackendServiceModel,
-  getBackendServiceModelLabel,
-  getBackendServiceSelectionLabel,
   type RecentBackendServiceSelection,
 } from "../lib/services";
 import type { BackendServiceId } from "../types";
+import "./ServicePickerModal.css";
 
 interface ServicePickerModalProps {
+  contextControls?: ReactNode;
   currentModelId: string;
   currentServiceId: BackendServiceId;
   isOpen: boolean;
@@ -20,66 +20,27 @@ interface ServicePickerModalProps {
   recentSelections: RecentBackendServiceSelection[];
 }
 
-function SearchIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="service-picker-search-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.9"
-    >
-      <circle cx="11" cy="11" r="6.75" />
-      <path d="m16.25 16.25 4 4" />
-    </svg>
-  );
-}
+type ModelChoice = { model: BackendServiceModel; service: BackendServiceOption };
 
-function ChevronDownIcon({ isExpanded }: { isExpanded: boolean }) {
+function Chevron({ expanded }: { expanded: boolean }) {
   return (
-    <svg
-      aria-hidden="true"
-      className={isExpanded ? "service-picker-chevron is-expanded" : "service-picker-chevron"}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
+    <svg aria-hidden="true" className={expanded ? "picker-chevron is-expanded" : "picker-chevron"} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
       <path d="m6 9 6 6 6-6" />
     </svg>
   );
 }
 
-function matchesModel(
-  query: string,
-  service: BackendServiceOption,
-  model: BackendServiceModel,
-) {
-  if (!query) {
-    return true;
-  }
+function choiceLabel({ model, service }: ModelChoice) {
+  return service.id === "backend-services" ? "Auto" : model.label;
+}
 
-  const searchableText = [
-    model.badgeLabel ?? "",
-    model.description,
-    model.label,
-    service.description,
-    service.label,
-    service.provider,
-    ...service.keywords,
-  ]
-    .join(" ")
-    .toLowerCase();
-
-  return searchableText.includes(query);
+function matchesQuery(query: string, { model, service }: ModelChoice) {
+  return [choiceLabel({ model, service }), model.label, service.label, service.provider, ...service.keywords]
+    .join(" ").toLowerCase().includes(query);
 }
 
 export default function ServicePickerModal({
+  contextControls,
   currentModelId,
   currentServiceId,
   isOpen,
@@ -88,399 +49,172 @@ export default function ServicePickerModal({
   recentSelections,
 }: ServicePickerModalProps) {
   const [query, setQuery] = useState("");
-  const [expandedProviderId, setExpandedProviderId] =
-    useState<BackendServiceId | null>(currentServiceId);
+  const [browseProviders, setBrowseProviders] = useState(false);
+  const [expandedProviderId, setExpandedProviderId] = useState<BackendServiceId | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const titleId = useId();
+  const providersId = useId();
 
   useEffect(() => {
-    if (!isOpen) {
-      setQuery("");
-      return undefined;
-    }
-
-    setExpandedProviderId(currentServiceId);
+    if (!isOpen) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    setQuery("");
+    setBrowseProviders(false);
+    setExpandedProviderId(null);
     inputRef.current?.focus();
+
+    const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+      'button, input:not([type="hidden"]), select, textarea, a[href], summary, [tabindex]',
+    ) ?? []).filter((element) => {
+      if (element.tabIndex < 0 || element.matches(":disabled") || element.closest("[hidden], [inert]")) return false;
+      for (let ancestor = element.parentElement; ancestor && ancestor !== dialogRef.current; ancestor = ancestor.parentElement) {
+        if (ancestor.tagName === "FIELDSET" && ancestor.hasAttribute("disabled")) {
+          const legend = ancestor.querySelector(":scope > legend");
+          if (!legend?.contains(element)) return false;
+        }
+        if (ancestor.tagName === "DETAILS" && !ancestor.hasAttribute("open")) {
+          const summary = ancestor.querySelector(":scope > summary");
+          if (!summary?.contains(element)) return false;
+        }
+      }
+      return true;
+    });
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        onClose();
+        event.preventDefault();
+        event.stopPropagation();
+        closeRef.current();
+      } else if (event.key === "Tab") {
+        const items = focusable();
+        const first = items[0];
+        const last = items.at(-1);
+        if (!first || !last) return;
+        const outside = !dialogRef.current?.contains(document.activeElement);
+        if (event.shiftKey && (document.activeElement === first || outside)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || outside)) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     }
 
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [currentServiceId, isOpen, onClose]);
-
-  useEffect(() => {
-    if (!isOpen || typeof document === "undefined") {
-      return undefined;
+    function keepFocusInDialog(event: FocusEvent) {
+      if (event.target instanceof Node && !dialogRef.current?.contains(event.target)) inputRef.current?.focus();
     }
-
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("focusin", keepFocusInDialog);
     return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("focusin", keepFocusInDialog);
       document.body.style.overflow = previousOverflow;
+      if (previousFocus?.isConnected) previousFocus.focus();
     };
   }, [isOpen]);
 
-  if (!isOpen) {
-    return null;
-  }
+  if (!isOpen) return null;
 
-  const normalizedQuery = query.trim().toLowerCase();
-  const currentSelectionLabel = getBackendServiceSelectionLabel(
-    currentServiceId,
-    currentModelId,
-  );
-  const recentSelectionSource = recentSelections.length
-    ? recentSelections
-    : [{ modelId: currentModelId, serviceId: currentServiceId }];
-  const recentModels = recentSelectionSource.flatMap((selection) => {
-    const service = BACKEND_SERVICE_OPTIONS.find(
-      (option) => option.id === selection.serviceId,
-    );
+  const allChoices = BACKEND_SERVICE_OPTIONS.flatMap((service) => service.models.map((model) => ({ service, model })));
+  const currentService = BACKEND_SERVICE_OPTIONS.find((service) => service.id === currentServiceId);
+  const currentModel = getBackendServiceModel(currentServiceId, currentModelId);
+  const currentChoice = currentService && currentModel ? { service: currentService, model: currentModel } : undefined;
+  const autoChoice = allChoices.find(({ service }) => service.id === "backend-services");
+  const seenRecent = new Set<string>();
+  const recentChoices = recentSelections.flatMap((selection) => {
+    const key = `${selection.serviceId}:${selection.modelId}`;
+    const service = BACKEND_SERVICE_OPTIONS.find((option) => option.id === selection.serviceId);
     const model = getBackendServiceModel(selection.serviceId, selection.modelId);
-
-    if (!service || !model || !matchesModel(normalizedQuery, service, model)) {
-      return [];
-    }
-
-    return [
-      {
-        model,
-        service,
-      },
-    ];
+    if (!service || !model || seenRecent.has(key)) return [];
+    seenRecent.add(key);
+    return [{ service, model }];
   });
-  const featuredModels: Array<{
-    model: BackendServiceModel;
-    service: BackendServiceOption;
-  }> = [];
-  const providerSections = BACKEND_SERVICE_OPTIONS.map((service) => ({
-    ...service,
-    visibleModels: service.models.filter((model) =>
-      matchesModel(normalizedQuery, service, model),
-    ),
-  })).filter((service) => service.visibleModels.length > 0 || !normalizedQuery);
+  const normalizedQuery = query.trim().toLowerCase();
+  const searchResults = allChoices.filter((choice) => matchesQuery(normalizedQuery, choice));
 
-  for (const service of BACKEND_SERVICE_OPTIONS) {
-    if (service.id === "backend-services") {
-      continue;
-    }
-
-    for (const model of service.models) {
-      if (!model.featured || !matchesModel(normalizedQuery, service, model)) {
-        continue;
-      }
-
-      featuredModels.push({
-        model,
-        service,
-      });
-    }
+  function modelRow(choice: ModelChoice) {
+    const { model, service } = choice;
+    const isAuto = service.id === "backend-services";
+    const isCurrent = currentServiceId === service.id && currentModelId === model.id;
+    const licenseLabel = service.id === "huggingface-api" && model.badgeLabel
+      ? model.badgeLabel === "OPEN-WEIGHT" ? "Custom license" : model.badgeLabel
+      : null;
+    return (
+      <button
+        key={`${service.id}:${model.id}`}
+        aria-pressed={isCurrent}
+        className={isCurrent ? "picker-model-row is-current" : "picker-model-row"}
+        onClick={() => { onSelectModel(service.id, model.id); onClose(); }}
+        title={model.description}
+        type="button"
+      >
+        <span className="picker-model-icon" aria-hidden="true">{isAuto ? "✦" : service.iconLabel}</span>
+        <span className="picker-model-copy">
+          <span className="picker-model-name">{choiceLabel(choice)}{isAuto ? <span className="picker-default-label">Default</span> : null}</span>
+          <span className="picker-model-detail">{isAuto ? "Let Margin Chat choose for each reply" : service.id === "openai-agent" ? "OpenAI · can explore your workspace" : service.provider}{licenseLabel ? ` · ${licenseLabel}` : ""}</span>
+        </span>
+        {isCurrent ? <span className="picker-selected"><span aria-hidden="true">✓</span><span className="picker-sr-only">Selected</span></span> : null}
+      </button>
+    );
   }
-
-  const hasVisibleContent =
-    recentModels.length || featuredModels.length || providerSections.length;
 
   const modal = (
-    <div
-      className="service-picker-backdrop"
-      onClick={(event) => {
-        event.stopPropagation();
-        onClose();
-      }}
-      onWheel={(event) => event.stopPropagation()}
-      role="presentation"
-    >
-      <section
-        aria-label="Choose AI model"
-        aria-modal="true"
-        className="service-picker-modal"
-        onClick={(event) => event.stopPropagation()}
-        onWheel={(event) => event.stopPropagation()}
-        role="dialog"
-      >
-        <label className="service-picker-search-shell">
-          <SearchIcon />
-          <input
-            ref={inputRef}
-            aria-label="Search AI models"
-            className="service-picker-search-input"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search models or providers..."
-            type="search"
-            value={query}
-          />
+    <div className="service-picker-backdrop" onClick={(event) => { event.stopPropagation(); onClose(); }} onWheel={(event) => event.stopPropagation()} role="presentation">
+      <section ref={dialogRef} aria-labelledby={titleId} aria-modal="true" className="service-picker-modal compact-model-picker" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} role="dialog">
+        <header className="picker-header">
+          <div><h2 id={titleId}>Choose a model</h2><p>Current: {currentChoice ? choiceLabel(currentChoice) : "Auto"}</p></div>
+          <button className="picker-close" aria-label="Close model picker" onClick={onClose} type="button">
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m6 6 12 12M6 18 18 6" /></svg>
+          </button>
+        </header>
+        <label className="picker-search">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg>
+          <input ref={inputRef} aria-label="Search AI models" onChange={(event) => setQuery(event.target.value)} placeholder="Search models or providers" type="search" value={query} />
         </label>
-
-        <div className="service-picker-context">
-          <span className="service-picker-context-label">Current selection</span>
-          <strong>{currentSelectionLabel}</strong>
-        </div>
-
-        <div className="service-picker-groups">
-          {recentModels.length ? (
-            <section className="service-picker-section">
-              <div className="service-picker-section-head">
-                <div>
-                  <h2>Most Recently Used</h2>
-                  <p>Jump back into the models you picked most recently.</p>
-                </div>
-              </div>
-
-              <div className="service-picker-model-list">
-                {recentModels.map(({ model, service }) => {
-                  const isCurrent =
-                    currentServiceId === service.id && currentModelId === model.id;
-
-                  return (
-                    <button
-                      key={`recent-${service.id}-${model.id}`}
-                      className={
-                        isCurrent
-                          ? "service-picker-model-card is-current"
-                          : "service-picker-model-card"
-                      }
-                      onClick={() => {
-                        onSelectModel(service.id, model.id);
-                        onClose();
-                      }}
-                      type="button"
-                    >
-                      <span
-                        className={`service-picker-card-icon is-${service.id}`}
-                        aria-hidden="true"
-                      >
-                        {service.iconLabel}
-                      </span>
-
-                      <span className="service-picker-model-copy">
-                        <span className="service-picker-model-title-row">
-                          <span className="service-picker-model-title">
-                            {model.label}
-                          </span>
-                          <span className="service-picker-model-provider">
-                            {service.provider}
-                          </span>
-                          {isCurrent ? (
-                            <span className="service-picker-provider-current">
-                              Selected
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="service-picker-model-description">
-                          {model.description}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+        <div className="picker-content">
+          {normalizedQuery ? (
+            <section className="picker-section" aria-label="Search results">
+              <h3>Search results</h3>
+              {searchResults.length ? searchResults.map(modelRow) : <p className="picker-no-results" role="status">No models found. Try another model or provider name.</p>}
             </section>
-          ) : null}
-
-          {featuredModels.length ? (
-            <section className="service-picker-section">
-              <div className="service-picker-section-head">
-                <div>
-                  <h2>New & Popular</h2>
-                  <p>Pick one of the strongest current model recommendations right away.</p>
-                </div>
-              </div>
-
-              <div className="service-picker-model-list">
-                {featuredModels.map(({ model, service }) => {
-                  const isCurrent =
-                    currentServiceId === service.id && currentModelId === model.id;
-
-                  return (
-                    <button
-                      key={`${service.id}-${model.id}`}
-                      className={
-                        isCurrent
-                          ? "service-picker-model-card is-featured is-current"
-                          : "service-picker-model-card is-featured"
-                      }
-                      onClick={() => {
-                        onSelectModel(service.id, model.id);
-                        onClose();
-                      }}
-                      type="button"
-                    >
-                      <span
-                        className={`service-picker-card-icon is-${service.id}`}
-                        aria-hidden="true"
-                      >
-                        {service.iconLabel}
-                      </span>
-
-                      <span className="service-picker-model-copy">
-                        <span className="service-picker-model-title-row">
-                          <span className="service-picker-model-title">
-                            {model.label}
-                          </span>
-                          <span className="service-picker-model-provider">
-                            {service.provider}
-                          </span>
-                          {model.badgeLabel ? (
-                            <span className="service-picker-model-badge">
-                              {model.badgeLabel}
-                            </span>
-                          ) : null}
-                          {isCurrent ? (
-                            <span className="service-picker-provider-current">
-                              Selected
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="service-picker-model-description">
-                          {model.description}
-                        </span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ) : null}
-
-          {providerSections.length ? (
-            <section className="service-picker-section">
-              <div className="service-picker-section-head">
-                <div>
-                  <h2>Providers & Modes</h2>
-                  <p>Open a provider to reveal the best model options supported here.</p>
-                </div>
-              </div>
-
-              <div className="service-picker-provider-list">
-                {providerSections.map((service) => {
-                  const isExpanded =
-                    Boolean(normalizedQuery) || expandedProviderId === service.id;
-                  const isCurrentProvider = currentServiceId === service.id;
-                  const currentProviderModelLabel = isCurrentProvider
-                    ? getBackendServiceModelLabel(currentServiceId, currentModelId)
-                    : null;
-
-                  return (
-                    <section
-                      key={service.id}
-                      className={
-                        isExpanded
-                          ? "service-picker-provider is-expanded"
-                          : "service-picker-provider"
-                      }
-                    >
-                      <button
-                        aria-expanded={isExpanded}
-                        className={
-                          isCurrentProvider
-                            ? "service-picker-provider-button is-current"
-                            : "service-picker-provider-button"
-                        }
-                        onClick={() =>
-                          setExpandedProviderId((current) =>
-                            current === service.id ? null : service.id,
-                          )
-                        }
-                        type="button"
-                      >
-                        <span
-                          className={`service-picker-card-icon is-${service.id}`}
-                          aria-hidden="true"
-                        >
-                          {service.iconLabel}
-                        </span>
-
-                        <span className="service-picker-provider-copy">
-                          <span className="service-picker-provider-name">
-                            {service.provider}
-                          </span>
-                          <span className="service-picker-provider-description">
-                            {service.description}
-                          </span>
-                        </span>
-
-                        <span className="service-picker-provider-meta">
-                          {currentProviderModelLabel ? (
-                            <span className="service-picker-provider-current">
-                              {currentProviderModelLabel}
-                            </span>
-                          ) : null}
-                          <ChevronDownIcon isExpanded={isExpanded} />
-                        </span>
+          ) : (
+            <>
+              {recentChoices.length ? <section className="picker-section" aria-label="Recent models"><h3>Recent</h3>{recentChoices.map(modelRow)}</section> : null}
+              {autoChoice && !seenRecent.has(`${autoChoice.service.id}:${autoChoice.model.id}`) ? <div className="picker-section">{modelRow(autoChoice)}</div> : null}
+              <section className="picker-browse">
+                <button aria-controls={providersId} aria-expanded={browseProviders} className="picker-browse-toggle" onClick={() => setBrowseProviders((open) => !open)} type="button">
+                  Browse by provider<Chevron expanded={browseProviders} />
+                </button>
+                {browseProviders ? <div id={providersId} className="picker-providers">
+                  {BACKEND_SERVICE_OPTIONS.filter((service) => service.id !== "backend-services").map((service) => {
+                    const expanded = expandedProviderId === service.id;
+                    const sectionId = `${providersId}-${service.id}`;
+                    return <div className="picker-provider" key={service.id}>
+                      <button aria-controls={sectionId} aria-expanded={expanded} className="picker-provider-toggle" onClick={() => setExpandedProviderId(expanded ? null : service.id)} type="button">
+                        <span>{service.label}</span><span className="picker-provider-count">{service.models.length}</span><Chevron expanded={expanded} />
                       </button>
-
-                      {isExpanded ? (
-                        <div className="service-picker-model-list is-provider-list">
-                          {service.visibleModels.map((model) => {
-                            const isCurrent =
-                              currentServiceId === service.id &&
-                              currentModelId === model.id;
-
-                            return (
-                              <button
-                                key={model.id}
-                                className={
-                                  isCurrent
-                                    ? "service-picker-model-card is-current"
-                                    : "service-picker-model-card"
-                                }
-                                onClick={() => {
-                                  onSelectModel(service.id, model.id);
-                                  onClose();
-                                }}
-                                type="button"
-                              >
-                                <span className="service-picker-model-copy">
-                                  <span className="service-picker-model-title-row">
-                                    <span className="service-picker-model-title">
-                                      {model.label}
-                                    </span>
-                                    {model.badgeLabel ? (
-                                      <span className="service-picker-model-badge">
-                                        {model.badgeLabel}
-                                      </span>
-                                    ) : null}
-                                    {isCurrent ? (
-                                      <span className="service-picker-provider-current">
-                                        Selected
-                                      </span>
-                                    ) : null}
-                                  </span>
-                                  <span className="service-picker-model-description">
-                                    {model.description}
-                                  </span>
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      ) : null}
-                    </section>
-                  );
-                })}
-              </div>
+                      {expanded ? <div id={sectionId} className="picker-provider-models">{service.models.map((model) => modelRow({ model, service }))}</div> : null}
+                    </div>;
+                  })}
+                </div> : null}
+              </section>
+            </>
+          )}
+          {contextControls ? (
+            <section aria-label="Context and preferences" className="picker-context-controls">
+              <h3>Context &amp; preferences</h3>
+              {contextControls}
             </section>
-          ) : null}
-
-          {!hasVisibleContent ? (
-            <div className="service-picker-empty">
-              <strong>No models matched.</strong>
-              <p>Try GPT, Gemini, Kimi, DeepSeek, Qwen, or the provider name.</p>
-            </div>
           ) : null}
         </div>
       </section>
     </div>
   );
-
-  return typeof document !== "undefined"
-    ? createPortal(modal, document.body)
-    : modal;
+  return typeof document !== "undefined" ? createPortal(modal, document.body) : modal;
 }

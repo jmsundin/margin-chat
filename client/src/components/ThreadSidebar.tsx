@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  ConversationGroupSelect,
-  NewConversationGroupForm,
-} from "./ConversationGroupControls";
+import { ConversationGroupSelect } from "./ConversationGroupControls";
 import type { ChatOutlineItem } from "../lib/chatOutline";
+import ChatOutline from "./ChatOutline";
 import {
   getSidebarThreadDropAction,
   sortThreadsByRecentActivity,
 } from "../lib/sidebarThreads";
 import type { ConversationGroup, MainViewMode, ThreadSummary } from "../types";
+import "./ThreadSidebar.css";
 
 type ThemeMode = "light" | "dark";
 type ThreadActionTarget = Pick<ThreadSummary, "id" | "title">;
@@ -424,7 +423,48 @@ export default function ThreadSidebar({
   );
   const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
+  const [workspaceActionsOpen, setWorkspaceActionsOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const workspaceActionsRef = useRef<HTMLDivElement>(null);
+  const workspaceActionsTriggerRef = useRef<HTMLButtonElement>(null);
+
+  function closeWorkspaceActions() {
+    setWorkspaceActionsOpen(false);
+    workspaceActionsTriggerRef.current?.focus();
+  }
+
+  useEffect(() => {
+    if (!workspaceActionsOpen) return;
+
+    workspaceActionsRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+
+    function handleOutside(event: Event) {
+      if (
+        event.target instanceof Node &&
+        !workspaceActionsRef.current?.contains(event.target) &&
+        !workspaceActionsTriggerRef.current?.contains(event.target)
+      ) {
+        setWorkspaceActionsOpen(false);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeWorkspaceActions();
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutside);
+    document.addEventListener("focusin", handleOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handleOutside);
+      document.removeEventListener("focusin", handleOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [workspaceActionsOpen]);
 
   useEffect(() => {
     if (!renameTarget) {
@@ -458,7 +498,8 @@ export default function ThreadSidebar({
       }
     }
 
-    function handleViewportChange() {
+    function handleViewportChange(event: Event) {
+      if (event.target instanceof Element && event.target.closest(".group-picker-dialog")) return;
       setOpenMenuState(null);
     }
 
@@ -500,6 +541,7 @@ export default function ThreadSidebar({
     }
 
     setOpenMenuState(null);
+    setWorkspaceActionsOpen(false);
   }, [collapsed]);
 
   useEffect(() => {
@@ -611,6 +653,7 @@ export default function ThreadSidebar({
     event.dataTransfer.setData("text/plain", threadId);
     setDraggedThreadId(threadId);
     setOpenMenuState(null);
+    setWorkspaceActionsOpen(false);
   }
 
   function handleThreadDragEnd() {
@@ -803,42 +846,7 @@ export default function ThreadSidebar({
             className="chat-outline is-nested"
             id={`chat-outline-${thread.id}`}
           >
-            {currentChatOutline.length ? (
-              <ol className="chat-outline-list">
-                {currentChatOutline.map((item) => (
-                  <li
-                    className={`chat-outline-level-${item.level}`}
-                    key={item.id}
-                  >
-                    <button
-                      aria-current={
-                        item.id === activeOutlineItemId
-                          ? "location"
-                          : undefined
-                      }
-                      className={
-                        item.id === activeOutlineItemId
-                          ? "chat-outline-item is-active"
-                          : "chat-outline-item"
-                      }
-                      onClick={() => onSelectOutlineItem(item.id)}
-                      title={item.label}
-                      type="button"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="chat-outline-marker"
-                      />
-                      <span className="chat-outline-label">{item.label}</span>
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            ) : (
-              <p className="chat-outline-empty">
-                Send a message to start this outline.
-              </p>
-            )}
+            <ChatOutline items={currentChatOutline} activeItemId={activeOutlineItemId} onSelect={onSelectOutlineItem} />
           </nav>
         ) : null}
       </div>
@@ -846,7 +854,7 @@ export default function ThreadSidebar({
   }
 
   return (
-    <aside className={collapsed ? "thread-sidebar is-collapsed" : "thread-sidebar"}>
+    <aside className={`thread-sidebar is-simplified${collapsed ? " is-collapsed" : ""}`}>
       <div className="thread-sidebar-head">
         <div className="thread-sidebar-title-row">
           <div aria-label="Main workspace view" className="thread-view-switcher" role="group">
@@ -863,6 +871,7 @@ export default function ThreadSidebar({
               type="button"
             >
               <ChatViewIcon />
+              <span>Chat</span>
             </button>
             <button
               aria-label="Open tile view"
@@ -877,9 +886,10 @@ export default function ThreadSidebar({
               type="button"
             >
               <TileViewIcon />
+              <span>Tiles</span>
             </button>
             <button
-              aria-label="Open graph view"
+              aria-label="Open map view"
               aria-pressed={mainViewMode === "graph"}
               className={
                 mainViewMode === "graph"
@@ -887,35 +897,12 @@ export default function ThreadSidebar({
                   : "thread-view-button"
               }
               onClick={() => onSetMainViewMode("graph")}
-              title="Open graph view"
+              title="Open map view"
               type="button"
             >
               <GraphViewIcon />
+              <span>Map</span>
             </button>
-          </div>
-          <div aria-label="Workspace actions" className="thread-sidebar-tools" role="group">
-            {onOpenInbox ? <button aria-label="Cloud Inbox" className="sidebar-tool-button" onClick={onOpenInbox} title="Cloud Inbox" type="button">
-              <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m4 5-2 10v5h20v-5L20 5H4Z"/><path d="M2 15h6l2 3h4l2-3h6M12 4v8m-3-3 3 3 3-3"/></svg>
-            </button> : null}
-            <button
-              aria-label="New note"
-              className="sidebar-tool-button"
-              onClick={onNewNote}
-              title="New note"
-              type="button"
-            >
-              <NoteIcon />
-            </button>
-            <button
-              aria-label="Search chats"
-              className="sidebar-tool-button"
-              onClick={onOpenSearch}
-              title="Search chats"
-              type="button"
-            >
-              <SearchIcon />
-            </button>
-            <NewConversationGroupForm compact iconOnly onCreate={onCreateGroup} />
           </div>
         </div>
         <button
@@ -930,15 +917,116 @@ export default function ThreadSidebar({
       </div>
 
       <div className="thread-sidebar-actions">
+        <div className="sidebar-create-row">
+          <button
+            aria-label="New chat"
+            className="sidebar-action is-primary"
+            onClick={onNewChat}
+            title="New chat"
+            type="button"
+          >
+            <PlusIcon />
+            <span>New chat</span>
+          </button>
+          <button
+            aria-controls={workspaceActionsOpen ? "sidebar-workspace-actions" : undefined}
+            aria-expanded={workspaceActionsOpen}
+            aria-haspopup="dialog"
+            aria-label="More workspace actions"
+            className="sidebar-more-button"
+            onClick={() => {
+              setOpenMenuState(null);
+              setNewGroupName(null);
+              setWorkspaceActionsOpen((current) => !current);
+            }}
+            ref={workspaceActionsTriggerRef}
+            title="More actions"
+            type="button"
+          >
+            <MoreIcon />
+            <span>More</span>
+          </button>
+          {workspaceActionsOpen ? (
+            <div
+              aria-label="More workspace actions"
+              className="sidebar-workspace-actions"
+              id="sidebar-workspace-actions"
+              ref={workspaceActionsRef}
+              role="dialog"
+            >
+              <button
+                className="sidebar-workspace-action"
+                onClick={() => {
+                  closeWorkspaceActions();
+                  onNewNote();
+                }}
+                type="button"
+              >
+                <NoteIcon />
+                <span>New note</span>
+              </button>
+              {newGroupName === null ? (
+                <button
+                  className="sidebar-workspace-action"
+                  onClick={() => setNewGroupName("")}
+                  type="button"
+                >
+                  <PlusIcon />
+                  <span>New group</span>
+                </button>
+              ) : (
+                <form
+                  aria-label="Create a new group"
+                  className="conversation-group-create-form is-compact"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (!newGroupName.trim()) return;
+                    onCreateGroup(newGroupName.trim());
+                    closeWorkspaceActions();
+                  }}
+                >
+                  <input
+                    aria-label="Group name"
+                    autoFocus
+                    maxLength={48}
+                    onChange={(event) => setNewGroupName(event.target.value)}
+                    placeholder="Group name"
+                    value={newGroupName}
+                  />
+                  <button disabled={!newGroupName.trim()} type="submit">Add</button>
+                  <button
+                    aria-label="Cancel creating group"
+                    onClick={closeWorkspaceActions}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                </form>
+              )}
+              {onOpenInbox ? (
+                <button
+                  className="sidebar-workspace-action"
+                  onClick={() => {
+                    closeWorkspaceActions();
+                    onOpenInbox();
+                  }}
+                  type="button"
+                >
+                  <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="m4 5-2 10v5h20v-5L20 5H4Z"/><path d="M2 15h6l2 3h4l2-3h6M12 4v8m-3-3 3 3 3-3"/></svg>
+                  <span>Cloud Inbox</span>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
         <button
-          aria-label="New chat"
-          className="sidebar-action is-primary"
-          onClick={onNewChat}
-          title="New chat"
+          aria-label="Search chats"
+          className="sidebar-search-button"
+          onClick={onOpenSearch}
           type="button"
         >
-          <PlusIcon />
-          <span>New chat</span>
+          <SearchIcon />
+          <span>Search chats</span>
         </button>
       </div>
 
@@ -1006,37 +1094,39 @@ export default function ThreadSidebar({
         </div>
       ) : (
         <div className="thread-list">
-          <section
-            aria-label="Pinned chats and notes"
-            className={
-              dropTargetKey === "pinned"
-                ? "thread-sidebar-section is-pinned is-drop-target"
-                : "thread-sidebar-section is-pinned"
-            }
-            data-thread-drop-target="pinned"
-            onDragLeave={(event) => handleThreadDragLeave(event, "pinned")}
-            onDragOver={(event) => handleThreadDragOver(event, "pinned")}
-            onDrop={(event) =>
-              handleThreadDrop(event, { pinned: true })
-            }
-          >
-            <div className="thread-group-section-header is-pinned">
-              <div className="thread-section-label">
-                <span aria-hidden="true" className="thread-section-pin-icon">
-                  <PinIcon filled />
-                </span>
-                <span>Pinned</span>
-                <span className="thread-section-count">
-                  {recentPinnedThreads.length}
-                </span>
+          {recentPinnedThreads.length || draggedThreadId ? (
+            <section
+              aria-label="Pinned chats and notes"
+              className={
+                dropTargetKey === "pinned"
+                  ? "thread-sidebar-section is-pinned is-drop-target"
+                  : "thread-sidebar-section is-pinned"
+              }
+              data-thread-drop-target="pinned"
+              onDragLeave={(event) => handleThreadDragLeave(event, "pinned")}
+              onDragOver={(event) => handleThreadDragOver(event, "pinned")}
+              onDrop={(event) =>
+                handleThreadDrop(event, { pinned: true })
+              }
+            >
+              <div className="thread-group-section-header is-pinned">
+                <div className="thread-section-label">
+                  <span aria-hidden="true" className="thread-section-pin-icon">
+                    <PinIcon filled />
+                  </span>
+                  <span>Pinned</span>
+                  <span className="thread-section-count">
+                    {recentPinnedThreads.length}
+                  </span>
+                </div>
               </div>
-            </div>
-            {recentPinnedThreads.length ? (
-              recentPinnedThreads.map(renderThreadItem)
-            ) : (
-              <p className="thread-section-drop-hint">Drop here to pin</p>
-            )}
-          </section>
+              {recentPinnedThreads.length ? (
+                recentPinnedThreads.map(renderThreadItem)
+              ) : (
+                <p className="thread-section-drop-hint">Drop here to pin</p>
+              )}
+            </section>
+          ) : null}
 
           {activityOrderedGroups.map((group) => {
             const sectionThreads = groupedThreads.filter(
@@ -1089,46 +1179,48 @@ export default function ThreadSidebar({
                 {!group.collapsed ? (
                   sectionThreads.length ? (
                     sectionThreads.map(renderThreadItem)
-                  ) : (
+                  ) : draggedThreadId ? (
                     <p className="thread-section-drop-hint">Drop into group</p>
-                  )
+                  ) : null
                 ) : null}
               </section>
             );
           })}
 
-          <section
-            aria-label="Ungrouped chats and notes"
-            className={
-              dropTargetKey === "ungrouped"
-                ? "thread-sidebar-section is-ungrouped is-drop-target"
-                : "thread-sidebar-section is-ungrouped"
-            }
-            data-thread-drop-target="ungrouped"
-            onDragLeave={(event) => handleThreadDragLeave(event, "ungrouped")}
-            onDragOver={(event) => handleThreadDragOver(event, "ungrouped")}
-            onDrop={(event) =>
-              handleThreadDrop(event, { groupId: null })
-            }
-          >
-            <div className="thread-group-section-header">
-              <div className="thread-section-label">
-                <span
-                  aria-hidden="true"
-                  className="conversation-group-color is-ungrouped"
-                />
-                <span>Ungrouped</span>
-                <span className="thread-section-count">
-                  {ungroupedThreads.length}
-                </span>
+          {ungroupedThreads.length || draggedThreadId ? (
+            <section
+              aria-label="Ungrouped chats and notes"
+              className={
+                dropTargetKey === "ungrouped"
+                  ? "thread-sidebar-section is-ungrouped is-drop-target"
+                  : "thread-sidebar-section is-ungrouped"
+              }
+              data-thread-drop-target="ungrouped"
+              onDragLeave={(event) => handleThreadDragLeave(event, "ungrouped")}
+              onDragOver={(event) => handleThreadDragOver(event, "ungrouped")}
+              onDrop={(event) =>
+                handleThreadDrop(event, { groupId: null })
+              }
+            >
+              <div className="thread-group-section-header">
+                <div className="thread-section-label">
+                  <span
+                    aria-hidden="true"
+                    className="conversation-group-color is-ungrouped"
+                  />
+                  <span>Ungrouped</span>
+                  <span className="thread-section-count">
+                    {ungroupedThreads.length}
+                  </span>
+                </div>
               </div>
-            </div>
-            {ungroupedThreads.length ? (
-              ungroupedThreads.map(renderThreadItem)
-            ) : (
-              <p className="thread-section-drop-hint">Drop here to ungroup</p>
-            )}
-          </section>
+              {ungroupedThreads.length ? (
+                ungroupedThreads.map(renderThreadItem)
+              ) : (
+                <p className="thread-section-drop-hint">Drop here to ungroup</p>
+              )}
+            </section>
+          ) : null}
         </div>
       )}
 

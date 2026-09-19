@@ -1,6 +1,7 @@
 import type { AppState } from "../types";
 import { createEmptyState } from "../initialState";
 import { hydratePersistedState } from "./appState";
+import { createAppStateFromWorkspaceMetadata } from "./workspaceModel";
 import {
   createMarkdownWorkspace, createMarkdownWorkspaceRenderer, discoverMarkdownWorkspace, parseMarkdownWorkspace,
   assignMarkdownFileIdentities, parseMarkdownWorkspaceManifest,
@@ -98,10 +99,17 @@ export function normalizeVaultMarkdownIdentities(files: Record<string, VaultFile
 
 export function vaultToState(files: Record<string, VaultFile>, current: AppState): AppState {
   const workspace = workspaceFromVault(files);
-  if (!workspace.manifest.files.length) return createEmptyState();
-  const parsed = parseMarkdownWorkspace(workspace.manifest, workspace.files);
+  const empty = !workspace.manifest.files.length;
+  const parsed = empty
+    ? createAppStateFromWorkspaceMetadata(workspace.manifest.workspace, createEmptyState().conversations)
+    : parseMarkdownWorkspace(workspace.manifest, workspace.files);
   const hydrated = parsed && hydratePersistedState(parsed);
   if (!hydrated) throw new Error("A Markdown document could not be opened. Its original content is preserved in your vault.");
+  if (empty) {
+    const placeholder = hydrated.conversations[hydrated.rootId];
+    placeholder.serviceId = hydrated.defaultServiceId;
+    placeholder.modelId = hydrated.defaultModelId;
+  }
   // View navigation belongs to the device, while authored relationships/settings travel with the vault.
   if (hydrated.conversations[current.activeConversationId]) hydrated.activeConversationId = current.activeConversationId;
   if (hydrated.conversations[current.rootId]) hydrated.rootId = current.rootId;

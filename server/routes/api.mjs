@@ -5,6 +5,7 @@ import {
   readRawBody,
   sendJson,
 } from "../http/json.mjs";
+import { sendStreamingJson } from "../http/streamingJson.mjs";
 import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
@@ -39,6 +40,7 @@ export function createApiHandler({
   documentService,
   runtimeConfig,
   vaultService,
+  semanticService,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
@@ -215,8 +217,32 @@ export function createApiHandler({
         return;
       }
 
-      if (["documentUpload", "documentDelete", "chat", "chatTitle"].includes(route?.id)) {
+      if (["documentUpload", "documentDelete", "chat", "chatTitle", "jevStatus", "jevWorkspace", "jevSearch"].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
+      }
+
+      if (route?.id === "jevStatus") {
+        sendJson(response, 200, { configured: Boolean(semanticService?.configured) }, { "Cache-Control": "private, no-store" });
+        return;
+      }
+
+      if (route?.id === "jevWorkspace" || route?.id === "jevSearch") {
+        if (request.headers["sec-fetch-site"] === "cross-site"
+          || !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          throw new HttpError(403, "Use Jev assistance from your Margin Chat workspace.");
+        }
+        const scope = createRequestAbortScope(request, response);
+        try {
+          const payload = await readJsonBody(request, 256 * 1024);
+          scope.signal.throwIfAborted();
+          const method = route.id === "jevSearch" ? "analyzeSearch" : "analyzeWorkspace";
+          const result = semanticService?.[method]
+            ? await semanticService[method]({ payload, userId: authContext.user.id, signal: scope.signal })
+            : { available: false, ...(route.id === "jevSearch" ? { scores: [], suggestedFacetIds: [] } : { categories: [], related: [] }), warning: "Jev assistance is not configured." };
+          scope.signal.throwIfAborted();
+          sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
+        } finally { scope.dispose(); }
+        return;
       }
 
       if (["billingCheckout", "billingTopUp", "billingDashboard", "billingConfirm", "billingPortal"].includes(route?.id)) {
@@ -344,7 +370,7 @@ export function createApiHandler({
         if (!vaultService) throw new HttpError(503, "Cloud Markdown storage is not configured.");
         const userId = authContext.user.id;
         if (route?.id === "vaultStatus") {
-          sendJson(response, 200, await vaultService.status(userId), { "Cache-Control": "private, no-store" });
+          await sendStreamingJson(response, 200, await vaultService.status(userId), { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultFileRead") {
@@ -370,7 +396,7 @@ export function createApiHandler({
             contentType: String(request.headers["content-type"] ?? "application/octet-stream"),
             bytes: await readRawBody(request, 4 * 1024 * 1024),
           });
-          sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultCommit" || route?.id === "vaultRebuild") {
@@ -382,7 +408,7 @@ export function createApiHandler({
           const result = route.id === "vaultCommit"
             ? await vaultService.commit(userId, body?.changes)
             : await vaultService.rebuild(userId);
-          sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
         }
       }
@@ -553,6 +579,7 @@ export function createApiHandler({
         error: "Not found",
       });
     } catch (error) {
+      if (response.destroyed) return;
       if (response.headersSent) {
         if (!response.writableEnded) {
           writeChatStreamEvent(response, {
@@ -577,9 +604,18 @@ export function createApiHandler({
       }
 
       if (error instanceof HttpError || hasStatusCode(error)) {
+        if (Array.isArray(error.conflicts)) {
+          try {
+            await sendStreamingJson(response, error.statusCode, {
+              error: error.message, conflicts: error.conflicts, manifest: error.manifest,
+            }, { "Cache-Control": "private, no-store" });
+          } catch (streamError) {
+            if (!response.destroyed) throw streamError;
+          }
+          return;
+        }
         sendJson(response, error.statusCode, {
           error: error.message,
-          ...(Array.isArray(error.conflicts) ? { conflicts: error.conflicts, manifest: error.manifest } : {}),
         });
         return;
       }

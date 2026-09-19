@@ -1,11 +1,13 @@
 import { MODEL_PROFILE_VERSION, selectProfileModel, TASK_PROVIDER_PREFERENCES } from "./modelProfiles.mjs";
+import { getModelRoutingEvidence } from "./modelRoutingEvidence.mjs";
 
 const PROVIDER_LABELS = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "gemini-api": "Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
 const MODE_TRADEOFFS = {
-  fast: "Fast favors the configured fast variant and a smaller context allowance; long or complex requests may need a larger mode.",
-  balanced: "Balanced uses the configured default or task variant with a moderate context allowance.",
-  thorough: "Thorough allows more context and asks for closer examination of tradeoffs; longer prompts and responses can add time and cost.",
+  fast: "Fast mode favors the configured fast variant and a smaller context allowance.",
+  balanced: "Balanced mode uses the configured default or task profile.",
+  thorough: "Thorough mode allows more context and asks for closer examination of tradeoffs.",
 };
+export const TASK_CATEGORIES = Object.freeze(["general", "coding", "reasoning", "research", "writing", "summary"]);
 
 export function providerName(serviceId) {
   return serviceId === "openai-agent" ? "openai" : serviceId.replace(/-api$/, "");
@@ -25,9 +27,9 @@ export function classifyTask(chatRequest) {
   return "general";
 }
 
-export function planRoutes(chatRequest, eligibleServiceIds, runtimeConfig) {
+export function planRoutes(chatRequest, eligibleServiceIds, runtimeConfig, { task: requestedTask } = {}) {
   const mode = chatRequest.ai?.mode ?? "balanced";
-  const task = classifyTask(chatRequest);
+  const task = TASK_CATEGORIES.includes(requestedTask) ? requestedTask : classifyTask(chatRequest);
   const automatic = chatRequest.serviceId === "backend-services";
   const preferences = TASK_PROVIDER_PREFERENCES[task] ?? eligibleServiceIds;
   const serviceIds = automatic
@@ -41,10 +43,108 @@ export function planRoutes(chatRequest, eligibleServiceIds, runtimeConfig) {
       model,
       mode,
       task,
+      routing: { method: automatic ? "rules" : "manual", selectedModel: model },
       profileVersion: MODEL_PROFILE_VERSION,
       reason: automatic
-        ? `Auto selected ${PROVIDER_LABELS[serviceId]} (${model}) for ${task} using ${policy}, limited to permitted providers with available credentials. ${MODE_TRADEOFFS[mode]} This is a heuristic selection.`
+        ? `Routing rules selected ${PROVIDER_LABELS[serviceId]} (${model}) for ${task} using ${policy}. ${MODE_TRADEOFFS[mode]} These heuristic preferences consider only allowed providers with an available key.`
         : "Used your selected provider and model.",
     };
   });
+}
+
+/** Semantic routing can only choose models from the already eligible credential pool. */
+export function createSemanticRouteCandidates(chatRequest, routes, runtimeConfig) {
+  if (chatRequest.serviceId !== "backend-services") return [];
+  const candidates = new Map();
+  for (const route of routes) {
+    for (const task of TASK_CATEGORIES) {
+      const model = selectProfileModel(route.serviceId, { mode: route.mode, task }, runtimeConfig);
+      const key = `${route.serviceId}:${model}`;
+      if (!candidates.has(key)) candidates.set(key, {
+        key, serviceId: route.serviceId, model, mode: route.mode, tasks: [],
+        description: `${PROVIDER_LABELS[route.serviceId]} ${model}; ${getModelRoutingEvidence(route.serviceId, model).summary} Configured ${route.mode} mode. Task associations are application preferences, not measured quality rankings.`,
+        evidence: getModelRoutingEvidence(route.serviceId, model),
+      });
+      candidates.get(key).tasks.push(task);
+    }
+  }
+  return [...candidates.values()];
+}
+
+export function applySemanticRouting(chatRequest, routes, runtimeConfig, analysis, candidates) {
+  const classifiedTask = TASK_CATEGORIES.includes(analysis?.task) ? analysis.task : null;
+  const automatic = chatRequest.serviceId === "backend-services";
+  const selected = automatic ? candidates.find((candidate) => candidate.key === analysis?.routeKey
+    && routes.some((route) => route.serviceId === candidate.serviceId)) : null;
+  const finish = (planned) => automatic ? applyIndependentSignals(planned, candidates, analysis?.signals, !selected) : planned;
+  if (!classifiedTask && !selected) {
+    if (!automatic) return routes;
+    const outcome = analysis?.keepDefault === true ? "Jev kept the configured routing preference."
+      : analysis ? "Jev did not provide a usable routing decision." : "Jev was unavailable.";
+    return finish(routes.map((route) => ({ ...route, reason: `${outcome} ${route.reason}` })));
+  }
+  const task = classifiedTask ?? routes[0].task;
+  const planned = planRoutes(chatRequest, routes.map((route) => route.serviceId), runtimeConfig, { task });
+  const classified = planned.map((route) => ({
+    ...route,
+    routing: { ...route.routing, method: automatic && classifiedTask ? "jev-task" : route.routing.method },
+    profileVersion: classifiedTask ? `${route.profileVersion}+jev-v1` : route.profileVersion,
+    reason: classifiedTask ? `Jev classified this request as ${task}. ${route.reason}` : route.reason,
+  }));
+  if (!selected) return finish(classified);
+  const first = classified.find((route) => route.serviceId === selected.serviceId);
+  if (!first) return finish(classified);
+  const taskExplanation = classifiedTask
+    ? `Jev classified the request as ${task}.`
+    : `Routing rules classified the request as ${task}.`;
+  const profileExplanation = selected.tasks.includes(task)
+    ? `The app's ${first.mode} profile assigns this model to ${task} tasks.`
+    : `The model is a configured candidate in ${first.mode} mode.`;
+  return finish([{
+    ...first,
+    model: selected.model,
+    routing: { method: "jev", selectedModel: selected.model },
+    profileVersion: `${MODEL_PROFILE_VERSION}+jev-v1`,
+    reason: `Jev selected ${PROVIDER_LABELS[selected.serviceId]} (${selected.model}). ${taskExplanation} ${profileExplanation} Only allowed providers with an available key were considered.`,
+  }, ...classified.filter((route) => route.serviceId !== selected.serviceId)]);
+}
+
+function applyIndependentSignals(routes, candidates, signals, allowPreference) {
+  const complexity = signals?.complexity;
+  const demanding = Number.isFinite(complexity?.score) && complexity.score >= 2.25 && complexity.score <= 3
+    && Number.isFinite(complexity.confidence) && complexity.confidence >= 0.7 && complexity.confidence <= 1;
+  const freshness = signals?.needsCurrentInformation;
+  const needsCurrentInformation = Number.isFinite(freshness) && freshness >= 0.8 && freshness <= 1;
+  if (!demanding && !needsCurrentInformation) return routes;
+  // Thresholds are explicit, provisional application policy. A freshness signal
+  // never grants browsing or expands credentials; a model choice stays authoritative.
+  return routes.map((route) => {
+    let next = route;
+    const evidence = getModelRoutingEvidence(route.serviceId, route.model);
+    const preferred = allowPreference && demanding && route.mode !== "fast"
+      && !["demanding", "coding", "unknown"].includes(evidence.preference)
+      ? candidates.find((candidate) => candidate.serviceId === route.serviceId
+        && getModelRoutingEvidence(candidate.serviceId, candidate.model).preference === "demanding") : null;
+    if (preferred && preferred.model !== route.model) {
+      const classification = route.routing?.method === "jev-task" ? `Jev classified this request as ${route.task}. ` : "";
+      next = {
+        ...route,
+        model: preferred.model,
+        routing: { ...route.routing, selectedModel: preferred.model },
+        reason: `${classification}Routing rules selected ${PROVIDER_LABELS[route.serviceId]} (${preferred.model}) for ${route.task} using the app's complex-work preference after Jev assessed demanding work. ${MODE_TRADEOFFS[route.mode]} This is an application heuristic, not a comparative benchmark result.`,
+      };
+    } else if (demanding) {
+      next = { ...next, reason: `${next.reason} Jev assessed demanding work; the existing model and speed preference were retained.` };
+    }
+    if (needsCurrentInformation) next = { ...next,
+      reason: `${next.reason} This request likely needs current external information; this route does not perform live web search. Verify current facts against up-to-date sources.`,
+    };
+    return { ...next, profileVersion: `${next.profileVersion}+jev-signals-v1` };
+  });
+}
+
+export function routingReasonForAttempt(route, fallbacks) {
+  if (!fallbacks.length) return route.reason;
+  const previous = fallbacks.at(-1);
+  return `The earlier ${PROVIDER_LABELS[previous.provider] ?? previous.provider} (${previous.model}) request failed. ${route.reason}`;
 }
