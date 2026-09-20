@@ -1,5 +1,5 @@
-import { useRef, useState } from "../../client/node_modules/react";
-import { createRoot } from "../../client/node_modules/react-dom/client";
+import { useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
 import ConversationGraphView from "../../client/src/components/ConversationGraphView";
 import GraphSourceFocus from "../../client/src/components/GraphSourceFocus";
 import { createChildConversation, createMainConversation, createStandaloneNoteConversation } from "../../client/src/initialState";

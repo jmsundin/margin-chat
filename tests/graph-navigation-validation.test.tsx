@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createElement } from "../client/node_modules/react";
-import { renderToStaticMarkup } from "../client/node_modules/react-dom/server";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { createEmptyState } from "../client/src/initialState";
 import { resolveGraphEvidence } from "../client/src/lib/graphExploration";
 import { defaultGraphLocation, useGraphExplorationNavigation } from "../client/src/lib/useGraphExplorationNavigation";

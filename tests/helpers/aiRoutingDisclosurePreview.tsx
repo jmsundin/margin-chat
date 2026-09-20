@@ -1,5 +1,5 @@
-import { useState } from "../../client/node_modules/react";
-import { createRoot } from "../../client/node_modules/react-dom/client";
+import { useState } from "react";
+import { createRoot } from "react-dom/client";
 import AIResponseDetails from "../../client/src/components/AIResponseDetails";
 import { applySemanticRouting, createSemanticRouteCandidates, planRoutes, routingReasonForAttempt } from "../../server/chat/routing.mjs";
 import { routingReceipt } from "./aiRoutingDisclosureFixture";

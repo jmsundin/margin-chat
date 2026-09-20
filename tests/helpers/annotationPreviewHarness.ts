@@ -10,8 +10,8 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLInput
 browser.requestAnimationFrame = () => 1;
 browser.cancelAnimationFrame = () => undefined;
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const { act, createElement } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { default: ChatPanel } = await import("../../client/src/components/ChatPanel");
 const timestamp = "2026-09-19T00:00:00Z";
 const conversation: Conversation = {

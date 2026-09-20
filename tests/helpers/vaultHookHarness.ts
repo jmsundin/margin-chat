@@ -101,8 +101,8 @@ Object.defineProperty(browser.navigator, "locks", { value: {
     return next;
   },
 } });
-const { act, createElement, useState } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement, useState } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { createEmptyState } = await import("../../client/src/initialState");
 const { useMarkdownVault } = await import("../../client/src/lib/useMarkdownVault");
 const { createBrowserVaultStore, exportVault } = await import("../../client/src/lib/vaultLocal");

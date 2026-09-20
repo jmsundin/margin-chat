@@ -8,8 +8,8 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "Element",
   Object.defineProperty(globalThis, name, { configurable: true, value });
 }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const { act, createElement, Fragment } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement, Fragment } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { default: GraphSourceFocus } = await import("../../client/src/components/GraphSourceFocus");
 
 let frameId = 0;

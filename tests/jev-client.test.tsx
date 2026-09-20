@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { renderToStaticMarkup } from "../client/node_modules/react-dom/server";
+import { renderToStaticMarkup } from "react-dom/server";
 import { createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
 import { createDefaultGraphNodeLayout } from "../client/src/lib/graphLayout";
 import {

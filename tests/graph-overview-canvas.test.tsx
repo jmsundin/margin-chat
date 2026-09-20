@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { renderToStaticMarkup } from "../client/node_modules/react-dom/server";
+import { renderToStaticMarkup } from "react-dom/server";
 import GraphOverviewCanvas, { getGraphOverviewConnections } from "../client/src/components/GraphOverviewCanvas";
 import type { GraphExplorationOverviewItem } from "../client/src/components/GraphExplorationPanel";
 import type { Conversation } from "../client/src/types";

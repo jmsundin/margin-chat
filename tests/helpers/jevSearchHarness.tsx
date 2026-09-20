@@ -7,8 +7,8 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "Element",
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value });
 }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const { act, createElement } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { useJevSearch } = await import("../../client/src/lib/useJevSearch");
 const originalFetch = globalThis.fetch;
 const originalSetTimeout = globalThis.setTimeout;

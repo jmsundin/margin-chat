@@ -18,8 +18,8 @@ const frames = new Map<number, FrameRequestCallback>();
 browser.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
 browser.cancelAnimationFrame = (id) => { frames.delete(id); };
 
-const { act, createElement, Fragment, useRef } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement, Fragment, useRef } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { default: ConversationGraphView } = await import("../../client/src/components/ConversationGraphView");
 const { default: GraphSourceFocus } = await import("../../client/src/components/GraphSourceFocus");
 const { createMainConversation, createChildConversation, createStandaloneNoteConversation } = await import("../../client/src/initialState");

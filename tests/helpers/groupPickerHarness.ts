@@ -8,8 +8,8 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLInput
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value });
 }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const { act, createElement, useState } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement, useState } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { ConversationGroupSelect, ConversationGroupPickerContext } = await import("../../client/src/components/ConversationGroupControls");
 const { assignConversationToGroup } = await import("../../client/src/lib/conversationGroups");
 const container = browser.document.createElement("div");

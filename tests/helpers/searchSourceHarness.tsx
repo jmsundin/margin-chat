@@ -18,8 +18,8 @@ browser.cancelAnimationFrame = () => undefined;
 Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: (callback: FrameRequestCallback) => browser.requestAnimationFrame(callback) });
 Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: (id: number) => browser.cancelAnimationFrame(id) });
 
-const { act, createElement } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { EditorView } = await import("@codemirror/view");
 const { createSearchPassageRange } = await import("../../client/src/lib/searchSource");
 const { default: SearchSourceFocus } = await import("../../client/src/components/SearchSourceFocus");

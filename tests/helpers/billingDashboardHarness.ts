@@ -8,8 +8,8 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLInput
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value });
 }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const { act, createElement } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { default: BillingDashboard } = await import("../../client/src/components/BillingDashboard");
 const { default: ProfileModal } = await import("../../client/src/components/ProfileModal");
 const container = browser.document.createElement("div");

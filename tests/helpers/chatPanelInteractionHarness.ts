@@ -12,8 +12,8 @@ browser.cancelAnimationFrame = () => undefined;
 Object.defineProperty(globalThis, "requestAnimationFrame", { configurable: true, value: browser.requestAnimationFrame });
 Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, value: browser.cancelAnimationFrame });
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-const { act, createElement, useState } = await import("../../client/node_modules/react/index.js");
-const { createRoot } = await import("../../client/node_modules/react-dom/client.js");
+const { act, createElement, useState } = await import("react");
+const { createRoot } = await import("react-dom/client");
 const { default: ChatPanel } = await import("../../client/src/components/ChatPanel");
 const { ConversationGroupSelect } = await import("../../client/src/components/ConversationGroupControls");
 
