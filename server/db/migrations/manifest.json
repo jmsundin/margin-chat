@@ -30,6 +30,11 @@
       "id": "0006_attachment_checkpoint_revision",
       "file": "0006_attachment_checkpoint_revision.sql",
       "transaction": true
+    },
+    {
+      "id": "0007_editable_documents",
+      "file": "0007_editable_documents.sql",
+      "transaction": true
     }
   ]
 }

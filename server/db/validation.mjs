@@ -7,7 +7,7 @@ import {
   VALID_SERVICE_IDS,
 } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
-import { normalizeAISettings, normalizeAIExecution } from "@margin-chat/workspace-contracts";
+import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument } from "@margin-chat/workspace-contracts";
 
 const DEFAULT_SERVICE_ID = "backend-services";
 
@@ -51,6 +51,10 @@ export function normalizeAppState(input) {
   const conversationsById = Object.fromEntries(
     normalizedConversations.map((conversation) => [conversation.id, conversation]),
   );
+  for (const conversation of normalizedConversations) {
+    if (conversation.linkedConversationIds) conversation.linkedConversationIds =
+      normalizeLinkedConversationIds(conversation.linkedConversationIds, conversation.id, conversationsById);
+  }
   const normalizedPinnedThreadIds = normalizePinnedThreadIds(
     input.pinnedThreadIds,
     conversationsById,
@@ -121,7 +125,7 @@ export function normalizeAppState(input) {
         throw createStateError(`Duplicate note id "${note.id}".`);
       }
 
-      if (note.sourceMessageId && !conversationMessageIds.has(note.sourceMessageId)) {
+      if (note.sourceMessageId && !conversationMessageIds.has(note.sourceMessageId) && !conversation.document?.blocks.some((block) => block.id === note.sourceBlockId && note.sourceMessageId === `document:${block.id}`)) {
         throw createStateError(
           `Note "${note.id}" must reference a message in its conversation.`,
         );
@@ -142,7 +146,8 @@ export function normalizeAppState(input) {
       );
     }
 
-    if (!messageIds.has(conversation.branchAnchor.sourceMessageId)) {
+    const sourceConversation = conversationsById[conversation.branchAnchor.sourceConversationId];
+    if (!sourceConversation.messages.some((message) => message.id === conversation.branchAnchor.sourceMessageId) && !sourceConversation.document?.blocks.some((block) => block.id === conversation.branchAnchor.sourceBlockId && conversation.branchAnchor.sourceMessageId === `document:${block.id}`)) {
       throw createStateError(
         `Anchor "${conversation.branchAnchor.id}" references a missing source message.`,
       );
@@ -544,6 +549,7 @@ function normalizeConversation(expectedId, input) {
                 `Conversation "${expectedId}" must use a supported kind.`,
               );
             })(),
+    ...(input.document !== undefined ? { document: normalizeEditableDocument(input.document) ?? (() => { throw createStateError(`Conversation "${expectedId}" has an invalid editable document.`); })() } : {}),
     messages: input.messages.map((message, index) =>
       normalizeMessage(expectedId, index, message),
     ),
@@ -557,6 +563,8 @@ function normalizeConversation(expectedId, input) {
         : normalizeNotes(expectedId, input.notes),
     modelId,
     ...(input.ai ? { ai: normalizeAISettings(input.ai) } : {}),
+    ...(normalizePublicTopicSource(input.publicTopic) ? { publicTopic: normalizePublicTopicSource(input.publicTopic) } : {}),
+    ...(Array.isArray(input.linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(input.linkedConversationIds, expectedId) } : {}),
     parentId:
       input.parentId === null || input.parentId === undefined
         ? null
@@ -703,6 +711,7 @@ function normalizeNotes(conversationId, input) {
               })(),
       quote: hasSelection ? quote : null,
       sourceMessageId,
+      ...(note.sourceBlockId !== undefined ? { sourceBlockId: normalizeId(note.sourceBlockId, `Note "${note.id ?? index}" sourceBlockId`) } : {}),
       startOffset,
       updatedAt: normalizeTimestamp(
         note.updatedAt,
@@ -823,6 +832,7 @@ function normalizeBranchAnchor(conversationId, input) {
       input.sourceMessageId,
       `branchAnchor for "${conversationId}" sourceMessageId`,
     ),
+    ...(input.sourceBlockId !== undefined ? { sourceBlockId: normalizeId(input.sourceBlockId, `branchAnchor for "${conversationId}" sourceBlockId`) } : {}),
     startOffset,
   };
 }

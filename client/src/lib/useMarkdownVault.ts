@@ -14,6 +14,7 @@ import {
   type LocalDirectoryStatus,
 } from "./workspaceStorage";
 import type { MarkdownWorkspace } from "./workspaceMarkdown";
+import { historyVaultFiles, type HistoryChat, type HistoryImportReceipt } from "./chatHistoryImport";
 
 type StorageMode = "loading" | "fallback" | "local" | "server";
 
@@ -370,6 +371,27 @@ export function useMarkdownVault(args: {
         await engine.import(files);
         await persistAndPublish();
         await saveAndRefresh(true);
+      });
+    },
+    async importChatHistory(chats: HistoryChat[]) {
+      return enqueue(async () => {
+        if (!initialized.current || !mounted.current) throw new Error("Wait for your workspace to open before importing.");
+        await saveAppState();
+        if (!mounted.current) throw new Error("Your account changed. Reopen the import in your current account.");
+        const receipt = await engine.importChatHistory(historyVaultFiles(chats, stateRef.current));
+        await persistAndPublish();
+        scheduleAutomaticRefresh();
+        return receipt;
+      });
+    },
+    async undoChatHistory(receipt: HistoryImportReceipt) {
+      return enqueue(async () => {
+        await saveAppState();
+        if (!mounted.current) throw new Error("Your account changed. Reopen your current workspace.");
+        const result = await engine.undoChatHistory(receipt);
+        await persistAndPublish();
+        scheduleAutomaticRefresh();
+        return result;
       });
     },
     async resolveConflict(id: string, choice: "local" | "remote" | "current") {

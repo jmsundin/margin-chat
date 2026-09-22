@@ -75,7 +75,7 @@ function BranchMapNode({
         <span aria-hidden="true" className="branch-map-node-dot" />
         <span className="branch-map-node-copy">
           <strong>{conversation.title}</strong>
-          {sourceQuote ? <span>“{excerpt(sourceQuote, 52)}”</span> : <span>Main chat</span>}
+          {sourceQuote ? <span>“{excerpt(sourceQuote, 52)}”</span> : <span>Main document</span>}
         </span>
       </button>
 
@@ -172,9 +172,9 @@ export default function BranchRail({
           </button>
         </div>
         <p className="branch-map-count">
-          {conversationCount} chat{conversationCount === 1 ? "" : "s"} in this discussion
+          {conversationCount} document{conversationCount === 1 ? "" : "s"} in this discussion
         </p>
-        <nav aria-label="Chats in this discussion" className="branch-map-tree">
+        <nav aria-label="Documents in this discussion" className="branch-map-tree">
           <ol>
             <BranchMapNode
               activeConversationId={activeConversationId}

@@ -16,7 +16,10 @@ export const DEFAULT_WORKSPACE_PREFERENCES: Readonly<{
 }>;
 
 interface WorkspaceItemBase {
+  document?: Conversation["document"];
   grouping?: Conversation["grouping"];
+  publicTopic?: Conversation["publicTopic"];
+  linkedConversationIds?: Conversation["linkedConversationIds"];
   branchAnchor: BranchAnchor | null;
   createdAt: string;
   documents: ConversationDocument[];

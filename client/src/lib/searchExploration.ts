@@ -5,6 +5,7 @@ import { summarizeAnnotationText } from "./annotationPreview";
 import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
 import { THREAD_CATEGORY_DEFINITIONS } from "./threadCategories";
 import { getConversationRootId } from "./tree";
+import { getCurrentDocumentText, getPrimaryDocumentSources } from "./documentSources";
 
 export type SearchPurposeId = "decision" | "evidence" | "alternative" | "open-question";
 export type SearchFacetKind = "topic" | "group" | "type" | "purpose";
@@ -72,7 +73,7 @@ const normalizedWords = (value: string) => ` ${value.toLowerCase().replace(/[^\p
 
 function contextWords(conversation?: Conversation) {
   if (!conversation) return new Set<string>();
-  const content = conversation.kind === "note" ? getStandaloneNote(conversation)?.content ?? ""
+  const content = conversation.document ? getCurrentDocumentText(conversation) : conversation.kind === "note" ? getStandaloneNote(conversation)?.content ?? ""
     : conversation.messages.filter((message) => message.role !== "system" && !message.id.startsWith(CONTEXT_PREFIX)).slice(-3).map((message) => message.content).join(" ");
   return new Set((`${conversation.title} ${content.slice(-4000)}`.toLowerCase().match(/[\p{L}][\p{L}\p{N}_-]{2,}/gu) ?? [])
     .filter((word) => !STOP_WORDS.has(word)).slice(0, 80));
@@ -137,7 +138,7 @@ const parsedSources = new WeakMap<Conversation, Map<string, ParsedSource>>();
 function parseSource(conversation: Conversation, source: SearchEvidenceRef, content: string) {
   let sources = parsedSources.get(conversation);
   if (!sources) { sources = new Map(); parsedSources.set(conversation, sources); }
-  const key = JSON.stringify([source.sourceKind, source.messageId, source.noteId]);
+  const key = JSON.stringify([source.sourceKind, source.sourceBlockId, source.messageId, source.noteId]);
   const previous = sources.get(key);
   if (previous?.content === content) return previous;
   const parsed: ParsedSource = {
@@ -207,7 +208,7 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
         const preview = `${previewStart ? "…" : ""}${previewText.length <= previewLimit ? previewText : `${previewText.slice(0, previewLimit - 1).trimEnd()}…`}`;
         const relatedWords = currentWords.size ? [...currentWords].filter((word) => words.includes(normalizedWords(word))).length : 0;
         corpus.push({
-          id: JSON.stringify([conversation.id, source.sourceKind, source.messageId ?? source.noteId ?? "", part.start]),
+          id: JSON.stringify([conversation.id, source.sourceKind, source.sourceBlockId ?? source.messageId ?? source.noteId ?? "", part.start]),
           conversationId: conversation.id, title: conversation.title, rootTitle, locationLabel, matchLabel,
           preview, passage: part.text, evidence, updatedAt, updatedLabel: dateLabel(updatedAt),
           facetIds: [...topics, ...memberships, `type:${type}`, ...purposeIds.map((id) => `purpose:${id}`)],
@@ -218,16 +219,15 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
     }
 
     add(conversation.title, { conversationId: conversation.id, sourceKind: "conversation" }, conversation.kind === "note" ? "Note title" : "Chat title", conversation.updatedAt);
-    if (conversation.kind !== "note") {
-      for (const message of conversation.messages) {
-        if (message.role === "system" || message.id.startsWith(CONTEXT_PREFIX)) continue;
-        add(message.content, { conversationId: conversation.id, sourceKind: "message", messageId: message.id }, message.role === "assistant" ? "Assistant message" : "Your message", message.createdAt);
-      }
+    for (const source of getPrimaryDocumentSources(conversation)) {
+      add(source.content, { conversationId: conversation.id, sourceKind: source.sourceKind, sourceBlockId: source.sourceBlockId, messageId: source.messageId, noteId: source.noteId },
+        source.sourceKind === "document" ? "Document passage" : source.sourceKind === "standalone-note" ? "Note content" : source.role === "assistant" ? "Assistant message" : "Your message", source.updatedAt);
     }
     const primaryNote = getStandaloneNote(conversation);
     for (const note of conversation.notes ?? []) {
       const primary = note === primaryNote;
-      add(note.content, { conversationId: conversation.id, sourceKind: primary ? "standalone-note" : "annotation", noteId: note.id }, primary ? "Note content" : note.kind === "side-chat" ? "Private side note" : "Private margin note", note.updatedAt, !primary);
+      if (primary) continue;
+      add(note.content, { conversationId: conversation.id, sourceKind: "annotation", noteId: note.id }, note.kind === "side-chat" ? "Private side note" : "Private margin note", note.updatedAt, true);
     }
   }
 

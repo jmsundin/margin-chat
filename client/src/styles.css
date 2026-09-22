@@ -9217,7 +9217,9 @@ button {
   position: absolute;
   top: 0;
   transform-origin: 0 0;
-  transition: transform 160ms ease;
+  /* The camera must track wheel, pinch and drag input in the same frame as
+     the group outlines and labels, without easing toward each new position. */
+  transition: none;
   will-change: transform;
 }
 
@@ -11399,7 +11401,7 @@ body,
   height: 24px;
   justify-content: center;
   left: 7px;
-  opacity: 0.38;
+  opacity: 0;
   pointer-events: none;
   position: absolute;
   top: 8px;
@@ -11407,9 +11409,24 @@ body,
   width: 14px;
 }
 
-.thread-item:hover .thread-item-drag-handle,
-.thread-item:focus-within .thread-item-drag-handle {
+.thread-item:hover .thread-item-drag-handle {
   opacity: 0.8;
+  transition-delay: 300ms;
+}
+
+.thread-item:has(:focus-visible) .thread-item-drag-handle,
+.thread-item:has(.thread-item-menu-trigger[aria-expanded="true"]) .thread-item-drag-handle,
+.thread-item.is-dragging .thread-item-drag-handle {
+  opacity: 0.8;
+  transition-delay: 0ms;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .thread-item-drag-handle { opacity: 0.8; transition: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thread-item-drag-handle { transition-duration: 0ms; }
 }
 
 .thread-item-drag-icon {
@@ -12348,4 +12365,87 @@ body .live-markdown-editor {
   display: block;
   font-size: 0.76rem;
   margin-top: 4px;
+}
+
+
+/* Keep branding in navigation; only conversation controls occupy canvas space. */
+.workspace-main-pane,
+.workspace-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspace-main-pane {
+  flex-direction: column;
+}
+
+.workspace-sidebar-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-sidebar-pane > .workspace-session-brand {
+  background: var(--rail-body-bg);
+  border-right: 1px solid var(--line);
+  flex-shrink: 0;
+  min-height: 56px;
+  padding: 6px 12px;
+}
+
+.workspace-sidebar-pane > .thread-sidebar {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.workspace-session-bar.workspace-content-toolbar {
+  display: flex;
+  flex-shrink: 0;
+  min-height: 44px;
+}
+
+.workspace-content-toolbar > .chat-tree-navigation {
+  flex: 1;
+  min-height: 30px;
+}
+
+.workspace-content-toolbar > .workspace-session-actions {
+  margin-left: auto;
+}
+
+@media (max-width: 900px) {
+  .workspace-session-bar.workspace-content-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .workspace-content-toolbar > .chat-tree-navigation {
+    flex-basis: 100%;
+    order: 1;
+  }
+
+  .workspace {
+    display: flex;
+  }
+
+  .workspace-sidebar-pane,
+  .workspace-sidebar-pane.is-collapsed {
+    display: contents;
+  }
+
+  .workspace-content {
+    position: relative;
+  }
+
+  .workspace-content > .branch-map {
+    bottom: auto;
+    height: calc(100% - 10px);
+    max-height: 620px;
+    left: auto;
+    max-width: calc(100vw - 20px);
+    position: absolute;
+    top: 0;
+    width: 320px;
+  }
 }

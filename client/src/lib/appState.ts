@@ -1,5 +1,5 @@
 import { createEmptyState } from "../initialState";
-import { normalizeAISettings, normalizeAIExecution } from "@margin-chat/workspace-contracts";
+import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { normalizeConversationGroups } from "./conversationGroups";
 import { normalizeGraphLayouts } from "./graphLayout";
@@ -88,9 +88,16 @@ export function hydratePersistedState(input: unknown): AppState | null {
               const serviceId = isBackendServiceId(conversation.serviceId)
                 ? conversation.serviceId
                 : DEFAULT_BACKEND_SERVICE_ID;
+              const { publicTopic, linkedConversationIds, document, ...base } = conversation;
+              const source = normalizePublicTopicSource(publicTopic);
+              const editableDocument = document === undefined ? undefined : normalizeEditableDocument(document);
+              if (document !== undefined && !editableDocument) throw new Error("Invalid editable document.");
 
               return {
-                ...conversation,
+                ...base,
+                ...(editableDocument ? { document: editableDocument } : {}),
+                ...(source ? { publicTopic: source } : {}),
+                ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(linkedConversationIds, conversationId, parsed.conversations) } : {}),
                 ...(conversation.ai ? { ai: normalizeAISettings(conversation.ai) } : {}),
                 messages: (conversation.messages ?? []).map((message) => ({ ...message,
                   ...(message.execution ? { execution: normalizeAIExecution(message.execution) } : {}),

@@ -209,7 +209,8 @@ describe("conversation graph view", () => {
 
     expect(markup).toContain("conversation-graph-node is-note");
     expect(markup).toContain("Move Layout research");
-    expect(markup).toContain("Standalone workspace note");
+    expect(markup).not.toContain("Standalone workspace note");
+    expect(markup).not.toContain("conversation-graph-node-semantic-preview");
     expect(markup).not.toContain("Add child chat to Layout research");
   });
 
@@ -335,6 +336,31 @@ describe("conversation graph view", () => {
     ]);
   });
 
+  test("fits extremely distant nodes without clipping them or scanning empty grid space", () => {
+    const placements: ConversationGraphNodePlacement[] = [
+      { conversationId: "left", depth: 0, x: -35_000_000, y: 0, width: 900, height: 900 },
+      { conversationId: "right", depth: 1, x: 35_000_000, y: 0, width: 200, height: 96 },
+      { conversationId: "outside", depth: 2, x: 70_000_000, y: 0, width: 200, height: 96 },
+    ];
+    const bounds = getConversationGraphViewportBounds({
+      overscan: 0, viewport: { scale: 0.00001, x: 400, y: 300 },
+      viewportSize: { width: 800, height: 600 },
+    });
+    expect(bounds.left).toBeCloseTo(-40_000_000);
+    expect(bounds.right).toBeCloseTo(40_000_000);
+    const index = buildConversationGraphNodeSpatialIndex(placements);
+    const getCell = index.cells.get.bind(index.cells);
+    let queriedCells = 0;
+    index.cells.get = (key) => {
+      queriedCells++;
+      if (queriedCells > index.cells.size) throw new Error("A wide fit must not enumerate empty grid space");
+      return getCell(key);
+    };
+    expect(queryConversationGraphNodeSpatialIndex(index, bounds).map((node) => node.conversationId))
+      .toEqual(["left", "right"]);
+    expect(queriedCells).toBeLessThanOrEqual(index.cells.size);
+  });
+
   test("keeps a large graph in the scene while mounting only nearby nodes", () => {
     const childIds = Array.from(
       { length: 1000 },
@@ -454,9 +480,9 @@ describe("conversation graph view", () => {
     expect(markup).toContain('data-conversation-id="runtime"');
     expect(markup).toContain('data-conversation-id="privacy"');
     expect(markup).toContain('data-conversation-id="mac"');
-    expect(markup).toContain("Apple Silicon → MLX or Ollama");
-    expect(markup).toContain("Current main");
-    expect(markup).toContain("choose a runtime for the hardware you own");
+    expect(markup).not.toContain("Apple Silicon → MLX or Ollama");
+    expect(markup).toContain("Chat");
+    expect(markup).not.toContain("choose a runtime for the hardware you own");
     expect(markup).toContain("Add child chat to Choosing a runtime");
     expect(markup).toContain("Dock Choosing a runtime in split view");
     expect(markup).toContain("Open Choosing a runtime in chat view");

@@ -3,6 +3,8 @@ import {
   type VaultChange, type VaultFile, type VaultSnapshot, type VaultStore, type VaultTransport,
 } from "./vaultTypes";
 import { reconcileVaultImportPaths, validateVaultWorkspace, workspaceFromVault } from "./vaultWorkspace";
+import type { HistoryImportReceipt } from "./chatHistoryImport";
+import { parseMarkdownWorkspace } from "./workspaceMarkdown";
 
 function assignFile(snapshot: VaultSnapshot, path: string, file: VaultFile | null | undefined) {
   if (file) snapshot.files[path] = file;
@@ -233,6 +235,52 @@ export class VaultSync {
       snapshot.conflicts = snapshot.conflicts.filter((item) => item.id !== id);
       await this.write(snapshot);
       return snapshot;
+    });
+  }
+
+  importChatHistory(files: Record<string, VaultFile>): Promise<HistoryImportReceipt> {
+    return this.store.lock(async () => {
+      const snapshot = structuredClone((await this.store.read()) ?? emptyVault());
+      validateVaultWorkspace(files);
+      const existing = new Set(workspaceFromVault(snapshot.files).manifest.files.map((file) => file.id));
+      const receipt: HistoryImportReceipt = { files: {}, conversationIds: [], skipped: 0 };
+      for (const file of workspaceFromVault(files).manifest.files) {
+        if (existing.has(file.id)) { receipt.skipped++; continue; }
+        if (snapshot.files[file.path]) throw new Error("An imported filename is already in use. Your existing chats have not changed.");
+        snapshot.files[file.path] = files[file.path];
+        receipt.files[file.path] = files[file.path];
+        receipt.conversationIds.push(file.id);
+        existing.add(file.id);
+      }
+      if (receipt.conversationIds.length) await this.write(snapshot);
+      return structuredClone(receipt);
+    });
+  }
+
+  undoChatHistory(receipt: HistoryImportReceipt) {
+    return this.store.lock(async () => {
+      const snapshot = structuredClone((await this.store.read()) ?? emptyVault());
+      const workspace = workspaceFromVault(snapshot.files);
+      const state = workspace.manifest.files.length ? parseMarkdownWorkspace(workspace.manifest, workspace.files) : null;
+      // A link or branch can be added from another file without changing this chat's bytes.
+      const referenced = new Set(Object.values(state?.conversations ?? {}).flatMap((chat) => [
+        chat.parentId, chat.branchAnchor?.sourceConversationId, ...(chat.linkedConversationIds ?? []),
+      ]).filter(Boolean));
+      for (const id of state?.pinnedThreadIds ?? []) referenced.add(id);
+      for (const group of Object.values(state?.groups ?? {})) for (const id of group.conversationIds) referenced.add(id);
+      const originals = new Map(workspaceFromVault(receipt.files).manifest.files.map((file) => [file.path, file.id]));
+      const currentPaths = new Map(workspace.manifest.files.map((file) => [file.id, file.path]));
+      let removed = 0;
+      let kept = 0;
+      for (const [path, original] of Object.entries(receipt.files)) {
+        const id = originals.get(path);
+        const currentPath = id && currentPaths.get(id);
+        if (!currentPath) continue;
+        if (currentPath !== path || referenced.has(id) || !sameVaultFile(snapshot.files[path], original)) { kept++; continue; }
+        delete snapshot.files[path]; removed++;
+      }
+      if (removed) await this.write(snapshot);
+      return { removed, kept };
     });
   }
 

@@ -40,7 +40,7 @@ function Reader() {
         node.getBoundingClientRect = () => new browser.DOMRect(0, 100, 600, 404) as unknown as DOMRect;
       } },
         ...[messageId, "other"].map((id) => createElement("section", {
-          key: id, "data-message-row-id": id, tabIndex: -1,
+          key: id, "data-message-row-id": id, "data-document-block-id": `block:${id}`, tabIndex: -1,
           ref: (node: HTMLElement | null) => {
             if (!node) return;
             node.scrollIntoView = () => { throw new Error("Source focus must never scroll map ancestors"); };
@@ -101,6 +101,12 @@ try {
   source = { conversationId: "chat", sourceKind: "standalone-note", noteId: "body" };
   await render(); await flushFrames();
   assert.equal(body.scrollTop, 0, "Standalone source notes open at the beginning");
+
+  source = { conversationId: "chat", sourceKind: "document", sourceBlockId: `block:${messageId}` };
+  await render(); await flushFrames();
+  assert.equal(revealed.at(-1), messageId, "Editable document references reveal their exact block");
+  assert.equal(body.scrollTop, 540);
+  assert.equal(container.scrollTop, 37);
 
   source = { conversationId: "chat", sourceKind: "message", messageId: "other" };
   await render();

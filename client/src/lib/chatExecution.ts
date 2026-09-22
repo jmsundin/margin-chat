@@ -8,6 +8,8 @@ export interface ChatExecution {
   createdAt: string;
   request: (onDelta: (delta: string) => void, signal: AbortSignal, onMetadata: (metadata: ChatReplyResponse["metadata"]) => void) => Promise<unknown>;
   onError: (error: unknown) => void;
+  /** Runs once after final buffered output/receipt delivery; silent teardown suppresses it. */
+  onFinish?: (status: "complete" | "stopped" | "failed") => void;
 }
 
 interface ActiveExecution {
@@ -15,6 +17,7 @@ interface ActiveExecution {
   flush: () => void;
   discard: () => void;
   mark: (status: AIExecutionRecord["status"]) => void;
+  finish: (status: "complete" | "stopped" | "failed") => void;
 }
 
 /** Owns buffered output and ensures a retired request cannot affect its successor. */
@@ -38,6 +41,8 @@ export class ChatExecutions {
     let receipt: AIExecutionRecord | undefined;
     let receiptChanged = false;
     let hasOutput = false;
+    let failed = false;
+    let finished = false;
     const startedAt = Date.now();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const cancelTimer = () => {
@@ -65,6 +70,11 @@ export class ChatExecutions {
         receipt = { ...receipt, status, durationMs: receipt.durationMs ?? Date.now() - startedAt,
           ...(status === "complete" ? { completedAt: receipt.completedAt ?? new Date().toISOString() } : {}) };
         receiptChanged = true;
+      },
+      finish: (status) => {
+        if (finished) return;
+        finished = true;
+        args.onFinish?.(status);
       },
     };
     const isCurrent = () => this.active.get(args.conversationId) === execution;
@@ -98,13 +108,16 @@ export class ChatExecutions {
       else execution.discard();
     }).catch((error: unknown) => {
       if (!isCurrent()) { execution.discard(); return; }
+      failed = true;
       execution.mark("failed");
       execution.flush();
       if (!execution.controller.signal.aborted) args.onError(error);
     }).finally(() => {
       if (!isCurrent()) return;
       this.active.delete(args.conversationId);
-      this.events.onPending(args.conversationId, false);
+      execution.finish(failed ? "failed" : "complete");
+      // onFinish may synchronously start another generation in this conversation.
+      if (!this.active.has(args.conversationId)) this.events.onPending(args.conversationId, false);
     });
     return true;
   }
@@ -115,8 +128,9 @@ export class ChatExecutions {
     if (preserveOutput) { execution.mark("stopped"); execution.flush(); }
     else execution.discard();
     this.active.delete(conversationId);
+    if (notify) execution.finish("stopped");
     execution.controller.abort();
-    if (notify) this.events.onPending(conversationId, false);
+    if (notify && !this.active.has(conversationId)) this.events.onPending(conversationId, false);
   }
 
   abort(conversationIds: Iterable<string>, notify = true) {

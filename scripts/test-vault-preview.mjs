@@ -5,7 +5,8 @@
  * Run: bun scripts/test-vault-preview.mjs [port]
  * Control: POST /api/fixture with X-Margin-Test-Fixture: 1 and a JSON body.
  * Optional synthetic suggestions: { action: "controls", jev: true }. No model calls
- * or external network are made; /api/chat stays unavailable in every fixture mode.
+ * or external network are made. Optional { action: "controls", chat: true }
+ * serves deterministic synthetic document replies; chat otherwise stays unavailable.
  */
 import { createServer } from "node:http";
 import { mkdtemp, readFile, stat } from "node:fs/promises";
@@ -23,9 +24,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
 await stat(join(dist, "index.html"));
 const directory = await mkdtemp(join(tmpdir(), "margin-chat-preview-"));
-const controls = { offline: false, delayMs: 0, authDelayMs: 0, signedIn: true, free: false, jev: false, userId: "preview-user" };
+const controls = { offline: false, delayMs: 0, authDelayMs: 0, signedIn: true, free: false, jev: false, chat: false, userId: "preview-user" };
 let activeApiRequests = 0;
 const requestCounts = { chat: 0, jevWorkspace: 0 };
+let lastChatRequest = null;
+let syntheticReplyCount = 0;
 const projection = new Map();
 const attachments = new Map();
 const noKeys = { byProvider: Object.fromEntries(["openai", "gemini", "huggingface", "xai"].map((provider) => [provider, { configured: false, hint: null }])), hasAny: false };
@@ -158,14 +161,14 @@ const server = createServer(async (request, response) => {
             path: body.path, content: body.content, baseRevision: current.files[body.path]?.revision ?? null,
           }]);
         } else if (body.action === "controls") {
-          for (const field of ["offline", "signedIn", "free", "jev"]) if (typeof body[field] === "boolean") controls[field] = body[field];
+          for (const field of ["offline", "signedIn", "free", "jev", "chat"]) if (typeof body[field] === "boolean") controls[field] = body[field];
           for (const field of ["delayMs", "authDelayMs"]) if (Number.isSafeInteger(body[field]) && body[field] >= 0 && body[field] <= 120000) controls[field] = body[field];
           if (typeof body.userId === "string" && /^preview-[a-z0-9_-]+$/u.test(body.userId)) controls.userId = body.userId;
           if (body.seed !== false) await seed(controls.userId);
         } else return sendJson(response, 400, { error: "Use action: controls or remote" });
       }
       const manifest = (await vaultService.snapshot(controls.userId)).manifest;
-      return sendJson(response, 200, { controls, user: user(), manifest, activeApiRequests, requestCounts, projection: projection.get(controls.userId) ?? null, directory }, { "Cache-Control": "no-store" });
+      return sendJson(response, 200, { controls, user: user(), manifest, activeApiRequests, requestCounts, lastChatRequest, projection: projection.get(controls.userId) ?? null, directory }, { "Cache-Control": "no-store" });
     }
     if (url.pathname.startsWith("/api/")) {
       activeApiRequests++;
@@ -175,6 +178,26 @@ const server = createServer(async (request, response) => {
         if (controls.offline) return sendJson(response, 503, { error: "The fixture is simulating an offline API." });
         if (url.pathname.startsWith("/api/chat")) {
           requestCounts.chat++;
+          if (controls.chat && request.method === "POST") {
+            if (!controls.signedIn) return sendJson(response, 401, { error: "Sign in to continue." });
+            if (request.headers["x-margin-vault-user"] && request.headers["x-margin-vault-user"] !== controls.userId) return sendJson(response, 409, { error: "The fixture account changed." });
+            const body = await readJsonBody(request, 512 * 1024);
+            if (url.pathname.endsWith("/title")) return sendJson(response, 200, { title: "A thoughtful reading document" });
+            lastChatRequest = { userId: controls.userId, body };
+            syntheticReplyCount++;
+            const metadata = { model: "synthetic-document-fixture", requestedModelId: body.modelId,
+              requestedServiceId: body.serviceId, resolvedServiceId: body.serviceId, credentialSource: "personal" };
+            const reply = `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;
+            response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
+            response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);
+            for (let offset = 0; offset < reply.length; offset += 48) {
+              if (response.destroyed) break;
+              response.write(`${JSON.stringify({ type: "delta", delta: reply.slice(offset, offset + 48) })}\n`);
+              await new Promise((resolve) => setTimeout(resolve, 35));
+            }
+            if (!response.destroyed) response.end(`${JSON.stringify({ type: "done" })}\n`);
+            return;
+          }
           return sendJson(response, 503, { error: "Model calls are intentionally unavailable in this isolated preview." });
         }
         return await handler(request, response);

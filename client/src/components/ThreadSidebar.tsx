@@ -18,6 +18,9 @@ const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
 interface ThreadSidebarProps {
+  mapExplorerRef?: (element: HTMLDivElement | null) => void;
+  mapExplorerActive?: boolean;
+  onSelectSidebarSection?: (section: "chats" | "explore") => void;
   activeOutlineItemId: string | null;
   activeThreadId: string;
   collapsed: boolean;
@@ -31,6 +34,7 @@ interface ThreadSidebarProps {
   onNewChat: () => void;
   onNewNote: () => void;
   onOpenInbox?: () => void;
+  onImportChatHistory?: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
@@ -83,23 +87,6 @@ function getThreadMenuPosition(triggerRect: DOMRect) {
   };
 }
 
-function getCompactLabel(title: string) {
-  const words = title.match(/[A-Za-z0-9]+/g) ?? [];
-
-  if (words.length >= 2) {
-    const first = words[0] ?? "";
-    const second = words[1] ?? "";
-
-    return `${first.charAt(0)}${second.charAt(0)}`.toUpperCase();
-  }
-
-  if (words.length === 1) {
-    return (words[0] ?? "").slice(0, 2).toUpperCase();
-  }
-
-  return title.trim().slice(0, 2).toUpperCase() || "?";
-}
-
 function PlusIcon() {
   return (
     <svg
@@ -136,7 +123,7 @@ function SearchIcon() {
   );
 }
 
-function NoteIcon() {
+function DocumentIcon() {
   return (
     <svg
       aria-hidden="true"
@@ -380,6 +367,9 @@ function SidebarCollapseIcon({ collapsed }: { collapsed: boolean }) {
 }
 
 export default function ThreadSidebar({
+  mapExplorerRef,
+  mapExplorerActive = false,
+  onSelectSidebarSection,
   activeOutlineItemId,
   activeThreadId,
   collapsed,
@@ -393,6 +383,7 @@ export default function ThreadSidebar({
   onNewChat,
   onNewNote,
   onOpenInbox,
+  onImportChatHistory,
   onOpenProfile,
   onOpenSettings,
   onOpenSearch,
@@ -764,7 +755,6 @@ export default function ThreadSidebar({
             thread.id === activeThreadId ? "is-active" : "",
             isPinned ? "is-pinned" : "",
             isStreaming ? "is-streaming" : "",
-            thread.kind === "note" ? "is-note" : "",
             draggedThreadId === thread.id ? "is-dragging" : "",
           ]
             .filter(Boolean)
@@ -788,11 +778,9 @@ export default function ThreadSidebar({
           type="button"
         >
           <span className="thread-item-title">
-            {thread.kind === "note" ? (
-              <span aria-hidden="true" className="thread-item-kind-icon">
-                <NoteIcon />
-              </span>
-            ) : null}
+            <span aria-hidden="true" className="thread-item-kind-icon">
+              <DocumentIcon />
+            </span>
             <span>{thread.title}</span>
           </span>
           <span className="thread-item-meta">
@@ -806,22 +794,20 @@ export default function ThreadSidebar({
           </span>
         </button>
 
-        {thread.kind !== "note" ? (
-          <button
-            aria-controls={`chat-outline-${thread.id}`}
-            aria-expanded={isExpanded}
-            aria-label={`${isExpanded ? "Collapse" : "Expand"} outline for ${thread.title}`}
-            className={
-              isExpanded
-                ? "thread-item-expand-trigger is-expanded"
-                : "thread-item-expand-trigger"
-            }
-            onClick={() => handleToggleExpanded(thread.id)}
-            type="button"
-          >
-            <ExpandIcon />
-          </button>
-        ) : null}
+        <button
+          aria-controls={`chat-outline-${thread.id}`}
+          aria-expanded={isExpanded}
+          aria-label={`${isExpanded ? "Collapse" : "Expand"} outline for ${thread.title}`}
+          className={
+            isExpanded
+              ? "thread-item-expand-trigger is-expanded"
+              : "thread-item-expand-trigger"
+          }
+          onClick={() => handleToggleExpanded(thread.id)}
+          type="button"
+        >
+          <ExpandIcon />
+        </button>
 
         <button
           aria-controls={
@@ -854,12 +840,12 @@ export default function ThreadSidebar({
   }
 
   return (
-    <aside className={`thread-sidebar is-simplified${collapsed ? " is-collapsed" : ""}`}>
+    <aside className={`thread-sidebar is-simplified${collapsed ? " is-collapsed" : ""}${mainViewMode === "graph" && mapExplorerActive ? " is-exploring-map" : ""}`}>
       <div className="thread-sidebar-head">
         <div className="thread-sidebar-title-row">
           <div aria-label="Main workspace view" className="thread-view-switcher" role="group">
             <button
-              aria-label="Open chat panel view"
+              aria-label="Open document view"
               aria-pressed={mainViewMode === "chat"}
               className={
                 mainViewMode === "chat"
@@ -867,11 +853,11 @@ export default function ThreadSidebar({
                   : "thread-view-button"
               }
               onClick={() => onSetMainViewMode("chat")}
-              title="Open chat panel view"
+              title="Open document view"
               type="button"
             >
               <ChatViewIcon />
-              <span>Chat</span>
+              <span>Document</span>
             </button>
             <button
               aria-label="Open tile view"
@@ -916,17 +902,22 @@ export default function ThreadSidebar({
         </button>
       </div>
 
+      {mainViewMode === "graph" && !collapsed && onSelectSidebarSection ? <div className="map-sidebar-tabs" role="group" aria-label="Workspace browsing">
+        <button type="button" aria-pressed={!mapExplorerActive} onClick={() => onSelectSidebarSection("chats")}>Documents</button>
+        <button type="button" aria-pressed={mapExplorerActive} onClick={() => onSelectSidebarSection("explore")}>Explore</button>
+      </div> : null}
+
       <div className="thread-sidebar-actions">
         <div className="sidebar-create-row">
           <button
-            aria-label="New chat"
+            aria-label="New document"
             className="sidebar-action is-primary"
             onClick={onNewChat}
-            title="New chat"
+            title="New document"
             type="button"
           >
             <PlusIcon />
-            <span>New chat</span>
+            <span>New document</span>
           </button>
           <button
             aria-controls={workspaceActionsOpen ? "sidebar-workspace-actions" : undefined}
@@ -954,17 +945,6 @@ export default function ThreadSidebar({
               ref={workspaceActionsRef}
               role="dialog"
             >
-              <button
-                className="sidebar-workspace-action"
-                onClick={() => {
-                  closeWorkspaceActions();
-                  onNewNote();
-                }}
-                type="button"
-              >
-                <NoteIcon />
-                <span>New note</span>
-              </button>
               {newGroupName === null ? (
                 <button
                   className="sidebar-workspace-action"
@@ -1003,6 +983,9 @@ export default function ThreadSidebar({
                   </button>
                 </form>
               )}
+              {onImportChatHistory ? <button type="button" className="sidebar-workspace-action" onClick={() => {
+                closeWorkspaceActions(); onImportChatHistory();
+              }}><span>Bring your chat history</span></button> : null}
               {onOpenInbox ? (
                 <button
                   className="sidebar-workspace-action"
@@ -1020,17 +1003,18 @@ export default function ThreadSidebar({
           ) : null}
         </div>
         <button
-          aria-label="Search chats"
+          aria-label="Search documents"
           className="sidebar-search-button"
           onClick={onOpenSearch}
           type="button"
         >
           <SearchIcon />
-          <span>Search chats</span>
+          <span>Search documents</span>
         </button>
       </div>
 
-      {collapsed ? (
+      {mapExplorerRef ? <div ref={mapExplorerRef} className="map-sidebar-explorer" hidden={mainViewMode !== "graph" || !mapExplorerActive || collapsed} /> : null}
+      {mainViewMode === "graph" && mapExplorerActive && !collapsed ? null : collapsed ? (
         <div className="thread-sidebar-mini-list">
           {orderedThreads.map((thread) => {
             const isPinned = pinnedThreadIds.has(thread.id);
@@ -1039,14 +1023,13 @@ export default function ThreadSidebar({
             return (
               <button
                 key={thread.id}
-                aria-label={`Open ${thread.kind === "note" ? "note" : "chat"} ${thread.title}${isStreaming ? ", response streaming" : ""}`}
+                aria-label={`Open document ${thread.title}${isStreaming ? ", response streaming" : ""}`}
                 className={
                   [
                     "thread-sidebar-mini-item",
                     thread.id === activeThreadId ? "is-active" : "",
                     isPinned ? "is-pinned" : "",
                     isStreaming ? "is-streaming" : "",
-                    thread.kind === "note" ? "is-note" : "",
                   ]
                     .filter(Boolean)
                     .join(" ")
@@ -1059,7 +1042,7 @@ export default function ThreadSidebar({
                 type="button"
               >
                 <span className="thread-sidebar-mini-badge" aria-hidden="true">
-                  {thread.kind === "note" ? <NoteIcon /> : getCompactLabel(thread.title)}
+                  <DocumentIcon />
                 </span>
                 {isPinned ? (
                   <span className="thread-sidebar-mini-pin" aria-hidden="true">
@@ -1096,7 +1079,7 @@ export default function ThreadSidebar({
         <div className="thread-list">
           {recentPinnedThreads.length || draggedThreadId ? (
             <section
-              aria-label="Pinned chats and notes"
+              aria-label="Pinned documents"
               className={
                 dropTargetKey === "pinned"
                   ? "thread-sidebar-section is-pinned is-drop-target"
@@ -1189,7 +1172,7 @@ export default function ThreadSidebar({
 
           {ungroupedThreads.length || draggedThreadId ? (
             <section
-              aria-label="Ungrouped chats and notes"
+              aria-label="Ungrouped documents"
               className={
                 dropTargetKey === "ungrouped"
                   ? "thread-sidebar-section is-ungrouped is-drop-target"
@@ -1335,19 +1318,19 @@ export default function ThreadSidebar({
             <form className="thread-dialog-form" onSubmit={handleSubmitRename}>
               <div className="thread-dialog-head">
                 <div>
-                  <p className="eyebrow">Thread settings</p>
-                  <h2 id="thread-rename-title">Rename chat</h2>
+                  <p className="eyebrow">Document settings</p>
+                  <h2 id="thread-rename-title">Rename document</h2>
                 </div>
               </div>
 
               <label className="thread-dialog-field">
-                <span className="thread-dialog-label">Chat title</span>
+                <span className="thread-dialog-label">Document title</span>
                 <input
                   autoFocus
                   className="thread-dialog-input"
                   maxLength={120}
                   onChange={(event) => setRenameValue(event.target.value)}
-                  placeholder="Enter a new chat title"
+                  placeholder="Enter a new document title"
                   type="text"
                   value={renameValue}
                 />
@@ -1389,18 +1372,18 @@ export default function ThreadSidebar({
           >
             <div className="thread-dialog-head">
               <div>
-                <p className="eyebrow">Thread settings</p>
-                <h2 id="thread-delete-title">Delete chat?</h2>
+                <p className="eyebrow">Document settings</p>
+                <h2 id="thread-delete-title">Delete document?</h2>
               </div>
             </div>
 
             <p className="thread-dialog-copy">
               This will delete <strong>{deleteTarget.title}</strong> and every branch
-              inside this thread.
+              inside this document.
             </p>
 
             <p className="thread-dialog-warning">
-              You can cancel to keep the chat, or confirm to remove it entirely.
+              You can cancel to keep the document, or confirm to remove it entirely.
             </p>
 
             <div className="thread-dialog-actions">

@@ -1,6 +1,7 @@
 import { normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { Conversation, Message } from "../types";
 import { getStandaloneNote } from "./standaloneNotes";
+import { getCurrentDocumentText } from "./documentSources";
 
 export interface WorkspaceContextItem {
   id: string;
@@ -21,8 +22,8 @@ export function prepareAIContext(conversations: Record<string, Conversation>, co
   const candidates = Object.values(conversations)
     .filter((candidate) => candidate.id !== conversation.id && (ai.contextScope === "workspace" || selected.has(candidate.id)))
     .map((candidate) => {
-      const content = candidate.kind === "note" ? getStandaloneNote(candidate)?.content ?? "" : undefined;
-      const visibleMessages = candidate.messages.filter((message) => message.role !== "system");
+      const content = candidate.document ? getCurrentDocumentText(candidate) : candidate.kind === "note" ? getStandaloneNote(candidate)?.content ?? "" : undefined;
+      const visibleMessages = candidate.document || candidate.kind === "note" ? [] : candidate.messages.filter((message) => message.role !== "system");
       const haystack = `${candidate.title}\n${content ?? ""}\n${visibleMessages.map((message) => message.content).join("\n")}`.toLowerCase();
       const score = terms.reduce((sum, term) => sum + (candidate.title.toLowerCase().includes(term) ? 4 : 0) + (haystack.includes(term) ? 1 : 0), 0);
       return { candidate, content, visibleMessages, score };

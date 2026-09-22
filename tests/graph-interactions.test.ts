@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createGraphInteractionController,
   getGraphNodesInSelectionBounds,
+  revealGraphBounds,
   type GraphInteractionCallbacks,
   type GraphNodeMove,
   type GraphPointer,
@@ -55,6 +56,14 @@ function harness(scale = 2) {
 }
 
 describe("graph gesture controller", () => {
+  test("revealing nearby content preserves its zoom and pans only clipped edges", () => {
+    const viewport = { x: 20, y: 40, scale: 0.5 };
+    const size = { width: 800, height: 600 };
+    expect(revealGraphBounds({ x: 200, y: 100, width: 300, height: 200 }, viewport, size)).toEqual(viewport);
+    expect(revealGraphBounds({ x: 1300, y: 1000, width: 300, height: 200 }, viewport, size)).toEqual({ x: -24, y: -24, scale: 0.5 });
+    expect(revealGraphBounds({ x: -200, y: -100, width: 300, height: 200 }, viewport, size)).toEqual({ x: 124, y: 74, scale: 0.5 });
+  });
+
   test("coalesces pointer bursts and translates a rigid selection using graph scale", () => {
     const app = harness();
     app.controller.startNode(point(100, 200), "one", ["one", "two"]);
@@ -106,6 +115,41 @@ describe("graph gesture controller", () => {
     app.controller.end(point(150, 260));
     expect(app.viewportUpdates.at(-1)).toEqual({ scale: 2, x: 70, y: 100 });
     expect(app.pans).toEqual([true, false]);
+    expect(app.pendingFrames()).toBe(0);
+  });
+
+  test("touch pinch scales around the moving midpoint and flushes either finger on release", () => {
+    const app = harness(1);
+    app.controller.startPan(point(100, 100));
+    app.controller.move(point(120, 100));
+    app.controller.startPinch(point(100, 100), point(200, 100, 2), 0.02, 2.2);
+    expect(app.pendingFrames()).toBe(0);
+    app.controller.move(point(100, 120));
+    app.controller.move(point(300, 120, 2));
+    expect(app.pendingFrames()).toBe(1);
+    app.flush();
+    expect(app.viewportUpdates.at(-1)).toEqual({ scale: 2, x: -60, y: 0 });
+    expect(app.controller.end(point(320, 120, 2))).toBe(true);
+    expect(app.viewportUpdates.at(-1)?.scale).toBe(2.2);
+    expect(app.controller.isActive()).toBe(false);
+    expect(app.pans.at(-1)).toBe(false);
+  });
+
+  test("pinch cancels node dragging, clamps scale, and ignores unrelated pointers", () => {
+    const app = harness(1);
+    app.controller.startNode(point(100, 100), "one", ["one"]);
+    app.controller.move(point(150, 100));
+    app.controller.startPinch(point(100, 100), point(200, 100, 2), 0.5, 2);
+    expect(app.previews.at(-1)).toBeNull();
+    expect(app.commits).toHaveLength(0);
+    expect(app.controller.move(point(400, 100, 3))).toBe(false);
+    app.controller.move(point(110, 100, 2));
+    app.flush();
+    expect(app.viewportUpdates.at(-1)?.scale).toBe(0.5);
+    app.controller.move(point(800, 100, 2));
+    app.controller.cancel();
+    app.flush();
+    expect(app.viewportUpdates.at(-1)?.scale).toBe(0.5);
     expect(app.pendingFrames()).toBe(0);
   });
 

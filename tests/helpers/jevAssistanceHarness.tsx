@@ -148,7 +148,7 @@ try {
   await act(async () => { preference![1](true); }); await flushTrailing();
   assert.equal(assistance!.status, "unconfigured");
   assert.deepEqual(assistance!.related, []);
-  assert(container.textContent.includes("not configured"));
+  assert.equal(container.querySelector('.jev-related'), null, "Unavailable suggestions do not render an empty Related panel");
   await act(async () => { preference![1](false); });
   assert.equal(container.textContent, "");
 

@@ -19,7 +19,11 @@ import {
 } from "react";
 import AppSettingsModal from "./components/AppSettingsModal";
 import BranchRail from "./components/BranchRail";
-import ChatPanel from "./components/ChatPanel";
+import DocumentPanel from "./components/DocumentPanel";
+import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
+import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
+import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
+import { remapDocumentAnchor } from "./lib/documentAnchors";
 import NotificationToast from "./components/NotificationToast";
 import AIControls from "./components/AIControls";
 import JevRelatedItems from "./components/JevRelatedItems";
@@ -31,12 +35,18 @@ import { normalizeAISettings } from "@margin-chat/workspace-contracts";
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import ConversationTreeNode from "./components/ConversationTreeNode";
-import ConversationGraphView from "./components/ConversationGraphView";
+import KnowledgeGraphWorkspace from "./components/KnowledgeGraphWorkspace";
+import { saveUrlMapNode } from "./lib/urlMap";
+import { findSavedPublicTopic, savePublicTopic } from "./lib/publicTopicWorkspace";
+import type { PublicTopic } from "./lib/publicKnowledge";
+import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
+import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
 import { ConversationGroupSelect, ConversationGroupPickerContext } from "./components/ConversationGroupControls";
 import MainChatTileView from "./components/MainChatTileView";
 import MarginNoteTreeNode from "./components/MarginNoteTreeNode";
 import ProfileModal from "./components/ProfileModal";
+import ChatHistoryImport from "./components/ChatHistoryImport";
 import CaptureInbox from "./components/CaptureInbox";
 import { openCaptureAsNote } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
@@ -98,7 +108,7 @@ import {
   getConversationRootId,
   getConversationTreeLanes,
 } from "./lib/tree";
-import { buildChatOutline } from "./lib/chatOutline";
+import { buildEditableDocumentOutline } from "./lib/chatOutline";
 import { getConversationSelectionViewMode } from "./lib/conversationNavigation";
 import {
   getStandaloneNoteContextMessageId,
@@ -198,7 +208,7 @@ function CloseIcon() {
   );
 }
 
-function MenuIcon() {
+function SidebarPanelIcon() {
   return (
     <svg
       aria-hidden="true"
@@ -209,9 +219,8 @@ function MenuIcon() {
       strokeWidth="1.8"
       viewBox="0 0 24 24"
     >
-      <path d="M5 7h14" />
-      <path d="M5 12h14" />
-      <path d="M5 17h14" />
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
     </svg>
   );
 }
@@ -645,10 +654,25 @@ export default function WorkspaceApp({
   const [graphFocusRequest, setGraphFocusRequest] = useState<{
     conversationId: string;
     requestId: number;
+    openReader?: boolean;
+    neighborhoodDepth?: number;
+    preserveMapMode?: boolean;
   } | null>(null);
   const graphFocusRequestCounterRef = useRef(0);
+  const mapUndoRef = useRef<((current: AppState) => AppState) | null>(null);
+  const [mapEditMessage, setMapEditMessage] = useState("");
+  const topicExpansion = useTopicExpansion({ state, setState, userId: user.id, onAuthExpired,
+    onBillingRefresh: () => { void onRefreshBilling(); },
+    onReady: (conversationId) => {
+      setGraphFocusRequest({ conversationId, requestId: ++graphFocusRequestCounterRef.current, neighborhoodDepth: 2, preserveMapMode: true });
+      mapUndoRef.current = null;
+      setMapEditMessage("AI subgraph added. Open any child note to review or edit it.");
+    },
+  });
   const [leftSidebarOpen, setLeftSidebarOpen] =
     useState(INITIAL_LEFT_SIDEBAR_OPEN);
+  const [graphExplorerContainer, setGraphExplorerContainer] = useState<HTMLDivElement | null>(null);
+  const [mapSidebarSection, setMapSidebarSection] = useState<"chats" | "explore">("chats");
   const [isMobileViewport, setIsMobileViewport] = useState(() =>
     getIsMobileViewport(),
   );
@@ -658,6 +682,9 @@ export default function WorkspaceApp({
   const [resizingChatPanelConversationId, setResizingChatPanelConversationId] =
     useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [selectionResponseDestination, setSelectionResponseDestination] = useState<"inline" | "side">("inline");
+  const [selectionReplaceText, setSelectionReplaceText] = useState(false);
+  const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
   const { executions: chatExecutions, pendingConversationIds } = useChatStreams(appendAssistantDelta, saveExecutionDetails);
   const [documentUploadByConversationId, setDocumentUploadByConversationId] =
     useState<Record<string, { error: string | null; uploading: boolean }>>({});
@@ -671,6 +698,7 @@ export default function WorkspaceApp({
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [jevEnabled, setJevEnabled] = useJevPreference(user.id);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [historyImportOpen, setHistoryImportOpen] = useState(false);
   const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage" | "billing">("account");
   const previousPendingChats = useRef(pendingConversationIds);
   const refreshBillingAfterChat = useEffectEvent(() => { void onRefreshBilling(); });
@@ -750,7 +778,7 @@ export default function WorkspaceApp({
     state.conversations,
     activeConversation.id,
   );
-  const currentChatOutline = buildChatOutline(activeConversation);
+  const currentChatOutline = buildEditableDocumentOutline(activeConversation);
   const currentChatOutlineKey = currentChatOutline
     .map((item) => item.id)
     .join("|");
@@ -914,13 +942,6 @@ export default function WorkspaceApp({
       current.railOpen ? { ...current, railOpen: false } : current,
     );
   }, [branchAccessEnabled, state.railOpen]);
-
-  useEffect(() => {
-    if (!vault.ready || mainViewMode !== "chat" || !branchAccessEnabled) return;
-    setState((current) => current.railOpen ? current : { ...current, railOpen: true });
-    // Reopen for a new context or newly created branches; respect a manual close
-    // until the user changes context again.
-  }, [vault.ready, mainViewMode, state.activeConversationId, branchNavigationCount]);
 
   useEffect(() => {
     setRecentModelSelections(
@@ -1526,7 +1547,173 @@ export default function WorkspaceApp({
   }
 
   function appendAssistantDelta(conversationId: string, messageId: string, contentDelta: string, createdAt: string) {
-    setState((current) => appendMessageDelta(current, conversationId, messageId, contentDelta, createdAt));
+    setState((current) => {
+      const next = appendMessageDelta(current, conversationId, messageId, contentDelta, createdAt);
+      const conversation = next.conversations[conversationId];
+      const generation = conversation?.document?.generations.find((item) => item.messageId === messageId);
+      if (!generation?.acceptedAt) return next;
+      const blocks = conversation.document!.blocks.map((block) => generation.blockIds.includes(block.id)
+        ? { ...block, content: block.content + contentDelta, updatedAt: createdAt } : block);
+      return { ...next, conversations: { ...next.conversations, [conversationId]: { ...conversation, document: { ...conversation.document!, blocks } } } };
+    });
+  }
+
+  function replaceDocumentConversation(current: AppState, updated: Conversation): AppState {
+    const before = current.conversations[updated.id];
+    if (!before) return current;
+    const archived = getEditableDocument(before).blocks
+      .filter((block) => !block.sourceMessageId && !updated.document?.blocks.some((item) => item.id === block.id)
+        && block.content.trim() && !updated.messages.some((message) => message.id === `document:${block.id}`))
+      .map((block) => ({ id: `document:${block.id}`, role: "user" as const, content: block.content, createdAt: block.createdAt }));
+    const conversation = { ...updated, messages: [...updated.messages, ...archived] };
+    const conversations = { ...current.conversations, [updated.id]: {
+      ...conversation,
+      notes: conversation.notes?.map((note) => remapDocumentAnchor(note, before, conversation)),
+    } };
+    for (const child of Object.values(conversations)) {
+      if (child.branchAnchor?.sourceConversationId === updated.id) {
+        conversations[child.id] = { ...child, branchAnchor: remapDocumentAnchor(child.branchAnchor, before, conversation) };
+      }
+    }
+    return { ...current, conversations };
+  }
+
+  function handleDocumentChange(conversationId: string, document: EditableDocument) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      if (conversation.document) {
+        const streaming = new Set(conversation.document.generations.filter((generation)=>generation.status === "streaming" && chatExecutions.has(conversationId)).flatMap((generation)=>generation.blockIds));
+        document = {...document,
+          blocks:document.blocks.map((block)=>streaming.has(block.id)?conversation.document!.blocks.find((item)=>item.id===block.id) ?? block:block),
+          prompts:conversation.document.prompts,
+          generations: conversation.document.generations.map((generation) => ({
+            ...remapDocumentReplacement(generation, conversation.document!.blocks, document.blocks),
+            blockIds: document.blocks.filter((block) => block.generationId === generation.id).map((block) => block.id),
+          })),
+        };
+      }
+      const updated = { ...conversation, document, updatedAt: new Date().toISOString() };
+      const next = replaceDocumentConversation(current, updated);
+      currentStateRef.current = next;
+      return next;
+    });
+  }
+
+  function handleDocumentSubmit(conversationId: string, request: DocumentAIRequest) {
+    const source = currentStateRef.current.conversations[conversationId];
+    if (!source || !request.prompt.trim() || chatExecutions.has(conversationId)) return;
+    const now = new Date().toISOString();
+    const originalDocument = getEditableDocument(source);
+    const sourceBlock = originalDocument.blocks.find((block) => block.id === request.blockId);
+    const rerun = originalDocument.generations.find((generation) => generation.id === request.rerunGenerationId);
+    if (!rerun && sourceBlock && request.sourceContent !== undefined && request.sourceContent !== sourceBlock.content) {
+      const mapped=remapDocumentRange(request.sourceContent,sourceBlock.content,request.from,request.to);
+      if(!mapped){setDocumentErrors((current)=>({...current,[conversationId]:"The passage changed while the prompt was open. Select it again to choose the insertion point."}));return;}
+      request={...request,from:mapped.from,to:mapped.to};
+    }
+    if (!rerun && (!sourceBlock || request.from < 0 || request.to < request.from || request.to > sourceBlock.content.length)) {
+      setDocumentErrors((current) => ({ ...current, [conversationId]: "That insertion point changed. Place the cursor again and retry." }));
+      return;
+    }
+    const priorPrompt = rerun && originalDocument.prompts.find((prompt) => prompt.id === rerun.promptId);
+    const selectedQuote = request.quote || priorPrompt?.selection?.quote;
+    const userMessage: Message = { id: createId("message"), role: "user", content: request.prompt.trim(), createdAt: now };
+    const messageId = createId("message");
+    const generationId = createId("generation");
+    const promptId = createId("prompt");
+    const outputBlockId = createId("block");
+    let target = source;
+    if (request.destination === "side") {
+      target = {
+        id: createId("conversation"), kind: "chat", title: excerpt(request.prompt.trim(), 52), parentId: source.id,
+        serviceId: source.serviceId, modelId: source.modelId, ai: source.ai, documents: [...(source.documents ?? [])],
+        branchAnchor: selectedQuote && sourceBlock ? { id: createId("anchor"), sourceConversationId: source.id,
+          sourceMessageId: sourceBlock.sourceMessageId ?? `document:${sourceBlock.id}`, sourceBlockId: sourceBlock.id,
+          startOffset: request.from, endOffset: request.to, quote: selectedQuote, prompt: userMessage.content, createdAt: now } : null,
+        childIds: [], messages: [], notes: [], createdAt: now, updatedAt: now,
+        document: {schemaVersion:1,blocks:[],prompts:[],generations:[]},
+      };
+    }
+    const promptRecord = { id: promptId, content: userMessage.content, sourceMessageId: userMessage.id, createdAt: now,
+      serviceId: target.serviceId, modelId: target.modelId, ai: target.ai,
+      ...(selectedQuote ? { selection: priorPrompt?.selection ?? { blockId: request.blockId, from: request.from, to: request.to, quote: selectedQuote } } : {}) };
+    const insertion = request.destination === "side" ? { blockId: null, offset: 0 }
+      : { blockId: request.blockId, offset: request.replaceSelection ? request.from : request.to,
+        ...(request.replaceSelection ? { replaceTo: request.to } : {}) };
+    const generation: DocumentGeneration = { id: generationId, promptId, messageId, createdAt: now,
+      serviceId: target.serviceId, modelId: target.modelId, ai: target.ai, status: "streaming", blockIds: rerun ? [] : [outputBlockId],
+      ...(rerun ? {alternativeOf: rerun.id} : {acceptedAt: now}), insertion,
+      ...(request.replaceSelection && sourceBlock ? {replacement: {blockId:sourceBlock.id,offset:request.from,content:sourceBlock.content.slice(request.from,request.to)}} : {}) };
+    let prepared: Conversation = { ...target, messages: [...target.messages, userMessage], updatedAt: now,
+      title: [DEFAULT_MAIN_CHAT_TITLE, DEFAULT_SIDE_CHAT_TITLE, "Untitled document", "New note"].includes(target.title) ? excerpt(userMessage.content, 52) : target.title,
+      document: { ...getEditableDocument(target), prompts: [...getEditableDocument(target).prompts, promptRecord], generations: [...getEditableDocument(target).generations, generation] } };
+    if (!rerun) prepared = insertDocumentBlock(prepared, { id: outputBlockId, kind: "markdown", content: "", createdAt: now, updatedAt: now, sourceMessageId: messageId, generationId }, insertion, now);
+    const targetId = prepared.id;
+    setDocumentErrors((current) => ({...current,[conversationId]:"",[targetId]:""}));
+    setState((current) => {
+      const sourceSnapshot = sourceBlock && !sourceBlock.sourceMessageId && sourceBlock.content.trim() && !source.messages.some((message)=>message.id===`document:${sourceBlock.id}`)
+        ? [{id:`document:${sourceBlock.id}`,role:"user" as const,content:sourceBlock.content,createdAt:sourceBlock.createdAt}] : [];
+      const base = request.destination === "side" ? { ...current, conversations: { ...current.conversations, [source.id]: { ...current.conversations[source.id], messages:[...source.messages,...sourceSnapshot], document: originalDocument } } } : current;
+      const next = request.destination === "side" ? addChildConversation(base, prepared, {activate:true})
+        : replaceDocumentConversation(current, prepared);
+      currentStateRef.current = next;
+      return next;
+    });
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+    const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote);
+    chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
+      request: (onDelta, signal, onMetadata) => requestChatReply({
+        ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
+        ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
+        conversation: getConversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
+        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, signal,
+      }),
+      onError(error) {
+        if (isApiErrorStatus(error,401)) onAuthExpired();
+        else if (isApiErrorStatus(error,402)) onBillingRequired(getErrorText(error,"Add money to continue using hosted AI."));
+        setDocumentErrors((current) => ({...current,[targetId]:getErrorText(error,"AI could not finish. Open the prompt icon to try again.")}));
+      },
+      onFinish(status) {
+        setState((current) => {
+          const conversation = current.conversations[targetId];
+          if (!conversation?.document) return current;
+          const output = conversation.document.blocks.find((block)=>block.id===outputBlockId);
+          const parts = output?.content ? splitDocumentMarkdown(output.content) : [];
+          const completedBlocks = output && parts.length > 1 ? parts.map((content,index)=>({...output,id:index ? `${outputBlockId}:part:${index}` : outputBlockId,content})) : output ? [output] : [];
+          return {...current,conversations:{...current.conversations,[targetId]:{...conversation,document:{...conversation.document,
+            blocks:completedBlocks.length ? conversation.document.blocks.flatMap((block)=>block.id===outputBlockId?completedBlocks:[block]):conversation.document.blocks,
+            generations:conversation.document.generations.map((item)=>item.id===generationId?{...item,status,...(completedBlocks.length ? {blockIds:completedBlocks.map((block)=>block.id)} : {})}:item),
+          }}}};
+        });
+        void onRefreshBilling();
+      },
+    });
+  }
+
+  function handleAcceptDocumentVersion(conversationId: string, generationId: string) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation || chatExecutions.has(conversationId)) return current;
+      const updated = acceptDocumentVersion(conversation, generationId);
+      if (updated === conversation) return current;
+      const next = replaceDocumentConversation(current, updated);
+      currentStateRef.current = next;
+      return next;
+    });
+  }
+
+  function handleUndoDocumentInsertion(conversationId: string, generationId: string) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation || chatExecutions.has(conversationId)) return current;
+      const updated = undoDocumentInsertion(conversation, generationId);
+      if (updated === conversation) return current;
+      const next = replaceDocumentConversation(current, updated);
+      currentStateRef.current = next;
+      return next;
+    });
   }
 
   function saveExecutionDetails(conversationId: string, messageId: string, execution: AIExecutionRecord) {
@@ -1939,6 +2126,7 @@ export default function WorkspaceApp({
     }
 
     const range = selection.getRangeAt(0);
+    if ((range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement)?.closest(".rich-document-editor")) return;
     const startBubble = getSelectionSourceElement(range.startContainer);
     const endBubble = getSelectionSourceElement(range.endContainer);
 
@@ -2130,6 +2318,12 @@ export default function WorkspaceApp({
       return;
     }
 
+    if (draft.sourceBlockId) {
+      handleDocumentSubmit(draft.conversationId, {blockId:draft.sourceBlockId,from:draft.startOffset,to:draft.endOffset,quote:draft.quote,sourceContent:draft.sourceContent,
+        prompt:promptOverride ?? draft.prompt,destination:selectionResponseDestination,replaceSelection:selectionReplaceText});
+      return;
+    }
+
     if (hasOverlappingAnchor(state.conversations, draft)) {
       window.alert(
         "That highlight overlaps an existing branch. Try a different phrase for now.",
@@ -2208,6 +2402,7 @@ export default function WorkspaceApp({
     quote?: string | null;
     sourceMessageId: string | null;
     sourceStandaloneNoteId?: string;
+    sourceBlockId?: string;
     startOffset?: number | null;
   }) {
     const content = args.kind === "side-chat" ? args.content : args.content.trim();
@@ -2218,6 +2413,7 @@ export default function WorkspaceApp({
       content,
       kind: args.kind ?? "comment",
       sourceMessageId: args.sourceMessageId,
+      ...(args.sourceBlockId ? {sourceBlockId: args.sourceBlockId} : {}),
       startOffset: args.startOffset ?? null,
       endOffset: args.endOffset ?? null,
       quote: args.quote ?? null,
@@ -2241,7 +2437,8 @@ export default function WorkspaceApp({
           ...current.conversations,
           [conversation.id]: {
             ...conversation,
-            messages: sourceNote
+            document: args.sourceBlockId ? getEditableDocument(conversation) : conversation.document,
+            messages: args.sourceBlockId && !conversation.messages.some((message)=>message.id === args.sourceMessageId) ? [...conversation.messages, {id:args.sourceMessageId!,role:"user",content:getEditableDocument(conversation).blocks.find((block)=>block.id===args.sourceBlockId)?.content || args.quote || content,createdAt:now}] : sourceNote
               ? upsertStandaloneNoteContextMessage(
                   conversation.messages,
                   sourceNote,
@@ -2269,6 +2466,7 @@ export default function WorkspaceApp({
       endOffset: selectionDraft.endOffset,
       quote: selectionDraft.quote,
       sourceStandaloneNoteId: selectionDraft.sourceNoteId,
+      sourceBlockId: selectionDraft.sourceBlockId,
     });
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
@@ -2357,10 +2555,11 @@ export default function WorkspaceApp({
   }
 
   function handleUseNote(conversationId: string, content: string) {
-    setDrafts((current) => ({
-      ...current,
-      [conversationId]: `${current[conversationId]?.trim() ? `${current[conversationId].trim()}\n\n` : ""}[From my margin note]\n${content}`,
-    }));
+    const conversation=currentStateRef.current.conversations[conversationId];
+    if(!conversation)return;
+    const now=new Date().toISOString();
+    const document=getEditableDocument(conversation);
+    handleDocumentChange(conversationId,{...document,blocks:[...document.blocks,{id:createId("block"),kind:"markdown",content,createdAt:now,updatedAt:now}]});
   }
 
   function handleCreateMainConversation() {
@@ -2372,6 +2571,7 @@ export default function WorkspaceApp({
       modelId: state.defaultModelId,
       serviceId: state.defaultServiceId,
     });
+    mainConversation.title = "Untitled document";
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
@@ -2400,6 +2600,55 @@ export default function WorkspaceApp({
           : current,
       );
     }
+  }
+
+  function handleSavePublicTopic(topic: PublicTopic) {
+    const existing = findSavedPublicTopic(state.conversations, topic);
+    setState((current) => savePublicTopic(current, topic).state);
+    mapUndoRef.current = null;
+    setMapEditMessage(existing ? `${existing.title} is already in your map.` : `${topic.label} added to your map. Keep exploring or choose “Show in my map”.`);
+  }
+
+  function handleCreateMapNote(args: { linkedTo?: string; url?: string }) {
+    const id = createId("note-conversation");
+    const createdAt = new Date().toISOString();
+    const noteId = createId("note");
+    setState((current) => createMapNote(current, { ...args, id, noteId, createdAt }));
+    setGraphFocusRequest({ conversationId: id, requestId: ++graphFocusRequestCounterRef.current, openReader: true });
+  }
+
+  function handleSetMapConnection(source: string, target: string, connected: boolean) {
+    const now = new Date().toISOString();
+    if (setPersonalMapConnection(state, source, target, connected, now) === state) return;
+    setState((current) => setPersonalMapConnection(current, source, target, connected, now));
+    mapUndoRef.current = (current) => setPersonalMapConnection(current, source, target, !connected, new Date().toISOString());
+    setMapEditMessage(connected ? "Connection added to your map." : "Connection removed. Both notes are still in your workspace.");
+  }
+
+  function handleAddMapChildNote(parentId: string) {
+    if (!state.conversations[parentId]) return;
+    const id = createId("note-conversation");
+    const noteId = createId("note");
+    const createdAt = new Date().toISOString();
+    setState((current) => addMapChildNote(current, { parentId, id, noteId, createdAt }));
+    setGraphFocusRequest({ conversationId: id, requestId: ++graphFocusRequestCounterRef.current, openReader: true });
+  }
+
+  function handleRemoveMapNote(id: string) {
+    const removed = getRemovableMapNote(state, id);
+    if (!removed) return;
+    const replacement = createMainConversation({ id: createId("conversation"), modelId: state.defaultModelId, serviceId: state.defaultServiceId });
+    setState((current) => removeMapNote(current, id, replacement));
+    mapUndoRef.current = (current) => restoreMapNote(current, removed);
+    setMapEditMessage(`${removed.conversation.title} removed from your workspace.`);
+  }
+
+  function handleUndoMapEdit() {
+    const undo = mapUndoRef.current;
+    if (!undo) return;
+    setState(undo);
+    mapUndoRef.current = null;
+    setMapEditMessage("Restored your last map edit.");
   }
 
   function handleCreateStandaloneNote() {
@@ -2631,9 +2880,8 @@ export default function WorkspaceApp({
       return;
     }
 
-    setActiveOutlineItemId((current) =>
-      current === outlineItemId ? current : outlineItemId,
-    );
+    const visibleId = currentChatOutline.find((item) => item.id === outlineItemId || item.memberIds?.includes(outlineItemId))?.id;
+    if (visibleId) setActiveOutlineItemId((current) => current === visibleId ? current : visibleId);
   }
 
   function handlePinThread(conversationId: string) {
@@ -2792,7 +3040,7 @@ export default function WorkspaceApp({
 
       if (
         !conversation ||
-        conversation.parentId !== null ||
+        (conversation.parentId !== null && conversation.kind !== "note") ||
         conversation.title === trimmedTitle
       ) {
         return current;
@@ -3015,99 +3263,27 @@ export default function WorkspaceApp({
   } as CSSProperties;
 
   function renderConversationChatPanel(conversation: Conversation) {
-    if (conversation.kind === "note") {
-      return (
-        <StandaloneNotePanel
-          conversation={conversation}
-          isActive={conversation.id === activeConversation.id}
-          onActivate={() => handleSelectConversation(conversation.id)}
-          onRename={handleRenameThread}
-          onUpdate={handleUpdateStandaloneNote}
-          registerPanelRef={(conversationId, element) => {
-            panelRefs.current[conversationId] = element;
-          }}
-        />
-      );
-    }
-
-    return (
-      <ChatPanel
-        aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
-        groupControl={<ConversationGroupSelect className="is-composer-group" conversationId={conversation.id} groups={state.groups} onAssign={handleAssignConversationGroup} />}
-        anchorsByMessageId={getAnchorsByMessageId(
-          state.conversations,
-          conversation.id,
-        )}
-        conversation={conversation}
-        draft={drafts[conversation.id] ?? ""}
-        initialScrollTop={panelScrollPositionsRef.current[conversation.id]}
-        isActive={conversation.id === activeConversation.id}
-        isSubmitting={Boolean(pendingConversationIds[conversation.id])}
-        key={conversation.id}
-        onActivate={() => handleSelectConversation(conversation.id)}
-        onAddSideChat={
-          conversation.id === activeConversation.id
-            ? handleAddSideChat
-            : undefined
-        }
-        onCreateNote={handleCreateNote}
-        onDeleteNote={handleDeleteNote}
-        onBranchFromMessage={handleBranchFromMessage}
-        onDeleteDocument={(documentId) => handleRemoveDocument(conversation.id, documentId)}
-        onDeleteDocumentEverywhere={handleDeleteDocument}
-        onDraftChange={(value) => handleDraftChange(conversation.id, value)}
-        onModelChange={handleModelChange}
-        onOpenBranch={handleSelectConversation}
-        onOpenNote={(noteId) => setNoteOpenRequest((current) => ({ noteId, sequence: (current?.sequence ?? 0) + 1 }))}
-        openNoteRequest={noteOpenRequest}
-        onScrollPositionChange={(conversationId, scrollTop) => {
-          panelScrollPositionsRef.current[conversationId] = scrollTop;
-        }}
-        onStopStreaming={stopChatStream}
-        onStopTypewriter={handleStopTypewriter}
-        onSubmit={handleSubmit}
-        onResubmitPrompt={handleResubmitPrompt}
-        onUploadDocuments={handleUploadDocuments}
-        onTypewriterComplete={handleTypewriterComplete}
-        onTypewriterProgress={handleTypewriterProgress}
-        onUpdateNote={handleUpdateNote}
-        onUseNote={handleUseNote}
-        onVisibleOutlineChange={
-          conversation.id === activeConversation.id
-            ? handleVisibleOutlineChange
-            : undefined
-        }
-        recentModelSelections={recentModelSelections}
-        documentUploadState={
-          documentUploadByConversationId[conversation.id] ?? {
-            error: null,
-            uploading: false,
-          }
-        }
-        registerAnchorRef={(branchConversationId, element) => {
-          anchorRefs.current[branchConversationId] = element;
-        }}
-        registerBranchOriginRef={(conversationId, element) => {
-          branchOriginRefs.current[conversationId] = element;
-        }}
-        registerComposerSurfaceRef={(conversationId, element) => {
-          composerSurfaceRefs.current[conversationId] = element;
-        }}
-        registerPanelRef={(conversationId, element) => {
-          panelRefs.current[conversationId] = element;
-        }}
-        selectionPreview={
-          selectionDraft?.conversationId === conversation.id
-            ? selectionDraft
-            : null
-        }
-        showBranchMargin={false}
-        showMarginNotes={false}
-        theme={theme}
-        typingMessageIds={typingMessageIds}
-        typingProgressByMessageId={typingProgressByMessageIdRef.current}
-      />
-    );
+    return <DocumentPanel key={conversation.id} conversation={conversation}
+      isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
+      aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
+      groupControl={<ConversationGroupSelect className="is-composer-group" conversationId={conversation.id} groups={state.groups} onAssign={handleAssignConversationGroup} />}
+      recentModelSelections={recentModelSelections} theme={theme} anchors={Object.values(getAnchorsByMessageId(state.conversations, conversation.id)).flat()}
+      error={documentErrors[conversation.id] ?? documentUploadByConversationId[conversation.id]?.error ?? undefined}
+      onChange={(document) => handleDocumentChange(conversation.id, document)}
+      onRename={(title) => handleRenameThread(conversation.id, title)}
+      onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
+      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionResponseDestination("inline"); setSelectionReplaceText(false); }}
+      onVisibleOutlineChange={handleVisibleOutlineChange}
+      onClearSelection={() => setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current)}
+      onOpenBranch={handleSelectConversation} onOpenNote={(noteId) => setNoteOpenRequest((current) => ({noteId, sequence:(current?.sequence ?? 0)+1}))}
+      onModelChange={(serviceId,modelId) => handleModelChange(conversation.id,serviceId,modelId)}
+      onUpload={(files) => {void handleUploadDocuments(conversation.id,files);}}
+      onRemoveAttachment={(id) => handleRemoveDocument(conversation.id,id)} uploading={documentUploadByConversationId[conversation.id]?.uploading}
+      onAcceptVersion={(id) => handleAcceptDocumentVersion(conversation.id,id)} onUndoInsertion={(id) => handleUndoDocumentInsertion(conversation.id,id)}
+      registerPanelRef={(element) => {panelRefs.current[conversation.id]=element;}}
+      registerAnchorRef={(id,element) => {anchorRefs.current[id]=element;}}
+      registerBranchOriginRef={(element) => {branchOriginRefs.current[conversation.id]=element;}}
+    />;
   }
 
   function renderExpandedTreeConversation(
@@ -3120,12 +3296,7 @@ export default function WorkspaceApp({
     const isResizing =
       conversation.id === resizingChatPanelConversationId &&
       isResizingChatPanel;
-    const contextLabel =
-      conversation.id === activeConversation.id
-        ? "Current chat"
-        : conversation.parentId === null
-          ? "Main chat"
-          : "Ancestor chat";
+    const contextLabel = conversation.id === activeConversation.id ? "Current document" : conversation.parentId === null ? "Main document" : "Parent document";
 
     return (
       <div
@@ -3138,9 +3309,9 @@ export default function WorkspaceApp({
         key={conversation.id}
         style={{ "--chat-panel-width": `${resizeInfo.width}px` } as CSSProperties}
       >
-        {contextLabel !== "Current chat" || (allowMinimize && conversation.parentId) ? (
+        {!contextLabel.startsWith("Current ") || (allowMinimize && conversation.parentId) ? (
           <div className="panel-context-header">
-            {contextLabel !== "Current chat" ? (
+            {!contextLabel.startsWith("Current ") ? (
               <span className="panel-context-label">{contextLabel}</span>
             ) : null}
             {allowMinimize && conversation.parentId ? (
@@ -3153,7 +3324,7 @@ export default function WorkspaceApp({
                   handleSelectConversation(conversation.parentId!);
                 }}
                 type="button"
-                title="Minimize this side chat"
+                title="Minimize this side document"
               >
                 <svg
                   aria-hidden="true"
@@ -3190,6 +3361,23 @@ export default function WorkspaceApp({
         >
           <span className="panel-resize-handle-grip" />
         </div>
+      </div>
+    );
+  }
+
+  function renderWorkspaceBrand() {
+    return (
+      <div className="workspace-session-brand">
+        <button
+          aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
+          aria-pressed={leftSidebarOpen}
+          className="workspace-menu-button"
+          onClick={handleToggleLeftSidebar}
+          type="button"
+        >
+          <SidebarPanelIcon />
+        </button>
+        <h1>Margin Chat</h1>
       </div>
     );
   }
@@ -3280,45 +3468,7 @@ export default function WorkspaceApp({
           />
         </div>
         <div className="workspace-shell">
-          <header className="workspace-session-bar">
-            <div className="workspace-session-brand">
-              <button
-                aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
-                aria-pressed={leftSidebarOpen}
-                className="workspace-menu-button"
-                onClick={handleToggleLeftSidebar}
-                type="button"
-              >
-                <MenuIcon />
-              </button>
-              <h1>Margin Chat</h1>
-            </div>
 
-            {!isTileView && !isGraphView
-              ? renderChatTreeNavigation()
-              : null}
-
-            <div className="workspace-session-actions">
-              {!isTileView &&
-              !isGraphView &&
-              branchAccessEnabled ? (
-                <button
-                  aria-controls="branch-navigation-map"
-                  aria-expanded={state.railOpen}
-                  className={
-                    state.railOpen
-                      ? "branch-drawer-trigger is-active"
-                      : "branch-drawer-trigger"
-                  }
-                  onClick={handleToggleRail}
-                  type="button"
-                >
-                  <span>Branches</span>
-                  <strong>{branchNavigationCount}</strong>
-                </button>
-              ) : null}
-            </div>
-          </header>
 
           {mobilePanelsOpen ? (
             <button
@@ -3341,7 +3491,11 @@ export default function WorkspaceApp({
 
           <main className="workspace">
             <ResizableSidebar collapsed={!leftSidebarOpen} mobile={isMobileViewport} onResizingChange={setIsResizingSidebar}>
+            {!isMobileViewport && renderWorkspaceBrand()}
             <ThreadSidebar
+              mapExplorerRef={setGraphExplorerContainer}
+              mapExplorerActive={mapSidebarSection === "explore"}
+              onSelectSidebarSection={setMapSidebarSection}
               activeOutlineItemId={activeOutlineItemId}
               activeThreadId={activeRootConversation.id}
               collapsed={!leftSidebarOpen}
@@ -3355,6 +3509,7 @@ export default function WorkspaceApp({
               onNewChat={handleCreateMainConversation}
               onNewNote={handleCreateStandaloneNote}
               onOpenInbox={() => setCaptureInboxOpen(true)}
+              onImportChatHistory={() => setHistoryImportOpen(true)}
               onOpenProfile={() => {
                 setProfileSaveError(null);
                 setProfileModalOpen(true);
@@ -3379,17 +3534,38 @@ export default function WorkspaceApp({
             />
             </ResizableSidebar>
 
-            {!isTileView && !isGraphView ? (
-              <BranchRail
-                activeConversationId={activeConversation.id}
-                conversations={state.conversations}
-                onClose={handleCloseRail}
-                onSelectConversation={(conversationId) => handleSelectConversation(conversationId, { preserveRail: !isMobileViewport })}
-                open={state.railOpen}
-                registerTabRef={(conversationId, element) => { tabRefs.current[conversationId] = element; }}
-                rootId={activeRootConversation.id}
-              />
-            ) : null}
+            <div className="workspace-main-pane">
+              {!isGraphView && (!isTileView || !leftSidebarOpen || isMobileViewport) && (
+                <header className="workspace-session-bar workspace-content-toolbar">
+                  {(!leftSidebarOpen || isMobileViewport) && renderWorkspaceBrand()}
+
+                  {!isTileView && !isGraphView
+                    ? renderChatTreeNavigation()
+                    : null}
+
+                  <div className="workspace-session-actions">
+                    {!isTileView &&
+                    !isGraphView &&
+                    branchAccessEnabled ? (
+                      <button
+                        aria-controls="branch-navigation-map"
+                        aria-expanded={state.railOpen}
+                        className={
+                          state.railOpen
+                            ? "branch-drawer-trigger is-active"
+                            : "branch-drawer-trigger"
+                        }
+                        onClick={handleToggleRail}
+                        type="button"
+                      >
+                        <span>Branches</span>
+                        <strong>{branchNavigationCount}</strong>
+                      </button>
+                    ) : null}
+                  </div>
+                </header>
+              )}
+              <div className="workspace-content">
 
             <section
               className={
@@ -3400,6 +3576,11 @@ export default function WorkspaceApp({
                     : "canvas-section"
               }
             >
+              {Object.values(state.conversations).every((chat) => !chat.messages.length && !chat.notes?.length && !chat.documents?.length) &&
+                <aside className="history-import-welcome">
+                  <div><strong>Start with your conversations</strong><p>Bring chats from ChatGPT and pick up where you left off.</p></div>
+                  <button type="button" className="thread-dialog-button" onClick={() => setHistoryImportOpen(true)}>Bring your chat history</button>
+                </aside>}
               <JevRelatedItems status={jev.status} related={jev.related} warning={jev.warning} conversations={state.conversations} currentId={activeConversation.id} onSelect={handleRevealConversation} />
               {isMobileViewport && !isTileView && !isGraphView ? (
                 <div className="workspace-mobile-shell">
@@ -3487,7 +3668,28 @@ export default function WorkspaceApp({
                   threads={threadSummaries}
                 />
               ) : isGraphView ? (
-                <ConversationGraphView
+                <KnowledgeGraphWorkspace
+                  onToggleSidebar={handleToggleLeftSidebar}
+                  sidebarOpen={leftSidebarOpen}
+                  onAddChildNote={handleAddMapChildNote}
+                  onExpandTopicWithAI={(id) => { void topicExpansion.expand(id); }}
+                  onCancelTopicExpansion={topicExpansion.cancel}
+                  expandingTopicId={topicExpansion.pendingId}
+                  topicExpansionProgress={topicExpansion.progress}
+                  topicExpansionError={topicExpansion.error}
+                  onDismissTopicExpansionError={topicExpansion.dismissError}
+                  explorerContainer={graphExplorerContainer}
+                  onOpenExplorer={() => { setMapSidebarSection("explore"); setLeftSidebarOpen(true); }}
+                  onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
+                  onSaveUrlMapNode={(graph, nodeId) => setState((current) => saveUrlMapNode(current, graph, nodeId))}
+                  urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
+                  onSavePublicTopic={handleSavePublicTopic}
+                  onCreateMapNote={handleCreateMapNote}
+                  onSetMapConnection={handleSetMapConnection}
+                  onRemoveMapNote={handleRemoveMapNote}
+                  onUndoMapEdit={handleUndoMapEdit}
+                  mapEditMessage={mapEditMessage}
+                  canUndoMapEdit={Boolean(mapUndoRef.current)}
                   key={`graph-${user.id}`}
                   workspaceKey={user.id}
                   threads={threadSummaries}
@@ -3499,6 +3701,7 @@ export default function WorkspaceApp({
                   groups={state.groups}
                   relatedItems={jev.related}
                   relatedStatus={jev.status}
+                  jev={{ userId: user.id, enabled: jevEnabled, ready: vault.ready }}
                   onActivateConversation={handleSelectConversation}
                   onAssignGroup={handleAssignConversationGroup}
                   onCreateChildConversation={handleAddGraphChildChat}
@@ -3651,6 +3854,19 @@ export default function WorkspaceApp({
                 </div>
               )}
             </section>
+            {!isTileView && !isGraphView ? (
+              <BranchRail
+                activeConversationId={activeConversation.id}
+                conversations={state.conversations}
+                onClose={handleCloseRail}
+                onSelectConversation={(conversationId) => handleSelectConversation(conversationId, { preserveRail: !isMobileViewport })}
+                open={state.railOpen}
+                registerTabRef={(conversationId, element) => { tabRefs.current[conversationId] = element; }}
+                rootId={activeRootConversation.id}
+              />
+            ) : null}
+              </div>
+            </div>
 
           {!isTileView && !isGraphView && connections.length ? (
             <ConnectorOverlay
@@ -3677,7 +3893,7 @@ export default function WorkspaceApp({
                     ? "New margin note"
                     : selectionDraft.sourceKind === "standalone-note"
                       ? "Selected note text"
-                      : "New branch"}
+                      : "Ask AI about this passage"}
                 </p>
                 <button
                   aria-label={
@@ -3727,9 +3943,13 @@ export default function WorkspaceApp({
                 >
                   {selectionDraft.sourceKind === "standalone-note"
                     ? "Side chat"
-                    : "Start branch"}
+                    : "Ask AI"}
                 </button>
               </div>
+              {selectionIntent === "branch" && selectionDraft.sourceBlockId ? <div className="document-ai-options">
+                <div role="group" aria-label="Response destination"><button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={()=>setSelectionResponseDestination("inline")}>In this document</button><button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={()=>setSelectionResponseDestination("side")}>Side document ↗</button></div>
+                {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event)=>setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
+              </div> : null}
               {selectionIntent === "note" ? (
                 <p className="selection-note-privacy">Margin note · Not sent to AI</p>
               ) : null}
@@ -3800,6 +4020,12 @@ export default function WorkspaceApp({
             }}
           /> : null}
 
+          {historyImportOpen && <ChatHistoryImport
+            existingIds={Object.keys(state.conversations)} cloudSyncEnabled={cloudSyncEnabled}
+            onImport={vault.importChatHistory} onUndo={vault.undoChatHistory}
+            onOpenChat={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
+            onClose={() => setHistoryImportOpen(false)}
+          />}
           <ProfileModal
             initialTab={profileInitialTab}
             billingDashboard={billingDashboard}

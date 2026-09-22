@@ -68,7 +68,10 @@ try {
   await act(async () => { setOpen(true); });
   assert.equal(browser.document.activeElement, input());
   assert.equal(dialog().querySelector("h2")?.textContent, "Search & explore");
-  assert(dialog().querySelector('[aria-label="Temporary search filters"]'), "Desktop filters should be discoverable without opening a menu.");
+  assert.equal(dialog().querySelector('[aria-label="Temporary search filters"]'), null, "Filters start minimized on desktop too.");
+  assert.equal(dialog().querySelector(".search-filter-toggle")!.getAttribute("aria-expanded"), "false");
+  await click(dialog().querySelector(".search-filter-toggle")!);
+  assert(dialog().querySelector('[aria-label="Temporary search filters"]'), "The Filters button reveals the filter controls.");
   assert.equal(cards().length, 12);
   assert(dialog().querySelector(".search-pagination")!.textContent?.includes("of 47"));
   assert(dialog().querySelectorAll(".search-direction-card").length <= 3);
@@ -117,7 +120,7 @@ try {
   checks.push("readable exact passage previews open canonical sources and preserve the return location");
 
   await click(dialog().querySelector(".search-context-toggle input")!);
-  assert(dialog().querySelector(".search-result-heading")!.textContent?.includes("Current chat given more weight"));
+  assert(dialog().querySelector(".search-result-heading")!.textContent?.includes("Current document given more weight"));
   assert(dialog().querySelector(".search-pagination")!.textContent?.includes("of 47"), "Context boosts must not exclude other chats.");
   await click(facetButton("Private notes"));
   assert.equal(cards().length, 1);
@@ -182,6 +185,7 @@ try {
   assert.equal(assistanceRequests[0].current, undefined, "Current-chat context is shared only after explicitly selecting it.");
   assert(assistanceRequests[0].items.every((item: any) => item.sourceKind !== "annotation" && !item.content.includes("private annotation")));
   assert(dialog().querySelector(".search-jev-status")!.textContent?.includes("Jev reviewed 20 passages"));
+  await click(dialog().querySelector(".search-filter-toggle")!);
   assert(dialog().querySelector(".search-facet-suggestion"));
   assert.equal(dialog().querySelectorAll('.search-facet-chip[aria-pressed="true"]').length, 0, "Jev suggestions must never apply filters automatically.");
   const reviewedIds = new Set(assistanceRequests[0].items.map((item: any) => item.id));

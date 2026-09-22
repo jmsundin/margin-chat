@@ -1,5 +1,6 @@
 import type { Conversation } from "../types";
 import { excerpt } from "../lib/tree";
+import { getStandaloneNote } from "../lib/standaloneNotes";
 
 interface ConversationTreeNodeProps {
   conversation: Conversation;
@@ -37,6 +38,8 @@ export default function ConversationTreeNode({
   registerNodeRef,
 }: ConversationTreeNodeProps) {
   const sourceQuote = conversation.branchAnchor?.quote;
+  const isNote = conversation.kind === "note";
+  const noteContent = getStandaloneNote(conversation)?.content.trim();
   const messageLabel = `${conversation.messages.length} message${
     conversation.messages.length === 1 ? "" : "s"
   }`;
@@ -59,7 +62,7 @@ export default function ConversationTreeNode({
       <span className="conversation-tree-node-head">
         <span className="conversation-tree-node-kicker">
           <BranchIcon />
-          Margin Chat
+          {isNote ? "Child note" : "Side document"}
         </span>
         <span aria-hidden="true" className="conversation-tree-node-expand">
           Expand ↗
@@ -67,10 +70,10 @@ export default function ConversationTreeNode({
       </span>
       <strong>{conversation.title}</strong>
       <span className="conversation-tree-node-origin">
-        {sourceQuote ? `“${excerpt(sourceQuote, 88)}”` : "Started from this chat"}
+        {sourceQuote ? `“${excerpt(sourceQuote, 88)}”` : isNote ? noteContent ? excerpt(noteContent, 88) : "A note under this topic" : "Started from this document"}
       </span>
       <span className="conversation-tree-node-meta">
-        <span>{messageLabel}</span>
+        <span>{isNote ? "Private note" : messageLabel}</span>
         <span aria-hidden="true">·</span>
         <span>{childLabel}</span>
       </span>

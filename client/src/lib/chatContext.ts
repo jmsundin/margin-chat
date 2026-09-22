@@ -9,6 +9,7 @@ import {
   getStandaloneNoteContextMessageId,
 } from "./standaloneNotes";
 import { getConversationPath } from "./tree";
+import { getCurrentDocumentText } from "./documentSources";
 
 export interface ConversationContext {
   ancestorContext: Array<{
@@ -48,7 +49,9 @@ export function getConversationRequestPayload(
     return {
       branchAnchor: ancestor.branchAnchor,
       id: ancestor.id,
-      messages: standaloneNote?.content.trim()
+      messages: ancestor.document
+        ? [{ content: getCurrentDocumentText(ancestor), createdAt: ancestor.updatedAt, id: `document-context-${ancestor.id}`, role: "user" as const }]
+        : standaloneNote?.content.trim()
         ? [
             {
               content: standaloneNote.content,

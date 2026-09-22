@@ -72,7 +72,7 @@ describe("thread sidebar pinning", () => {
   test("moves pinned threads into a dedicated group without duplicating them", () => {
     const markup = renderSidebar([thread("pinned", "Pinned conversation")]);
 
-    expect(markup).toContain('aria-label="Pinned chats and notes"');
+    expect(markup).toContain('aria-label="Pinned documents"');
     expect(markup).toContain('data-thread-drop-target="pinned"');
     expect(markup).toContain("Ungrouped");
     expect(markup.indexOf("Pinned conversation")).toBeLessThan(
@@ -87,21 +87,21 @@ describe("thread sidebar pinning", () => {
     const markup = renderSidebar([]);
 
     expect(markup).not.toContain("Drop here to pin");
-    expect(markup).not.toContain('aria-label="Pinned chats and notes"');
+    expect(markup).not.toContain('aria-label="Pinned documents"');
     expect(markup).toContain("Ungrouped");
 
     const emptyMarkup = renderSidebar([], new Set(), []);
-    expect(emptyMarkup).not.toContain('aria-label="Ungrouped chats and notes"');
+    expect(emptyMarkup).not.toContain('aria-label="Ungrouped documents"');
     expect(emptyMarkup).not.toContain("Drop here to ungroup");
   });
 
   test("labels workspace views and search while keeping secondary actions tucked away", () => {
     const markup = renderSidebar([]);
 
-    expect(markup).toContain("<span>Chat</span>");
+    expect(markup).toContain("<span>Document</span>");
     expect(markup).toContain("<span>Tiles</span>");
     expect(markup).toContain("<span>Map</span>");
-    expect(markup).toContain("<span>Search chats</span>");
+    expect(markup).toContain("<span>Search documents</span>");
     expect(markup).toContain('aria-label="More workspace actions"');
     expect(markup).not.toContain('aria-label="New group"');
     expect(markup).not.toContain("<span>New note</span>");
@@ -114,7 +114,7 @@ describe("thread sidebar pinning", () => {
     expect(markup).toContain("Streaming");
   });
 
-  test("shows standalone notes in the chat list with note-specific controls", () => {
+  test("shows legacy notes with the same document controls and outline", () => {
     const noteThread = {
       ...thread("note", "Research scratchpad"),
       kind: "note" as const,
@@ -155,8 +155,9 @@ describe("thread sidebar pinning", () => {
 
     expect(markup).toContain('aria-label="More workspace actions"');
     expect(markup).toContain("Research scratchpad");
-    expect(markup).toContain("thread-item is-active is-note");
-    expect(markup).not.toContain("Expand outline for Research scratchpad");
+    expect(markup).toContain("thread-item is-active");
+    expect(markup).not.toContain("is-note");
+    expect(markup).toContain("Expand outline for Research scratchpad");
   });
 
   test("orders chats and notes from most recently worked with to oldest", () => {

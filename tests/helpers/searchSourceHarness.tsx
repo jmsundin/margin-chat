@@ -45,7 +45,12 @@ chat.notes = [
   { ...standalone.notes![0], id: "margin", kind: "comment", content: "Inserted. A **private** passage." },
   { ...standalone.notes![0], id: "side", kind: "side-chat", content: "The side note passage." },
 ];
-const conversations = { chat, standalone };
+const editable = createMainConversation({ id: "editable" });
+const split = createMainConversation({ id: "split" });
+split.messages = [{ id: "split-response", role: "assistant", content: "Intro.\n\nA later paragraph.\n\nA final paragraph.", createdAt: split.createdAt }];
+const blockId = 'authored"]';
+editable.document = { schemaVersion: 1, blocks: [{ id: blockId, kind: "markdown", content: "A **current** document passage.", createdAt: editable.createdAt, updatedAt: editable.updatedAt }], prompts: [], generations: [] };
+const conversations = { chat, standalone, editable, split };
 const mount = browser.document.createElement("div");
 const panels = browser.document.createElement("div");
 browser.document.body.append(mount, panels);
@@ -55,6 +60,16 @@ row.dataset.messageRowId = chat.messages[0].id;
 row.tabIndex = -1;
 row.innerHTML = '<div class="message-content"><p>A <strong>focused</strong> response.</p></div>';
 panels.querySelector("#chat .panel-body")!.append(row);
+const editablePanel = browser.document.createElement("article");
+editablePanel.id = "editable";
+editablePanel.innerHTML = '<div class="panel-body"><section tabindex="-1"><div class="tiptap"><p>A <strong>current</strong> document passage.</p></div></section></div>';
+const editableTarget = editablePanel.querySelector("section")!;
+(editableTarget as any).dataset.documentBlockId = blockId;
+panels.append(editablePanel);
+const splitPanel = browser.document.createElement("article");
+splitPanel.id = "split";
+splitPanel.innerHTML = '<div class="panel-body"><section data-document-block-id="first" data-message-id="split-response"><div class="tiptap"><p>Intro.</p></div></section><section data-document-block-id="second" data-message-id="split-response"><div class="tiptap"><p>A later paragraph.</p></div></section><section data-document-block-id="third" data-message-id="split-response"><div class="tiptap"><p>A final paragraph.</p></div></section></div>';
+panels.append(splitPanel);
 const standaloneTarget = panels.querySelector("#standalone .panel-body")!;
 const marginTarget = panels.querySelector("[data-margin-note-tree-node]")!;
 const sideTarget = panels.querySelector(".side-note-panel")!;
@@ -75,7 +90,7 @@ async function request(source: SearchEvidenceRef | null) {
   await act(async () => root.render(createElement(SearchSourceFocus, {
     request: source ? { source, sequence: ++sequence } : null,
     conversations,
-    getPanelElement: (id: string) => panels.querySelector(id === "chat" ? "#chat" : id === "standalone" ? "#standalone" : "[data-missing]") as unknown as HTMLElement | null,
+    getPanelElement: (id: string) => panels.querySelector(id === "chat" ? "#chat" : id === "standalone" ? "#standalone" : id === "editable" ? "#editable" : id === "split" ? "#split" : "[data-missing]") as unknown as HTMLElement | null,
   })));
 }
 async function flushFrame() {
@@ -130,6 +145,15 @@ try {
   assert.equal(frames.size, 0, "Canceling a request clears deferred navigation");
   await flushFrame();
   assert.equal(scrolled.length, scrollCount);
+  await request({ conversationId: "editable", sourceKind: "document", sourceBlockId: blockId, quote: "A **current** document passage.", startOffset: 0, endOffset: 31 });
+  await flushFrame();
+  assert(editableTarget.classList.contains("is-search-source"), "Document blocks are matched by literal stable identity");
+  assert.equal(highlights.get("margin-search-source")?.ranges[0].toString(), "A current document passage.", "Rich document source navigation highlights current rendered content");
+  const splitQuote = "A later paragraph.\n\nA final paragraph.";
+  await request({ conversationId: "split", sourceKind: "message", messageId: "split-response", quote: splitQuote, startOffset: 8, endOffset: 8 + splitQuote.length });
+  await flushFrame();
+  assert.equal(highlights.get("margin-search-source")?.ranges[0].toString(), "A later paragraph.A final paragraph.", "A legacy passage can span two projected paragraph blocks");
+  assert(scrolled.at(-1) === splitPanel.querySelector('[data-document-block-id="second"] p'), "Cross-block source navigation reaches the quoted paragraph rather than the first block");
   await act(async () => root.unmount());
   assert.equal(highlights.size, 0);
   console.log("Search source focus checks passed.");

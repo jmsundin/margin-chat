@@ -10,6 +10,10 @@ import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
 import { matchApiRoute } from "./registry.mjs";
+import { createUrlMapService } from "../urlMap/index.mjs";
+import { handleUrlMapRequest } from "./urlMap.mjs";
+import { createTopicExpansionService } from "../topicExpansion/index.mjs";
+import { handleTopicExpansionRequest } from "./topicExpansion.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
@@ -41,10 +45,14 @@ export function createApiHandler({
   runtimeConfig,
   vaultService,
   semanticService,
+  urlMapService,
+  topicExpansionService,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
   const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
+  const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
+  const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
 
   return async function handleRequest(request, response) {
     try {
@@ -217,8 +225,18 @@ export function createApiHandler({
         return;
       }
 
-      if (["documentUpload", "documentDelete", "chat", "chatTitle", "jevStatus", "jevWorkspace", "jevSearch"].includes(route?.id)) {
+      if (["documentUpload", "documentDelete", "chat", "chatTitle", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch"].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
+      }
+
+      if (route?.id === "urlMap") {
+        await handleUrlMapRequest({ request, response, user: authContext.user, mapUrl });
+        return;
+      }
+
+      if (route?.id === "topicExpansion") {
+        await handleTopicExpansionRequest({ request, response, user: authContext.user, expandTopic });
+        return;
       }
 
       if (route?.id === "jevStatus") {

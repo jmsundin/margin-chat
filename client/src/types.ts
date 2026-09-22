@@ -10,6 +10,7 @@ export type {
   Message,
   ConversationDocument,
   ConversationNote,
+  PublicTopicSource,
   BranchAnchor,
   Conversation,
   GraphNodeLayout,
@@ -138,6 +139,8 @@ export interface SelectionDraft {
   };
   sourceKind?: "message" | "standalone-note";
   sourceNoteId?: string;
+  sourceBlockId?: string;
+  sourceContent?: string;
 }
 
 export interface ConnectionLine {

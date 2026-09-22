@@ -148,7 +148,7 @@ export function getConversationTreeLanes(
       .filter((child): child is Conversation => Boolean(child))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     const marginNotes = (parentConversation.notes ?? [])
-      .filter((note) => (note.kind ?? "comment") === "comment")
+      .filter((note) => note.kind !== "standalone")
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
 
     if (!children.length && !marginNotes.length) {

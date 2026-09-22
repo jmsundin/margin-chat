@@ -114,7 +114,8 @@ const user: any = {
 const storageDirectory = await mkdtemp(join(tmpdir(), "margin-chat-hook-test-"));
 const remote = createVaultService({ storage: createFileVaultStorage(storageDirectory), env: {} });
 const emptySettingsScenario = process.argv.includes("--empty-settings");
-if (!emptySettingsScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+const historyScenario = process.argv.includes("--chat-history");
+if (!emptySettingsScenario && !historyScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -161,6 +162,57 @@ function type(content: string) {
       { id: "typed-message", role: "user", createdAt: "2026-09-13T00:00:00.000Z", content },
     ] },
   } }));
+}
+async function checkChatHistory() {
+  const { parseChatGPTHistory } = await import("../../client/src/lib/chatHistoryImport");
+  const { chatGPTFixture } = await import("./chatHistoryFixture");
+  networkReleased = true;
+  initialNetwork.resolve();
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Workspace did not become ready.");
+  await act(async () => { await current.vault.syncNow(); });
+  const preview = await parseChatGPTHistory([chatGPTFixture(), chatGPTFixture("second")]);
+  const first = preview.chats[0];
+  const second = preview.chats[1];
+  const model = current.state.defaultModelId;
+  const gate = deferred();
+  writeEntered = deferred();
+  writeGate = gate;
+  const importing = current.vault.importChatHistory([first]);
+  await writeEntered.promise;
+  await act(async () => { type("My draft while history is importing."); });
+  gate.resolve();
+  let receipt: any;
+  await act(async () => { receipt = await importing; });
+  assert.equal(receipt.conversationIds[0], first.id);
+  assert.deepEqual(current.state.conversations[first.id].messages, first.messages);
+  assert(Object.values(current.state.conversations).some((chat: any) => chat.messages.some((m: any) => m.content === "My draft while history is importing.")), "Import lost concurrent writing.");
+  assert.equal(current.state.defaultModelId, model);
+  await act(async () => { await current.vault.syncNow(); });
+  const cloud = await remote.snapshot(user.id);
+  assert(Object.keys(cloud.manifest.files).some((path) => path.includes(first.id)), "Imported chat did not reach cloud storage.");
+  await act(async () => { assert.equal((await current.vault.importChatHistory([first])).skipped, 1); });
+  await act(async () => {
+    current.setState((state: any) => ({ ...state, conversations: { ...state.conversations,
+      [first.id]: { ...state.conversations[first.id], messages: [...state.conversations[first.id].messages,
+        { id: "continued", role: "user", content: "Continue my imported conversation.", createdAt: new Date().toISOString() }] },
+    } }));
+  });
+  await act(async () => { assert.deepEqual(await current.vault.undoChatHistory(receipt), { removed: 0, kept: 1 }); });
+  let secondReceipt: any;
+  await act(async () => { secondReceipt = await current.vault.importChatHistory([second]); });
+  await act(async () => { assert.deepEqual(await current.vault.undoChatHistory(secondReceipt), { removed: 1, kept: 0 }); });
+  assert.equal(current.state.conversations[second.id], undefined);
+  await act(async () => { await current.vault.syncNow(); });
+  await act(async () => { root.unmount(); });
+  globalThis.fetch = (async () => { throw new TypeError("Offline fixture"); }) as typeof fetch;
+  current = null;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Imported history did not reopen offline.");
+  assert.equal(current.state.conversations[first.id].messages.at(-1).content, "Continue my imported conversation.");
+  assert.equal(current.state.conversations[second.id], undefined);
+  console.log(JSON.stringify({ checks: ["import preserves concurrent writing", "cloud synchronization", "duplicate prevention", "undo keeps continued chats", "undo removes unchanged chats", "offline reopening"] }));
 }
 async function checkEmptyWorkspaceSettings() {
   networkReleased = true;
@@ -415,7 +467,8 @@ async function checkPopulatedWorkspace() {
   console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
 }
 try {
-  if (emptySettingsScenario) await checkEmptyWorkspaceSettings();
+  if (historyScenario) await checkChatHistory();
+  else if (emptySettingsScenario) await checkEmptyWorkspaceSettings();
   else await checkPopulatedWorkspace();
 } finally {
   initialNetwork.resolve();

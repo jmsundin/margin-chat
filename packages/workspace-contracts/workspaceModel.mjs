@@ -1,4 +1,6 @@
 import { normalizeAISettings, normalizeAIExecution } from "./ai.mjs";
+import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./exploration.mjs";
+import { normalizeEditableDocument } from "./editableDocument.mjs";
 export const WORKSPACE_DOCUMENT_SCHEMA_VERSION = 2;
 
 // Format-level defaults for standalone Markdown imported without a manifest.
@@ -108,12 +110,15 @@ function readWorkspaceDocument(input, mode) {
   for (const [itemId, item] of Object.entries(input.items)) {
     if (!isRecord(item) || item.id !== itemId) return null;
     if (item.kind !== "chat" && item.kind !== "note") return null;
+    const editableDocument = item.document === undefined ? undefined : normalizeEditableDocument(item.document);
+    if (item.document !== undefined && !editableDocument) return null;
 
     conversations[itemId] = {
       branchAnchor: item.branchAnchor ?? null,
       childIds: [],
       createdAt: item.createdAt,
       documents: item.documents ?? [],
+      ...(editableDocument ? { document: editableDocument } : {}),
       id: item.id,
       ...(item.grouping === "manual" || item.grouping === "automatic" ? { grouping: item.grouping } : {}),
       kind: item.kind,
@@ -122,6 +127,8 @@ function readWorkspaceDocument(input, mode) {
       })),
       modelId: item.modelId,
       ...(item.ai ? { ai: normalizeAISettings(item.ai) } : {}),
+      ...(normalizePublicTopicSource(item.publicTopic) ? { publicTopic: normalizePublicTopicSource(item.publicTopic) } : {}),
+      ...(Array.isArray(item.linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(item.linkedConversationIds, item.id, input.items) } : {}),
       notes: [],
       parentId: item.parentId ?? null,
       serviceId: item.serviceId,

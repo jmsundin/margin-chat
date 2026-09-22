@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import LiveMarkdownEditor from "./LiveMarkdownEditor";
+import RichNoteEditor from "./RichNoteEditor";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { excerpt } from "../lib/tree";
 import type { ConversationNote } from "../types";
@@ -123,7 +123,7 @@ export default function MarginNoteTreeNode({
                 <div className="message-content is-markdown obsidian-note-markdown" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(note.content) }} />
             ) : <p className="margin-note-tree-empty">Keep a thought beside this passage.</p>}
           </div>
-          <p className="margin-note-tree-privacy" title="This note is private. It is only included in a prompt when you choose Use in message.">
+          <p className="margin-note-tree-privacy" title="This note stays private. Insert it into a document when you want AI to use it as context.">
             <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
             <span>Private note <span aria-hidden="true">·</span> Not sent to AI</span>
           </p>
@@ -133,7 +133,7 @@ export default function MarginNoteTreeNode({
       {expanded ? (
         <div className="margin-note-tree-editor" id={editorId}>
           <span className="margin-note-tree-editor-label">Your note</span>
-          <LiveMarkdownEditor
+          <RichNoteEditor
             ariaLabel="Edit margin note"
             autoFocus
             className="is-margin-note"
@@ -162,12 +162,12 @@ export default function MarginNoteTreeNode({
                 }}
                 type="button"
               >
-                {addedToDraft ? "Added to draft" : "Use in message"}
+                {addedToDraft ? "Inserted into document" : "Insert into document"}
               </button>
             ) : null}
             <button className="margin-note-tree-done" onClick={closeEditor} type="button">Done</button>
           </div>
-          <span className="sr-only" role="status">{addedToDraft ? "Note added to your message draft." : ""}</span>
+          <span className="sr-only" role="status">{addedToDraft ? "Note inserted into your document." : ""}</span>
           <p className="margin-note-tree-privacy">Private note <span aria-hidden="true">·</span> Not sent to AI</p>
         </div>
       ) : null}

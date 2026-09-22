@@ -1,5 +1,7 @@
 import { createAppStateFromWorkspaceMetadata, createWorkspaceDocumentMetadata, WORKSPACE_DOCUMENT_SCHEMA_VERSION, } from "./workspaceModel.mjs";
 import { normalizeAIExecution } from "./ai.mjs";
+import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./exploration.mjs";
+import { normalizeEditableDocument } from "./editableDocument.mjs";
 import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
 export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 3;
 export function createMarkdownWorkspace(state, savedAt = new Date().toISOString(), previousWorkspace) {
@@ -114,6 +116,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
         const metadata = {
             conversation: {
                 ...conversationMetadata,
+                ...(conversation.document ? { document: { ...conversation.document, blocks: [] } } : {}),
                 kind: conversation.kind === "note" ? "note" : "chat",
             },
             entityType: "conversation",
@@ -135,6 +138,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
         const title = sanitizeHeading(conversation.title);
         const contextMessages = renderMessages(conversation.messages);
         const attachments = renderAttachments(conversation.documents ?? [], path);
+        const documentBody = conversation.document ? renderEditableDocument(conversation.document) : "";
         const body = conversation.kind === "note"
             ? [
                 renderFrontmatter(conversation, "note"),
@@ -142,6 +146,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
                 `# ${title}`,
                 relationships,
                 attachments,
+                documentBody,
                 contextMessages ? `## Context messages\n\n${contextMessages}` : "",
                 "## Note",
                 primaryNote?.content ?? "",
@@ -154,6 +159,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
                 `# ${title}`,
                 relationships,
                 attachments,
+                documentBody,
                 "## Messages",
                 contextMessages,
             ]
@@ -328,6 +334,11 @@ export function parseMarkdownWorkspace(manifest, fileContents) {
                 : null;
             conversations[conversationId].parentId =
                 parentRecord?.type === "conversation" ? parentRecord.id : null;
+            const linkedIds = (parsed.linkedTargets ?? []).map((target) => resolveLinkRecord(recordByTarget, target))
+                .filter((record) => record?.type === "conversation").map((record) => record.id);
+            if (linkedIds.length || Array.isArray(conversations[conversationId].linkedConversationIds)) {
+                conversations[conversationId].linkedConversationIds = normalizeLinkedConversationIds(linkedIds, conversationId, conversations);
+            }
         }
         const notesByConversation = new Map();
         for (const [conversationId, parsed] of parsedConversations) {
@@ -422,10 +433,21 @@ function parseConversationFile(source, record, workspace) {
             content: isNote ? parseNoteBody(source) : "",
         }
         : null;
+    const { publicTopic: rawPublicTopic, linkedConversationIds, document: rawDocument, ...conversationMetadata } = metadata.conversation;
+    const documentSection = editableDocumentSection(source);
+    const document = rawDocument === undefined ? undefined : documentSection && normalizeEditableDocument({
+        ...rawDocument, blocks: parseEditableDocumentContent(documentSection.text, metadata.conversation),
+    });
+    if (rawDocument !== undefined && !document) return null;
+    const publicTopic = normalizePublicTopicSource(rawPublicTopic);
     return {
         childTargets: relationships.childTargets,
+        linkedTargets: relationships.linkedTargets,
         conversation: {
-            ...metadata.conversation,
+            ...conversationMetadata,
+            ...(document ? { document } : {}),
+            ...(publicTopic ? { publicTopic } : {}),
+            ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds } : {}),
             childIds: [],
             messages,
             notes: primaryNote ? [primaryNote] : [],
@@ -467,7 +489,7 @@ function parseMetadata(source) {
 }
 function parseRelationships(source) {
     const relationshipStart = source.indexOf("## Relationships");
-    const contentStarts = [source.indexOf("\n## Messages"), source.indexOf("\n## Context messages"), source.indexOf("\n## Note")]
+    const contentStarts = [source.indexOf("\n## Messages"), source.indexOf("\n## Context messages"), source.indexOf("\n## Note"), source.indexOf("\n<!-- margin-chat-document -->")]
         .filter((index) => index > relationshipStart);
     const relationshipEnd = contentStarts.length
         ? Math.min(...contentStarts)
@@ -478,6 +500,7 @@ function parseRelationships(source) {
     const parentMatch = /^- Parent:\s*(?:\[\[([^\]|]+)(?:\|[^\]]*)?\]\]|None)\s*$/m.exec(section);
     return {
         childTargets: getRelationshipTargets(section, "Child"),
+        linkedTargets: getRelationshipTargets(section, "Linked"),
         noteTargets: getRelationshipTargets(section, "Note"),
         parentTarget: parentMatch?.[1]?.trim() ?? null,
     };
@@ -489,8 +512,13 @@ function getRelationshipTargets(section, relationship) {
 function parseMessages(source) {
     const marker = /^<!-- margin-chat-message (.+) -->$/gm;
     const messages = [];
+    const documentSection = editableDocumentSection(source);
     let match;
     while ((match = marker.exec(source))) {
+        if (documentSection && match.index >= documentSection.start && match.index < documentSection.end) {
+            marker.lastIndex = documentSection.end;
+            continue;
+        }
         const metadata = JSON.parse(match[1]);
         let contentFrom = marker.lastIndex;
         if (source[contentFrom] === "\r")
@@ -525,6 +553,8 @@ function parseMessages(source) {
 function parseNoteBody(source) {
     const marker = /^## Note\r?\n\r?\n/gm;
     const messageRanges = messageBlocks(source).map((block) => [block.start, block.end]);
+    const documentSection = editableDocumentSection(source);
+    if (documentSection) messageRanges.push([documentSection.start, documentSection.end]);
     for (const match of source.matchAll(marker)) {
         if (!messageRanges.some(([start, end]) => match.index >= start && match.index <= end)) {
             return source.slice(match.index + match[0].length);
@@ -602,8 +632,20 @@ function preserveMarkdownEdits(raw, before, after, record) {
             const tail = result.slice(start);
             const endOffset = tail.search(/\n## (?!Relationships\b)/);
             const end = endOffset === -1 ? result.length : start + endOffset;
-            const section = result.slice(start, end).replace(/^- (?:Parent|Child|Note):.*(?:\r?\n|$)/gm, "");
+            const section = result.slice(start, end).replace(/^- (?:Parent|Child|Note|Linked):.*(?:\r?\n|$)/gm, "");
             result = result.slice(0, start) + section.replace(/^## Relationships\r?\n/, () => `## Relationships\n${newLines}\n`) + result.slice(end);
+        }
+    }
+    const beforeDocument = editableDocumentSection(before);
+    const afterDocument = editableDocumentSection(after);
+    if (beforeDocument?.text !== afterDocument?.text) {
+        const existingDocument = editableDocumentSection(result);
+        if (existingDocument) {
+            result = result.slice(0, existingDocument.start) + (afterDocument?.text ?? "") + result.slice(existingDocument.end);
+        } else if (afterDocument) {
+            const contentStart = result.search(/^## (?:Messages|Context messages|Note)\r?$/m);
+            const insertion = contentStart === -1 ? result.length : contentStart;
+            result = result.slice(0, insertion) + `${afterDocument.text}\n\n` + result.slice(insertion);
         }
     }
     const beforeMessages = messageBlocks(before);
@@ -646,7 +688,7 @@ function relationshipLines(source) {
         return "";
     const endOffset = source.slice(start).search(/\n## (?!Relationships\b)/);
     const section = source.slice(start, endOffset === -1 ? undefined : start + endOffset);
-    return section.split(/\r?\n/).filter((line) => /^- (?:Parent|Child|Note):/.test(line)).join("\n");
+    return section.split(/\r?\n/).filter((line) => /^- (?:Parent|Child|Note|Linked):/.test(line)).join("\n");
 }
 export function getAttachmentVaultPath(document) {
     if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(document.id))
@@ -670,14 +712,19 @@ function attachmentSection(source) {
     return /<!-- margin-chat-attachments -->\r?\n[\s\S]*?<!-- margin-chat-attachments-end -->/.exec(source)?.[0] ?? "";
 }
 function insertAttachmentSection(source, section) {
-    const content = source.search(/^## (?:Messages|Context messages|Note)\r?$/m);
+    const content = source.search(/^(?:## (?:Messages|Context messages|Note)|<!-- margin-chat-document -->)\r?$/m);
     return content === -1 ? `${source}\n\n${section}` : `${source.slice(0, content)}${section}\n\n${source.slice(content)}`;
 }
 function messageBlocks(source) {
     const blocks = [];
     const marker = /^<!-- margin-chat-message (.+) -->\r?$/gm;
+    const documentSection = editableDocumentSection(source);
     let match;
     while ((match = marker.exec(source))) {
+        if (documentSection && match.index >= documentSection.start && match.index < documentSection.end) {
+            marker.lastIndex = documentSection.end;
+            continue;
+        }
         const metadata = JSON.parse(match[1]);
         const endMarker = "<!-- margin-chat-message-end -->";
         const contentStart = marker.lastIndex + (source[marker.lastIndex] === "\r" ? 2 : 1);
@@ -730,6 +777,11 @@ function renderConversationRelationships(args) {
         if (child && path)
             lines.push(`- Child: ${renderWikiLink(path, child.title)}`);
     }
+    for (const linkedId of normalizeLinkedConversationIds(args.conversation.linkedConversationIds, args.conversation.id, args.conversations) ?? []) {
+        const linked = args.conversations[linkedId];
+        const path = args.conversationPathById.get(linkedId);
+        if (path) lines.push(`- Linked: ${renderWikiLink(path, linked.title)}`);
+    }
     for (const note of args.conversation.notes ?? []) {
         if (note === args.primaryNote)
             continue;
@@ -760,6 +812,7 @@ function renderMessages(messages) {
         .join("\n\n");
 }
 function renderFrontmatter(conversation, kind) {
+    const publicTopic = normalizePublicTopicSource(conversation.publicTopic);
     return [
         "---",
         `margin-chat-id: ${JSON.stringify(conversation.id)}`,
@@ -768,6 +821,14 @@ function renderFrontmatter(conversation, kind) {
         `created: ${JSON.stringify(conversation.createdAt)}`,
         `updated: ${JSON.stringify(conversation.updatedAt)}`,
         `tags: [margin-chat, ${kind}]`,
+        ...(publicTopic ? [
+            `public-topic-id: ${JSON.stringify(publicTopic.id)}`,
+            `public-topic-label: ${JSON.stringify(publicTopic.label)}`,
+            `public-topic-source: ${JSON.stringify(publicTopic.wikidataUrl)}`,
+            ...(publicTopic.wikipediaUrl ? [`public-topic-article: ${JSON.stringify(publicTopic.wikipediaUrl)}`] : []),
+            `public-topic-retrieved: ${JSON.stringify(publicTopic.retrievedAt)}`,
+            ...(publicTopic.revision ? [`public-topic-revision: ${publicTopic.revision}`] : []),
+        ] : []),
         "---",
     ].join("\n");
 }
@@ -868,4 +929,87 @@ function getLinkTargetAliases(path) {
 function resolveLinkRecord(records, target) {
     const normalized = target.replace(/^\.\//, "").replace(/\.md$/i, "");
     return records.get(normalized) ?? records.get(normalized.split("/").at(-1) ?? "");
+}
+
+/** Visible Markdown is authoritative; metadata carries settings/history, never a second body. */
+function renderEditableDocument(document) {
+    const blocks = document.blocks.map(({ content, ...metadata }) =>
+        `<!-- margin-chat-document-block ${JSON.stringify({ ...metadata, contentLength: content.length })} -->\n${content}\n<!-- margin-chat-document-block-end ${JSON.stringify(metadata.id)} -->`);
+    return ["<!-- margin-chat-document -->", "## Document", ...blocks, "<!-- margin-chat-document-end -->"].join("\n\n");
+}
+
+function editableDocumentBlocks(source, start = 0) {
+    const blocks = [];
+    const marker = /^<!-- margin-chat-document-block (.+) -->\r?$/gm;
+    marker.lastIndex = start;
+    let match;
+    while ((match = marker.exec(source))) {
+        const metadata = JSON.parse(match[1]);
+        if (typeof metadata.id !== "string") throw new Error("Invalid document block identity.");
+        const contentStart = marker.lastIndex + (source[marker.lastIndex] === "\r" ? 2 : 1);
+        const endMarker = `\n<!-- margin-chat-document-block-end ${JSON.stringify(metadata.id)} -->`;
+        const expectedEnd = contentStart + metadata.contentLength;
+        const contentEnd = Number.isSafeInteger(metadata.contentLength) && metadata.contentLength >= 0 && source.startsWith(endMarker, expectedEnd)
+            ? expectedEnd : source.indexOf(endMarker, contentStart);
+        if (contentEnd < 0) throw new Error("Incomplete document block. Its content was preserved.");
+        const end = contentEnd + endMarker.length;
+        const { contentLength: _contentLength, ...block } = metadata;
+        blocks.push({ start: match.index, end, text: source.slice(match.index, end), value: { ...block, content: source.slice(contentStart, contentEnd) } });
+        marker.lastIndex = end;
+    }
+    return blocks;
+}
+
+function parseEditableDocumentContent(section, conversation) {
+    const markedBlocks = editableDocumentBlocks(section);
+    const values = [];
+    const ids = new Set(markedBlocks.map((block) => block.value.id));
+    const opening = /^<!-- margin-chat-document -->\r?\n(?:\r?\n)?(?:## Document\r?\n(?:\r?\n)?)?/.exec(section);
+    let cursor = opening?.[0].length ?? "<!-- margin-chat-document -->".length;
+    const appendUnmarked = (until) => {
+        const raw = section.slice(cursor, until);
+        if (!raw.trim()) return;
+        // An external editor may insert ordinary Markdown between identified blocks.
+        // Import it as a new block rather than silently dropping authored text.
+        const content = raw.replace(/^\n{1,2}/, "").replace(/\n{1,2}$/, "");
+        let hash = 2166136261;
+        for (let index = 0; index < content.length; index += 1) hash = Math.imul(hash ^ content.charCodeAt(index), 16777619);
+        const baseId = `imported:${(hash >>> 0).toString(36)}`;
+        let id = baseId;
+        for (let ordinal = 2; ids.has(id); ordinal += 1) id = `${baseId}:${ordinal}`;
+        ids.add(id);
+        values.push({ id, kind: "markdown", content, createdAt: conversation.updatedAt, updatedAt: conversation.updatedAt });
+    };
+    for (const block of markedBlocks) {
+        appendUnmarked(block.start);
+        values.push(block.value);
+        cursor = block.end;
+    }
+    appendUnmarked(section.lastIndexOf("<!-- margin-chat-document-end -->"));
+    return values;
+}
+
+function editableDocumentSection(source) {
+    if (parseMetadata(source)?.conversation?.document === undefined) return null;
+    const startMatch = /^<!-- margin-chat-document -->\r?$/m.exec(source);
+    if (!startMatch) return null;
+    // Walk complete blocks first so literal section-end markers inside authored text cannot close it.
+    const marker = /^<!-- margin-chat-document-(?:block (.+)|end) -->\r?$/gm;
+    marker.lastIndex = startMatch.index + startMatch[0].length;
+    let match;
+    while ((match = marker.exec(source))) {
+        if (!match[1]) {
+            const end = match.index + match[0].length;
+            return { start: startMatch.index, end, text: source.slice(startMatch.index, end) };
+        }
+        const metadata = JSON.parse(match[1]);
+        const contentStart = marker.lastIndex + (source[marker.lastIndex] === "\r" ? 2 : 1);
+        const endMarker = `\n<!-- margin-chat-document-block-end ${JSON.stringify(metadata.id)} -->`;
+        const expectedEnd = contentStart + metadata.contentLength;
+        const contentEnd = Number.isSafeInteger(metadata.contentLength) && metadata.contentLength >= 0 && source.startsWith(endMarker, expectedEnd)
+            ? expectedEnd : source.indexOf(endMarker, contentStart);
+        if (contentEnd < 0) throw new Error("Incomplete document block. Its content was preserved.");
+        marker.lastIndex = contentEnd + endMarker.length;
+    }
+    throw new Error("Incomplete editable document. Its content was preserved.");
 }

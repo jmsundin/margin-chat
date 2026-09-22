@@ -80,3 +80,7 @@ Current limits are 3 MiB of decoded content per JSON commit (4 MiB HTTP JSON-bod
 The local object-store adapter uses `.lock` directories. If a crashed development process leaves one behind, first stop **all** servers using that vault directory, verify the lock is abandoned, and remove only that lock directory. Never expire a lock while another writer may still be active.
 
 Capture intake remains in the existing Postgres inbox. Opening a capture as a workspace note makes that note part of the Markdown vault; the inbox itself is not included in a vault export.
+
+## ChatGPT history
+
+**More → Bring your chat history** imports selected conversations from a ChatGPT export into this vault. Preview is local; the import uses the same durable saves and synchronization as authored chats. See [Chat history import](chat-history-import.md) for supported files, duplicate handling, undo, and limits.

@@ -4,7 +4,9 @@ import type {
   ConversationGraphGroupPlacement,
   ConversationGraphScene,
 } from "./conversationGraph";
-import { getStandaloneNote } from "./standaloneNotes";
+import { getPrimaryDocumentSources, resolvePrimaryDocumentSource } from "./documentSources";
+import { getEditableDocument } from "./editableDocument";
+import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
 
 export type GraphScope =
   | { kind: "all" }
@@ -17,7 +19,8 @@ export type GraphScope =
 /** Source IDs identify the canonical workspace item, never a copied passage. */
 export interface GraphEvidenceRef {
   conversationId: string;
-  sourceKind: "conversation" | "message" | "standalone-note";
+  sourceKind: "conversation" | "message" | "standalone-note" | "document";
+  sourceBlockId?: string;
   messageId?: string;
   noteId?: string;
   quote?: string;
@@ -99,6 +102,20 @@ export function getGraphScopeConversationIds(args: {
     return result;
   }
   if (!Object.hasOwn(conversations, scope.conversationId)) return result;
+  // Personal connections can be authored at either endpoint; focus traverses both
+  // directions without changing the parent-only category or breadcrumb hierarchy.
+  const personalNeighbors = new Map<string, Set<string>>();
+  for (const conversation of Object.values(conversations)) {
+    for (const linkedId of conversation.linkedConversationIds ?? []) {
+      if (linkedId === conversation.id || !Object.hasOwn(conversations, linkedId)) continue;
+      const outgoing = personalNeighbors.get(conversation.id) ?? new Set<string>();
+      outgoing.add(linkedId);
+      personalNeighbors.set(conversation.id, outgoing);
+      const incoming = personalNeighbors.get(linkedId) ?? new Set<string>();
+      incoming.add(conversation.id);
+      personalNeighbors.set(linkedId, incoming);
+    }
+  }
   const depth = Number.isFinite(scope.depth) ? Math.max(0, Math.floor(scope.depth)) : 1;
   const visited = new Set<string>();
   const queue = [{ id: scope.conversationId, depth: 0 }];
@@ -109,8 +126,11 @@ export function getGraphScopeConversationIds(args: {
     result.add(entry.id);
     if (entry.depth >= depth) continue;
     const parentId = conversations[entry.id].parentId;
-    const neighbors = [...(children.get(entry.id) ?? []), ...(parentId ? [parentId] : [])];
-    queue.push(...neighbors.map((id) => ({ id, depth: entry.depth + 1 })));
+    const neighbors = new Set([
+      ...(children.get(entry.id) ?? []), ...(parentId ? [parentId] : []),
+      ...(personalNeighbors.get(entry.id) ?? []),
+    ]);
+    queue.push(...[...neighbors].map((id) => ({ id, depth: entry.depth + 1 })));
   }
   // Keep the full breadcrumb ancestry regardless of the local expansion depth.
   const ancestry = new Set<string>();
@@ -125,7 +145,7 @@ export function getGraphScopeConversationIds(args: {
 
 function evidenceKey(evidence: GraphEvidenceRef) {
   return JSON.stringify([
-    evidence.conversationId, evidence.sourceKind, evidence.messageId ?? evidence.noteId ?? null,
+    evidence.conversationId, evidence.sourceKind, evidence.sourceBlockId ?? evidence.messageId ?? evidence.noteId ?? null,
     evidence.startOffset ?? null, evidence.endOffset ?? null, evidence.quote ?? null,
   ]);
 }
@@ -138,18 +158,15 @@ export function searchGraphSources(
   const term = query.trim();
   if (!term) {
     return Object.values(conversations).map((conversation): GraphSearchResult => {
-      const note = getStandaloneNote(conversation);
-      const message = conversation.kind !== "note" ? [...conversation.messages].reverse().find((entry) => entry.content.trim()) : undefined;
-      const evidence: GraphEvidenceRef = note
-        ? { conversationId: conversation.id, sourceKind: "standalone-note", noteId: note.id }
-        : message
-          ? { conversationId: conversation.id, sourceKind: "message", messageId: message.id }
-          : { conversationId: conversation.id, sourceKind: "conversation" };
-      const content = note?.content ?? message?.content ?? conversation.title;
+      const source = getPrimaryDocumentSources(conversation).reverse().find((item) => item.content.trim());
+      const evidence: GraphEvidenceRef = source
+        ? { conversationId: conversation.id, sourceKind: source.sourceKind, messageId: source.messageId, noteId: source.noteId, sourceBlockId: source.sourceBlockId }
+        : { conversationId: conversation.id, sourceKind: "conversation" };
+      const content = source?.content ?? conversation.title;
       return {
         id: evidenceKey(evidence), evidence, title: conversation.title,
         preview: content.length > 192 ? `${content.slice(0, 192)}…` : content,
-        sourceLabel: note ? "Note" : message ? `${message.role[0].toUpperCase()}${message.role.slice(1)} message` : "Title",
+        sourceLabel: source?.sourceKind === "document" ? "Document" : source?.sourceKind === "standalone-note" ? "Note" : source ? `${source.role[0].toUpperCase()}${source.role.slice(1)} message` : "Title",
         updatedAt: conversation.updatedAt,
       };
     }).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
@@ -176,15 +193,10 @@ export function searchGraphSources(
   };
   for (const conversation of Object.values(conversations)) {
     addSource(conversation, conversation.title, "Title", { conversationId: conversation.id, sourceKind: "conversation" }, conversation.updatedAt);
-    if (conversation.kind === "note") {
-      const note = getStandaloneNote(conversation);
-      if (note) addSource(conversation, note.content, "Note", { conversationId: conversation.id, sourceKind: "standalone-note", noteId: note.id }, note.updatedAt);
-      continue;
-    }
-    for (const message of conversation.messages) {
-      addSource(conversation, message.content, `${message.role[0].toUpperCase()}${message.role.slice(1)} message`, {
-        conversationId: conversation.id, sourceKind: "message", messageId: message.id,
-      }, message.createdAt);
+    for (const source of getPrimaryDocumentSources(conversation)) {
+      addSource(conversation, source.content, source.sourceKind === "document" ? "Document" : source.sourceKind === "standalone-note" ? "Note" : `${source.role[0].toUpperCase()}${source.role.slice(1)} message`, {
+        conversationId: conversation.id, sourceKind: source.sourceKind, messageId: source.messageId, noteId: source.noteId, sourceBlockId: source.sourceBlockId,
+      }, source.updatedAt);
     }
   }
   return results.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
@@ -203,15 +215,26 @@ export function resolveGraphEvidence(
   if (evidence.sourceKind === "conversation") {
     return { ...result, status: "exact", content: conversation.title };
   }
-  let content: string | undefined;
-  if (evidence.sourceKind === "message" && conversation.kind !== "note") {
-    content = conversation.messages.find((message) => message.id === evidence.messageId)?.content;
-  } else if (evidence.sourceKind === "standalone-note") {
-    const note = getStandaloneNote(conversation);
-    if (note && note.id === evidence.noteId) content = note.content;
-  }
+  const content = resolvePrimaryDocumentSource(conversation, evidence);
   if (content === undefined) return result;
   result.content = content;
+  const atCurrentBlock = (resolved: GraphEvidenceResolution): GraphEvidenceResolution => {
+    if (!resolved.highlight || evidence.sourceKind === "document") return resolved;
+    const note = getStandaloneNote(conversation);
+    const wholeNote = evidence.sourceKind === "standalone-note" || Boolean(note && evidence.messageId === getStandaloneNoteContextMessageId(note.id));
+    const blocks = getEditableDocument(conversation).blocks.filter((block) => wholeNote || block.sourceMessageId === evidence.messageId);
+    let offset = 0;
+    for (const block of blocks) {
+      const end = offset + block.content.length;
+      if (resolved.highlight.startOffset >= offset && resolved.highlight.endOffset <= end) {
+        const highlight = { startOffset: resolved.highlight.startOffset - offset, endOffset: resolved.highlight.endOffset - offset };
+        return { ...resolved, evidence: { ...evidence, sourceKind: "document", sourceBlockId: block.id,
+          messageId: block.sourceMessageId ?? `document:${block.id}`, ...highlight } };
+      }
+      offset = end + (wholeNote && conversation.document ? 2 : 0);
+    }
+    return resolved;
+  };
   const { quote, startOffset, endOffset } = evidence;
   if (!quote) {
     return { ...result, status: startOffset === undefined && endOffset === undefined ? "exact" : "stale" };
@@ -221,12 +244,12 @@ export function resolveGraphEvidence(
     startOffset! >= 0 && endOffset! > startOffset! && endOffset! <= content.length &&
     content.slice(startOffset, endOffset) === quote
   ) {
-    return { ...result, status: "exact", highlight: { startOffset: startOffset!, endOffset: endOffset! } };
+    return atCurrentBlock({ ...result, status: "exact", highlight: { startOffset: startOffset!, endOffset: endOffset! } });
   }
   const recoveredOffset = content.indexOf(quote);
   if (recoveredOffset >= 0 && content.indexOf(quote, recoveredOffset + 1) === -1) {
     const highlight = { startOffset: recoveredOffset, endOffset: recoveredOffset + quote.length };
-    return { ...result, status: "recovered", highlight, evidence: { ...evidence, ...highlight } };
+    return atCurrentBlock({ ...result, status: "recovered", highlight, evidence: { ...evidence, ...highlight } });
   }
   return { ...result, status: "stale" };
 }
@@ -241,10 +264,12 @@ function nonemptyString(input: unknown): input is string {
 
 export function normalizeEvidence(input: unknown): GraphEvidenceRef | null {
   if (!isRecord(input) || !nonemptyString(input.conversationId)) return null;
-  if (input.sourceKind !== "conversation" && input.sourceKind !== "message" && input.sourceKind !== "standalone-note") return null;
+  if (input.sourceKind !== "conversation" && input.sourceKind !== "message" && input.sourceKind !== "standalone-note" && input.sourceKind !== "document") return null;
+  if (input.sourceKind === "document" && !nonemptyString(input.sourceBlockId)) return null;
   if (input.sourceKind === "message" && !nonemptyString(input.messageId)) return null;
   if (input.sourceKind === "standalone-note" && !nonemptyString(input.noteId)) return null;
   const evidence: GraphEvidenceRef = { conversationId: input.conversationId, sourceKind: input.sourceKind };
+  if (input.sourceKind === "document") evidence.sourceBlockId = input.sourceBlockId as string;
   if (input.sourceKind === "message") evidence.messageId = input.messageId as string;
   if (input.sourceKind === "standalone-note") evidence.noteId = input.noteId as string;
   if (typeof input.quote === "string" && input.quote.length) evidence.quote = input.quote;

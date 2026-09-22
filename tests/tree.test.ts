@@ -231,7 +231,7 @@ describe("getConversationTreeLanes", () => {
     expect(getConversationTreeLanes({ root }, "root")).toEqual([
       {
         conversationIds: [],
-        noteIds: ["margin-note"],
+        noteIds: ["margin-note", "side-note"],
         parentId: "root",
         selectedConversationId: null,
       },

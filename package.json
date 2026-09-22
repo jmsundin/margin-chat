@@ -36,15 +36,18 @@
   },
   "dependencies": {
     "@margin-chat/capture-contracts": "workspace:*",
+    "@margin-chat/workspace-contracts": "workspace:*",
+    "@mozilla/readability": "^0.6.0",
     "@neondatabase/serverless": "^1.1.0",
     "@vercel/blob": "^2.8.0",
     "fflate": "^0.8.3",
+    "ipaddr.js": "^2.5.0",
+    "linkedom": "^0.18.13",
     "mammoth": "^1.10.0",
     "pdf-parse": "1.1.1",
     "pg": "^8.20.0",
     "stripe": "^20.4.1",
-    "vercel": "^58.9.4",
-    "@margin-chat/workspace-contracts": "workspace:*"
+    "vercel": "^58.9.4"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",

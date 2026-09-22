@@ -26,6 +26,45 @@ function restoreLocation(stored: unknown) {
 }
 
 describe("persisted map source validation", () => {
+  test("restores supported document layouts and safely defaults older or malformed choices", () => {
+    const viewport = { x: -310, y: 170, scale: 0.38 };
+    for (const documentLayoutMode of ["auto", "tree-right", "tree-down", "connections"]) {
+      const restored = restoreLocation({ ...defaultGraphLocation(), overviewPresentation: "documents", documentLayoutMode, viewport });
+      expect(restored.restored).toBe(true);
+      expect(restored.state).toMatchObject({ overviewPresentation: "documents", documentLayoutMode, viewport });
+    }
+    const { documentLayoutMode: _mode, ...olderLocation } = defaultGraphLocation();
+    expect(restoreLocation(olderLocation).state.documentLayoutMode).toBe("auto");
+    for (const documentLayoutMode of [null, "tree", "TREE-RIGHT", "", 1, {}, ["connections"]]) {
+      const restored = restoreLocation({ ...olderLocation, documentLayoutMode, viewport });
+      expect(restored.state.documentLayoutMode).toBe("auto");
+      expect(restored.state.viewport).toEqual(viewport);
+    }
+    const restored = restoreLocation({
+      present: { ...defaultGraphLocation(), overviewPresentation: "documents", documentLayoutMode: "connections" },
+      past: [{ ...olderLocation, overviewPresentation: "documents", documentLayoutMode: "tree-right" }],
+      future: [{ ...olderLocation, overviewPresentation: "documents", documentLayoutMode: "tree-down" }],
+    });
+    expect(restored.state.documentLayoutMode).toBe("connections");
+    expect(restored.canGoBack).toBe(true);
+    expect(restored.canGoForward).toBe(true);
+  });
+
+  test("restores group focus alongside its camera and defaults older locations to no group focus", () => {
+    const viewport = { x: -400, y: 120, scale: 0.45 };
+    expect(restoreLocation({ ...defaultGraphLocation(), focusedTerritoryId: "research", focusedTerritoryScale: 0.6, viewport }).state)
+      .toMatchObject({ focusedTerritoryId: "research", focusedTerritoryScale: 0.6, viewport });
+    const { focusedTerritoryId: _focus, focusedTerritoryScale: _scale, ...olderLocation } = defaultGraphLocation();
+    expect(restoreLocation(olderLocation).state.focusedTerritoryId).toBeNull();
+    expect(restoreLocation({ ...olderLocation, focusedTerritoryId: { invalid: true } }).state.focusedTerritoryId).toBeNull();
+    expect(restoreLocation({ ...olderLocation, focusedTerritoryId: "research", viewport }).state.focusedTerritoryScale).toBe(viewport.scale);
+    for (const focusedTerritoryScale of [0, -1, "0.6", {}, null]) {
+      expect(restoreLocation({ ...olderLocation, focusedTerritoryId: "research", focusedTerritoryScale, viewport }).state.focusedTerritoryScale)
+        .toBe(viewport.scale);
+    }
+    expect(restoreLocation({ ...olderLocation, focusedTerritoryScale: 0.6 }).state.focusedTerritoryScale).toBeNull();
+  });
+
   test("strips invalid quotes and offsets without discarding the saved location", () => {
     const workspace = createEmptyState();
     const conversation = workspace.conversations[workspace.rootId];

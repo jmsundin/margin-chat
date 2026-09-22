@@ -211,7 +211,7 @@ describe("Jev workspace assistance", () => {
     expect(root.positioned).toBe(true);
   });
 
-  test("shows consent disclosure, off-by-default switch, related notes, and honest fallback states", () => {
+  test("shows consent disclosure and related notes only when valid results are ready", () => {
     const { state, current } = fixture();
     const settings = renderToStaticMarkup(<AppSettingsModal isOpen mainViewMode="chat" theme="light" onClose={() => {}} onSetMainViewMode={() => {}} onSetTheme={() => {}} onSetJevEnabled={() => {}} />);
     expect(settings).toContain("TypeSafe analyzes permitted chat context");
@@ -224,11 +224,12 @@ describe("Jev workspace assistance", () => {
     const partial = renderToStaticMarkup(<JevRelatedItems {...props} status="ready" warning={warning} />);
     expect(partial).toContain("Story outline");
     expect(partial).toContain(`<p role="status">${warning}</p>`);
-    for (const status of ["unconfigured", "unavailable", "loading", "paused"] as const) {
+    for (const status of ["checking", "unconfigured", "unavailable", "loading", "paused"] as const) {
       const html = renderToStaticMarkup(<JevRelatedItems {...props} status={status} warning={warning} />);
-      expect(html).not.toContain("Story outline");
-      expect(html).not.toContain(warning);
-      expect(html).toContain('role="status"');
+      expect(html).toBe("");
+    }
+    for (const related of [[], [{ id: current.id, score: 1 }], [{ id: "deleted-document", score: 0.9 }]]) {
+      expect(renderToStaticMarkup(<JevRelatedItems {...props} related={related} status="ready" warning={warning} />)).toBe("");
     }
   });
 });

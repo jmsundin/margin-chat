@@ -29,3 +29,17 @@ test("empty workspace settings survive automatic sync and offline reopen without
   if (exitCode !== 0) throw new Error(`Empty vault settings integration failed:\n${stdout}\n${stderr}`);
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(5);
 }, 15000);
+
+
+test("ChatGPT history imports preserve writing, sync, undo safely, and reopen offline", async () => {
+  const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--chat-history"], {
+    cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
+  });
+  const timeout = setTimeout(() => child.kill(), 10000);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  clearTimeout(timeout);
+  if (exitCode !== 0) throw new Error(`History integration failed:\n${stdout}\n${stderr}`);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(6);
+}, 15000);

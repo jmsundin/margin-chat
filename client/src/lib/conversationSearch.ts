@@ -2,6 +2,7 @@ import type { Conversation, ThreadSummary } from "../types";
 import { getStandaloneNote } from "./standaloneNotes";
 import { categorizeThread, getThreadCategoryLabel } from "./threadCategories";
 import { excerpt, getConversationRootId, getRootConversations } from "./tree";
+import { getCurrentDocumentText, getPrimaryDocumentSources } from "./documentSources";
 
 export { buildSearchExploration } from "./searchExploration";
 export type {
@@ -45,6 +46,11 @@ function getThreadPreviewFromConversations(
   threadConversations: Conversation[],
 ) {
   for (const conversation of threadConversations) {
+    if (conversation.document) {
+      const content = getCurrentDocumentText(conversation);
+      if (content.trim()) return excerpt(content, 92);
+      continue;
+    }
     const latestMessage =
       conversation.messages[conversation.messages.length - 1];
 
@@ -73,7 +79,7 @@ function getThreadCategoryContext(threadConversations: Conversation[]) {
       remainingCharacters -= nextSnippet.length + 1;
     }
 
-    for (const message of conversation.messages.slice(-3).reverse()) {
+    for (const message of (conversation.document ? getPrimaryDocumentSources(conversation) : conversation.messages).slice(-3).reverse()) {
       if (remainingCharacters <= 0) {
         break;
       }
@@ -175,7 +181,7 @@ export function buildThreadSummaries(
       const latestConversation = threadConversations[0] ?? rootConversation;
       const standaloneNote = getStandaloneNote(rootConversation);
       const preview = standaloneNote
-        ? excerpt(standaloneNote.content, 108) || "Empty note"
+        ? excerpt(rootConversation.document ? getCurrentDocumentText(rootConversation) : standaloneNote.content, 108) || "Empty note"
         : getThreadPreviewFromConversations(threadConversations);
       const categoryId = categorizeThread({
         context: getThreadCategoryContext(threadConversations),
@@ -259,12 +265,12 @@ export function buildSearchResults(
         };
       }
 
-      const matchingMessage = conversation.messages.find((message) =>
+      const matchingMessage = (conversation.document ? getPrimaryDocumentSources(conversation).map((source) => ({ ...source, createdAt: source.updatedAt })) : conversation.messages).find((message) =>
         message.content.toLowerCase().includes(normalizedQuery),
       );
 
       const matchingNote = (conversation.notes ?? []).find((note) =>
-        note.content.toLowerCase().includes(normalizedQuery),
+        (!conversation.document || note.kind !== "standalone") && note.content.toLowerCase().includes(normalizedQuery),
       );
 
       if (!matchingMessage && !matchingNote) {
@@ -298,7 +304,7 @@ export function buildSearchResults(
         conversationId: conversation.id,
         locationLabel:
           conversation.parentId === null ? "Main chat" : "Branch conversation",
-        matchLabel: `${matchingMessage.role} message`,
+        matchLabel: conversation.document ? "Document passage" : `${matchingMessage.role} message`,
         preview: getMatchPreview(matchingMessage.content, normalizedQuery),
         rootTitle: rootConversation.title,
         title: conversation.title,

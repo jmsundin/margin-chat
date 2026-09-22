@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ConversationGraphDetail } from "./conversationGraph";
 import { normalizeEvidence, type GraphEvidenceRef, type GraphScope } from "./graphExploration";
 import type { GraphViewport } from "./graphInteractions";
+import type { DocumentLayoutMode } from "./documentMapLayout";
 
 export interface GraphExplorationLocation {
   scope: GraphScope;
@@ -14,14 +15,22 @@ export interface GraphExplorationLocation {
   expandedGroups: string[];
   readerScroll: number;
   showRelated: boolean;
-  overviewPresentation: "themes" | "map";
+  overviewPresentation: "themes" | "map" | "canvas" | "documents";
   overviewTopicId: string | null;
+  focusedTerritoryId: string | null;
+  focusedTerritoryScale: number | null;
+  groupOverviewVersion: number;
+  documentLayoutVersion: number;
+  documentLayoutMode: DocumentLayoutMode;
 }
 
 export const defaultGraphLocation = (): GraphExplorationLocation => ({
   scope: { kind: "all" }, selectedConversationId: null, dockedConversationId: null,
   detailLevel: "compact", source: null, query: "", viewport: { scale: 1, x: 0, y: 0 },
-  expandedGroups: [], readerScroll: 0, showRelated: false, overviewPresentation: "themes", overviewTopicId: null,
+  expandedGroups: [], readerScroll: 0, showRelated: false, overviewPresentation: "map", overviewTopicId: null, focusedTerritoryId: null, focusedTerritoryScale: null,
+  groupOverviewVersion: 1,
+  documentLayoutVersion: 1,
+  documentLayoutMode: "auto",
 });
 
 function normalizeLocation(value: any): GraphExplorationLocation | null {
@@ -44,8 +53,15 @@ function normalizeLocation(value: any): GraphExplorationLocation | null {
       expandedGroups: Array.isArray(value.expandedGroups) ? value.expandedGroups.filter((id: unknown) => typeof id === "string") : [],
       readerScroll: Number.isFinite(value.readerScroll) ? Math.max(0, value.readerScroll) : 0,
       showRelated: value.showRelated === true,
-      overviewPresentation: value.overviewPresentation === "map" ? "map" : "themes",
+      overviewPresentation: ["map", "canvas", "documents"].includes(value.overviewPresentation) ? value.overviewPresentation : "themes",
       overviewTopicId: typeof value.overviewTopicId === "string" ? value.overviewTopicId : null,
+      focusedTerritoryId: typeof value.focusedTerritoryId === "string" ? value.focusedTerritoryId : null,
+      groupOverviewVersion: value.groupOverviewVersion === 1 ? 1 : 0,
+      documentLayoutVersion: value.documentLayoutVersion === 1 ? 1 : 0,
+      documentLayoutMode: ["tree-right", "tree-down", "connections"].includes(value.documentLayoutMode) ? value.documentLayoutMode : "auto",
+      focusedTerritoryScale: typeof value.focusedTerritoryId === "string"
+        ? Number.isFinite(value.focusedTerritoryScale) && value.focusedTerritoryScale > 0 ? value.focusedTerritoryScale : value.viewport.scale
+        : null,
     };
   } catch { return null; }
 }

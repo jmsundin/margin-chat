@@ -76,6 +76,7 @@ async function readWorkspaceSnapshot(client, userId) {
         service_id,
         ai_settings,
         grouping_mode,
+        editable_document,
         created_at,
         updated_at
       from marginchat_conversations
@@ -131,6 +132,7 @@ async function readWorkspaceSnapshot(client, userId) {
         conversation_id,
         source_conversation_id,
         source_message_id,
+        source_block_id,
         start_offset,
         end_offset,
         quote,
@@ -147,6 +149,7 @@ async function readWorkspaceSnapshot(client, userId) {
         id,
         conversation_id,
         source_message_id,
+        source_block_id,
         content,
         note_kind,
         start_offset,
@@ -180,6 +183,7 @@ async function readWorkspaceSnapshot(client, userId) {
       title: row.title,
       updatedAt: toIsoString(row.updated_at),
       ...(row.ai_settings ? { ai: row.ai_settings } : {}),
+      ...(row.editable_document ? { document: row.editable_document } : {}),
       ...(row.grouping_mode ? { grouping: row.grouping_mode } : {}),
     };
   }
@@ -233,6 +237,7 @@ async function readWorkspaceSnapshot(client, userId) {
       quote: row.quote,
       sourceConversationId: fromStorageId(row.source_conversation_id),
       sourceMessageId: fromStorageId(row.source_message_id),
+      ...(row.source_block_id ? { sourceBlockId: row.source_block_id } : {}),
       startOffset: row.start_offset,
     };
   }
@@ -254,6 +259,7 @@ async function readWorkspaceSnapshot(client, userId) {
       sourceMessageId: row.source_message_id
         ? fromStorageId(row.source_message_id)
         : null,
+      ...(row.source_block_id ? { sourceBlockId: row.source_block_id } : {}),
       startOffset: row.start_offset,
       updatedAt: toIsoString(row.updated_at),
     });
@@ -497,10 +503,11 @@ export async function writeState(
             service_id,
             ai_settings,
             grouping_mode,
+            editable_document,
             created_at,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           on conflict (id) do update set
             session_id = excluded.session_id,
             title = excluded.title,
@@ -510,6 +517,7 @@ export async function writeState(
             service_id = excluded.service_id,
             ai_settings = excluded.ai_settings,
             grouping_mode = excluded.grouping_mode,
+            editable_document = excluded.editable_document,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at
         `,
@@ -523,6 +531,7 @@ export async function writeState(
           conversation.serviceId,
           conversation.ai ?? null,
           conversation.grouping ?? null,
+          conversation.document ?? null,
           conversation.createdAt,
           conversation.updatedAt,
         ],
@@ -595,6 +604,7 @@ export async function writeState(
               id,
               conversation_id,
               source_message_id,
+        source_block_id,
               content,
               note_kind,
               start_offset,
@@ -603,10 +613,11 @@ export async function writeState(
               created_at,
               updated_at
             )
-            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             on conflict (id) do update set
               conversation_id = excluded.conversation_id,
               source_message_id = excluded.source_message_id,
+              source_block_id = excluded.source_block_id,
               content = excluded.content,
               note_kind = excluded.note_kind,
               start_offset = excluded.start_offset,
@@ -619,6 +630,7 @@ export async function writeState(
             toStorageId(note.id),
             toStorageId(conversation.id),
             note.sourceMessageId ? toStorageId(note.sourceMessageId) : null,
+            note.sourceBlockId ?? null,
             note.content,
             note.kind,
             note.startOffset,
@@ -659,17 +671,19 @@ export async function writeState(
             conversation_id,
             source_conversation_id,
             source_message_id,
+        source_block_id,
             start_offset,
             end_offset,
             quote,
             prompt,
             created_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           on conflict (id) do update set
             conversation_id = excluded.conversation_id,
             source_conversation_id = excluded.source_conversation_id,
             source_message_id = excluded.source_message_id,
+              source_block_id = excluded.source_block_id,
             start_offset = excluded.start_offset,
             end_offset = excluded.end_offset,
             quote = excluded.quote,
@@ -681,6 +695,7 @@ export async function writeState(
           toStorageId(conversation.id),
           toStorageId(conversation.branchAnchor.sourceConversationId),
           toStorageId(conversation.branchAnchor.sourceMessageId),
+          conversation.branchAnchor.sourceBlockId ?? null,
           conversation.branchAnchor.startOffset,
           conversation.branchAnchor.endOffset,
           conversation.branchAnchor.quote,

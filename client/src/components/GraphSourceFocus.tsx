@@ -16,12 +16,17 @@ export default function GraphSourceFocus({ source, getPanelElement }: {
     const frame = window.requestAnimationFrame(() => {
       const panel = getPanelRef.current();
       if (!panel) return;
-      const target = source.sourceKind === "message"
-        ? Array.from(panel.querySelectorAll<HTMLElement>("[data-message-row-id]"))
-            .find((element) => element.dataset.messageRowId === source.messageId)
+      const target = source.sourceKind === "document"
+        ? Array.from(panel.querySelectorAll<HTMLElement>("[data-document-block-id]"))
+            .find((element) => element.dataset.documentBlockId === source.sourceBlockId)
+          ?? Array.from(panel.querySelectorAll<HTMLElement>("[data-message-row-id]")).find((element) => element.dataset.messageRowId === source.messageId)
+          ?? (source.noteId ? panel.querySelector<HTMLElement>(".panel-body") : null)
+        : source.sourceKind === "message"
+        ? Array.from(panel.querySelectorAll<HTMLElement>("[data-message-row-id], [data-document-block-id][data-message-id]"))
+            .find((element) => (element.dataset.messageRowId ?? element.dataset.messageId) === source.messageId)
         : panel.querySelector<HTMLElement>(".panel-body");
       if (!target) return;
-      if (source.sourceKind === "message") {
+      if (source.sourceKind === "message" || source.sourceKind === "document") {
         const scroller = target.closest<HTMLElement>(".panel-body");
         if (!scroller || !panel.contains(scroller)) return;
         const targetBounds = target.getBoundingClientRect();
@@ -42,6 +47,7 @@ export default function GraphSourceFocus({ source, getPanelElement }: {
     source?.conversationId,
     source?.sourceKind,
     source?.messageId,
+    source?.sourceBlockId,
     source?.noteId,
     source?.quote,
     source?.startOffset,

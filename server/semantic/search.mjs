@@ -31,7 +31,7 @@ export function validateSearchAnalysis(payload) {
   if (!Array.isArray(payload.items) || payload.items.length > 20) throw new HttpError(400, "Provide at most 20 search passages.");
   const items = payload.items.map((item) => {
     if (!isRecord(item) || !isId(item.id) || typeof item.title !== "string" || typeof item.content !== "string"
-      || !["conversation", "message", "standalone-note"].includes(item.sourceKind)
+      || !["conversation", "message", "standalone-note", "document"].includes(item.sourceKind)
       || item.sourceKind === "message" && !["user", "assistant"].includes(item.role)) {
       throw new HttpError(400, "Search passages must identify a permitted primary source.");
     }

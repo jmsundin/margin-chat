@@ -70,6 +70,7 @@ export interface ConversationNote {
   content: string;
   kind?: "comment" | "side-chat" | "standalone";
   sourceMessageId: string | null;
+  sourceBlockId?: string;
   startOffset: number | null;
   endOffset: number | null;
   quote: string | null;
@@ -81,11 +82,87 @@ export interface BranchAnchor {
   id: string;
   sourceConversationId: string;
   sourceMessageId: string;
+  sourceBlockId?: string;
   startOffset: number;
   endOffset: number;
   quote: string;
   prompt: string;
   createdAt: string;
+}
+
+/** Markdown offsets are UTF-16 string offsets, matching JavaScript/editor selections. */
+export interface DocumentSelection {
+  blockId: string;
+  from: number;
+  to: number;
+  quote: string;
+}
+
+export interface DocumentInsertion {
+  blockId: string | null;
+  offset: number;
+  /** An explicit replacement ends here; omitted inserts without deleting text. */
+  replaceTo?: number;
+}
+
+export interface DocumentBlock {
+  id: string;
+  kind: "markdown";
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+  sourceMessageId?: string;
+  generationId?: string;
+}
+
+export interface DocumentPrompt {
+  id: string;
+  content: string;
+  createdAt: string;
+  sourceMessageId?: string;
+  serviceId: BackendServiceId;
+  modelId: string;
+  ai?: AISettings;
+  selection?: DocumentSelection;
+}
+
+export interface DocumentGeneration {
+  id: string;
+  promptId: string;
+  /** Original output remains in messages, even after its visible blocks are edited. */
+  messageId: string;
+  createdAt: string;
+  serviceId: BackendServiceId;
+  modelId: string;
+  ai?: AISettings;
+  status: "streaming" | "complete" | "stopped" | "failed";
+  alternativeOf?: string;
+  blockIds: string[];
+  insertion?: DocumentInsertion;
+  /** Candidates do not have acceptedAt and never enter the document by projection. */
+  acceptedAt?: string;
+  /** Authored blocks replaced when accepting a rerun, retained for an exact undo. */
+  previousBlocks?: DocumentBlock[];
+  replacement?: { blockId: string; offset: number; content: string };
+}
+
+export interface EditableDocument {
+  schemaVersion: 1;
+  blocks: DocumentBlock[];
+  prompts: DocumentPrompt[];
+  generations: DocumentGeneration[];
+}
+
+export interface PublicTopicSource {
+  /** Canonical Wikidata item ID; aliases contain redirected item IDs, not labels. */
+  id: string;
+  aliases: string[];
+  label: string;
+  description: string;
+  wikidataUrl: string;
+  wikipediaUrl?: string;
+  retrievedAt: string;
+  revision?: number;
 }
 
 export interface Conversation {
@@ -97,9 +174,13 @@ export interface Conversation {
   serviceId: BackendServiceId;
   modelId: string;
   ai?: AISettings;
+  publicTopic?: PublicTopicSource;
+  /** User-authored connections, independent of the parent/child tree. */
+  linkedConversationIds?: string[];
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   documents?: ConversationDocument[];
+  document?: EditableDocument;
   messages: Message[];
   notes?: ConversationNote[];
   createdAt: string;

@@ -69,7 +69,7 @@ const FOCUS_COMPACT_HEIGHT = 88;
 const FOCUS_COMPACT_WIDTH = 210;
 const OVERVIEW_NODE_HEIGHT = 96;
 const OVERVIEW_NODE_WIDTH = 200;
-const PREVIEW_NODE_BASE_HEIGHT = 168;
+const PREVIEW_NODE_BASE_HEIGHT = 240;
 const PREVIEW_NODE_WIDTH = 330;
 const READER_NODE_BASE_HEIGHT = 430;
 const READER_NODE_WIDTH = 430;
@@ -219,7 +219,7 @@ export function getConversationGraphViewportBounds(args: {
   const overscan =
     args.overscan ??
     Math.max(360, Math.min(760, Math.max(viewportWidth, viewportHeight) * 0.65));
-  const scale = Math.max(args.viewport.scale, 0.001);
+  const scale = Math.max(args.viewport.scale, Number.EPSILON);
 
   return {
     bottom: (viewportHeight - args.viewport.y + overscan) / scale,
@@ -280,20 +280,22 @@ export function queryConversationGraphNodeSpatialIndex(
   const lastRow = Math.floor(bounds.bottom / index.cellSize);
   const visited = new Set<string>();
   const placements: ConversationGraphNodePlacement[] = [];
-
-  for (let column = firstColumn; column <= lastColumn; column += 1) {
-    for (let row = firstRow; row <= lastRow; row += 1) {
-      for (const placement of
-        index.cells.get(getSpatialCellKey(column, row)) ?? []) {
-        if (
-          visited.has(placement.conversationId) ||
-          !graphPlacementIntersectsBounds(placement, bounds)
-        ) {
-          continue;
-        }
-
-        visited.add(placement.conversationId);
-        placements.push(placement);
+  function collect(cell: ConversationGraphNodePlacement[]) {
+    for (const placement of cell) {
+      if (visited.has(placement.conversationId) || !graphPlacementIntersectsBounds(placement, bounds)) continue;
+      visited.add(placement.conversationId);
+      placements.push(placement);
+    }
+  }
+  const queryCellCount = (lastColumn - firstColumn + 1) * (lastRow - firstRow + 1);
+  // A fitted, widely spaced map can cover millions of empty grid cells. Scan
+  // occupied cells when that costs less than enumerating the viewport grid.
+  if (queryCellCount > index.cells.size) {
+    for (const cell of index.cells.values()) collect(cell);
+  } else {
+    for (let column = firstColumn; column <= lastColumn; column += 1) {
+      for (let row = firstRow; row <= lastRow; row += 1) {
+        collect(index.cells.get(getSpatialCellKey(column, row)) ?? []);
       }
     }
   }

@@ -30,12 +30,24 @@ export default function SearchSourceFocus({ request, conversations, getPanelElem
       const { conversations: current, getPanelElement: getPanel } = latest.current;
       const resolution = resolveSearchSource(current, source);
       if (resolution.status === "missing") return;
+      const resolvedSource = "evidence" in resolution ? resolution.evidence : source;
       const panel = getPanel(source.conversationId);
+      let acrossBlocks = false;
       if (source.sourceKind === "annotation") {
         target = Array.from(document.querySelectorAll<HTMLElement>("[data-margin-note-tree-node]")).find((element) => element.dataset.marginNoteTreeNode === source.noteId) ??
           (panel ? Array.from(panel.querySelectorAll<HTMLElement>(".side-note-panel[data-side-note-id]")).find((element) => element.dataset.sideNoteId === source.noteId) : null) ?? null;
+      } else if (resolvedSource.sourceKind === "document") {
+        target = panel ? Array.from(panel.querySelectorAll<HTMLElement>("[data-document-block-id]")).find((element) => element.dataset.documentBlockId === resolvedSource.sourceBlockId) ?? null : null;
+        // The legacy renderer remains available to isolated readers and tests.
+        if (!target && source.sourceKind === "message") target = panel ? Array.from(panel.querySelectorAll<HTMLElement>("[data-message-row-id]")).find((element) => element.dataset.messageRowId === source.messageId) ?? null : null;
+        if (!target && source.sourceKind === "standalone-note") target = panel?.querySelector<HTMLElement>(".panel-body") ?? null;
       } else if (source.sourceKind === "message") {
-        target = panel ? Array.from(panel.querySelectorAll<HTMLElement>("[data-message-row-id]")).find((element) => element.dataset.messageRowId === source.messageId) ?? null : null;
+        const matches = panel ? Array.from(panel.querySelectorAll<HTMLElement>("[data-message-row-id], [data-document-block-id][data-message-id]")).filter((element) => (element.dataset.messageRowId ?? element.dataset.messageId) === source.messageId) : [];
+        // Older search references may span several paragraph blocks. A quote
+        // that fits one block is already remapped above; otherwise search the
+        // reader's rendered text so later paragraphs remain reachable.
+        acrossBlocks = matches.length > 1;
+        target = acrossBlocks ? panel?.querySelector<HTMLElement>(".panel-body") ?? null : matches[0] ?? null;
       } else target = panel?.querySelector<HTMLElement>(".panel-body") ?? null;
       if (!target) {
         if (++attempts < 12) frame = window.requestAnimationFrame(reveal);
@@ -52,7 +64,7 @@ export default function SearchSourceFocus({ request, conversations, getPanelElem
         target.scrollIntoView({ block: "nearest", inline: "nearest" });
         editor.focus();
       } else {
-        const content = target.querySelector<HTMLElement>(".message-content, .markdown-note-reading") ?? target;
+        const content = acrossBlocks ? target : target.querySelector<HTMLElement>(".tiptap, .message-content, .markdown-note-reading") ?? target;
         const range = resolution.highlight && source.quote ? createSearchPassageRange(content, source.quote) : null;
         if (range && typeof Highlight !== "undefined" && typeof CSS !== "undefined" && "highlights" in CSS) CSS.highlights.set(highlightKey, new Highlight(range));
         if (range) {

@@ -2,6 +2,7 @@ import { normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { AISettings, Conversation, ConversationGroup, ThreadCategoryId, ThreadSummary } from "../types";
 import { getStandaloneNote } from "./standaloneNotes";
 import { THREAD_CATEGORY_DEFINITIONS, getThreadCategoryLabel } from "./threadCategories";
+import { getCurrentDocumentText } from "./documentSources";
 
 export interface JevWorkspaceItem {
   id: string;
@@ -53,6 +54,7 @@ export function withJevConsent(settings: AISettings | undefined, enabled: boolea
 }
 
 function visibleContent(conversation: Conversation, limit = 1600) {
+  if (conversation.document) return getCurrentDocumentText(conversation).slice(0, limit);
   if (conversation.kind === "note") return (getStandaloneNote(conversation)?.content ?? "").slice(0, limit);
   return conversation.messages
     .filter((message) => (message.role === "user" || message.role === "assistant") && message.content.trim())

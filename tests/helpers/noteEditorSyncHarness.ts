@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 
 const browser = new Window({ url: "http://note-editor.test" });
-for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "getComputedStyle"]) {
+for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "ShadowRoot", "getComputedStyle"]) {
   const value = name === "window" ? browser : (browser as any)[name];
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value: typeof value === "function" && name === "getComputedStyle" ? value.bind(browser) : value });
 }
@@ -63,6 +63,8 @@ const container = browser.document.createElement("div");
 browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
 function editor(selector: string) {
+  const rich = container.querySelector(`${selector} .tiptap`) as any;
+  if (rich?.editor) return { richEditor: rich.editor, state: { doc: { toString: () => rich.editor.getMarkdown() } }, contentDOM: rich.editor.view.dom, focus: () => rich.editor.view.focus() };
   const element = container.querySelector(`${selector} .cm-editor`);
   assert(element, `Missing actual CodeMirror editor at ${selector}`);
   const view = EditorView.findFromDOM(element as unknown as HTMLElement);
@@ -70,6 +72,7 @@ function editor(selector: string) {
   return view;
 }
 function replace(view: any, content: string) {
+  if (view.richEditor) { view.richEditor.commands.setContent(content, { contentType: "markdown" }); return; }
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content }, userEvent: "input.type" });
 }
 
@@ -118,9 +121,9 @@ try {
   const useButton = container.querySelector<HTMLButtonElement>(".margin-note-tree-use")!;
   assert.equal(useButton.disabled, false, "A nonempty note should be available to add to a message.");
   await act(async () => { useButton.click(); });
-  assert.deepEqual(uses, [{ conversationId: standalone.id, content: "Typed into the actual margin editor." }], "Use in message must pass the latest note to its own conversation exactly once.");
-  assert.equal(useButton.textContent?.trim(), "Added to draft", "Adding a note needs visible feedback.");
-  assert.equal(container.querySelector(".margin-note-tree-editor [role='status']")?.textContent, "Note added to your message draft.", "Adding a note needs announced feedback.");
+  assert.deepEqual(uses, [{ conversationId: standalone.id, content: "Typed into the actual margin editor." }], "Insert into document must pass the latest note to its own conversation exactly once.");
+  assert.equal(useButton.textContent?.trim(), "Inserted into document", "Adding a note needs visible feedback.");
+  assert.equal(container.querySelector(".margin-note-tree-editor > .sr-only[role='status']")?.textContent, "Note inserted into your document.", "Adding a note needs announced feedback.");
   assert.equal(useButton.disabled, true, "The confirmation state must prevent an immediate duplicate insertion.");
   await act(async () => { useButton.click(); });
   assert.equal(uses.length, 1, "Clicking the confirmation must not add the note twice.");
@@ -129,10 +132,10 @@ try {
   const escape = new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
   await act(async () => {
     marginView.focus();
-    assert.equal(browser.document.activeElement, marginView.contentDOM, "Escape must start inside the actual CodeMirror editor.");
+    assert.equal(browser.document.activeElement, marginView.contentDOM, "Escape must start inside the actual rich editor.");
     marginView.contentDOM.dispatchEvent(escape);
   });
-  assert.equal(escape.defaultPrevented, true, "The card must capture Escape before CodeMirror consumes it.");
+  assert.equal(escape.defaultPrevented, true, "The card must capture Escape before the rich editor consumes it.");
   assert.equal(container.querySelector(".margin-note-tree-editor"), null, "Escape must minimize the editor.");
   const toggle = container.querySelector<HTMLButtonElement>(".margin-note-tree-summary")!;
   assert.equal(toggle.getAttribute("aria-expanded"), "false");
@@ -154,9 +157,9 @@ try {
   await act(async () => { replace(editor(".margin-note-tree-node"), ""); });
   assert.equal(latestMargin.content, "", "Clearing a margin note restored old content.");
   const emptyUseButton = container.querySelector<HTMLButtonElement>(".margin-note-tree-use")!;
-  assert.equal(emptyUseButton.textContent?.trim(), "Use in message", "Editing the note must clear the old insertion confirmation.");
+  assert.equal(emptyUseButton.textContent?.trim(), "Insert into document", "Editing the note must clear the old insertion confirmation.");
   assert.equal(emptyUseButton.disabled, true, "An empty note cannot be added to a message.");
-  assert.equal(container.querySelector(".margin-note-tree-editor [role='status']")?.textContent, "");
+  assert.equal(container.querySelector(".margin-note-tree-editor > .sr-only[role='status']")?.textContent, "");
   await act(async () => { emptyUseButton.click(); });
   assert.equal(uses.length, 1, "An empty note must never invoke insertion.");
   await act(async () => { replace(editor(".standalone-note-panel"), ""); });
@@ -174,7 +177,7 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 380));
   assert.equal(updates.length, realEditCount, "Closing or unmounting an editor re-uploaded a stale draft.");
   assert.equal(renameCalls, 1, "Remote updates must not repeat the explicit local rename.");
-  console.log(JSON.stringify({ checks: ["remote props update actual CodeMirror without local writes", "standalone typing updates immediately", "margin typing updates immediately", "empty content remains empty", "closing and unmounting cannot flush stale drafts", "ancestor note title and editor remain usable without activating its conversation", "Escape from CodeMirror minimizes and restores toggle focus", "Done minimizes and restores toggle focus", "Use in message inserts latest content once with visible and announced feedback", "empty notes cannot be inserted"] }));
+  console.log(JSON.stringify({ checks: ["remote props update real editors without local writes", "standalone typing updates immediately", "formatted margin typing updates immediately", "empty content remains empty", "closing and unmounting cannot flush stale drafts", "ancestor note title and editor remain usable without activating its conversation", "Escape from rich editor minimizes and restores toggle focus", "Done minimizes and restores toggle focus", "Insert into document inserts latest content once with visible and announced feedback", "empty notes cannot be inserted"] }));
 } finally {
   await act(async () => { root.unmount(); });
   await browser.happyDOM.abort();

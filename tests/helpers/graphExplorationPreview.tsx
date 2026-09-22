@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ConversationGraphView from "../../client/src/components/ConversationGraphView";
+import ThreadSidebar from "../../client/src/components/ThreadSidebar";
 import GraphSourceFocus from "../../client/src/components/GraphSourceFocus";
 import { createChildConversation, createMainConversation, createStandaloneNoteConversation } from "../../client/src/initialState";
 import { buildThreadSummaries } from "../../client/src/lib/conversationSearch";
@@ -91,6 +92,9 @@ function PreviewReader({ conversation, source }: { conversation: Conversation; s
 function GraphExplorationPreview() {
   const [fixture, setFixture] = useState(createFixture);
   const [activeId, setActiveId] = useState("atlas");
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarSection, setSidebarSection] = useState<"chats" | "explore">("chats");
+  const [explorerContainer, setExplorerContainer] = useState<HTMLDivElement | null>(null);
   const [view, setView] = useState<"graph" | "chat">("graph");
   const [dark, setDark] = useState(true);
   const [focusRequest, setFocusRequest] = useState<{ conversationId: string; requestId: number } | null>(null);
@@ -104,13 +108,25 @@ function GraphExplorationPreview() {
   }
   return <main style={{ height: "100dvh", display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg)" }}>
     <header style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 12, padding: "10px 16px", borderBottom: "1px solid var(--line)", flex: "0 0 auto" }}>
+      <button type="button" aria-label="Toggle workspace menu" onClick={() => setSidebarOpen((value) => !value)}>☰</button>
       <strong>Graph exploration preview</strong><span style={{ fontSize: 12, color: "var(--muted)" }}>14 synthetic items · no workspace data</span>
       <button type="button" onClick={() => reveal("back-stack")}>Reveal deep branch</button>
       <button type="button" onClick={() => setDark((value) => !value)}>{dark ? "Light" : "Dark"} theme</button>
       {view === "chat" ? <button type="button" onClick={() => setView("graph")}>Return to map</button> : null}
     </header>
+    <div style={{ display: "flex", flex: "1 1 0%", minHeight: 0 }}>
+    <div style={{ display: sidebarOpen ? "flex" : "none", width: 272, flexShrink: 0, minHeight: 0 }}>
+      <ThreadSidebar mapExplorerRef={setExplorerContainer} mapExplorerActive={sidebarSection === "explore"} onSelectSidebarSection={setSidebarSection}
+        collapsed={false} mainViewMode={view === "graph" ? "graph" : "chat"} activeThreadId={activeId} activeOutlineItemId={null}
+        currentChatOutline={[]} currentChatTitle={fixture.conversations[activeId].title} groups={fixture.groups} threads={threads} pinnedThreads={[]} streamingThreadIds={new Set()} theme={dark ? "dark" : "light"}
+        onAssignGroup={() => {}} onCreateGroup={() => {}} onDeleteThread={() => {}} onNewChat={() => {}} onNewNote={() => {}} onOpenProfile={() => {}} onOpenSettings={() => {}} onOpenSearch={() => {}}
+        onPinThread={() => {}} onUnpinThread={() => {}} onRenameThread={() => {}} onSelectOutlineItem={() => {}}
+        onSetMainViewMode={(mode) => setView(mode === "graph" ? "graph" : "chat")} onSelectThread={reveal} onToggleCollapse={() => setSidebarOpen(false)} onToggleGroup={() => {}} onToggleTheme={() => setDark((value) => !value)} />
+    </div>
     {view === "chat" ? <PreviewReader conversation={fixture.conversations[activeId]} /> :
       <ConversationGraphView
+        explorerContainer={explorerContainer}
+        onOpenExplorer={() => { setSidebarOpen(true); setSidebarSection("explore"); }}
         workspaceKey="graph-exploration-preview"
         activeConversationId={activeId}
         conversations={fixture.conversations}
@@ -143,6 +159,7 @@ function GraphExplorationPreview() {
         renderDockedConversation={(id, source) => <PreviewReader conversation={fixture.conversations[id]} source={source} />}
         renderExpandedConversation={(id) => <PreviewReader conversation={fixture.conversations[id]} />}
       />}
+    </div>
   </main>;
 }
 

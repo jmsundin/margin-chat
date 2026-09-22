@@ -36,7 +36,7 @@ try {
       currentChatOutline: [], currentChatTitle: "Research", groups: {}, mainViewMode: "chat",
       onAssignGroup: (id, groupId) => events.push(`group:${id}:${groupId}`),
       onCreateGroup: (name) => events.push(`create:${name}`), onDeleteThread: noop,
-      onNewChat: noop, onNewNote: () => events.push("note"), onOpenInbox: () => events.push("inbox"),
+      onNewChat: () => events.push("document"), onNewNote: () => events.push("note"), onOpenInbox: () => events.push("inbox"),
       onOpenProfile: noop, onOpenSettings: noop, onOpenSearch: noop,
       onPinThread: (id) => events.push(`pin:${id}`), onRenameThread: noop, onSelectOutlineItem: noop,
       onSetMainViewMode: noop, onSelectThread: noop, onToggleCollapse: noop, onToggleGroup: noop,
@@ -46,6 +46,9 @@ try {
   });
 
   assert.equal(container.querySelector('[data-thread-drop-target="pinned"]'), null);
+  await click('[aria-label="New document"]');
+  assert(events.includes("document"), "The primary creation action opens a unified document.");
+  assert.equal(container.querySelector('[aria-label="New note"]'), null, "Separate chat/note creation should not remain in the unified interface.");
   await click(".sidebar-more-button");
   assert.equal(browser.document.activeElement, element(".sidebar-workspace-action"));
   await act(async () => {
@@ -55,16 +58,11 @@ try {
   assert.equal(browser.document.activeElement, element(".sidebar-more-button"));
 
   await click(".sidebar-more-button");
-  await click(".sidebar-workspace-action");
-  assert(events.includes("note"));
-  assert.equal(container.querySelector(".sidebar-workspace-actions"), null);
-
-  await click(".sidebar-more-button");
   await click(".sidebar-workspace-action:last-child");
   assert(events.includes("inbox"));
 
   await click(".sidebar-more-button");
-  await click(".sidebar-workspace-action:nth-child(2)");
+  await click(".sidebar-workspace-action:first-child");
   assert.equal(browser.document.activeElement, element('[aria-label="Group name"]'));
   await act(async () => {
     const input = element('[aria-label="Group name"]');
@@ -78,7 +76,7 @@ try {
   assert.equal(browser.document.activeElement, element(".sidebar-more-button"));
 
   await click(".sidebar-more-button");
-  await click(".sidebar-workspace-action:nth-child(2)");
+  await click(".sidebar-workspace-action:first-child");
   await act(async () => {
     element('[aria-label="Group name"]').dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   });

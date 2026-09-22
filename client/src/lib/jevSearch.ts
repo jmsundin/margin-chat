@@ -1,12 +1,13 @@
 import type { Conversation } from "../types";
 import type { SearchFacet, SearchPassageResult } from "./searchExploration";
 import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
+import { getCurrentDocumentText, resolvePrimaryDocumentSource } from "./documentSources";
 
 export interface JevSearchItem {
   id: string;
   title: string;
   content: string;
-  sourceKind: "conversation" | "message" | "standalone-note";
+  sourceKind: "conversation" | "message" | "standalone-note" | "document";
   role?: "user" | "assistant";
 }
 export interface JevSearchSnapshot {
@@ -33,7 +34,11 @@ function primaryPassage(result: SearchPassageResult, conversations: Record<strin
   if (!conversation) return null;
   let content: string | undefined;
   let role: "user" | "assistant" | undefined;
-  if (evidence.sourceKind === "conversation") content = conversation.title;
+  if (conversation.document || evidence.sourceKind === "document") {
+    content = resolvePrimaryDocumentSource(conversation, { ...evidence, sourceKind: evidence.sourceKind });
+    if (evidence.sourceKind === "message") role = conversation.messages.find((message) => message.id === evidence.messageId)?.role === "assistant" ? "assistant" : "user";
+  }
+  else if (evidence.sourceKind === "conversation") content = conversation.title;
   else if (evidence.sourceKind === "standalone-note") {
     const note = getStandaloneNote(conversation);
     if (note && note.id === evidence.noteId) content = note.content;
@@ -55,7 +60,7 @@ function primaryPassage(result: SearchPassageResult, conversations: Record<strin
 
 function currentContext(conversation?: Conversation): JevSearchSnapshot["current"] {
   if (!conversation) return undefined;
-  const content = conversation.kind === "note" ? getStandaloneNote(conversation)?.content ?? "" : conversation.messages
+  const content = conversation.document ? getCurrentDocumentText(conversation) : conversation.kind === "note" ? getStandaloneNote(conversation)?.content ?? "" : conversation.messages
     .filter((message) => (message.role === "user" || message.role === "assistant") && !message.id.startsWith(CONTEXT_PREFIX))
     .slice(-4).map((message) => `${message.role}: ${message.content.slice(-800)}`).join("\n").slice(-800);
   return { title: conversation.title.slice(0, 200), content: content.slice(0, 800) };

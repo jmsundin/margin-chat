@@ -10,6 +10,27 @@ export type GraphNodeMove = {
   deltaY: number;
 };
 
+// Keep the camera's zoom and move only enough to expose the requested content.
+export function revealGraphBounds(
+  bounds: GraphSelectionBounds,
+  viewport: GraphViewport,
+  size: { width: number; height: number },
+  padding = 24,
+): GraphViewport {
+  function offset(start: number, length: number, available: number) {
+    const end = start + length;
+    if (length > available - padding * 2) return padding - start;
+    if (start < padding) return padding - start;
+    if (end > available - padding) return available - padding - end;
+    return 0;
+  }
+  return {
+    ...viewport,
+    x: viewport.x + offset(bounds.x * viewport.scale + viewport.x, bounds.width * viewport.scale, size.width),
+    y: viewport.y + offset(bounds.y * viewport.scale + viewport.y, bounds.height * viewport.scale, size.height),
+  };
+}
+
 export function getGraphNodesInSelectionBounds(
   placements: ConversationGraphNodePlacement[],
   bounds: GraphSelectionBounds,
@@ -37,6 +58,7 @@ export interface GraphInteractionCallbacks {
 type Interaction = { start: GraphPointer; latest: GraphPointer } & (
   | { kind: "node"; conversationId: string; conversationIds: string[] }
   | { kind: "pan"; origin: GraphViewport }
+  | { kind: "pinch"; secondStart: GraphPointer; secondLatest: GraphPointer; origin: GraphViewport; anchor: { x: number; y: number }; minimumScale: number; maximumScale: number }
   | { kind: "marquee"; startWorld: { x: number; y: number }; additive: boolean; initialIds: Set<string> }
 );
 
@@ -73,6 +95,15 @@ export function createGraphInteractionController(
         ...callbacks.getViewport(),
         x: current.origin.x + current.latest.clientX - current.start.clientX,
         y: current.origin.y + current.latest.clientY - current.start.clientY,
+      });
+    } else if (current.kind === "pinch") {
+      const startDistance = Math.max(1, Math.hypot(current.secondStart.clientX - current.start.clientX, current.secondStart.clientY - current.start.clientY));
+      const distance = Math.hypot(current.secondLatest.clientX - current.latest.clientX, current.secondLatest.clientY - current.latest.clientY);
+      const scale = Math.min(current.maximumScale, Math.max(current.minimumScale, current.origin.scale * distance / startDistance));
+      callbacks.onViewport({
+        scale,
+        x: current.origin.x + (current.latest.clientX + current.secondLatest.clientX - current.start.clientX - current.secondStart.clientX) / 2 + current.anchor.x * (current.origin.scale - scale),
+        y: current.origin.y + (current.latest.clientY + current.secondLatest.clientY - current.start.clientY - current.secondStart.clientY) / 2 + current.anchor.y * (current.origin.scale - scale),
       });
     } else {
       const point = callbacks.toWorld(current.latest);
@@ -123,6 +154,18 @@ export function createGraphInteractionController(
       interaction = { kind: "pan", start, latest: start, origin: { ...read().getViewport() } };
       read().onPanning(true);
     },
+    startPinch(first: GraphPointer, second: GraphPointer, minimumScale: number, maximumScale: number) {
+      finish(false);
+      const start = snapshot(first);
+      const secondStart = snapshot(second);
+      const callbacks = read();
+      interaction = {
+        kind: "pinch", start, latest: start, secondStart, secondLatest: secondStart,
+        origin: { ...callbacks.getViewport() }, minimumScale, maximumScale,
+        anchor: callbacks.toWorld({ pointerId: first.pointerId, clientX: (first.clientX + second.clientX) / 2, clientY: (first.clientY + second.clientY) / 2 }),
+      };
+      callbacks.onPanning(true);
+    },
     startMarquee(point: GraphPointer, additive: boolean, initialIds: Iterable<string>) {
       finish(false);
       const start = snapshot(point);
@@ -132,8 +175,10 @@ export function createGraphInteractionController(
       if (!additive) read().onSelection(new Set());
     },
     move(point: GraphPointer) {
-      if (!interaction || interaction.start.pointerId !== point.pointerId) return false;
-      interaction.latest = snapshot(point);
+      if (!interaction) return false;
+      if (interaction.start.pointerId === point.pointerId) interaction.latest = snapshot(point);
+      else if (interaction.kind === "pinch" && interaction.secondStart.pointerId === point.pointerId) interaction.secondLatest = snapshot(point);
+      else return false;
       if (frame === null) {
         frame = scheduler.request(() => {
           frame = null;
@@ -143,8 +188,10 @@ export function createGraphInteractionController(
       return true;
     },
     end(point: GraphPointer, commit = true) {
-      if (!interaction || interaction.start.pointerId !== point.pointerId) return false;
-      interaction.latest = snapshot(point);
+      if (!interaction) return false;
+      if (interaction.start.pointerId === point.pointerId) interaction.latest = snapshot(point);
+      else if (interaction.kind === "pinch" && interaction.secondStart.pointerId === point.pointerId) interaction.secondLatest = snapshot(point);
+      else return false;
       return finish(commit);
     },
     cancel: () => finish(false),

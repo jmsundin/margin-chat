@@ -95,6 +95,13 @@ export default function StandaloneNotePanel({
           <p>Private workspace note · Markdown Live Preview</p>
         </header>
 
+        {conversation.publicTopic ? <aside className="public-topic-provenance" aria-label="Public topic source">
+          <strong>{conversation.publicTopic.label}</strong>
+          <p>{conversation.publicTopic.description}</p>
+          <a href={conversation.publicTopic.wikidataUrl} target="_blank" rel="noreferrer">Wikidata topic ↗</a>
+          {conversation.publicTopic.wikipediaUrl ? <a href={conversation.publicTopic.wikipediaUrl} target="_blank" rel="noreferrer">Wikipedia article ↗</a> : null}
+          <small>Public data: Wikidata · CC0 · Retrieved {new Date(conversation.publicTopic.retrievedAt).toLocaleDateString()}. Your notes below are private.</small>
+        </aside> : null}
         {note ? (
           <LiveMarkdownEditor
             ariaLabel={`Edit ${conversation.title}`}
