@@ -16,6 +16,7 @@ import { readReleaseConfig, configurationGaps, redact } from "./release/config.m
 import { executeRelease, RELEASE_STEPS, VERCEL_SYNC_STEPS } from "./release/sequence.mjs";
 import { readVercelUpdates, describeVercelUpdates, assertDeployedCommit, assertProductionAlias, createVercelApi, planVercelUpdates, applyVercelUpdates } from "./release/vercel-updates.mjs";
 import { checkReadiness, runPersistenceSmoke } from "./release/smoke.mjs";
+import { promoteVerifiedDeployment } from "./release/promote.mjs";
 import { createNeonReleaseProvider, validateBlobStoreTokens, backupBlobStore, restoreBlobBackup } from "./release/providers.mjs";
 
 const exec = promisify(execFile);
@@ -271,10 +272,8 @@ export async function releaseProduction({ config, env = process.env, onProgress 
           blobToken: env.BLOB_READ_WRITE_TOKEN, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET });
       },
       async promote() {
-        await assertLock();
-        if ((await project()).targets?.production?.id !== previous.id) throw new Error("Production routing changed outside this release. Promotion stopped.");
-        await command("bun", ["--no-env-file", "x", "--no-install", "vercel", "promote", candidate.id, "--yes"], vercelEnv);
-        return { deployment: candidate.id };
+        return promoteVerifiedDeployment({ api: vercelApi, projectId: config.vercel.projectId,
+          deploymentId: candidate.id, previousDeploymentId: previous.id, expectedSha: plan.sha, assertLock });
       },
       async verifyProduction() {
         await assertLock();

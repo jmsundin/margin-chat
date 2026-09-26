@@ -77,7 +77,7 @@ export async function assertProductionAlias({ api, productionUrl, projectId, dep
 }
 
 export function createVercelApi({ config, token, fetchImpl = fetch }) {
-  return async (path, { method = "GET", body } = {}) => {
+  return async (path, { method = "GET", body, allowEmptyResponse = false } = {}) => {
     const url = new URL(path, "https://api.vercel.com");
     if (url.origin !== "https://api.vercel.com") throw new Error("Invalid Vercel API origin.");
     url.searchParams.set("teamId", config.orgId);
@@ -89,7 +89,10 @@ export function createVercelApi({ config, token, fetchImpl = fetch }) {
     // Provider error bodies can echo submitted secrets. Never include them in errors.
     if (!response.ok) throw new Error(`Vercel ${method} request failed (${response.status}); re-run sync after resolving the API failure.`);
     let result;
-    try { result = await response.json(); }
+    try {
+      const text = await response.text();
+      result = allowEmptyResponse && !text.trim() ? {} : JSON.parse(text);
+    }
     catch { throw new Error(`Vercel ${method} returned an unreadable response; re-run sync to reconcile updates.`); }
     if (!result || result.error || result.errors?.length || result.failed?.length) throw new Error(`Vercel ${method} reported an unsuccessful update; re-run sync to reconcile updates.`);
     return result;
