@@ -48,7 +48,7 @@ const observedDirectoryWorkspaces = new Map<string, MarkdownWorkspace>();
 
 export class LocalDirectoryConflictError extends Error {
   constructor(public readonly paths: string[]) {
-    super(`The connected folder changed outside Margin Chat (${paths.join(", ")}). Read and reconcile the folder before saving.`);
+    super(`The connected folder changed again while saving (${paths.join(", ")}). Its files are preserved; sync will retry.`);
     this.name = "LocalDirectoryConflictError";
   }
 }
@@ -400,10 +400,12 @@ export async function readConnectedDirectoryCompanions(
       const descriptor = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
       if (descriptor.localEncoding === "base64" && typeof descriptor.copy === "string") binaryCopies.add(descriptor.copy);
       if (descriptor.remoteEncoding === "base64" && typeof descriptor.remoteCopy === "string") binaryCopies.add(descriptor.remoteCopy);
+      if (descriptor.baseEncoding === "base64" && typeof descriptor.baseCopy === "string") binaryCopies.add(descriptor.baseCopy);
+      if (descriptor.resultEncoding === "base64" && typeof descriptor.resultCopy === "string") binaryCopies.add(descriptor.resultCopy);
       if (typeof descriptor.path === "string" && /^attachments\//i.test(descriptor.path)
         && !/\/metadata\.json$/u.test(descriptor.path)
       ) {
-        for (const copy of [descriptor.copy, descriptor.remoteCopy]) if (typeof copy === "string") binaryCopies.add(copy);
+        for (const copy of [descriptor.copy, descriptor.remoteCopy, descriptor.baseCopy, descriptor.resultCopy]) if (typeof copy === "string") binaryCopies.add(copy);
       }
     } catch { /* Preserve unreadable conflict notes as files; they are not authoritative sync controls. */ }
   }

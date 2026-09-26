@@ -4,6 +4,8 @@ import "./AIResponseDetails.css";
 
 const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
 const routingLabels = {
+  astra: "Auto · selected by GPT-6 Astra (low reasoning)",
+  "astra-task": "Auto · GPT-6 Astra task matching",
   jev: "Auto · selected by Jev",
   "jev-task": "Auto · Jev task matching",
   rules: "Auto · standard routing",

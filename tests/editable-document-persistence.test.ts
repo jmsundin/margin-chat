@@ -48,10 +48,10 @@ describe("editable document database and local persistence", () => {
   test("migration adds document storage, retains unrelated foreign keys, and round-trips main/side documents and block anchors", async () => {
     const { client, pg } = database();
     const migrations = await loadMigrations();
-    await migrateDatabase(client, { migrations: migrations.filter((migration) => migration.id !== "0007_editable_documents") });
+    await migrateDatabase(client, { migrations: migrations.filter((migration) => migration.id < "0007_editable_documents") });
     await pg.query("insert into marginchat_users (id,email,password_hash,display_name) values ('docs-user','docs@example.test','hash','Documents')");
     const migration = await migrateDatabase(client, { migrations });
-    expect(migration.executed).toEqual(["0007_editable_documents"]);
+    expect(migration.executed).toEqual(migrations.filter((migration) => migration.id >= "0007_editable_documents").map((migration) => migration.id));
     const constraints = await pg.query<{ target: string; source: string }>(`select confrelid::regclass::text as target, conrelid::regclass::text as source from pg_constraint
       where contype='f' and conrelid in ('marginchat_branch_anchors'::regclass, 'marginchat_conversation_notes'::regclass)`);
     expect(constraints.rows.some((row) => row.target === "marginchat_messages")).toBe(false);

@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useRef, useState } from "react";
+import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import GroupPickerModal, { type GroupPickerSuggestion } from "./GroupPickerModal";
 import { getConversationGroupId } from "../lib/conversationGroups";
 import type { ConversationGroup } from "../types";
@@ -76,19 +77,10 @@ export function NewConversationGroupForm({
     triggerRef.current?.focus();
   }
 
-  useEffect(() => {
-    if (!open || !iconOnly) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      if (event.target instanceof Node && !popoverRef.current?.contains(event.target)) {
-        setName("");
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [open, iconOnly]);
+  useOutsideDismiss(open && iconOnly, () => {
+    setName("");
+    setOpen(false);
+  }, popoverRef);
 
   const trigger = (
     <button

@@ -68,7 +68,10 @@ const groups: Record<string, ConversationGroup> = {
 };
 const container = browser.document.createElement("div");
 browser.document.body.append(container);
-const root = createRoot(container as unknown as Element);
+const graphHost = browser.document.createElement("div");
+const explorerHost = browser.document.createElement("div");
+container.append(graphHost, explorerHost);
+const root = createRoot(graphHost as unknown as Element);
 let account = "account-a";
 let focusRequest: { conversationId: string; requestId: number } | null = null;
 function Reader({ id, source }: { id: string; source?: GraphEvidenceRef }) {
@@ -86,6 +89,7 @@ function Reader({ id, source }: { id: string; source?: GraphEvidenceRef }) {
 }
 function Graph() {
   return createElement(ConversationGraphView, {
+    explorerContainer: explorerHost as unknown as HTMLElement,
     key: account, workspaceKey: account, activeConversationId: "root", conversations, groups,
     graphLayouts: layouts, threads: buildThreadSummaries(conversations), focusRequest,
     onFocusRequestHandled(requestId) { if (focusRequest?.requestId === requestId) focusRequest = null; },
@@ -895,7 +899,8 @@ async function checkSparseMapPresentation() {
   assert.equal(element('.semantic-map').dataset.mapScale, "titles", "Fitting a few distant notes keeps individual titles discoverable");
   assert.equal(element(".conversation-graph-stage").hidden, false);
   assert.equal(container.querySelector('.graph-territories[data-territory-mode="overview"]'), null);
-  assert.equal(container.querySelector(".graph-map-filters"), null, "A map with no available filters does not offer an empty menu");
+  assert(container.querySelector('.graph-map-filters')?.textContent.includes("Branch ancestry"), "Branch relationship filtering remains available on sparse maps");
+  assert(container.querySelector('.graph-map-filters')?.textContent.includes("Authored links"), "Authored-link filtering remains available on sparse maps");
   await click(element('[aria-label="Zoom out to all groups"]'));
   assert.equal(element('.semantic-map').dataset.mapScale, "groups", "All groups opens the aggregate overview");
   assert.equal(element(".conversation-graph-stage").hidden, true);
@@ -1226,6 +1231,7 @@ async function checkTemporarySelectionSpacing() {
     await flushFrames();
   }
   const node = element('[aria-label="Preview Dense center"]');
+  const centersBeforePinch = ids.map((id) => { const box = placement(id); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; });
   await touch(node, "pointerdown", 41, 100, 200);
   await touch(node, "pointerdown", 42, 200, 200);
   await touch(viewport, "pointermove", 42, 300, 200);
@@ -1238,7 +1244,8 @@ async function checkTemporarySelectionSpacing() {
   await act(async () => { node.dispatchEvent(new browser.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 })); });
   await flushFrames();
   assert.equal(container.querySelector(".conversation-graph-node.is-selected"), null, "Completing a pinch cannot accidentally select its starting node");
-  assert.deepEqual(positions(), originalPositions, "Pinching never moves authored nodes");
+  assert.deepEqual(ids.map((id) => { const box = placement(id); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; }), centersBeforePinch,
+    "Pinching grows document detail around stable authored centers");
 
   await click(element('[aria-label="Dock Dense center in split view"]'));
   const splitter = element('[aria-label="Resize docked chat"]');
@@ -1255,6 +1262,15 @@ async function checkTemporarySelectionSpacing() {
 }
 
 try {
+  await act(async () => root.render(createElement(ConversationGraphView, { ...Graph().props, explorerContainer: null })));
+  await flushFrames();
+  await click(element('[aria-label="Explore map collections and sources"]'));
+  assert(container.querySelector('.graph-map-explorer-popover'));
+  await click(element('.graph-map-explorer-popover .graph-exploration-search input'));
+  assert(container.querySelector('.graph-map-explorer-popover'), "Interacting with the floating explorer keeps it open");
+  await click(element('.conversation-graph-viewport'));
+  assert.equal(container.querySelector('.graph-map-explorer-popover'), null, "Clicking outside the floating explorer dismisses it");
+  await act(async () => root.render(null));
   await render();
   assert.equal(stageCount(), 61);
   assert.equal(element('.semantic-map').dataset.mapPresentation, 'map', 'A large map starts in its grouped presentation');

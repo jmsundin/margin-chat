@@ -8,5 +8,5 @@ test("formatted document editors preserve source, cursor, streaming isolation, a
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   clearTimeout(timeout);
   if (code !== 0) throw new Error(`Rich document editor regression:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(13);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(16);
 }, 25000);

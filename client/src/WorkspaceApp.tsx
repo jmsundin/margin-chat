@@ -1,7 +1,8 @@
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
-import { getChatPanelLayout, resizeChatPanels } from "./lib/chatPanelLayout";
-import { getConversationAnnotationPreview } from "./lib/annotationPreview";
+import "./document-workspace.css";
+import { getChatPanelLayout, resizeChatPanel } from "./lib/chatPanelLayout";
+import { getConversationAnnotationPreview, summarizeAnnotationText } from "./lib/annotationPreview";
 import {
   startTransition,
   type Dispatch,
@@ -19,11 +20,25 @@ import {
 } from "react";
 import AppSettingsModal from "./components/AppSettingsModal";
 import BranchRail from "./components/BranchRail";
+import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
+import DocumentLinkPicker from "./components/DocumentLinkPicker";
+import DocumentTabs from "./components/DocumentTabs";
+import DocumentChildTabs from "./components/DocumentChildTabs";
+import DocumentMenu from "./components/DocumentMenu";
+import DocumentViewsMenu from "./components/DocumentViewsMenu";
+import WorkspaceModeMenu from "./components/WorkspaceModeMenu";
+import WorkspaceView from "./components/WorkspaceView";
+import DocumentDock from "./components/DocumentDock";
+import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
+import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
+import { focusDocument, getDocumentWidth, getDocumentWorkspace, minimizeDocument, reorderDocument, setDocumentWidth } from "./lib/documentWorkspace";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
+import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
+import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
 import AIControls from "./components/AIControls";
 import JevRelatedItems from "./components/JevRelatedItems";
@@ -31,10 +46,10 @@ import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
 import { applyJevCategories, withJevConsent } from "./lib/jevAssistance";
 import { applyJevGroupSuggestions } from "./lib/jevGrouping";
 import { getThreadCategoryLabel } from "./lib/threadCategories";
-import { normalizeAISettings } from "@margin-chat/workspace-contracts";
+import { normalizeAISettings, normalizeDocumentDock, type DocumentDockNode } from "@margin-chat/workspace-contracts";
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
-import ConversationTreeNode from "./components/ConversationTreeNode";
+import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
 import KnowledgeGraphWorkspace from "./components/KnowledgeGraphWorkspace";
 import { saveUrlMapNode } from "./lib/urlMap";
 import { findSavedPublicTopic, savePublicTopic } from "./lib/publicTopicWorkspace";
@@ -42,7 +57,7 @@ import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
-import { ConversationGroupSelect, ConversationGroupPickerContext } from "./components/ConversationGroupControls";
+import { ConversationGroupPickerContext } from "./components/ConversationGroupControls";
 import MainChatTileView from "./components/MainChatTileView";
 import MarginNoteTreeNode from "./components/MarginNoteTreeNode";
 import ProfileModal from "./components/ProfileModal";
@@ -73,7 +88,7 @@ import {
 import { getConversationRequestPayload } from "./lib/chatContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument } from "./lib/workspaceCommands";
-import { buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
+import { buildDocumentSummaries, buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
   CONVERSATION_GROUP_COLORS,
   assignConversationToGroup,
@@ -91,6 +106,7 @@ import { canSyncWorkspaceToCloud } from "./lib/workspaceStorage";
 import { useMarkdownVault } from "./lib/useMarkdownVault";
 import {
   getBackendServiceLabel,
+  getBackendServiceModel,
   resolveBackendServiceModelId,
   type RecentBackendServiceSelection,
   upsertRecentBackendServiceSelection,
@@ -106,7 +122,6 @@ import {
   getBranchNavigation,
   getConversationPath,
   getConversationRootId,
-  getConversationTreeLanes,
 } from "./lib/tree";
 import { buildEditableDocumentOutline } from "./lib/chatOutline";
 import { getConversationSelectionViewMode } from "./lib/conversationNavigation";
@@ -344,6 +359,7 @@ interface WorkspaceAppProps {
     displayName: string;
     email: string;
   }) => Promise<AuthenticatedUser>;
+  onChangePassword: (args: { currentPassword: string; password: string }) => Promise<void>;
   onUpdateApiKeys: (args: {
     keys: Partial<Record<ApiKeyProvider, string | null>>;
   }) => Promise<ApiKeySettings>;
@@ -397,28 +413,6 @@ function buildBackendErrorReply(
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
-}
-
-function getLineRect(element: Element | null): DOMRect | null {
-  if (!element) {
-    return null;
-  }
-
-  const clientRect = Array.from(element.getClientRects())
-    .filter((rect) => rect.width > 0 && rect.height > 0)
-    .at(-1);
-
-  if (clientRect) {
-    return clientRect;
-  }
-
-  const fallbackRect = element.getBoundingClientRect();
-
-  if (fallbackRect.width > 0 && fallbackRect.height > 0) {
-    return fallbackRect;
-  }
-
-  return null;
 }
 
 function getElementRect(element: Element | null): DOMRect | null {
@@ -579,6 +573,24 @@ function getAnchorsByMessageId(
     links[messageId] = bucket;
   }
 
+  for (const link of conversations[conversationId]?.document?.links ?? []) {
+    const target = getDocumentLinkTarget(link, conversations);
+    if (!target) continue;
+    const bucket = links[link.sourceMessageId] ?? [];
+    bucket.push({
+      branchConversationId: link.id,
+      kind: "document-link",
+      targetBlockId: link.targetBlockId,
+      title: target.conversation.title || "Untitled document",
+      anchor: { ...link, sourceConversationId: conversationId, prompt: "" },
+      preview: {
+        kind: target.conversation.kind === "note" ? "note" : "chat",
+        content: summarizeAnnotationText(target.block?.content ?? getEditableDocumentText(target.conversation)),
+      },
+    });
+    links[link.sourceMessageId] = bucket;
+  }
+
   return links;
 }
 
@@ -619,6 +631,7 @@ export default function WorkspaceApp({
   onStartSubscription,
   onSetTheme,
   onUpdateProfile,
+  onChangePassword,
   onUpdateApiKeys,
   theme,
   user,
@@ -642,6 +655,7 @@ export default function WorkspaceApp({
   const [state, setState] = useState<AppState>(
     () => initialStoredStateRef.current!.state,
   );
+  const [scrollingDocumentId, setScrollingDocumentId] = useState(state.activeConversationId);
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
@@ -694,7 +708,10 @@ export default function WorkspaceApp({
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
     null,
   );
-  const [selectionIntent, setSelectionIntent] = useState<"branch" | "note">("branch");
+  const [selectionIntent, setSelectionIntent] = useState<"branch" | "note" | "link">("branch");
+  const [selectionModelOpen, setSelectionModelOpen] = useState(false);
+  const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
+  const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [jevEnabled, setJevEnabled] = useJevPreference(user.id);
   const [profileModalOpen, setProfileModalOpen] = useState(false);
@@ -730,32 +747,54 @@ export default function WorkspaceApp({
   const [canvasWidth, setCanvasWidth] = useState(0);
   const [resizedPanelWidths, setResizedPanelWidths] = useState<Record<string, number>>({});
   const toolbarRef = useRef<HTMLFormElement>(null);
-  const panelRefs = useRef<Record<string, HTMLElement | null>>({});
+  const documentPanelRefs = useRef<Record<string, HTMLElement | null>>({});
+  const graphPanelRefs = useRef<Record<string, HTMLElement | null>>({});
+  const panelRefs = useRef(documentPanelRefs.current);
+  // A map reader and the document workspace may retain the same document.
+  // Navigation must always target the panel in the currently visible mode.
+  panelRefs.current = mainViewMode === "graph" ? graphPanelRefs.current : documentPanelRefs.current;
   const anchorRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const branchOriginRefs = useRef<Record<string, HTMLElement | null>>({});
   const composerSurfaceRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
-  const treeNodeRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const panelScrollPositionsRef = useRef<Record<string, number>>({});
   const suppressNextChatAutoCenterRef = useRef(false);
-  const pendingTreeLaneFocusRef = useRef<string | null>(null);
+  const [documentFocusSequence, setDocumentFocusSequence] = useState(0);
   const typingProgressByMessageIdRef = useRef<Record<string, number>>({});
   const currentStateRef = useRef(state);
   currentStateRef.current = state;
+  const pendingMovedBlockFocus = useRef<{ conversationId: string; blockId: string } | null>(null);
+  useLayoutEffect(() => {
+    const request = pendingMovedBlockFocus.current;
+    if (!request) return;
+    pendingMovedBlockFocus.current = null;
+    const panel = panelRefs.current[request.conversationId];
+    const block = [...(panel?.querySelectorAll<HTMLElement>("[data-document-block-id]") ?? [])]
+      .find((element) => element.dataset.documentBlockId === request.blockId);
+    const focusTarget = block?.querySelector<HTMLElement>(".rich-document-content, .rich-document-grip");
+    focusTarget?.focus({ preventScroll: true });
+    block?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [state]);
   const selectionSyncFrameRef = useRef(0);
   const panelResizeStateRef = useRef<{
     conversationId: string;
     originWidth: number;
+    latestWidth: number;
     startClientX: number;
     direction: 1 | -1;
-    companionId?: string;
-    companionWidth?: number;
+    startScrollLeft: number;
     maxWidth: number;
     pointerId: number;
     handle: HTMLDivElement;
     previousCursor: string;
     previousUserSelect: string;
   } | null>(null);
+  const pendingPanelResizeScroll = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (pendingPanelResizeScroll.current === null) return;
+    if (canvasRef.current) canvasRef.current.scrollLeft = pendingPanelResizeScroll.current;
+    pendingPanelResizeScroll.current = null;
+  }, [resizedPanelWidths, state.conversations]);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const cloudSyncEnabled = canSyncWorkspaceToCloud(user);
   const cloudBackupSizeBytes = useMemo(
@@ -766,19 +805,66 @@ export default function WorkspaceApp({
   const activeConversation =
     state.conversations[state.activeConversationId] ??
     state.conversations[state.rootId];
+  const documentAnchorLinks = useMemo(() => {
+    const cache = new Map<string, MessageAnchorLink[]>();
+    return (conversationId: string) => {
+      if (!cache.has(conversationId)) cache.set(conversationId, Object.values(getAnchorsByMessageId(state.conversations, conversationId)).flat());
+      return cache.get(conversationId)!;
+    };
+  }, [state.conversations]);
   const {
     children: focusedBranches,
-    parent: parentConversation,
     path,
     siblings: siblingBranches,
   } = getBranchNavigation(state.conversations, activeConversation.id);
-  const isMainView = activeConversation.parentId === null;
   const activeRootConversation = path[0] ?? activeConversation;
-  const conversationTreeLanes = getConversationTreeLanes(
-    state.conversations,
-    activeConversation.id,
-  );
-  const currentChatOutline = buildEditableDocumentOutline(activeConversation);
+  const documentDock = normalizeDocumentDock(state.documentDock, state.conversations);
+  const pinnedDocumentIds = listPinnedDocumentIds(documentDock?.tree ?? null);
+  const workspaceFocusId = pinnedDocumentIds.includes(activeConversation.id) && state.conversations[scrollingDocumentId]
+    ? scrollingDocumentId : activeConversation.id;
+  const documentWorkspace = getDocumentWorkspace(state.conversations, workspaceFocusId);
+  const minimizedSideDocumentsByParent = useMemo(() => {
+    const children = new Map<string, Conversation[]>();
+    for (const root of Object.values(state.conversations)) {
+      const layout = root.documentLayout;
+      if (root.parentId !== null || !layout) continue;
+      const minimized = new Set(layout.minimizedIds);
+      for (const id of new Set([...layout.order, ...layout.minimizedIds])) {
+        const child = state.conversations[id];
+        if (!minimized.has(id) || !child?.parentId) continue;
+        const siblings = children.get(child.parentId) ?? [];
+        siblings.push(child);
+        children.set(child.parentId, siblings);
+      }
+    }
+    return children;
+  }, [state.conversations]);
+  const familyDocumentIds = new Set(documentWorkspace.documents.map((document) => document.id));
+  const familyPinnedDocumentIds: string[] = [];
+  function collectFamilyPins(node: DocumentDockNode | null) {
+    if (!node) return;
+    if (node.type === "pane") { if (node.scope === "family") familyPinnedDocumentIds.push(node.documentId); }
+    else { collectFamilyPins(node.first); collectFamilyPins(node.second); }
+  }
+  collectFamilyPins(documentDock?.tree ?? null);
+  const visiblePinnedDocumentIds = pinnedDocumentIds.filter((id) => !familyPinnedDocumentIds.includes(id) || familyDocumentIds.has(id));
+  const scrollingDocuments = documentWorkspace.visibleDocuments.filter((document) => !pinnedDocumentIds.includes(document.id));
+  const tabDocuments = [
+    ...visiblePinnedDocumentIds.filter((id) => !familyDocumentIds.has(id)).map((id) => state.conversations[id]),
+    ...documentWorkspace.documents,
+  ];
+  useEffect(() => {
+    if (!pinnedDocumentIds.includes(activeConversation.id)) setScrollingDocumentId(activeConversation.id);
+  }, [activeConversation.id, pinnedDocumentIds.join("|")]);
+  useLayoutEffect(() => {
+    for (const [id, scrollTop] of Object.entries(panelScrollPositionsRef.current)) {
+      const body = panelRefs.current[id]?.querySelector<HTMLElement>(".document-body");
+      if (!body) continue;
+      body.scrollTop = scrollTop;
+      delete panelScrollPositionsRef.current[id];
+    }
+  });
+  const currentChatOutline = useMemo(() => buildEditableDocumentOutline(activeConversation), [activeConversation]);
   const currentChatOutlineKey = currentChatOutline
     .map((item) => item.id)
     .join("|");
@@ -787,27 +873,21 @@ export default function WorkspaceApp({
   const chatPanelLayout = getChatPanelLayout({
     availableWidth: canvasWidth,
     preferredWidth: chatPanelWidth,
-    hasParent: Boolean(parentConversation),
-    hasSideItems: conversationTreeLanes.length > 0,
+    hasParent: scrollingDocuments.length > 1,
+    hasSideItems: scrollingDocuments.length > 1,
     mobile: isMobileViewport,
   });
+  if (!isMobileViewport && canvasWidth >= 1150 && scrollingDocuments.length >= 3) {
+    chatPanelLayout.width = Math.min(chatPanelWidth, (canvasWidth - 112) / 3);
+  }
   const panelMaximumWidth = Math.max(CHAT_PANEL_MIN_WIDTH_PX, Math.min(CHAT_PANEL_MAX_WIDTH_PX, canvasWidth - 48));
   function getRenderedPanelWidth(conversationId: string) {
     if (isMobileViewport) return chatPanelLayout.width;
-    return Math.min(resizedPanelWidths[conversationId] ?? chatPanelLayout.width, panelMaximumWidth);
+    return Math.min(resizedPanelWidths[conversationId] ?? getDocumentWidth(state.conversations, conversationId) ?? chatPanelLayout.width, panelMaximumWidth);
   }
   function getPanelResizeInfo(conversation: Conversation) {
-    const width = getRenderedPanelWidth(conversation.id);
-    const pathIndex = path.findIndex((item) => item.id === conversation.id);
-    const companion = conversation.parentId
-      ? state.conversations[conversation.parentId]
-      : path[pathIndex + 1];
-    const companionWidth = companion ? getRenderedPanelWidth(companion.id) : undefined;
     return {
-      width,
-      companionId: companion?.id,
-      companionWidth,
-      direction: (companion && conversation.parentId ? -1 : 1) as 1 | -1,
+      width: getRenderedPanelWidth(conversation.id),
       maxWidth: panelMaximumWidth,
     };
   }
@@ -831,8 +911,18 @@ export default function WorkspaceApp({
       })),
     [state.conversations, state.groups, summaryMinute, jevCategoryKey],
   );
+  const documentSummaries = useMemo(
+    () => buildDocumentSummaries(state.conversations).map((document) => ({
+      ...document, groupId: getConversationGroupId(state.groups, document.id),
+    })),
+    [state.conversations, state.groups, summaryMinute],
+  );
   const threadSummaryById = new Map(
-    threadSummaries.map((thread) => [thread.id, thread] as const),
+    documentSummaries.map((thread) => [thread.id, thread] as const),
+  );
+  const blockMoveTargets = useMemo(
+    () => documentSummaries.map(({ id, title }) => ({ id, title: title || "Untitled document" })),
+    [documentSummaries],
   );
   const pinnedThreadSummaries = state.pinnedThreadIds
     .map((threadId) => threadSummaryById.get(threadId))
@@ -848,26 +938,12 @@ export default function WorkspaceApp({
       continue;
     }
 
-    const rootConversationId = getConversationRootId(
-      state.conversations,
-      conversationId,
-    );
-
-    if (rootConversationId) {
-      streamingThreadIds.add(rootConversationId);
-    }
+    streamingThreadIds.add(conversationId);
   }
   const nearbyBranchCount = siblingBranches.length + focusedBranches.length;
   const branchNavigationCount =
     nearbyBranchCount + Math.max(path.length - 1, 0);
   const branchAccessEnabled = branchNavigationCount > 0;
-  const mobileChatContextCopy = isMainView
-    ? focusedBranches.length
-      ? `${focusedBranches.length} direct ${
-          focusedBranches.length === 1 ? "branch" : "branches"
-        } ready to review`
-      : "Focused on the main thread with quick actions nearby"
-    : `Branching from ${parentConversation?.title ?? activeRootConversation.title}`;
   const mobilePanelsOpen =
     isMobileViewport &&
     !isTileView &&
@@ -1002,18 +1078,20 @@ export default function WorkspaceApp({
         return;
       }
 
+      const completed = event instanceof PointerEvent && event.type === "pointerup";
+      if (completed) handleChatPanelResizePointerMove(event);
       panelResizeStateRef.current = null;
+      if (completed && resizeState.latestWidth !== resizeState.originWidth) {
+        setState((current) => setDocumentWidth(current, resizeState.conversationId, resizeState.latestWidth));
+      }
+      if (!completed) pendingPanelResizeScroll.current = resizeState.startScrollLeft;
+      clearPanelWidthPreview(resizeState.conversationId);
       setIsResizingChatPanel(false);
       setResizingChatPanelConversationId(null);
       if (resizeState.handle.hasPointerCapture?.(resizeState.pointerId)) resizeState.handle.releasePointerCapture(resizeState.pointerId);
       document.body.style.cursor = resizeState.previousCursor;
       document.body.style.userSelect = resizeState.previousUserSelect;
 
-      panelRefs.current[resizeState.conversationId]?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "nearest",
-      });
     }
 
     function handleChatPanelResizePointerMove(event: PointerEvent) {
@@ -1024,17 +1102,26 @@ export default function WorkspaceApp({
       }
 
       event.preventDefault();
-      const next = resizeChatPanels({
+      const next = resizeChatPanel({
         width: resizeState.originWidth,
-        companionWidth: resizeState.companionWidth,
         delta: (event.clientX - resizeState.startClientX) * resizeState.direction,
         maxWidth: resizeState.maxWidth,
       });
+      resizeState.latestWidth = next.width;
+      // In a horizontal flow, compensate scrolling when moving the left edge
+      // so the document's opposite edge stays in place where the canvas allows.
+      pendingPanelResizeScroll.current = resizeState.startScrollLeft
+        + (resizeState.direction === -1 ? next.width - resizeState.originWidth : 0);
       setResizedPanelWidths((current) => ({
         ...current,
         [resizeState.conversationId]: next.width,
-        ...(resizeState.companionId && next.companionWidth !== undefined ? { [resizeState.companionId]: next.companionWidth } : {}),
       }));
+    }
+
+    function cancelWithEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || !panelResizeStateRef.current) return;
+      event.preventDefault();
+      stopChatPanelResize();
     }
 
     window.addEventListener("pointermove", handleChatPanelResizePointerMove);
@@ -1043,6 +1130,7 @@ export default function WorkspaceApp({
     window.addEventListener("lostpointercapture", stopChatPanelResize);
     window.addEventListener("blur", stopChatPanelResize);
     window.addEventListener("resize", stopChatPanelResize);
+    window.addEventListener("keydown", cancelWithEscape);
 
     return () => {
       window.removeEventListener("pointermove", handleChatPanelResizePointerMove);
@@ -1051,6 +1139,7 @@ export default function WorkspaceApp({
       window.removeEventListener("lostpointercapture", stopChatPanelResize);
       window.removeEventListener("blur", stopChatPanelResize);
       window.removeEventListener("resize", stopChatPanelResize);
+      window.removeEventListener("keydown", cancelWithEscape);
       const resizing = panelResizeStateRef.current;
       if (resizing) {
         panelResizeStateRef.current = null;
@@ -1068,6 +1157,7 @@ export default function WorkspaceApp({
 
     const resizing = panelResizeStateRef.current;
     panelResizeStateRef.current = null;
+    clearPanelWidthPreview(resizing.conversationId);
     setIsResizingChatPanel(false);
     setResizingChatPanelConversationId(null);
     if (resizing.handle.hasPointerCapture?.(resizing.pointerId)) resizing.handle.releasePointerCapture(resizing.pointerId);
@@ -1096,6 +1186,20 @@ export default function WorkspaceApp({
     };
   }, []);
 
+  const toggleSidebarFromShortcut = useEffectEvent(() => handleToggleLeftSidebar());
+  useEffect(() => {
+    function handleSidebarShortcut(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.isComposing || event.key.toLowerCase() !== "b") return;
+      // Capture before editor keymaps so this workspace shortcut never also
+      // toggles bold or gets swallowed by a document's keyboard handlers.
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) toggleSidebarFromShortcut();
+    }
+    document.addEventListener("keydown", handleSidebarShortcut, true);
+    return () => document.removeEventListener("keydown", handleSidebarShortcut, true);
+  }, []);
+
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || mainViewMode !== "chat") return;
@@ -1112,56 +1216,15 @@ export default function WorkspaceApp({
       suppressNextChatAutoCenterRef.current = false;
       return;
     }
+    if (pinnedDocumentIds.includes(state.activeConversationId)) return;
 
     const panel = panelRefs.current[state.activeConversationId];
-    const parentPanel = parentConversation && panelRefs.current[parentConversation.id];
-    const canvas = canvasRef.current;
-    if (canvas && panel && parentPanel && chatPanelLayout.fitsPair &&
-      getRenderedPanelWidth(activeConversation.id) + getRenderedPanelWidth(parentConversation!.id) + 80 <= canvasWidth + 1) {
-      canvas.scrollTo({
-        left: canvas.scrollLeft + parentPanel.getBoundingClientRect().left - canvas.getBoundingClientRect().left - 24,
-        behavior: "smooth",
-      });
-      return;
-    }
     panel?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
       inline: "center",
     });
-  }, [mainViewMode, state.activeConversationId, canvasWidth, chatPanelLayout.width, chatPanelLayout.fitsPair, vault.ready, isResizingSidebar]);
-
-  useLayoutEffect(() => {
-    const parentConversationId = pendingTreeLaneFocusRef.current;
-    const canvas = canvasRef.current;
-
-    if (!parentConversationId || !canvas) {
-      return undefined;
-    }
-
-    const targetLane = Array.from(
-      canvas.querySelectorAll<HTMLElement>("[data-tree-parent-id]"),
-    ).find(
-      (lane) => lane.dataset.treeParentId === parentConversationId,
-    );
-
-    if (!targetLane) {
-      return undefined;
-    }
-
-    pendingTreeLaneFocusRef.current = null;
-    const frameId = window.requestAnimationFrame(() => {
-      targetLane.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "center",
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frameId);
-    };
-  }, [state.activeConversationId]);
+  }, [mainViewMode, state.activeConversationId, canvasWidth, chatPanelLayout.width, chatPanelLayout.fitsPair, vault.ready, isResizingSidebar, documentFocusSequence]);
 
   useEffect(() => {
     setActiveOutlineItemId((current) =>
@@ -1178,6 +1241,7 @@ export default function WorkspaceApp({
     if (
       !canvas ||
       event.ctrlKey ||
+      target instanceof Element && target.closest("select, .document-child-tabs-panel") ||
       isProfileDialogWheelTarget(target)
     ) {
       return;
@@ -1200,6 +1264,31 @@ export default function WorkspaceApp({
     });
 
     if (Math.abs(horizontalDelta) < 0.5) {
+      // Let ordinary vertical wheels use native scrolling. For a vertical
+      // diagonal, discard X so it cannot chain sideways into the canvas,
+      // including when the document has reached its top or bottom.
+      if (deltaX === 0 || Math.abs(deltaY) < 0.5) return;
+      event.preventDefault();
+      event.stopPropagation();
+      let element = target instanceof Element ? target : null;
+      while (element && element !== canvas) {
+        if (element instanceof HTMLElement) {
+          const style = window.getComputedStyle(element);
+          if (/^(auto|scroll|overlay)$/.test(style.overflowY)) {
+            const nextScrollTop = clamp(
+              element.scrollTop + normalizeWheelDelta(event.deltaY, event.deltaMode, element.clientHeight),
+              0,
+              Math.max(0, element.scrollHeight - element.clientHeight),
+            );
+            if (nextScrollTop !== element.scrollTop) {
+              element.scrollTop = nextScrollTop;
+              return;
+            }
+            if (style.overscrollBehaviorY === "contain" || style.overscrollBehaviorY === "none") return;
+          }
+        }
+        element = element.parentElement;
+      }
       return;
     }
 
@@ -1246,7 +1335,7 @@ export default function WorkspaceApp({
     return () => {
       canvas.removeEventListener("wheel", handleWheel, true);
     };
-  }, [handleConversationCanvasWheel, mainViewMode]);
+  }, [handleConversationCanvasWheel, mainViewMode, vault.ready]);
 
   useEffect(() => {
     if (!selectionDraft) {
@@ -1258,7 +1347,7 @@ export default function WorkspaceApp({
     function handlePointerDown(event: MouseEvent) {
       const target = event.target as HTMLElement;
 
-      if (toolbarRef.current?.contains(target)) {
+      if (selectionModelOpen || toolbarRef.current?.contains(target)) {
         return;
       }
 
@@ -1267,7 +1356,7 @@ export default function WorkspaceApp({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !selectionModelOpen) {
         setSelectionDraft(null);
         window.getSelection()?.removeAllRanges();
       }
@@ -1291,36 +1380,34 @@ export default function WorkspaceApp({
       }
     }
 
-    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("copy", handleCopy);
 
     return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("copy", handleCopy);
     };
-  }, [selectionDraft]);
+  }, [selectionDraft, selectionModelOpen]);
 
   useLayoutEffect(() => {
     if (!selectionDraft || !toolbarRef.current) {
       return;
     }
-
-    const nextSize = {
-      width: toolbarRef.current.offsetWidth,
-      height: toolbarRef.current.scrollHeight,
-    };
-
-    setToolbarSize((current) =>
-      current.width === nextSize.width && current.height === nextSize.height
-        ? current
-        : nextSize,
-    );
-  }, [selectionDraft]);
+    const toolbar = toolbarRef.current;
+    function measure() {
+      const nextSize = { width: toolbar.offsetWidth, height: toolbar.scrollHeight };
+      setToolbarSize((current) => current.width === nextSize.width && current.height === nextSize.height ? current : nextSize);
+    }
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [selectionDraft, selectionIntent]);
 
   useEffect(() => {
-    if (mainViewMode !== "chat" || isMobileViewport) {
+    if (mainViewMode !== "chat") {
       setConnections([]);
       setConnectorOcclusionRects([]);
       return;
@@ -1342,17 +1429,47 @@ export default function WorkspaceApp({
           return;
         }
 
-        const canvasRect = getElementRect(canvasRef.current);
+        const layout = canvasRef.current?.closest<HTMLElement>(".document-workspace-layout");
+        const layoutRect = getElementRect(layout ?? canvasRef.current);
+        if (!layoutRect) return;
+        const windowRect = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+        const workspaceRect = intersectConnectorRects(layoutRect, windowRect);
+        if (!workspaceRect) return;
+        // The overlay is fixed above the workspace. Mask every pixel occupied by
+        // the dock, including its headers and gutters, for every dock orientation.
+        const dockRects = Array.from(layout?.querySelectorAll(".document-workspace-dock") ?? [])
+          .map((element) => getElementRect(element)).filter((rect): rect is DOMRect => Boolean(rect));
+        nextOcclusionRects.push(...buildConnectorOcclusions(workspaceRect, dockRects, window.innerWidth, window.innerHeight));
 
-        if (canvasRect && canvasRect.top > 0) {
-          nextOcclusionRects.push({
-            id: "canvas-top-band",
-            x: 0,
-            y: 0,
-            width: window.innerWidth,
-            height: canvasRect.top,
-            radius: 0,
-          });
+        const panelViewports = new Map<string, ConnectorRect | null>();
+        function endpoint(conversation: Conversation, element: Element | null | undefined, target: DocumentConnectorEndpoint["target"]): DocumentConnectorEndpoint {
+          const panel = panelRefs.current[conversation.id];
+          const panelRect = getElementRect(panel);
+          if (!panelViewports.has(conversation.id)) {
+            const body = panel?.querySelector<HTMLElement>(".document-body") ?? panel;
+            let viewport: ConnectorRect | null = workspaceRect;
+            // Each document scrolls independently; a DOM rect alone does not
+            // tell us whether its text is clipped by its body or the canvas.
+            for (let ancestor: Element | null = body ?? null; ancestor && viewport; ancestor = ancestor.parentElement) {
+              const style = window.getComputedStyle(ancestor);
+              const clipX = /(auto|scroll|hidden|clip)/.test(style.overflowX);
+              const clipY = /(auto|scroll|hidden|clip)/.test(style.overflowY);
+              if (!clipX && !clipY) continue;
+              const rect = ancestor.getBoundingClientRect();
+              viewport = intersectConnectorRects(viewport, {
+                left: clipX ? rect.left : viewport.left,
+                right: clipX ? rect.right : viewport.right,
+                top: clipY ? rect.top : viewport.top,
+                bottom: clipY ? rect.bottom : viewport.bottom,
+              });
+            }
+            panelViewports.set(conversation.id, viewport);
+          }
+          const viewport = panelViewports.get(conversation.id) ?? null;
+          const lineRects = element ? Array.from(element.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0) : [];
+          const anchor = lineRects.filter((rect) => viewport && intersectConnectorRects(rect, viewport)).at(-1)
+            ?? lineRects.at(-1) ?? getElementRect(element ?? null);
+          return { title: conversation.title || "Untitled document", target, panel: panelRect, viewport, anchor };
         }
 
         const activePath = getConversationPath(
@@ -1378,34 +1495,34 @@ export default function WorkspaceApp({
               continue;
             }
 
-            const anchorRect = getLineRect(
-              anchorRefs.current[childConversation.id],
-            );
-            const parentPanelRect = getElementRect(
-              panelRefs.current[parentConversation.id],
-            );
-            const targetElement = activePathIds.has(childConversation.id)
-              ? branchOriginRefs.current[childConversation.id]
-              : treeNodeRefs.current[childConversation.id];
-            const targetRect = getElementRect(targetElement);
-
-            if (!anchorRect || !parentPanelRect || !targetRect) {
-              continue;
-            }
-
-            nextConnections.push({
+            const connection = buildDocumentConnector({
               id: `tree-${childConversation.id}`,
-              start: {
-                x: parentPanelRect.right,
-                y: anchorRect.top + anchorRect.height / 2,
-              },
-              end: {
-                x: targetRect.left,
-                y: targetRect.top + targetRect.height / 2,
-              },
+              source: endpoint(parentConversation, anchorRefs.current[childConversation.id], { conversationId: parentConversation.id, anchorId: childConversation.id }),
+              target: endpoint(childConversation, branchOriginRefs.current[childConversation.id], { conversationId: childConversation.id }),
               active: activePathIds.has(childConversation.id),
-              variant: "curve",
             });
+            if (connection) nextConnections.push(connection);
+          }
+        }
+
+        for (const conversation of Object.values(state.conversations)) {
+          for (const link of conversation.document?.links ?? []) {
+            const linked = getDocumentLinkTarget(link, state.conversations);
+            if (!linked || link.sourceBlockId?.startsWith("detached:")) continue;
+            const targetPanel = panelRefs.current[linked.conversation.id];
+            if (!panelRefs.current[conversation.id] && !targetPanel) continue;
+            const targetElement = link.targetBlockId
+              ? Array.from(targetPanel?.querySelectorAll<HTMLElement>("[data-document-block-id]") ?? []).find((element) => element.dataset.documentBlockId === link.targetBlockId)
+              : targetPanel?.querySelector(".document-header");
+            const targetEndpoint = endpoint(linked.conversation, targetElement, { conversationId: linked.conversation.id, blockId: link.targetBlockId });
+            if (linked.block) targetEndpoint.title = `${linked.conversation.title || "Untitled document"} · ${excerpt(linked.block.content.replace(/[#*_`]/g, ""), 48)}`;
+            const connection = buildDocumentConnector({
+              id: `link-${link.id}`,
+              source: endpoint(conversation, anchorRefs.current[link.id], { conversationId: conversation.id, anchorId: link.id }),
+              target: targetEndpoint,
+              active: [conversation.id, linked.conversation.id].includes(state.activeConversationId),
+            });
+            if (connection) nextConnections.push(connection);
           }
         }
 
@@ -1427,18 +1544,26 @@ export default function WorkspaceApp({
           });
         }
 
-        setConnections(nextConnections);
-        setConnectorOcclusionRects(nextOcclusionRects);
+        setConnections((current) => JSON.stringify(current) === JSON.stringify(nextConnections) ? current : nextConnections);
+        setConnectorOcclusionRects((current) => JSON.stringify(current) === JSON.stringify(nextOcclusionRects) ? current : nextOcclusionRects);
       });
     };
 
     requestUpdate();
+    const layout = canvasRef.current?.closest<HTMLElement>(".document-workspace-layout");
+    const resizeObserver = new ResizeObserver(requestUpdate);
+    if (layout) resizeObserver.observe(layout);
+    layout?.querySelectorAll(".document-workspace-dock, .document-workspace-scrolling, .document-body").forEach((element) => resizeObserver.observe(element));
+    const mutationObserver = new MutationObserver(requestUpdate);
+    if (layout) mutationObserver.observe(layout, { subtree: true, childList: true, characterData: true });
     window.addEventListener("resize", requestUpdate);
     window.addEventListener("scroll", requestUpdate, true);
     canvasRef.current?.addEventListener("scroll", requestUpdate);
 
     return () => {
       window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
       window.removeEventListener("resize", requestUpdate);
       window.removeEventListener("scroll", requestUpdate, true);
       canvasRef.current?.removeEventListener("scroll", requestUpdate);
@@ -1452,21 +1577,28 @@ export default function WorkspaceApp({
     mainViewMode,
     state.activeConversationId,
     state.conversations,
+    state.documentDock,
+    scrollingDocumentId,
     state.railOpen,
   ]);
 
-  function handleResetChatPanelWidth(conversation: Conversation) {
-    const { companionId } = getPanelResizeInfo(conversation);
+  function clearPanelWidthPreview(conversationId: string) {
     setResizedPanelWidths((current) => {
+      if (!(conversationId in current)) return current;
       const next = { ...current };
-      delete next[conversation.id];
-      if (companionId) delete next[companionId];
+      delete next[conversationId];
       return next;
     });
   }
 
+  function handleResetChatPanelWidth(conversation: Conversation) {
+    clearPanelWidthPreview(conversation.id);
+    setState((current) => setDocumentWidth(current, conversation.id, undefined));
+  }
+
   function handleChatPanelResizePointerDown(
     conversationId: string,
+    edge: "left" | "right",
     event: ReactPointerEvent<HTMLDivElement>,
   ) {
     if (
@@ -1483,15 +1615,15 @@ export default function WorkspaceApp({
     const conversation = state.conversations[conversationId];
     if (!conversation) return;
     const info = getPanelResizeInfo(conversation);
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Window listeners also cover uncaptured pointers. */ }
 
     panelResizeStateRef.current = {
       conversationId,
       originWidth: info.width,
+      latestWidth: info.width,
       startClientX: event.clientX,
-      direction: info.direction,
-      companionId: info.companionId,
-      companionWidth: info.companionWidth,
+      direction: edge === "left" ? -1 : 1,
+      startScrollLeft: canvasRef.current?.scrollLeft ?? 0,
       maxWidth: info.maxWidth,
       pointerId: event.pointerId,
       handle: event.currentTarget,
@@ -1506,20 +1638,20 @@ export default function WorkspaceApp({
 
   function handleChatPanelResizeKeyDown(
     conversation: Conversation,
+    edge: "left" | "right",
     event: ReactKeyboardEvent<HTMLDivElement>,
   ) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
+    event.stopPropagation();
     const info = getPanelResizeInfo(conversation);
     const delta = event.key === "Home" ? -info.maxWidth
       : event.key === "End" ? info.maxWidth
-        : (event.key === "ArrowRight" ? 1 : -1) * info.direction * CHAT_PANEL_KEYBOARD_STEP_PX;
-    const next = resizeChatPanels({ ...info, delta });
-    setResizedPanelWidths((current) => ({
-      ...current,
-      [conversation.id]: next.width,
-      ...(info.companionId && next.companionWidth !== undefined ? { [info.companionId]: next.companionWidth } : {}),
-    }));
+        : (event.key === "ArrowRight" ? 1 : -1) * (edge === "left" ? -1 : 1) * CHAT_PANEL_KEYBOARD_STEP_PX;
+    const next = resizeChatPanel({ ...info, delta });
+    pendingPanelResizeScroll.current = (canvasRef.current?.scrollLeft ?? 0)
+      + (edge === "left" ? next.width - info.width : 0);
+    setState((current) => setDocumentWidth(current, conversation.id, next.width));
   }
 
   function handleDraftChange(conversationId: string, value: string) {
@@ -1565,7 +1697,7 @@ export default function WorkspaceApp({
       .filter((block) => !block.sourceMessageId && !updated.document?.blocks.some((item) => item.id === block.id)
         && block.content.trim() && !updated.messages.some((message) => message.id === `document:${block.id}`))
       .map((block) => ({ id: `document:${block.id}`, role: "user" as const, content: block.content, createdAt: block.createdAt }));
-    const conversation = { ...updated, messages: [...updated.messages, ...archived] };
+    const conversation = remapDocumentLinks(before, { ...updated, messages: [...updated.messages, ...archived] });
     const conversations = { ...current.conversations, [updated.id]: {
       ...conversation,
       notes: conversation.notes?.map((note) => remapDocumentAnchor(note, before, conversation)),
@@ -1585,6 +1717,7 @@ export default function WorkspaceApp({
       if (conversation.document) {
         const streaming = new Set(conversation.document.generations.filter((generation)=>generation.status === "streaming" && chatExecutions.has(conversationId)).flatMap((generation)=>generation.blockIds));
         document = {...document,
+          links: conversation.document.links,
           blocks:document.blocks.map((block)=>streaming.has(block.id)?conversation.document!.blocks.find((item)=>item.id===block.id) ?? block:block),
           prompts:conversation.document.prompts,
           generations: conversation.document.generations.map((generation) => ({
@@ -1598,6 +1731,20 @@ export default function WorkspaceApp({
       currentStateRef.current = next;
       return next;
     });
+  }
+
+  function handleMoveDocumentBlock(sourceId: string, blockId: string, targetId: string, beforeBlockId: string | null) {
+    const updatedAt = new Date().toISOString();
+    const movedBlockId = createId("block");
+    setState((current) => {
+      const next = transferDocumentBlock(current, sourceId, blockId, targetId, beforeBlockId, updatedAt, movedBlockId);
+      if (next === current) return current;
+      const focused = focusDocument(next, targetId);
+      pendingMovedBlockFocus.current = { conversationId: targetId, blockId: movedBlockId };
+      currentStateRef.current = focused;
+      return focused;
+    });
+    setSelectionDraft((current) => current?.conversationId === sourceId && current.sourceBlockId === blockId ? null : current);
   }
 
   function handleDocumentSubmit(conversationId: string, request: DocumentAIRequest) {
@@ -1646,7 +1793,7 @@ export default function WorkspaceApp({
       ...(rerun ? {alternativeOf: rerun.id} : {acceptedAt: now}), insertion,
       ...(request.replaceSelection && sourceBlock ? {replacement: {blockId:sourceBlock.id,offset:request.from,content:sourceBlock.content.slice(request.from,request.to)}} : {}) };
     let prepared: Conversation = { ...target, messages: [...target.messages, userMessage], updatedAt: now,
-      title: [DEFAULT_MAIN_CHAT_TITLE, DEFAULT_SIDE_CHAT_TITLE, "Untitled document", "New note"].includes(target.title) ? excerpt(userMessage.content, 52) : target.title,
+      title: [DEFAULT_MAIN_CHAT_TITLE, DEFAULT_SIDE_CHAT_TITLE, "Side chat", "Untitled document", "New note"].includes(target.title) ? excerpt(userMessage.content, 52) : target.title,
       document: { ...getEditableDocument(target), prompts: [...getEditableDocument(target).prompts, promptRecord], generations: [...getEditableDocument(target).generations, generation] } };
     if (!rerun) prepared = insertDocumentBlock(prepared, { id: outputBlockId, kind: "markdown", content: "", createdAt: now, updatedAt: now, sourceMessageId: messageId, generationId }, insertion, now);
     const targetId = prepared.id;
@@ -2075,7 +2222,8 @@ export default function WorkspaceApp({
   ) {
     const nextModelId = resolveBackendServiceModelId(serviceId, modelId);
 
-    setState((current) => {
+    const updatedAt = new Date().toISOString();
+    function applySelection(current: AppState): AppState {
       const conversation = current.conversations[conversationId];
 
       if (!conversation) {
@@ -2105,10 +2253,14 @@ export default function WorkspaceApp({
                 ...conversation,
                 modelId: nextModelId,
                 serviceId,
+                updatedAt,
               },
             },
       };
-    });
+    }
+    // Submission reads this ref, including before React commits a batched picker update.
+    currentStateRef.current = applySelection(currentStateRef.current);
+    setState(applySelection);
 
     setRecentModelSelections((current) =>
       upsertRecentBackendServiceSelection(current, {
@@ -2331,7 +2483,7 @@ export default function WorkspaceApp({
       return;
     }
 
-    const parentConversation = state.conversations[draft.conversationId];
+    const parentConversation = currentStateRef.current.conversations[draft.conversationId];
 
     if (!parentConversation) {
       return;
@@ -2392,6 +2544,56 @@ export default function WorkspaceApp({
 
   function handleExplainSelection() {
     handleCreateBranch(EXPLAIN_SELECTION_PROMPT);
+  }
+
+  function handleCreateDocumentLink(target: { conversationId: string; blockId?: string }) {
+    if (!selectionDraft) return;
+    const source = state.conversations[selectionDraft.conversationId];
+    const destination = state.conversations[target.conversationId];
+    const link = source && createDocumentLink(source, destination, selectionDraft, target.blockId);
+    if (!link || !destination) {
+      setSelectionLinkError("This passage or destination has changed. Select the text again and choose a current destination.");
+      return;
+    }
+    setState((current) => ({ ...current, conversations: {
+      ...current.conversations,
+      [source.id]: addDocumentLink(current.conversations[source.id], link),
+    } }));
+    setDocumentLinkNotice({ message: `Linked to ${destination.title || "Untitled document"}${target.blockId ? " · block" : ""}`,
+      conversationId: destination.id, blockId: target.blockId });
+    setSelectionDraft(null);
+    setSelectionLinkError(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function handleRemoveDocumentLink(conversationId: string, linkId: string) {
+    setState((current) => {
+      const source = current.conversations[conversationId];
+      if (!source) return current;
+      return { ...current, conversations: { ...current.conversations, [source.id]: removeDocumentLink(source, linkId) } };
+    });
+    setDocumentLinkNotice({ message: "Link removed" });
+  }
+
+  function handleNavigateDocumentConnector(target: { conversationId: string; blockId?: string; anchorId?: string }) {
+    const conversation = state.conversations[target.conversationId];
+    if (!conversation) return;
+    const anchor = target.anchorId
+      ? conversation.document?.links?.find((link) => link.id === target.anchorId) ?? state.conversations[target.anchorId]?.branchAnchor
+      : undefined;
+    const blockId = target.blockId ?? anchor?.sourceBlockId;
+    if (blockId || anchor) {
+      handleOpenSearchSource({ conversationId: conversation.id, sourceKind: blockId ? "document" : "message",
+        sourceBlockId: blockId, messageId: anchor?.sourceMessageId,
+        quote: anchor?.quote, startOffset: anchor?.startOffset, endOffset: anchor?.endOffset });
+    } else handleSelectConversation(conversation.id, { nextViewMode: "chat" });
+  }
+
+  function handleOpenDocumentReference(sourceId: string, referenceId: string) {
+    const link = state.conversations[sourceId]?.document?.links?.find((item) => item.id === referenceId);
+    if (!link) { handleSelectConversation(referenceId); return; }
+    const target = getDocumentLinkTarget(link, state.conversations);
+    if (target) handleNavigateDocumentConnector({ conversationId: target.conversation.id, blockId: target.block?.id });
   }
 
   function handleCreateNote(args: {
@@ -2791,13 +2993,67 @@ export default function WorkspaceApp({
     handleRevealConversation(conversationId);
   }
 
+  function handleFocusVisibleDocument(conversationId: string) {
+    if (currentStateRef.current.activeConversationId === conversationId) return;
+    // Clicking into an already visible editor must not scroll it away from the pointer.
+    suppressNextChatAutoCenterRef.current = true;
+    setState((current) => focusDocument(current, conversationId, false));
+  }
+
+  function handleMinimizeDocument(conversationId: string) {
+    if (selectionDraft?.conversationId === conversationId) setSelectionDraft(null);
+    setState((current) => minimizeDocument(current.documentDock ? {
+      ...current, documentDock: { ...current.documentDock, tree: removePinnedDocument(current.documentDock.tree, conversationId) },
+    } : current, conversationId));
+  }
+
+  function handleToggleDocumentPin(conversationId: string) {
+    setSelectionDraft(null);
+    const body = panelRefs.current[conversationId]?.querySelector<HTMLElement>(".document-body");
+    if (body) panelScrollPositionsRef.current[conversationId] = body.scrollTop;
+    setState((current) => {
+      if (!current.conversations[conversationId]) return current;
+      const dock = normalizeDocumentDock(current.documentDock, current.conversations);
+      const tree = dock?.tree ?? null;
+      if (listPinnedDocumentIds(tree).includes(conversationId)) {
+        return { ...current, documentDock: { ...dock, width: dock?.width ?? 0.4, tree: removePinnedDocument(tree, conversationId) } };
+      }
+      // Pinning also restores a minimized document, without changing the active editor.
+      const restored = focusDocument(current, conversationId, false);
+      return { ...restored, activeConversationId: current.activeConversationId, rootId: current.rootId,
+        documentDock: { ...dock, width: dock?.width ?? 0.4, tree: addPinnedDocument(tree, conversationId) } };
+    });
+  }
+
+  function handleToggleDocumentPinScope(conversationId: string) {
+    function toggle(node: DocumentDockNode | null): DocumentDockNode | null {
+      if (!node) return null;
+      if (node.type === "pane") return node.documentId === conversationId
+        ? { ...node, scope: node.scope === "family" ? "workspace" : "family" } : node;
+      return { ...node, first: toggle(node.first)!, second: toggle(node.second)! };
+    }
+    setState((current) => {
+      const dock = normalizeDocumentDock(current.documentDock, current.conversations);
+      if (!dock) return current;
+      const next = { ...current, documentDock: { ...dock, tree: toggle(dock.tree) } };
+      return current.activeConversationId === conversationId && !familyPinnedDocumentIds.includes(conversationId)
+        && !familyDocumentIds.has(conversationId) ? focusDocument(next, workspaceFocusId, false) : next;
+    });
+  }
+
   function handleSelectConversation(
     conversationId: string,
     options: {
       nextViewMode?: MainViewMode;
       preserveRail?: boolean;
+      keepSidebarOpen?: boolean;
     } = {},
   ) {
+    suppressNextChatAutoCenterRef.current = false;
+    if (!pinnedDocumentIds.includes(conversationId) || familyPinnedDocumentIds.includes(conversationId)) {
+      setScrollingDocumentId(conversationId);
+    }
+    setDocumentFocusSequence((sequence) => sequence + 1);
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setMainViewMode(
@@ -2815,22 +3071,18 @@ export default function WorkspaceApp({
         }
 
         return {
-          ...current,
-          activeConversationId: conversationId,
+          ...focusDocument(current, conversationId),
           railOpen: options.preserveRail ? current.railOpen : false,
-          rootId:
-            getConversationRootId(current.conversations, conversationId) ??
-            current.rootId,
         };
       });
     });
 
-    if (isMobileViewport) {
+    if (isMobileViewport && !options.keepSidebarOpen) {
       setLeftSidebarOpen(false);
     }
   }
 
-  function handleRevealConversation(conversationId: string) {
+  function handleRevealConversation(conversationId: string, options: { keepSidebarOpen?: boolean } = {}) {
     if (mainViewMode === "graph") {
       setGraphFocusRequest({
         conversationId,
@@ -2838,7 +3090,7 @@ export default function WorkspaceApp({
       });
     }
 
-    handleSelectConversation(conversationId);
+    handleSelectConversation(conversationId, options);
   }
 
   function handleSelectOutlineItem(outlineItemId: string) {
@@ -2890,7 +3142,6 @@ export default function WorkspaceApp({
 
       if (
         !conversation ||
-        conversation.parentId !== null ||
         current.pinnedThreadIds.includes(conversationId)
       ) {
         return current;
@@ -3040,7 +3291,6 @@ export default function WorkspaceApp({
 
       if (
         !conversation ||
-        (conversation.parentId !== null && conversation.kind !== "note") ||
         conversation.title === trimmedTitle
       ) {
         return current;
@@ -3064,7 +3314,7 @@ export default function WorkspaceApp({
   function handleDeleteThread(conversationId: string) {
     const rootConversation = state.conversations[conversationId];
 
-    if (!rootConversation || rootConversation.parentId !== null) {
+    if (!rootConversation) {
       return;
     }
 
@@ -3242,6 +3492,8 @@ export default function WorkspaceApp({
     }
   }
 
+  const selectionConversation = selectionDraft ? state.conversations[selectionDraft.conversationId] : undefined;
+  useEffect(() => { if (!selectionDraft || selectionIntent !== "branch") setSelectionModelOpen(false); }, [selectionDraft, selectionIntent]);
   const selectionTooltipLayout =
     selectionDraft && typeof window !== "undefined"
       ? getSelectionTooltipLayout({
@@ -3262,41 +3514,55 @@ export default function WorkspaceApp({
     "--chat-panel-width": `${chatPanelLayout.width}px`,
   } as CSSProperties;
 
-  function renderConversationChatPanel(conversation: Conversation) {
+  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat") {
     return <DocumentPanel key={conversation.id} conversation={conversation}
+      documentMenu={<DocumentMenu conversation={conversation}
+        className="document-header-menu-trigger"
+        pinned={pinnedDocumentIds.includes(conversation.id)} familyPinned={familyPinnedDocumentIds.includes(conversation.id)}
+        minimized={documentWorkspace.minimizedIds.includes(conversation.id)}
+        onTogglePin={handleToggleDocumentPin} onTogglePinScope={handleToggleDocumentPinScope}
+        onMinimize={handleMinimizeDocument} onRestore={handleSelectConversation}
+        groups={state.groups} onAssignGroup={handleAssignConversationGroup}
+        onFocusFallback={() => {
+          const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
+            .filter((button) => !button.closest("[hidden]"));
+          (triggers.find((button) => button.closest<HTMLElement>("[data-document-tab-id]")?.dataset.documentTabId === conversation.id)
+            ?? triggers.find((button) => button.closest<HTMLElement>("[data-document-tab-id]")?.dataset.documentTabId === currentStateRef.current.activeConversationId))?.focus();
+        }} />}
+      minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
+      moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
-      groupControl={<ConversationGroupSelect className="is-composer-group" conversationId={conversation.id} groups={state.groups} onAssign={handleAssignConversationGroup} />}
-      recentModelSelections={recentModelSelections} theme={theme} anchors={Object.values(getAnchorsByMessageId(state.conversations, conversation.id)).flat()}
+      recentModelSelections={recentModelSelections} theme={theme} anchors={documentAnchorLinks(conversation.id)}
       error={documentErrors[conversation.id] ?? documentUploadByConversationId[conversation.id]?.error ?? undefined}
       onChange={(document) => handleDocumentChange(conversation.id, document)}
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
-      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionResponseDestination("inline"); setSelectionReplaceText(false); }}
+      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionLinkError(null); setSelectionResponseDestination("inline"); setSelectionReplaceText(false); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
       onClearSelection={() => setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current)}
-      onOpenBranch={handleSelectConversation} onOpenNote={(noteId) => setNoteOpenRequest((current) => ({noteId, sequence:(current?.sequence ?? 0)+1}))}
+      onOpenBranch={(id) => handleOpenDocumentReference(conversation.id, id)}
+      onRemoveLink={(id) => handleRemoveDocumentLink(conversation.id, id)}
+      onOpenNote={(noteId) => { handleFocusVisibleDocument(conversation.id); setNoteOpenRequest((current) => ({noteId, sequence:(current?.sequence ?? 0)+1})); }}
       onModelChange={(serviceId,modelId) => handleModelChange(conversation.id,serviceId,modelId)}
       onUpload={(files) => {void handleUploadDocuments(conversation.id,files);}}
       onRemoveAttachment={(id) => handleRemoveDocument(conversation.id,id)} uploading={documentUploadByConversationId[conversation.id]?.uploading}
       onAcceptVersion={(id) => handleAcceptDocumentVersion(conversation.id,id)} onUndoInsertion={(id) => handleUndoDocumentInsertion(conversation.id,id)}
-      registerPanelRef={(element) => {panelRefs.current[conversation.id]=element;}}
-      registerAnchorRef={(id,element) => {anchorRefs.current[id]=element;}}
-      registerBranchOriginRef={(element) => {branchOriginRefs.current[conversation.id]=element;}}
+      registerPanelRef={(element) => {(view === "graph" ? graphPanelRefs : documentPanelRefs).current[conversation.id]=element;}}
+      registerAnchorRef={(id,element) => {if (view === "chat") anchorRefs.current[id]=element;}}
+      registerBranchOriginRef={(element) => {if (view === "chat") branchOriginRefs.current[conversation.id]=element;}}
     />;
   }
 
-  function renderExpandedTreeConversation(
-    conversation: Conversation,
-    allowMinimize: boolean,
-  ) {
+  function renderExpandedTreeConversation(conversation: Conversation) {
+    const pinnedParent = conversation.parentId && visiblePinnedDocumentIds.includes(conversation.parentId)
+      ? state.conversations[conversation.parentId] : null;
     const resizeInfo = getPanelResizeInfo(conversation);
-    const resizeMinimum = resizeChatPanels({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
-    const resizeMaximum = resizeChatPanels({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
+    const resizeMinimum = resizeChatPanel({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
+    const resizeMaximum = resizeChatPanel({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
     const isResizing =
       conversation.id === resizingChatPanelConversationId &&
       isResizingChatPanel;
-    const contextLabel = conversation.id === activeConversation.id ? "Current document" : conversation.parentId === null ? "Main document" : "Parent document";
 
     return (
       <div
@@ -3306,61 +3572,38 @@ export default function WorkspaceApp({
             : "conversation-tree-expanded panel-slot is-resizable is-split-context"
         }
         data-expanded-conversation-id={conversation.id}
+        data-document-id={conversation.id}
+        onPointerDownCapture={() => handleFocusVisibleDocument(conversation.id)}
+        onFocusCapture={() => handleFocusVisibleDocument(conversation.id)}
         key={conversation.id}
         style={{ "--chat-panel-width": `${resizeInfo.width}px` } as CSSProperties}
       >
-        {!contextLabel.startsWith("Current ") || (allowMinimize && conversation.parentId) ? (
-          <div className="panel-context-header">
-            {!contextLabel.startsWith("Current ") ? (
-              <span className="panel-context-label">{contextLabel}</span>
-            ) : null}
-            {allowMinimize && conversation.parentId ? (
-              <button
-                aria-label={`Minimize ${conversation.title}`}
-                className="conversation-tree-minimize"
-                onClick={() => {
-                  pendingTreeLaneFocusRef.current = conversation.parentId;
-                  suppressNextChatAutoCenterRef.current = true;
-                  handleSelectConversation(conversation.parentId!);
-                }}
-                type="button"
-                title="Minimize this side document"
-              >
-                <svg
-                  aria-hidden="true"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeLinecap="round"
-                  strokeWidth="1.8"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="M6 12h12" />
-                </svg>
-                <span>Minimize</span>
-              </button>
-            ) : null}
-          </div>
-        ) : null}
+        {pinnedParent && <DocumentChildTabs key={pinnedParent.id} parent={pinnedParent}
+          documents={documentWorkspace.documents.filter((document) => document.parentId === pinnedParent.id)}
+          currentDocumentId={conversation.id} minimizedDocumentIds={documentWorkspace.minimizedIds}
+          onSelect={handleSelectConversation} />}
         {renderConversationChatPanel(conversation)}
-        <div
-          aria-label={conversation.parentId ? "Resize side chat panel width" : "Resize chat panel width"}
+        {(["left", "right"] as const).map((edge) => <div
+          key={edge}
+          data-resize-edge={edge}
+          aria-label={`Resize ${conversation.title} document from ${edge}`}
           aria-orientation="vertical"
           aria-valuemax={resizeMaximum}
           aria-valuemin={resizeMinimum}
           aria-valuenow={Math.round(resizeInfo.width)}
           aria-valuetext={`${Math.round(resizeInfo.width)} pixels wide`}
-          className={`panel-resize-handle is-visible${resizeInfo.direction === -1 ? " is-left-edge" : ""}`}
+          className={`panel-resize-handle is-visible${edge === "left" ? " is-left-edge" : ""}`}
           onDoubleClick={() => handleResetChatPanelWidth(conversation)}
-          onKeyDown={(event) => handleChatPanelResizeKeyDown(conversation, event)}
+          onKeyDown={(event) => handleChatPanelResizeKeyDown(conversation, edge, event)}
           onPointerDown={(event) =>
-            handleChatPanelResizePointerDown(conversation.id, event)
+            handleChatPanelResizePointerDown(conversation.id, edge, event)
           }
           role="separator"
           tabIndex={0}
-          title={`Drag to resize ${conversation.title}. Double-click to reset.`}
+          title={`Drag the ${edge} edge to resize ${conversation.title}. Double-click to reset this document.`}
         >
           <span className="panel-resize-handle-grip" />
-        </div>
+        </div>)}
       </div>
     );
   }
@@ -3371,6 +3614,8 @@ export default function WorkspaceApp({
         <button
           aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
           aria-pressed={leftSidebarOpen}
+          aria-keyshortcuts="Meta+B Control+B"
+          title="Toggle chat sidebar (⌘B / Ctrl+B)"
           className="workspace-menu-button"
           onClick={handleToggleLeftSidebar}
           type="button"
@@ -3378,60 +3623,14 @@ export default function WorkspaceApp({
           <SidebarPanelIcon />
         </button>
         <h1>Margin Chat</h1>
+        <WorkspaceModeMenu key={`${leftSidebarOpen}-${isMobileViewport}`} mainViewMode={mainViewMode} onSetMainViewMode={handleSetMainViewMode} />
       </div>
     );
   }
 
-  function renderChatTreeNavigation() {
-    if (isMobileViewport) {
-      return (
-        <nav aria-label="Conversation hierarchy" className="chat-tree-navigation mobile-chat-navigation">
-          {parentConversation ? (
-            <button className="mobile-parent-button" onClick={() => handleSelectConversation(parentConversation.id)}
-              title={`Back to ${parentConversation.title}`} type="button">
-              <span aria-hidden="true">←</span> Back to parent
-            </button>
-          ) : null}
-          <span aria-current="page" className="mobile-active-chat-title" title={activeConversation.title}>
-            {activeConversation.title}
-          </span>
-        </nav>
-      );
-    }
-    return (
-      <div className="chat-tree-navigation">
-        <nav aria-label="Conversation hierarchy" className="canvas-breadcrumb">
-          {path.map((conversation, index) => (
-            <span
-              className={
-                conversation.id === activeConversation.id
-                  ? "breadcrumb-item is-active"
-                  : "breadcrumb-item"
-              }
-              key={conversation.id}
-            >
-              {index > 0 ? (
-                <span aria-hidden="true" className="breadcrumb-separator">
-                  ›
-                </span>
-              ) : null}
-              <button
-                aria-current={
-                  conversation.id === activeConversation.id ? "page" : undefined
-                }
-                className="breadcrumb-button"
-                data-breadcrumb-conversation-id={conversation.id}
-                onClick={() => handleSelectConversation(conversation.id)}
-                title={conversation.title}
-                type="button"
-              >
-                {conversation.title}
-              </button>
-            </span>
-          ))}
-        </nav>
-      </div>
-    );
+  function renderRelatedItems() {
+    return <JevRelatedItems status={jev.status} related={jev.related} warning={jev.warning}
+      conversations={state.conversations} currentId={activeConversation.id} onSelect={handleRevealConversation} />;
   }
 
   if (!vault.ready) {
@@ -3457,13 +3656,18 @@ export default function WorkspaceApp({
     <div className="app-shell">
       <div className="app-chrome">
         <div className="workspace-notifications">
+          <NotificationToast message={documentLinkNotice?.message ?? null} kind="success"
+            onDismiss={() => setDocumentLinkNotice(null)}
+            action={documentLinkNotice?.conversationId ? { label: "Open link", onClick: () => handleNavigateDocumentConnector({
+              conversationId: documentLinkNotice.conversationId!, blockId: documentLinkNotice.blockId,
+            }) } : undefined} />
           <NotificationToast
             message={billingNotice?.message ?? null}
             kind={billingNotice?.kind}
             onDismiss={onDismissBillingNotice}
           />
           <NotificationToast
-            message={vault.conflicts.length ? `${vault.conflicts.length} conflicting ${vault.conflicts.length === 1 ? "edit is" : "edits are"} preserved for review.` : vault.message}
+            message={vault.message ?? (vault.conflicts.length ? `${vault.conflicts.length} alternative ${vault.conflicts.length === 1 ? "version" : "versions"} saved. You can keep writing.` : null)}
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />
         </div>
@@ -3493,11 +3697,12 @@ export default function WorkspaceApp({
             <ResizableSidebar collapsed={!leftSidebarOpen} mobile={isMobileViewport} onResizingChange={setIsResizingSidebar}>
             {!isMobileViewport && renderWorkspaceBrand()}
             <ThreadSidebar
+              header={isMobileViewport ? renderWorkspaceBrand() : undefined}
               mapExplorerRef={setGraphExplorerContainer}
               mapExplorerActive={mapSidebarSection === "explore"}
               onSelectSidebarSection={setMapSidebarSection}
               activeOutlineItemId={activeOutlineItemId}
-              activeThreadId={activeRootConversation.id}
+              activeThreadId={activeConversation.id}
               collapsed={!leftSidebarOpen}
               currentChatOutline={currentChatOutline}
               currentChatTitle={activeConversation.title}
@@ -3519,9 +3724,7 @@ export default function WorkspaceApp({
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
               onSelectOutlineItem={handleSelectOutlineItem}
-              onSetMainViewMode={handleSetMainViewMode}
               onSelectThread={handleRevealConversation}
-              onToggleCollapse={handleToggleLeftSidebar}
               onToggleGroup={handleToggleConversationGroup}
               onToggleTheme={() =>
                 onSetTheme((current) => getNextTheme(current))
@@ -3530,39 +3733,14 @@ export default function WorkspaceApp({
               pinnedThreads={pinnedThreadSummaries}
               streamingThreadIds={streamingThreadIds}
               theme={theme}
-              threads={threadSummaries}
+              threads={documentSummaries}
             />
             </ResizableSidebar>
 
             <div className="workspace-main-pane">
-              {!isGraphView && (!isTileView || !leftSidebarOpen || isMobileViewport) && (
+              {isTileView && (!leftSidebarOpen || isMobileViewport) && (
                 <header className="workspace-session-bar workspace-content-toolbar">
-                  {(!leftSidebarOpen || isMobileViewport) && renderWorkspaceBrand()}
-
-                  {!isTileView && !isGraphView
-                    ? renderChatTreeNavigation()
-                    : null}
-
-                  <div className="workspace-session-actions">
-                    {!isTileView &&
-                    !isGraphView &&
-                    branchAccessEnabled ? (
-                      <button
-                        aria-controls="branch-navigation-map"
-                        aria-expanded={state.railOpen}
-                        className={
-                          state.railOpen
-                            ? "branch-drawer-trigger is-active"
-                            : "branch-drawer-trigger"
-                        }
-                        onClick={handleToggleRail}
-                        type="button"
-                      >
-                        <span>Branches</span>
-                        <strong>{branchNavigationCount}</strong>
-                      </button>
-                    ) : null}
-                  </div>
+                  {renderWorkspaceBrand()}
                 </header>
               )}
               <div className="workspace-content">
@@ -3581,70 +3759,6 @@ export default function WorkspaceApp({
                   <div><strong>Start with your conversations</strong><p>Bring chats from ChatGPT and pick up where you left off.</p></div>
                   <button type="button" className="thread-dialog-button" onClick={() => setHistoryImportOpen(true)}>Bring your chat history</button>
                 </aside>}
-              <JevRelatedItems status={jev.status} related={jev.related} warning={jev.warning} conversations={state.conversations} currentId={activeConversation.id} onSelect={handleRevealConversation} />
-              {isMobileViewport && !isTileView && !isGraphView ? (
-                <div className="workspace-mobile-shell">
-                  <div className="workspace-mobile-summary">
-                    <p className="eyebrow">
-                      {isMainView ? "Main chat" : "Branch chat"}
-                    </p>
-                    <h2>{activeConversation.title}</h2>
-                    <p className="workspace-mobile-copy">
-                      {mobileChatContextCopy}
-                    </p>
-                  </div>
-
-                  <div
-                    aria-label="Mobile workspace actions"
-                    className="workspace-mobile-actions"
-                    role="toolbar"
-                  >
-                    <button
-                      aria-pressed={leftSidebarOpen}
-                      className={
-                        leftSidebarOpen
-                          ? "workspace-mobile-button is-active"
-                          : "workspace-mobile-button"
-                      }
-                      onClick={handleToggleLeftSidebar}
-                      type="button"
-                    >
-                      <span>Chats {threadSummaries.length}</span>
-                      <strong>{threadSummaries.length}</strong>
-                    </button>
-                    <button
-                      aria-pressed={state.railOpen}
-                      aria-controls="branch-navigation-map"
-                      className={
-                        state.railOpen
-                          ? "workspace-mobile-button is-active"
-                          : "workspace-mobile-button"
-                      }
-                      disabled={!branchAccessEnabled}
-                      onClick={handleToggleRail}
-                      type="button"
-                    >
-                      <span>Map {branchNavigationCount}</span>
-                      <strong>{branchNavigationCount}</strong>
-                    </button>
-                    <button
-                      className="workspace-mobile-button"
-                      onClick={handleOpenSearch}
-                      type="button"
-                    >
-                      <span>Search</span>
-                    </button>
-                    <button
-                      className="workspace-mobile-button is-primary"
-                      onClick={handleCreateMainConversation}
-                      type="button"
-                    >
-                      <span>New chat</span>
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
               {isTileView ? (
                 <div className="canvas-head">
                   <div className="canvas-view-intro">
@@ -3654,10 +3768,11 @@ export default function WorkspaceApp({
                       Search or choose a thread to continue the conversation.
                     </p>
                   </div>
+                  {renderRelatedItems()}
                 </div>
               ) : null}
 
-              {isTileView ? (
+              <WorkspaceView mode="tiles" active={isTileView}>
                 <MainChatTileView
                   activeThreadId={activeRootConversation.id}
                   groups={state.groups}
@@ -3667,8 +3782,10 @@ export default function WorkspaceApp({
                   onToggleGroup={handleToggleConversationGroup}
                   threads={threadSummaries}
                 />
-              ) : isGraphView ? (
+              </WorkspaceView>
+              <WorkspaceView mode="graph" active={isGraphView}>
                 <KnowledgeGraphWorkspace
+                  isVisible={isGraphView}
                   onToggleSidebar={handleToggleLeftSidebar}
                   sidebarOpen={leftSidebarOpen}
                   onAddChildNote={handleAddMapChildNote}
@@ -3719,9 +3836,9 @@ export default function WorkspaceApp({
                       ? <>
                           <GraphSourceFocus
                             source={source}
-                            getPanelElement={() => panelRefs.current[conversationId] ?? null}
+                            getPanelElement={() => graphPanelRefs.current[conversationId] ?? null}
                           />
-                          {renderConversationChatPanel(conversation)}
+                          {renderConversationChatPanel(conversation, "graph")}
                         </>
                       : null;
                   }}
@@ -3729,130 +3846,79 @@ export default function WorkspaceApp({
                     const conversation = state.conversations[conversationId];
 
                     return conversation
-                      ? renderConversationChatPanel(conversation)
+                      ? renderConversationChatPanel(conversation, "graph")
                       : null;
                   }}
                 />
-              ) : (
-                <div className="chat-tree-workspace">
-                  <div
-                  className={
-                    `conversation-canvas is-tree-browser${conversationTreeLanes.length ? " has-tree-context" : ""}${isResizingChatPanel ? " is-resizing-panel" : ""}`
-                  }
-                  ref={canvasRef}
-                  style={conversationCanvasStyle}
-                >
-                  {renderExpandedTreeConversation(activeRootConversation, false)}
-
-                  {conversationTreeLanes.map((lane, laneIndex) => {
-                    const parentConversation =
-                      state.conversations[lane.parentId];
-
-                    if (!parentConversation) {
-                      return null;
-                    }
-
-                    const marginNotes = lane.noteIds
-                      .map((noteId) =>
-                        (parentConversation.notes ?? []).find(
-                          (note) => note.id === noteId,
-                        ),
-                      )
-                      .filter(
-                        (note): note is ConversationNote => Boolean(note),
-                      );
-
-                    return (
-                      <section
-                        aria-label={`Side items for ${parentConversation.title}`}
-                        className={
-                          lane.selectedConversationId
-                            ? "conversation-tree-lane has-expanded-chat"
-                            : "conversation-tree-lane"
-                        }
-                        data-tree-depth={laneIndex + 1}
-                        data-tree-parent-id={lane.parentId}
-                        key={lane.parentId}
-                        style={lane.selectedConversationId ? { "--chat-panel-width": `${getRenderedPanelWidth(lane.selectedConversationId)}px` } as CSSProperties : undefined}
-                      >
-                        <header className="conversation-tree-lane-head">
-                          <span>Depth {laneIndex + 1}</span>
-                          <strong>{parentConversation.title}</strong>
-                          <span>
-                            {lane.conversationIds.length
-                              ? `${lane.conversationIds.length} child${
-                                  lane.conversationIds.length === 1
-                                    ? ""
-                                    : "ren"
-                                }`
-                              : ""}
-                            {lane.conversationIds.length && marginNotes.length
-                              ? " · "
-                              : ""}
-                            {marginNotes.length
-                              ? `${marginNotes.length} note${
-                                  marginNotes.length === 1 ? "" : "s"
-                                }`
-                              : ""}
-                          </span>
-                        </header>
-                        <div className="conversation-tree-lane-list">
-                          {lane.conversationIds.map((conversationId) => {
-                            const conversation =
-                              state.conversations[conversationId];
-
-                            if (!conversation) {
-                              return null;
-                            }
-
-                            if (
-                              conversation.id === lane.selectedConversationId
-                            ) {
-                              return renderExpandedTreeConversation(
-                                conversation,
-                                true,
-                              );
-                            }
-
-                            return (
-                              <ConversationTreeNode
-                                conversation={conversation}
-                                key={conversation.id}
-                                onExpand={(nextConversationId) =>
-                                  handleSelectConversation(nextConversationId)
-                                }
-                                registerNodeRef={(
-                                  nextConversationId,
-                                  element,
-                                ) => {
-                                  treeNodeRefs.current[nextConversationId] =
-                                    element;
-                                }}
-                              />
-                            );
-                          })}
-                          {marginNotes.map((note) => (
-                            <MarginNoteTreeNode
-                              conversationId={parentConversation.id}
-                              key={note.id}
-                              note={note}
-                              openRequest={noteOpenRequest?.noteId === note.id ? noteOpenRequest.sequence : undefined}
-                              onDelete={handleDeleteNote}
-                              onUpdate={handleUpdateNote}
-                              onUse={
-                                parentConversation.kind === "note"
-                                  ? undefined
-                                  : handleUseNote
-                              }
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    );
-                  })}
+              </WorkspaceView>
+              <WorkspaceView mode="chat" active={!isTileView && !isGraphView}>
+                <div className="chat-tree-workspace document-workspace">
+                  <header className="document-workspace-toolbar" aria-label="Document navigation">
+                    {(!leftSidebarOpen || isMobileViewport) && <button
+                      aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
+                      aria-pressed={leftSidebarOpen}
+                      aria-keyshortcuts="Meta+B Control+B"
+                      title="Toggle chat sidebar (⌘B / Ctrl+B)"
+                      className="workspace-menu-button"
+                      onClick={handleToggleLeftSidebar}
+                      type="button"
+                    ><SidebarPanelIcon /></button>}
+                    <DocumentTabs documents={tabDocuments}
+                      groups={state.groups}
+                      onAssignGroup={handleAssignConversationGroup}
+                      activeDocumentId={activeConversation.id}
+                      minimizedDocumentIds={documentWorkspace.minimizedIds}
+                      pinnedDocumentIds={pinnedDocumentIds}
+                      familyPinnedDocumentIds={familyPinnedDocumentIds}
+                      onTogglePin={handleToggleDocumentPin}
+                      onTogglePinScope={handleToggleDocumentPinScope}
+                      canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
+                      onSelect={handleSelectConversation}
+                      onMinimize={handleMinimizeDocument}
+                      onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
+                      onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
+                    />
+                    <div className="document-workspace-actions">
+                      <DocumentViewsMenu currentDocumentId={activeConversation.id}
+                        relatedItems={jev.status === "ready" ? jev.related.filter((item) => item.id !== activeConversation.id && state.conversations[item.id]).slice(0, 5)
+                          .map(({ id }) => ({ id, title: state.conversations[id].title, kind: state.conversations[id].kind })) : []}
+                        relatedWarning={jev.warning} onSelectRelated={handleRevealConversation}
+                        branchCount={branchNavigationCount} branchesOpen={state.railOpen} branchesEnabled={branchAccessEnabled}
+                        onToggleBranches={handleToggleRail} />
+                    </div>
+                  </header>
+                  <DocumentWorkspaceLayout width={documentDock?.width ?? 0.4} position={documentDock?.position}
+                    onWidthChange={(width) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree: current.documentDock?.tree ?? null, width } }))}
+                    dock={documentDock?.tree && visiblePinnedDocumentIds.length ? <DocumentDock
+                      tree={documentDock.tree} conversations={state.conversations} activeDocumentId={activeConversation.id}
+                      visibleDocumentIds={visiblePinnedDocumentIds}
+                      onSelect={handleFocusVisibleDocument} onUnpin={handleToggleDocumentPin} onToggleScope={handleToggleDocumentPinScope}
+                      dockPosition={documentDock.position}
+                      onMoveDock={(position) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree: current.documentDock?.tree ?? null, width: current.documentDock?.width ?? 0.4, position } }))}
+                      onChange={(tree) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree, width: current.documentDock?.width ?? 0.4 } }))}
+                      renderDocument={renderConversationChatPanel}
+                    /> : null}>
+                  <div className={`conversation-canvas is-tree-browser is-document-workspace${isResizingChatPanel ? " is-resizing-panel" : ""}`}
+                    aria-label="Documents side by side" ref={canvasRef} style={conversationCanvasStyle}>
+                    {scrollingDocuments.map((conversation) => renderExpandedTreeConversation(conversation))}
+                    {!scrollingDocuments.length ? <div className="document-workspace-empty">
+                      <p>These documents are pinned. Open another document from the sidebar or add a side document here.</p>
+                      <button type="button" onClick={() => handleAddSideChat(activeConversation.id)}>New side document</button>
+                    </div> : null}
+                    {(activeConversation.notes ?? []).some((note) => note.kind !== "standalone") ? (
+                      <aside className="document-margin-notes" aria-label={`Notes for ${activeConversation.title}`}>
+                        {(activeConversation.notes ?? []).filter((note) => note.kind !== "standalone").map((note) => (
+                          <MarginNoteTreeNode key={note.id} conversationId={activeConversation.id} note={note}
+                            openRequest={noteOpenRequest?.noteId === note.id ? noteOpenRequest.sequence : undefined}
+                            onDelete={handleDeleteNote} onUpdate={handleUpdateNote}
+                            onUse={activeConversation.kind === "note" ? undefined : handleUseNote} />
+                        ))}
+                      </aside>
+                    ) : null}
+                  </div>
+                  </DocumentWorkspaceLayout>
                 </div>
-                </div>
-              )}
+              </WorkspaceView>
             </section>
             {!isTileView && !isGraphView ? (
               <BranchRail
@@ -3872,6 +3938,7 @@ export default function WorkspaceApp({
             <ConnectorOverlay
               connections={connections}
               occlusionRects={connectorOcclusionRects}
+              onNavigate={handleNavigateDocumentConnector}
             />
           ) : null}
 
@@ -3882,14 +3949,14 @@ export default function WorkspaceApp({
               onSubmit={(event) => {
                 event.preventDefault();
                 if (selectionIntent === "note") handleCreateSelectionNote();
-                else handleCreateBranch();
+                else if (selectionIntent === "branch") handleCreateBranch();
               }}
               ref={toolbarRef}
               style={toolbarStyle}
             >
               <div className="selection-tooltip-head">
                 <p className="eyebrow">
-                  {selectionIntent === "note"
+                  {selectionIntent === "link" ? "Link this passage" : selectionIntent === "note"
                     ? "New margin note"
                     : selectionDraft.sourceKind === "standalone-note"
                       ? "Selected note text"
@@ -3897,7 +3964,7 @@ export default function WorkspaceApp({
                 </p>
                 <button
                   aria-label={
-                    selectionIntent === "note"
+                    selectionIntent === "link" ? "Cancel link" : selectionIntent === "note"
                       ? "Cancel margin note"
                       : "Cancel new branch"
                   }
@@ -3945,6 +4012,12 @@ export default function WorkspaceApp({
                     ? "Side chat"
                     : "Ask AI"}
                 </button>
+                <button type="button" aria-label="Link selected text to an existing document or block"
+                  aria-pressed={selectionIntent === "link"}
+                  className={selectionIntent === "link" ? "is-active" : ""}
+                  onClick={() => { setSelectionLinkError(null); setSelectionIntent("link"); }}>
+                  Link to existing
+                </button>
               </div>
               {selectionIntent === "branch" && selectionDraft.sourceBlockId ? <div className="document-ai-options">
                 <div role="group" aria-label="Response destination"><button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={()=>setSelectionResponseDestination("inline")}>In this document</button><button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={()=>setSelectionResponseDestination("side")}>Side document ↗</button></div>
@@ -3953,7 +4026,11 @@ export default function WorkspaceApp({
               {selectionIntent === "note" ? (
                 <p className="selection-note-privacy">Margin note · Not sent to AI</p>
               ) : null}
-              <div className="selection-input-row">
+              {selectionIntent === "link" ? <DocumentLinkPicker
+                conversations={state.conversations} sourceConversationId={selectionDraft.conversationId}
+                sourceBlockId={selectionDraft.sourceBlockId} onSelect={handleCreateDocumentLink}
+                onCancel={() => setSelectionIntent("branch")} error={selectionLinkError ?? undefined}
+              /> : <div className="selection-input-row">
                 <input
                   aria-label={selectionIntent === "note" ? "Margin note" : "Branch prompt"}
                   id="branch-prompt"
@@ -3976,8 +4053,12 @@ export default function WorkspaceApp({
                 >
                   <SendIcon />
                 </button>
-              </div>
+              </div>}
               {selectionIntent === "branch" ? <div className="selection-actions">
+                {selectionConversation ? <button type="button" className="selection-explain" aria-label="Choose AI model and provider"
+                  aria-haspopup="dialog" aria-expanded={selectionModelOpen} onClick={() => setSelectionModelOpen(true)}>
+                  {selectionConversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(selectionConversation.serviceId, selectionConversation.modelId)?.label ?? selectionConversation.modelId} ⌄
+                </button> : null}
                 <button
                   className="selection-explain"
                   onClick={handleExplainSelection}
@@ -3988,6 +4069,16 @@ export default function WorkspaceApp({
               </div> : null}
             </form>
           ) : null}
+
+          {selectionConversation && selectionIntent === "branch" ? <ServicePickerModal
+            isOpen={selectionModelOpen} onClose={() => setSelectionModelOpen(false)}
+            currentServiceId={selectionConversation.serviceId} currentModelId={selectionConversation.modelId}
+            recentSelections={recentModelSelections}
+            onSelectModel={(serviceId, modelId) => handleModelChange(selectionConversation.id, serviceId, modelId)}
+            contextControls={<AIControls conversation={selectionConversation} conversations={state.conversations}
+              disabled={Boolean(pendingConversationIds[selectionConversation.id])}
+              onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)} />}
+          /> : null}
 
           <SearchModal
             conversations={state.conversations}
@@ -4058,6 +4149,7 @@ export default function WorkspaceApp({
             onManageBilling={onManageBilling}
             onLogout={handleWorkspaceLogout}
             onSaveApiKeys={onUpdateApiKeys}
+            onChangePassword={onChangePassword}
             onStartSubscription={onStartSubscription}
             onSave={handleSaveProfile}
             user={user}

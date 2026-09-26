@@ -71,31 +71,31 @@ export function createSemanticRouteCandidates(chatRequest, routes, runtimeConfig
   return [...candidates.values()];
 }
 
-export function applySemanticRouting(chatRequest, routes, runtimeConfig, analysis, candidates) {
+export function applySemanticRouting(chatRequest, routes, runtimeConfig, analysis, candidates, router = { label: "Jev", method: "jev", version: "jev-v1" }) {
   const classifiedTask = TASK_CATEGORIES.includes(analysis?.task) ? analysis.task : null;
   const automatic = chatRequest.serviceId === "backend-services";
   const selected = automatic ? candidates.find((candidate) => candidate.key === analysis?.routeKey
     && routes.some((route) => route.serviceId === candidate.serviceId)) : null;
-  const finish = (planned) => automatic ? applyIndependentSignals(planned, candidates, analysis?.signals, !selected) : planned;
+  const finish = (planned) => automatic ? applyIndependentSignals(planned, candidates, analysis?.signals, !selected, router) : planned;
   if (!classifiedTask && !selected) {
     if (!automatic) return routes;
-    const outcome = analysis?.keepDefault === true ? "Jev kept the configured routing preference."
-      : analysis ? "Jev did not provide a usable routing decision." : "Jev was unavailable.";
+    const outcome = analysis?.keepDefault === true ? `${router.label} kept the configured routing preference.`
+      : analysis ? `${router.label} did not provide a usable routing decision.` : `${router.label} was unavailable.`;
     return finish(routes.map((route) => ({ ...route, reason: `${outcome} ${route.reason}` })));
   }
   const task = classifiedTask ?? routes[0].task;
   const planned = planRoutes(chatRequest, routes.map((route) => route.serviceId), runtimeConfig, { task });
   const classified = planned.map((route) => ({
     ...route,
-    routing: { ...route.routing, method: automatic && classifiedTask ? "jev-task" : route.routing.method },
-    profileVersion: classifiedTask ? `${route.profileVersion}+jev-v1` : route.profileVersion,
-    reason: classifiedTask ? `Jev classified this request as ${task}. ${route.reason}` : route.reason,
+    routing: { ...route.routing, method: automatic && classifiedTask ? `${router.method}-task` : route.routing.method },
+    profileVersion: classifiedTask ? `${route.profileVersion}+${router.version}` : route.profileVersion,
+    reason: classifiedTask ? `${router.label} classified this request as ${task}. ${route.reason}` : route.reason,
   }));
   if (!selected) return finish(classified);
   const first = classified.find((route) => route.serviceId === selected.serviceId);
   if (!first) return finish(classified);
   const taskExplanation = classifiedTask
-    ? `Jev classified the request as ${task}.`
+    ? `${router.label} classified the request as ${task}.`
     : `Routing rules classified the request as ${task}.`;
   const profileExplanation = selected.tasks.includes(task)
     ? `The app's ${first.mode} profile assigns this model to ${task} tasks.`
@@ -103,13 +103,13 @@ export function applySemanticRouting(chatRequest, routes, runtimeConfig, analysi
   return finish([{
     ...first,
     model: selected.model,
-    routing: { method: "jev", selectedModel: selected.model },
-    profileVersion: `${MODEL_PROFILE_VERSION}+jev-v1`,
-    reason: `Jev selected ${PROVIDER_LABELS[selected.serviceId]} (${selected.model}). ${taskExplanation} ${profileExplanation} Only allowed providers with an available key were considered.`,
+    routing: { method: router.method, selectedModel: selected.model },
+    profileVersion: `${MODEL_PROFILE_VERSION}+${router.version}`,
+    reason: `${router.label} selected ${PROVIDER_LABELS[selected.serviceId]} (${selected.model}). ${taskExplanation} ${profileExplanation} Only allowed providers with an available key were considered.`,
   }, ...classified.filter((route) => route.serviceId !== selected.serviceId)]);
 }
 
-function applyIndependentSignals(routes, candidates, signals, allowPreference) {
+function applyIndependentSignals(routes, candidates, signals, allowPreference, router) {
   const complexity = signals?.complexity;
   const demanding = Number.isFinite(complexity?.score) && complexity.score >= 2.25 && complexity.score <= 3
     && Number.isFinite(complexity.confidence) && complexity.confidence >= 0.7 && complexity.confidence <= 1;
@@ -126,20 +126,20 @@ function applyIndependentSignals(routes, candidates, signals, allowPreference) {
       ? candidates.find((candidate) => candidate.serviceId === route.serviceId
         && getModelRoutingEvidence(candidate.serviceId, candidate.model).preference === "demanding") : null;
     if (preferred && preferred.model !== route.model) {
-      const classification = route.routing?.method === "jev-task" ? `Jev classified this request as ${route.task}. ` : "";
+      const classification = route.routing?.method === `${router.method}-task` ? `${router.label} classified this request as ${route.task}. ` : "";
       next = {
         ...route,
         model: preferred.model,
         routing: { ...route.routing, selectedModel: preferred.model },
-        reason: `${classification}Routing rules selected ${PROVIDER_LABELS[route.serviceId]} (${preferred.model}) for ${route.task} using the app's complex-work preference after Jev assessed demanding work. ${MODE_TRADEOFFS[route.mode]} This is an application heuristic, not a comparative benchmark result.`,
+        reason: `${classification}Routing rules selected ${PROVIDER_LABELS[route.serviceId]} (${preferred.model}) for ${route.task} using the app's complex-work preference after ${router.label} assessed demanding work. ${MODE_TRADEOFFS[route.mode]} This is an application heuristic, not a comparative benchmark result.`,
       };
     } else if (demanding) {
-      next = { ...next, reason: `${next.reason} Jev assessed demanding work; the existing model and speed preference were retained.` };
+      next = { ...next, reason: `${next.reason} ${router.label} assessed demanding work; the existing model and speed preference were retained.` };
     }
     if (needsCurrentInformation) next = { ...next,
       reason: `${next.reason} This request likely needs current external information; this route does not perform live web search. Verify current facts against up-to-date sources.`,
     };
-    return { ...next, profileVersion: `${next.profileVersion}+jev-signals-v1` };
+    return { ...next, profileVersion: `${next.profileVersion}+${router.method}-signals-v1` };
   });
 }
 

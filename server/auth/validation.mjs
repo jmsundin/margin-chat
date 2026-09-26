@@ -44,6 +44,25 @@ export function normalizeProfileUpdatePayload(input) {
   };
 }
 
+export function normalizePasswordChangePayload(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw createStatusError(400, "Password change payload must be a JSON object.");
+  }
+
+  return {
+    currentPassword: normalizePassword(input.currentPassword, {
+      maxLength: 200,
+      message: "Current password is required.",
+      minLength: 1,
+    }),
+    password: normalizePassword(input.password, {
+      maxLength: 200,
+      message: "Password must be between 8 and 200 characters.",
+      minLength: 8,
+    }),
+  };
+}
+
 export function normalizePasswordResetRequestPayload(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw createStatusError(400, "Password reset payload must be a JSON object.");

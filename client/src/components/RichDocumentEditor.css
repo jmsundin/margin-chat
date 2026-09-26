@@ -4,7 +4,10 @@
 .rich-document-block-main { border-radius: 7px; min-width: 0; padding: 4px 8px 8px; transition: background .12s ease; }
 .rich-document-block.is-focused .rich-document-block-main { background: color-mix(in srgb, var(--ink) 2%, transparent); }
 .rich-document-block.is-dragging { opacity: .5; }
-.rich-document-block:has(+ .rich-document-block.is-dragging) { border-bottom-color: var(--sage); }
+.rich-document-block.is-drop-before::before, .rich-document-block.is-drop-after::after { background: var(--sage); border-radius: 2px; content: ""; height: 3px; left: 34px; pointer-events: none; position: absolute; right: 4px; z-index: 3; }
+.rich-document-block.is-drop-before::before { top: -2px; }
+.rich-document-block.is-drop-after::after { bottom: -2px; }
+.rich-document-drop-end { border-top: 3px solid var(--sage); margin-left: 34px; }
 .rich-document-block-gutter { display: flex; align-items: flex-start; padding-top: 2px; }
 .rich-document-grip { align-items: center; background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: grab; display: flex; justify-content: center; min-height: 34px; opacity: 0; padding: 4px; transition: opacity 120ms ease; width: 32px; }
 .rich-document-block:hover .rich-document-grip { opacity: 1; transition-delay: 300ms; }
@@ -13,6 +16,7 @@
 .rich-document-block.is-dragging .rich-document-grip { opacity: 1; transition-delay: 0ms; }
 .rich-document-grip:hover, .rich-document-grip[aria-expanded="true"] { background: var(--button-active-surface); color: var(--ink); }
 .rich-document-grip:active { cursor: grabbing; }
+.rich-document-grip { touch-action: none; }
 .rich-document-editor button, .rich-document-editor select { font: inherit; }
 .rich-document-editor :is(button, select, textarea):focus-visible { outline: 2px solid var(--sage); outline-offset: 3px; }
 .rich-document-editor button:disabled { cursor: default; opacity: .42; }
@@ -60,6 +64,7 @@
 .rich-document-toolbar { align-items: center; background: var(--panel-strong); border: 1px solid var(--line-strong); border-radius: 9px; box-shadow: 0 8px 24px #0002; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; padding: 5px; position: relative; z-index: 2; }
 .rich-document-toolbar :is(button,select) { background: transparent; border: 1px solid transparent; border-radius: 5px; color: var(--ink); cursor: pointer; font-size: .75rem; min-height: 34px; min-width: 32px; padding: 4px 8px; }
 .rich-document-toolbar select { background: var(--panel-strong); border-color: var(--line); max-width: 135px; }
+.rich-document-toolbar .rich-document-move-target { max-width: 200px; }
 .rich-document-toolbar button:hover, .rich-document-toolbar button[aria-pressed="true"] { background: var(--button-active-surface); border-color: var(--button-active-border); }
 .rich-document-toolbar .rich-document-ask { color: var(--sage); font-weight: 600; }
 .rich-document-toolbar .rich-document-toolbar-close { margin-left: auto; }

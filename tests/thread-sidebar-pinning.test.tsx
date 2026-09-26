@@ -54,9 +54,7 @@ function renderSidebar(
       onPinThread={() => {}}
       onRenameThread={() => {}}
       onSelectOutlineItem={() => {}}
-      onSetMainViewMode={() => {}}
       onSelectThread={() => {}}
-      onToggleCollapse={() => {}}
       onToggleGroup={() => {}}
       onToggleTheme={() => {}}
       onUnpinThread={() => {}}
@@ -95,12 +93,14 @@ describe("thread sidebar pinning", () => {
     expect(emptyMarkup).not.toContain("Drop here to ungroup");
   });
 
-  test("labels workspace views and search while keeping secondary actions tucked away", () => {
+  test("keeps document actions and search without duplicating the brand view menu", () => {
     const markup = renderSidebar([]);
 
-    expect(markup).toContain("<span>Document</span>");
-    expect(markup).toContain("<span>Tiles</span>");
-    expect(markup).toContain("<span>Map</span>");
+    expect(markup).not.toContain("thread-view-switcher");
+    expect(markup).not.toContain('aria-label="Open document view"');
+    expect(markup).not.toContain('aria-label="Open tile view"');
+    expect(markup).not.toContain('aria-label="Open map view"');
+    expect(markup).toContain('aria-label="New document"');
     expect(markup).toContain("<span>Search documents</span>");
     expect(markup).toContain('aria-label="More workspace actions"');
     expect(markup).not.toContain('aria-label="New group"');
@@ -140,9 +140,7 @@ describe("thread sidebar pinning", () => {
         onPinThread={() => {}}
         onRenameThread={() => {}}
         onSelectOutlineItem={() => {}}
-        onSetMainViewMode={() => {}}
         onSelectThread={() => {}}
-        onToggleCollapse={() => {}}
         onToggleGroup={() => {}}
         onToggleTheme={() => {}}
         onUnpinThread={() => {}}

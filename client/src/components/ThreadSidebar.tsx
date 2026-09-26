@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ConversationGroupSelect } from "./ConversationGroupControls";
 import type { ChatOutlineItem } from "../lib/chatOutline";
 import ChatOutline from "./ChatOutline";
@@ -18,6 +18,7 @@ const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
 interface ThreadSidebarProps {
+  header?: ReactNode;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
   mapExplorerActive?: boolean;
   onSelectSidebarSection?: (section: "chats" | "explore") => void;
@@ -41,9 +42,7 @@ interface ThreadSidebarProps {
   onPinThread: (conversationId: string) => void;
   onRenameThread: (conversationId: string, title: string) => void;
   onSelectOutlineItem: (outlineItemId: string) => void;
-  onSetMainViewMode: (viewMode: MainViewMode) => void;
-  onSelectThread: (conversationId: string) => void;
-  onToggleCollapse: () => void;
+  onSelectThread: (conversationId: string, options?: { keepSidebarOpen?: boolean }) => void;
   onToggleGroup: (groupId: string) => void;
   onToggleTheme: () => void;
   onUnpinThread: (conversationId: string) => void;
@@ -137,67 +136,6 @@ function DocumentIcon() {
     >
       <path d="M6 3.5h8.5L19 8v12.5H6z" />
       <path d="M14.5 3.5V8H19M9 12h7M9 15.5h5" />
-    </svg>
-  );
-}
-
-function TileViewIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="sidebar-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <rect x="4" y="4" width="7" height="7" rx="1.4" />
-      <rect x="13" y="4" width="7" height="7" rx="1.4" />
-      <rect x="4" y="13" width="7" height="7" rx="1.4" />
-      <rect x="13" y="13" width="7" height="7" rx="1.4" />
-    </svg>
-  );
-}
-
-function ChatViewIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="sidebar-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="M7 16.5H5a2 2 0 0 1-2-2V6.8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v7.7a2 2 0 0 1-2 2h-7l-4.6 3.7c-.4.3-1 .1-1-.5z" />
-      <path d="M8 9h8" />
-      <path d="M8 12.5h5" />
-    </svg>
-  );
-}
-
-function GraphViewIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="sidebar-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <circle cx="5.5" cy="7" r="2.2" />
-      <circle cx="18.5" cy="6" r="2.2" />
-      <circle cx="10" cy="18" r="2.2" />
-      <path d="M7.5 7.8 16.4 6.2" />
-      <path d="M6.9 8.9 8.9 16" />
-      <path d="m16.9 7.8-5.3 8.4" />
     </svg>
   );
 }
@@ -348,25 +286,8 @@ function ExpandIcon() {
   );
 }
 
-function SidebarCollapseIcon({ collapsed }: { collapsed: boolean }) {
-  return (
-    <svg
-      aria-hidden="true"
-      className="sidebar-collapse-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.8"
-    >
-      <path d="M18 5v14" />
-      <path d={collapsed ? "m11 6 5 6-5 6" : "m13 6-5 6 5 6"} />
-    </svg>
-  );
-}
-
 export default function ThreadSidebar({
+  header,
   mapExplorerRef,
   mapExplorerActive = false,
   onSelectSidebarSection,
@@ -390,9 +311,7 @@ export default function ThreadSidebar({
   onPinThread,
   onRenameThread,
   onSelectOutlineItem,
-  onSetMainViewMode,
   onSelectThread,
-  onToggleCollapse,
   onToggleGroup,
   onToggleTheme,
   onUnpinThread,
@@ -409,9 +328,7 @@ export default function ThreadSidebar({
   const [renameTarget, setRenameTarget] = useState<ThreadActionTarget | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ThreadActionTarget | null>(null);
-  const [expandedThreadIds, setExpandedThreadIds] = useState<Record<string, boolean>>(
-    {},
-  );
+  const [sidebarContent, setSidebarContent] = useState<"documents" | "outline">("documents");
   const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const [workspaceActionsOpen, setWorkspaceActionsOpen] = useState(false);
@@ -419,6 +336,11 @@ export default function ThreadSidebar({
   const menuRef = useRef<HTMLDivElement>(null);
   const workspaceActionsRef = useRef<HTMLDivElement>(null);
   const workspaceActionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const outlineTitleRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (sidebarContent === "outline") outlineTitleRef.current?.focus();
+  }, [sidebarContent]);
 
   function closeWorkspaceActions() {
     setWorkspaceActionsOpen(false);
@@ -447,11 +369,11 @@ export default function ThreadSidebar({
       }
     }
 
-    document.addEventListener("pointerdown", handleOutside);
+    document.addEventListener("pointerdown", handleOutside, true);
     document.addEventListener("focusin", handleOutside);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
-      document.removeEventListener("pointerdown", handleOutside);
+      document.removeEventListener("pointerdown", handleOutside, true);
       document.removeEventListener("focusin", handleOutside);
       document.removeEventListener("keydown", handleKeyDown);
     };
@@ -494,13 +416,13 @@ export default function ThreadSidebar({
       setOpenMenuState(null);
     }
 
-    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     document.addEventListener("keydown", handleKeyDown);
     window.addEventListener("resize", handleViewportChange);
     window.addEventListener("scroll", handleViewportChange, true);
 
     return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
@@ -549,22 +471,6 @@ export default function ThreadSidebar({
     if (deleteTarget && !threadIds.has(deleteTarget.id)) {
       setDeleteTarget(null);
     }
-
-    setExpandedThreadIds((current) => {
-      let changed = false;
-      const next: Record<string, boolean> = {};
-
-      for (const [threadId, expanded] of Object.entries(current)) {
-        if (!threadIds.has(threadId)) {
-          changed = true;
-          continue;
-        }
-
-        next[threadId] = expanded;
-      }
-
-      return changed ? next : current;
-    });
   }, [deleteTarget, openMenuState, renameTarget, threads]);
 
   function handleOpenMenu(event: React.MouseEvent<HTMLButtonElement>, thread: ThreadSummary) {
@@ -623,17 +529,10 @@ export default function ThreadSidebar({
     setDeleteTarget(null);
   }
 
-  function handleToggleExpanded(threadId: string) {
-    const willExpand = !expandedThreadIds[threadId];
-
-    setExpandedThreadIds((current) => ({
-      [threadId]: !current[threadId],
-    }));
-
-    if (willExpand && threadId !== activeThreadId) {
-      setOpenMenuState(null);
-      onSelectThread(threadId);
-    }
+  function handleOpenOutline(threadId: string) {
+    setOpenMenuState(null);
+    if (threadId !== activeThreadId) onSelectThread(threadId, { keepSidebarOpen: true });
+    setSidebarContent("outline");
   }
 
   function handleThreadDragStart(
@@ -743,7 +642,7 @@ export default function ThreadSidebar({
   ];
 
   function renderThreadItem(thread: ThreadSummary) {
-    const isExpanded = Boolean(expandedThreadIds[thread.id]);
+    const isExpanded = sidebarContent === "outline" && thread.id === activeThreadId;
     const isPinned = pinnedThreadIds.has(thread.id);
     const isStreaming = streamingThreadIds.has(thread.id);
 
@@ -803,7 +702,7 @@ export default function ThreadSidebar({
               ? "thread-item-expand-trigger is-expanded"
               : "thread-item-expand-trigger"
           }
-          onClick={() => handleToggleExpanded(thread.id)}
+          onClick={() => handleOpenOutline(thread.id)}
           type="button"
         >
           <ExpandIcon />
@@ -826,81 +725,13 @@ export default function ThreadSidebar({
           <MoreIcon />
         </button>
 
-        {isExpanded && thread.id === activeThreadId ? (
-          <nav
-            aria-label={`Outline for ${currentChatTitle}`}
-            className="chat-outline is-nested"
-            id={`chat-outline-${thread.id}`}
-          >
-            <ChatOutline items={currentChatOutline} activeItemId={activeOutlineItemId} onSelect={onSelectOutlineItem} />
-          </nav>
-        ) : null}
       </div>
     );
   }
 
   return (
     <aside className={`thread-sidebar is-simplified${collapsed ? " is-collapsed" : ""}${mainViewMode === "graph" && mapExplorerActive ? " is-exploring-map" : ""}`}>
-      <div className="thread-sidebar-head">
-        <div className="thread-sidebar-title-row">
-          <div aria-label="Main workspace view" className="thread-view-switcher" role="group">
-            <button
-              aria-label="Open document view"
-              aria-pressed={mainViewMode === "chat"}
-              className={
-                mainViewMode === "chat"
-                  ? "thread-view-button is-active"
-                  : "thread-view-button"
-              }
-              onClick={() => onSetMainViewMode("chat")}
-              title="Open document view"
-              type="button"
-            >
-              <ChatViewIcon />
-              <span>Document</span>
-            </button>
-            <button
-              aria-label="Open tile view"
-              aria-pressed={mainViewMode === "tiles"}
-              className={
-                mainViewMode === "tiles"
-                  ? "thread-view-button is-active"
-                  : "thread-view-button"
-              }
-              onClick={() => onSetMainViewMode("tiles")}
-              title="Open tile view"
-              type="button"
-            >
-              <TileViewIcon />
-              <span>Tiles</span>
-            </button>
-            <button
-              aria-label="Open map view"
-              aria-pressed={mainViewMode === "graph"}
-              className={
-                mainViewMode === "graph"
-                  ? "thread-view-button is-active"
-                  : "thread-view-button"
-              }
-              onClick={() => onSetMainViewMode("graph")}
-              title="Open map view"
-              type="button"
-            >
-              <GraphViewIcon />
-              <span>Map</span>
-            </button>
-          </div>
-        </div>
-        <button
-          aria-label={collapsed ? "Expand left sidebar" : "Minimize left sidebar"}
-          className="sidebar-utility-button sidebar-collapse-button"
-          onClick={onToggleCollapse}
-          title={collapsed ? "Expand left sidebar" : "Minimize left sidebar"}
-          type="button"
-        >
-          <SidebarCollapseIcon collapsed={collapsed} />
-        </button>
-      </div>
+      {header}
 
       {mainViewMode === "graph" && !collapsed && onSelectSidebarSection ? <div className="map-sidebar-tabs" role="group" aria-label="Workspace browsing">
         <button type="button" aria-pressed={!mapExplorerActive} onClick={() => onSelectSidebarSection("chats")}>Documents</button>
@@ -918,6 +749,17 @@ export default function ThreadSidebar({
           >
             <PlusIcon />
             <span>New document</span>
+          </button>
+        </div>
+        <div className="sidebar-secondary-row">
+          <button
+            aria-label="Search documents"
+            className="sidebar-search-button"
+            onClick={onOpenSearch}
+            type="button"
+          >
+            <SearchIcon />
+            <span>Search documents</span>
           </button>
           <button
             aria-controls={workspaceActionsOpen ? "sidebar-workspace-actions" : undefined}
@@ -1002,15 +844,6 @@ export default function ThreadSidebar({
             </div>
           ) : null}
         </div>
-        <button
-          aria-label="Search documents"
-          className="sidebar-search-button"
-          onClick={onOpenSearch}
-          type="button"
-        >
-          <SearchIcon />
-          <span>Search documents</span>
-        </button>
       </div>
 
       {mapExplorerRef ? <div ref={mapExplorerRef} className="map-sidebar-explorer" hidden={mainViewMode !== "graph" || !mapExplorerActive || collapsed} /> : null}
@@ -1076,134 +909,149 @@ export default function ThreadSidebar({
           })}
         </div>
       ) : (
-        <div className="thread-list">
-          {recentPinnedThreads.length || draggedThreadId ? (
-            <section
-              aria-label="Pinned documents"
-              className={
-                dropTargetKey === "pinned"
-                  ? "thread-sidebar-section is-pinned is-drop-target"
-                  : "thread-sidebar-section is-pinned"
-              }
-              data-thread-drop-target="pinned"
-              onDragLeave={(event) => handleThreadDragLeave(event, "pinned")}
-              onDragOver={(event) => handleThreadDragOver(event, "pinned")}
-              onDrop={(event) =>
-                handleThreadDrop(event, { pinned: true })
-              }
-            >
-              <div className="thread-group-section-header is-pinned">
-                <div className="thread-section-label">
-                  <span aria-hidden="true" className="thread-section-pin-icon">
-                    <PinIcon filled />
-                  </span>
-                  <span>Pinned</span>
-                  <span className="thread-section-count">
-                    {recentPinnedThreads.length}
-                  </span>
-                </div>
-              </div>
-              {recentPinnedThreads.length ? (
-                recentPinnedThreads.map(renderThreadItem)
-              ) : (
-                <p className="thread-section-drop-hint">Drop here to pin</p>
-              )}
-            </section>
-          ) : null}
-
-          {activityOrderedGroups.map((group) => {
-            const sectionThreads = groupedThreads.filter(
-              (thread) => thread.groupId === group.id,
-            );
-            const targetKey = `group:${group.id}`;
-
-            return (
+        <div className="sidebar-document-browser">
+          <div className="sidebar-content-switcher" role="group" aria-label="Sidebar content">
+            <button type="button" aria-label="Show documents" aria-pressed={sidebarContent === "documents"}
+              aria-controls="sidebar-document-list" onClick={() => setSidebarContent("documents")}>Documents</button>
+            <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
+              aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button>
+          </div>
+          <div className="thread-list" id="sidebar-document-list" hidden={sidebarContent !== "documents"}>
+            {recentPinnedThreads.length || draggedThreadId ? (
               <section
-                aria-label={`${group.name} group`}
+                aria-label="Pinned documents"
                 className={
-                  dropTargetKey === targetKey
-                    ? "thread-sidebar-section is-drop-target"
-                    : "thread-sidebar-section"
+                  dropTargetKey === "pinned"
+                    ? "thread-sidebar-section is-pinned is-drop-target"
+                    : "thread-sidebar-section is-pinned"
                 }
-                data-thread-drop-target={targetKey}
-                key={group.id}
-                onDragLeave={(event) =>
-                  handleThreadDragLeave(event, targetKey)
-                }
-                onDragOver={(event) =>
-                  handleThreadDragOver(event, targetKey)
-                }
+                data-thread-drop-target="pinned"
+                onDragLeave={(event) => handleThreadDragLeave(event, "pinned")}
+                onDragOver={(event) => handleThreadDragOver(event, "pinned")}
                 onDrop={(event) =>
-                  handleThreadDrop(event, {
-                    groupId: group.id,
-                  })
+                  handleThreadDrop(event, { pinned: true })
+                }
+              >
+                <div className="thread-group-section-header is-pinned">
+                  <div className="thread-section-label">
+                    <span aria-hidden="true" className="thread-section-pin-icon">
+                      <PinIcon filled />
+                    </span>
+                    <span>Pinned</span>
+                    <span className="thread-section-count">
+                      {recentPinnedThreads.length}
+                    </span>
+                  </div>
+                </div>
+                {recentPinnedThreads.length ? (
+                  recentPinnedThreads.map(renderThreadItem)
+                ) : (
+                  <p className="thread-section-drop-hint">Drop here to pin</p>
+                )}
+              </section>
+            ) : null}
+
+            {activityOrderedGroups.map((group) => {
+              const sectionThreads = groupedThreads.filter(
+                (thread) => thread.groupId === group.id,
+              );
+              const targetKey = `group:${group.id}`;
+
+              return (
+                <section
+                  aria-label={`${group.name} group`}
+                  className={
+                    dropTargetKey === targetKey
+                      ? "thread-sidebar-section is-drop-target"
+                      : "thread-sidebar-section"
+                  }
+                  data-thread-drop-target={targetKey}
+                  key={group.id}
+                  onDragLeave={(event) =>
+                    handleThreadDragLeave(event, targetKey)
+                  }
+                  onDragOver={(event) =>
+                    handleThreadDragOver(event, targetKey)
+                  }
+                  onDrop={(event) =>
+                    handleThreadDrop(event, {
+                      groupId: group.id,
+                    })
+                  }
+                >
+                  <div className="thread-group-section-header">
+                    <button
+                      aria-expanded={!group.collapsed}
+                      onClick={() => onToggleGroup(group.id)}
+                      type="button"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className="conversation-group-color"
+                        style={{ backgroundColor: group.color }}
+                      />
+                      <span>{group.name}</span>
+                      <span className="thread-section-count">
+                        {sectionThreads.length}
+                      </span>
+                      <span aria-hidden="true">
+                        {group.collapsed ? "＋" : "−"}
+                      </span>
+                    </button>
+                  </div>
+                  {!group.collapsed ? (
+                    sectionThreads.length ? (
+                      sectionThreads.map(renderThreadItem)
+                    ) : draggedThreadId ? (
+                      <p className="thread-section-drop-hint">Drop into group</p>
+                    ) : null
+                  ) : null}
+                </section>
+              );
+            })}
+
+            {ungroupedThreads.length || draggedThreadId ? (
+              <section
+                aria-label="Ungrouped documents"
+                className={
+                  dropTargetKey === "ungrouped"
+                    ? "thread-sidebar-section is-ungrouped is-drop-target"
+                    : "thread-sidebar-section is-ungrouped"
+                }
+                data-thread-drop-target="ungrouped"
+                onDragLeave={(event) => handleThreadDragLeave(event, "ungrouped")}
+                onDragOver={(event) => handleThreadDragOver(event, "ungrouped")}
+                onDrop={(event) =>
+                  handleThreadDrop(event, { groupId: null })
                 }
               >
                 <div className="thread-group-section-header">
-                  <button
-                    aria-expanded={!group.collapsed}
-                    onClick={() => onToggleGroup(group.id)}
-                    type="button"
-                  >
+                  <div className="thread-section-label">
                     <span
                       aria-hidden="true"
-                      className="conversation-group-color"
-                      style={{ backgroundColor: group.color }}
+                      className="conversation-group-color is-ungrouped"
                     />
-                    <span>{group.name}</span>
+                    <span>Ungrouped</span>
                     <span className="thread-section-count">
-                      {sectionThreads.length}
+                      {ungroupedThreads.length}
                     </span>
-                    <span aria-hidden="true">
-                      {group.collapsed ? "＋" : "−"}
-                    </span>
-                  </button>
+                  </div>
                 </div>
-                {!group.collapsed ? (
-                  sectionThreads.length ? (
-                    sectionThreads.map(renderThreadItem)
-                  ) : draggedThreadId ? (
-                    <p className="thread-section-drop-hint">Drop into group</p>
-                  ) : null
-                ) : null}
+                {ungroupedThreads.length ? (
+                  ungroupedThreads.map(renderThreadItem)
+                ) : (
+                  <p className="thread-section-drop-hint">Drop here to ungroup</p>
+                )}
               </section>
-            );
-          })}
-
-          {ungroupedThreads.length || draggedThreadId ? (
-            <section
-              aria-label="Ungrouped documents"
-              className={
-                dropTargetKey === "ungrouped"
-                  ? "thread-sidebar-section is-ungrouped is-drop-target"
-                  : "thread-sidebar-section is-ungrouped"
-              }
-              data-thread-drop-target="ungrouped"
-              onDragLeave={(event) => handleThreadDragLeave(event, "ungrouped")}
-              onDragOver={(event) => handleThreadDragOver(event, "ungrouped")}
-              onDrop={(event) =>
-                handleThreadDrop(event, { groupId: null })
-              }
-            >
-              <div className="thread-group-section-header">
-                <div className="thread-section-label">
-                  <span
-                    aria-hidden="true"
-                    className="conversation-group-color is-ungrouped"
-                  />
-                  <span>Ungrouped</span>
-                  <span className="thread-section-count">
-                    {ungroupedThreads.length}
-                  </span>
-                </div>
-              </div>
-              {ungroupedThreads.length ? (
-                ungroupedThreads.map(renderThreadItem)
-              ) : (
-                <p className="thread-section-drop-hint">Drop here to ungroup</p>
-              )}
-            </section>
-          ) : null}
+            ) : null}
+          </div>
+          <nav aria-label={`Outline for ${currentChatTitle}`} className="chat-outline is-expanded-panel"
+            id={`chat-outline-${activeThreadId}`} hidden={sidebarContent !== "outline"}>
+            <h2 className="sidebar-outline-title" ref={outlineTitleRef} tabIndex={-1} title={currentChatTitle}>
+              <DocumentIcon /><span>{currentChatTitle || "Untitled document"}</span>
+            </h2>
+            <ChatOutline key={activeThreadId} items={currentChatOutline} activeItemId={activeOutlineItemId} onSelect={onSelectOutlineItem} />
+          </nav>
         </div>
       )}
 

@@ -1,34 +1,39 @@
-import type { ConnectionLine, ConnectorOcclusionRect } from "../types";
+import type { ConnectionLine, ConnectorNavigationTarget, ConnectorOcclusionRect } from "../types";
+import { buildConnectorCurve, groupConnectorContinuations } from "../lib/documentConnectors";
+import "./ConnectorOverlay.css";
 
 interface ConnectorOverlayProps {
   connections: ConnectionLine[];
   occlusionRects: ConnectorOcclusionRect[];
+  onNavigate?: (target: ConnectorNavigationTarget) => void;
 }
 
-function buildCurvePath(connection: ConnectionLine) {
-  const horizontalGap = connection.end.x - connection.start.x;
-
-  if (horizontalGap <= 24) {
-    return `M ${connection.start.x} ${connection.start.y} L ${connection.end.x} ${connection.end.y}`;
-  }
-
-  const controlOffset = Math.min(
-    horizontalGap - 12,
-    Math.max(48, horizontalGap * 0.35),
-  );
-
-  return `M ${connection.start.x} ${connection.start.y} C ${
-    connection.start.x + controlOffset
-  } ${connection.start.y}, ${connection.end.x - controlOffset} ${
-    connection.end.y
-  }, ${connection.end.x} ${connection.end.y}`;
-}
+const directionArrows = { up: "↑", down: "↓", left: "←", right: "→", open: "↗" };
+const directionLabels = { up: "above", down: "below", left: "to the left", right: "to the right", open: "in another document" };
 
 export default function ConnectorOverlay({
   connections,
   occlusionRects,
+  onNavigate,
 }: ConnectorOverlayProps) {
+  function renderContinuation(connection: ConnectionLine, inList = false) {
+    const continuation = connection.continuation!;
+    return <button
+      key={connection.id}
+      type="button"
+      className={`connector-continuation${connection.active ? " is-active" : ""}${inList ? " is-in-list" : ""}`}
+      style={inList ? undefined : { left: continuation.left, top: continuation.top, maxWidth: continuation.width }}
+      aria-label={`Reveal ${continuation.relation === "source" ? "source" : "linked"} passage: ${continuation.title}, ${directionLabels[continuation.direction]}`}
+      title={`${continuation.relation === "source" ? "Source" : "Linked"} passage ${directionLabels[continuation.direction]} · ${continuation.title}. Click to reveal.`}
+      onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onNavigate?.(continuation.target); }}
+    >
+      <span aria-hidden="true">{directionArrows[continuation.direction]}</span>
+      <span className="connector-continuation-relation">{continuation.relation === "source" ? "From" : "To"}</span>
+      <span className="connector-continuation-title">{continuation.title}</span>
+    </button>;
+  }
   return (
+    <>
     <svg
       aria-hidden="true"
       className="connector-overlay"
@@ -63,11 +68,11 @@ export default function ConnectorOverlay({
         </mask>
       </defs>
       <g mask="url(#connector-visibility-mask)">
-        {connections.map((connection) => {
+        {connections.filter((connection) => !connection.continuation).map((connection) => {
           const path =
             connection.variant === "straight"
               ? `M ${connection.start.x} ${connection.start.y} L ${connection.end.x} ${connection.end.y}`
-              : buildCurvePath(connection);
+              : buildConnectorCurve(connection);
 
           return (
             <g key={connection.id}>
@@ -104,5 +109,28 @@ export default function ConnectorOverlay({
         })}
       </g>
     </svg>
+    <div className="connector-continuations" aria-label="Document relationships">
+      {groupConnectorContinuations(connections).map((group) => {
+        const first = group.connections[0];
+        const continuation = first.continuation!;
+        if (group.connections.length === 1) return renderContinuation(first);
+        return <details
+          className={`connector-continuation-group${group.top > window.innerHeight / 2 ? " opens-up" : ""}`}
+          key={first.id}
+          style={{ left: group.left, top: group.top, maxWidth: group.width }}
+          onKeyDown={(event) => { if (event.key === "Escape") { event.currentTarget.removeAttribute("open"); event.currentTarget.querySelector("summary")?.focus(); } }}
+          onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.removeAttribute("open"); }}
+        >
+          <summary className="connector-continuation" aria-label={`Show ${group.connections.length} document relationships`}>
+            <span aria-hidden="true">{directionArrows[continuation.direction]}</span>
+            <span className="connector-continuation-relation">{continuation.relation === "source" ? "From" : "To"}</span>
+            <span className="connector-continuation-title">{continuation.title}</span>
+            <span className="connector-continuation-count">+{group.connections.length - 1}</span>
+          </summary>
+          <div className="connector-continuation-list">{group.connections.map((connection) => renderContinuation(connection, true))}</div>
+        </details>;
+      })}
+    </div>
+    </>
   );
 }

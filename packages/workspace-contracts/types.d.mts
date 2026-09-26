@@ -27,7 +27,7 @@ export interface AIExecutionRecord {
   profileVersion: string;
   /** Selection provenance; model may identify a different model after fallback. */
   routing?: {
-    method: "jev" | "jev-task" | "rules" | "manual";
+    method: "astra" | "astra-task" | "jev" | "jev-task" | "rules" | "manual";
     selectedModel: string;
   };
   sources: AIContextSource[];
@@ -115,6 +115,19 @@ export interface DocumentBlock {
   generationId?: string;
 }
 
+/** A user-authored passage link; it does not change either document's ancestry. */
+export interface DocumentLink {
+  id: string;
+  sourceMessageId: string;
+  sourceBlockId?: string;
+  startOffset: number;
+  endOffset: number;
+  quote: string;
+  targetConversationId: string;
+  targetBlockId?: string;
+  createdAt: string;
+}
+
 export interface DocumentPrompt {
   id: string;
   content: string;
@@ -151,6 +164,8 @@ export interface EditableDocument {
   blocks: DocumentBlock[];
   prompts: DocumentPrompt[];
   generations: DocumentGeneration[];
+  /** Source passages remain historical references if their block or target is removed. */
+  links?: DocumentLink[];
 }
 
 export interface PublicTopicSource {
@@ -163,6 +178,31 @@ export interface PublicTopicSource {
   wikipediaUrl?: string;
   retrievedAt: string;
   revision?: number;
+}
+
+export interface DocumentLayout {
+  /** Horizontal document positions within this root's family; ancestry is unchanged. */
+  order: string[];
+  /** Side documents retained as tabs while their panes are hidden. */
+  minimizedIds: string[];
+  /** User-selected widths in CSS pixels, keyed by document in this root's family. */
+  widthsById?: Record<string, number>;
+}
+
+export type DocumentDockNode =
+  | { type: "pane"; documentId: string; scope?: "workspace" | "family" }
+  | { type: "split"; id: string; direction: "horizontal" | "vertical"; ratio: number;
+      first: DocumentDockNode; second: DocumentDockNode };
+
+export type DocumentDockPosition = "left" | "right" | "top" | "bottom";
+
+export interface DocumentDockLayout {
+  /** A pane may remain visible across the workspace or only within its document family. */
+  tree: DocumentDockNode | null;
+  /** Fraction of the document workspace reserved for pinned panes. */
+  width: number;
+  /** Side of the scrolling workspace occupied by pinned panes; omitted means left. */
+  position?: DocumentDockPosition;
 }
 
 export interface Conversation {
@@ -181,6 +221,8 @@ export interface Conversation {
   childIds: string[];
   documents?: ConversationDocument[];
   document?: EditableDocument;
+  /** Saved on the family root, independent of which document is currently focused. */
+  documentLayout?: DocumentLayout;
   messages: Message[];
   notes?: ConversationNote[];
   createdAt: string;
@@ -212,6 +254,7 @@ export interface AppState {
   defaultModelId: string;
   railOpen: boolean;
   pinnedThreadIds: string[];
+  documentDock?: DocumentDockLayout;
   graphLayouts: Record<string, GraphNodeLayout>;
   groups: Record<string, ConversationGroup>;
   conversations: Record<string, Conversation>;

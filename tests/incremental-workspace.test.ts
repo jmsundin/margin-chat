@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createChildConversation, createEmptyState, createMainConversation, createStandaloneNoteConversation } from "../client/src/initialState";
 import { createMarkdownWorkspace, createMarkdownWorkspaceRenderer, discoverMarkdownWorkspace, parseMarkdownWorkspace } from "../client/src/lib/workspaceMarkdown";
-import { createVaultFileRenderer, hasSameAuthoredState, stateToVaultFiles } from "../client/src/lib/vaultWorkspace";
+import { createVaultFileRenderer, hasSameAuthoredState, stateToVaultFiles, workspaceFromVault } from "../client/src/lib/vaultWorkspace";
 import { addRootConversation, appendMessageDelta, deleteThread } from "../client/src/lib/workspaceCommands";
 import type { AppState, Conversation } from "../client/src/types";
 import type { VaultFile } from "../client/src/lib/vaultTypes";
@@ -70,7 +70,7 @@ describe("incremental Markdown persistence", () => {
     advance(changeConversation(state, "standalone", (conversation) => ({ ...conversation, kind: "chat" })));
   });
 
-  test("renaming a parent or child preserves existing relationship aliases like the full renderer", () => {
+  test("renaming a parent or child updates incoming relationship links like the full renderer", () => {
     let state = createEmptyState();
     const root = state.conversations[state.rootId];
     const child = createChildConversation({ id: "child", parentConversation: root, createdAt: stamp });
@@ -82,9 +82,16 @@ describe("incremental Markdown persistence", () => {
       const before = workspace;
       workspace = render(state, stamp, before);
       expect(workspace).toEqual(createMarkdownWorkspace(state, stamp, before));
+      const oldPath = before.manifest.files.find((record) => record.id === id)!.path;
+      const renamed = workspace.manifest.files.find((record) => record.id === id)!;
+      expect(renamed.path).not.toBe(oldPath);
+      expect(renamed.aliases).toContain(oldPath);
+      expect(workspace.files[oldPath]).toBeUndefined();
       const otherId = id === root.id ? child.id : root.id;
       const otherPath = workspace.manifest.files.find((record) => record.id === otherId)!.path;
-      expect(workspace.files[otherPath]).toBe(before.files[otherPath]);
+      expect(workspace.files[otherPath]).not.toBe(before.files[otherPath]);
+      expect(workspace.files[otherPath]).toContain(`[[${renamed.path.replace(/\.md$/, "")}|Renamed ${id}]]`);
+      expect(parseMarkdownWorkspace(workspace.manifest, workspace.files)?.conversations[child.id].parentId).toBe(root.id);
     }
   });
 
@@ -125,10 +132,10 @@ describe("incremental Markdown persistence", () => {
 
     const malformed = { ...workspace, files: {
       ...workspace.files,
-      "Renamed/Nested.md": workspace.files["Renamed/Nested.md"].replace(/<!-- margin-chat-metadata .+ -->/, "<!-- margin-chat-metadata {broken} -->"),
+      "Renamed/Nested.md": workspace.files["Renamed/Nested.md"].replace(/^margin-chat: \|-\r?\n/m, (opening) => `${opening}  broken registry\n`),
     } };
     const originalBytes = structuredClone(malformed.files);
-    expect(() => render(state, stamp, malformed)).toThrow("could not be parsed");
+    expect(() => render(state, stamp, malformed)).toThrow("preserved");
     expect(malformed.files).toEqual(originalBytes);
     // A rejected incoming snapshot must not poison the last successful cache.
     expect(render(state, stamp, workspace)).toEqual(createMarkdownWorkspace(state, stamp, workspace));
@@ -214,7 +221,7 @@ describe("incremental Markdown persistence", () => {
     const nextState = appendMessageDelta(state, "conversation-root", "reply", "updated", stamp);
     const next = render(nextState, first);
     expect(next).toEqual(stateToVaultFiles(nextState, first));
-    const unchangedPath = Object.keys(first).find((path) => path.endsWith(".md") && first[path].content.includes('"id":"other"'))!;
+    const unchangedPath = workspaceFromVault(first).manifest.files.find((record) => record.id === "other")?.path;
     expect(unchangedPath).toBeDefined();
     expect(next[unchangedPath]).toBe(first[unchangedPath]);
     expect(hasSameAuthoredState(state, { ...state, rootId: "conversation-root", activeConversationId: "conversation-root", railOpen: !state.railOpen })).toBe(true);

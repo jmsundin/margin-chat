@@ -121,7 +121,7 @@ function GraphExplorationPreview() {
         currentChatOutline={[]} currentChatTitle={fixture.conversations[activeId].title} groups={fixture.groups} threads={threads} pinnedThreads={[]} streamingThreadIds={new Set()} theme={dark ? "dark" : "light"}
         onAssignGroup={() => {}} onCreateGroup={() => {}} onDeleteThread={() => {}} onNewChat={() => {}} onNewNote={() => {}} onOpenProfile={() => {}} onOpenSettings={() => {}} onOpenSearch={() => {}}
         onPinThread={() => {}} onUnpinThread={() => {}} onRenameThread={() => {}} onSelectOutlineItem={() => {}}
-        onSetMainViewMode={(mode) => setView(mode === "graph" ? "graph" : "chat")} onSelectThread={reveal} onToggleCollapse={() => setSidebarOpen(false)} onToggleGroup={() => {}} onToggleTheme={() => setDark((value) => !value)} />
+        onSelectThread={reveal} onToggleGroup={() => {}} onToggleTheme={() => setDark((value) => !value)} />
     </div>
     {view === "chat" ? <PreviewReader conversation={fixture.conversations[activeId]} /> :
       <ConversationGraphView

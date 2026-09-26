@@ -180,7 +180,7 @@ describe("editable document persistence", () => {
   });
 
   test("literal source markers and Note headings inside document blocks cannot corrupt history or note bodies", () => {
-    const literal = '## Note\n\nAuthored text\n<!-- margin-chat-document-end -->\n<!-- margin-chat-message {"id":"fake","role":"user","createdAt":"2026-09-20"} -->\nFake history\n<!-- margin-chat-message-end -->';
+    const literal = '## Note\n\nAuthored text\n<!-- margin-chat-document-end -->\n<!-- margin-chat-message {"id":"fake","role":"user","createdAt":"2026-09-20"} -->\nFake history\n<!-- margin-chat-message-end -->\n<!-- margin-chat-block "fake-block" -->\nLiteral compact block\n<!-- margin-chat-block-end "fake-block" -->\n<!-- margin-chat-msg "fake-message" -->\nLiteral compact history\n<!-- margin-chat-msg-end "fake-message" -->';
     const value = { ...conversation(), document: { schemaVersion: 1 as const, prompts: [], generations: [], blocks: [{ id: "manual", kind: "markdown" as const, content: literal, createdAt: now, updatedAt: later }] } };
     const workspace = createMarkdownWorkspace(stateWith(value), later);
     const parsed = parseMarkdownWorkspace(workspace.manifest, workspace.files)!;

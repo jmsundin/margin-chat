@@ -23,6 +23,7 @@ const initial = [
   { id: "advanced", kind: "markdown" as const, content: "> [!tip] Keep\n> A [[wiki link]].\n\n%%private comment%%", createdAt: date, updatedAt: date },
 ];
 let updateBlocks: any;
+let updatePlaceholderVisibility: (hidden: boolean) => void;
 let latestBlocks: any[] = initial;
 const updates: any[] = [];
 const invocations: any[] = [];
@@ -33,10 +34,12 @@ const insertions: any[] = [];
 let splitCount = 0;
 function Host() {
   const [blocks, setBlocks] = useState(initial);
+  const [hidePlaceholder, setHidePlaceholder] = useState(false);
   updateBlocks = setBlocks;
+  updatePlaceholderVisibility = setHidePlaceholder;
   latestBlocks = blocks;
   return createElement(RichDocumentEditor, {
-    conversationId: "conversation", blocks, readOnlyBlockIds: ["stream"],
+    conversationId: "conversation", blocks, readOnlyBlockIds: ["stream"], hidePlaceholder,
     decorations: { first: [{ from: 17, to: 25, branchIds: ["branch"] }] },
     onUpdateBlock(id: string, markdown: string) { updates.push({ id, markdown }); setBlocks((items) => items.map((item) => item.id === id ? { ...item, content: markdown } : item)); },
     onInvokeAI(value: any) { invocations.push(value); }, onSelectionChange(value: any) { selections.push(value); },
@@ -51,6 +54,7 @@ browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
 function block(id: string) { const item = container.querySelector(`[data-document-block-id='${id}']`); assert(item, `Missing block ${id}`); return item; }
 function editor(id: string): InstanceType<typeof Editor> { const dom = block(id).querySelector(".tiptap") as any; assert(dom?.editor, `Missing real Tiptap editor ${id}`); return dom.editor; }
+function hintedBlocks() { return [...container.querySelectorAll('.rich-document-content[data-placeholder]:not([data-placeholder=""])')]; }
 async function key(view: any, name: string, extras = {}) { const event = new browser.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true, ...extras }); await act(async () => { view.dom.dispatchEvent(event); }); return event; }
 async function settle() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); }); }
 try {
@@ -65,6 +69,17 @@ try {
   assert.equal(editor("stream").isEditable, false);
   assert.equal(first.isEditable, true);
   checks.push("formatted content and compatible source IDs without mount writes");
+
+  assert.equal(hintedBlocks().length, 1, "Existing empty blocks and the continuation share one writing hint.");
+  assert(hintedBlocks()[0].closest('.is-continuation'), "The last editable blank area receives the initial hint.");
+  await act(async () => editor("empty").commands.focus());
+  await settle();
+  assert.deepEqual(hintedBlocks(), [editor("empty").view.dom], "Focusing another empty block moves the single hint there.");
+  await act(async () => updatePlaceholderVisibility(true));
+  assert.equal(hintedBlocks().length, 0, "An open AI prompt suppresses document writing hints.");
+  await act(async () => updatePlaceholderVisibility(false));
+  assert.equal(hintedBlocks().length, 1, "Closing AI restores one hint without recreating editors.");
+  checks.push("one writing hint follows the empty caret and is hidden while AI is open");
 
   const original = initial[0].content;
   let boldPosition = -1;
@@ -86,6 +101,37 @@ try {
   assert.equal(original.slice(selected.startOffset, selected.endOffset), "bold");
   assert(block("first").querySelector(".message-anchor[data-annotation-branches='[\"branch\"]']"), "Saved anchors should remain hover-preview targets.");
   checks.push("rich selection maps to exact raw Markdown and saved highlights");
+
+  await act(async () => { first.commands.selectAll(); });
+  const entireSelection = selections.filter(Boolean).at(-1);
+  assert.equal(entireSelection.startOffset, 0, "Select all starts at the original source boundary, including heading syntax.");
+  assert.equal(entireSelection.endOffset, original.length);
+  assert.equal(entireSelection.quote, original);
+  assert.equal(first.getMarkdown(), original, "Mapping a structural selection does not change the editor document.");
+  for (const source of ["## Whole __heading__\n\n", "* __First__\n* Second\n"]) {
+    const structural = new Editor({ extensions: createRichDocumentExtensions(), content: source, contentType: "markdown" });
+    try {
+      const doc = structural.state.doc;
+      const serialize = (value: any) => structural.markdown!.serialize(value);
+      assert.equal(markdownOffsetAtDocumentPosition(doc, serialize, source, 0, 1), 0);
+      assert.equal(markdownOffsetAtDocumentPosition(doc, serialize, source, doc.content.size, -1), source.length);
+      // Exercise every document/list/list-item boundary in both directions.
+      for (let position = 0; position <= doc.content.size; position += 1) {
+        if (doc.resolve(position).parent.inlineContent) continue;
+        for (const affinity of [-1, 1] as const) {
+          const offset = markdownOffsetAtDocumentPosition(doc, serialize, source, position, affinity);
+          assert(offset >= 0 && offset <= source.length);
+        }
+      }
+      let secondItemPosition = -1;
+      doc.descendants((node: any, position: number) => { if (node.type.name === "listItem" && node.textContent === "Second") secondItemPosition = position; });
+      if (secondItemPosition >= 0) {
+        assert.equal(markdownOffsetAtDocumentPosition(doc, serialize, source, secondItemPosition, 1), source.indexOf("Second"), "Forward affinity enters the next list item's text without including its bullet.");
+        assert.equal(markdownOffsetAtDocumentPosition(doc, serialize, source, secondItemPosition, -1), source.indexOf("First") + "First".length, "Backward affinity stops at the previous text, before its closing mark.");
+      }
+    } finally { structural.destroy(); }
+  }
+  checks.push("select-all and nested list boundaries map to source without invalid structural text insertion");
 
   await act(async () => { first.commands.setTextSelection(first.state.doc.content.size - 1); first.commands.insertContent(" draft"); });
   const localText = first.getMarkdown();
@@ -159,6 +205,23 @@ try {
   assert.equal(editor("first"), first, "Reordering must retain existing editor/undo identity.");
   assert.equal(first.view.dom.getAttribute("aria-label"), "Document block 2", "A moved editor's accessible label must reflect its current position without recreating it.");
   checks.push("keyboard-accessible block reorder retains editor identity");
+
+  const linkButton = () => [...block("first").querySelectorAll('button')].find((button) => button.textContent === 'Link') as any;
+  await act(async () => linkButton().click());
+  const linkField = block("first").querySelector('input[aria-label="Link address"]') as any;
+  assert(linkField);
+  await act(async () => linkField.click());
+  assert(block("first").querySelector('.rich-document-link-form'), "Clicking inside the link editor keeps it open.");
+  await act(async () => (block("first").querySelector('select') as any).click());
+  assert.equal(block("first").querySelector('.rich-document-link-form'), null, "Clicking elsewhere in the toolbar closes the nested link editor.");
+  assert(block("first").querySelector('.rich-document-toolbar'));
+  await act(async () => linkButton().click());
+  await act(async () => editor("empty").view.dom.click());
+  assert.equal(block("first").querySelector('.rich-document-toolbar'), null, "An outside editor click closes formatting despite editor click propagation guards.");
+  await act(async () => (block("first").querySelector('.rich-document-grip') as any).click());
+  assert.equal(block("first").querySelector('.rich-document-link-form'), null, "Reopening formatting does not reopen the dismissed link editor.");
+  await act(async () => (block("first").querySelector('.rich-document-grip') as any).click());
+  checks.push("formatting and nested link popups dismiss on outside clicks while preserving inside clicks");
 
   const features = "## Heading\n\n- [x] complete\n- [ ] todo\n\n| A | B |\n| :--- | ---: |\n| **bold** | text |\n\n```ts\nconst answer = 42;\n```\n\nA ==highlight== and ~~strike~~.\n\n> Nested **quote**.\n\n1. first\n   - child\n2. second\n\nAn [editable link](https://example.com) &amp; escaped \\*stars\\*.";
   const featureEditor = new Editor({ extensions: createRichDocumentExtensions(), content: features, contentType: "markdown" });

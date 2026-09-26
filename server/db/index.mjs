@@ -1,12 +1,14 @@
 import pg from "pg";
 import { assertMigrationsReady, loadMigrations, migrateDatabase } from "./migrations.mjs";
 import {
+  changeUserPassword,
   createAuthSession,
   createPasswordResetToken,
   createUser,
   deleteAuthSession,
   findUserForLogin,
   getUserByAuthSession,
+  getUserPasswordHash,
   resetPasswordWithToken,
   updateUserProfile,
 } from "./authRepository.mjs";
@@ -128,6 +130,10 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     return withClient((client) => createAuthSession(client, args));
   }
 
+  async function changeUserPasswordRecord(args) {
+    return withClient((client) => changeUserPassword(client, args));
+  }
+
   async function createUserRecord(args) {
     return withClient((client) => createUser(client, args));
   }
@@ -146,6 +152,10 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
 
   async function getUserByAuthSessionRecord(sessionId) {
     return withClient((client) => getUserByAuthSession(client, sessionId));
+  }
+
+  async function getUserPasswordHashRecord(userId) {
+    return withClient((client) => getUserPasswordHash(client, userId));
   }
 
   async function updateUserProfileRecord(args) {
@@ -329,6 +339,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
       name, (args) => withClient((client) => operation(client, args)),
     ])),
     chargeHostedRequest: chargeHostedRequestRecord,
+    changeUserPassword: changeUserPasswordRecord,
     settleHostedRequest: (args) => withClient((client) => settleHostedRequest(client, args)),
     getBillingDashboard: (userId) => withClient((client) => getBillingDashboard(client, userId)),
     close,
@@ -350,6 +361,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     getVaultProjectionCheckpoint,
     getHealth,
     getUserByAuthSession: getUserByAuthSessionRecord,
+    getUserPasswordHash: getUserPasswordHashRecord,
     incrementTrialApiCallsUsed: incrementTrialApiCallsUsedRecord,
     listUserApiKeys: listUserApiKeysRecord,
     listVaultAttachments: listVaultAttachmentsRecord,

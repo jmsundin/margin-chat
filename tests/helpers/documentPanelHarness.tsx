@@ -13,6 +13,7 @@ Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, 
 const { act, createElement, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: DocumentPanel } = await import("../../client/src/components/DocumentPanel");
+const { default: DocumentMenu } = await import("../../client/src/components/DocumentMenu");
 const { ConversationGroupSelect } = await import("../../client/src/components/ConversationGroupControls");
 const { createMainConversation } = await import("../../client/src/initialState");
 const { getEditableDocument, insertDocumentGeneration } = await import("../../client/src/lib/editableDocument");
@@ -31,6 +32,7 @@ const submissions: any[] = [];
 const acceptances: string[] = [];
 const undo: string[] = [];
 const opens: string[] = [];
+const pinToggles: string[] = [];
 const checks: string[] = [];
 let selectedDraft: SelectionDraft | null = null;
 let selectionClearCount = 0;
@@ -41,6 +43,7 @@ function Host() {
   replaceConversation = setConversation;
   return createElement(DocumentPanel, {
     conversation, isActive: true, isSubmitting: false, aiControls: null,
+    documentMenu: createElement(DocumentMenu, { conversation, onTogglePin: (id) => pinToggles.push(id) }),
     groupControl: createElement(ConversationGroupSelect, { conversationId: conversation.id, groups: {}, onAssign() {} }), recentModelSelections: [], anchors: [], theme: "light",
     onChange: (document) => { documentChanges++; setConversation((current) => ({ ...current, document })); }, onRename: () => {},
     onSubmit: (request) => submissions.push(request), onStop: () => {},
@@ -78,6 +81,17 @@ async function settle() { await act(async () => { await new Promise((resolve) =>
 try {
   await act(async () => root.render(createElement(Host)));
   await settle();
+  const headerOptions = element('.document-header .document-menu-trigger');
+  assert(headerOptions.closest('.document-body'), "The title and menu share the document's sticky reading header.");
+  await click(headerOptions);
+  const headerMenu = browser.document.querySelector('[role="menu"]');
+  assert(headerMenu);
+  assert.equal(headerMenu.parentElement, browser.document.body, "Header options escape the document's clipped scroll area.");
+  await click(headerMenu.querySelector('[role="menuitem"]'));
+  assert.deepEqual(pinToggles, [initial.id]);
+  assert.equal(browser.document.activeElement, headerOptions);
+  assert.equal(browser.document.querySelector('[role="menu"]'), null);
+  checks.push("the document header exposes shared document actions in an accessible portaled menu");
   assert.equal(container.querySelectorAll(".document-prompt-icon").length, 1);
   assert.equal(container.querySelector(".document-prompt-history"), null, "Historical prompts start compact.");
   await act(async () => { const value = editor("message:answer"); value.commands.setTextSelection(value.state.doc.content.size - 1); value.commands.insertContent(" My manual refinement."); });
@@ -103,6 +117,28 @@ try {
   assert(selectionClearCount > clearsBeforeInvocation, "A new AI invocation explicitly clears the older selected-passage popup.");
   assert.equal(selectedDraft, null);
   assert(browser.document.activeElement === element('textarea[aria-label="AI prompt"]'), "AI textarea receives focus");
+  assert.equal(container.querySelectorAll('.rich-document-content[data-placeholder]:not([data-placeholder=""])').length, 0,
+    "Document placeholders stay hidden while the AI prompt has focus.");
+  await click(element('textarea[aria-label="AI prompt"]'));
+  assert(element(".document-ai-composer"), "Clicks inside the composer keep it open.");
+  await click(element('[aria-label="Choose AI model"]'));
+  const modelSearch = browser.document.querySelector('[aria-label="Search AI models"]');
+  assert(modelSearch);
+  await click(modelSearch);
+  assert(element(".document-ai-composer"), "A portaled model picker keeps its parent composer open.");
+  await click(browser.document.querySelector(".service-picker-backdrop"));
+  assert.equal(browser.document.querySelector(".service-picker-backdrop"), null);
+  assert(element(".document-ai-composer"), "Closing the model picker backdrop preserves the composer.");
+  assert.equal(container.querySelector('.document-ai-composer .conversation-group-trigger'), null,
+    "Group settings live in the tab menu rather than the AI composer.");
+  const titleInput = element('[aria-label="Document title"]');
+  await act(async () => {
+    titleInput.focus();
+    titleInput.dispatchEvent(new browser.Event("pointerdown", { bubbles: true }));
+  });
+  assert.equal(container.querySelector(".document-ai-composer"), null, "An outside pointer press closes the AI composer.");
+  assert.equal(browser.document.activeElement, titleInput, "Outside dismissal leaves focus on the clicked control.");
+  await space("empty");
   await fill("AI prompt", "Add a practical action.");
   await click(button("Generate ↑"));
   assert.equal(submissions.at(-1).destination, "inline");
@@ -119,6 +155,14 @@ try {
   assert.equal(latest.document!.blocks.find((block) => block.id === "message:answer")!.content, manual);
   checks.push("side-document destination submits without replacing current authored text");
 
+  await click(element(".document-prompt-icon"));
+  await click(element('textarea[aria-label="Saved AI prompt"]'));
+  assert(element(".document-prompt-history"), "Clicks within saved prompt history preserve it.");
+  await click(element('[aria-label="Document title"]'));
+  assert.equal(container.querySelector(".document-prompt-history"), null, "Clicks outside saved prompt history close it.");
+  await click(element(".document-prompt-icon"));
+  await click(element(".document-prompt-icon"));
+  assert.equal(container.querySelector(".document-prompt-history"), null, "The prompt trigger toggles history closed without reopening it.");
   await click(element(".document-prompt-icon"));
   await fill("Saved AI prompt", "Try a shorter next step.");
   await click(button("↻ Try another version"));
@@ -178,9 +222,8 @@ try {
   assert.equal(documentChanges, changesBeforeFocus, "A projected empty document remains unsaved when merely focused");
   assert.equal(latest.document, undefined);
   assert.equal(container.querySelector('.rich-document-hint, .rich-document-add'), null);
-  assert.equal(container.querySelector('.document-header-details > span'), null, "The header omits the redundant Document label");
-  assert(element('.document-header-details button[aria-label="Group for conversation new-empty-document: Ungrouped"]'),
-    "The compact group picker retains its accessible label");
+  assert.equal(container.querySelector('.document-header-details, .conversation-group-trigger'), null,
+    "Group settings do not occupy document content space.");
   await act(async () => editor(emptyBlockId).commands.insertContent('A new idea written directly into the empty document.'));
   assert.equal(latest.document!.blocks[0].content, 'A new idea written directly into the empty document.');
   assert.equal(latest.messages.length, 0);

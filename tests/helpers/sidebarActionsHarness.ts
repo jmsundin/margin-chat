@@ -19,6 +19,7 @@ const thread = {
   id: "chat", title: "Research", preview: "A sample chat",
   updatedAt: "2026-09-19T00:00:00.000Z", updatedLabel: "now",
 };
+const sideThread = { ...thread, id: "side-document", title: "Side research" };
 const noop = () => {};
 function element(selector: string) {
   const node = container.querySelector(selector);
@@ -29,25 +30,33 @@ async function click(selector: string) {
   await act(async () => { element(selector).click(); });
 }
 
-try {
+async function renderSidebar(collapsed = false) {
   await act(async () => {
     root.render(createElement(ThreadSidebar, {
-      activeOutlineItemId: null, activeThreadId: "chat", collapsed: false,
+      activeOutlineItemId: null, activeThreadId: "side-document", collapsed,
       currentChatOutline: [], currentChatTitle: "Research", groups: {}, mainViewMode: "chat",
       onAssignGroup: (id, groupId) => events.push(`group:${id}:${groupId}`),
       onCreateGroup: (name) => events.push(`create:${name}`), onDeleteThread: noop,
       onNewChat: () => events.push("document"), onNewNote: () => events.push("note"), onOpenInbox: () => events.push("inbox"),
       onOpenProfile: noop, onOpenSettings: noop, onOpenSearch: noop,
       onPinThread: (id) => events.push(`pin:${id}`), onRenameThread: noop, onSelectOutlineItem: noop,
-      onSetMainViewMode: noop, onSelectThread: noop, onToggleCollapse: noop, onToggleGroup: noop,
+      onSelectThread: (id) => events.push(`select:${id}`), onToggleGroup: noop,
       onToggleTheme: noop, onUnpinThread: noop, pinnedThreads: [], streamingThreadIds: new Set(),
-      theme: "dark", threads: [thread],
+      theme: "dark", threads: [thread, sideThread],
     }));
   });
+}
+
+try {
+  await renderSidebar();
 
   assert.equal(container.querySelector('[data-thread-drop-target="pinned"]'), null);
   await click('[aria-label="New document"]');
   assert(events.includes("document"), "The primary creation action opens a unified document.");
+  assert.equal(container.querySelector('[aria-label="New side document"]'), null, "Side document creation lives beside the active tab.");
+  await click('.thread-item-main[title="Side research"]');
+  assert(events.includes("select:side-document"), "A side document has its own selectable sidebar entry.");
+  assert.equal(element('.thread-item.is-active .thread-item-main').title, "Side research");
   assert.equal(container.querySelector('[aria-label="New note"]'), null, "Separate chat/note creation should not remain in the unified interface.");
   await click(".sidebar-more-button");
   assert.equal(browser.document.activeElement, element(".sidebar-workspace-action"));
@@ -113,6 +122,10 @@ try {
   await drag("dragstart", ".thread-item-main");
   await drag("dragend", ".thread-item-main");
   assert.equal(container.querySelector('[data-thread-drop-target="pinned"]'), null);
+  await renderSidebar(true);
+  assert.equal(container.querySelector('[aria-label="New side document"]'), null);
+  await click('[aria-label="Open document Side research"]');
+  assert.equal(events.at(-1), "select:side-document");
   console.log("Sidebar action, keyboard dismissal, group creation, and drag/drop checks passed.");
 } finally {
   await act(async () => { root.unmount(); });

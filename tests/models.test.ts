@@ -26,9 +26,9 @@ const EXPECTED_MODELS = {
     "Qwen/Qwen3.8-2.4T-A95B",
     "MiniMaxAI/MiniMax-M3",
   ],
-  "openai-api": ["gpt-6-astra", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
-  "openai-agent": ["gpt-6-astra", "gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
-  "xai-api": ["grok-4.6", "grok-4.3"],
+  "openai-api": ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"],
+  "openai-agent": ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"],
+  "xai-api": ["grok-4.7", "grok-4.3"],
 } as const;
 
 describe("provider model catalog", () => {
@@ -59,7 +59,7 @@ describe("provider model catalog", () => {
 
     expect(config.geminiModel).toBe("gemini-3.8-flash");
     expect(config.openaiModel).toBe("gpt-6-astra");
-    expect(config.xaiModel).toBe("grok-4.6");
+    expect(config.xaiModel).toBe("grok-4.7");
   });
 
   test("runtime defaults match the refreshed catalog", () => {

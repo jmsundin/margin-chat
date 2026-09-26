@@ -1,3 +1,5 @@
+import { readLatexAtStart } from "./latex";
+
 export type MarkdownBlockKind =
   | "blank"
   | "blockquote"
@@ -6,6 +8,7 @@ export type MarkdownBlockKind =
   | "indented-code"
   | "line"
   | "list"
+  | "math"
   | "setext-heading"
   | "table";
 
@@ -76,6 +79,7 @@ function isSpecialStart(lines: SourceLine[], index: number) {
   return (
     !line.trim() ||
     Boolean(fenceMarker(line)) ||
+    /^ {0,3}(?:\$\$|\\\[)/.test(line) ||
     isQuote(line) ||
     isList(line) ||
     isIndentedCode(line) ||
@@ -112,6 +116,20 @@ export function parseMarkdownBlocks(value: string): MarkdownBlock[] {
       blocks.push(block(value, lines, index, endIndex, "fenced-code"));
       index = endIndex;
       continue;
+    }
+
+    const math = /^ {0,3}(?:\$\$|\\\[)/.test(line)
+      ? readLatexAtStart(value.slice(lines[index].start).replace(/^ {0,3}/, ""), true)
+      : null;
+    if (math) {
+      const mathLines = math.raw.split("\n");
+      const endIndex = index + mathLines.length - 1;
+      const remainder = lines[endIndex].value.slice(mathLines.at(-1)!.length + (endIndex === index ? line.length - line.trimStart().length : 0));
+      if (!remainder.trim()) {
+        blocks.push(block(value, lines, index, endIndex, "math"));
+        index = endIndex;
+        continue;
+      }
     }
 
     if (isQuote(line)) {

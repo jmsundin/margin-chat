@@ -120,6 +120,53 @@ export async function deleteAuthSession(client, sessionId) {
   await client.query("delete from marginchat_user_sessions where id = $1", [sessionId]);
 }
 
+export async function getUserPasswordHash(client, userId) {
+  const result = await client.query(
+    "select password_hash from marginchat_users where id = $1",
+    [userId],
+  );
+  return result.rows[0]?.password_hash ?? null;
+}
+
+export async function changeUserPassword(
+  client,
+  { currentPasswordHash, currentSessionId, expiresAt, passwordHash, replacementSessionId, userId },
+) {
+  await client.query("begin");
+
+  try {
+    // Compare the verified hash again so a concurrent reset/change cannot be
+    // overwritten by a request authenticated with the previous password.
+    const result = await client.query(
+      `
+        update marginchat_users
+        set password_hash = $1, updated_at = now()
+        where id = $2 and password_hash = $3
+          and exists (
+            select 1 from marginchat_user_sessions
+            where id = $4 and user_id = $2 and expires_at > now()
+          )
+        returning id
+      `,
+      [passwordHash, userId, currentPasswordHash, currentSessionId],
+    );
+
+    if (!result.rowCount) {
+      throw createStatusError(401, "Your password or session changed. Sign in again before changing your password.");
+    }
+
+    await client.query("delete from marginchat_user_sessions where user_id = $1", [userId]);
+    await client.query("delete from marginchat_extension_sessions where user_id = $1", [userId]);
+    await client.query("delete from marginchat_capture_tokens where user_id = $1", [userId]);
+    await client.query("delete from marginchat_password_reset_tokens where user_id = $1", [userId]);
+    await createAuthSession(client, { expiresAt, id: replacementSessionId, userId });
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
 export async function updateUserProfile(
   client,
   { displayName, email, userId },

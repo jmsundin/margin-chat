@@ -1,3 +1,4 @@
+import DismissibleDetails from "./DismissibleDetails";
 import { useState } from "react";
 import { AI_PROVIDERS, normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { AISettings, Conversation } from "../types";
@@ -15,7 +16,7 @@ export default function AIControls({ conversation, conversations, disabled, onCh
   const [query, setQuery] = useState("");
   const permitted = settings.allowedProviders ?? [...AI_PROVIDERS];
   const choices = Object.values(conversations).filter((item) => item.id !== conversation.id && item.title.toLowerCase().includes(query.toLowerCase()));
-  return <details className="ai-controls">
+  return <DismissibleDetails className="ai-controls">
     <summary tabIndex={0}>{conversation.serviceId === "backend-services" ? `Auto · ${settings.mode[0].toUpperCase()}${settings.mode.slice(1)} · ` : "AI context · "}{scopes[settings.contextScope]}</summary>
     <div className="ai-controls-body">
       {conversation.serviceId === "backend-services" ? <label>Auto preference
@@ -51,5 +52,5 @@ export default function AIControls({ conversation, conversations, disabled, onCh
       {!permitted.includes("openai") ? <p className="ai-context-help">Attachment search uses OpenAI. With OpenAI excluded, original files are saved but their contents are not indexed or searched.</p> : null}
       <p className="ai-context-help">Personal margin notes and side notes stay private. Context uses your latest local edits. Each response records the sources and model it used.</p>
     </div>
-  </details>;
+  </DismissibleDetails>;
 }

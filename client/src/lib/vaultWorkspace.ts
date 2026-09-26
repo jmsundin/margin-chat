@@ -1,6 +1,7 @@
 import type { AppState } from "../types";
 import { createEmptyState } from "../initialState";
 import { hydratePersistedState } from "./appState";
+import { getConversationRootId } from "./tree";
 import { createAppStateFromWorkspaceMetadata } from "./workspaceModel";
 import {
   createMarkdownWorkspace, createMarkdownWorkspaceRenderer, discoverMarkdownWorkspace, parseMarkdownWorkspace,
@@ -85,6 +86,7 @@ export function createVaultFileRenderer() {
 
 export function hasSameAuthoredState(left: AppState, right: AppState) {
   return left.conversations === right.conversations && left.graphLayouts === right.graphLayouts
+    && left.documentDock === right.documentDock
     && left.groups === right.groups && left.pinnedThreadIds === right.pinnedThreadIds
     && left.defaultModelId === right.defaultModelId && left.defaultServiceId === right.defaultServiceId;
 }
@@ -97,7 +99,7 @@ export function normalizeVaultMarkdownIdentities(files: Record<string, VaultFile
   };
 }
 
-export function vaultToState(files: Record<string, VaultFile>, current: AppState): AppState {
+export function vaultToState(files: Record<string, VaultFile>, current: AppState, preferredConversationId?: string | null): AppState {
   const workspace = workspaceFromVault(files);
   const empty = !workspace.manifest.files.length;
   const parsed = empty
@@ -111,8 +113,10 @@ export function vaultToState(files: Record<string, VaultFile>, current: AppState
     placeholder.modelId = hydrated.defaultModelId;
   }
   // View navigation belongs to the device, while authored relationships/settings travel with the vault.
-  if (hydrated.conversations[current.activeConversationId]) hydrated.activeConversationId = current.activeConversationId;
-  if (hydrated.conversations[current.rootId]) hydrated.rootId = current.rootId;
+  const focusedId = preferredConversationId && hydrated.conversations[preferredConversationId]
+    ? preferredConversationId : current.activeConversationId;
+  if (hydrated.conversations[focusedId]) hydrated.activeConversationId = focusedId;
+  hydrated.rootId = getConversationRootId(hydrated.conversations, hydrated.activeConversationId) ?? hydrated.rootId;
   hydrated.railOpen = current.railOpen;
   return hydrated;
 }

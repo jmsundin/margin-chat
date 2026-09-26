@@ -2,13 +2,14 @@ import type { JSONContent } from "@tiptap/core";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import diff from "fast-diff";
 import { marked } from "marked";
+import { latexMarkdownLexer } from "./latex";
 import { findObsidianCalloutBlocks, findObsidianInlineTokens } from "./obsidianMarkdown";
 
 /** Keep raw slices, including separators, so splitting never rewrites source text. */
 export function splitRichDocumentMarkdown(markdown: string): string[] {
   if (!markdown) return [""];
   const chunks: string[] = [];
-  for (const token of marked.lexer(markdown, { gfm: true })) {
+  for (const token of latexMarkdownLexer.lexer(markdown, { gfm: true })) {
     if (token.type === "space" && chunks.length) chunks[chunks.length - 1] += token.raw;
     else if (token.raw) chunks.push(token.raw);
   }
@@ -21,7 +22,7 @@ export function getRichDocumentFallbackReason(markdown: string): string | null {
   if (inline.some((token) => token.kind === "wikilink" || token.kind === "embed")) return "Wiki link";
   if (inline.some((token) => token.kind === "comment")) return "Hidden comment";
   if (findObsidianCalloutBlocks(markdown).length) return "Callout";
-  const tokens = marked.lexer(markdown, { gfm: true });
+  const tokens = latexMarkdownLexer.lexer(markdown, { gfm: true });
   if (Object.keys(tokens.links).length) return "Reference";
   let reason: string | null = null;
   marked.walkTokens(tokens, (token) => {
@@ -61,6 +62,10 @@ const positionCache = new WeakMap<ProseMirrorNode, Map<number, { markdown: strin
 /** Serialize a harmless temporary marker; it never enters the live editor or its history. */
 export function markdownOffsetAtDocumentPosition(doc: ProseMirrorNode, serialize: MarkdownSerializer, markdown: string, position: number, affinity: -1 | 1 = 1): number {
   const safe = Math.max(0, Math.min(doc.content.size, position));
+  // AllSelection includes the document's outer boundaries, where text is not
+  // valid content. These boundaries also include the source's Markdown syntax.
+  if (safe === 0) return 0;
+  if (safe === doc.content.size) return markdown.length;
   let cache = positionCache.get(doc);
   if (!cache) { cache = new Map(); positionCache.set(doc, cache); }
   const key = safe * 2 + (affinity > 0 ? 1 : 0);
@@ -68,10 +73,26 @@ export function markdownOffsetAtDocumentPosition(doc: ProseMirrorNode, serialize
   if (!result) {
     let marker = "MARGINCURSOR9F34B7";
     while (doc.textContent.includes(marker)) marker += "X";
-    const point = doc.resolve(safe);
+    let insertion = safe;
+    if (!doc.resolve(insertion).parent.inlineContent) {
+      // Node/list selections can end between structural nodes. Follow the
+      // selection affinity to a real textblock instead of inserting text into
+      // a document, list, table, or other block-only parent.
+      let nearest: number | undefined;
+      doc.descendants((node, nodePosition) => {
+        if (!node.isTextblock) return true;
+        const boundary = nodePosition + 1 + (affinity < 0 ? node.content.size : 0);
+        if (affinity > 0 && boundary >= safe && nearest === undefined) nearest = boundary;
+        else if (affinity < 0 && boundary <= safe) nearest = boundary;
+        return false;
+      });
+      if (nearest === undefined) return affinity < 0 ? 0 : markdown.length;
+      insertion = nearest;
+    }
+    const point = doc.resolve(insertion);
     const neighbor = affinity > 0 ? point.nodeAfter : point.nodeBefore;
     const marks = neighbor?.isText ? neighbor.marks : point.marks();
-    const markerDoc = doc.replace(safe, safe, new Slice(Fragment.from(doc.type.schema.text(marker, marks)), 0, 0));
+    const markerDoc = doc.replace(insertion, insertion, new Slice(Fragment.from(doc.type.schema.text(marker, marks)), 0, 0));
     const marked = serialize(markerDoc.toJSON());
     const offset = marked.indexOf(marker);
     if (offset < 0) return affinity < 0 ? 0 : markdown.length;

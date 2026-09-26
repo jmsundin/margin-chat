@@ -135,6 +135,9 @@ export default function ServicePickerModal({
     seenRecent.add(key);
     return [{ service, model }];
   });
+  const featuredChoices = BACKEND_SERVICE_OPTIONS.filter((service) => !["backend-services", "openai-agent"].includes(service.id))
+    .flatMap((service) => { const model = service.models.find((model) => model.featured); return model ? [{ service, model }] : []; })
+    .filter(({ service, model }) => !seenRecent.has(`${service.id}:${model.id}`));
   const normalizedQuery = query.trim().toLowerCase();
   const searchResults = allChoices.filter((choice) => matchesQuery(normalizedQuery, choice));
 
@@ -157,7 +160,7 @@ export default function ServicePickerModal({
         <span className="picker-model-icon" aria-hidden="true">{isAuto ? "✦" : service.iconLabel}</span>
         <span className="picker-model-copy">
           <span className="picker-model-name">{choiceLabel(choice)}{isAuto ? <span className="picker-default-label">Default</span> : null}</span>
-          <span className="picker-model-detail">{isAuto ? "Let Margin Chat choose for each reply" : service.id === "openai-agent" ? "OpenAI · can explore your workspace" : service.provider}{licenseLabel ? ` · ${licenseLabel}` : ""}</span>
+          <span className="picker-model-detail">{isAuto ? "GPT-6 Astra chooses a model for each reply" : service.id === "openai-agent" ? "OpenAI · can explore your workspace" : service.provider}{licenseLabel ? ` · ${licenseLabel}` : ""}</span>
         </span>
         {isCurrent ? <span className="picker-selected"><span aria-hidden="true">✓</span><span className="picker-sr-only">Selected</span></span> : null}
       </button>
@@ -187,6 +190,7 @@ export default function ServicePickerModal({
             <>
               {recentChoices.length ? <section className="picker-section" aria-label="Recent models"><h3>Recent</h3>{recentChoices.map(modelRow)}</section> : null}
               {autoChoice && !seenRecent.has(`${autoChoice.service.id}:${autoChoice.model.id}`) ? <div className="picker-section">{modelRow(autoChoice)}</div> : null}
+              {featuredChoices.length ? <section className="picker-section" aria-label="Featured models"><h3>Featured models</h3>{featuredChoices.map(modelRow)}</section> : null}
               <section className="picker-browse">
                 <button aria-controls={providersId} aria-expanded={browseProviders} className="picker-browse-toggle" onClick={() => setBrowseProviders((open) => !open)} type="button">
                   Browse by provider<Chevron expanded={browseProviders} />

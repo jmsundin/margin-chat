@@ -7,7 +7,7 @@ import {
   VALID_SERVICE_IDS,
 } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
-import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument } from "@margin-chat/workspace-contracts";
+import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock } from "@margin-chat/workspace-contracts";
 
 const DEFAULT_SERVICE_ID = "backend-services";
 
@@ -52,6 +52,8 @@ export function normalizeAppState(input) {
     normalizedConversations.map((conversation) => [conversation.id, conversation]),
   );
   for (const conversation of normalizedConversations) {
+    const documentLayout = normalizeDocumentLayout(input.conversations[conversation.id].documentLayout, conversation.id, conversationsById);
+    if (documentLayout) conversation.documentLayout = documentLayout;
     if (conversation.linkedConversationIds) conversation.linkedConversationIds =
       normalizeLinkedConversationIds(conversation.linkedConversationIds, conversation.id, conversationsById);
   }
@@ -67,6 +69,7 @@ export function normalizeAppState(input) {
     input.groups,
     conversationsById,
   );
+  const documentDock = normalizeDocumentDock(input.documentDock, conversationsById);
 
   if (!conversationsById[input.rootId]) {
     throw createStateError("rootId must reference an existing conversation.");
@@ -181,6 +184,7 @@ export function normalizeAppState(input) {
 
   return {
     activeConversationId: input.activeConversationId,
+    ...(documentDock ? { documentDock } : {}),
     conversations: normalizedConversations,
     defaultModelId,
     defaultServiceId,
@@ -360,12 +364,6 @@ function normalizePinnedThreadIds(input, conversationsById) {
     if (!conversation) {
       throw createStateError(
         `Pinned thread "${threadId}" must reference an existing conversation.`,
-      );
-    }
-
-    if (conversation.parentId !== null) {
-      throw createStateError(
-        `Pinned thread "${threadId}" must reference a top-level conversation.`,
       );
     }
 

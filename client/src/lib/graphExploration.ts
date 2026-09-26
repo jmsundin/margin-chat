@@ -28,11 +28,19 @@ export interface GraphEvidenceRef {
   endOffset?: number;
 }
 
+export type GraphEvidenceRelation = "reference" | "supports" | "challenges" | "example" | "question";
+
+/** Roles are curated by the user; text similarity never assigns an evidence role. */
+export interface GraphConceptMember extends GraphEvidenceRef {
+  relation?: GraphEvidenceRelation;
+}
+
 export interface GraphConcept {
   id: string;
   label: string;
   description: string;
-  members: GraphEvidenceRef[];
+  kind?: "concept" | "claim";
+  members: GraphConceptMember[];
 }
 
 export interface GraphSearchResult {
@@ -290,16 +298,21 @@ export function normalizeGraphConcepts(input: unknown): GraphConcept[] {
     if (!isRecord(candidate) || !nonemptyString(candidate.id) || !nonemptyString(candidate.label) || ids.has(candidate.id)) continue;
     ids.add(candidate.id);
     const memberKeys = new Set<string>();
-    const members: GraphEvidenceRef[] = [];
+    const members: GraphConceptMember[] = [];
     for (const item of Array.isArray(candidate.members) ? candidate.members : []) {
-      const member = normalizeEvidence(item);
+      const member: GraphConceptMember | null = normalizeEvidence(item);
       if (!member) continue;
       const key = evidenceKey(member);
       if (memberKeys.has(key)) continue;
       memberKeys.add(key);
+      if (isRecord(item) && (item.relation === "reference" || item.relation === "supports" || item.relation === "challenges" || item.relation === "example" || item.relation === "question")) {
+        member.relation = item.relation;
+      }
       members.push(member);
     }
-    concepts.push({ id: candidate.id, label: candidate.label.trim(), description: typeof candidate.description === "string" ? candidate.description : "", members });
+    concepts.push({ id: candidate.id, label: candidate.label.trim(), description: typeof candidate.description === "string" ? candidate.description : "", members,
+      ...(candidate.kind === "concept" || candidate.kind === "claim" ? { kind: candidate.kind } : {}),
+    });
   }
   return concepts;
 }

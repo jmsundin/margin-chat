@@ -81,6 +81,30 @@
 .semantic-map .graph-node-more .conversation-graph-node-action::after { content: attr(title); text-align: left; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .semantic-map .conversation-graph-node-preview { position: static; padding: 0 16px 16px; overflow: auto; flex: 1; min-height: 0; }
 .semantic-map .conversation-graph-node-preview p { font-size: 14px; line-height: 1.5; }
+.semantic-map .conversation-graph-node.is-preview,
+.semantic-map .conversation-graph-node.is-reader { display: flex; flex-direction: column; }
+.semantic-map .conversation-graph-node:is(.is-preview, .is-reader) .conversation-graph-node-select { height: auto; flex: 0 0 auto; padding: 10px 14px; }
+.semantic-map .conversation-graph-node:is(.is-preview, .is-reader)[data-conversation-id] .conversation-graph-node-head > strong { font-size: 15px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; max-height: 40px; overflow: hidden; }
+.semantic-map .conversation-graph-node:is(.is-preview, .is-reader) .conversation-graph-node-kicker { display: none; }
+.semantic-map .conversation-graph-node.is-group-compact .conversation-graph-node-preview { overflow: hidden; }
+.semantic-map .conversation-graph-node.is-group-compact .conversation-graph-node-preview p { margin: 0; }
+.semantic-map .conversation-graph-node-reader { position: relative; inset: auto; flex: 1 1 0; min-height: 0; border-radius: 0 0 12px 12px; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; }
+.semantic-map .conversation-graph-node-reader > .chat-panel { width: 100%; min-width: 0; margin: 0; border: 0; border-radius: 0; }
+.semantic-map .conversation-graph-node-reader .panel-body { overscroll-behavior: contain; }
+.semantic-map .conversation-graph-node-reader .document-body { --document-top-padding: 12px; --document-left-padding: 18px; --document-right-padding: 24px; padding-top: var(--document-top-padding); }
+.semantic-map .conversation-graph-node.is-reader:has(.document-panel) > .conversation-graph-node-select { display: none; }
+.semantic-map .conversation-graph-node-reader .document-title { font-size: 20px; }
+.semantic-map .conversation-graph-node-reader .document-title-input { min-height: 32px; }
+.semantic-map .conversation-graph-reader-empty { white-space: pre-wrap; }
+.semantic-map .conversation-graph-node:is(.is-preview, .is-reader) {
+  /* Geometric transitions repeatedly lay out editors during every zoom frame. */
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.graph-node-content-skeleton { flex: 1; min-height: 0; overflow: hidden; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.graph-node-content-skeleton > span { flex: 0 0 10px; width: 100%; border-radius: 4px; background: var(--line); }
+.graph-node-content-skeleton > span:first-child { width: 64%; height: 16px; margin-bottom: 8px; }
+.graph-node-content-skeleton > span:nth-child(3) { width: 86%; }
+.graph-node-content-skeleton > span:last-child { width: 72%; }
 .semantic-map .conversation-graph-node-source-label { display: none; }
 .semantic-map .conversation-graph-node-breadcrumbs { display: none; }
 .semantic-map .conversation-graph-pan-hint { display: none; }

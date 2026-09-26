@@ -16,7 +16,7 @@ import { emptyVault } from "../client/src/lib/vaultTypes";
 import { stateToVaultFiles, vaultToState } from "../client/src/lib/vaultWorkspace";
 import { normalizeAppState } from "../server/db/validation.mjs";
 
-const methods = ["jev", "jev-task", "rules", "manual"] as const;
+const methods = ["astra", "astra-task", "jev", "jev-task", "rules", "manual"] as const;
 const base = {
   schemaVersion: 1,
   model: "actual-fallback-model",

@@ -219,11 +219,11 @@ describe("Jev workspace assistance", () => {
     expect(settings).not.toContain('checked=""');
     const props = { conversations: state.conversations, currentId: current.id, related: [{ id: "note", score: 0.8 }], onSelect() {} };
     expect(renderToStaticMarkup(<JevRelatedItems {...props} status="off" />)).toBe("");
-    expect(renderToStaticMarkup(<JevRelatedItems {...props} status="ready" />)).toContain("Story outline");
+    expect(renderToStaticMarkup(<JevRelatedItems {...props} status="ready" />)).toContain('aria-label="Related notes and chats (1)"');
     const warning = "Some suggestions were unavailable. Existing categories were retained.";
     const partial = renderToStaticMarkup(<JevRelatedItems {...props} status="ready" warning={warning} />);
-    expect(partial).toContain("Story outline");
-    expect(partial).toContain(`<p role="status">${warning}</p>`);
+    expect(partial).toContain('aria-expanded="false"');
+    expect(partial).not.toContain("jev-related-popover");
     for (const status of ["checking", "unconfigured", "unavailable", "loading", "paused"] as const) {
       const html = renderToStaticMarkup(<JevRelatedItems {...props} status={status} warning={warning} />);
       expect(html).toBe("");
@@ -233,6 +233,13 @@ describe("Jev workspace assistance", () => {
     }
   });
 });
+
+test("related items open without a strip and support keyboard navigation, dismissal and selection", async () => {
+  const child = Bun.spawn([process.execPath, "tests/helpers/jevRelatedItemsHarness.tsx"], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+  if (code !== 0) throw new Error(`Related items integration failed:\n${stdout}\n${stderr}`);
+  expect(stdout).toContain("Related items checks passed.");
+}, 10_000);
 
 test("client Jev hook debounces, caches, cancels stale work, and isolates consent between accounts", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/jevAssistanceHarness.tsx"], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });

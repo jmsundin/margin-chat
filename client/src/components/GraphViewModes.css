@@ -1,0 +1,32 @@
+.graph-view-modes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; flex: 0 0 auto; padding: 8px 12px; background: var(--panel-bg); border-bottom: 1px solid var(--line); }
+.graph-view-mode-tabs { display: flex; align-items: center; gap: 3px; border: 1px solid var(--line); padding: 3px; border-radius: 9px; }
+.graph-view-mode-tabs button { background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--muted); font: inherit; font-size: .78rem; padding: 6px 11px; cursor: pointer; min-height: 32px; }
+.graph-view-mode-tabs button[aria-pressed="true"] { color: var(--ink); background: var(--accent-soft); border-color: var(--accent); }
+.graph-view-mode-select { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .73rem; }
+.graph-view-mode-select select { max-width: 190px; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-bg); color: var(--ink); font: inherit; padding: 5px 22px 5px 7px; }
+.graph-view-purpose { color: var(--muted); font-size: .72rem; margin: 0; flex: 1 1 260px; line-height: 1.45; }
+.graph-mode-panel { position: absolute; inset: 0; overflow: auto; background: var(--panel-bg); color: var(--ink); cursor: auto; touch-action: pan-x pan-y; container-type: inline-size; }
+.semantic-map .conversation-graph-viewport.is-analysis-view { background-image: none; touch-action: auto; }
+.graph-mode-context { border-bottom: 1px solid var(--line); padding: 7px 14px; color: var(--muted); background: var(--panel-bg); font-size: .75rem; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.graph-mode-context button { border: 1px solid var(--line); background: var(--panel-bg); color: var(--ink); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
+.semantic-map[data-view-mode="network"] .conversation-graph-node.is-group-spread .conversation-graph-node-move-handle { display: flex; }
+.semantic-map[data-view-mode="network"] .conversation-graph-node[data-network-pinned="true"] { outline: 2px dashed var(--accent); outline-offset: 4px; }
+.graph-network-pin { font: inherit; font-size: .72rem; }
+@container (max-width: 600px) {
+  .graph-evidence-view { flex-direction: column; overflow-y: auto; }
+  .graph-evidence-view .graph-evidence-index { border-bottom: 1px solid var(--line); border-right: 0; flex: 0 0 auto; max-height: 220px; }
+  .graph-evidence-index header p, .graph-evidence-index .graph-evidence-local { display: none; }
+  .graph-evidence-index nav ul { display: flex; gap: 8px; overflow-x: auto; }
+  .graph-evidence-index li { flex: 0 0 190px; }
+  .graph-evidence-index li + li { margin-top: 0; }
+  .graph-evidence-view .graph-evidence-main { flex: 1 0 auto; overflow: visible; }
+  .graph-evidence-section-title { flex-wrap: wrap; gap: 6px; }
+}
+@media (max-width: 760px) {
+  .graph-view-modes { gap: 8px; padding: 7px 8px; }
+  .graph-view-mode-tabs { flex: 1 0 100%; }
+  .graph-view-mode-tabs button { flex: 1; min-height: 38px; }
+  .graph-view-purpose { flex-basis: 100%; }
+  .graph-view-mode-select { flex: 1; }
+  .graph-view-mode-select select { flex: 1; min-width: 0; }
+}

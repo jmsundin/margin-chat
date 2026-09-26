@@ -1,5 +1,5 @@
 import { createEmptyState } from "../initialState";
-import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument } from "@margin-chat/workspace-contracts";
+import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { normalizeConversationGroups } from "./conversationGroups";
 import { normalizeGraphLayouts } from "./graphLayout";
@@ -88,14 +88,16 @@ export function hydratePersistedState(input: unknown): AppState | null {
               const serviceId = isBackendServiceId(conversation.serviceId)
                 ? conversation.serviceId
                 : DEFAULT_BACKEND_SERVICE_ID;
-              const { publicTopic, linkedConversationIds, document, ...base } = conversation;
+              const { publicTopic, linkedConversationIds, document, documentLayout, ...base } = conversation;
               const source = normalizePublicTopicSource(publicTopic);
+              const layout = normalizeDocumentLayout(documentLayout, conversationId, parsed.conversations);
               const editableDocument = document === undefined ? undefined : normalizeEditableDocument(document);
               if (document !== undefined && !editableDocument) throw new Error("Invalid editable document.");
 
               return {
                 ...base,
                 ...(editableDocument ? { document: editableDocument } : {}),
+                ...(layout ? { documentLayout: layout } : {}),
                 ...(source ? { publicTopic: source } : {}),
                 ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(linkedConversationIds, conversationId, parsed.conversations) } : {}),
                 ...(conversation.ai ? { ai: normalizeAISettings(conversation.ai) } : {}),
@@ -148,8 +150,10 @@ export function hydratePersistedState(input: unknown): AppState | null {
         rootId: nextRootId,
       });
 
+    const documentDock = normalizeDocumentDock(parsed.documentDock, conversations);
     return {
       activeConversationId: nextActiveConversationId,
+      ...(documentDock ? { documentDock } : {}),
       conversations,
       defaultModelId,
       defaultServiceId,
@@ -173,6 +177,22 @@ export function getStateStorageKey(userId: string) {
 
 export function getStateSavedAtStorageKey(userId: string) {
   return `${STORAGE_SAVED_AT_KEY}:${userId}`;
+}
+
+export function loadLastFocusedDocument(userId: string): string | null {
+  try {
+    return window.localStorage.getItem(`margin-chat-last-focused-document:${userId}`) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastFocusedDocument(userId: string, conversationId: string) {
+  try {
+    window.localStorage.setItem(`margin-chat-last-focused-document:${userId}`, conversationId);
+  } catch {
+    // Unavailable browser preferences must not prevent opening or saving documents.
+  }
 }
 
 export function getRecentModelSelectionsStorageKey(userId: string) {

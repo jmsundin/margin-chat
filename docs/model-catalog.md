@@ -1,4 +1,4 @@
-# Model catalog review — September 19, 2026
+# Model catalog review — September 26, 2026
 
 The picker contains a curated set of current models for the app's existing OpenAI, Gemini, xAI, and Hugging Face integrations. The roles below are selection guidance based on official model documentation, model cards, and serving availability. They are not an independent benchmark ranking or a claim that one model wins every task.
 
@@ -9,18 +9,19 @@ This review updates the catalog and its defaults. It does not activate provider 
 | Service | Display name | Exact requested model ID | Role |
 | --- | --- | --- | --- |
 | OpenAI / OpenAI Agent | GPT-6 Astra | `gpt-6-astra` | Default; flagship complex reasoning and coding |
-| OpenAI / OpenAI Agent | GPT-5.6 Sol | `gpt-5.6` | Strong professional and general-purpose work; documented Sol alias |
-| OpenAI / OpenAI Agent | GPT-5.6 Terra | `gpt-5.6-terra` | Balance capability and cost |
-| OpenAI / OpenAI Agent | GPT-5.6 Luna | `gpt-5.6-luna` | Fast, economical everyday tasks |
+| OpenAI / OpenAI Agent | GPT-6 Sol | `gpt-6-sol` | Strong reasoning and coding at lower per-token cost than Astra |
+| OpenAI / OpenAI Agent | GPT-6 Luna | `gpt-6-luna` | Efficient focused and high-volume tasks |
 | Gemini | Gemini 3.8 Flash | `gemini-3.8-flash` | Default; current stable Flash model |
 | Gemini | Gemini 3.1 Pro Preview | `gemini-3.1-pro-preview` | Advanced reasoning option; explicitly a preview release |
 | Gemini | Gemini 3.5 Flash-Lite | `gemini-3.5-flash-lite` | Stable option for economical, high-throughput work |
-| xAI | Grok 4.6 | `grok-4.6` | Default; current flagship general and coding model |
+| xAI | Grok 4.7 | `grok-4.7` | Default; current flagship general and coding model |
 | xAI | Grok 4.3 | `grok-4.3` | Additional supported alternative |
 
-OpenAI sources: [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), [GPT-5.6 Sol and its `gpt-5.6` alias](https://developers.openai.com/api/docs/models/gpt-5.6-sol), [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra), and [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna).
+OpenAI sources: [GPT-6 Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), [GPT-6 Sol](https://developers.openai.com/api/docs/models/gpt-6-sol), and [GPT-6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna).
 
-Google's [Gemini model catalog](https://ai.google.dev/gemini-api/docs/models) identifies the exact endpoints and stable/preview status. The [xAI model catalog](https://docs.x.ai/developers/models) identifies Grok 4.6 as the current flagship; [xAI's model details](https://docs.x.ai/developers/models/grok-4.3) cover Grok 4.3.
+Auto routing uses `gpt-6-astra` with `reasoning.effort: "low"` and structured output to choose from eligible model profiles. It is independent of the Jev toggle. The router respects provider permissions and personal/hosted credential pools. It is metered as a separate routing operation for hosted requests, with the same `openai:gpt-6-astra` price entry. Missing credentials, pricing, invalid output, or a 15-second timeout fall back to standard rules. Cancellation and settlement failures stop the request. Manual model choices and title generation skip this router.
+
+Google's [Gemini model catalog](https://ai.google.dev/gemini-api/docs/models) identifies the exact endpoints and stable/preview status. The [xAI model catalog](https://docs.x.ai/developers/models) identifies Grok 4.7 as the current flagship; [xAI's model details](https://docs.x.ai/developers/models/grok-4.3) cover Grok 4.3.
 
 Anthropic models are not included because this app has no Anthropic adapter. Adding an unsupported provider name to the picker would not make it callable. This is an integration boundary, not a judgment about Anthropic model quality.
 
@@ -50,11 +51,11 @@ Previously accepted IDs remain recognized on the server and through the client's
 
 ## Production deployment
 
-Apply `0003_model_catalog_refresh.sql` through the normal release workflow before starting the updated application. It extends persisted model validation for the new IDs. Preserve earlier migration history and the legacy model IDs required by existing conversations.
+Apply `0010_current_model_catalog.sql` through the normal release workflow before starting the updated application. It extends persisted model validation for the new IDs. Preserve earlier migration history and the legacy model IDs required by existing conversations.
 
-Existing environment model overrides and saved chat selections are intentionally not rewritten. Update `OPENAI_MODEL`, `GEMINI_MODEL`, `HUGGINGFACE_MODEL` (or `HF_MODEL`), and `XAI_MODEL` in deployment configuration when adopting the refreshed defaults; `.env.example` shows the new choices. Astra has higher per-token pricing than the previous OpenAI default. Review the cost/latency tradeoff before making it the production default; Sol, Terra, and Luna remain selectable.
+Existing environment model overrides and saved chat selections are intentionally not rewritten. Update `OPENAI_MODEL`, `GEMINI_MODEL`, `HUGGINGFACE_MODEL` (or `HF_MODEL`), and `XAI_MODEL` in deployment configuration when adopting the refreshed defaults; `.env.example` shows the new choices. Astra has higher per-token pricing than the previous OpenAI default. Review the cost/latency tradeoff before making it the production default; Sol and Luna remain selectable; GPT-5.6 choices and Grok 4.6 remain recognized for saved chats.
 
-Before enabling a new model for hosted credits, add a verified entry to `HOSTED_MODEL_PRICES_JSON` for its exact requested `provider:model` key. For example, the new defaults require `openai:gpt-6-astra`, `gemini:gemini-3.8-flash`, `huggingface:deepseek-ai/DeepSeek-V4.1-Flash`, and `xai:grok-4.6`. Every additional model that hosted selection or fallback may call needs its own exact entry. OpenAI Agent shares the corresponding `openai:model` entry; Sol requests use `openai:gpt-5.6`, not an inferred replacement key.
+Before enabling a new model for hosted credits, add a verified entry to `HOSTED_MODEL_PRICES_JSON` for its exact requested `provider:model` key. For example, the new defaults require `openai:gpt-6-astra`, `gemini:gemini-3.8-flash`, `huggingface:deepseek-ai/DeepSeek-V4.1-Flash`, and `xai:grok-4.7`. Every additional model that hosted selection or fallback may call needs its own exact entry. OpenAI Agent shares the corresponding `openai:model` entry; GPT-6 Sol and Luna require `openai:gpt-6-sol` and `openai:gpt-6-luna`.
 
 Unpriced hosted models fail before provider dispatch. A new picker option therefore remains unavailable for hosted use until its pricing and any required reasoning reservation bounds are configured. Automatic routing may continue to another configured, priced option. Do not copy another model's prices or assume that a custom license means free hosted inference. Hugging Face prices also depend on the serving provider; validate the actual routing and billing policy before enabling a hosted route.
 

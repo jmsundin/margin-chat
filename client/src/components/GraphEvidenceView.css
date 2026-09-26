@@ -1,0 +1,73 @@
+.graph-evidence-view { background: var(--bg); color: var(--ink); display: flex; flex: 1 1 0%; height: 100%; min-height: 0; min-width: 0; overflow: hidden; width: 100%; }
+.graph-evidence-view * { box-sizing: border-box; }
+.graph-evidence-view button, .graph-evidence-view input, .graph-evidence-view select, .graph-evidence-view textarea { color: inherit; font: inherit; }
+.graph-evidence-view button { background: var(--button-surface); border: 1px solid var(--line); border-radius: 7px; cursor: pointer; font-size: 12px; min-height: 34px; padding: 7px 10px; }
+.graph-evidence-view button:hover:not(:disabled) { background: var(--button-active-surface); border-color: var(--button-active-border); }
+.graph-evidence-view button:disabled { cursor: default; opacity: .5; }
+.graph-evidence-view :is(button, input, textarea, select, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.graph-evidence-view :is(input, textarea, select) { background: var(--panel-strong); border: 1px solid var(--line-strong); border-radius: 7px; font-size: 13px; line-height: 1.6; max-width: 100%; min-height: 36px; padding: 7px 10px; }
+.graph-evidence-view label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.graph-evidence-view h2, .graph-evidence-view h3, .graph-evidence-view h4, .graph-evidence-view p { overflow-wrap: anywhere; }
+.graph-evidence-index { background: var(--panel-strong); border-right: 1px solid var(--line); display: flex; flex: 0 0 250px; flex-direction: column; gap: 14px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 22px 18px; }
+.graph-evidence-index h2 { font-size: 21px; letter-spacing: -.025em; line-height: 1.25; margin: 9px 0; }
+.graph-evidence-index header p, .graph-evidence-local { color: var(--muted); font-size: 12px; line-height: 1.65; margin: 0; }
+.graph-evidence-eyebrow { color: var(--sage, var(--muted)); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.graph-evidence-index ul, .graph-evidence-results { list-style: none; margin: 0; padding: 0; }
+.graph-evidence-index li + li { margin-top: 7px; }
+.graph-evidence-index nav button { display: flex; flex-direction: column; gap: 5px; padding: 12px; text-align: left; width: 100%; }
+.graph-evidence-index nav button[aria-current] { background: var(--sage-soft, var(--accent-soft)); border-color: var(--sage, var(--accent)); }
+.graph-evidence-index nav button strong { font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.graph-evidence-index nav button :is(span, small) { color: var(--muted); font-size: 10px; }
+.graph-evidence-local { font-size: 10px; margin-top: auto; padding-top: 15px; }
+.graph-evidence-main { flex: 1 1 0%; min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: clamp(16px, 3vw, 36px); scrollbar-gutter: stable; }
+.graph-evidence-heading, .graph-evidence-section-title { align-items: flex-start; display: flex; gap: 16px; justify-content: space-between; }
+.graph-evidence-heading h3 { font-size: clamp(22px, 2vw, 30px); font-weight: 650; letter-spacing: -.03em; line-height: 1.25; margin: 7px 0 10px; }
+.graph-evidence-heading p { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 0 0 10px; white-space: pre-wrap; }
+.graph-evidence-hint { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 8px 0 12px; }
+.graph-evidence-lanes { align-items: start; display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 255px), 1fr)); margin-top: 24px; }
+.graph-evidence-lane { min-width: 0; }
+.graph-evidence-lane > h4 { align-items: center; border-bottom: 2px solid var(--line-strong); display: flex; font-size: 13px; gap: 8px; margin: 0 0 12px; padding-bottom: 10px; }
+.graph-evidence-lane[data-evidence-role="supports"] > h4 { border-color: var(--sage, #568276); }
+.graph-evidence-lane[data-evidence-role="challenges"] > h4 { border-color: var(--accent, #b67962); }
+.graph-evidence-lane > h4 span { color: var(--muted); font-size: 11px; font-weight: 400; }
+.graph-evidence-source { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 10px; padding: 12px; }
+.graph-evidence-source.is-stale, .graph-evidence-source.is-missing { border-style: dashed; }
+.graph-evidence-source-meta { align-items: baseline; color: var(--muted); display: flex; font-size: 10px; gap: 8px; justify-content: space-between; line-height: 1.5; }
+.graph-evidence-source-meta > button { background: transparent; border: 0; color: var(--muted); font-size: 10px; min-height: 28px; padding: 3px; }
+.graph-evidence-view .graph-evidence-source-open { background: transparent; border: 0; border-radius: 3px; display: block; padding: 7px 0; text-align: left; width: 100%; }
+.graph-evidence-source-open strong { display: block; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.graph-evidence-source-open blockquote { border-left: 2px solid var(--line-strong); color: var(--muted); font-size: 12px; line-height: 1.65; margin: 10px 0; max-height: 220px; overflow-y: auto; overflow-wrap: anywhere; padding-left: 12px; white-space: pre-wrap; }
+.graph-evidence-source-open > span { color: var(--sage, var(--muted)); display: block; font-size: 10px; margin-top: 10px; }
+.graph-evidence-source > select { font-size: 11px; margin-top: 5px; min-height: 30px; padding: 4px 7px; width: 100%; }
+.graph-evidence-attach { border-top: 1px solid var(--line); margin-top: 32px; padding-top: 22px; }
+.graph-evidence-section-title h4 { font-size: 14px; margin: 6px 0 17px; }
+.graph-evidence-attach > input { width: 100%; }
+.graph-evidence-results { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); margin: 14px 0; }
+.graph-evidence-results button { display: flex; flex-direction: column; gap: 5px; height: 100%; min-width: 0; padding: 12px; text-align: left; width: 100%; }
+.graph-evidence-results button :is(span, small) { color: var(--muted); font-size: 10px; }
+.graph-evidence-results strong { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.graph-evidence-results p { color: var(--muted); display: -webkit-box; font-size: 11px; line-height: 1.6; margin: 3px 0 5px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.graph-evidence-results small { margin-top: auto; }
+.graph-evidence-picker, .graph-evidence-form { background: var(--panel-strong); border: 1px solid var(--line-strong); border-radius: 12px; margin-bottom: 20px; padding: 20px; }
+.graph-evidence-picker textarea, .graph-evidence-form :is(input, textarea, select) { display: block; width: 100%; }
+.graph-evidence-picker textarea { min-height: 150px; resize: vertical; }
+.graph-evidence-role { margin: 16px 0; }
+.graph-evidence-role select { display: block; margin-top: 6px; }
+.graph-evidence-form :is(input, textarea, select) { margin-bottom: 14px; }
+.graph-evidence-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.graph-evidence-actions > button:first-child, .graph-evidence-new { border-color: var(--sage, var(--accent)) !important; }
+.graph-evidence-empty { color: var(--muted); font-size: 13px; line-height: 1.7; padding: 20px 0; }
+.graph-evidence-empty-state { margin: 8vh auto; max-width: 420px; }
+.graph-evidence-empty-state h3 { font-size: 25px; letter-spacing: -.03em; }
+.graph-evidence-empty-state p { color: var(--muted); font-size: 14px; line-height: 1.75; }
+@media (max-width: 850px) { .graph-evidence-index { flex-basis: 210px; padding: 18px 14px; } }
+@media (max-width: 600px) {
+  .graph-evidence-view { flex-direction: column; overflow-y: auto; }
+  .graph-evidence-index { border-bottom: 1px solid var(--line); border-right: 0; flex: 0 0 auto; max-height: 260px; }
+  .graph-evidence-index header p, .graph-evidence-index .graph-evidence-local { display: none; }
+  .graph-evidence-index nav ul { display: flex; gap: 8px; overflow-x: auto; }
+  .graph-evidence-index li { flex: 0 0 190px; }
+  .graph-evidence-index li + li { margin-top: 0; }
+  .graph-evidence-main { flex: 1 0 auto; overflow: visible; }
+  .graph-evidence-section-title { flex-wrap: wrap; gap: 6px; }
+}

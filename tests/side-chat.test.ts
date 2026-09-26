@@ -26,7 +26,7 @@ describe("side chats", () => {
     expect(side.serviceId).toBe(root.serviceId);
   });
 
-  test("creates a peer beside a branch by reusing its parent", () => {
+  test("creates a child of the focused side document", () => {
     const root = createMainConversation({ id: "root" });
     const branch = createSideConversation({
       id: "branch",
@@ -37,7 +37,7 @@ describe("side chats", () => {
       sourceConversation: branch,
     });
 
-    expect(peer.parentId).toBe("root");
+    expect(peer.parentId).toBe("branch");
     expect(peer.branchAnchor).toBeNull();
   });
 

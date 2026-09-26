@@ -2,12 +2,15 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
 import type { DocumentAIRequest } from "../lib/documentAI";
+import { useOutsideDismiss } from "../lib/useOutsideDismiss";
+import { DocumentEditHistory, type DocumentEditOptions } from "../lib/documentEditHistory";
 import { getBackendServiceModel, type RecentBackendServiceSelection } from "../lib/services";
-import RichDocumentEditor, { type RichDocumentInvocation, type RichDocumentDecoration } from "./RichDocumentEditor";
+import RichDocumentEditor, { type RichDocumentInvocation, type RichDocumentDecoration, type RichDocumentEditorProps } from "./RichDocumentEditor";
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
+import AutoSizingDocumentTitle from "./AutoSizingDocumentTitle";
 import "./DocumentPanel.css";
 
 type DocumentValue = NonNullable<Conversation["document"]>;
@@ -15,10 +18,15 @@ type Block = DocumentValue["blocks"][number];
 
 export interface DocumentPanelProps {
   conversation: Conversation;
+  minimizedSideDocuments?: Conversation[];
+  moveTargets?: RichDocumentEditorProps["moveTargets"];
+  onMoveBlock?: RichDocumentEditorProps["onMoveBlock"];
   isActive: boolean;
   isSubmitting: boolean;
   aiControls: ReactNode;
-  groupControl: ReactNode;
+  documentMenu?: ReactNode;
+  /** @deprecated Group assignment is available in the document menu. */
+  groupControl?: ReactNode;
   recentModelSelections: RecentBackendServiceSelection[];
   anchors: MessageAnchorLink[];
   theme: "light" | "dark";
@@ -31,6 +39,7 @@ export interface DocumentPanelProps {
   onClearSelection?: () => void;
   onVisibleOutlineChange?: (conversationId: string, outlineItemId: string) => void;
   onOpenBranch: (id: string) => void;
+  onRemoveLink?: (id: string) => void;
   onOpenNote: (id: string) => void;
   onModelChange: (serviceId: Conversation["serviceId"], modelId: string) => void;
   onUpload: (files: File[]) => void;
@@ -50,7 +59,12 @@ function freshBlock(content = ""): Block {
 
 export default function DocumentPanel(props: DocumentPanelProps) {
   const { conversation } = props;
+  const minimizedSideDocuments = props.minimizedSideDocuments ?? [];
   const document = useMemo(() => getEditableDocument(conversation), [conversation]);
+  const historyRef = useRef<{ conversationId: string; history: DocumentEditHistory } | null>(null);
+  if (!historyRef.current || historyRef.current.conversationId !== conversation.id) historyRef.current = { conversationId: conversation.id, history: new DocumentEditHistory(document.blocks) };
+  const editHistory = historyRef.current.history;
+  editHistory.sync(document.blocks);
   const latestDocument = useRef(document);
   latestDocument.current = document;
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -65,6 +79,13 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const [rerunText, setRerunText] = useState("");
   const [hiddenVersions, setHiddenVersions] = useState<string[]>([]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLFormElement>(null);
+  const promptHistoryRef = useRef<HTMLDivElement>(null);
+  useOutsideDismiss(Boolean(invocation), () => {
+    setInvocation(null);
+    setPrompt("");
+  }, composerRef);
+  useOutsideDismiss(Boolean(openPromptId), () => setOpenPromptId(null), promptHistoryRef);
   useEffect(() => setTitle(conversation.title), [conversation.title]);
   useEffect(() => { if (invocation) promptRef.current?.focus(); }, [invocation]);
   useEffect(() => {
@@ -72,28 +93,46 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     setInvocation(null);
   }, [document.blocks, invocation]);
 
-  function change(next: DocumentValue) { latestDocument.current = next; props.onChange(next); }
-  function updateBlock(id: string, content: string) {
-    const current = latestDocument.current;
-    change({ ...current, blocks: current.blocks.map((block) => block.id === id ? { ...block, content, updatedAt: new Date().toISOString() } : block) });
+  function change(next: DocumentValue, edit: DocumentEditOptions = {}) {
+    editHistory.record(latestDocument.current.blocks, next.blocks, edit);
+    latestDocument.current = next;
+    props.onChange(next);
   }
-  function insertBlock(afterId: string | null, content: string) {
+  function updateBlock(id: string, content: string, edit?: DocumentEditOptions) {
+    const current = latestDocument.current;
+    if (current.blocks.find((block) => block.id === id)?.content === content) return;
+    change({ ...current, blocks: current.blocks.map((block) => block.id === id ? { ...block, content, updatedAt: new Date().toISOString() } : block) }, edit);
+  }
+  function insertBlock(afterId: string | null, content: string, edit?: DocumentEditOptions) {
     const current = latestDocument.current;
     const block = freshBlock(content);
     const blocks = [...current.blocks];
     const index = blocks.findIndex((item) => item.id === afterId);
     blocks.splice(index < 0 ? blocks.length : index + 1, 0, block);
-    change({ ...current, blocks });
+    change({ ...current, blocks }, { ...edit,
+      group: edit?.group ? `${block.id}:typing` : undefined,
+      afterFocus: { blockId: block.id, from: edit?.afterFocus?.from ?? content.length, to: edit?.afterFocus?.to ?? content.length },
+    });
     return block.id;
   }
-  function splitBlock(id: string, before: string, after: string) {
+  function splitBlock(id: string, before: string, after: string, edit?: DocumentEditOptions) {
     const current = latestDocument.current;
     const source = current.blocks.find((block) => block.id === id);
     if (!source) return "";
     const block = { ...freshBlock(after), sourceMessageId: source.sourceMessageId, generationId: source.generationId };
     const blocks = current.blocks.flatMap((item) => item.id === id ? [{ ...item, content: before, updatedAt: new Date().toISOString() }, block] : [item]);
-    change({ ...current, blocks });
+    change({ ...current, blocks }, { ...edit, group: undefined, afterFocus: { blockId: block.id, from: 0, to: 0 } });
     return block.id;
+  }
+  function historyAction(action: "undo" | "redo") {
+    const current = latestDocument.current;
+    const result = editHistory[action](current.blocks);
+    if (!result) return null;
+    const next = { ...current, blocks: result.blocks };
+    latestDocument.current = next;
+    props.onChange(next);
+    props.onClearSelection?.();
+    return result.focus ?? { blockId: result.blocks[0]?.id ?? "", from: 0, to: 0 };
   }
   function dismissAI(restoreSpaces = true) {
     const previous = invocation;
@@ -118,32 +157,35 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     return [item.id, generation?.blockIds.find((id) => document.blocks.some((block) => block.id === id)) ?? document.blocks.at(-1)?.id];
   }));
   const modelLabel = conversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(conversation.serviceId, conversation.modelId)?.label ?? conversation.modelId;
-  const decorations: Record<string, RichDocumentDecoration[]> = {};
-  const sourceOffsets = new Map<string, number>();
-  for (const block of document.blocks) {
-    const sourceId = block.sourceMessageId ?? `document:${block.id}`;
-    const base = sourceOffsets.get(sourceId) ?? 0;
-    sourceOffsets.set(sourceId, base + block.content.length);
-    function addRange(anchor: {sourceMessageId: string | null; sourceBlockId?: string; startOffset: number | null; endOffset: number | null; quote: string | null}, ids: Pick<RichDocumentDecoration,"branchIds"|"noteIds">) {
-      if (anchor.sourceBlockId ? anchor.sourceBlockId !== block.id : anchor.sourceMessageId !== sourceId) return;
-      if (anchor.startOffset === null || anchor.endOffset === null) return;
-      let from = anchor.startOffset - (anchor.sourceBlockId ? 0 : base);
-      let to = anchor.endOffset - (anchor.sourceBlockId ? 0 : base);
-      const quote = anchor.quote ?? "";
-      // Legacy highlights used rendered-text offsets. Recover an exact quote
-      // when possible; an edited-away passage must not highlight another phrase.
-      if (quote && block.content.slice(from,to) !== quote) {
-        if (anchor.sourceBlockId) return;
-        const found = block.content.indexOf(quote);
-        if (found < 0 || block.content.indexOf(quote, found + 1) >= 0) return;
-        from = found; to = found + quote.length;
+  const decorations = useMemo(() => {
+    const ranges: Record<string, RichDocumentDecoration[]> = {};
+    const sourceOffsets = new Map<string, number>();
+    for (const block of document.blocks) {
+      const sourceId = block.sourceMessageId ?? `document:${block.id}`;
+      const base = sourceOffsets.get(sourceId) ?? 0;
+      sourceOffsets.set(sourceId, base + block.content.length);
+      function addRange(anchor: {sourceMessageId: string | null; sourceBlockId?: string; startOffset: number | null; endOffset: number | null; quote: string | null}, ids: Pick<RichDocumentDecoration,"branchIds"|"noteIds">) {
+        if (anchor.sourceBlockId ? anchor.sourceBlockId !== block.id : anchor.sourceMessageId !== sourceId) return;
+        if (anchor.startOffset === null || anchor.endOffset === null) return;
+        let from = anchor.startOffset - (anchor.sourceBlockId ? 0 : base);
+        let to = anchor.endOffset - (anchor.sourceBlockId ? 0 : base);
+        const quote = anchor.quote ?? "";
+        // Legacy highlights used rendered-text offsets. Recover an exact quote
+        // when possible; an edited-away passage must not highlight another phrase.
+        if (quote && block.content.slice(from,to) !== quote) {
+          if (anchor.sourceBlockId) return;
+          const found = block.content.indexOf(quote);
+          if (found < 0 || block.content.indexOf(quote, found + 1) >= 0) return;
+          from = found; to = found + quote.length;
+        }
+        if (from < 0 || to > block.content.length || to <= from) return;
+        (ranges[block.id] ??= []).push({from,to,...ids});
       }
-      if (from < 0 || to > block.content.length || to <= from) return;
-      (decorations[block.id] ??= []).push({from,to,...ids});
+      props.anchors.forEach((anchor) => addRange(anchor.anchor,{branchIds:[anchor.branchConversationId]}));
+      conversation.notes?.forEach((note) => addRange(note,{noteIds:[note.id]}));
     }
-    props.anchors.forEach((anchor) => addRange(anchor.anchor,{branchIds:[anchor.branchConversationId]}));
-    conversation.notes?.forEach((note) => addRange(note,{noteIds:[note.id]}));
-  }
+    return ranges;
+  }, [document, props.anchors, conversation.notes]);
   useEffect(() => {
     const ids: string[] = [];
     const frame=window.requestAnimationFrame(() => {
@@ -156,7 +198,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   function reportVisibleOutline() {
     const panel = bodyRef.current;
     if (!panel || !props.onVisibleOutlineChange) return;
-    const readingLine = panel.getBoundingClientRect().top + 32;
+    const headerBottom = panel.querySelector(".document-header")?.getBoundingClientRect().bottom ?? panel.getBoundingClientRect().top;
+    const readingLine = Math.max(panel.getBoundingClientRect().top, headerBottom) + 32;
     const targets = Array.from(panel.querySelectorAll<HTMLElement>("[data-chat-outline-id]"));
     let visibleId = targets[0]?.dataset.chatOutlineId;
     let closestTop = -Infinity;
@@ -183,7 +226,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const activePrompt = document.prompts.find((prompt) => prompt.id === active?.promptId) ?? item;
     const alternatives = document.generations.filter((generation) => generation.alternativeOf === original?.id && !generation.acceptedAt && !hiddenVersions.includes(generation.id));
     const receipt = conversation.messages.find((message) => message.id === active?.messageId)?.execution;
-    return <div className="document-prompt-marker" key={item.id} data-chat-outline-id={`message-${item.sourceMessageId ?? `document-prompt:${item.id}`}`}>
+    return <div className="document-prompt-marker" key={item.id} ref={openPromptId === item.id ? promptHistoryRef : undefined} data-chat-outline-id={`message-${item.sourceMessageId ?? `document-prompt:${item.id}`}`}>
       <button className="document-prompt-icon" aria-label={`Show AI prompt: ${item.content.slice(0,70)}`} aria-expanded={openPromptId === item.id} type="button"
         title="AI prompt and versions" onClick={() => { setOpenPromptId(openPromptId === item.id ? null : item.id); setRerunText(activePrompt.content); }}>
         <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-6 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 8h8M8 12h5"/></svg>
@@ -192,7 +235,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         <header><strong>AI prompt</strong><button aria-label="Close prompt history" type="button" onClick={() => setOpenPromptId(null)}>×</button></header>
         <textarea aria-label="Saved AI prompt" value={rerunText} onChange={(event) => setRerunText(event.target.value)} rows={3}/>
         <small>{activePrompt.modelId || "Auto"} · {new Date(activePrompt.createdAt).toLocaleDateString()}</small>
-        <div className="document-version-actions"><button type="button" disabled={props.isSubmitting || !rerunText.trim()} onClick={() => {
+        <div className="document-version-actions"><button type="button" aria-label="Choose AI model for another version" aria-haspopup="dialog" onClick={() => setModelOpen(true)}>{modelLabel} ⌄</button><button type="button" disabled={props.isSubmitting || !rerunText.trim()} onClick={() => {
           props.onSubmit({ blockId: active?.blockIds[0] ?? document.blocks[0]?.id ?? "", from:0,to:0,prompt:rerunText,destination:"inline",rerunGenerationId:original?.id });
         }}>↻ Try another version</button>
           {active && active.blockIds.some((id) => document.blocks.some((block) => block.id === id)) ? <button disabled={props.isSubmitting} type="button" onClick={() => props.onUndoInsertion(active.id)}>Undo insertion</button> : null}
@@ -207,29 +250,51 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     </div>;
   }
 
-  return <article className={`chat-panel document-panel${props.isActive ? " is-active" : ""}`} ref={props.registerPanelRef}>
+  return <article className={`chat-panel document-panel${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
+    {minimizedSideDocuments.length ? <nav className="document-side-restores" aria-label="Minimized side documents">
+      {minimizedSideDocuments.map((sideDocument) => <button key={sideDocument.id} type="button"
+        className="document-side-restore" aria-label={`Open side document: ${sideDocument.title || "Untitled document"}`}
+        title={`Open side document: ${sideDocument.title || "Untitled document"}`}
+        onClick={() => props.onOpenBranch(sideDocument.id)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 3H5v18h14v-9M14 3v5h5l-5-5M8 12h3M8 16h3"/>
+          <path d="m17 13 3 3-3 3m-4-3h7"/>
+        </svg>
+      </button>)}
+    </nav> : null}
     <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
-      {props.groupControl ? <div className="document-header-details">{props.groupControl}</div> : null}
-      {conversation.branchAnchor ? <div className="document-origin" ref={props.registerBranchOriginRef}><button type="button" onClick={() => props.onOpenBranch(conversation.parentId!)}>← Source document</button><span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span></div> : null}
       <header className="document-header">
-        <input aria-label="Document title" value={title} onChange={(event) => setTitle(event.target.value)} onBlur={() => { const value=title.trim() || "Untitled document";setTitle(value);if(value!==conversation.title)props.onRename(value); }} onKeyDown={(event) => {if(event.key === "Enter")event.currentTarget.blur();}}/>
+        {conversation.branchAnchor ? <div className="document-origin" ref={props.registerBranchOriginRef}><button type="button" onClick={() => props.onOpenBranch(conversation.parentId!)}>← Source document</button><span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span></div> : null}
+        <div className="document-header-title-row">
+          <AutoSizingDocumentTitle value={title} onChange={setTitle} onCommit={() => { const value=title.trim() || "Untitled document";setTitle(value);if(value!==conversation.title)props.onRename(value); }}/>
+          {props.documentMenu}
+        </div>
       </header>
-      <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} readOnlyBlockIds={streamingIds} decorations={decorations}
+      <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
+        moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
         onUpdateBlock={updateBlock} onInsertBlock={insertBlock} onSplitBlock={splitBlock}
-        onDeleteBlock={(id) => {const current=latestDocument.current;const blocks=current.blocks.filter((block)=>block.id!==id);change({...current,blocks:blocks.length?blocks:[freshBlock()]});}}
-        onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks});}}
+        onHistory={historyAction}
+        onDeleteBlock={(id, edit) => {
+          const current=latestDocument.current;
+          const index = current.blocks.findIndex((block) => block.id === id);
+          const blocks=current.blocks.filter((block)=>block.id!==id);
+          if (!blocks.length) blocks.push(freshBlock());
+          const focus = blocks[Math.max(0, index - 1)] ?? blocks[0];
+          change({...current,blocks}, { ...edit, afterFocus: { blockId: focus.id, from: focus.content.length, to: focus.content.length } });
+        }}
+        onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks}, { beforeFocus: { blockId: id, from: 0, to: 0 }, afterFocus: { blockId: id, from: 0, to: 0 } });}}
         onInvokeAI={(next) => {props.onClearSelection?.();setInvocation(next);setReplaceSelection(false);setOpenPromptId(null);}}
         onSelectionChange={(selection) => { if(selection)props.onSelection({...selection,prompt:"",sourceKind:"message",sourceContent:document.blocks.find((block)=>block.id===selection.sourceBlockId)?.content}); else props.onClearSelection?.(); }}
         renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering theme={props.theme}/>}
         renderAfterBlock={(block) => <>
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPrompt)}
-          {invocation?.blockId === block.id ? <form className="document-ai-composer" onSubmit={(event) => {event.preventDefault();submit();}} onKeyDown={(event)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();dismissAI();}}}>
+          {invocation?.blockId === block.id ? <form ref={composerRef} className="document-ai-composer" onSubmit={(event) => {event.preventDefault();submit();}} onKeyDown={(event)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();dismissAI();}}}>
             <div className="document-ai-heading"><strong>✦ Ask AI</strong><button type="button" aria-label="Close AI prompt" onClick={()=>dismissAI()}>×</button></div>
             {invocation.selection?.quote ? <blockquote>{invocation.selection.quote}</blockquote> : null}
             <textarea aria-label="AI prompt" placeholder="What would you like to write or explore?" value={prompt} onChange={(event)=>setPrompt(event.target.value)} ref={promptRef} rows={2} onKeyDown={(event)=>{if(event.key==="Enter"&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();submit();}}}/>
             <div className="document-ai-options"><div role="group" aria-label="Response destination"><button aria-pressed={destination==="inline"} onClick={()=>setDestination("inline")} type="button">In this document</button><button aria-pressed={destination==="side"} onClick={()=>setDestination("side")} type="button">Side document ↗</button></div>
               {invocation.selection && destination==="inline" ? <label><input type="checkbox" checked={replaceSelection} onChange={(event)=>setReplaceSelection(event.target.checked)}/>Replace selection</label> : null}</div>
-            <div className="document-ai-toolbar"><button type="button" aria-label="Attach documents" onClick={()=>fileRef.current?.click()}>＋ Attach</button>{props.groupControl}<button type="button" aria-label="Choose AI model" onClick={()=>setModelOpen(true)}>{modelLabel}⌄</button><button className="document-ai-send" type="submit" disabled={!prompt.trim()||props.isSubmitting}>Generate ↑</button></div>
+            <div className="document-ai-toolbar"><button type="button" aria-label="Attach documents" onClick={()=>fileRef.current?.click()}>＋ Attach</button><button type="button" aria-label="Choose AI model" onClick={()=>setModelOpen(true)}>{modelLabel}⌄</button><button className="document-ai-send" type="submit" disabled={!prompt.trim()||props.isSubmitting}>Generate ↑</button></div>
             <small>Uses this document{invocation.selection?.quote ? " and the selected passage" : ""} · Enter to send</small>
           </form> : null}
         </>}/>
@@ -238,7 +303,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>
     </div>
-    <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote}/>
+    <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>
     <ServicePickerModal contextControls={props.aiControls} currentModelId={conversation.modelId} currentServiceId={conversation.serviceId} isOpen={modelOpen} onClose={()=>setModelOpen(false)} onSelectModel={props.onModelChange} recentSelections={props.recentModelSelections}/>
   </article>;
 }

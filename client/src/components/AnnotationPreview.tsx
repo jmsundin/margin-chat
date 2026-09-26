@@ -26,6 +26,7 @@ interface AnnotationPreviewProps {
   notes: ConversationNote[];
   onOpenBranch: (id: string) => void;
   onOpenNote?: (id: string) => void;
+  onRemoveLink?: (id: string) => void;
 }
 
 /** One preview per pane; resolve saved IDs against current content, never a copied DOM snippet. */
@@ -146,6 +147,9 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
       }
     };
     const selectionChange = () => { if (selectedText()) close(); };
+    const dismissOutside = (event: Event) => {
+      if (!popupRef.current?.contains(event.target as Node)) close();
+    };
     const dismissOnScroll = (event: Event) => {
       if (popupRef.current?.contains(event.target as Node)) return;
       // Tab focus may scroll its highlight into view; keep and reposition that preview.
@@ -168,7 +172,8 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
     container.addEventListener("focusin", focusIn);
     container.addEventListener("focusout", focusOut);
     container.addEventListener("click", openNote);
-    container.addEventListener("pointerdown", close);
+    document.addEventListener("pointerdown", dismissOutside, true);
+    document.addEventListener("click", dismissOutside, true);
     document.addEventListener("keydown", keyDown, true);
     document.addEventListener("selectionchange", selectionChange);
     window.addEventListener("scroll", dismissOnScroll, true);
@@ -181,7 +186,8 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
       container.removeEventListener("focusin", focusIn);
       container.removeEventListener("focusout", focusOut);
       container.removeEventListener("click", openNote);
-      container.removeEventListener("pointerdown", close);
+      document.removeEventListener("pointerdown", dismissOutside, true);
+      document.removeEventListener("click", dismissOutside, true);
       document.removeEventListener("keydown", keyDown, true);
       document.removeEventListener("selectionchange", selectionChange);
       window.removeEventListener("scroll", dismissOnScroll, true);
@@ -196,6 +202,9 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
   useLayoutEffect(() => {
     if (!visible || !target || !popupRef.current) return;
     positionPreview(target);
+    // ProseMirror owns decoration attributes. Mutating one makes its DOM
+    // observer replace the highlight and dismiss the preview immediately.
+    if (target.closest(".tiptap")) return;
     const previous = target.getAttribute("aria-describedby");
     target.setAttribute("aria-describedby", [previous, descriptionId].filter(Boolean).join(" "));
     return () => {
@@ -225,12 +234,14 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
         {branches.map((link) => {
           const preview = link.preview;
           const isNote = preview?.kind === "note";
+          const isLink = link.kind === "document-link";
           return <section className="annotation-preview-item" key={link.branchConversationId}>
-            <div className="annotation-preview-kind">{isNote ? "Side note" : "Side chat"}{preview?.messageCount ? ` · ${preview.messageCount} ${preview.messageCount === 1 ? "message" : "messages"}` : ""}</div>
+            <div className="annotation-preview-kind">{isLink ? link.targetBlockId ? "Linked block" : "Linked document" : isNote ? "Side note" : "Side chat"}{preview?.messageCount ? ` · ${preview.messageCount} ${preview.messageCount === 1 ? "message" : "messages"}` : ""}</div>
             <h3>{link.title}</h3>
             {preview?.prompt || link.anchor.prompt ? <p className="annotation-preview-question">{summarizeAnnotationText(preview?.prompt || link.anchor.prompt, 160)}</p> : null}
-            {preview?.content ? <><span className="annotation-preview-caption">{isNote ? "Note preview" : "Latest reply"}</span><p>{preview.content}</p></> : <p className="annotation-preview-empty">{isNote ? "This note is empty." : "No reply yet. Open the chat to continue."}</p>}
-            <button className="annotation-preview-open" onClick={() => { close(); props.onOpenBranch(link.branchConversationId); }} type="button">Open {isNote ? "side note" : "side chat"}<span aria-hidden="true">↗</span></button>
+            {preview?.content ? <><span className="annotation-preview-caption">{isLink ? "Linked content" : isNote ? "Note preview" : "Latest reply"}</span><p>{preview.content}</p></> : <p className="annotation-preview-empty">{isLink ? "This document is empty." : isNote ? "This note is empty." : "No reply yet. Open the chat to continue."}</p>}
+            <button className="annotation-preview-open" onClick={() => { close(); props.onOpenBranch(link.branchConversationId); }} type="button">Open {isLink ? link.targetBlockId ? "linked block" : "linked document" : isNote ? "side note" : "side chat"}<span aria-hidden="true">↗</span></button>
+            {isLink && props.onRemoveLink ? <button className="annotation-preview-open" onClick={() => { close(); props.onRemoveLink?.(link.branchConversationId); }} type="button">Remove link</button> : null}
           </section>;
         })}
         {notes.map((note) => <section className="annotation-preview-item" key={note.id}>

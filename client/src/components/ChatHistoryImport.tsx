@@ -58,6 +58,11 @@ export default function ChatHistoryImport({ existingIds, cloudSyncEnabled, onImp
   }
 
   return <dialog ref={dialog} className="history-import-dialog" aria-labelledby="history-import-title"
+    onClick={(event) => {
+      if (event.target !== event.currentTarget) return;
+      const bounds = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) onClose();
+    }}
     onCancel={(event) => { event.preventDefault(); if (!busyRef.current) onClose(); }}>
     <header className="history-import-head">
       <div><p className="eyebrow">Start with familiar conversations</p><h2 id="history-import-title">Bring your chat history</h2></div>

@@ -531,6 +531,29 @@ export async function requestPasswordResetConfirm(args: {
   }
 }
 
+export async function requestChangePassword(args: {
+  currentPassword: string;
+  password: string;
+}): Promise<void> {
+  const response = await fetch("/api/auth/password/change", {
+    body: JSON.stringify(args),
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { ok?: boolean } | ErrorPayload | null;
+
+  if (response.status === 404) {
+    throw new ApiError(404, "Password changes are not available on this version of the app. Please try again after it is updated.");
+  }
+
+  ensureOk(response, payload, "Unable to change your password.");
+
+  if (!payload || typeof payload !== "object" || !("ok" in payload) || payload.ok !== true) {
+    throw new Error("Backend returned an invalid password change response.");
+  }
+}
+
 export async function requestLogout(): Promise<void> {
   const response = await fetch("/api/auth/logout", {
     credentials: "same-origin",

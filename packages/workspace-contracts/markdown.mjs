@@ -2,10 +2,34 @@ import { createAppStateFromWorkspaceMetadata, createWorkspaceDocumentMetadata, W
 import { normalizeAIExecution } from "./ai.mjs";
 import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./exploration.mjs";
 import { normalizeEditableDocument } from "./editableDocument.mjs";
+import { normalizeDocumentLayout } from "./documentLayout.mjs";
 import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
-export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 3;
-export function createMarkdownWorkspace(state, savedAt = new Date().toISOString(), previousWorkspace) {
-    const result = renderMarkdownWorkspace(state, savedAt, previousWorkspace?.manifest);
+import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
+import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
+export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
+export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 4;
+
+function decodeWorkspace(workspace) {
+    if (!workspace) return undefined;
+    return { ...workspace, files: Object.fromEntries(Object.entries(workspace.files).map(([path, source]) =>
+        [path, isAuxiliaryMarkdownPath(path) ? source : decodeReadableMarkdown(source)])) };
+}
+function encodeWorkspace(workspace, previous, decodedPrevious) {
+    const files = { ...workspace.files };
+    for (const record of workspace.manifest.files) {
+        const source = files[record.path];
+        files[record.path] = decodedPrevious?.files[record.path] === source
+            ? previous.files[record.path] : encodeReadableMarkdown(source);
+    }
+    return { ...workspace, files };
+}
+export function createMarkdownWorkspace(state, savedAt = new Date().toISOString(), previousWorkspace, options = {}) {
+    const decoded = decodeWorkspace(previousWorkspace);
+    return encodeWorkspace(createLegacyMarkdownWorkspace(state, savedAt, decoded, options), previousWorkspace, decoded);
+}
+
+function createLegacyMarkdownWorkspace(state, savedAt = new Date().toISOString(), previousWorkspace, options = {}) {
+    const result = renderMarkdownWorkspace(state, savedAt, previousWorkspace?.manifest, undefined, options.preservePaths);
     if (!previousWorkspace)
         return result;
     for (const [path, source] of Object.entries(previousWorkspace.files)) {
@@ -24,10 +48,12 @@ export function createMarkdownWorkspace(state, savedAt = new Date().toISOString(
         }
     }
     result.manifest.files.sort((left, right) => left.path.localeCompare(right.path));
-    const previousRendered = renderMarkdownWorkspace(previousState, savedAt, previousWorkspace.manifest);
+    const previousRendered = renderMarkdownWorkspace(previousState, savedAt, previousWorkspace.manifest, undefined, true);
+    const previousRecords = new Map(previousWorkspace.manifest.files.map((record) => [record.id, record]));
     for (const record of result.manifest.files) {
-        const raw = previousWorkspace.files[record.path];
-        const canonical = previousRendered.files[record.path];
+        const previousPath = previousRecords.get(record.id)?.path;
+        const raw = previousWorkspace.files[previousPath];
+        const canonical = previousRendered.files[previousPath];
         if (raw === undefined || canonical === undefined)
             continue;
         if (result.files[record.path] === canonical) {
@@ -42,6 +68,19 @@ export function createMarkdownWorkspace(state, savedAt = new Date().toISOString(
 /** Reuses unchanged documents between immutable editor snapshots. External snapshots
  * and relationship changes deliberately take the complete recovery/validation path. */
 export function createMarkdownWorkspaceRenderer() {
+    const render = createLegacyMarkdownWorkspaceRenderer();
+    let previousResult;
+    let previousDecoded;
+    return (state, savedAt, workspace) => {
+        const decoded = workspace === previousResult ? previousDecoded : decodeWorkspace(workspace);
+        const result = render(state, savedAt, decoded);
+        const encoded = encodeWorkspace(result, workspace, decoded);
+        previousResult = encoded;
+        previousDecoded = result;
+        return encoded;
+    };
+}
+function createLegacyMarkdownWorkspaceRenderer() {
     let previousState;
     let previousResult;
     let canonicalFiles;
@@ -57,12 +96,12 @@ export function createMarkdownWorkspaceRenderer() {
                 const after = state.conversations[id];
                 return before && before.title === after.title && before.kind === after.kind && before.parentId === after.parentId
                     && before.childIds.join("\0") === after.childIds.join("\0")
-                    && (before.notes ?? []).map((note) => `${note.id}:${note.kind}`).join("\0")
-                        === (after.notes ?? []).map((note) => `${note.id}:${note.kind}`).join("\0");
+                    && (before.notes ?? []).map((note) => `${note.id}:${note.kind}:${buildAnnotationTitle(note, before.title)}`).join("\0")
+                        === (after.notes ?? []).map((note) => `${note.id}:${note.kind}:${buildAnnotationTitle(note, after.title)}`).join("\0");
             });
         let result;
         if (!sameStructure) {
-            result = createMarkdownWorkspace(state, savedAt, workspace);
+            result = createLegacyMarkdownWorkspace(state, savedAt, workspace);
             const parsed = parseMarkdownWorkspace(result.manifest, result.files);
             if (!parsed) throw new Error("Saved Markdown could not be parsed. Its files were preserved.");
             canonicalFiles = renderMarkdownWorkspace(parsed, savedAt, result.manifest).files;
@@ -90,16 +129,41 @@ export function createMarkdownWorkspaceRenderer() {
     };
 }
 
-function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConversationIds) {
+function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConversationIds, preservePaths = false) {
     const previousRecords = new Map(previousManifest?.files.map((record) => [record.id, record]));
+    const plannedRecords = new Map();
     const conversationPathById = new Map();
     const annotationPathById = new Map();
-    for (const conversation of Object.values(state.conversations)) {
-        conversationPathById.set(conversation.id, previousRecords.get(conversation.id)?.path ?? getConversationMarkdownPath(conversation));
+    // Reserve imported paths before allocating generated names, including on case-insensitive disks.
+    const reserved = new Set((previousManifest?.files ?? []).map((record) => pathKey(record.path)));
+    function plan(id, title, folder, type) {
+        const previous = previousRecords.get(id);
+        const owned = !previous || previous.managedPath === previous.path
+            || (!previous.managedPath && previous.path === legacyMarkdownPath(folder, id));
+        let path = previous?.path;
+        if ((!preservePaths && owned) || !path) {
+            const desired = titleMarkdownPath(folder, title, id);
+            path = desired;
+            let ordinal = 2;
+            while (reserved.has(pathKey(path)) && pathKey(path) !== pathKey(previous?.path ?? "")) {
+                path = desired.replace(/\.md$/, ` (${ordinal++}).md`);
+            }
+        }
+        reserved.add(pathKey(path));
+        const aliases = [...new Set([...(previous?.aliases ?? []),
+            ...(previous && previous.path !== path ? [previous.path] : [])])].filter((alias) => alias !== path);
+        const record = { ...previous, id, path, type,
+            ...(owned && !preservePaths ? { managedPath: path } : {}),
+            ...(aliases.length ? { aliases } : {}) };
+        plannedRecords.set(id, record);
+        return path;
+    }
+    for (const conversation of Object.values(state.conversations).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) {
+        conversationPathById.set(conversation.id, plan(conversation.id, conversation.title, conversation.kind === "note" ? "Notes" : "Chats", "conversation"));
         const primaryNote = getPrimaryStandaloneNote(conversation);
         for (const note of conversation.notes ?? []) {
             if (note !== primaryNote) {
-                annotationPathById.set(note.id, previousRecords.get(note.id)?.path ?? getAnnotationMarkdownPath(note.id));
+                annotationPathById.set(note.id, plan(note.id, buildAnnotationTitle(note, conversation.title), "Notes", "note"));
             }
         }
     }
@@ -114,6 +178,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
             : -1;
         const { childIds: _childIds, messages: _messages, notes: _notes, parentId: _parentId, ...conversationMetadata } = conversation;
         const metadata = {
+            file: portableFileRecord(plannedRecords.get(conversation.id)),
             conversation: {
                 ...conversationMetadata,
                 ...(conversation.document ? { document: { ...conversation.document, blocks: [] } } : {}),
@@ -166,12 +231,13 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
                 .filter((section) => section !== "")
                 .join("\n\n");
         files[path] = body;
-        fileRecords.push({ ...previousRecords.get(conversation.id), id: conversation.id, path, type: "conversation" });
+        fileRecords.push(plannedRecords.get(conversation.id));
         for (const [index, note] of (conversation.notes ?? []).entries()) {
             if (note === primaryNote)
                 continue;
             const notePath = annotationPathById.get(note.id);
             const noteMetadata = {
+                file: portableFileRecord(plannedRecords.get(note.id)),
                 entityType: "note",
                 index,
                 note: omitNoteContent(note),
@@ -188,9 +254,10 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
                 "## Note",
                 note.content,
             ].join("\n\n");
-            fileRecords.push({ ...previousRecords.get(note.id), id: note.id, path: notePath, type: "note" });
+            fileRecords.push(plannedRecords.get(note.id));
         }
     }
+    const { documentDock: _oldDocumentDock, ...previousView } = previousManifest?.workspace.view ?? {};
     return {
         files,
         manifest: {
@@ -202,7 +269,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
                 ...previousManifest?.workspace,
                 ...createWorkspaceDocumentMetadata(state),
                 preferences: { ...previousManifest?.workspace.preferences, ...createWorkspaceDocumentMetadata(state).preferences },
-                view: { ...previousManifest?.workspace.view, ...createWorkspaceDocumentMetadata(state).view },
+                view: { ...previousView, ...createWorkspaceDocumentMetadata(state).view },
             },
         },
     };
@@ -211,7 +278,7 @@ export function parseMarkdownWorkspaceManifest(input) {
     if (!input || typeof input !== "object" || Array.isArray(input))
         return null;
     const candidate = input;
-    if (candidate.formatVersion !== MARKDOWN_WORKSPACE_FORMAT_VERSION ||
+    if (![3, MARKDOWN_WORKSPACE_FORMAT_VERSION].includes(candidate.formatVersion) ||
         typeof candidate.savedAt !== "string" ||
         Number.isNaN(Date.parse(candidate.savedAt)) ||
         !candidate.workspace ||
@@ -261,9 +328,14 @@ export function discoverMarkdownWorkspace(files, fallbackManifest, previousFiles
         const matchingPrevious = previous ?? fallbackManifest?.files.find((record) => record.id === id);
         const aliases = [...new Set([
                 ...(matchingPrevious?.aliases ?? []),
+                ...(Array.isArray(metadata?.file?.aliases) ? metadata.file.aliases.filter((alias) => typeof alias === "string" && isSafeMarkdownPath(alias)) : []),
+                ...(typeof metadata?.file?.managedPath === "string" && metadata.file.managedPath !== path && isSafeMarkdownPath(metadata.file.managedPath) ? [metadata.file.managedPath] : []),
                 ...(matchingPrevious && matchingPrevious.path !== path ? [matchingPrevious.path] : []),
             ])].filter((alias) => alias !== path);
-        records.push({ id, path, type: metadata?.entityType === "note" ? "note" : "conversation", ...(aliases.length ? { aliases } : {}) });
+        const managedPath = metadata?.file?.managedPath ?? matchingPrevious?.managedPath;
+        records.push({ id, path, type: metadata?.entityType === "note" ? "note" : "conversation",
+            ...(typeof managedPath === "string" && isSafeMarkdownPath(managedPath) ? { managedPath } : {}),
+            ...(aliases.length ? { aliases } : {}) });
     }
     const { defaultServiceId, defaultModelId } = DEFAULT_WORKSPACE_PREFERENCES;
     const workspace = fallbackManifest?.workspace ?? {
@@ -308,6 +380,10 @@ export function parseMarkdownWorkspace(manifest, fileContents) {
                 recordByTarget.set(target, record);
             }
         }
+        // Current paths take precedence over historical aliases that have since been reused.
+        for (const record of manifest.files) {
+            for (const target of getLinkTargetAliases(record.path)) recordByTarget.set(target, record);
+        }
         const parsedConversations = new Map();
         const parsedNotes = [];
         for (const record of manifest.files) {
@@ -315,13 +391,13 @@ export function parseMarkdownWorkspace(manifest, fileContents) {
             if (typeof source !== "string")
                 return null;
             if (record.type === "conversation") {
-                const parsed = parseConversationFile(source.replace(/\r\n/g, "\n"), record, manifest.workspace);
+                const parsed = parseConversationFile(decodeReadableMarkdown(source).replace(/\r\n/g, "\n"), record, manifest.workspace);
                 if (!parsed || parsed.conversation.id !== record.id)
                     return null;
                 parsedConversations.set(record.id, parsed);
             }
             else {
-                const parsed = parseNoteFile(source.replace(/\r\n/g, "\n"));
+                const parsed = parseNoteFile(decodeReadableMarkdown(source).replace(/\r\n/g, "\n"));
                 if (!parsed || parsed.note.id !== record.id)
                     return null;
                 parsedNotes.push({ file: parsed, record });
@@ -341,6 +417,11 @@ export function parseMarkdownWorkspace(manifest, fileContents) {
             }
         }
         const notesByConversation = new Map();
+        for (const conversation of Object.values(conversations)) {
+            const documentLayout = normalizeDocumentLayout(conversation.documentLayout, conversation.id, conversations);
+            if (documentLayout) conversation.documentLayout = documentLayout;
+            else delete conversation.documentLayout;
+        }
         for (const [conversationId, parsed] of parsedConversations) {
             const primaryNote = parsed.conversation.notes?.[0];
             if (primaryNote && parsed.primaryNoteIndex !== null) {
@@ -417,6 +498,7 @@ export function parseMarkdownWorkspace(manifest, fileContents) {
     }
 }
 function parseConversationFile(source, record, workspace) {
+    source = decodeReadableMarkdown(source);
     const metadata = parseMetadata(source);
     if (!metadata)
         return /<!--\s*margin-chat-metadata\b/.test(source) ? null : parsePlainMarkdownNote(source, record, workspace);
@@ -461,6 +543,7 @@ function parseConversationFile(source, record, workspace) {
     };
 }
 function parseNoteFile(source) {
+    source = decodeReadableMarkdown(source);
     const metadata = parseMetadata(source);
     if (!metadata || metadata.entityType !== "note")
         return null;
@@ -474,7 +557,27 @@ function parseNoteFile(source) {
         parentTarget: relationships.parentTarget,
     };
 }
+/** Restoring an older version changes content, not ownership of its surviving filename. */
+export function preserveMarkdownFileLocation(source, currentSource, path) {
+    const current = parseMetadata(currentSource);
+    const decoded = decodeReadableMarkdown(source);
+    const selected = parseMetadata(decoded);
+    const identity = (metadata) => metadata?.entityType === "conversation" ? metadata.conversation?.id : metadata?.note?.id;
+    if (!selected || !current || identity(selected) !== identity(current) || !current.file) return source;
+    const aliases = [...new Set([...(selected.file?.aliases ?? []), ...(current.file.aliases ?? []),
+        selected.file?.managedPath, current.file.managedPath])]
+        .filter((alias) => typeof alias === "string" && alias !== path && isSafeMarkdownPath(alias));
+    const file = { ...selected.file, ...current.file };
+    if (!current.file.managedPath) delete file.managedPath;
+    if (aliases.length) file.aliases = aliases;
+    else delete file.aliases;
+    if (JSON.stringify(file) === JSON.stringify(selected.file)) return source;
+    const updated = decoded.replace(/^<!-- margin-chat-metadata .+ -->\r?$/m,
+        (line) => serializeMetadata({ ...selected, file }) + (line.endsWith("\r") ? "\r" : ""));
+    return isReadableMarkdown(source) ? encodeReadableMarkdown(updated) : updated;
+}
 function parseMetadata(source) {
+    source = decodeReadableMarkdown(source);
     const match = /^<!-- margin-chat-metadata (.+) -->\r?$/m.exec(source);
     if (!match)
         return null;
@@ -758,7 +861,8 @@ function mergeFrontmatter(raw, result, before, after = result) {
         else if (changed)
             lines[index] = line;
     }
-    const frontmatter = `---\n${lines.join("\n")}\n---\n`;
+    const newline = /^---(\r?\n)/.exec(raw)?.[1] ?? "\n";
+    const frontmatter = `---${newline}${lines.join(newline)}${newline}---${newline}`;
     return pattern.test(result) ? result.replace(pattern, () => frontmatter) : frontmatter + result;
 }
 function renderConversationRelationships(args) {
@@ -859,13 +963,10 @@ function renderWikiLink(path, label) {
         .replace(/\s+/g, " ");
     return `[[${target}|${safeLabel}]]`;
 }
-function getConversationMarkdownPath(conversation) {
-    const directory = conversation.kind === "note" ? "Notes" : "Chats";
-    const prefix = conversation.kind === "note" ? "note" : "chat";
-    return `${directory}/${prefix}-${safeFileId(conversation.id)}.md`;
-}
-function getAnnotationMarkdownPath(noteId) {
-    return `Notes/note-${safeFileId(noteId)}.md`;
+function pathKey(path) { return path.normalize("NFC").toLowerCase(); }
+function portableFileRecord(record) {
+    return { ...(record.managedPath ? { managedPath: record.managedPath } : {}),
+        ...(record.aliases?.length ? { aliases: record.aliases } : {}) };
 }
 function safeFileId(id) {
     const slug = id
@@ -911,6 +1012,7 @@ function isMarkdownWorkspaceFileRecord(input) {
         Boolean(record.id) &&
         typeof record.path === "string" &&
         isSafeMarkdownPath(record.path) &&
+        (record.managedPath === undefined || typeof record.managedPath === "string" && isSafeMarkdownPath(record.managedPath)) &&
         (record.aliases === undefined || Array.isArray(record.aliases) && record.aliases.every((alias) => typeof alias === "string" && isSafeMarkdownPath(alias))) &&
         (record.type === "conversation" || record.type === "note"));
 }

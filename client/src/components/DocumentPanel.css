@@ -1,5 +1,6 @@
 .chat-panel.document-panel,
 .chat-panel.document-panel.is-active {
+  position: relative;
   min-height: 0;
   margin-block: 8px;
   background: var(--bg);
@@ -7,18 +8,41 @@
   border-radius: 10px;
   box-shadow: 0 1px 3px rgb(0 0 0 / 4%);
 }
-.document-body { --document-top-padding:20px; --document-left-padding:24px; position: relative; padding: var(--document-top-padding) 32px 72px var(--document-left-padding); overflow-y: auto; }
-.document-header { padding: 0 0 10px; }
-.document-header > input { border: 0; border-radius: 0; background: transparent; color: var(--ink); font-size: clamp(26px, 3vw, 36px); font-weight: 650; line-height: 1.25; width: 100%; padding: 6px 0; outline-offset: 5px; }
-.document-header-details { display:flex; align-items:center; color:var(--muted); font-size:12px; margin:calc(8px - var(--document-top-padding)) 16px 10px calc(12px - var(--document-left-padding)); }
-.document-header-details .conversation-group-select > span { display:none; }
-.document-header-details .conversation-group-select { gap:0; min-width:0; }
-.document-header-details .conversation-group-trigger { min-height:30px; padding:4px 6px; max-width:100%; font-size:12px; }
-.document-origin { display:flex; align-items:center; gap:12px; font-size:12px; color:var(--muted); margin-bottom:24px; }
+.document-body { --document-top-padding:20px; --document-left-padding:24px; --document-right-padding:32px; position: relative; padding: var(--document-top-padding) var(--document-right-padding) 72px var(--document-left-padding); overflow-y: auto; }
+.document-dock-pane-body .document-body { --document-right-padding:24px; }
+.document-panel.has-minimized-side-documents > .document-body { margin-right: 36px; }
+.document-side-restores { position: absolute; top: 10px; right: 4px; bottom: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 28px; overflow-y: auto; scrollbar-width: none; }
+.document-side-restores::-webkit-scrollbar { display: none; }
+.document-side-restore { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel-strong); color: var(--accent); }
+.document-side-restore svg { width: 16px; height: 16px; }
+.document-side-restore:hover { border-color: var(--accent); background: var(--accent-soft); }
+.document-side-restore:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-header {
+  position: sticky;
+  top: 0;
+  z-index: 8;
+  padding: 0 0 10px;
+  background: var(--bg);
+  isolation: isolate;
+}
+.document-header::before {
+  content: "";
+  position: absolute;
+  inset: calc(-1 * var(--document-top-padding)) calc(-1 * var(--document-right-padding)) 0 calc(-1 * var(--document-left-padding));
+  z-index: -1;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  pointer-events: none;
+}
+.document-header-title-row { display: flex; align-items: flex-start; gap: 10px; }
+.document-header-title-row > .document-title { flex: 1; }
+.document-header-title-row > .document-menu-trigger { margin-top: 10px; }
+
+.document-origin { display:flex; align-items:center; gap:12px; font-size:12px; color:var(--muted); margin-bottom:12px; }
 .document-origin span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .document-panel button { cursor:pointer; font:inherit; }
 .document-panel button:disabled { cursor:default; opacity:.45; }
-.document-origin button, .document-header-details button { background:transparent; border:0; color:var(--muted); white-space:nowrap; }
+.document-origin button { background:transparent; border:0; color:var(--muted); white-space:nowrap; }
 .document-ai-composer { margin:12px 0 20px; border:1px solid var(--line-strong); border-top:2px solid var(--accent); border-radius:14px; padding:14px; background:var(--panel-strong); box-shadow:0 10px 26px #0002; }
 .document-ai-heading { display:flex; align-items:center; justify-content:space-between; color:var(--accent); font-size:13px; }
 .document-ai-heading button,.document-prompt-history header button { color:var(--muted); border:0; background:transparent; width:28px; height:28px; font-size:22px; }

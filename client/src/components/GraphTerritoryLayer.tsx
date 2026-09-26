@@ -1,7 +1,7 @@
 import { Fragment, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { GraphViewport } from "../lib/graphInteractions";
 import { curvedGraphConnection } from "../lib/graphConnectionCurve";
-import { getMapTerritoryScreenBounds, layoutMapTerritoryOverview, mapTerritoryHeadingWidth, placeMapTerritoryHeadings, readableNodeSize, territoryConnections, type MapTerritory, type MapTerritoryBounds, type MapConnections } from "../lib/graphPresentation";
+import { getMapTerritoryScreenBounds, layoutMapTerritoryOverview, mapTerritoryHeadingWidth, placeMapTerritoryHeadings, readableNodeSize, territoryConnections, type MapTerritory, type MapTerritoryBounds, type MapConnections, type MapNodeFootprint } from "../lib/graphPresentation";
 
 export default function GraphTerritoryLayer({ territories, conversations, viewport, onOpen, itemLabel = "chats and notes",
   mode = "overview", activeTerritoryId = null, selectedNodeId = null, nodeFootprint, semanticLabels }: {
@@ -13,7 +13,7 @@ export default function GraphTerritoryLayer({ territories, conversations, viewpo
   mode?: "overview" | "canvas";
   activeTerritoryId?: string | null;
   selectedNodeId?: string | null;
-  nodeFootprint?: { width: number; height: number };
+  nodeFootprint?: MapNodeFootprint;
   semanticLabels?: Record<string, string>;
 }) {
   const layerRef = useRef<HTMLDivElement>(null);
@@ -43,8 +43,9 @@ export default function GraphTerritoryLayer({ territories, conversations, viewpo
     maxWidth: layerWidth > 0 ? mapTerritoryHeadingWidth(layerWidth) : undefined,
     obstacles: mode === "canvas" ? territories.flatMap((territory) => territory.nodes.map((node) => {
       const factor = layoutViewport.scale * readableNodeSize(layoutViewport.scale, node.conversationId === selectedNodeId);
-      const width = nodeFootprint?.width ?? node.width * factor;
-      const height = nodeFootprint?.height ?? node.height * factor;
+      const footprint = typeof nodeFootprint === "function" ? nodeFootprint(node) : nodeFootprint;
+      const width = footprint?.width ?? node.width * factor;
+      const height = footprint?.height ?? node.height * factor;
       return { x: (node.x + node.width / 2) * layoutViewport.scale - width / 2,
         y: (node.y + node.height / 2) * layoutViewport.scale - height / 2, width, height };
     })) : undefined,

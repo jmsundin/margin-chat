@@ -1,5 +1,6 @@
 import VaultPanel from "./VaultPanel";
 import BillingDashboard from "./BillingDashboard";
+import PasswordChangeForm from "./PasswordChangeForm";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { useEffect, useRef, useState } from "react";
 import type {
@@ -37,6 +38,7 @@ interface ProfileModalProps {
     onProgress: (progress: StateUploadProgress) => void,
   ) => Promise<void>;
   onChooseLocalDirectory: () => Promise<void>;
+  onChangePassword: (args: { currentPassword: string; password: string }) => Promise<void>;
   onClearLocalDirectory: () => Promise<void>;
   onClose: () => void;
   onLogout: () => void | Promise<void>;
@@ -134,6 +136,7 @@ export default function ProfileModal({
   localDirectoryStatus,
   onBackupToCloud,
   onChooseLocalDirectory,
+  onChangePassword,
   onClearLocalDirectory,
   onClose,
   onLogout,
@@ -145,6 +148,8 @@ export default function ProfileModal({
 }: ProfileModalProps) {
   const displayNameInputRef = useRef<HTMLInputElement>(null);
   const profileBodyRef = useRef<HTMLDivElement>(null);
+  const passwordChangingRef = useRef(false);
+  const [passwordChanging, setPasswordChanging] = useState(false);
   const [displayName, setDisplayName] = useState(user.displayName);
   const [email, setEmail] = useState(user.email);
   const [apiKeyDrafts, setApiKeyDrafts] = useState(EMPTY_API_KEY_DRAFTS);
@@ -190,7 +195,7 @@ export default function ProfileModal({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !passwordChangingRef.current) {
         onClose();
       }
     }
@@ -227,6 +232,25 @@ export default function ProfileModal({
           totalBytes: cloudBackupSizeBytes,
           uploadedBytes: cloudBackupMatchesLocal ? cloudBackupSizeBytes : 0,
         };
+
+  function closeProfile() {
+    if (!passwordChangingRef.current) onClose();
+  }
+
+  function selectTab(tab: typeof activeTab) {
+    if (!passwordChangingRef.current) setActiveTab(tab);
+  }
+
+  async function changePassword(args: { currentPassword: string; password: string }) {
+    passwordChangingRef.current = true;
+    setPasswordChanging(true);
+    try {
+      await onChangePassword(args);
+    } finally {
+      passwordChangingRef.current = false;
+      setPasswordChanging(false);
+    }
+  }
 
   async function saveApiKeyChanges(
     overrides: Partial<Record<ApiKeyProvider, string | null>> = {},
@@ -343,7 +367,8 @@ export default function ProfileModal({
           <button
             aria-label="Close profile"
             className="search-modal-close"
-            onClick={onClose}
+            disabled={passwordChanging}
+            onClick={closeProfile}
             type="button"
           >
             <CloseIcon />
@@ -365,9 +390,10 @@ export default function ProfileModal({
               aria-controls={`profile-panel-${tabId}`}
               aria-selected={activeTab === tabId}
               className={activeTab === tabId ? "is-active" : ""}
+              disabled={passwordChanging}
               id={`profile-tab-${tabId}`}
               key={tabId}
-              onClick={() => setActiveTab(tabId)}
+              onClick={() => selectTab(tabId)}
               role="tab"
               type="button"
             >
@@ -407,7 +433,7 @@ export default function ProfileModal({
                   <span>{getBillingStatusCopy(user.billing)}</span>
                 </div>
 
-                <button className="thread-dialog-button is-primary" onClick={() => setActiveTab("billing")} type="button">
+                <button className="thread-dialog-button is-primary" disabled={passwordChanging} onClick={() => selectTab("billing")} type="button">
                   Open billing dashboard
                 </button>
               </section>
@@ -416,6 +442,7 @@ export default function ProfileModal({
                 className="thread-dialog-form"
                 onSubmit={(event) => {
                   event.preventDefault();
+                  if (passwordChangingRef.current || isSaving) return;
                   void onSave({
                     displayName: trimmedDisplayName,
                     email: trimmedEmail,
@@ -428,6 +455,7 @@ export default function ProfileModal({
                     ref={displayNameInputRef}
                     autoComplete="name"
                     className="thread-dialog-input"
+                    disabled={passwordChanging}
                     onChange={(event) => setDisplayName(event.target.value)}
                     placeholder="Your name"
                     type="text"
@@ -440,6 +468,7 @@ export default function ProfileModal({
                   <input
                     autoComplete="email"
                     className="thread-dialog-input"
+                    disabled={passwordChanging}
                     onChange={(event) => setEmail(event.target.value)}
                     placeholder="you@example.com"
                     type="email"
@@ -462,28 +491,30 @@ export default function ProfileModal({
                 <div className="thread-dialog-actions">
                   <button
                     className="thread-dialog-button is-danger profile-logout-button"
-                    disabled={isSaving || billingSubmitting}
-                    onClick={() => void onLogout()}
+                    disabled={isSaving || billingSubmitting || passwordChanging}
+                    onClick={() => { if (!passwordChangingRef.current) void onLogout(); }}
                     type="button"
                   >
                     Log out
                   </button>
                   <button
                     className="thread-dialog-button"
-                    onClick={onClose}
+                    disabled={passwordChanging}
+                    onClick={closeProfile}
                     type="button"
                   >
                     Cancel
                   </button>
                   <button
                     className="thread-dialog-button is-primary"
-                    disabled={isSaving || !hasChanges}
+                    disabled={isSaving || passwordChanging || !hasChanges}
                     type="submit"
                   >
                     {isSaving ? "Saving..." : "Save changes"}
                   </button>
                 </div>
               </form>
+              <PasswordChangeForm disabled={isSaving} key={user.id} onChangePassword={changePassword} />
             </div>
           ) : null}
 

@@ -47,6 +47,17 @@ describe("selected text popup positioning", () => {
       }).left,
     ).toBe(195);
   });
+
+  test("uses the roomier side for a destination picker taller than either gap", () => {
+    const layout = getSelectionTooltipLayout({
+      rect: { height: 130, left: 80, top: 176, width: 200 },
+      tooltipHeight: 570, tooltipWidth: 440,
+      viewportHeight: 835, viewportMargin: 16, viewportWidth: 801,
+    });
+    expect(layout.placement).toBe("below");
+    expect(layout.top).toBe(318);
+    expect(layout.maxHeight).toBe(501);
+  });
 });
 
 describe("selected text copying", () => {

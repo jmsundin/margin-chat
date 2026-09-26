@@ -16,9 +16,7 @@ export function sanitizePinnedThreadIds(
       continue;
     }
 
-    const conversation = conversations[value];
-
-    if (!conversation || conversation.parentId !== null) {
+    if (!Object.hasOwn(conversations, value) || !conversations[value]) {
       continue;
     }
 

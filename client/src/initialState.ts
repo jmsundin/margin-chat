@@ -7,7 +7,7 @@ import { createDefaultGraphNodeLayout } from "./lib/graphLayout";
 import type { AppState, BackendServiceId, Conversation } from "./types";
 
 export const DEFAULT_MAIN_CHAT_TITLE = "New chat";
-export const DEFAULT_SIDE_CHAT_TITLE = "Side chat";
+export const DEFAULT_SIDE_CHAT_TITLE = "Untitled side document";
 export const DEFAULT_CHILD_CHAT_TITLE = "New child chat";
 export const DEFAULT_STANDALONE_NOTE_TITLE = "Untitled note";
 
@@ -52,7 +52,7 @@ export function createSideConversation({
     id,
     kind: "chat",
     title: DEFAULT_SIDE_CHAT_TITLE,
-    parentId: sourceConversation.parentId ?? sourceConversation.id,
+    parentId: sourceConversation.id,
     serviceId: sourceConversation.serviceId,
     modelId: sourceConversation.modelId,
     ...(sourceConversation.ai ? { ai: structuredClone(sourceConversation.ai) } : {}),

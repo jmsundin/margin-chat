@@ -6,6 +6,7 @@ import { getWorkspaceSessionId, VALID_SERVICE_IDS } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
 import { createStatusError } from "../lib/errors.mjs";
 import { deleteDocument, restoreVaultAttachment } from "./documentRepository.mjs";
+import { normalizeDocumentLayout, normalizeDocumentDock } from "@margin-chat/workspace-contracts";
 
 const WORKSPACE_ENTITY_ID_SEPARATOR = "::";
 
@@ -50,6 +51,7 @@ async function readWorkspaceSnapshot(client, userId) {
         default_model_id,
         rail_open,
         pinned_thread_ids,
+        document_dock,
         graph_layouts,
         conversation_groups
       from marginchat_app_sessions
@@ -77,6 +79,7 @@ async function readWorkspaceSnapshot(client, userId) {
         ai_settings,
         grouping_mode,
         editable_document,
+        document_layout,
         created_at,
         updated_at
       from marginchat_conversations
@@ -184,8 +187,15 @@ async function readWorkspaceSnapshot(client, userId) {
       updatedAt: toIsoString(row.updated_at),
       ...(row.ai_settings ? { ai: row.ai_settings } : {}),
       ...(row.editable_document ? { document: row.editable_document } : {}),
+      ...(row.document_layout ? { documentLayout: row.document_layout } : {}),
       ...(row.grouping_mode ? { grouping: row.grouping_mode } : {}),
     };
+  }
+
+  for (const conversation of Object.values(conversations)) {
+    const documentLayout = normalizeDocumentLayout(conversation.documentLayout, conversation.id, conversations);
+    if (documentLayout) conversation.documentLayout = documentLayout;
+    else delete conversation.documentLayout;
   }
 
   for (const row of messageResult.rows) {
@@ -297,8 +307,10 @@ async function readWorkspaceSnapshot(client, userId) {
       serviceId: session.default_service_id,
     });
 
+  const documentDock = normalizeDocumentDock(session.document_dock, conversations);
   const state = {
     activeConversationId,
+    ...(documentDock ? { documentDock } : {}),
     conversations,
     defaultModelId,
     defaultServiceId,
@@ -319,7 +331,7 @@ async function readWorkspaceSnapshot(client, userId) {
         ? session.conversation_groups
         : {},
     pinnedThreadIds: (session.pinned_thread_ids ?? []).filter(
-      (conversationId) => conversations[conversationId]?.parentId === null,
+      (conversationId) => Object.hasOwn(conversations, conversationId),
     ),
     railOpen: Boolean(session.rail_open),
     rootId: rootConversationId,
@@ -455,9 +467,10 @@ export async function writeState(
           conversation_groups,
           active_conversation_id,
           root_conversation_id,
-          revision
+          revision,
+          document_dock
         )
-        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         on conflict (id) do update set
           user_id = excluded.user_id,
           default_service_id = excluded.default_service_id,
@@ -469,6 +482,7 @@ export async function writeState(
           active_conversation_id = excluded.active_conversation_id,
           root_conversation_id = excluded.root_conversation_id,
           revision = excluded.revision,
+          document_dock = excluded.document_dock,
           updated_at = now()
       `,
       [
@@ -483,6 +497,7 @@ export async function writeState(
         normalizedState.activeConversationId,
         normalizedState.rootId,
         nextRevision,
+        normalizedState.documentDock ?? null,
       ],
     );
 
@@ -504,10 +519,11 @@ export async function writeState(
             ai_settings,
             grouping_mode,
             editable_document,
+            document_layout,
             created_at,
             updated_at
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           on conflict (id) do update set
             session_id = excluded.session_id,
             title = excluded.title,
@@ -518,6 +534,7 @@ export async function writeState(
             ai_settings = excluded.ai_settings,
             grouping_mode = excluded.grouping_mode,
             editable_document = excluded.editable_document,
+            document_layout = excluded.document_layout,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at
         `,
@@ -532,6 +549,7 @@ export async function writeState(
           conversation.ai ?? null,
           conversation.grouping ?? null,
           conversation.document ?? null,
+          conversation.documentLayout ?? null,
           conversation.createdAt,
           conversation.updatedAt,
         ],

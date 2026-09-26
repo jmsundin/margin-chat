@@ -20,6 +20,21 @@ test("title text stays readable and selected previews keep their on-screen size"
   }
 });
 
+test("group headings clear document readers as their projected footprints grow", () => {
+  const node = { conversationId: "document", x: 20, y: 30, width: 200, height: 96, depth: 0 };
+  const territory: MapTerritory = { id: "research", label: "Research", color: "#888", nodes: [node], x: 20, y: 30 };
+  for (const scale of [2, 3, 6]) {
+    const viewport = { x: 50, y: -30, scale };
+    const footprint = { width: node.width * scale, height: node.height * scale };
+    const bounds = getMapTerritoryScreenBounds(territory, viewport, null, () => footprint);
+    const heading = placeMapTerritoryHeadings([bounds], "canvas")[0];
+    expect(heading.y + heading.height).toBeLessThanOrEqual(viewport.y + node.y * scale);
+    expect(bounds.x).toBeLessThan(viewport.x + node.x * scale);
+    expect(bounds.x + bounds.width).toBeGreaterThan(viewport.x + (node.x + node.width) * scale);
+    expect(bounds.y + bounds.height).toBeGreaterThan(viewport.y + (node.y + node.height) * scale);
+  }
+});
+
 test("group skeleton counts cover each visible source once without changing geometry", () => {
   const node = (id: string, x: number) => ({ conversationId: id, x, y: 0, width: 200, height: 96, depth: 0 });
   const scene: ConversationGraphScene = { nodes: [node("a", -200), node("b", 100), node("c", 500)], groups: [], edges: [], width: 700, height: 96 };

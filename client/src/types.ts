@@ -13,6 +13,9 @@ export type {
   PublicTopicSource,
   BranchAnchor,
   Conversation,
+  DocumentDockNode,
+  DocumentDockLayout,
+  DocumentDockPosition,
   GraphNodeLayout,
   ConversationGroup,
   AppState,
@@ -155,6 +158,21 @@ export interface ConnectionLine {
   };
   active: boolean;
   variant?: "curve" | "straight";
+  continuation?: {
+    title: string;
+    direction: "up" | "down" | "left" | "right" | "open";
+    relation: "source" | "target";
+    target: ConnectorNavigationTarget;
+    left: number;
+    top: number;
+    width: number;
+  };
+}
+
+export interface ConnectorNavigationTarget {
+  conversationId: string;
+  anchorId?: string;
+  blockId?: string;
 }
 
 export interface ConnectorOcclusionRect {
@@ -170,6 +188,8 @@ export interface MessageAnchorLink {
   branchConversationId: string;
   title: string;
   anchor: BranchAnchor;
+  kind?: "document-link";
+  targetBlockId?: string;
   preview?: {
     kind: "chat" | "note";
     prompt?: string;

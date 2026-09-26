@@ -129,6 +129,8 @@ describe("shared Markdown runtime", () => {
     expect(browser.createMarkdownWorkspace).toBe(server.createMarkdownWorkspace);
     expect(browser.parseMarkdownWorkspace).toBe(server.parseMarkdownWorkspace);
     expect(browser.discoverMarkdownWorkspace).toBe(server.discoverMarkdownWorkspace);
+    expect(browser.encodeReadableMarkdown).toBe(server.encodeReadableMarkdown);
+    expect(browser.decodeReadableMarkdown).toBe(server.decodeReadableMarkdown);
   });
 
   const badMetadata = [
@@ -154,11 +156,30 @@ describe("shared Markdown runtime", () => {
     });
     const workspace = browser.createMarkdownWorkspace(state);
     const path = workspace.manifest.files[0].path;
-    const source = workspace.files[path];
-    for (const files of [{}, { [path]: source.replace("<!-- margin-chat-message-end -->", "") }]) {
-      expect(browser.parseMarkdownWorkspace(workspace.manifest, files)).toBeNull();
-      expect(server.parseMarkdownWorkspace(workspace.manifest, files)).toBeNull();
+    for (const source of [workspace.files[path], browser.decodeReadableMarkdown(workspace.files[path])]) {
+      const damaged = source.replace(/^<!-- margin-chat-(?:message|msg)-end(?: .+)? -->\r?$/m, "");
+      expect(damaged).not.toBe(source);
+      for (const files of [{}, { [path]: damaged }]) {
+        expect(browser.parseMarkdownWorkspace(workspace.manifest, files)).toBeNull();
+        expect(server.parseMarkdownWorkspace(workspace.manifest, files)).toBeNull();
+      }
     }
+  });
+
+  test("both runtimes read version 3 and 4 manifests and reject broken readable registries", () => {
+    const workspace = browser.createMarkdownWorkspace(createEmptyState());
+    for (const formatVersion of [3, 4]) {
+      expect(browser.parseMarkdownWorkspaceManifest({ ...workspace.manifest, formatVersion })).not.toBeNull();
+      expect(server.parseMarkdownWorkspaceManifest({ ...workspace.manifest, formatVersion })).not.toBeNull();
+    }
+    const path = workspace.manifest.files[0].path;
+    const source = workspace.files[path];
+    const damaged = source.replace(/^margin-chat: \|-\r?\n/m, (opening) => `${opening}  broken registry\n`);
+    expect(damaged).not.toBe(source);
+    const files = { [path]: damaged };
+    expect(() => browser.discoverMarkdownWorkspace(files)).toThrow();
+    expect(() => server.discoverMarkdownWorkspace(files)).toThrow();
+    expect(files[path]).toBe(damaged);
   });
 
   test("both runtimes reject invalid manifest paths, aliases, versions and dates", () => {

@@ -1,5 +1,6 @@
 const WHEEL_DELTA_TOLERANCE = 0.5;
-const HORIZONTAL_INTENT_RATIO = 0.75;
+// Favor reading vertically unless the gesture clearly aims across documents.
+const HORIZONTAL_INTENT_RATIO = 2;
 
 export type WheelGestureAxis = "horizontal" | "vertical" | "none";
 

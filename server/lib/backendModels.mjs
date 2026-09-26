@@ -4,7 +4,7 @@ const DEFAULT_MODEL_IDS = {
   "huggingface-api": "deepseek-ai/DeepSeek-V4.1-Flash",
   "openai-api": "gpt-6-astra",
   "openai-agent": "gpt-6-astra",
-  "xai-api": "grok-4.6",
+  "xai-api": "grok-4.7",
 };
 
 // Include earlier picker IDs so persisted chats remain valid. The client offers
@@ -32,17 +32,22 @@ const MODEL_IDS_BY_SERVICE = {
   ]),
   "openai-api": new Set([
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
   ]),
   "openai-agent": new Set([
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "gpt-5.6",
     "gpt-5.6-terra",
     "gpt-5.6-luna",
   ]),
   "xai-api": new Set([
+    "grok-4.7",
     "grok-4.6",
     "grok-4.5",
     "grok-4.3",

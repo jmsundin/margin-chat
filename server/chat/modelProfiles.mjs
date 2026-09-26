@@ -3,7 +3,7 @@ import { getRuntimeDefaultModelForService, isBackendModelIdForService, getDefaul
 // Application preferences, not measured rankings. Keep exact IDs in the existing
 // supported catalog; provider documentation is evidence of capabilities, not
 // evidence of comparative quality on this application's tasks.
-export const MODEL_PROFILE_VERSION = "heuristic-2026-09-19.1";
+export const MODEL_PROFILE_VERSION = "heuristic-2026-09-26.1";
 export const PROFILE_EVIDENCE = Object.freeze({
   kind: "heuristic",
   reviewedAt: "2026-09-19",
@@ -21,7 +21,7 @@ export const PROFILE_EVIDENCE = Object.freeze({
 });
 
 const FAST_MODELS = {
-  "openai-api": "gpt-5.6-luna",
+  "openai-api": "gpt-6-luna",
   "gemini-api": "gemini-3.5-flash-lite",
   "huggingface-api": "Qwen/Qwen3.8-27B",
   "xai-api": "grok-4.3",
@@ -39,7 +39,7 @@ export function selectProfileModel(serviceId, { mode, task }, runtimeConfig) {
   }
   if (mode === "balanced" && task === "summary") {
     if (serviceId === "gemini-api") model = "gemini-3.8-flash";
-    if (serviceId === "openai-api") model = "gpt-5.6-terra";
+    if (serviceId === "openai-api") model = "gpt-6-sol";
   }
   return isBackendModelIdForService(serviceId, model) ? model : getDefaultModelIdForService(serviceId);
 }

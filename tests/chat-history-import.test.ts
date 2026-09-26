@@ -138,12 +138,26 @@ describe("ChatGPT history import", () => {
       linkedConversationIds: [preview.chats[0].id] };
     const linkedFiles = stateToVaultFiles(state, files);
     await engine.edit(linkedFiles, files);
-    const renamedPath = Object.keys(files).find((path) => path.includes(preview.chats[1].id))!;
+    const renamedPath = workspaceFromVault(files).manifest.files.find((record) => record.id === preview.chats[1].id)!.path;
     await engine.edit({ "Renamed.md": files[renamedPath] }, { [renamedPath]: files[renamedPath] });
     expect(await engine.undoChatHistory(receipt)).toEqual({ removed: 0, kept: 2 });
     const restored = vaultToState((await engine.read()).files, createEmptyState());
     expect(restored.conversations.linker.linkedConversationIds).toEqual([preview.chats[0].id]);
     expect(restored.conversations[preview.chats[1].id]).toBeDefined();
+  });
+
+  test("undo preserves an imported document pinned in the dock without content edits", async () => {
+    const engine = device();
+    const preview = await parseChatGPTHistory([chatGPTFixture(), chatGPTFixture("unused")]);
+    const files = historyVaultFiles(preview.chats, createEmptyState());
+    const receipt = await engine.importChatHistory(files);
+    const state = vaultToState(files, createEmptyState());
+    state.documentDock = { width: .4, tree: { type: "pane", documentId: preview.chats[0].id, scope: "family" } };
+    await engine.edit(stateToVaultFiles(state, files), files);
+    expect(await engine.undoChatHistory(receipt)).toEqual({ removed: 1, kept: 1 });
+    const restored = vaultToState((await engine.read()).files, createEmptyState());
+    expect(restored.conversations[preview.chats[0].id]).toBeDefined();
+    expect(restored.documentDock).toEqual(state.documentDock);
   });
 
 });

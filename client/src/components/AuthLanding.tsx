@@ -76,7 +76,7 @@ export default function AuthLanding({
       return;
     }
 
-    setNotice("If an account exists for that email, password reset instructions have been sent.");
+    setNotice("If an account exists for that email, you’ll receive password reset instructions. Check your spam folder too.");
   }
 
   async function handleResetSubmit(event: FormEvent<HTMLFormElement>) {
@@ -96,6 +96,9 @@ export default function AuthLanding({
     }
 
     window.history.replaceState({}, "", window.location.pathname);
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setResetToken("");
     setLoginEmail(resetEmail);
     setLoginPassword("");
     setMode("login");

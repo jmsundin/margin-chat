@@ -1,0 +1,58 @@
+.document-views-control { display: flex; align-items: center; flex: 0 0 auto; }
+.document-views-trigger {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 34px;
+  padding: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.document-views-trigger svg { width: 18px; height: 18px; }
+.document-views-trigger:hover, .document-views-trigger[aria-expanded="true"] { background: var(--button-surface); color: var(--ink); }
+.document-views-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-views-menu {
+  position: fixed;
+  z-index: 200;
+  box-sizing: border-box;
+  width: min(224px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 8px 24px #0003;
+}
+.document-views-menu.is-related { width: min(320px, calc(100vw - 16px)); }
+.document-views-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.document-views-menu button:hover:not(:disabled), .document-views-menu button:focus-visible { background: var(--button-active-surface); outline: none; }
+.document-views-menu button:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.document-views-menu button:disabled { color: var(--muted); opacity: .6; cursor: default; }
+.document-views-menu button > svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.document-views-count { margin-left: auto; color: var(--muted); font-size: 11px; }
+.document-views-check { flex: 0 0 9px; color: var(--accent); }
+.document-views-heading { margin: 8px 10px 4px; color: var(--muted); font-size: 11px; font-weight: 600; }
+.document-views-menu .document-views-back { color: var(--muted); font-size: 12px; }
+.document-views-kind { flex: 0 0 29px; color: var(--muted); font-size: 10px; }
+.document-views-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.document-views-menu p { margin: 8px 10px; color: var(--muted); font-size: 12px; line-height: 1.4; }

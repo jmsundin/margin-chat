@@ -4,29 +4,92 @@ import {
 } from "./vaultTypes";
 import { reconcileVaultImportPaths, validateVaultWorkspace, workspaceFromVault } from "./vaultWorkspace";
 import type { HistoryImportReceipt } from "./chatHistoryImport";
-import { parseMarkdownWorkspace } from "./workspaceMarkdown";
+import { parseMarkdownWorkspace, preserveMarkdownFileLocation } from "./workspaceMarkdown";
+import { mergeVaultFile } from "./vaultMerge";
+import { recoverVaultAlternatives } from "./vaultRecovery";
+import { remapVaultMergeAnchors } from "./vaultMergeAnchors";
 
 function assignFile(snapshot: VaultSnapshot, path: string, file: VaultFile | null | undefined) {
   if (file) snapshot.files[path] = file;
   else delete snapshot.files[path];
 }
 
-function preserveConflict(snapshot: VaultSnapshot, path: string, local: VaultFile | null, remote: VaultFile | null, sourcePath?: string) {
+type MergeRecovery = {
+  base?: VaultFile | null;
+  result?: VaultFile | null;
+  conflicted?: boolean;
+};
+
+function preserveConflict(snapshot: VaultSnapshot, path: string, local: VaultFile | null, remote: VaultFile | null, sourcePath?: string, recovery: MergeRecovery = {}) {
+  const result = recovery.result !== undefined ? recovery.result : remote;
   if (snapshot.conflicts.some((conflict) => conflict.path === path
-    && sameVaultFile(conflict.local, local) && sameVaultFile(conflict.remote, remote))) return;
+    && conflict.sourcePath === sourcePath && sameVaultFile(conflict.local, local) && sameVaultFile(conflict.remote, remote)
+    && (conflict.base === undefined) === (recovery.base === undefined) && sameVaultFile(conflict.base, recovery.base)
+    && sameVaultFile(conflict.result !== undefined ? conflict.result : conflict.remote, result))) return;
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  snapshot.conflicts.push({ id, path, local, remote, createdAt, ...(sourcePath ? { sourcePath } : {}) });
+  if (recovery.conflicted !== false) snapshot.conflicts.push({ id, path, local, remote, createdAt,
+    automatic: true, result, ...(recovery.base !== undefined ? { base: recovery.base } : {}),
+    ...(sourcePath ? { sourcePath } : {}) });
   const backupPath = `_conflicts/${id}/local/${path.split("/").pop()}`;
   const remotePath = `_conflicts/${id}/remote/${path.split("/").pop()}`;
   if (local) snapshot.files[backupPath] = { ...local };
   if (remote) snapshot.files[remotePath] = { ...remote };
+  const basePath = `_conflicts/${id}/base/${path.split("/").pop()}`;
+  const resultPath = `_conflicts/${id}/result/${path.split("/").pop()}`;
+  if (recovery.base) snapshot.files[basePath] = { ...recovery.base };
+  if (result) snapshot.files[resultPath] = { ...result };
   snapshot.files[`_conflicts/${id}/conflict.json`] = {
     content: JSON.stringify({ path, createdAt, localDeleted: !local, remoteDeleted: !remote, copy: local ? backupPath : null,
       remoteCopy: remote ? remotePath : null, localEncoding: local?.encoding ?? "utf8", remoteEncoding: remote?.encoding ?? "utf8",
+      automatic: true, conflicted: recovery.conflicted !== false,
+      baseKnown: recovery.base !== undefined, baseCopy: recovery.base ? basePath : null,
+      resultCopy: result ? resultPath : null, resultDeleted: !result,
+      baseEncoding: recovery.base?.encoding ?? "utf8", resultEncoding: result?.encoding ?? "utf8",
       ...(sourcePath ? { sourcePath } : {}) }, null, 2),
     contentType: "application/json",
   };
+}
+
+type MergeAttempt = {
+  path: string; base: VaultFile | null | undefined; local: VaultFile | null; remote: VaultFile | null;
+  file: VaultFile | null; conflicted: boolean; sourcePath?: string;
+};
+type MergeContext = { base: Record<string, VaultFile>; local: Record<string, VaultFile>; remote: Record<string, VaultFile> };
+
+function mergeConcurrentFile(snapshot: VaultSnapshot, attempts: MergeAttempt[], path: string,
+  base: VaultFile | null | undefined, local: VaultFile | null, remote: VaultFile | null, sourcePath?: string) {
+  const outcome = mergeVaultFile(path, base ?? null, local, remote);
+  attempts.push({ path, base, local, remote, ...outcome, ...(sourcePath ? { sourcePath } : {}) });
+  assignFile(snapshot, path, outcome.file);
+}
+
+/** Validate the complete result before saving recovery receipts and the durable sync base. */
+function finishMerges(snapshot: VaultSnapshot, attempts: MergeAttempt[], context: MergeContext) {
+  if (!attempts.length) return;
+  const remapped = remapVaultMergeAnchors(context.base, context.local, context.remote, snapshot.files);
+  for (const [path, file] of Object.entries(remapped)) {
+    if (sameVaultFile(file, snapshot.files[path])) continue;
+    const attempt = attempts.find((item) => item.path === path);
+    if (attempt) attempt.file = file;
+    else attempts.push({ path, base: context.base[path], local: context.local[path] ?? null,
+      remote: context.remote[path] ?? null, file, conflicted: false });
+  }
+  snapshot.files = remapped;
+  try { validateVaultWorkspace(snapshot.files); }
+  catch (error) {
+    if (!attempts.some((attempt) => !sameVaultFile(attempt.file, attempt.remote))) throw error;
+    // Individually valid edits can break cross-file identities/references when combined.
+    // Keep the canonical versions and preserve every alternative instead of publishing that combination.
+    for (const attempt of attempts) {
+      attempt.file = attempt.remote;
+      attempt.conflicted = true;
+      assignFile(snapshot, attempt.path, attempt.remote);
+    }
+    validateVaultWorkspace(snapshot.files);
+  }
+  for (const attempt of attempts) preserveConflict(snapshot, attempt.path, attempt.local, attempt.remote, attempt.sourcePath,
+    { ...(attempt.base !== undefined ? { base: attempt.base } : {}), result: attempt.file, conflicted: attempt.conflicted });
 }
 
 export function pendingVaultChanges(snapshot: VaultSnapshot): VaultChange[] {
@@ -43,7 +106,11 @@ export function pendingVaultChanges(snapshot: VaultSnapshot): VaultChange[] {
 }
 
 function nextVaultBatch(snapshot: VaultSnapshot): VaultChange[] {
-  const changes = pendingVaultChanges(snapshot);
+  const pending = pendingVaultChanges(snapshot);
+  // Finish uploading every recovery object before publishing working documents.
+  // A large/binary archive may span batches; a failed upload must leave the cloud document untouched.
+  const recovery = pending.filter((change) => /^_conflicts\//iu.test(change.path));
+  const changes = recovery.length ? recovery : pending;
   const byPath = new Map(changes.map((change) => [change.path, change]));
   const previousFiles = Object.fromEntries(Object.entries(snapshot.base)
     .flatMap(([path, entry]) => entry.file ? [[path, entry.file]] : []));
@@ -93,12 +160,12 @@ function nextVaultBatch(snapshot: VaultSnapshot): VaultChange[] {
 }
 
 /** Conflicts follow the document's surviving cloud identity, not an obsolete filename. */
-function reconcileRemoteRenames(snapshot: VaultSnapshot, remoteFiles: Record<string, VaultFile>) {
+function reconcileRemoteRenames(snapshot: VaultSnapshot, remoteFiles: Record<string, VaultFile>, attempts: MergeAttempt[]) {
   const previousFiles = Object.fromEntries(Object.entries(snapshot.base)
     .flatMap(([path, entry]) => entry.file ? [[path, entry.file]] : []));
   const localById = new Map(workspaceFromVault(snapshot.files).manifest.files.map((record) => [record.id, record.path]));
   const remoteById = new Map(workspaceFromVault(remoteFiles).manifest.files.map((record) => [record.id, record.path]));
-  const moves: Array<{ sourcePath?: string; targetPath: string; local: VaultFile | null; remote: VaultFile | null }> = [];
+  const moves: Array<{ sourcePath?: string; targetPath: string; base?: VaultFile | null; local: VaultFile | null; remote: VaultFile | null; lostRename?: boolean }> = [];
   const previousRecords = workspaceFromVault(previousFiles).manifest.files;
   for (const previous of previousRecords) {
     const localPath = localById.get(previous.id);
@@ -112,7 +179,8 @@ function reconcileRemoteRenames(snapshot: VaultSnapshot, remoteFiles: Record<str
     const localChanged = localPath !== previous.path || !sameVaultFile(local, previousFiles[previous.path]);
     const remoteChanged = remotePath !== previous.path || !sameVaultFile(remote, previousFiles[previous.path]);
     if (!localChanged || !remoteChanged) continue;
-    moves.push({ sourcePath: localPath, targetPath: remotePath ?? localPath!, local, remote });
+    moves.push({ sourcePath: localPath, targetPath: remotePath ?? localPath!, base: previousFiles[previous.path], local, remote,
+      lostRename: !!localPath && localPath !== previous.path && localPath !== remotePath });
   }
   // Independently restored devices may share an identity without a common
   // revision. Preserve both copies instead of committing duplicate documents.
@@ -125,20 +193,30 @@ function reconcileRemoteRenames(snapshot: VaultSnapshot, remoteFiles: Record<str
   // Capture every version before moving anything, including crossed renames.
   const movedSources = new Set(moves.map((move) => move.sourcePath));
   for (const move of moves) {
-    preserveConflict(snapshot, move.targetPath, move.local, move.remote, move.sourcePath);
     const occupied = snapshot.files[move.targetPath];
     if (occupied && !movedSources.has(move.targetPath) && !sameVaultFile(occupied, previousFiles[move.targetPath])
       && !sameVaultFile(occupied, move.local) && !sameVaultFile(occupied, move.remote)) {
-      preserveConflict(snapshot, move.targetPath, occupied, move.remote);
+      preserveConflict(snapshot, move.targetPath, occupied, move.remote, undefined,
+        { base: previousFiles[move.targetPath] });
     }
   }
   for (const move of moves) if (move.sourcePath) delete snapshot.files[move.sourcePath];
-  for (const move of moves) assignFile(snapshot, move.targetPath, move.remote);
+  for (const move of moves) {
+    mergeConcurrentFile(snapshot, attempts, move.targetPath, move.base, move.local, move.remote, move.sourcePath);
+    if (move.lostRename) attempts[attempts.length - 1].conflicted = true;
+  }
+  return new Set(moves.flatMap((move) => [move.targetPath, ...(move.sourcePath ? [move.sourcePath] : [])]));
 }
 
 /** Apply edits relative to the files the editor actually displayed, not the latest disk revision. */
 export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, VaultFile>, expected: Record<string, VaultFile>): VaultSnapshot {
   const result = structuredClone(snapshot);
+  const attempts: MergeAttempt[] = [];
+  const context: MergeContext = { base: { ...snapshot.files }, local: { ...snapshot.files }, remote: snapshot.files };
+  for (const path of new Set([...Object.keys(next), ...Object.keys(expected)])) {
+    if (expected[path]) context.base[path] = expected[path]; else delete context.base[path];
+    if (next[path]) context.local[path] = next[path]; else delete context.local[path];
+  }
   next = { ...next };
   expected = { ...expected };
   const nextById = new Map(workspaceFromVault(next).manifest.files.map((record) => [record.id, record.path]));
@@ -151,7 +229,8 @@ export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, Va
     const current = result.files[record.path];
     if (!current && !result.files[movedPath]) {
       // A rename on disk must not silently reverse a deletion made in the app.
-      preserveConflict(result, movedPath, next[movedPath], null, record.path);
+      preserveConflict(result, movedPath, next[movedPath], null, record.path,
+        { base: expected[record.path], result: null });
       delete next[movedPath];
       continue;
     }
@@ -169,8 +248,9 @@ export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, Va
     if (sameVaultFile(previous, edited)) continue;
     const current = result.files[path] ?? null;
     if (sameVaultFile(current, previous) || sameVaultFile(current, edited)) assignFile(result, path, edited);
-    else preserveConflict(result, path, edited, current);
+    else mergeConcurrentFile(result, attempts, path, previous, edited, current);
   }
+  finishMerges(result, attempts, context);
   return result;
 }
 
@@ -181,6 +261,7 @@ export class VaultSync {
 
   private async write(snapshot: VaultSnapshot) {
     validateVaultWorkspace(snapshot.files);
+    recoverVaultAlternatives(snapshot);
     await this.store.write(snapshot);
   }
 
@@ -228,11 +309,22 @@ export class VaultSync {
       const conflict = snapshot.conflicts.find((item) => item.id === id);
       if (!conflict) return snapshot;
       // A newer edit must not disappear when resolving an older conflict.
-      if (choice !== "current" && !sameVaultFile(snapshot.files[conflict.path], conflict.remote)) {
-        throw new Error("This file changed again. Sync and review its latest version before resolving it.");
+      // Recovery may have arrived before its working result when the uploading
+      // device disconnected. The saved cloud input is also safe to replace.
+      if (choice !== "current" && !sameVaultFile(snapshot.files[conflict.path], conflict.result !== undefined ? conflict.result : conflict.remote)
+        && !sameVaultFile(snapshot.files[conflict.path], conflict.remote)) {
+        throw new Error("This file changed again. Its newer writing is safe; download the vault to recover an older version without replacing it.");
       }
-      if (choice === "local") assignFile(snapshot, conflict.path, conflict.local);
+      if (choice !== "current") {
+        let selected = choice === "local" ? conflict.local : conflict.remote;
+        const current = snapshot.files[conflict.path];
+        if (selected && current && !selected.encoding && !current.encoding && /\.md$/i.test(conflict.path)) {
+          selected = { ...selected, content: preserveMarkdownFileLocation(selected.content, current.content, conflict.path) };
+        }
+        assignFile(snapshot, conflict.path, selected);
+      }
       snapshot.conflicts = snapshot.conflicts.filter((item) => item.id !== id);
+      snapshot.dismissedRecoveryIds = [...new Set([...(snapshot.dismissedRecoveryIds ?? []), id])];
       await this.write(snapshot);
       return snapshot;
     });
@@ -267,6 +359,12 @@ export class VaultSync {
         chat.parentId, chat.branchAnchor?.sourceConversationId, ...(chat.linkedConversationIds ?? []),
       ]).filter(Boolean));
       for (const id of state?.pinnedThreadIds ?? []) referenced.add(id);
+      const pinnedPanes = state?.documentDock?.tree ? [state.documentDock.tree] : [];
+      while (pinnedPanes.length) {
+        const pane = pinnedPanes.pop()!;
+        if (pane.type === "pane") referenced.add(pane.documentId);
+        else pinnedPanes.push(pane.first, pane.second);
+      }
       for (const group of Object.values(state?.groups ?? {})) for (const id of group.conversationIds) referenced.add(id);
       const originals = new Map(workspaceFromVault(receipt.files).manifest.files.map((file) => [file.path, file.id]));
       const currentPaths = new Map(workspace.manifest.files.map((file) => [file.id, file.path]));
@@ -329,21 +427,26 @@ export class VaultSync {
           const file = base?.revision === entry.revision ? base.file : incoming.get(path);
           if (file) remoteFiles[path] = file;
         }
-        reconcileRemoteRenames(snapshot, remoteFiles);
+        const attempts: MergeAttempt[] = [];
+        const context: MergeContext = { local: { ...snapshot.files }, remote: remoteFiles,
+          base: Object.fromEntries(Object.entries(snapshot.base).flatMap(([path, entry]) => entry.file ? [[path, entry.file]] : [])) };
+        const moved = reconcileRemoteRenames(snapshot, remoteFiles, attempts);
         for (const [path, entry] of entries) {
           const base = snapshot.base[path];
           if (base?.revision === entry.revision) continue;
           if (!incoming.has(path)) return null;
           const file = incoming.get(path)!;
           const local = snapshot.files[path] ?? null;
-          if (sameVaultFile(local, base?.file) || sameVaultFile(local, file)) {
+          if (moved.has(path)) {
+            // Identity reconciliation already combined this document at its surviving path.
+          } else if (sameVaultFile(local, base?.file) || sameVaultFile(local, file)) {
             assignFile(snapshot, path, file);
           } else {
-            preserveConflict(snapshot, path, local, file);
-            assignFile(snapshot, path, file);
+            mergeConcurrentFile(snapshot, attempts, path, base?.file, local, file);
           }
           snapshot.base[path] = { revision: entry.revision, file };
         }
+        finishMerges(snapshot, attempts, context);
         snapshot.remoteRevision = remote.revision;
         // Persist downloads/conflict copies before publishing further changes.
         await this.write(snapshot);

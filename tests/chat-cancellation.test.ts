@@ -9,6 +9,8 @@ afterEach(() => { globalThis.fetch = originalFetch; });
 
 function service() {
   return createChatService({
+    // Exercise generation and rule fallback independently of the router API.
+    autoRouter: async () => null,
     database: {},
     env: { OPENAI_API_KEY: "openai-test", GEMINI_API_KEY: "gemini-test", XAI_API_KEY: "xai-test", HF_TOKEN: "hf-test" },
     runtimeConfig: { defaultBackendProvider: "openai-api" },

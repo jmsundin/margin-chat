@@ -1,0 +1,55 @@
+.connector-continuations {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.connector-continuation {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  box-shadow: 0 2px 8px #0002;
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.connector-continuation > :first-child { color: var(--accent); flex-shrink: 0; }
+.connector-continuation-relation { color: var(--muted); flex-shrink: 0; }
+.connector-continuation-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connector-continuation.is-active { border-color: var(--accent); }
+.connector-continuation:hover { background: var(--accent-soft); }
+.connector-continuation:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.connector-continuation-group { position: absolute; pointer-events: auto; }
+.connector-continuation-group > summary { position: relative; max-width: 100%; list-style: none; }
+.connector-continuation-group > summary::-webkit-details-marker { display: none; }
+.connector-continuation-count { flex-shrink: 0; color: var(--accent); }
+.connector-continuation-group[open] { z-index: 1; }
+.connector-continuation-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  display: grid;
+  gap: 4px;
+  width: 240px;
+  max-width: min(240px, 80vw);
+  max-height: min(240px, 40vh);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  box-shadow: 0 4px 16px #0003;
+}
+.connector-continuation-group.opens-up .connector-continuation-list { top: auto; bottom: calc(100% + 4px); }
+.connector-continuation.is-in-list { position: static; box-shadow: none; border-color: transparent; width: 100%; text-align: left; }

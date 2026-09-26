@@ -16,7 +16,9 @@ type FileRef = Omit<VaultFile, "content"> & { object: string };
 type StoredSnapshot = Omit<VaultSnapshot, "files" | "base" | "conflicts" | "directoryBaselines"> & {
   files: Record<string, FileRef>;
   base: Record<string, { revision: string; file: FileRef | null }>;
-  conflicts: Array<Omit<VaultSnapshot["conflicts"][number], "local" | "remote"> & { local: FileRef | null; remote: FileRef | null }>;
+  conflicts: Array<Omit<VaultSnapshot["conflicts"][number], "local" | "remote" | "base" | "result"> & {
+    local: FileRef | null; remote: FileRef | null; base?: FileRef | null; result?: FileRef | null;
+  }>;
   directoryBaselines?: Record<string, { manifest: NonNullable<VaultSnapshot["directoryBaselines"]>[string]["manifest"]; files: Record<string, FileRef> }>;
 };
 
@@ -116,12 +118,17 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       }
       const snapshot = emptyVault();
       snapshot.remoteRevision = stored.remoteRevision;
+      if (stored.dismissedRecoveryIds) snapshot.dismissedRecoveryIds = stored.dismissedRecoveryIds;
       for (const [path, ref] of Object.entries(stored.files)) {
         if (!validVaultPath(path)) throw new Error("Invalid path in local vault.");
         snapshot.files[path] = (await readRef(ref))!;
       }
       for (const [path, base] of Object.entries(stored.base)) snapshot.base[path] = { revision: base.revision, file: await readRef(base.file) };
-      for (const conflict of stored.conflicts) snapshot.conflicts.push({ ...conflict, local: await readRef(conflict.local), remote: await readRef(conflict.remote) });
+      for (const { local, remote, base, result, ...metadata } of stored.conflicts) snapshot.conflicts.push({ ...metadata,
+        local: await readRef(local), remote: await readRef(remote),
+        ...(base !== undefined ? { base: await readRef(base) } : {}),
+        ...(result !== undefined ? { result: await readRef(result) } : {}),
+      });
       if (stored.directoryBaselines) {
         snapshot.directoryBaselines = {};
         for (const [id, baseline] of Object.entries(stored.directoryBaselines)) {
@@ -139,6 +146,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       const root = await directory();
       const history = await root.getDirectoryHandle("history", { create: true });
       const stored: StoredSnapshot = { schemaVersion: 1, remoteRevision: snapshot.remoteRevision, files: {}, base: {}, conflicts: [] };
+      if (snapshot.dismissedRecoveryIds) stored.dismissedRecoveryIds = snapshot.dismissedRecoveryIds;
       const cache = operationCache ?? createOperationCache();
       const known = new Set<string>();
       async function storeFile(file: VaultFile | null, path: string): Promise<FileRef | null> {
@@ -171,8 +179,11 @@ export function createBrowserVaultStore(userId: string): VaultStore {
         stored.files[path] = (await storeFile(file, path))!;
       }
       for (const [path, base] of Object.entries(snapshot.base)) stored.base[path] = { revision: base.revision, file: await storeFile(base.file, path) };
-      for (const conflict of snapshot.conflicts) stored.conflicts.push({ ...conflict,
-        local: await storeFile(conflict.local, conflict.path), remote: await storeFile(conflict.remote, conflict.path) });
+      for (const { local, remote, base, result, ...metadata } of snapshot.conflicts) stored.conflicts.push({ ...metadata,
+        local: await storeFile(local, metadata.path), remote: await storeFile(remote, metadata.path),
+        ...(base !== undefined ? { base: await storeFile(base, metadata.path) } : {}),
+        ...(result !== undefined ? { result: await storeFile(result, metadata.path) } : {}),
+      });
       if (snapshot.directoryBaselines) {
         stored.directoryBaselines = {};
         for (const [id, baseline] of Object.entries(snapshot.directoryBaselines)) {

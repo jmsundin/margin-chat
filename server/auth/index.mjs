@@ -6,9 +6,10 @@ import {
   readAuthSessionId,
 } from "./cookies.mjs";
 import { hashPassword, verifyPassword } from "./passwords.mjs";
-import { sendPasswordResetEmail } from "./passwordResetEmail.mjs";
+import { getPasswordResetEmailConfiguration, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
 import {
   normalizeLoginPayload,
+  normalizePasswordChangePayload,
   normalizePasswordResetConfirmPayload,
   normalizePasswordResetRequestPayload,
   normalizeProfileUpdatePayload,
@@ -91,6 +92,16 @@ export function createAuthService({
 
   async function requestPasswordReset(payload) {
     const input = normalizePasswordResetRequestPayload(payload);
+    const emailConfiguration = getPasswordResetEmailConfiguration(env);
+    const allowDevelopmentToken = !emailConfiguration.configured
+      && [undefined, "", "development", "test"].includes(env.NODE_ENV)
+      && !env.VERCEL && !env.VERCEL_ENV && !env.VERCEL_URL;
+
+    if (!emailConfiguration.configured && !allowDevelopmentToken) {
+      console.error(emailConfiguration.reason);
+      throw createStatusError(503, "Password reset is temporarily unavailable. Please try again later.");
+    }
+
     const user = await database.findUserForLogin(input.email);
 
     if (!user) {
@@ -107,13 +118,14 @@ export function createAuthService({
       userId: user.id,
     });
 
-    if (env.NODE_ENV === "production") {
+    if (emailConfiguration.configured) {
       try {
         const delivery = await sendPasswordResetEmail({
           email: user.email,
           env,
           token,
           tokenHash,
+          ttlMs: runtimeConfig.passwordResetTtlMs,
         });
 
         if (!delivery.delivered) {
@@ -126,7 +138,7 @@ export function createAuthService({
 
     return {
       ok: true,
-      ...(env.NODE_ENV === "production" ? {} : { resetToken: token }),
+      ...(allowDevelopmentToken ? { resetToken: token } : {}),
     };
   }
 
@@ -140,6 +152,31 @@ export function createAuthService({
     });
 
     return { ok: true };
+  }
+
+  async function changePassword(userId, sessionId, payload) {
+    const input = normalizePasswordChangePayload(payload);
+    const currentPasswordHash = await database.getUserPasswordHash(userId);
+
+    if (!currentPasswordHash || !(await verifyPassword(input.currentPassword, currentPasswordHash))) {
+      throw createStatusError(400, "Current password is incorrect.");
+    }
+
+    if (input.password === input.currentPassword) {
+      throw createStatusError(400, "Choose a different password from your current password.");
+    }
+
+    const replacementSessionId = randomUUID();
+    await database.changeUserPassword({
+      currentPasswordHash,
+      currentSessionId: sessionId,
+      expiresAt: getSessionExpiryDate(),
+      passwordHash: await hashPassword(input.password),
+      replacementSessionId,
+      userId,
+    });
+
+    return { cookie: createAuthSessionCookie(replacementSessionId, runtimeConfig), ok: true };
   }
 
   async function getAuthContext(request) {
@@ -199,6 +236,7 @@ export function createAuthService({
   return {
     authenticateCredentials,
     buildClearedSessionCookie,
+    changePassword,
     getAuthContext,
     login,
     logout,

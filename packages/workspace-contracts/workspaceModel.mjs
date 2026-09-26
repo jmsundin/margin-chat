@@ -1,6 +1,8 @@
 import { normalizeAISettings, normalizeAIExecution } from "./ai.mjs";
 import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./exploration.mjs";
 import { normalizeEditableDocument } from "./editableDocument.mjs";
+import { normalizeDocumentLayout } from "./documentLayout.mjs";
+import { normalizeDocumentDock } from "./documentDock.mjs";
 export const WORKSPACE_DOCUMENT_SCHEMA_VERSION = 2;
 
 // Format-level defaults for standalone Markdown imported without a manifest.
@@ -75,6 +77,7 @@ export function createWorkspaceDocument(state) {
     },
     schemaVersion: WORKSPACE_DOCUMENT_SCHEMA_VERSION,
     view: {
+      ...(state.documentDock ? { documentDock: state.documentDock } : {}),
       activeItemId: state.activeConversationId,
       activeRootId: state.rootId,
       graphLayouts: state.graphLayouts,
@@ -185,6 +188,8 @@ function readWorkspaceDocument(input, mode) {
   }
 
   for (const conversation of Object.values(conversations)) {
+    const documentLayout = normalizeDocumentLayout(input.items[conversation.id].documentLayout, conversation.id, conversations);
+    if (documentLayout) conversation.documentLayout = documentLayout;
     conversation.childIds.sort((left, right) =>
       conversations[left].createdAt.localeCompare(conversations[right].createdAt),
     );
@@ -194,6 +199,7 @@ function readWorkspaceDocument(input, mode) {
 
   return {
     activeConversationId: input.view.activeItemId,
+    ...optionalDocumentDock(input.view.documentDock, conversations),
     conversations: { ...conversations },
     defaultModelId: input.preferences.defaultModelId,
     defaultServiceId: input.preferences.defaultServiceId,
@@ -212,6 +218,7 @@ export function createWorkspaceDocumentMetadata(state) {
 export function createAppStateFromWorkspaceMetadata(metadata, conversations) {
   return {
     activeConversationId: metadata.view.activeItemId,
+    ...optionalDocumentDock(metadata.view.documentDock, conversations),
     conversations,
     defaultModelId: metadata.preferences.defaultModelId,
     defaultServiceId: metadata.preferences.defaultServiceId,
@@ -221,4 +228,9 @@ export function createAppStateFromWorkspaceMetadata(metadata, conversations) {
     railOpen: metadata.view.railOpen,
     rootId: metadata.view.activeRootId
   };
+}
+
+function optionalDocumentDock(input, conversations) {
+  const documentDock = normalizeDocumentDock(input, conversations);
+  return documentDock ? { documentDock } : {};
 }

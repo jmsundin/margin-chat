@@ -1,0 +1,31 @@
+.document-link-picker { color: var(--ink); display: flex; flex-direction: column; gap: 10px; min-width: 0; width: 100%; }
+.document-link-picker .document-link-picker-header { align-items: center; display: flex; gap: 6px; }
+.document-link-picker-heading { flex: 1; min-width: 0; }
+.document-link-picker .document-link-picker-heading h3 { font-size: .83rem; font-weight: 600; line-height: 1.4; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-link-picker .document-link-picker-heading p { color: var(--muted); font-size: .71rem; line-height: 1.5; margin: 2px 0 0; }
+.document-link-picker svg { fill: none; height: 16px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.7; width: 16px; }
+.document-link-picker button { font: inherit; }
+.document-link-picker .document-link-picker-back, .document-link-picker .document-link-picker-close { align-items: center; background: transparent; border: 0; border-radius: 6px; color: var(--muted); display: flex; flex: 0 0 30px; height: 32px; justify-content: center; padding: 5px; }
+.document-link-picker .document-link-picker-search { align-items: center; background: var(--input-bg); border: 1px solid var(--line-strong); border-radius: 8px; display: flex; gap: 8px; padding: 0 9px; }
+.document-link-picker-search > svg { color: var(--muted); flex: 0 0 15px; }
+.document-link-picker .document-link-picker-search input { background: transparent; border: 0; border-radius: 0; box-shadow: none; color: var(--ink); font: inherit; font-size: .78rem; min-height: 36px; min-width: 0; outline: 0; padding: 8px 0; width: 100%; }
+.document-link-picker-search:focus-within { border-color: var(--accent); }
+.document-link-picker-options { display: flex; flex-direction: column; gap: 3px; max-height: min(260px, 35dvh); min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.document-link-picker-document { align-items: stretch; border-radius: 7px; display: flex; gap: 2px; min-width: 0; }
+.document-link-picker .document-link-picker-target { align-items: center; background: transparent; border: 0; border-radius: 7px; color: var(--ink); display: flex; flex: 1; gap: 8px; min-height: 48px; min-width: 0; padding: 8px; text-align: left; }
+.document-link-picker-target > svg { color: var(--muted); flex: 0 0 16px; }
+.document-link-picker-target-copy { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.document-link-picker-title { font-size: .8rem; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-link-picker-preview { color: var(--muted); font-size: .7rem; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-link-picker .document-link-picker-browse { align-items: center; background: transparent; border: 0; border-radius: 6px; color: var(--muted); display: flex; flex: 0 0 auto; font-size: .7rem; gap: 2px; padding: 8px 5px; }
+.document-link-picker .document-link-picker-browse svg { height: 13px; width: 13px; }
+.document-link-picker .document-link-picker-block { background: transparent; border: 0; border-radius: 7px; color: var(--ink); display: flex; flex-direction: column; flex-shrink: 0; font-size: .78rem; gap: 3px; line-height: 1.45; padding: 8px; text-align: left; }
+.document-link-picker-block-label { color: var(--muted); font-size: .65rem; }
+.document-link-picker-block > span:last-child { -webkit-box-orient: vertical; -webkit-line-clamp: 3; display: -webkit-box; overflow: hidden; overflow-wrap: anywhere; }
+.document-link-picker button:hover:not(:disabled), .document-link-picker button:focus-visible { background: var(--accent-soft); color: var(--ink); }
+.document-link-picker button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-link-picker button:disabled { cursor: wait; opacity: .55; }
+.document-link-picker .document-link-picker-help, .document-link-picker .document-link-picker-empty, .document-link-picker .document-link-picker-error { color: var(--muted); font-size: .7rem; line-height: 1.5; margin: 0; }
+.document-link-picker .document-link-picker-empty { padding: 12px 8px; }
+.document-link-picker .document-link-picker-help { border-top: 1px solid var(--line); padding-top: 8px; }
+.document-link-picker .document-link-picker-error { color: var(--danger); }

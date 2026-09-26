@@ -8,5 +8,5 @@ test("mounted document panel keeps editing, inline prompts, side destinations, a
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   clearTimeout(timeout);
   if (code !== 0) throw new Error(`Document panel integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(9);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(10);
 }, 25000);

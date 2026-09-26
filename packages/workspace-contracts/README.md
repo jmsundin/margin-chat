@@ -22,7 +22,30 @@ remains empty, and temporarily orphaned annotation files remain preserved on dis
 Markdown updates preserve original source bytes outside fields actually edited by
 the app. Keep those preservation tests when changing the codec.
 
+New Markdown uses manifest version 4, while version 3 remains readable. The YAML
+header's `margin-chat: |-` field contains an indented JSON registry with
+`schemaVersion: 2`, the document metadata, and block/message metadata keyed by
+stable ID. The body retains authoritative Markdown text and compact paired
+`margin-chat-block` / `margin-chat-msg` identity comments. Document and attachment
+boundaries remain. A compatibility comment in the header prevents older readers
+from silently treating the new structure as a plain note.
+
+`encodeReadableMarkdown`, `decodeReadableMarkdown`, and `isReadableMarkdown`
+bridge the readable representation and legacy JSON-bearing marker format.
+Readers accept both representations. Preserve legacy fixtures and test actual
+readable-source edits as well: decoding every test input would miss regressions
+in external editing, newline preservation, and header updates. Reading a legacy
+file leaves it intact; an authored edit can migrate it to the current format.
+
+Generated paths start with the title and always include a short stable ID suffix.
+App-managed title changes rename the file and update managed incoming links;
+external paths remain stable. Path aliases preserve old relationship targets.
+Test same-title offline creation, renames, external filenames, and byte
+preservation alongside codec round trips.
+
 Run `bun test tests/workspace-contracts.test.ts tests/workspace-model.test.ts
-tests/workspace-markdown.test.ts tests/vault-workspace.test.ts` after changes.
+tests/workspace-markdown.test.ts tests/vault-workspace.test.ts
+tests/editable-document.test.ts tests/incremental-workspace.test.ts
+tests/vault-merge-anchors.test.ts` after changes.
 The contract tests include native Node loading, malformed input, read-policy
 differences, and browser/server byte preservation parity.

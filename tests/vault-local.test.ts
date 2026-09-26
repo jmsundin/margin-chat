@@ -92,6 +92,29 @@ function snapshot(content: string): VaultSnapshot {
 const objectPath = (content: string) => `margin-chat-vaults/alice/history/${createHash("sha256").update(content).digest("hex")}.md`;
 
 describe("durable OPFS Markdown storage", () => {
+  test("automatic recovery ancestors/results use verified objects and dismissed versions stay dismissed", async () => withOpfs(async (opfs) => {
+    const desired = snapshot("Selected merged writing");
+    desired.conflicts.push({ id: "merge", path: "Note.md", createdAt: "2026-09-25T12:00:00.000Z", automatic: true,
+      base: { content: "Original writing" }, local: { content: "Device writing" }, remote: { content: "Synced writing" },
+      result: { content: "Selected merged writing" } });
+    desired.dismissedRecoveryIds = ["older-merge"];
+    const storage = createBrowserVaultStore("alice");
+    await storage.write(desired);
+    expect(await createBrowserVaultStore("alice").read()).toEqual(desired);
+    const index = JSON.parse(new TextDecoder().decode(opfs.files.get("margin-chat-vaults/alice/vault-state.json")));
+    expect(index.conflicts[0].base.content).toBeUndefined();
+    expect(index.conflicts[0].result.content).toBeUndefined();
+    expect(index.conflicts[0].base.object).toMatch(/\.md$/);
+    expect(index.conflicts[0].result.object).toMatch(/\.md$/);
+    const changed = structuredClone(desired);
+    changed.conflicts[0].base = { content: "Another ancestor" };
+    opfs.failOnce("close", (path) => path === objectPath("Another ancestor"));
+    await expect(storage.write(changed)).rejects.toMatchObject({ name: "QuotaExceededError" });
+    expect(await createBrowserVaultStore("alice").read()).toEqual(desired);
+    opfs.files.set(objectPath("Original writing"), new Uint8Array());
+    await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("incomplete or damaged");
+  }));
+
   test("directory observations reopen with exact companion bytes and advance atomically with the vault", async () => withOpfs(async (opfs) => {
     const original = snapshot("Previously observed folder note");
     original.directoryBaselines = { "directory-identity": {

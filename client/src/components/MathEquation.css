@@ -1,0 +1,17 @@
+.document-math-display { display: block; overflow-x: auto; max-width: 100%; padding: 8px 0; }
+.document-math-error { color: var(--danger, #c85c5c); font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tiptap-mathematics-render { cursor: pointer; border-radius: 4px; }
+.tiptap-mathematics-render[data-type="inline-math"] { display: inline-block; max-width: 100%; vertical-align: baseline; }
+.tiptap-mathematics-render[data-type="block-math"] { display: block; margin: 12px 0; }
+.tiptap-mathematics-render:hover, .tiptap-mathematics-render:focus-visible, .tiptap-mathematics-render.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 3px; background: var(--accent-soft); }
+.math-equation-backdrop { position: fixed; inset: 0; z-index: 5000; background: #0006; display: grid; place-items: center; padding: 20px; }
+.math-equation-dialog { width: min(520px, 100%); max-height: calc(100dvh - 40px); overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 18px 60px #0005; display: grid; gap: 16px; }
+.math-equation-dialog header, .math-equation-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.math-equation-dialog footer { justify-content: flex-end; }
+.math-equation-dialog label { display: grid; gap: 6px; font-size: 13px; }
+.math-equation-dialog textarea, .math-equation-dialog select { width: 100%; box-sizing: border-box; padding: 10px; background: var(--panel-bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+.math-equation-dialog textarea { font-family: monospace; resize: vertical; }
+.math-equation-dialog button { padding: 8px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--button-surface); color: var(--ink); font: inherit; cursor: pointer; }
+.math-equation-dialog button[type="submit"] { background: var(--accent-soft); color: var(--accent); }
+.math-equation-dialog button:disabled { opacity: .5; cursor: default; }
+.math-equation-preview { min-height: 64px; padding: 16px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-bg); }

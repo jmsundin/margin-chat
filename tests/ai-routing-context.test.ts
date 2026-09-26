@@ -19,6 +19,8 @@ function payload(overrides: any = {}) {
 }
 function service(overrides: any = {}) {
   return createChatService({
+    // Exercise generation and rule fallback independently of the router API.
+    autoRouter: async () => null,
     database: {}, env: { OPENAI_API_KEY: "test-openai", GEMINI_API_KEY: "test-gemini", HUGGINGFACE_API_KEY: "test-hf", XAI_API_KEY: "test-xai" },
     runtimeConfig: { defaultBackendProvider: "openai-api", openaiModel: "gpt-5.6", geminiModel: "gemini-3.1-pro-preview", huggingFaceModel: "openai/gpt-oss-120b", xaiModel: "grok-4.5" },
     ...overrides,
@@ -42,8 +44,8 @@ describe("AI routing and execution receipts", () => {
     const summary = await chat.requestReply(payload({ messages: [{ role: "user", content: "Summarize these notes." }] }));
     expect(summary.metadata.execution).toMatchObject({ provider: "gemini-api", task: "summary", mode: "balanced", model: "gemini-3.8-flash", schemaVersion: 1, status: "complete" });
     const coding = await chat.requestReply(payload({ ai: { mode: "fast" }, messages: [{ role: "user", content: "Debug this TypeScript code." }] }));
-    expect(calls[1].body.model).toBe("gpt-5.6-luna");
-    expect(coding.metadata.execution).toMatchObject({ provider: "openai-api", task: "coding", model: "gpt-5.6-luna-resolved" });
+    expect(calls[1].body.model).toBe("gpt-6-luna");
+    expect(coding.metadata.execution).toMatchObject({ provider: "openai-api", task: "coding", model: "gpt-6-luna-resolved" });
     expect(coding.metadata.execution.reason).toContain("heuristic");
     const manual = await chat.requestReply(payload({ serviceId: "openai-api", modelId: "gpt-5.6-terra", ai: { mode: "thorough" } }));
     expect(calls[2].body.model).toBe("gpt-5.6-terra");

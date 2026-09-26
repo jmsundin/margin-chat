@@ -1,7 +1,7 @@
 export const AI_MODES = Object.freeze(["balanced", "fast", "thorough"]);
 export const AI_PROVIDERS = Object.freeze(["openai", "gemini", "huggingface", "xai"]);
 const scopes = new Set(["conversation", "selected", "workspace"]);
-const routingMethods = new Set(["jev", "jev-task", "rules", "manual"]);
+const routingMethods = new Set(["astra", "astra-task", "jev", "jev-task", "rules", "manual"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value, limit) => typeof value === "string" ? value.slice(0, limit) : "";
 

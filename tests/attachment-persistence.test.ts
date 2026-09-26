@@ -207,7 +207,7 @@ test("the additive identity migration preserves legacy indexes and accepts write
     const attachments = revisions("applied-0005");
     await client.query("insert into marginchat_vault_projections (user_id,vault_revision,attachment_revisions) values ('legacy-owner',7,$1::jsonb)", [JSON.stringify(attachments)]);
     const upgrade = await migrateDatabase(client, { migrations });
-    expect(upgrade.executed).toEqual(["0006_attachment_checkpoint_revision", "0007_editable_documents"]);
+    expect(upgrade.executed).toEqual(migrations.slice(index + 1).map((migration) => migration.id));
     expect((await client.query("select vault_revision, attachment_revisions, attachment_checkpoint_revision from marginchat_vault_projections where user_id='legacy-owner'")).rows[0])
       .toMatchObject({ attachment_revisions: attachments, attachment_checkpoint_revision: null });
     expect(await readVaultProjectionCheckpoint(client, "legacy-owner")).toEqual({ revision: 7, attachments: {} });

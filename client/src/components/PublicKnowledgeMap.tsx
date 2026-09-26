@@ -1,3 +1,5 @@
+import DismissibleDetails from "./DismissibleDetails";
+import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
@@ -125,6 +127,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const searchFormRef = useRef<HTMLFormElement>(null);
+  useOutsideDismiss(searchResultsOpen, () => setSearchResultsOpen(false), searchFormRef);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const explorerTriggerRef = useRef<HTMLButtonElement>(null);
   const openController = useRef<AbortController | null>(null);
@@ -742,17 +745,17 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         </div> : null}
       </form>
       <button type="button" ref={explorerTriggerRef} aria-expanded={explorerContainer ? undefined : explorerOpen} onClick={openExplorer}>Explore</button>
-      <details className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
+      <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
         <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg></summary>
         <div><button type="button" aria-pressed={location.presentation === "groups"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showAllGroups(); }}>Groups and topics</button>
           <button type="button" aria-pressed={documentsOnly} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(location.documentLayoutMode, true); }}>Topics and connections</button></div>
-      </details>
-      <details className="public-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
+      </DismissibleDetails>
+      <DismissibleDetails className="public-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
         <summary>Filters{location.filters.relation !== "all" || location.filters.includeMetadata ? " •" : ""}</summary>
         <div><label>Relationships<select value={location.filters.relation} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, relation: event.target.value as PublicRelationFilter } }))}>
           <option value="all">All relationships</option><option value="types">Types & categories of ideas</option><option value="parts">Parts & wholes</option><option value="other">Other relationships</option>
         </select></label><label><input type="checkbox" checked={location.filters.includeMetadata} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, includeMetadata: event.target.checked } }))} />Include Wikimedia metadata</label><p>Category pages, portals, and templates are hidden by default. Your loaded topics stay available.</p></div>
-      </details>
+      </DismissibleDetails>
     </header>
     {location.graphFocusId ? <div className="public-map-focusbar" aria-label="Focused public connections">
       <span><strong>Around {location.graph.topics[location.graphFocusId]?.label}</strong><small>{visible.topics.length} topics · {location.graphFocusDepth} {location.graphFocusDepth === 1 ? "hop" : "hops"}</small></span>
@@ -803,9 +806,9 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       {(openingId || topicError) && <div className="public-map-feedback" role={topicError ? "alert" : "status"}>{openingId && !topicError ? "Opening public topic…" : topicError && <><p>{topicError.message}</p><button type="button" onClick={() => { const error = topicError; void (error.action === "open" ? openTopic(error.id) : expandTopic(error.id, !!location.graph.expansions[error.id])); }}>Try again</button><button type="button" onClick={() => setTopicError(null)}>Dismiss</button></>}</div>}
       <div className="public-map-bottom"><p role="status" aria-live="polite">{notice || (showNeighborhoods ? "Zoom to reveal topics · Select a group to focus" : "Drag to pan · Pinch to zoom")}<span id="public-map-keyboard-help">Arrow keys pan · +/− zoom · Home / 0 shows all groups</span></p>
         <div className="public-map-zoom" aria-label="Public map controls" data-graph-ui="true">
-          <details className="public-map-arrange" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Arrange</summary><div>
+          <DismissibleDetails className="public-map-arrange" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Arrange</summary><div>
             {([["auto", "Auto layout"], ["tree-right", "Tree: left to right"], ["tree-down", "Tree: top down"], ["connections", location.graphFocusId ? "Around focused node" : "Most connections"]] as const).map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentsOnly && location.documentLayoutMode === mode} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(mode); }}>{label}</button>)}
-          </div></details>
+          </div></DismissibleDetails>
           <button type="button" onClick={() => zoomAt(1 / 1.2)} aria-label="Zoom out" disabled={location.viewport.scale <= minimumZoomScale}>−</button><span>{Math.round(location.viewport.scale * 100)}%</span><button type="button" onClick={() => zoomAt(1.2)} aria-label="Zoom in" disabled={location.viewport.scale >= 1.6}>+</button>
           <button type="button" onClick={() => fitMap()} disabled={!visible.topics.length}>{location.graphFocusId ? "Fit connections" : activeNeighborhood ? "Fit group" : "Fit map"}</button>
           {selected ? <><button type="button" onClick={() => selectTopic(selected.id, true)}>Center topic</button><button type="button" onClick={() => focusConnections(selected.id)}>Focus connections</button></> : null}

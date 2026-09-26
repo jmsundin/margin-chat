@@ -1,9 +1,8 @@
 # Jev assistance
 
-Margin Chat uses TypeSafe's Jev model for four optional features:
+Margin Chat uses TypeSafe's Jev model for three optional features:
 
-- Rank permitted notes and chats before the reply's context budget is applied.
-- Select a task and an eligible configured model for Auto replies.
+- Rank permitted notes and chats for manually selected models before the reply's context budget is applied.
 - Categorize workspace chats and notes, and organize ungrouped items into existing
   groups or category groups.
 - Suggest related notes and chats for the current context.
@@ -15,7 +14,7 @@ and restart the server. The key stays on the server; never put it in a `VITE_`
 variable. **Jev assistance** in **App settings** is enabled by default when an
 account has no saved preference on that device. An explicit saved `false` remains
 off. The preference is separate for each account on each device and separate from
-the reply-provider allowlist. Turning it off stops new analysis and cancels
+the reply-provider allowlist. Turning it off stops new Jev analysis and cancels
 workspace analysis in progress; groups already saved remain in place.
 
 No dependency installation is required. The server uses the documented HTTP API:
@@ -35,71 +34,11 @@ is pinned to `jev-1.13.0` so a moving alias does not silently change judgments.
 
 ## Chat context and routing
 
-The existing context scope still determines which sources can enter a reply:
-this conversation and ancestors, selected material, or the workspace. Only the
-already permitted candidate snapshot is sent for reranking. Personal margin
-annotations, system messages, and saved execution receipts are excluded from
-Jev's input. Source IDs returned by the model never authorize extra retrieval.
+Jev reranks permitted workspace excerpts for replies with a manually selected model when assistance is enabled. It does not change that model. Source scope, personal margin-note exclusions, and context budgets remain enforced.
 
-Jev asks an independent Score for each candidate using a four-level relevance
-rubric. Trusted scores reorder candidates; uncertain candidates keep their slots.
-Final context budgets and source receipts remain enforced by the existing chat
-pipeline. The client shortlist is still bounded: reranking cannot discover
-material omitted from it.
+Auto replies use GPT-6 Astra with low reasoning, independently of Jev assistance. That single pass classifies the task, chooses an eligible model, and orders permitted workspace excerpts. See [the model catalog](model-catalog.md) for routing credentials, billing, and fallback behavior.
 
-For Auto, a Choice identifies writing, coding, research, reasoning, summary, or
-general intent. Another Choice selects among eligible configured model profiles.
-The same request independently asks for task complexity (Score) and whether
-current external information is needed (Noul). Noul is a yes-probability and
-does not have a separate confidence field. No question can read another answer.
-Model options include reviewed catalog descriptions and explicit app preferences;
-unknown configured overrides are identified as lacking comparison evidence.
-No latency measurements, prices, or benchmark rankings are invented.
-The actual candidate list comes from code, after provider permissions and
-credentials have been checked. Personal-key requests remain in their personal
-credential pool. Manual model selection remains exact. Title generation skips
-Jev. The semantic decision is made once per reply; billing preflight remains
-synchronous and uses the same eligible credential pool.
-
-When Jev defers the model choice, a demanding-work signal can prefer a reviewed
-complex-work candidate within the same eligible provider. Explicit model choices
-and Fast mode are preserved. This is provisional app policy, not a measured
-quality guarantee. A likely need for current information adds a disclosure that
-the route does not search the live web; it never grants new tools or credentials.
-
-### Visible model selection
-
-Each reply with an execution receipt has a compact model/service footer beneath
-the answer. **Why this model?** expands the selection reason and supporting
-details; it is collapsed by default and works with a click, tap, or keyboard.
-The footer appears as the reply starts streaming and remains with the saved
-answer. Inside the disclosure, the label distinguishes
-**Auto · selected by Jev**, **Auto · Jev task matching**, **Auto · standard
-routing**, and **Selected by you**. Jev task matching means Jev identified the
-task, but the app's rules chose the model; it does not imply Jev selected that
-specific model.
-
-The explanation is assembled from accepted task judgments, independent complexity
-and freshness signals, the selected mode, configured task associations, and the
-permitted credential pool. As described
-in [TypeSafe's System One documentation](https://docs.typesafe.ai/concepts/system-one),
-Jev returns structured decisions rather than written reasoning. These are
-auditable selection factors, not a generated account of Jev's internal reasoning
-or a claim that the chosen model wins an independent benchmark. No extra API call
-is made to generate the explanation.
-
-If a provider fails before answering, the footer shows **Fallback used** alongside
-the model/service that actually answers; expanding it identifies earlier
-attempts. If Jev is unavailable or provides no usable routing decision, the explanation says standard routing was
-used. Context sources, full model IDs, and technical fallback information remain
-in the expandable details. A provider-resolved model ID is kept separately from
-the requested model ID.
-
-The optional `execution.routing` object records `method` (`jev`, `jev-task`,
-`rules`, or `manual`) and `selectedModel`. It survives streaming, interruption,
-JSON/Markdown storage, synchronization, and export. Old receipts without it keep
-their recorded model/service/reason and use a neutral **Selection details** label;
-the UI never invents a Jev decision for historical replies.
+Each reply retains its model and expandable **Why this model?** details. New Auto receipts use `astra` or `astra-task`; standard fallback uses `rules`, and exact manual choices use `manual`. `astra-task` means Astra classified the task and application rules selected the model. Historical `jev` and `jev-task` receipts retain their original labels and explanations. Streaming, persistence, and exports preserve these records.
 
 ## Workspace organization and related material
 

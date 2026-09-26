@@ -37,27 +37,17 @@ const OPENAI_MODELS: BackendServiceModel[] = [
     label: "GPT-6 Astra",
   },
   {
-    badgeLabel: "VERSATILE",
-    description:
-      "Strong general-purpose reasoning and coding with lower per-token cost than Astra.",
-    featured: true,
-    id: "gpt-5.6",
-    label: "GPT-5.6 Sol",
-  },
-  {
     badgeLabel: "BALANCED",
-    description:
-      "GPT-5.6 model balancing frontier intelligence with lower cost for everyday production use.",
+    description: "Strong GPT-6 reasoning and coding with lower per-token cost than Astra.",
     featured: true,
-    id: "gpt-5.6-terra",
-    label: "GPT-5.6 Terra",
+    id: "gpt-6-sol",
+    label: "GPT-6 Sol",
   },
   {
     badgeLabel: "FAST",
-    description:
-      "Cost-sensitive GPT-5.6 model for responsive, high-volume workloads.",
-    id: "gpt-5.6-luna",
-    label: "GPT-5.6 Luna",
+    description: "Efficient GPT-6 model for focused tasks and high-volume workloads.",
+    id: "gpt-6-luna",
+    label: "GPT-6 Luna",
   },
 ];
 
@@ -225,8 +215,8 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
         badgeLabel: "FLAGSHIP",
         description: "xAI's flagship model for code, agentic tool use, configurable reasoning, and general chat.",
         featured: true,
-        id: "grok-4.6",
-        label: "Grok 4.6",
+        id: "grok-4.7",
+        label: "Grok 4.7",
       },
       {
         badgeLabel: "BALANCED",
@@ -242,7 +232,14 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
 
 // Keep saved chats and recent selections intact without promoting older models
 // in the fresh model catalog. Provider availability may still change over time.
+const LEGACY_OPENAI_MODELS: BackendServiceModel[] = [
+  { id: "gpt-5.6", label: "GPT-5.6 Sol", description: "Previous Sol release, retained for saved chats." },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "Previous balanced model, retained for saved chats." },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", description: "Previous Luna release, retained for saved chats." },
+];
 const LEGACY_MODELS: Partial<Record<BackendServiceId, BackendServiceModel[]>> = {
+  "openai-api": LEGACY_OPENAI_MODELS,
+  "openai-agent": LEGACY_OPENAI_MODELS,
   "gemini-api": [
     { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", description: "Previous Flash release, retained for saved chats." },
     { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite", description: "Previous Flash-Lite release, retained for saved chats." },
@@ -253,6 +250,7 @@ const LEGACY_MODELS: Partial<Record<BackendServiceId, BackendServiceModel[]>> = 
     { id: "Qwen/Qwen3-Coder-480B-A35B-Instruct", label: "Qwen3 Coder 480B", description: "Previous coding selection, retained for saved chats." },
   ],
   "xai-api": [
+    { id: "grok-4.6", label: "Grok 4.6", description: "Previous flagship, retained for saved chats." },
     { id: "grok-4.5", label: "Grok 4.5", description: "Previous Grok flagship, retained for saved chats." },
   ],
 };

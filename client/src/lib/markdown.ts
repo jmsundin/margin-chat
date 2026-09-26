@@ -17,6 +17,7 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { getObsidianCalloutFamily } from "./obsidianMarkdown";
+import { latexMarkedExtensions } from "./latex";
 
 function escapeHtml(value: string) {
   return value
@@ -259,13 +260,14 @@ const obsidianRenderer: RendererObject = {
 };
 
 const markdown = new Marked({
+  extensions: latexMarkedExtensions,
   gfm: true,
   renderer,
   silent: true,
 });
 
 const obsidianMarkdown = new Marked({
-  extensions: obsidianInlineExtensions,
+  extensions: [...obsidianInlineExtensions, ...latexMarkedExtensions],
   gfm: true,
   renderer: obsidianRenderer,
   silent: true,

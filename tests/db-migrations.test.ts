@@ -54,6 +54,16 @@ describe("versioned database releases", () => {
     expect((await assertMigrationsReady(client, { migrations })).status).toBe("ready");
   }, 30_000);
 
+  test("current catalog migration accepts GPT-6 Sol/Luna and Grok 4.7 with provider constraints", async () => {
+    const { client, pg } = database();
+    await migrateDatabase(client, { migrations: await loadMigrations() });
+    for (const [service, model] of [["openai-api", "gpt-6-sol"], ["openai-agent", "gpt-6-luna"], ["xai-api", "grok-4.7"]]) {
+      await pg.query("insert into marginchat_app_sessions (id, default_service_id, default_model_id) values ($1,$2,$3)", [model, service, model]);
+      await pg.query("insert into marginchat_conversations (id,session_id,title,service_id,model_id,created_at,updated_at) values ($1,$1,'Current',$2,$3,now(),now())", [model,service,model]);
+      await expect(pg.query("update marginchat_conversations set service_id='gemini-api' where id=$1", [model])).rejects.toMatchObject({ code: "23514" });
+    }
+  });
+
   test("adopting a legacy database actually runs baseline reconciliation and preserves its account", async () => {
     const { client, pg, queries } = database();
     await pg.exec(`create table marginchat_user_accounts (

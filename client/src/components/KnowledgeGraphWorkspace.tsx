@@ -1,3 +1,4 @@
+import DismissibleDetails from "./DismissibleDetails";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ConversationGraphView, { type ConversationGraphViewProps } from "./ConversationGraphView";
 import PublicKnowledgeMap from "./PublicKnowledgeMap";
@@ -28,7 +29,7 @@ interface Props extends ConversationGraphViewProps {
   onDismissTopicExpansionError?: () => void;
 }
 
-export default function KnowledgeGraphWorkspace({ onToggleSidebar, sidebarOpen, onSaveUrlMapNode, urlMapAIOptions, onSavePublicTopic, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, onSaveUrlMapNode, urlMapAIOptions, onSavePublicTopic, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, ...personalProps }: Props) {
   const [urlMapOpen, setUrlMapOpen] = useState(false);
   const [mode, setMode] = useState<"personal" | "public">("personal");
   const [publicFocus, setPublicFocus] = useState<{ id: string; requestId: number } | null>(null);
@@ -49,8 +50,8 @@ export default function KnowledgeGraphWorkspace({ onToggleSidebar, sidebarOpen, 
   }, [personalProps.conversations]);
 
   useEffect(() => {
-    if (personalProps.focusRequest && !personalProps.focusRequest.preserveMapMode) { setMode("personal"); setUrlMapOpen(false); }
-  }, [personalProps.focusRequest]);
+    if (isVisible && personalProps.focusRequest && !personalProps.focusRequest.preserveMapMode) { setMode("personal"); setUrlMapOpen(false); }
+  }, [isVisible, personalProps.focusRequest]);
 
   function explorePublic(conversation: Conversation) {
     setConnectingId(null);
@@ -104,7 +105,7 @@ export default function KnowledgeGraphWorkspace({ onToggleSidebar, sidebarOpen, 
         <button type="button" aria-pressed={urlMapOpen} onClick={() => { setUrlMapOpen(true); setConnectingId(null); }}>Map a URL</button>
       </div>
     </>;
-  const addActions = <details className="knowledge-map-add" onKeyDown={(event) => {
+  const addActions = <DismissibleDetails className="knowledge-map-add" onKeyDown={(event) => {
     if (event.key !== "Escape") return;
     event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus();
   }}>
@@ -113,7 +114,7 @@ export default function KnowledgeGraphWorkspace({ onToggleSidebar, sidebarOpen, 
       <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onCreateMapNote({}); }}>New note</button>
       <button type="button" aria-expanded={sourceFormOpen} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setSourceFormOpen(!sourceFormOpen); }}>Add web source</button>
     </div>
-  </details>;
+  </DismissibleDetails>;
 
   return <section className="knowledge-graph-workspace" aria-label="Knowledge maps">
     {!personalVisible ? <header className="knowledge-map-switcher">
@@ -137,7 +138,7 @@ export default function KnowledgeGraphWorkspace({ onToggleSidebar, sidebarOpen, 
     {expandingTopicId ? <div className="map-workspace-notice" role="status" aria-live="polite"><span>{topicExpansionProgress || "Building an AI subgraph…"} · {personalProps.conversations[expandingTopicId]?.title}</span><button type="button" onClick={onCancelTopicExpansion}>Cancel expansion</button></div> : null}
     {topicExpansionError ? <div className="map-workspace-notice is-error" role="alert"><span>{topicExpansionError.message}</span>{personalProps.conversations[topicExpansionError.conversationId] ? <button type="button" disabled={Boolean(expandingTopicId)} onClick={() => onExpandTopicWithAI?.(topicExpansionError.conversationId)}>Retry AI expansion</button> : null}<button type="button" onClick={onDismissTopicExpansionError}>Dismiss</button></div> : null}
     <div className="knowledge-map-panel" hidden={mode !== "personal" || urlMapOpen}>
-      <ConversationGraphView {...personalProps} isVisible={mode === "personal" && !urlMapOpen} renderNodeActions={renderActions} renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
+      <ConversationGraphView {...personalProps} isVisible={isVisible && mode === "personal" && !urlMapOpen} renderNodeActions={renderActions} renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
         toolbarLeading={personalVisible ? <div className="knowledge-map-switcher is-inline">{mapControls}</div> : null}
         toolbarTrailing={personalVisible ? addActions : null}
         focusRequest={personalProps.focusRequest ?? personalFocus}
@@ -146,7 +147,7 @@ export default function KnowledgeGraphWorkspace({ onToggleSidebar, sidebarOpen, 
         onRemoveConnection={(source, target) => onSetMapConnection(source, target, false)} />
     </div>
     <div className="knowledge-map-panel" hidden={mode !== "public" || urlMapOpen}>
-      <PublicKnowledgeMap isVisible={mode === "public" && !urlMapOpen} explorerContainer={personalProps.explorerContainer} onOpenExplorer={personalProps.onOpenExplorer} onFocusCanvas={personalProps.onFocusCanvas} key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} focusRequest={publicFocus} searchRequest={publicSearch}
+      <PublicKnowledgeMap isVisible={isVisible && mode === "public" && !urlMapOpen} explorerContainer={personalProps.explorerContainer} onOpenExplorer={personalProps.onOpenExplorer} onFocusCanvas={personalProps.onFocusCanvas} key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} focusRequest={isVisible ? publicFocus : null} searchRequest={isVisible ? publicSearch : null}
         onFocusRequestHandled={(id) => setPublicFocus((request) => request?.requestId === id ? null : request)}
         onSearchRequestHandled={(id) => setPublicSearch((request) => request?.requestId === id ? null : request)}
         savedTopics={savedTopics} onSave={onSavePublicTopic} onShowInMyMap={showPersonal} />

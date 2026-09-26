@@ -60,6 +60,13 @@ try {
   });
   await act(pause);
   assert(dialog());
+  await act(async () => dialog()!.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true })));
+  assert(dialog(), "Pointer interactions inside the portaled preview keep it open.");
+  await act(async () => container.querySelector(".composer")!.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true })));
+  assert.equal(dialog(), null, "Clicking outside the source content container dismisses the preview.");
+  await act(async () => assistantMark().dispatchEvent(new browser.PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" })));
+  await act(pause);
+  assert(dialog());
   checks.push("moving into the preview keeps it readable");
 
   const updated = { ...props, conversation: { ...conversation, notes: [{ ...conversation.notes![0], content: "Updated note" }] }, anchorsByMessageId: { answer: [{ ...link, preview: { ...link.preview!, content: "Updated reply" } }], question: [link] } };

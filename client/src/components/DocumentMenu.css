@@ -1,0 +1,47 @@
+.document-menu-trigger {
+  display: grid;
+  place-items: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.document-menu-trigger svg { width: 16px; height: 16px; }
+.document-menu-trigger:hover, .document-menu-trigger[aria-expanded="true"] { background: var(--button-active-surface); color: var(--ink); }
+.document-menu-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-menu {
+  position: fixed;
+  z-index: 120;
+  width: 224px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px #0002;
+}
+.document-menu button {
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.document-menu button:hover, .document-menu button:focus-visible { background: var(--button-active-surface); outline: none; }
+.document-menu button:disabled { color: var(--muted); cursor: default; }
+.document-menu [role="menuitemcheckbox"] { display: flex; align-items: flex-start; gap: 7px; }
+.document-menu-check { flex: 0 0 13px; color: var(--accent); }
+.document-menu .document-menu-group-setting { display: flex; align-items: center; gap: 8px; }
+.document-menu-group-name { margin-left: auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }

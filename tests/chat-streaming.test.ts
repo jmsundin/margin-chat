@@ -10,6 +10,8 @@ afterEach(() => {
 
 function createService() {
   return createChatService({
+    // Exercise generation and rule fallback independently of the router API.
+    autoRouter: async () => null,
     database: {},
     env: {
       GEMINI_API_KEY: "gemini-test-key",

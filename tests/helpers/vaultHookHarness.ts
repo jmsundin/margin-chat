@@ -115,7 +115,8 @@ const storageDirectory = await mkdtemp(join(tmpdir(), "margin-chat-hook-test-"))
 const remote = createVaultService({ storage: createFileVaultStorage(storageDirectory), env: {} });
 const emptySettingsScenario = process.argv.includes("--empty-settings");
 const historyScenario = process.argv.includes("--chat-history");
-if (!emptySettingsScenario && !historyScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+const focusScenario = process.argv.includes("--document-focus");
+if (!emptySettingsScenario && !historyScenario && !focusScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -163,6 +164,114 @@ function type(content: string) {
     ] },
   } }));
 }
+async function checkDocumentFocus() {
+  const { createMainConversation, createChildConversation } = await import("../../client/src/initialState");
+  const { stateToVaultFiles } = await import("../../client/src/lib/vaultWorkspace");
+  const { focusDocument } = await import("../../client/src/lib/documentWorkspace");
+  const seed = createEmptyState();
+  const other = createMainConversation({ id: "other-root" });
+  other.title = "Other document";
+  const child = createChildConversation({ id: "last-focused-child", parentConversation: other });
+  child.title = "Last focused side document";
+  seed.conversations[other.id] = other;
+  seed.conversations[child.id] = child;
+  other.childIds = [child.id];
+  const snapshot = emptyVault();
+  snapshot.files = stateToVaultFiles(seed, {});
+  await local.write(snapshot);
+  const onlineFetch = globalThis.fetch;
+  globalThis.fetch = (async () => { throw new TypeError("Offline fixture"); }) as typeof fetch;
+  const reopen = async () => {
+    await act(async () => { root.unmount(); });
+    current = null;
+    root = createRoot(container as unknown as Element);
+    await act(async () => { root.render(createElement(Host)); });
+    await until(() => current?.vault.ready, "Focus fixture did not reopen.");
+  };
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Focus fixture did not load.");
+  const before = (await local.read())!.files;
+  await act(async () => { current.setState((state: any) => focusDocument(state, child.id)); });
+  // Reopen immediately after navigation, without an edit, explicit save or sync debounce.
+  await reopen();
+  assert.equal(current.state.activeConversationId, child.id, "Reopening lost the last focused document.");
+  assert.equal(current.state.rootId, other.id, "Reopening selected the wrong document family.");
+  assert.deepEqual((await local.read())!.files, before, "Navigation rewrote authored vault files.");
+
+  // An account with identical document IDs must keep its own selection.
+  const originalUserId = user.id;
+  user.id = "another-focus-user";
+  await createBrowserVaultStore(user.id).write(snapshot);
+  await reopen();
+  assert.notEqual(current.state.activeConversationId, child.id, "Another account inherited the focused document.");
+  user.id = originalUserId;
+  await reopen();
+  assert.equal(current.state.activeConversationId, child.id);
+
+  // The remembered document may arrive after the initial local hydration.
+  await act(async () => { root.unmount(); });
+  await remote.commit(user.id, Object.entries(snapshot.files).map(([path, file]) => ({ path, content: file.content, baseRevision: null })));
+  await local.write(emptyVault());
+  globalThis.fetch = onlineFetch;
+  current = null;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Local readiness waited for cloud focus restoration.");
+  await networkEntered.promise;
+  networkReleased = true;
+  initialNetwork.resolve();
+  await until(() => Boolean(current.state.conversations[child.id]), "Cloud documents did not load.");
+  assert.equal(current.state.activeConversationId, child.id, "Initial local fallback replaced the remembered cloud document.");
+  assert.equal(current.state.rootId, other.id);
+
+  // A user's selection while cloud hydration is pending wins over startup restoration.
+  await act(async () => { await current.vault.syncNow(); });
+  await act(async () => { root.unmount(); });
+  const partial = emptyVault();
+  const partialState = { ...seed, conversations: { ...seed.conversations } };
+  delete partialState.conversations[child.id];
+  partial.files = stateToVaultFiles(partialState, {});
+  await local.write(partial);
+  const delayedCloud = deferred();
+  const delayedCloudEntered = deferred();
+  globalThis.fetch = (async (input: any, init: any) => {
+    if (new URL(String(input), "http://fixture.test").pathname === "/api/vault") {
+      delayedCloudEntered.resolve();
+      await delayedCloud.promise;
+    }
+    return onlineFetch(input, init);
+  }) as typeof fetch;
+  current = null;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Partial local vault did not load.");
+  await delayedCloudEntered.promise;
+  await act(async () => { current.setState((state: any) => focusDocument(state, other.id)); });
+  delayedCloud.resolve();
+  await until(() => Boolean(current.state.conversations[child.id]), "Delayed cloud child did not load.");
+  assert.equal(current.state.activeConversationId, other.id, "Cloud hydration overrode the user's new selection.");
+  await act(async () => { await current.vault.syncNow(); });
+  await act(async () => { current.setState((state: any) => focusDocument(state, child.id)); });
+
+  // Deleted targets must fall back to a valid document and matching root.
+  globalThis.fetch = (async () => { throw new TypeError("Offline fixture"); }) as typeof fetch;
+  await act(async () => { root.unmount(); });
+  delete seed.conversations[child.id];
+  other.childIds = [];
+  const withoutChild = emptyVault();
+  withoutChild.files = stateToVaultFiles(seed, {});
+  await local.write(withoutChild);
+  current = null;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "Deleted focus fallback did not load.");
+  assert(current.state.conversations[current.state.activeConversationId]);
+  assert.equal(current.state.rootId, current.state.activeConversationId);
+  await act(async () => { current.setState((state: any) => focusDocument(state, other.id)); });
+  await reopen();
+  assert.equal(current.state.activeConversationId, other.id, "New navigation did not replace the missing remembered document.");
+  console.log(JSON.stringify({ checks: ["focus-only offline reopen", "side-document root restoration", "no authored file changes", "account isolation", "delayed cloud restoration", "new navigation wins over delayed restoration", "deleted target fallback", "new selection replaces missing target"] }));
+}
 async function checkChatHistory() {
   const { parseChatGPTHistory } = await import("../../client/src/lib/chatHistoryImport");
   const { chatGPTFixture } = await import("./chatHistoryFixture");
@@ -190,7 +299,11 @@ async function checkChatHistory() {
   assert.equal(current.state.defaultModelId, model);
   await act(async () => { await current.vault.syncNow(); });
   const cloud = await remote.snapshot(user.id);
-  assert(Object.keys(cloud.manifest.files).some((path) => path.includes(first.id)), "Imported chat did not reach cloud storage.");
+  const { workspaceFromVault } = await import("../../client/src/lib/vaultWorkspace");
+  const importedPath = workspaceFromVault((await local.read())!.files).manifest.files.find((record) => record.id === first.id)!.path;
+  assert(cloud.manifest.files[importedPath] && !cloud.manifest.files[importedPath].deleted, "Imported chat did not reach cloud storage.");
+  const uploaded = await remote.readFile({ userId: user.id, path: importedPath });
+  assert(uploaded.bytes.toString().includes(`margin-chat-id: ${JSON.stringify(first.id)}`), "Cloud file lost the imported identity.");
   await act(async () => { assert.equal((await current.vault.importChatHistory([first])).skipped, 1); });
   await act(async () => {
     current.setState((state: any) => ({ ...state, conversations: { ...state.conversations,
@@ -467,7 +580,8 @@ async function checkPopulatedWorkspace() {
   console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
 }
 try {
-  if (historyScenario) await checkChatHistory();
+  if (focusScenario) await checkDocumentFocus();
+  else if (historyScenario) await checkChatHistory();
   else if (emptySettingsScenario) await checkEmptyWorkspaceSettings();
   else await checkPopulatedWorkspace();
 } finally {

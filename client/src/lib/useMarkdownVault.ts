@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { AppState, AuthenticatedUser } from "../types";
 import type { StateUploadProgress } from "./api";
-import { getStateSavedAtStorageKey, getStateStorageKey } from "./appState";
+import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { bytesToBase64, createBrowserVaultStore, exportVault, importVault } from "./vaultLocal";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
@@ -45,6 +45,8 @@ export function useMarkdownVault(args: {
   const engine = engineRef.current;
   const displayedFiles = useRef<Record<string, VaultFile>>({});
   const displayedState = useRef(args.state);
+  const [initialFocus] = useState(() => loadLastFocusedDocument(user.id));
+  const pendingFocus = useRef(initialFocus);
   const [renderFiles] = useState(createVaultFileRenderer);
   const folder = useRef<MarkdownWorkspace | null>(null);
   const folderId = useRef<string | null>(null);
@@ -75,12 +77,14 @@ export function useMarkdownVault(args: {
   }
 
   function publish(snapshot: VaultSnapshot) {
-    const next = vaultToState(snapshot.files, stateRef.current);
+    const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current);
+    if (pendingFocus.current === next.activeConversationId) pendingFocus.current = null;
     displayedFiles.current = structuredClone(snapshot.files);
     displayedState.current = next;
     hasVaultContent.current = workspaceFromVault(snapshot.files).manifest.files.length > 0;
     stateRef.current = next;
     if (!mounted.current) return;
+    if (!pendingFocus.current) saveLastFocusedDocument(user.id, next.activeConversationId);
     setState(next);
     setConflicts(snapshot.conflicts);
     setMatchesCloud(enabledRef.current && pendingVaultChanges(snapshot).length === 0);
@@ -287,6 +291,14 @@ export function useMarkdownVault(args: {
     });
     return () => { mounted.current = false; };
   }, [engine, user.id]);
+
+  useLayoutEffect(() => {
+    if (!ready) return;
+    // Keep the startup preference while its document is still arriving from the
+    // cloud. A new selection takes precedence over that pending restoration.
+    if (args.state.activeConversationId !== displayedState.current.activeConversationId) pendingFocus.current = null;
+    if (!pendingFocus.current) saveLastFocusedDocument(user.id, args.state.activeConversationId);
+  }, [args.state.activeConversationId, ready, user.id]);
 
   useEffect(() => {
     if (!ready || args.state === displayedState.current) return;

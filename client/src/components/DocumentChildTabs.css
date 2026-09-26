@@ -1,0 +1,16 @@
+.document-child-tabs { position: absolute; inset: 0 12px auto; z-index: 15; }
+.document-child-tabs-trigger { display: flex; align-items: flex-start; justify-content: center; width: 100%; height: 12px; padding: 1px 0 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.document-child-tabs-trigger > span { width: 48px; height: 3px; border-radius: 3px; background: var(--line-strong); }
+.document-child-tabs-trigger:hover > span, .document-child-tabs.is-open .document-child-tabs-trigger > span { background: var(--accent); }
+.document-child-tabs-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.document-child-tabs-panel { padding: 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink); box-shadow: 0 8px 24px #0003; }
+.document-child-tabs-heading { display: flex; justify-content: space-between; gap: 12px; padding: 0 4px 8px; color: var(--muted); font-size: 11px; }
+.document-child-tabs-heading > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.document-child-tabs-list { display: flex; gap: 4px; overflow-x: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.document-child-tabs-list > button { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; max-width: 240px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--button-surface); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.document-child-tabs-list > button > span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.document-child-tabs-list > button > small { font-size: 10px; }
+.document-child-tabs-list > button:hover { color: var(--ink); border-color: var(--line-strong); }
+.document-child-tabs-list > button[aria-current="page"] { color: var(--ink); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.document-child-tabs-list > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+@media (pointer: coarse) { .document-child-tabs-trigger { height: 24px; } }

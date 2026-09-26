@@ -102,8 +102,9 @@ try {
   assert.equal(assistance!.status, "ready");
   assert.equal(assistance!.categories[chatId], "writing");
   assert.deepEqual(assistance!.groupSuggestions[chatId], { groupId: "stories", confidence: 0.9 });
-  assert(container.textContent.includes("Related outline"));
-  container.querySelector("button")!.dispatchEvent(new browser.MouseEvent("click", { bubbles: true }));
+  await act(async () => { container.querySelector(".jev-related-trigger")!.dispatchEvent(new browser.MouseEvent("click", { bubbles: true })); });
+  assert(browser.document.querySelector(".jev-related-popover")?.textContent.includes("Related outline"));
+  await act(async () => { browser.document.querySelector(".jev-related-links button")!.dispatchEvent(new browser.MouseEvent("click", { bubbles: true })); });
   assert.equal(selected, note.id, "Related suggestion navigates to its real item");
 
   state = { ...state, conversations: { ...state.conversations, [chatId]: { ...state.conversations[chatId], updatedAt: "2099-01-01T00:00:00Z", notes: [{ ...note.notes![0], kind: "comment", content: "PRIVATE" }] } } };
@@ -148,7 +149,7 @@ try {
   await act(async () => { preference![1](true); }); await flushTrailing();
   assert.equal(assistance!.status, "unconfigured");
   assert.deepEqual(assistance!.related, []);
-  assert.equal(container.querySelector('.jev-related'), null, "Unavailable suggestions do not render an empty Related panel");
+  assert.equal(container.querySelector('.jev-related-control'), null, "Unavailable suggestions do not render an empty Related control");
   await act(async () => { preference![1](false); });
   assert.equal(container.textContent, "");
 

@@ -26,6 +26,10 @@ export interface VaultConflict {
   remote: VaultFile | null;
   createdAt: string;
   sourcePath?: string;
+  /** Automatic recovery records retain the actual ancestor and selected result. */
+  base?: VaultFile | null;
+  result?: VaultFile | null;
+  automatic?: boolean;
 }
 
 export interface VaultSnapshot {
@@ -33,6 +37,8 @@ export interface VaultSnapshot {
   files: Record<string, VaultFile>;
   base: Record<string, { revision: string; file: VaultFile | null }>;
   conflicts: VaultConflict[];
+  /** Dismissing an alternative is local UI state; its portable recovery files remain. */
+  dismissedRecoveryIds?: string[];
   remoteRevision: number;
   /** Device-only observations, keyed by the identity of the selected directory handle. */
   directoryBaselines?: Record<string, {

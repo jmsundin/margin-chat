@@ -35,6 +35,21 @@
       "id": "0007_editable_documents",
       "file": "0007_editable_documents.sql",
       "transaction": true
+    },
+    {
+      "id": "0008_document_layout",
+      "file": "0008_document_layout.sql",
+      "transaction": true
+    },
+    {
+      "id": "0009_document_dock",
+      "file": "0009_document_dock.sql",
+      "transaction": true
+    },
+    {
+      "id": "0010_current_model_catalog",
+      "file": "0010_current_model_catalog.sql",
+      "transaction": true
     }
   ]
 }

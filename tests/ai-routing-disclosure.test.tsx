@@ -37,6 +37,8 @@ describe("discreet model selection disclosure", () => {
   });
 
   test.each([
+    ["astra", "Auto · selected by GPT-6 Astra (low reasoning)"],
+    ["astra-task", "Auto · GPT-6 Astra task matching"],
     ["jev-task", "Auto · Jev task matching"],
     ["rules", "Auto · standard routing"],
     ["manual", "Selected by you"],

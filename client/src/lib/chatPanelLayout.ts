@@ -24,16 +24,11 @@ export function getChatPanelLayout({
   return { width: Math.min(preferredWidth, maximum), maxWidth: maximum, fitsPair };
 }
 
-/** Resize a divider without squeezing either neighboring chat below its minimum. */
-export function resizeChatPanels({ width, companionWidth, delta, maxWidth = 980 }: {
+/** Resize one document within its bounds; neighboring documents keep their widths. */
+export function resizeChatPanel({ width, delta, maxWidth = 980 }: {
   width: number;
-  companionWidth?: number;
   delta: number;
   maxWidth?: number;
 }) {
-  const total = width + (companionWidth ?? 0);
-  const minimum = companionWidth === undefined ? 320 : Math.max(320, total - maxWidth);
-  const maximum = companionWidth === undefined ? maxWidth : Math.min(maxWidth, total - 320);
-  const nextWidth = Math.max(minimum, Math.min(maximum, width + delta));
-  return { width: nextWidth, companionWidth: companionWidth === undefined ? undefined : total - nextWidth };
+  return { width: Math.max(320, Math.min(maxWidth, width + delta)) };
 }

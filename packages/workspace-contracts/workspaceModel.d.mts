@@ -17,6 +17,7 @@ export const DEFAULT_WORKSPACE_PREFERENCES: Readonly<{
 
 interface WorkspaceItemBase {
   document?: Conversation["document"];
+  documentLayout?: Conversation["documentLayout"];
   grouping?: Conversation["grouping"];
   publicTopic?: Conversation["publicTopic"];
   linkedConversationIds?: Conversation["linkedConversationIds"];
@@ -61,6 +62,7 @@ export interface WorkspaceDocument {
   };
   schemaVersion: number;
   view: {
+    documentDock?: AppState["documentDock"];
     activeItemId: string;
     activeRootId: string;
     graphLayouts: Record<string, GraphNodeLayout>;

@@ -35,14 +35,14 @@ describe("current automatic model profiles", () => {
       ["openai-api", "gpt-6-astra"],
       ["gemini-api", "gemini-3.8-flash"],
       ["huggingface-api", "deepseek-ai/DeepSeek-V4.1-Flash"],
-      ["xai-api", "grok-4.6"],
+      ["xai-api", "grok-4.7"],
     ]);
   });
 
   test("fast mode keeps fast variants even for coding and reasoning requests", () => {
     for (const task of ["general", "coding", "reasoning"]) {
       const models = services.map((serviceId) => selectProfileModel(serviceId, { mode: "fast", task }, {}));
-      expect(models).toEqual(["gpt-5.6-luna", "gemini-3.5-flash-lite", "Qwen/Qwen3.8-27B", "grok-4.3"]);
+      expect(models).toEqual(["gpt-6-luna", "gemini-3.5-flash-lite", "Qwen/Qwen3.8-27B", "grok-4.3"]);
     }
   });
 
@@ -57,9 +57,9 @@ describe("current automatic model profiles", () => {
   });
 
   test("retains supported runtime defaults for ordinary requests and repairs stale defaults", () => {
-    const configured = { openaiModel: "gpt-5.6-terra", geminiModel: "gemini-3.5-flash-lite", huggingFaceModel: "openai/gpt-oss-120b", xaiModel: "grok-4.3" };
+    const configured = { openaiModel: "gpt-6-sol", geminiModel: "gemini-3.5-flash-lite", huggingFaceModel: "openai/gpt-oss-120b", xaiModel: "grok-4.3" };
     expect(planRoutes(request(), services, configured).map(({ model }: any) => model)).toEqual([
-      "gpt-5.6-terra", "gemini-3.5-flash-lite", "openai/gpt-oss-120b", "grok-4.3",
+      "gpt-6-sol", "gemini-3.5-flash-lite", "openai/gpt-oss-120b", "grok-4.3",
     ]);
     const stale = { openaiModel: "retired", geminiModel: "retired", huggingFaceModel: "retired", xaiModel: "retired" };
     for (const serviceId of services) {

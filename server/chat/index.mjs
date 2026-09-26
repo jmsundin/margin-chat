@@ -1,3 +1,4 @@
+import { analyzeAutoRoute, AUTO_ROUTER_LABEL } from "./autoRouter.mjs";
 import { HttpError } from "../lib/errors.mjs";
 import { requestOpenAIAgentResponse, requestOpenAIAgentResponseStream } from "./openaiAgent.mjs";
 import {
@@ -47,7 +48,7 @@ function semanticWorkspaceExcerpt(item) {
   return source;
 }
 
-export function createChatService({ database, documentService, env, runtimeConfig, semanticService }) {
+export function createChatService({ database, documentService, env, runtimeConfig, semanticService, autoRouter = analyzeAutoRoute }) {
   const automaticServicePriority = [...new Set([
     runtimeConfig.defaultBackendProvider, "openai-api", "gemini-api", "huggingface-api", "xai-api",
   ])].filter((id) => PROVIDERS[id] && id !== "openai-agent");
@@ -119,7 +120,9 @@ export function createChatService({ database, documentService, env, runtimeConfi
     const semanticWarnings = [];
     // Titles and credential preflight remain deterministic. A reply has one
     // semantic pass, shared by every eligible provider attempt.
-    if (!instructionOverride && chatRequest.ai.jevEnabled === true) {
+    const automatic = chatRequest.serviceId === "backend-services";
+    if (!instructionOverride && (automatic || chatRequest.ai.jevEnabled === true)) {
+      const analyzerLabel = automatic ? AUTO_ROUTER_LABEL : "Jev";
       const workspaceCandidates = scopedWorkspaceCandidates(chatRequest);
       const semanticRequest = {
         ...initialContext.chatRequest,
@@ -130,18 +133,31 @@ export function createChatService({ database, documentService, env, runtimeConfi
       const candidates = createSemanticRouteCandidates(chatRequest, routes, runtimeConfig);
       let analysis = null;
       try {
-        analysis = await semanticService?.analyzeChat({
-          chatRequest: semanticRequest, routes: candidates, signal: context.signal, userId: context.userId,
-        });
-      } catch {
+        if (automatic) {
+          // Personal generation must never introduce an unreserved hosted routing charge.
+          const personal = getProviderCredential(routes[0].serviceId, context).source === "personal";
+          const credential = getProviderCredential("openai-api", { ...context, ...(personal ? { allowHosted: false } : {}) });
+          if (isProviderAllowed("openai-api", chatRequest.ai) && credential.apiKey) {
+            analysis = await autoRouter({ chatRequest: semanticRequest, routes: candidates,
+              apiKey: credential.apiKey, signal: context.signal,
+              usageMeter: credential.source === "hosted" ? context.usageMeter : null });
+          }
+        } else {
+          analysis = await semanticService?.analyzeChat({
+            chatRequest: semanticRequest, routes: [], signal: context.signal, userId: context.userId,
+          });
+        }
+      } catch (error) {
         context.signal?.throwIfAborted();
+        if (error?.billingFailure || (automatic && error?.name === "AbortError")) throw error;
       }
       context.signal?.throwIfAborted();
-      if (!analysis) semanticWarnings.push("Jev is unavailable; used standard context ordering and routing.");
+      if (!analysis) semanticWarnings.push(`${analyzerLabel} is unavailable; used standard context ordering and routing.`);
       if (Array.isArray(analysis?.warnings)) {
         semanticWarnings.push(...analysis.warnings.filter((warning) => typeof warning === "string").slice(0, 8).map((warning) => warning.slice(0, 500)));
       }
-      routes = applySemanticRouting(chatRequest, routes, runtimeConfig, analysis, candidates);
+      routes = applySemanticRouting(chatRequest, routes, runtimeConfig, analysis, candidates,
+        automatic ? { label: AUTO_ROUTER_LABEL, method: "astra", version: "astra-low-v1" } : undefined);
       const permittedIds = new Set(semanticRequest.workspaceContext.map((item) => item.id));
       const ordering = new Map();
       for (const id of Array.isArray(analysis?.contextOrder) ? analysis.contextOrder : []) {
@@ -153,7 +169,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
           (ordering.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (ordering.get(b.id) ?? Number.MAX_SAFE_INTEGER)),
       };
       if (analysis && workspaceCandidates.length > SEMANTIC_CONTEXT_LIMIT) {
-        semanticWarnings.push(`Jev considered the first ${SEMANTIC_CONTEXT_LIMIT} permitted workspace sources; other sources retained their original order.`);
+        semanticWarnings.push(`${analyzerLabel} considered the first ${SEMANTIC_CONTEXT_LIMIT} permitted workspace sources; other sources retained their original order.`);
       }
     }
     const documentContext = await getDocumentContext(initialContext.chatRequest, context);

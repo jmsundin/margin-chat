@@ -1858,14 +1858,6 @@ button {
 
 .jev-settings-section { align-items: flex-start; }
 .jev-settings-section input { accent-color: var(--ink); cursor: pointer; flex: 0 0 auto; height: 22px; width: 22px; }
-.jev-related { align-items: center; border-bottom: 1px solid var(--line); display: flex; flex: 0 0 auto; gap: 12px; min-height: 42px; padding: 8px 18px; }
-.jev-related-label { color: var(--muted); flex: 0 0 auto; font-size: 12px; font-weight: 600; }
-.jev-related p { color: var(--muted); font-size: 12px; line-height: 1.4; margin: 0; }
-.jev-related-items { display: flex; gap: 6px; min-width: 0; overflow-x: auto; }
-.jev-related-items button { background: var(--button-surface); border: 1px solid var(--line); border-radius: 7px; color: var(--ink); cursor: pointer; flex: 0 0 auto; font-size: 12px; max-width: 240px; overflow: hidden; padding: 5px 9px; text-overflow: ellipsis; white-space: nowrap; }
-.jev-related-items button span { color: var(--muted); font-size: 10px; margin-right: 6px; }
-.jev-related-items button:hover { background: var(--button-active-surface); }
-.jev-related-items button:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .conversation-graph-node-category { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 
 .app-settings-option-group {
@@ -6662,7 +6654,8 @@ button {
   margin-bottom: 8px;
 }
 
-.profile-api-key-section {
+.profile-api-key-section,
+.profile-password-section {
   background: var(--rail-empty-bg);
   border: 1px solid var(--button-border);
   border-radius: 22px;
@@ -6670,6 +6663,10 @@ button {
   flex-direction: column;
   gap: 14px;
   padding: 18px;
+}
+
+.profile-password-section h3 {
+  margin: 6px 0 0;
 }
 
 .profile-storage-section h3 {
@@ -8816,7 +8813,7 @@ button {
   border-radius: 12px;
   display: grid;
   gap: 3px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-bottom: 10px;
   padding: 3px;
 }
@@ -12382,6 +12379,8 @@ body .live-markdown-editor {
 }
 
 .workspace-sidebar-pane {
+  container-name: workspace-sidebar;
+  container-type: inline-size;
   display: flex;
   flex-direction: column;
 }
@@ -12391,7 +12390,16 @@ body .live-markdown-editor {
   border-right: 1px solid var(--line);
   flex-shrink: 0;
   min-height: 56px;
-  padding: 6px 12px;
+  padding: 6px 10px;
+}
+
+.workspace-session-brand > .workspace-mode-control { margin-left: auto; }
+.workspace-session-brand:has(.workspace-mode-control) { gap: 6px; min-width: 0; }
+.workspace-session-brand:has(.workspace-mode-control) h1 { flex-shrink: 0; }
+.thread-sidebar > .workspace-session-brand { flex-shrink: 0; }
+
+@container workspace-sidebar (max-width: 255px) {
+  .workspace-session-brand .workspace-mode-label { display: none; }
 }
 
 .workspace-sidebar-pane > .thread-sidebar {

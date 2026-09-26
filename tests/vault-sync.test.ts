@@ -4,6 +4,8 @@ import { exportVault, importVault } from "../client/src/lib/vaultLocal";
 import { emptyVault, type VaultFile, type VaultManifest, type VaultSnapshot, type VaultStore, type VaultTransport } from "../client/src/lib/vaultTypes";
 import { createVaultService } from "../server/vault/index.mjs";
 import { digest } from "../server/vault/storage.mjs";
+import { createEmptyState } from "../client/src/initialState";
+import { stateToVaultFiles, vaultToState } from "../client/src/lib/vaultWorkspace";
 
 const file = (content: string): VaultFile => ({ content });
 function deferred<T = void>() {
@@ -169,7 +171,7 @@ describe("multi-device Markdown sync", () => {
     expect((await observer.read()).conflicts).toHaveLength(0);
   });
 
-  test("a cloud rename keeps an offline edit resolvable at the surviving document path", async () => {
+  test("a cloud rename carries offline writing automatically to the surviving document path", async () => {
     const remote = cloud(); const cloudDevice = remote.device(); const offlineDevice = remote.device();
     const original = identified("cloud-move", "Original.");
     const local = identified("cloud-move", "Offline writing.");
@@ -180,8 +182,8 @@ describe("multi-device Markdown sync", () => {
     await cloudDevice.sync();
     const merged = await offlineDevice.sync();
     expect(merged.files["Old.md"]).toBeUndefined();
-    expect(merged.conflicts[0]).toMatchObject({ path: "Renamed.md", local, remote: { content: original.content } });
-    await offlineDevice.resolve(merged.conflicts[0].id, "local");
+    expect(merged.files["Renamed.md"].content).toBe(local.content);
+    expect(merged.conflicts).toHaveLength(0);
     await offlineDevice.sync(); await cloudDevice.sync();
     expect((await cloudDevice.read()).files["Renamed.md"].content).toBe(local.content);
   });
@@ -250,6 +252,242 @@ describe("multi-device Markdown sync", () => {
     expect(Object.entries(conflicted.files).some(([path, value]) => path.startsWith("_conflicts/") && value.content === "phone edit")).toBe(true);
     await phone.resolve(conflicted.conflicts[0].id, "local"); await phone.sync(); await computer.sync();
     expect((await computer.read()).files["note.md"].content).toBe("phone edit");
+  });
+
+  test("three offline devices combine independent passages without requiring recovery review", async () => {
+    const remote = cloud(); const a = remote.device(); const b = remote.device(); const c = remote.device();
+    const original = "Owner: Alice\n\nDate: Monday\n\nVenue: Office\n";
+    await replace(a, "Plan.md", original); await a.sync(); await b.sync(); await c.sync();
+    await replace(a, "Plan.md", original.replace("Alice", "Bob"));
+    await replace(b, "Plan.md", original.replace("Monday", "Tuesday"));
+    await replace(c, "Plan.md", original.replace("Office", "Park"));
+    await a.sync(); await b.sync(); await c.sync(); await a.sync(); await b.sync();
+    for (const device of [a, b, c]) {
+      const snapshot = await device.read();
+      expect(snapshot.files["Plan.md"].content).toBe("Owner: Bob\n\nDate: Tuesday\n\nVenue: Park\n");
+      expect(snapshot.conflicts).toHaveLength(0);
+      expect(pendingVaultChanges(snapshot)).toHaveLength(0);
+    }
+    const before = await c.read();
+    await c.sync(); await c.sync();
+    expect(await c.read()).toEqual(before);
+    const receipts = Object.entries(before.files).filter(([path]) => /\/conflict\.json$/.test(path));
+    expect(receipts).toHaveLength(2);
+    for (const [, receipt] of receipts) {
+      const record = JSON.parse(receipt.content);
+      expect(record.conflicted).toBe(false);
+      for (const key of ["baseCopy", "copy", "remoteCopy", "resultCopy"]) expect(before.files[record[key]]).toBeDefined();
+    }
+  });
+
+  test("eight offline devices converge in different reconnect orders and under simultaneous uploads", async () => {
+    const original = Array.from({ length: 8 }, (_, index) => `Section ${index}: original.`).join("\n\n");
+    const expected = Array.from({ length: 8 }, (_, index) => `Section ${index}: device${index}.`).join("\n\n");
+    for (const order of [[0, 1, 2, 3, 4, 5, 6, 7], [7, 6, 5, 4, 3, 2, 1, 0], [3, 0, 6, 2, 7, 1, 5, 4], null]) {
+      const remote = cloud(); const devices = Array.from({ length: 8 }, () => remote.device());
+      await replace(devices[0], "Shared.md", original); await devices[0].sync();
+      await Promise.all(devices.slice(1).map((device) => device.sync()));
+      for (const [index, device] of devices.entries()) {
+        await replace(device, "Shared.md", original.replace(`Section ${index}: original.`, `Section ${index}: device${index}.`));
+      }
+      if (order) for (const index of order) await devices[index].sync();
+      else {
+        // A bounded busy-cloud retry can yield; the scheduled next sync must finish safely.
+        const results = await Promise.allSettled(devices.map((device) => device.sync()));
+        for (const result of results) if (result.status === "rejected") expect(result.reason.message).toContain("sync will retry");
+      }
+      for (const device of devices) await device.sync();
+      for (const device of devices) await device.sync();
+      for (const device of devices) {
+        const snapshot = await device.read();
+        expect(snapshot.files["Shared.md"].content).toBe(expected);
+        expect(snapshot.conflicts).toHaveLength(0);
+        expect(pendingVaultChanges(snapshot)).toHaveLength(0);
+      }
+      const settled = await devices[0].read();
+      expect(await devices[0].sync()).toEqual(settled);
+    }
+  });
+
+  test("eight conflicting devices preserve every submitted version while independent edits still combine", async () => {
+    const remote = cloud(); const devices = Array.from({ length: 8 }, () => remote.device());
+    const original = "Launch Friday.\n\n" + Array.from({ length: 8 }, (_, index) => `Section ${index}: original.`).join("\n\n");
+    const days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Saturday", "Sunday", "Tomorrow", "Today"];
+    await replace(devices[0], "Shared.md", original); await devices[0].sync();
+    await Promise.all(devices.slice(1).map((device) => device.sync()));
+    const authored = days.map((day, index) => original.replace("Friday", day).replace(`Section ${index}: original.`, `Section ${index}: device${index}.`));
+    for (const [index, device] of devices.entries()) await replace(device, "Shared.md", authored[index]);
+    for (const index of [3, 0, 6, 2, 7, 1, 5, 4]) await devices[index].sync();
+    for (const device of devices) await device.sync();
+    const expected = "Launch Thursday.\n\n" + Array.from({ length: 8 }, (_, index) => `Section ${index}: device${index}.`).join("\n\n");
+    for (const device of devices) {
+      const snapshot = await device.read();
+      expect(snapshot.files["Shared.md"].content).toBe(expected);
+      expect(pendingVaultChanges(snapshot)).toHaveLength(0);
+      const preserved = new Set(Object.values(snapshot.files).map((entry) => entry.content));
+      for (const version of authored) expect(preserved.has(version)).toBe(true);
+    }
+  });
+
+  test("editable document blocks merge through the app codec and survive reopening and subsequent saving", async () => {
+    const remote = cloud(); const a = remote.device(); const b = remote.device();
+    const state = createEmptyState(); const id = state.rootId;
+    const stamp = "2026-09-25T12:00:00.000Z";
+    state.conversations[id].document = { schemaVersion: 1,
+      blocks: ["First paragraph.", "Second paragraph."].map((content, index) => ({
+        id: `block-${index}`, kind: "markdown" as const, content, createdAt: stamp, updatedAt: stamp,
+      })), prompts: [], generations: [] };
+    await a.edit(stateToVaultFiles(state, {}), {}); await a.sync(); await b.sync();
+    const local = structuredClone(state); local.conversations[id].document!.blocks[0].content = "First paragraph, edited on device A.";
+    const other = structuredClone(state); other.conversations[id].document!.blocks[1].content = "Second paragraph, edited on device B.";
+    const aFiles = (await a.read()).files; const bFiles = (await b.read()).files;
+    await a.edit(stateToVaultFiles(local, aFiles), aFiles);
+    await b.edit(stateToVaultFiles(other, bFiles), bFiles);
+    await a.sync(); await b.sync(); await a.sync();
+    for (const device of [a, b]) {
+      const snapshot = await device.read();
+      const reopened = vaultToState(snapshot.files, state);
+      expect(reopened.conversations[id].document!.blocks.map((block) => block.content)).toEqual([
+        "First paragraph, edited on device A.", "Second paragraph, edited on device B.",
+      ]);
+      expect(snapshot.conflicts).toHaveLength(0);
+      await device.edit(stateToVaultFiles(reopened, snapshot.files), snapshot.files);
+      expect(pendingVaultChanges(await device.read())).toHaveLength(0);
+    }
+  });
+
+  test("an overlapping passage keeps unrelated edits and allows restoring either complete input", async () => {
+    const remote = cloud(); const a = remote.device(); const b = remote.device();
+    const original = "Launch Friday.\n\nOwner: Alice.\n\nVenue: Office.\n";
+    const local = original.replace("Friday", "Monday").replace("Alice", "Bob");
+    const synced = original.replace("Friday", "Tuesday").replace("Office", "Park");
+    await replace(a, "Plan.md", original); await a.sync(); await b.sync();
+    await replace(a, "Plan.md", synced); await replace(b, "Plan.md", local); await a.sync();
+    const merged = await b.sync();
+    expect(merged.files["Plan.md"].content).toBe("Launch Tuesday.\n\nOwner: Bob.\n\nVenue: Park.\n");
+    expect(merged.conflicts).toHaveLength(1);
+    const saved = merged.conflicts[0];
+    expect(saved.base?.content).toBe(original);
+    expect(saved.result).toEqual(merged.files["Plan.md"]);
+    expect(pendingVaultChanges(merged)).toHaveLength(0);
+    const fresh = remote.device();
+    expect((await fresh.sync()).conflicts[0].id).toBe(saved.id);
+    const restored = await b.resolve(saved.id, "remote");
+    expect(restored.files["Plan.md"].content).toBe(synced);
+    await b.sync(); await b.sync();
+    expect((await b.read()).conflicts).toHaveLength(0);
+    expect((await b.read()).dismissedRecoveryIds).toContain(saved.id);
+    expect((await fresh.resolve(saved.id, "local")).files["Plan.md"].content).toBe(local);
+  });
+
+  test("recovery uploads finish before merged documents, including failure between archive batches", async () => {
+    const remote = cloud(); const a = remote.device(); const localStore = store();
+    let archiveBatches = 0; let interrupt = true;
+    const b = new VaultSync(localStore, { ...remote.transport, async commit(changes) {
+      if (changes.some((change) => change.path.startsWith("_conflicts/"))) {
+        expect(changes.every((change) => change.path.startsWith("_conflicts/"))).toBe(true);
+        archiveBatches++;
+        if (archiveBatches === 2 && interrupt) throw new Error("Interrupted recovery upload");
+      }
+      return remote.transport.commit(changes);
+    } });
+    const original = "Owner: Alice\n\nVenue: Office\n";
+    const notes = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`Note-${index}.md`, file(original)]));
+    await a.edit(notes, {}); await a.sync(); await b.sync();
+    await a.edit(Object.fromEntries(Object.keys(notes).map((path) => [path, file(original.replace("Alice", "Bob"))])), (await a.read()).files);
+    await b.edit(Object.fromEntries(Object.keys(notes).map((path) => [path, file(original.replace("Office", "Park"))])), (await b.read()).files);
+    await a.sync();
+    await expect(b.sync()).rejects.toThrow("Interrupted recovery upload");
+    const manifest = await remote.transport.manifest();
+    expect((await remote.transport.read("Note-0.md", manifest.files["Note-0.md"])).content).toBe("Owner: Bob\n\nVenue: Office\n");
+    const local = await b.read();
+    expect(local.files["Note-0.md"].content).toBe("Owner: Bob\n\nVenue: Park\n");
+    expect(Object.keys(local.files).filter((path) => /\/conflict\.json$/.test(path))).toHaveLength(12);
+    interrupt = false;
+    const reopened = new VaultSync(localStore, b.transport);
+    await reopened.sync(); await a.sync();
+    expect((await a.read()).files["Note-0.md"].content).toBe("Owner: Bob\n\nVenue: Park\n");
+    expect(Object.keys((await reopened.read()).files).filter((path) => /\/conflict\.json$/.test(path))).toHaveLength(12);
+  });
+
+  test("a third device racing the result commit rebases automatically and converges", async () => {
+    const remote = cloud(); const a = remote.device(); const c = remote.device();
+    let race = false;
+    const b = new VaultSync(store(), { ...remote.transport, async commit(changes) {
+      if (race && changes.some((change) => change.path === "Plan.md")) { race = false; await c.sync(); }
+      return remote.transport.commit(changes);
+    } });
+    const original = "Owner: Alice\n\nDate: Monday\n\nVenue: Office\n";
+    await replace(a, "Plan.md", original); await a.sync(); await b.sync(); await c.sync();
+    await replace(a, "Plan.md", original.replace("Alice", "Bob"));
+    await replace(b, "Plan.md", original.replace("Monday", "Tuesday"));
+    await replace(c, "Plan.md", original.replace("Office", "Park"));
+    await a.sync(); race = true;
+    await b.sync(); await a.sync(); await c.sync();
+    for (const device of [a, b, c]) {
+      expect((await device.read()).files["Plan.md"].content).toBe("Owner: Bob\n\nDate: Tuesday\n\nVenue: Park\n");
+      expect(pendingVaultChanges(await device.read())).toHaveLength(0);
+    }
+  });
+
+  test("a failed durable recovery save publishes neither the result nor its new base", async () => {
+    const remote = cloud(); const a = remote.device(); const storage = store();
+    let failSave = false; let commits = 0;
+    const b = new VaultSync({ ...storage, async write(snapshot) {
+      if (failSave && Object.keys(snapshot.files).some((path) => path.startsWith("_conflicts/"))) throw new Error("Storage full");
+      await storage.write(snapshot);
+    } }, { ...remote.transport, async commit(changes) { commits++; return remote.transport.commit(changes); } });
+    const original = "Owner: Alice\n\nVenue: Office\n";
+    await replace(a, "Plan.md", original); await a.sync(); await b.sync();
+    await replace(a, "Plan.md", original.replace("Alice", "Bob"));
+    await replace(b, "Plan.md", original.replace("Office", "Park"));
+    await a.sync(); const before = await b.read(); commits = 0; failSave = true;
+    await expect(b.sync()).rejects.toThrow("Storage full");
+    expect(await b.read()).toEqual(before);
+    expect(commits).toBe(0);
+    failSave = false;
+    expect((await b.sync()).files["Plan.md"].content).toBe("Owner: Bob\n\nVenue: Park\n");
+  });
+
+  test("a lost result acknowledgement is recovered without duplicating text or recovery records", async () => {
+    const remote = cloud(); const a = remote.device(); const localStore = store(); let loseResponse = false;
+    const b = new VaultSync(localStore, { ...remote.transport, async commit(changes) {
+      const manifest = await remote.transport.commit(changes);
+      if (loseResponse && changes.some((change) => change.path === "Plan.md")) {
+        loseResponse = false; throw new Error("Connection closed after commit");
+      }
+      return manifest;
+    } });
+    const original = "Owner: Alice\n\nVenue: Office\n";
+    await replace(a, "Plan.md", original); await a.sync(); await b.sync();
+    await replace(a, "Plan.md", original.replace("Alice", "Bob"));
+    await replace(b, "Plan.md", original.replace("Office", "Park"));
+    await a.sync(); loseResponse = true;
+    await expect(b.sync()).rejects.toThrow("Connection closed after commit");
+    const reopened = new VaultSync(localStore, remote.transport);
+    const recovered = await reopened.sync();
+    expect(recovered.files["Plan.md"].content).toBe("Owner: Bob\n\nVenue: Park\n");
+    expect(Object.keys(recovered.files).filter((path) => /\/conflict\.json$/.test(path))).toHaveLength(1);
+    expect(pendingVaultChanges(recovered)).toHaveLength(0);
+    expect(await reopened.sync()).toEqual(recovered);
+  });
+
+  test("another device can restore an alternative when recovery uploaded but the working result never did", async () => {
+    const remote = cloud(); const a = remote.device(); let interrupt = false;
+    const b = new VaultSync(store(), { ...remote.transport, async commit(changes) {
+      if (interrupt && changes.some((change) => change.path === "Plan.md")) throw new Error("Device disconnected");
+      return remote.transport.commit(changes);
+    } });
+    const original = "Launch Friday.\n\nOwner: Alice.\n";
+    const local = "Launch Monday.\n\nOwner: Bob.\n";
+    const synced = "Launch Tuesday.\n\nOwner: Alice.\n";
+    await replace(a, "Plan.md", original); await a.sync(); await b.sync();
+    await replace(a, "Plan.md", synced); await replace(b, "Plan.md", local); await a.sync(); interrupt = true;
+    await expect(b.sync()).rejects.toThrow("Device disconnected");
+    const fresh = remote.device(); const downloaded = await fresh.sync();
+    expect(downloaded.files["Plan.md"].content).toBe(synced);
+    expect(downloaded.conflicts).toHaveLength(1);
+    expect((await fresh.resolve(downloaded.conflicts[0].id, "local")).files["Plan.md"].content).toBe(local);
   });
 
   test("a source named conflict.json keeps its local JSON separately from the conflict descriptor", async () => {

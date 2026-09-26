@@ -26,6 +26,24 @@ function restoreLocation(stored: unknown) {
 }
 
 describe("persisted map source validation", () => {
+  test("restores mode cameras and pins without accepting malformed geometry or invented relation kinds", () => {
+    const canvasCamera = { viewport: { x: -52, y: 150, scale: 1.8 }, scopeKey: '{"kind":"all"}', focusedTerritoryId: null, focusedTerritoryScale: null };
+    const restored = restoreLocation({ ...defaultGraphLocation(), viewMode: "network", contentLens: "concepts", documentViewMode: "canvas",
+      modeCameras: { canvas: canvasCamera, network: { ...canvasCamera, viewport: { x: 0, y: 0, scale: -1 } }, invented: canvasCamera },
+      networkPins: { source: { x: -40, y: 600 }, broken: { x: "40", y: 60 }, missing: null },
+      networkIteration: 3, relationKinds: ["link", "supports", "link"], scopeBeforeFocus: { kind: "group", groupId: "research" },
+    });
+    expect(restored.state).toMatchObject({ viewMode: "network", contentLens: "concepts", documentViewMode: "canvas", networkIteration: 3,
+      modeCameras: { canvas: canvasCamera }, networkPins: { source: { x: -40, y: 600 } }, relationKinds: ["link"],
+      scopeBeforeFocus: { kind: "group", groupId: "research" } });
+    expect(Object.keys(restored.state.modeCameras)).toEqual(["canvas"]);
+    expect(Object.keys(restored.state.networkPins)).toEqual(["source"]);
+    const invalid = restoreLocation({ ...defaultGraphLocation(), viewMode: "made-up", contentLens: "entities", documentViewMode: "evidence",
+      networkIteration: -1, scopeBeforeFocus: { kind: "made-up" }, relationKinds: [] });
+    expect(invalid.state).toMatchObject({ viewMode: null, contentLens: "documents", documentViewMode: "topics", networkIteration: 0,
+      scopeBeforeFocus: null, relationKinds: [] });
+  });
+
   test("restores supported document layouts and safely defaults older or malformed choices", () => {
     const viewport = { x: -310, y: 170, scale: 0.38 };
     for (const documentLayoutMode of ["auto", "tree-right", "tree-down", "connections"]) {

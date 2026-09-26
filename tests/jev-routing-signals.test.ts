@@ -138,7 +138,7 @@ describe("independent chat judgments and evidence", () => {
 
   test("catalog evidence distinguishes roles without invented numeric rankings or unknown-model claims", () => {
     expect(getModelRoutingEvidence("openai-api", "gpt-6-astra")).toMatchObject({ basis: "reviewed-catalog", preference: "demanding" });
-    expect(getModelRoutingEvidence("openai-api", "gpt-5.6-terra")).toMatchObject({ preference: "balanced" });
+    expect(getModelRoutingEvidence("openai-api", "gpt-6-sol")).toMatchObject({ preference: "general" });
     for (const [provider, model] of [["openai-api", "private-model"], ["gemini-api", "gpt-6-astra"]]) {
       expect(getModelRoutingEvidence(provider, model)).toMatchObject({ basis: "configured-only", preference: "unknown" });
       expect(getModelRoutingEvidence(provider, model)).not.toHaveProperty("source");
@@ -172,19 +172,19 @@ describe("signal-aware routing policy", () => {
   test("demanding work can prefer a reviewed model within the existing provider candidates", () => {
     const chat = request({ messages: [{ role: "user", content: "Summarize these options." }] });
     const { routes, candidates } = planned(chat, ["openai-api"]);
-    expect(routes[0].model).toBe("gpt-5.6-terra");
+    expect(routes[0].model).toBe("gpt-6-sol");
     const result = applySemanticRouting(chat, routes, {}, { task: "summary", signals: demanding }, candidates);
     expect(result[0]).toMatchObject({ serviceId: "openai-api", model: "gpt-6-astra", routing: { method: "jev-task", selectedModel: "gpt-6-astra" } });
     expect(result[0].reason).toContain("complex-work preference");
     expect(result[0].reason).not.toContain("Jev selected");
-    expect(result[0].reason).not.toContain("(gpt-5.6-terra)");
+    expect(result[0].reason).not.toContain("(gpt-6-sol)");
   });
 
   test("signals never override an explicit Jev choice, a manual choice, or Fast mode", () => {
     const chat = request();
     const { routes, candidates } = planned(chat);
-    const explicit = applySemanticRouting(chat, routes, {}, { routeKey: "openai-api:gpt-5.6-terra", signals: demanding }, candidates);
-    expect(explicit[0]).toMatchObject({ model: "gpt-5.6-terra", routing: { method: "jev" } });
+    const explicit = applySemanticRouting(chat, routes, {}, { routeKey: "openai-api:gpt-6-sol", signals: demanding }, candidates);
+    expect(explicit[0]).toMatchObject({ model: "gpt-6-sol", routing: { method: "jev" } });
     const manual = request({ serviceId: "openai-api", modelId: "gpt-5.6-luna" });
     const manualPlan = planned(manual);
     expect(applySemanticRouting(manual, manualPlan.routes, {}, { signals: demanding }, manualPlan.candidates)[0])

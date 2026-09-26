@@ -217,17 +217,21 @@ export function getMapTerritoryBounds(territory: MapTerritory): MapTerritoryBoun
 }
 
 /** Screen bounds include readable cards and room for the group's heading. */
+export type MapNodeFootprint = { width: number; height: number }
+  | ((node: ConversationGraphNodePlacement) => { width: number; height: number } | undefined);
+
 export function getMapTerritoryScreenBounds(
   territory: MapTerritory,
   viewport: GraphViewport,
   selectedNodeId?: string | null,
-  nodeFootprint?: { width: number; height: number },
+  nodeFootprint?: MapNodeFootprint,
 ): MapTerritoryBounds {
   const factor = (selected: boolean) => selected ? 1 : Math.min(1.12, Math.max(0.9, viewport.scale));
   const bounds = enclosingBounds(territory.nodes.map((node) => {
     const size = factor(node.conversationId === selectedNodeId);
-    const width = nodeFootprint?.width ?? node.width * size;
-    const height = nodeFootprint?.height ?? node.height * size;
+    const footprint = typeof nodeFootprint === "function" ? nodeFootprint(node) : nodeFootprint;
+    const width = footprint?.width ?? node.width * size;
+    const height = footprint?.height ?? node.height * size;
     return { x: viewport.x + (node.x + node.width / 2) * viewport.scale - width / 2,
       y: viewport.y + (node.y + node.height / 2) * viewport.scale - height / 2, width, height };
   }), { x: viewport.x + territory.x * viewport.scale, y: viewport.y + territory.y * viewport.scale });

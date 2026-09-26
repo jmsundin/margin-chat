@@ -204,6 +204,39 @@ export function buildThreadSummaries(
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
+/** Each document is independently addressable, including nested side documents. */
+export function buildDocumentSummaries(
+  conversations: Record<string, Conversation>,
+): ThreadSummary[] {
+  return Object.values(conversations)
+    .map((conversation) => {
+      const standaloneNote = getStandaloneNote(conversation);
+      const preview = conversation.document
+        ? excerpt(getCurrentDocumentText(conversation), 108) || "Empty document"
+        : standaloneNote
+          ? excerpt(standaloneNote.content, 108) || "Empty note"
+          : getThreadPreviewFromConversations([conversation]);
+      const categoryId = categorizeThread({
+        context: getThreadCategoryContext([conversation]),
+        preview,
+        title: conversation.title,
+      });
+
+      return {
+        categoryId,
+        categoryLabel: getThreadCategoryLabel(categoryId),
+        conversationCount: 1,
+        id: conversation.id,
+        kind: conversation.kind === "note" ? ("note" as const) : ("chat" as const),
+        preview,
+        title: conversation.title,
+        updatedAt: conversation.updatedAt,
+        updatedLabel: formatRelativeTime(conversation.updatedAt),
+      };
+    })
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
 export function buildSearchResults(
   conversations: Record<string, Conversation>,
   query: string,

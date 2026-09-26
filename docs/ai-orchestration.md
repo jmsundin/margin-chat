@@ -3,7 +3,9 @@
 Open the AI controls below the message box to choose Auto's Balanced, Fast, or
 Thorough preference. Choose whether AI can use only this conversation and its
 branch, selected notes/conversations, or relevant material from the workspace.
-Provider checkboxes apply to generation, title suggestions, and attachment
+The AI prompt popup also opens the shared model/provider picker; choosing a model preserves the prompt and passage. Featured current models appear immediately, with search and provider browsing below.
+
+Provider checkboxes apply to Auto routing, generation, title suggestions, and attachment
 indexing/search. Excluding OpenAI still saves uploaded originals and explains
 that attachment search is paused.
 
@@ -42,6 +44,9 @@ skips document indexing and search, with a visible warning, even when the final
 reply uses another provider. Conversation and permitted note context still work.
 
 ## Routing policy and its evidence
+
+Auto uses `gpt-6-astra` with low reasoning through the Responses API to return a structured task, eligible model choice, and source order. This runs independently of Jev, once per reply, and is skipped for manual selections and titles. The routing request uses an allowed OpenAI credential in the same personal/hosted pool; personal replies cannot introduce hosted router charges. Hosted routing is reserved and settled separately using the existing usage meter. Missing credentials or pricing, timeout, and invalid routing output retain the standard rules below; cancellation and billing settlement errors stop execution. New receipts identify `astra` or `astra-task`, while historical Jev receipts remain readable.
+
 
 `server/chat/modelProfiles.mjs` contains versioned application preferences and
 their documentation sources. `server/chat/routing.mjs` classifies prompts into

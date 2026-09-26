@@ -3,8 +3,18 @@ import type { ConversationGraphDetail } from "./conversationGraph";
 import { normalizeEvidence, type GraphEvidenceRef, type GraphScope } from "./graphExploration";
 import type { GraphViewport } from "./graphInteractions";
 import type { DocumentLayoutMode } from "./documentMapLayout";
+import { isGraphViewMode, normalizeGraphModeCameras, normalizeNetworkPins, type GraphContentLens, type GraphModeCameras, type GraphRelationKind, type GraphViewMode } from "./graphViewModes";
 
 export interface GraphExplorationLocation {
+  viewMode: GraphViewMode | null;
+  contentLens: GraphContentLens;
+  documentViewMode: GraphViewMode;
+  relationKinds: GraphRelationKind[];
+  modeCameras: GraphModeCameras;
+  scopeBeforeFocus: GraphScope | null;
+  selectedConceptId: string | null;
+  networkIteration: number;
+  networkPins: Record<string, { x: number; y: number }>;
   scope: GraphScope;
   selectedConversationId: string | null;
   dockedConversationId: string | null;
@@ -25,6 +35,8 @@ export interface GraphExplorationLocation {
 }
 
 export const defaultGraphLocation = (): GraphExplorationLocation => ({
+  viewMode: null, contentLens: "documents", documentViewMode: "topics", relationKinds: ["branch", "link"], modeCameras: {}, scopeBeforeFocus: null,
+  selectedConceptId: null, networkIteration: 0, networkPins: {},
   scope: { kind: "all" }, selectedConversationId: null, dockedConversationId: null,
   detailLevel: "compact", source: null, query: "", viewport: { scale: 1, x: 0, y: 0 },
   expandedGroups: [], readerScroll: 0, showRelated: false, overviewPresentation: "map", overviewTopicId: null, focusedTerritoryId: null, focusedTerritoryScale: null,
@@ -45,6 +57,16 @@ function normalizeLocation(value: any): GraphExplorationLocation | null {
     if (!validScope) return null;
     return {
       ...defaultGraphLocation(), scope, viewport: value.viewport,
+      viewMode: isGraphViewMode(value.viewMode) ? value.viewMode : null,
+      contentLens: value.contentLens === "concepts" ? "concepts" : "documents",
+      documentViewMode: isGraphViewMode(value.documentViewMode) && ["canvas", "focus", "topics", "lineage", "network", "documents"].includes(value.documentViewMode) ? value.documentViewMode : "topics",
+      relationKinds: Array.isArray(value.relationKinds) ? [...new Set(value.relationKinds.filter((kind: unknown) => kind === "branch" || kind === "link"))] as GraphRelationKind[] : ["branch", "link"],
+      modeCameras: normalizeGraphModeCameras(value.modeCameras),
+      scopeBeforeFocus: value.scopeBeforeFocus && value.scopeBeforeFocus.kind !== "focus"
+        ? normalizeLocation({ ...defaultGraphLocation(), scope: value.scopeBeforeFocus })?.scope ?? null : null,
+      selectedConceptId: typeof value.selectedConceptId === "string" ? value.selectedConceptId : null,
+      networkIteration: Number.isSafeInteger(value.networkIteration) && value.networkIteration >= 0 ? value.networkIteration : 0,
+      networkPins: normalizeNetworkPins(value.networkPins),
       selectedConversationId: typeof value.selectedConversationId === "string" ? value.selectedConversationId : null,
       dockedConversationId: typeof value.dockedConversationId === "string" ? value.dockedConversationId : null,
       detailLevel: ["compact", "preview", "reader"].includes(value.detailLevel) ? value.detailLevel : "compact",

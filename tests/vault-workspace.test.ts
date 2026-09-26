@@ -74,6 +74,17 @@ describe("vault workspace source of truth", () => {
     expect(recovered.railOpen).toBe(true);
   });
 
+  test("restored focus uses its current parent after a document moves between roots", () => {
+    const state = authoredWorkspace();
+    const current = { ...state, activeConversationId: "child" };
+    const moved = { ...state, conversations: { ...state.conversations,
+      child: { ...state.conversations.child, parentId: "design" },
+    } };
+    const recovered = vaultToState(stateToVaultFiles(moved, {}), current);
+    expect(recovered.activeConversationId).toBe("child");
+    expect(recovered.rootId).toBe("design");
+  });
+
   test("unchanged remote plain Markdown remains the exact revision offered for conflict resolution", () => {
     const raw = "# A remote note\r\n\r\nKeep these exact bytes.\r\n";
     const files: Record<string, VaultFile> = { "Remote.md": { content: raw } };

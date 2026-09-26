@@ -3,7 +3,7 @@ import AuthLanding from "./components/AuthLanding";
 import {
   requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession,
   requestCreateCheckoutSession, requestLogin, requestLogout, requestPasswordReset,
-  requestPasswordResetConfirm, requestSignup, requestUpdateApiKeys, requestUpdateProfile,
+  requestPasswordResetConfirm, requestSignup, requestUpdateApiKeys, requestUpdateProfile, requestChangePassword, ApiError,
 } from "./lib/api";
 import { rememberOfflineUser, loadOfflineUser, forgetOfflineUser } from "./lib/offlineSession";
 import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type ThemeMode } from "./lib/appearance";
@@ -20,9 +20,8 @@ function getErrorText(error: unknown, fallback: string) {
 }
 
 export default function App() {
-  const hasPasswordResetToken = new URLSearchParams(window.location.search).has(
-    "reset_token",
-  );
+  // Removing a used reset token must not restart session hydration and race a new login.
+  const [hasPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).has("reset_token"));
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
   const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
   const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(null);
@@ -268,6 +267,7 @@ export default function App() {
 
     try {
       await requestPasswordResetConfirm(args);
+      forgetOfflineUser();
       return true;
     } catch (error) {
       setAuthError(getErrorText(error, "Unable to reset the password."));
@@ -303,6 +303,15 @@ export default function App() {
     setAuthUser(user);
     setAuthStatus("authenticated");
     return user;
+  }
+
+  async function handleChangePassword(args: { currentPassword: string; password: string }) {
+    try {
+      await requestChangePassword(args);
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 401) handleAuthExpired(error.message);
+      throw error;
+    }
   }
 
   async function handleUpdateApiKeys(args: {
@@ -409,6 +418,7 @@ export default function App() {
       onStartSubscription={handleStartSubscription}
       onSetTheme={setTheme}
       onUpdateProfile={handleUpdateProfile}
+      onChangePassword={handleChangePassword}
       onUpdateApiKeys={handleUpdateApiKeys}
       theme={theme}
       user={authUser}

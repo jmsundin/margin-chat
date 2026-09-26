@@ -33,12 +33,13 @@ export function getSelectionTooltipLayout(args: {
     args.viewportHeight - topBelow - args.viewportMargin,
     0,
   );
-  const renderAbove =
-    args.tooltipHeight > 0 && availableBelow < args.tooltipHeight;
   const availableAbove = Math.max(
     args.rect.top - SELECTION_TOOLTIP_GAP_PX - args.viewportMargin,
     0,
   );
+  // A destination picker can be taller than either side of the selection.
+  // Keep it on the roomier side rather than clipping it into a tiny strip above.
+  const renderAbove = args.tooltipHeight > availableBelow && availableAbove > availableBelow;
   const top = renderAbove
     ? Math.max(
         args.rect.top - SELECTION_TOOLTIP_GAP_PX - args.tooltipHeight,

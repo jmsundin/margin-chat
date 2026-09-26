@@ -92,6 +92,15 @@ describe("saved workspace recovery", () => {
     expect(recovered.defaultModelId).toBe(root.modelId);
   });
 
+  test("retains pinned side documents in order while discarding missing and duplicate pins", () => {
+    const state = createEmptyState();
+    const root = state.conversations[state.rootId];
+    const child = createChildConversation({ id: "pinned-side", parentConversation: root });
+    state.conversations[child.id] = child;
+    state.pinnedThreadIds = [child.id, "missing", root.id, child.id, "toString"];
+    expect(hydratePersistedState(state)!.pinnedThreadIds).toEqual([child.id, root.id]);
+  });
+
   test("returns no recovered workspace for unusable saved data", () => {
     for (const input of [
       null,

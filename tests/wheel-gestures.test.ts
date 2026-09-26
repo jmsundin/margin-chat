@@ -14,11 +14,22 @@ describe("wheel gesture routing", () => {
     ).toBe(0);
   });
 
-  test("routes a diagonal trackpad swipe horizontally instead of letting the panel consume it", () => {
-    expect(getWheelGestureAxis(32, 40)).toBe("horizontal");
-    expect(
-      getHorizontalWheelDelta({ deltaX: 32, deltaY: 40, shiftKey: false }),
-    ).toBe(32);
+  test("keeps upward and downward diagonals vertical despite drift in either horizontal direction", () => {
+    for (const deltaY of [-40, 40]) {
+      for (const deltaX of [-40, -32, 32, 40]) {
+        expect(getWheelGestureAxis(deltaX, deltaY)).toBe("vertical");
+        expect(getHorizontalWheelDelta({ deltaX, deltaY, shiftKey: false })).toBe(0);
+      }
+    }
+  });
+
+  test("favors vertical scrolling when horizontal movement is stronger but still ambiguous", () => {
+    for (const deltaY of [-40, 40]) {
+      for (const deltaX of [-79.9, -60, 60, 79.9]) {
+        expect(getWheelGestureAxis(deltaX, deltaY)).toBe("vertical");
+        expect(getHorizontalWheelDelta({ deltaX, deltaY, shiftKey: false })).toBe(0);
+      }
+    }
   });
 
   test("routes a dominant horizontal gesture to the conversation strip at any viewport size", () => {
@@ -26,12 +37,25 @@ describe("wheel gesture routing", () => {
     expect(
       getHorizontalWheelDelta({ deltaX: -42, deltaY: 18, shiftKey: false }),
     ).toBe(-42);
+    for (const deltaY of [-40, 0, 40]) {
+      for (const deltaX of [-80, 80]) {
+        expect(getWheelGestureAxis(deltaX, deltaY)).toBe("horizontal");
+        expect(getHorizontalWheelDelta({ deltaX, deltaY, shiftKey: false })).toBe(deltaX);
+      }
+    }
   });
 
   test("supports Shift+wheel as an explicit horizontal gesture", () => {
     expect(
       getHorizontalWheelDelta({ deltaX: 0, deltaY: 36, shiftKey: true }),
     ).toBe(36);
+    for (const deltaY of [-40, 40]) {
+      for (const deltaX of [-60, -32, 32, 60]) {
+        expect(getHorizontalWheelDelta({ deltaX, deltaY, shiftKey: true })).toBe(deltaY);
+      }
+    }
+    expect(getHorizontalWheelDelta({ deltaX: -100, deltaY: 40, shiftKey: true })).toBe(-100);
+    expect(getHorizontalWheelDelta({ deltaX: 100, deltaY: -40, shiftKey: true })).toBe(100);
   });
 
   test("ignores sub-pixel wheel noise", () => {
@@ -39,6 +63,8 @@ describe("wheel gesture routing", () => {
     expect(
       getHorizontalWheelDelta({ deltaX: 0.2, deltaY: -0.3, shiftKey: true }),
     ).toBe(0);
+    expect(getWheelGestureAxis(0.5, 0)).toBe("horizontal");
+    expect(getWheelGestureAxis(0, -0.5)).toBe("vertical");
   });
 
   test("leaves wheel gestures inside the Profile dialog untouched", () => {

@@ -19,12 +19,22 @@ const normalizeBlock = (block) => ({ id: block.id, kind: "markdown", content: bl
   createdAt: block.createdAt, updatedAt: block.updatedAt,
   ...(block.sourceMessageId ? { sourceMessageId: block.sourceMessageId } : {}),
   ...(block.generationId ? { generationId: block.generationId } : {}) });
+const validLink = (link) => record(link) && id(link.id) && id(link.sourceMessageId) &&
+  optionalId(link.sourceBlockId) && offset(link.startOffset) && offset(link.endOffset) &&
+  link.endOffset > link.startOffset && string(link.quote) && link.quote.length > 0 &&
+  id(link.targetConversationId) && optionalId(link.targetBlockId) && dated(link.createdAt);
+const normalizeLink = (link) => ({ id: link.id, sourceMessageId: link.sourceMessageId,
+  ...(link.sourceBlockId ? { sourceBlockId: link.sourceBlockId } : {}),
+  startOffset: link.startOffset, endOffset: link.endOffset, quote: link.quote,
+  targetConversationId: link.targetConversationId,
+  ...(link.targetBlockId ? { targetBlockId: link.targetBlockId } : {}), createdAt: link.createdAt });
 
 /** Reject malformed authored documents as a whole; never truncate or silently lose text. */
 export function normalizeEditableDocument(input) {
   if (!record(input) || input.schemaVersion !== 1 || !Array.isArray(input.blocks) ||
       !Array.isArray(input.prompts) || !Array.isArray(input.generations)) return undefined;
   if (!input.blocks.every(validBlock) || !unique(input.blocks)) return undefined;
+  if (input.links !== undefined && (!Array.isArray(input.links) || !input.links.every(validLink) || !unique(input.links))) return undefined;
   if (!input.prompts.every((prompt) => record(prompt) && id(prompt.id) && string(prompt.content) &&
       dated(prompt.createdAt) && optionalId(prompt.sourceMessageId) && validSettings(prompt) &&
       (prompt.selection === undefined || record(prompt.selection) && id(prompt.selection.blockId) &&
@@ -47,6 +57,7 @@ export function normalizeEditableDocument(input) {
   return {
     schemaVersion: 1,
     blocks: input.blocks.map(normalizeBlock),
+    ...(input.links ? { links: input.links.map(normalizeLink) } : {}),
     prompts: input.prompts.map((prompt) => ({ id: prompt.id, content: prompt.content, createdAt: prompt.createdAt,
       ...settings(prompt), ...(prompt.sourceMessageId ? { sourceMessageId: prompt.sourceMessageId } : {}),
       ...(prompt.selection ? { selection: { blockId: prompt.selection.blockId, from: prompt.selection.from, to: prompt.selection.to, quote: prompt.selection.quote } } : {}) })),

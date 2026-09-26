@@ -1,4 +1,7 @@
+import DismissibleDetails from "./DismissibleDetails";
+import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -37,6 +40,13 @@ import {
 } from "../lib/conversationGraph";
 import GraphExplorationPanel, { type GraphExplorationOverviewItem } from "./GraphExplorationPanel";
 import GraphOverviewCanvas from "./GraphOverviewCanvas";
+import { GraphAnalysisViews } from "./GraphAnalysisViews";
+import { GraphEvidenceView } from "./GraphEvidenceView";
+import { getGraphAnalysisEdges } from "../lib/graphAnalysis";
+import { layoutNetworkMap } from "../lib/networkMapLayout";
+import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
+import GraphViewModeControls from "./GraphViewModeControls";
+import "./GraphViewModes.css";
 import {
   aggregateGraphEdges, getGraphScopeConversationIds, getGraphWorldBounds,
   getGraphConceptConversationIds, readGraphConcepts, writeGraphConcepts,
@@ -62,7 +72,6 @@ import {
   resolveGraphNodeReflow,
   resolveGraphSelectionReflow,
 } from "../lib/graphAutoLayout";
-import { getWheelGestureAxis } from "../lib/wheelGestures";
 import { buildGraphDragPreviewIndex, resolveGraphDragPreview } from "../lib/graphDragPreview";
 import {
   getGraphNodesInSelectionBounds,
@@ -73,6 +82,7 @@ import {
   type GraphViewport,
 } from "../lib/graphInteractions";
 import { useGraphInteractions } from "../lib/useGraphInteractions";
+import { useGraphContentQueue } from "../lib/useGraphContentQueue";
 import { buildThreadSummaries } from "../lib/conversationSearch";
 import { buildCategoryOrganizedGraphLayouts } from "../lib/graphCategories";
 import { getConversationRootId } from "../lib/tree";
@@ -85,7 +95,7 @@ import type {
 } from "../types";
 
 const GRAPH_SCALE_MIN = 0.02;
-const GRAPH_SCALE_MAX = 2.2;
+const GRAPH_SCALE_MAX = 6;
 const GRAPH_ZOOM_STEP = 1.14;
 const GRAPH_PINCH_ZOOM_SENSITIVITY = 0.008;
 const GRAPH_PINCH_ZOOM_MAX_FACTOR = 1.28;
@@ -97,6 +107,22 @@ const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
 
 function getGraphSemanticLevel(scale: number): ConversationGraphSemanticLevel {
   return getMapScale(scale) === "groups" ? "territory" : "compact";
+}
+
+function getNodeZoomDetail(footprint?: { width: number; height: number }): ConversationGraphDetail {
+  if (!footprint) return "compact";
+  if (footprint.width >= 360 && footprint.height >= 190) return "reader";
+  if (footprint.width >= 210 && footprint.height >= 110) return "preview";
+  return "compact";
+}
+
+function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement, scale: number, detail: ConversationGraphDetail) {
+  if (scale < 1.15 || detail === "reader") return undefined;
+  // An explicitly opened preview keeps its reading space while the camera
+  // catches up, then grows along with the surrounding document cards.
+  return detail === "preview"
+    ? { width: Math.max(330, 200 * scale), height: Math.max(240, 96 * scale) }
+    : { width: placement.width * scale, height: placement.height * scale };
 }
 
 export interface ConversationGraphViewProps {
@@ -201,14 +227,14 @@ function getLatestMessage(
     .find((message) => role === undefined || message.role === role);
 }
 
-function getConversationPreview(conversation: Conversation) {
-  if (conversation.document) return excerpt(getCurrentDocumentText(conversation), 124) || "This document is empty.";
+function getConversationPreview(conversation: Conversation, length = 124) {
+  if (conversation.document) return excerpt(getCurrentDocumentText(conversation), length) || "This document is empty.";
   const standaloneNote = getStandaloneNote(conversation);
 
   if (standaloneNote) {
     return standaloneNote.content.trim()
-      ? excerpt(standaloneNote.content, 124)
-      : conversation.publicTopic?.description ? excerpt(conversation.publicTopic.description, 124) : "This note is empty.";
+      ? excerpt(standaloneNote.content, length)
+      : conversation.publicTopic?.description ? excerpt(conversation.publicTopic.description, length) : "This note is empty.";
   }
 
   const message =
@@ -216,7 +242,7 @@ function getConversationPreview(conversation: Conversation) {
     getLatestMessage(conversation);
 
   return message
-    ? excerpt(message.content, 124)
+    ? excerpt(message.content, length)
     : "This chat does not have any messages yet.";
 }
 
@@ -355,10 +381,37 @@ function GraphNodeAction({
   );
 }
 
+// Camera changes only affect the card shell; parsing text and rendering editors
+// waits for admission to the viewport and stays memoized while zooming.
+const GraphNodeReader = memo(function GraphNodeReader({ conversation, renderContent }: {
+  conversation: Conversation;
+  renderContent?: (conversationId: string) => ReactNode;
+}) {
+  return renderContent?.(conversation.id) ?? <p className="conversation-graph-reader-empty">
+    {getCurrentDocumentText(conversation) || getStandaloneNote(conversation)?.content || conversation.messages.map((message) => message.content).join("\n\n") || "This document is empty."}
+  </p>;
+});
+
+const GraphNodePreview = memo(function GraphNodePreview({ conversation, extended }: { conversation: Conversation; extended: boolean }) {
+  const isNote = isStandaloneNoteConversation(conversation);
+  return <>
+    <span className="conversation-graph-node-source-label">{conversation.publicTopic ? "Public topic · Your private notes" : isNote ? conversation.parentId ? "Child note" : "Workspace note" : conversation.parentId ? "Branched from" : "Discussion"}</span>
+    {conversation.branchAnchor ? <blockquote>{getSourceQuote(conversation)}</blockquote> : null}
+    <p>{getConversationPreview(conversation, extended ? 600 : 124)}</p>
+  </>;
+});
+
+function GraphNodeSkeleton() {
+  return <div className="graph-node-content-skeleton" role="status" aria-label="Loading document content">
+    <span /><span /><span /><span /><span />
+  </div>;
+}
+
 function GraphNode({
   zoomScale,
   screenFootprint,
   isConnectionCenter = false,
+  isPinned = false,
   isSpaced,
   menuActions,
   actions,
@@ -385,7 +438,8 @@ function GraphNode({
   onOpen,
   onSelect,
   placement,
-  readerContent,
+  contentReady,
+  renderReader,
   semanticLevel,
 }: {
   actions?: ReactNode;
@@ -393,6 +447,7 @@ function GraphNode({
   zoomScale: number;
   screenFootprint?: { width: number; height: number; titleFontSize?: number; titleLines?: number };
   isConnectionCenter?: boolean;
+  isPinned?: boolean;
   isSpaced?: boolean;
   activeConversationId: string;
   categoryLabel?: string;
@@ -420,11 +475,12 @@ function GraphNode({
   onOpen: (conversationId: string) => void;
   onSelect: (conversationId: string) => void;
   placement: ConversationGraphNodePlacement;
-  readerContent?: ReactNode;
+  contentReady: boolean;
+  renderReader?: (conversationId: string) => ReactNode;
   semanticLevel: ConversationGraphSemanticLevel;
 }) {
-  const isPreview = isSelected && detailLevel === "preview" && !screenFootprint;
-  const isReader = isSelected && detailLevel === "reader";
+  const isPreview = detailLevel === "preview";
+  const isReader = detailLevel === "reader";
   const isNote = isStandaloneNoteConversation(conversation);
   const moveLabel =
     isMultiSelected && multiSelectionSize > 1
@@ -464,6 +520,9 @@ function GraphNode({
         .filter(Boolean)
         .join(" ")}
       data-conversation-id={conversation.id}
+      data-network-pinned={isPinned || undefined}
+      data-graph-detail={detailLevel}
+      data-graph-content={isPreview || isReader ? contentReady ? "ready" : "loading" : undefined}
       data-multi-selected={isMultiSelected ? "true" : undefined}
       style={nodeStyle}
     >
@@ -516,7 +575,7 @@ function GraphNode({
       >
         <GraphNodeAction icon="open" label={`Open ${conversation.title} in chat view`} onClick={() => onOpen(conversation.id)} primary />
         {actions}
-        <details className="graph-node-more" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }} onClick={(event) => event.stopPropagation()}>
+        <DismissibleDetails className="graph-node-more" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }} onClick={(event) => event.stopPropagation()}>
           <summary aria-label={`More actions for ${conversation.title}`} title="More actions">•••</summary>
           <div>
         {menuActions}
@@ -558,31 +617,27 @@ function GraphNode({
           onAssign={onAssignGroup}
         />
           </div>
-        </details>
+        </DismissibleDetails>
       </div>
 
-      {isPreview ? (
+      {(isPreview || isReader) && !contentReady ? <GraphNodeSkeleton /> : null}
+
+      {isPreview && contentReady ? (
         <div className="conversation-graph-node-preview">
-          <span className="conversation-graph-node-source-label">{conversation.publicTopic ? "Public topic · Your private notes" : isNote ? conversation.parentId ? "Child note" : "Workspace note" : conversation.parentId ? "Branched from" : "Discussion"}</span>
-          {conversation.branchAnchor ? <blockquote>{getSourceQuote(conversation)}</blockquote> : null}
-          <p>{getConversationPreview(conversation)}</p>
-          <div className="graph-map-preview-actions">
+          <GraphNodePreview conversation={conversation} extended={Boolean(screenFootprint)} />
+          {!screenFootprint ? <div className="graph-map-preview-actions">
             <button type="button" onClick={() => onFocus(conversation.id)}>Focus here</button>
             {conversation.parentId ? <button type="button" onClick={() => onSource(conversation.id)}>Show source</button> : null}
-          </div>
+          </div> : null}
         </div>
       ) : null}
 
-      {isReader ? (
+      {isReader && contentReady ? (
         <div
           className="conversation-graph-node-reader"
           data-graph-reader-scroll="true"
         >
-          {readerContent ?? (
-            <p className="conversation-graph-reader-empty">
-              This chat does not have any messages yet.
-            </p>
-          )}
+          <GraphNodeReader conversation={conversation} renderContent={renderReader} />
         </div>
       ) : null}
     </article>
@@ -691,8 +746,15 @@ export default function ConversationGraphView({
     .filter((id) => groups[id]).map((id) => [id, groups[id]])), [groups, groupSemantics.orderedGroupIds]);
   const navigation = useGraphExplorationNavigation(workspaceKey);
   const { scope, selectedConversationId, detailLevel, dockedConversationId, viewport, source, query, expandedGroups, showRelated, focusedTerritoryId, focusedTerritoryScale } = navigation.state;
+  const viewMode = getGraphViewMode(navigation.state);
+  const isCanvasMode = navigation.state.viewMode === "canvas";
+  const isNetworkMode = navigation.state.viewMode === "network";
+  const isLineageMode = navigation.state.viewMode === "lineage";
+  const panelView = isGraphPanelMode(viewMode) || navigation.state.contentLens === "concepts";
+  const showBranches = isLineageMode || navigation.state.relationKinds.includes("branch");
+  const showLinks = !isLineageMode && navigation.state.relationKinds.includes("link");
   const focusedNodeId = scope.kind === "focus" ? scope.conversationId : null;
-  const documentsOnly = navigation.state.overviewPresentation === "documents" || !!focusedNodeId;
+  const documentsOnly = !isCanvasMode && (navigation.state.overviewPresentation === "documents" || !!focusedNodeId || isNetworkMode || isLineageMode);
   const setSelectedConversationId = (id: string | null) => navigation.update({ selectedConversationId: id });
   const setDetailLevel = (value: ConversationGraphDetail) => navigation.update({ detailLevel: value });
   const setDockedConversationId = (id: string | null) => navigation.update({ dockedConversationId: id, source: null });
@@ -705,6 +767,10 @@ export default function ConversationGraphView({
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const explorerRef = useRef<HTMLDivElement>(null);
+  const explorerTriggerRef = useRef<HTMLButtonElement>(null);
+  useOutsideDismiss(searchOpen, () => setSearchOpen(false), searchRef);
+  useOutsideDismiss(explorerOpen && !explorerContainer, () => setExplorerOpen(false), explorerRef, explorerTriggerRef);
   const deferredQuery = useDeferredValue(query);
   const dockBodyRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -778,10 +844,13 @@ export default function ConversationGraphView({
     return Math.max(Number.EPSILON, Math.min(GRAPH_SCALE_MIN,
       1 / (Math.max(1, bounds.width, bounds.height) * 1024)));
   }, [completeScene]);
-  const allDocumentConnections = useMemo(() => Object.values(conversations).flatMap((conversation) => [
-    ...(conversation.parentId ? [{ sourceId: conversation.parentId, targetId: conversation.id }] : []),
-    ...(conversation.linkedConversationIds ?? []).map((targetId) => ({ sourceId: conversation.id, targetId })),
-  ]), [conversations]);
+  const allDocumentConnections = useMemo(() => getGraphAnalysisEdges(conversations)
+    .filter((edge) => edge.kind === "branch" ? showBranches : showLinks), [conversations, showBranches, showLinks]);
+  const relationshipConversations = useMemo(() => showBranches && showLinks ? conversations
+    : Object.fromEntries(Object.entries(conversations).map(([id, conversation]) => [id, { ...conversation,
+      parentId: showBranches ? conversation.parentId : null, childIds: showBranches ? conversation.childIds : [],
+      linkedConversationIds: showLinks ? conversation.linkedConversationIds : [],
+    }])), [conversations, showBranches, showLinks]);
   const scopedIds = useMemo(() => {
     const ids = scope.kind === "focus"
       ? getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections, scope.conversationId, scope.depth)
@@ -793,10 +862,11 @@ export default function ConversationGraphView({
   }, [scope, conversations, groups, categorizedThreads, concepts, showRelated, relatedItems, activeConversationId, allDocumentConnections]);
   const canExpandNeighborhood = useMemo(() => scope.kind === "focus" && getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections,
     scope.conversationId, scope.depth + 1).size > scopedIds.size, [scope, conversations, allDocumentConnections, scopedIds]);
+  const scopedConversations = useMemo(() => Object.fromEntries(Object.entries(conversations).filter(([id]) => scopedIds.has(id))), [conversations, scopedIds]);
   const unfocusedScene = useMemo(() => {
-    if (scope.kind === "all") return completeScene;
+    if (scope.kind === "all") return showBranches ? completeScene : { ...completeScene, edges: [] };
     const nodes = completeScene.nodes.filter((node) => scopedIds.has(node.conversationId));
-    const edges = completeScene.edges.filter((edge) => scopedIds.has(edge.parentConversationId) && scopedIds.has(edge.childConversationId));
+    const edges = showBranches ? completeScene.edges.filter((edge) => scopedIds.has(edge.parentConversationId) && scopedIds.has(edge.childConversationId)) : [];
     const groupPlacements = completeScene.groups.flatMap((group) => {
       const members = nodes.filter((node) => group.conversationIds.includes(node.conversationId));
       if (!members.length) return [];
@@ -804,10 +874,10 @@ export default function ConversationGraphView({
       return [{ ...group, conversationIds: members.map((node) => node.conversationId), x: bounds.left, y: bounds.top, width: bounds.width, height: bounds.height }];
     });
     return { ...completeScene, nodes, edges, groups: groupPlacements };
-  }, [completeScene, scope.kind, scopedIds]);
+  }, [completeScene, scope.kind, scopedIds, showBranches]);
   const territories = useMemo(() => buildMapTerritories(unfocusedScene, territoryGroups), [unfocusedScene, territoryGroups]);
   const focusedTerritory = territories.find((territory) => territory.id === focusedTerritoryId) ?? null;
-  const browsingGroups = viewportSize.width > 0 && navigation.state.overviewPresentation === "map" && scope.kind === "all" && !focusedTerritory
+  const browsingGroups = !isCanvasMode && viewportSize.width > 0 && navigation.state.overviewPresentation === "map" && scope.kind === "all" && !focusedTerritory
     && (territories.some((territory) => territory.id !== "__ungrouped__") || unfocusedScene.nodes.length > 4);
   const browsingLayout = useMemo(() => browsingGroups
     ? layoutMapTerritoryOverview(territories, { x: 0, y: 0, scale: viewport.scale }, viewportSize.width || 1000) : [],
@@ -818,7 +888,11 @@ export default function ConversationGraphView({
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }) : null,
   [focusedTerritory, viewportSize]);
   const compactTerritoryNodes = Boolean(focusedTerritoryId) && (viewport.scale < 0.7 || !!focusedLayout?.arranged) && detailLevel !== "reader";
-  const compactFootprint = focusedLayout?.arranged ? focusedLayout.nodeFootprint! : GROUP_NODE_FOOTPRINT;
+  const compactFootprint = useMemo(() => {
+    const footprint = focusedLayout?.arranged ? focusedLayout.nodeFootprint! : GROUP_NODE_FOOTPRINT;
+    const factor = focusedLayout?.arranged ? Math.max(1, viewport.scale / focusedLayout.viewport.scale) : 1;
+    return { width: footprint.width * factor, height: footprint.height * factor };
+  }, [focusedLayout, viewport.scale]);
   const documentConnections = useMemo(() => {
     const ids = new Set(unfocusedScene.nodes.map((node) => node.conversationId));
     return [
@@ -826,10 +900,28 @@ export default function ConversationGraphView({
     ];
   }, [unfocusedScene.nodes, allDocumentConnections]);
   const documentLayoutMode = navigation.state.documentLayoutMode;
-  const documentLayout = useMemo(() => documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
+  const networkCache = useRef<{ key: string; layout: ReturnType<typeof layoutNetworkMap> } | null>(null);
+  const networkLayout = useMemo(() => {
+    if (!isNetworkMode) return null;
+    const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections, navigation.state.networkIteration]);
+    if (networkCache.current?.key !== key) networkCache.current = { key, layout: layoutNetworkMap(unfocusedScene.nodes,
+      viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }, documentConnections,
+      { iteration: navigation.state.networkIteration, pinned: navigation.state.networkPins }) };
+    const positions = new Map(networkCache.current.layout.nodes.map((node) => [node.conversationId, node]));
+    // Moving or pinning a card must not restart physics for every other card.
+    const nodes = unfocusedScene.nodes.map((node) => {
+      const placed = positions.get(node.conversationId)!;
+      const position = navigation.state.networkPins[node.conversationId] ?? placed;
+      return { ...node, x: position.x, y: position.y, width: placed.width, height: placed.height };
+    });
+    networkCache.current.layout = { ...networkCache.current.layout, nodes };
+    return { ...networkCache.current.layout, nodes };
+  }, [isNetworkMode, unfocusedScene.nodes, viewportSize, documentConnections, navigation.state.networkIteration, navigation.state.networkPins]);
+  const documentLayout = useMemo(() => networkLayout ? { ...networkLayout, arranged: true, centerNodeId: null }
+    : documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 },
     { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }) : null,
-  [documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId]);
+  [networkLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId]);
   const documentFootprint = useMemo(() => getDocumentNodeFootprint(viewport.scale), [viewport.scale]);
   const displayScene = useMemo(() => documentLayout
     ? replaceConversationGraphNodes(unfocusedScene, documentLayout.nodes)
@@ -845,7 +937,10 @@ export default function ConversationGraphView({
     } : node);
     const footprints = placements.map((node) => {
       const factor = readableNodeSize(viewport.scale, node.conversationId === selectedConversation.id);
-      return { ...node, x: node.x + node.width * (1 - factor) / 2, y: node.y + node.height * (1 - factor) / 2, width: node.width * factor, height: node.height * factor };
+      const footprint = getCanvasNodeFootprint(node, viewport.scale, node.conversationId === selectedConversation.id ? detailLevel : "compact");
+      const width = footprint ? footprint.width / viewport.scale : node.width * factor;
+      const height = footprint ? footprint.height / viewport.scale : node.height * factor;
+      return { ...node, x: node.x + (node.width - width) / 2, y: node.y + (node.height - height) / 2, width, height };
     });
     const adjusted = resolveGraphFocusLayout({ placements: footprints, selectedConversationId: selectedConversation.id, gapX: 24 / viewport.scale, gapY: 24 / viewport.scale });
     const originalById = new Map(placements.map((node) => [node.conversationId, node]));
@@ -854,6 +949,12 @@ export default function ConversationGraphView({
       return { ...original, x: node.x + (node.width - original.width) / 2, y: node.y + (node.height - original.height) / 2 };
     }));
   }, [displayScene, selectedConversation, detailLevel, semanticLevel, viewport.scale, compactTerritoryNodes, browsingGroups, documentsOnly]);
+  const nodeScreenFootprint = useCallback((placement: ConversationGraphNodePlacement) => {
+    const selectedDetail = placement.conversationId === selectedConversationId ? detailLevel : "compact";
+    if (selectedDetail === "reader") return undefined;
+    return documentsOnly ? documentFootprint : browsingFootprints.get(placement.conversationId)
+      ?? (compactTerritoryNodes ? compactFootprint : getCanvasNodeFootprint(placement, viewport.scale, selectedDetail));
+  }, [selectedConversationId, detailLevel, documentsOnly, documentFootprint, browsingFootprints, compactTerritoryNodes, compactFootprint, viewport.scale]);
   const worldBounds = useMemo(() => getGraphWorldBounds([...scene.nodes, ...scene.groups], 24), [scene]);
   const sourceItems = useMemo(() => searchGraphSources(conversations, deferredQuery).filter((item) => scopedIds.has(item.evidence.conversationId)), [conversations, deferredQuery, query, scopedIds]);
   const overviewItems = useMemo<GraphExplorationOverviewItem[]>(() => {
@@ -886,7 +987,7 @@ export default function ConversationGraphView({
       : { kind: "ungrouped" };
     return [item.id, [...getGraphScopeConversationIds({ scope: itemScope, conversations, groups, concepts, threads: categorizedThreads })]];
   })), [overviewItems, conversations, groups, concepts, categorizedThreads]);
-  const showThemeOverview = scope.kind === "all" && !selectedConversation && navigation.state.overviewPresentation === "themes";
+  const showThemeOverview = !panelView && scope.kind === "all" && !selectedConversation && navigation.state.overviewPresentation === "themes";
   const canvasTerritories = useMemo(() => buildMapTerritories(scene, territoryGroups), [scene, territoryGroups]);
   const crowdedLabels = useMemo(() => mapLabelsOverlap(unfocusedScene.nodes, viewport.scale), [unfocusedScene.nodes, viewport.scale]);
   // A few distant notes should remain discoverable after Fit instead of
@@ -895,10 +996,10 @@ export default function ConversationGraphView({
   // user deliberately zooms farther out.
   const sparseUngroupedMap = unfocusedScene.nodes.length > 0 && unfocusedScene.nodes.length <= 4 && !unfocusedScene.groups.length;
   const groupScaleThreshold = sparseUngroupedMap ? GRAPH_SPARSE_GROUP_SCALE : 0.7;
-  const showTerritories = !documentsOnly && (browsingGroups ? !browsingFootprints.size : !showThemeOverview && !focusedTerritory && (viewport.scale < groupScaleThreshold || (!selectedConversation && crowdedLabels)));
+  const showTerritories = !isCanvasMode && !documentsOnly && (browsingGroups ? !browsingFootprints.size : !showThemeOverview && !focusedTerritory && (viewport.scale < groupScaleThreshold || (!selectedConversation && crowdedLabels)));
   const mapScale = showTerritories ? "groups" : viewport.scale >= 1.25 ? "working" : "titles";
   const hasRelatedFilter = relatedStatus === "ready" && relatedItems.length > 0;
-  const hasMapFilters = hasRelatedFilter;
+  const hasMapFilters = true;
   const scopeLabel = scope.kind === "all" ? "All discussions" : scope.kind === "ungrouped" ? "Ungrouped" : scope.kind === "focus" ? `Around ${conversations[scope.conversationId]?.title ?? "removed discussion"}` : overviewItems.find((item) => item.id === `${scope.kind}:${scope.kind === "group" ? scope.groupId : scope.kind === "concept" ? scope.conceptId : scope.categoryId}`)?.label ?? "Unavailable collection";
   const resolvedSource = useMemo(() => source ? resolveGraphEvidence(conversations, source) : null, [conversations, source]);
   const {
@@ -929,10 +1030,10 @@ export default function ConversationGraphView({
     () =>
       scene.groups.filter(
         (placement) =>
-          !documentsOnly && !browsingGroups && scope.kind === "all" && !expandedGroups.includes(placement.groupId) &&
+          !isCanvasMode && !documentsOnly && !browsingGroups && scope.kind === "all" && !expandedGroups.includes(placement.groupId) &&
           groups[placement.groupId]?.collapsed && !placement.conversationIds.includes(selectedConversationId ?? ""),
       ),
-    [groups, scene.groups, scope.kind, expandedGroups, selectedConversationId, browsingGroups, documentsOnly],
+    [groups, scene.groups, scope.kind, expandedGroups, selectedConversationId, browsingGroups, documentsOnly, isCanvasMode],
   );
   const hiddenConversationIds = useMemo(
     () => {
@@ -1004,6 +1105,31 @@ export default function ConversationGraphView({
     hiddenConversationIds,
     viewportBounds,
   ]);
+  const renderedNodeDetails = useMemo(() => renderedNodePlacements.map((placement) => {
+    const selectedDetail = placement.conversationId === selectedConversationId ? detailLevel : "compact";
+    const screenFootprint = nodeScreenFootprint(placement);
+    const zoomDetail = getNodeZoomDetail(screenFootprint);
+    // A docked document already has an editor; its canvas card remains a preview.
+    const nodeDetail = zoomDetail === "reader" && dockedConversationId === placement.conversationId ? "preview"
+      : zoomDetail !== "compact" ? zoomDetail : screenFootprint ? "compact" : selectedDetail;
+    const factor = readableNodeSize(viewport.scale, nodeDetail !== "compact");
+    const width = screenFootprint ? screenFootprint.width / viewport.scale : placement.width * factor;
+    const height = screenFootprint ? screenFootprint.height / viewport.scale : placement.height * factor;
+    const visualBounds = {
+      x: placement.x + (placement.width - width) / 2,
+      y: placement.y + (placement.height - height) / 2,
+      width, height,
+    };
+    return { placement, screenFootprint, nodeDetail, visualBounds, contentKey: `${placement.conversationId}:${nodeDetail}` };
+  }), [renderedNodePlacements, selectedConversationId, detailLevel, nodeScreenFootprint, dockedConversationId, viewport.scale]);
+  const visibleContentKeys = useMemo(() => {
+    if (panelView || showTerritories || showThemeOverview || !viewportSize.width || !viewportSize.height) return [];
+    const bounds = getConversationGraphViewportBounds({ viewport, viewportSize, overscan: 0 });
+    return renderedNodeDetails.filter(({ nodeDetail, visualBounds }) => nodeDetail !== "compact"
+      && graphPlacementIntersectsBounds(visualBounds, bounds)).map(({ contentKey }) => contentKey);
+  }, [renderedNodeDetails, viewport, viewportSize, showTerritories, showThemeOverview, panelView]);
+  const visibleContentSet = useMemo(() => new Set(visibleContentKeys), [visibleContentKeys]);
+  const readyContentKeys = useGraphContentQueue(visibleContentKeys, viewport, isVisible);
   const renderedGroupPlacements = useMemo(
     () =>
       scene.groups.filter((placement) =>
@@ -1072,7 +1198,7 @@ export default function ConversationGraphView({
     graphPlacementIntersectsBounds({ x: Math.min(edge.startX, edge.endX) - 150, y: Math.min(edge.startY, edge.endY) - 30, width: Math.abs(edge.endX - edge.startX) + 300, height: Math.abs(edge.endY - edge.startY) + 60 }, viewportBounds)
   ), [groupedEdges, viewportBounds]);
   const relatedEdges = useMemo(() => {
-    if (!showRelated || relatedStatus !== "ready") return [];
+    if (isLineageMode || !showRelated || relatedStatus !== "ready") return [];
     const origin = placementByConversationId.get(activeConversationId);
     if (!origin || hiddenConversationIds.has(activeConversationId)) return [];
     return relatedItems.flatMap((item) => {
@@ -1082,7 +1208,7 @@ export default function ConversationGraphView({
         : { startX: origin.x + origin.width, startY: origin.y + origin.height / 2, endX: target.x, endY: target.y + target.height / 2, path: undefined };
       return [{ id: item.id, ...geometry }];
     });
-  }, [showRelated, relatedStatus, activeConversationId, relatedItems, placementByConversationId, hiddenConversationIds, documentsOnly, documentLayoutMode]);
+  }, [showRelated, relatedStatus, activeConversationId, relatedItems, placementByConversationId, hiddenConversationIds, documentsOnly, documentLayoutMode, isLineageMode]);
   const conversationGroupByConversationId = useMemo(() => {
     const groupByConversationId = new Map<string, ConversationGroup>();
 
@@ -1149,7 +1275,7 @@ export default function ConversationGraphView({
   const applyManualViewport = useCallback((nextViewport: GraphViewport) => {
     const previous = viewportStateRef.current;
     const canvas = viewportRef.current;
-    if (browsingGroups || documentsOnly) { applyViewport(nextViewport); return; }
+    if (isCanvasMode || browsingGroups || documentsOnly) { applyViewport(nextViewport); return; }
     if (!focusedTerritoryId && !showTerritories && nextViewport.scale < previous.scale && nextViewport.scale < groupScaleThreshold && canvas) {
       interactions.cancel();
       const overview = fitMapTerritoryOverview(territories, { width: canvas.clientWidth, height: canvas.clientHeight });
@@ -1172,7 +1298,7 @@ export default function ConversationGraphView({
       selectedConversationId: null, dockedConversationId: null, source: null,
       detailLevel: "compact", expandedGroups: [] });
     if (returningFromGrid) { fitAsOverviewRef.current = true; setFitAfterArrange(true); }
-  }, [applyViewport, focusedTerritoryId, focusedTerritoryScale, focusedLayout, completeScene, territoryGroups, navigation.update, showTerritories, groupScaleThreshold, territories, browsingGroups, documentsOnly]);
+  }, [applyViewport, focusedTerritoryId, focusedTerritoryScale, focusedLayout, completeScene, territoryGroups, navigation.update, showTerritories, groupScaleThreshold, territories, browsingGroups, documentsOnly, isCanvasMode]);
 
   const interactions = useGraphInteractions({
     getViewport: () => viewportStateRef.current,
@@ -1197,11 +1323,13 @@ export default function ConversationGraphView({
   const fitGraph = useCallback(() => {
     const viewportElement = viewportRef.current;
 
-    if (!isVisible || !viewportElement?.clientWidth || !viewportElement.clientHeight) {
+    if (panelView || !isVisible || !viewportElement?.clientWidth || !viewportElement.clientHeight) {
       return;
     }
 
     const canvas = { width: viewportElement.clientWidth, height: viewportElement.clientHeight };
+    if (isCanvasMode) { applyViewport(calculateFitViewport(scene, viewportElement)); fitAsOverviewRef.current = false; return; }
+    if (networkLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
       applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }).viewport);
       fitAsOverviewRef.current = false;
@@ -1222,7 +1350,7 @@ export default function ConversationGraphView({
         { maxScale: Math.min(0.69, groupScaleThreshold - 0.01) }) : standardFit);
     }
     fitAsOverviewRef.current = false;
-  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId]);
+  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, networkLayout]);
 
   useEffect(() => {
     if (!isVisible || !viewportSize.width || !viewportSize.height || navigation.state.groupOverviewVersion === 1) return;
@@ -1302,7 +1430,7 @@ export default function ConversationGraphView({
     const current = viewportStateRef.current;
     if (browsingGroups && !browsingFootprints.has(conversationId)) return;
     const factor = readableNodeSize(current.scale, conversationId === selectedConversationId && detailLevel !== "compact");
-    const footprint = documentsOnly ? documentFootprint : browsingFootprints.get(conversationId) ?? (compactTerritoryNodes ? compactFootprint : undefined);
+    const footprint = nodeScreenFootprint(placement);
     const width = footprint ? footprint.width / current.scale : placement.width * factor;
     const height = footprint ? footprint.height / current.scale : placement.height * factor;
     const next = revealGraphBounds({
@@ -1311,15 +1439,15 @@ export default function ConversationGraphView({
       width, height: height + 40 / current.scale,
     }, current, { width: element.clientWidth, height: element.clientHeight });
     if (next.x !== current.x || next.y !== current.y) applyViewport(next);
-  }, [applyViewport, detailLevel, isVisible, scene.nodes, selectedConversationId, compactTerritoryNodes, compactFootprint, browsingGroups, browsingFootprints, documentsOnly, documentFootprint]);
+  }, [applyViewport, detailLevel, isVisible, scene.nodes, selectedConversationId, browsingGroups, browsingFootprints, nodeScreenFootprint]);
   const focusedCanvasSizeRef = useRef<{ id: string; width: number; height: number } | null>(null);
   useLayoutEffect(() => {
-    const viewId = focusedTerritoryId ?? (documentsOnly ? "__documents__" : browsingGroups ? "__groups__" : null);
+    const viewId = focusedTerritoryId ?? (documentsOnly ? `__${viewMode}__` : browsingGroups ? "__groups__" : null);
     const previous = focusedCanvasSizeRef.current;
     focusedCanvasSizeRef.current = viewId ? { id: viewId, ...viewportSize } : null;
     if (!previous?.width || !previous.height || previous.id !== viewId
       || (previous.width === viewportSize.width && previous.height === viewportSize.height)) return;
-    if (!isVisible || (!focusedLayout?.arranged && !browsingGroups && !documentsOnly) || restoringHistoryRef.current) return;
+    if (panelView || !isVisible || (!focusedLayout?.arranged && !browsingGroups && !documentsOnly) || restoringHistoryRef.current) return;
     // ResizeObserver fires before the new grid columns are committed. Reveal
     // the selection here, against the placements that are actually rendered.
     if (focusedNodeId) fitGraph();
@@ -1330,9 +1458,9 @@ export default function ConversationGraphView({
       y: viewportStateRef.current.y + (viewportSize.height - previous.height) / 2 });
     else if (browsingGroups) fitGraph();
     else if (focusedLayout) applyViewport(focusedLayout.viewport);
-  }, [focusedTerritoryId, viewportSize, focusedLayout, isVisible, selectedConversation, keepConversationVisible, applyViewport, browsingGroups, fitGraph, browsingFootprints.size, documentsOnly, focusedNodeId]);
+  }, [focusedTerritoryId, viewportSize, focusedLayout, isVisible, selectedConversation, keepConversationVisible, applyViewport, browsingGroups, fitGraph, browsingFootprints.size, documentsOnly, focusedNodeId, viewMode, panelView]);
   const revealOnResize = useEffectEvent(() => {
-    if (restoringHistoryRef.current) return;
+    if (panelView || restoringHistoryRef.current) return;
     if (focusedNodeId) fitGraph();
     else if (selectedConversation) keepConversationVisible(selectedConversation.id);
     else if (focusedTerritory || showTerritories) fitGraph();
@@ -1375,6 +1503,11 @@ export default function ConversationGraphView({
       onFocusRequestHandled?.(focusRequest.requestId);
       return;
     }
+    if (panelView) {
+      openEvidence({ conversationId: focusRequest.conversationId, sourceKind: "conversation" });
+      onFocusRequestHandled?.(focusRequest.requestId);
+      return;
+    }
     revealedSelectionKeyRef.current = null;
     if (documentsOnly) setDockCollapsed(false);
     navigation.navigate({
@@ -1386,7 +1519,7 @@ export default function ConversationGraphView({
     });
     setFitAfterArrange(false);
     onFocusRequestHandled?.(focusRequest.requestId);
-  }, [conversations, focusRequest, groups, navigation.navigate, onFocusRequestHandled, isVisible, documentsOnly]);
+  }, [conversations, focusRequest, groups, navigation.navigate, onFocusRequestHandled, isVisible, documentsOnly, panelView]);
 
   useEffect(() => {
     if (dockedConversationId && !dockedConversation) {
@@ -1425,7 +1558,7 @@ export default function ConversationGraphView({
     const selectionKey = selectedConversation
       ? `${selectedConversation.id}:${detailLevel}`
       : null;
-    if (!isVisible) return;
+    if (!isVisible || panelView) return;
 
     if (restoringHistoryRef.current) {
       restoringHistoryRef.current = false;
@@ -1458,6 +1591,7 @@ export default function ConversationGraphView({
     isVisible,
     focusedNodeId,
     fitGraph,
+    panelView,
   ]);
 
   useEffect(() => {
@@ -1582,6 +1716,7 @@ export default function ConversationGraphView({
   }
 
   function handleCanvasKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (panelView) return;
     if (event.target !== event.currentTarget || event.ctrlKey || event.metaKey || event.altKey || showThemeOverview) return;
     const current = viewportStateRef.current;
     const step = event.shiftKey ? 120 : 60;
@@ -1595,6 +1730,7 @@ export default function ConversationGraphView({
   }
 
   function startTouchGesture(event: ReactPointerEvent<HTMLDivElement>) {
+    if (panelView) return;
     if (event.pointerType !== "touch") suppressTouchClickRef.current = false;
     const target = event.target as Element;
     if (event.pointerType !== "touch" || showThemeOverview || target.closest("[data-graph-reader-scroll]") || (target.closest("[data-graph-ui]") && !target.closest(".graph-territory"))) return;
@@ -1618,6 +1754,7 @@ export default function ConversationGraphView({
   }
 
   const handleViewportWheel = useEffectEvent((event: WheelEvent) => {
+    if (panelView) return;
     const viewportElement = viewportRef.current;
 
     if (!viewportElement) {
@@ -1643,30 +1780,9 @@ export default function ConversationGraphView({
       event.target instanceof Element
         ? event.target.closest<HTMLElement>("[data-graph-ui]")
         : null;
-    const readerScroller = readerRoot
-      ? event.target instanceof Element
-        ? event.target.closest<HTMLElement>(".panel-body") ?? readerRoot
-        : readerRoot
-      : null;
-    const gestureAxis = getWheelGestureAxis(deltaX, deltaY);
-
-    if (
-      readerScroller &&
-      !event.ctrlKey &&
-      !event.metaKey &&
-      !event.shiftKey &&
-      gestureAxis === "vertical"
-    ) {
-      const canScrollUp = deltaY < 0 && readerScroller.scrollTop > 0;
-      const canScrollDown =
-        deltaY > 0 &&
-        readerScroller.scrollTop + readerScroller.clientHeight <
-          readerScroller.scrollHeight - 1;
-
-      if (canScrollUp || canScrollDown) {
-        return;
-      }
-    }
+    // Reading and editing owns ordinary scrolling, including at either end of
+    // the document. Pinch/Ctrl-wheel still belongs to the camera.
+    if (readerRoot && !event.ctrlKey && !event.metaKey) return;
 
     // Group headings and clickable SVG edges belong to the pannable canvas;
     // only overlays and controls should keep ordinary wheel events for themselves.
@@ -1715,6 +1831,7 @@ export default function ConversationGraphView({
   }, [handleViewportWheel]);
 
   function startPan(event: ReactPointerEvent<HTMLDivElement>) {
+    if (panelView) return;
     if (
       interactions.isActive() ||
       event.button !== 0 ||
@@ -1740,7 +1857,7 @@ export default function ConversationGraphView({
     event: ReactPointerEvent<HTMLButtonElement>,
     conversationId: string,
   ) {
-    if (documentsOnly || event.button !== 0 || interactions.isActive()) return;
+    if ((documentsOnly && !isNetworkMode) || event.button !== 0 || interactions.isActive()) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -1751,6 +1868,16 @@ export default function ConversationGraphView({
   }
 
   function commitNodeMove(move: GraphNodeMove) {
+    if (isNetworkMode) {
+      if (Math.abs(move.deltaX) < 0.5 && Math.abs(move.deltaY) < 0.5) return;
+      const pins = { ...navigation.state.networkPins };
+      for (const id of move.conversationIds) {
+        const node = placementByConversationId.get(id);
+        if (node) pins[id] = { x: node.x + move.deltaX, y: node.y + move.deltaY };
+      }
+      navigation.update({ networkPins: pins });
+      return;
+    }
     if (documentsOnly) return;
     if (Math.abs(move.deltaX) < 0.5 && Math.abs(move.deltaY) < 0.5) return;
     // Focus spacing is transient. A deliberate drag starts at the displayed
@@ -1907,10 +2034,25 @@ export default function ConversationGraphView({
     if (!conversations[conversationId]) {
       return;
     }
-    if (documentsOnly) { dockConversation(conversationId); return; }
+    const placement = scene.nodes.find((node) => node.conversationId === conversationId);
+    const canvas = viewportRef.current;
+    if ((documentsOnly || browsingGroups || compactTerritoryNodes) && placement && canvas) {
+      const footprint = documentsOnly ? documentFootprint : browsingFootprints.get(conversationId) ?? compactFootprint;
+      const scale = clamp(viewport.scale * Math.max(360, Math.min(600, canvas.clientWidth - 48)) / footprint.width,
+        viewport.scale, GRAPH_SCALE_MAX);
+      const targetPlacement = browsingGroups
+        ? layoutMapTerritoryOverview(territories, { x: 0, y: 0, scale }, canvas.clientWidth)
+          .flatMap((territory) => territory.displayNodes).find((node) => node.conversationId === conversationId) ?? placement
+        : placement;
+      preserveSelectionViewRef.current = `${conversationId}:preview`;
+      navigation.navigate({ selectedConversationId: conversationId, detailLevel: "preview", source: null,
+        dockedConversationId: null,
+        viewport: centerNodeInCanvas(targetPlacement, { width: canvas.clientWidth, height: canvas.clientHeight }, scale) });
+      return;
+    }
 
     preserveSelectionViewRef.current = null;
-    navigation.navigate({ selectedConversationId: conversationId, detailLevel: "reader", source: null });
+    navigation.navigate({ selectedConversationId: conversationId, detailLevel: "reader", source: null, dockedConversationId: null });
   }
 
   function dockConversation(conversationId: string) {
@@ -1946,6 +2088,51 @@ export default function ConversationGraphView({
     setFitAfterArrange(true);
   }
 
+  function rememberModeCamera() {
+    return { ...navigation.state.modeCameras, [viewMode]: {
+      viewport, scopeKey: JSON.stringify(scope), focusedTerritoryId, focusedTerritoryScale,
+    } };
+  }
+
+  function chooseViewMode(nextMode: GraphViewMode) {
+    interactions.cancel();
+    setInspectedEdge(null);
+    setInspectedPersonalConnection(null);
+    setInspectedOverviewSources([]);
+    setMultiSelectedConversationIds(new Set());
+    setIsMultiSelectActive(false);
+    const focusId = selectedConversationId && conversations[selectedConversationId] ? selectedConversationId : activeConversationId;
+    const baseScope = scope.kind === "focus" ? navigation.state.scopeBeforeFocus ?? { kind: "all" } as GraphScope : scope;
+    const nextScope: GraphScope = nextMode === "focus"
+      ? { kind: "focus", conversationId: focusId, depth: scope.kind === "focus" ? scope.depth : 1 } : baseScope;
+    const modeCameras = rememberModeCamera();
+    const camera = modeCameras[nextMode];
+    const restoredCamera = camera?.scopeKey === JSON.stringify(nextScope) ? camera : null;
+    const nextSelection = selectedConversationId ?? (nextMode === "focus" ? focusId : null);
+    const nextDetail = detailLevel === "reader" ? "preview" : detailLevel;
+    revealedSelectionKeyRef.current = nextSelection ? `${nextSelection}:${nextDetail}` : null;
+    restoringHistoryRef.current = true;
+    fitAsOverviewRef.current = false;
+    setFitAfterArrange(!isGraphPanelMode(nextMode) && !restoredCamera);
+    navigation.navigate({ viewMode: nextMode, contentLens: "documents", modeCameras, scope: nextScope,
+      documentViewMode: !isGraphPanelMode(nextMode) ? nextMode : !isGraphPanelMode(viewMode) ? viewMode : navigation.state.documentViewMode,
+      scopeBeforeFocus: nextMode === "focus" ? baseScope : null,
+      selectedConversationId: nextSelection, detailLevel: nextDetail,
+      dockedConversationId: dockedConversationId ?? (detailLevel === "reader" ? selectedConversationId : null),
+      overviewPresentation: nextMode === "canvas" ? "canvas" : nextMode === "topics" ? "map" : "documents",
+      documentLayoutMode: nextMode === "lineage" ? documentLayoutMode === "tree-down" ? "tree-down" : "tree-right"
+        : nextMode === "focus" || nextMode === "network" ? "connections" : documentLayoutMode,
+      focusedTerritoryId: nextMode === "topics" ? restoredCamera?.focusedTerritoryId ?? null : null,
+      focusedTerritoryScale: nextMode === "topics" ? restoredCamera?.focusedTerritoryScale ?? null : null,
+      ...(restoredCamera ? { viewport: restoredCamera.viewport } : {}),
+    });
+  }
+
+  function toggleRelation(kind: GraphRelationKind) {
+    const kinds = navigation.state.relationKinds;
+    navigation.update({ relationKinds: kinds.includes(kind) ? kinds.filter((value) => value !== kind) : [...kinds, kind] });
+  }
+
   function focusConnections(conversationId: string, depth = 1, mode: DocumentLayoutMode = "connections") {
     if (!conversations[conversationId]) return;
     interactions.cancel();
@@ -1959,7 +2146,8 @@ export default function ConversationGraphView({
     fitAsOverviewRef.current = false;
     revealedSelectionKeyRef.current = `${conversationId}:compact`;
     preserveSelectionViewRef.current = null;
-    navigation.navigate({ scope: { kind: "focus", conversationId, depth: Math.max(1, Math.floor(depth)) },
+    navigation.navigate({ viewMode: "focus", contentLens: "documents", modeCameras: rememberModeCamera(), scopeBeforeFocus: scope.kind === "focus" ? navigation.state.scopeBeforeFocus : scope,
+      scope: { kind: "focus", conversationId, depth: Math.max(1, Math.floor(depth)) },
       selectedConversationId: conversationId, dockedConversationId: null, detailLevel: "compact", source: null,
       focusedTerritoryId: null, focusedTerritoryScale: null, overviewPresentation: "documents", documentLayoutMode: mode,
       documentLayoutVersion: 1, query: "", expandedGroups: [], showRelated: false });
@@ -1979,7 +2167,7 @@ export default function ConversationGraphView({
     setInspectedOverviewSources([]);
     setMultiSelectedConversationIds(new Set());
     setIsMultiSelectActive(false);
-    navigation.navigate({ focusedTerritoryId: territory.id, focusedTerritoryScale: null, selectedConversationId: null,
+    navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), focusedTerritoryId: territory.id, focusedTerritoryScale: null, selectedConversationId: null,
       dockedConversationId: null, source: null, detailLevel: "compact", overviewPresentation: "map",
       expandedGroups: [...new Set([...expandedGroups, territory.id])] });
     // Wait for a closing reader to give its space back before computing the fit.
@@ -1994,7 +2182,7 @@ export default function ConversationGraphView({
     setMultiSelectedConversationIds(new Set());
     setIsMultiSelectActive(false);
     fitAsOverviewRef.current = true;
-    navigation.navigate({ scope: { kind: "all" }, focusedTerritoryId: null, focusedTerritoryScale: null,
+    navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), scope: { kind: "all" }, focusedTerritoryId: null, focusedTerritoryScale: null,
       selectedConversationId: null, dockedConversationId: null, source: null,
       detailLevel: "compact", expandedGroups: [], overviewPresentation: "map", query: "" });
     setFitAfterArrange(true);
@@ -2010,7 +2198,7 @@ export default function ConversationGraphView({
     setSearchOpen(false);
     setExplorerOpen(false);
     fitAsOverviewRef.current = false;
-    navigation.navigate({ scope: { kind: "all" }, focusedTerritoryId: null, focusedTerritoryScale: null,
+    navigation.navigate({ viewMode: null, contentLens: "documents", modeCameras: rememberModeCamera(), scope: { kind: "all" }, focusedTerritoryId: null, focusedTerritoryScale: null,
       selectedConversationId: null, dockedConversationId: null, source: null, detailLevel: "compact",
       expandedGroups: [], overviewPresentation: "documents", documentLayoutVersion: 1, query: "" });
     setFitAfterArrange(true);
@@ -2031,7 +2219,7 @@ export default function ConversationGraphView({
     const separator = id.indexOf(":");
     const kind = id.slice(0, separator);
     const value = id.slice(separator + 1);
-    if (kind === "concept") changeScope({ kind, conceptId: value });
+    if (kind === "concept") { navigation.update({ selectedConceptId: value }); changeScope({ kind, conceptId: value }); }
     if (kind === "group") changeScope({ kind, groupId: value });
     if (kind === "category") {
       const category = categorizedThreads.find((thread) => thread.categoryId === value);
@@ -2046,6 +2234,12 @@ export default function ConversationGraphView({
     revealedSelectionKeyRef.current = null;
     preserveSelectionViewRef.current = null;
     setDockCollapsed(false);
+    if (panelView) {
+      revealedSelectionKeyRef.current = `${evidence.conversationId}:preview`;
+      navigation.navigate({ selectedConversationId: evidence.conversationId, dockedConversationId: evidence.conversationId,
+        detailLevel: "preview", source: evidence, readerScroll: 0 });
+      return;
+    }
     const withinFocusedTerritory = focusedTerritory?.nodes.some((node) => node.conversationId === evidence.conversationId);
     navigation.navigate({
       scope: scopedIds.has(evidence.conversationId) ? scope : { kind: "all" },
@@ -2141,7 +2335,7 @@ export default function ConversationGraphView({
   </div>;
 
   return (
-    <section className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
+    <section className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
       <div className={`graph-map-navigation${toolbarLeading ? " has-workspace-controls" : ""}`} role="toolbar" aria-label="Map exploration">
         {toolbarLeading}
         <div className="graph-map-history">
@@ -2162,29 +2356,47 @@ export default function ConversationGraphView({
             <button type="button" onClick={openExplorer}>View all results · {sourceItems.length}</button>
           </div> : null}
         </div>
-        <button type="button" aria-label="Explore map collections and sources" onClick={openExplorer}>Explore</button>
-        <details className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
+        <button type="button" ref={explorerTriggerRef} aria-label="Explore map collections and sources" onClick={openExplorer}>Explore</button>
+        <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
           <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg></summary>
           <div>
             <button type="button" aria-pressed={navigation.state.overviewPresentation === "map"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showAllGroups(); }}>Groups and documents</button>
             <button type="button" aria-pressed={documentsOnly} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showDocuments(); }}>Documents and connections</button>
-            {scope.kind === "all" && !selectedConversation && !focusedTerritory ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setInspectedOverviewSources([]); navigation.navigate({ overviewPresentation: showThemeOverview ? "map" : "themes", focusedTerritoryId: null, focusedTerritoryScale: null }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
+            {scope.kind === "all" && !selectedConversation && !focusedTerritory ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setInspectedOverviewSources([]); navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), overviewPresentation: showThemeOverview ? "map" : "themes", focusedTerritoryId: null, focusedTerritoryScale: null }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
           </div>
-        </details>
-        {hasMapFilters ? <details className="graph-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Filters</summary><div className="graph-map-context-controls" data-graph-ui="true">
+        </DismissibleDetails>
+        {hasMapFilters ? <DismissibleDetails className="graph-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Filters</summary><div className="graph-map-context-controls" data-graph-ui="true">
+            <label><input type="checkbox" checked={showBranches} disabled={isLineageMode} onChange={() => toggleRelation("branch")} /> Branch ancestry</label>
+            <label><input type="checkbox" checked={showLinks} disabled={isLineageMode} onChange={() => toggleRelation("link")} /> Authored links</label>
+            {isLineageMode ? <small>Lineage follows parent → child branch ancestry.</small> : null}
             {hasRelatedFilter ? <label><input type="checkbox" checked={showRelated} onChange={(event) => { navigation.update({ showRelated: event.target.checked }); setFitAfterArrange(true); }} /> Possibly related to {conversations[activeConversationId]?.title}</label> : null}
             {showRelated && relatedStatus === "ready" ? <small>Suggestions from up to 40 recent items; relevance is not a factual relationship.</small> : null}
-          </div></details> : null}
+          </div></DismissibleDetails> : null}
         {toolbarTrailing}
       </div>
-      {scope.kind === "focus" ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
+      <GraphViewModeControls mode={viewMode} lens={navigation.state.contentLens} onModeChange={chooseViewMode}
+        onLensChange={(lens) => {
+          if (lens === "documents" && viewMode === "evidence") chooseViewMode(navigation.state.documentViewMode);
+          else { navigation.navigate({ contentLens: lens }); setFitAfterArrange(false); }
+        }} />
+      {isNetworkMode && !panelView ? <div className="graph-mode-context" aria-label="Network layout controls">
+        <span>Layout stays still until you relax it. Drag a document to pin its position.</span>
+        <button type="button" onClick={() => { navigation.update({ networkIteration: navigation.state.networkIteration + 1 }); setFitAfterArrange(true); }}>Relax network</button>
+        {selectedConversationId ? <button type="button" aria-pressed={Boolean(navigation.state.networkPins[selectedConversationId])} onClick={() => {
+          const pins = { ...navigation.state.networkPins }; const node = placementByConversationId.get(selectedConversationId);
+          if (pins[selectedConversationId]) delete pins[selectedConversationId]; else if (node) pins[selectedConversationId] = { x: node.x, y: node.y };
+          navigation.update({ networkPins: pins });
+        }}>{navigation.state.networkPins[selectedConversationId] ? "Unpin selected" : "Pin selected"}</button> : null}
+        {Object.keys(navigation.state.networkPins).length ? <button type="button" onClick={() => navigation.update({ networkPins: {} })}>Clear pins ({Object.keys(navigation.state.networkPins).length})</button> : null}
+      </div> : null}
+      {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
         <button type="button" disabled={!canExpandNeighborhood} onClick={() => focusConnections(scope.conversationId, scope.depth + 1, documentLayoutMode)}>Show more connections</button>
         <button type="button" onClick={showDocuments}>All nodes</button>
       </div> : null}
       {explorerContainer ? createPortal(explorationContent, explorerContainer) : explorerOpen ?
-        <div className="graph-map-explorer-popover" data-graph-ui="true" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setExplorerOpen(false); } }}>
+        <div ref={explorerRef} className="graph-map-explorer-popover" data-graph-ui="true" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setExplorerOpen(false); } }}>
           <button type="button" className="graph-map-explorer-close" onClick={() => setExplorerOpen(false)}>Close explorer</button>
           {explorationContent}
         </div> : null}
@@ -2196,7 +2408,7 @@ export default function ConversationGraphView({
         style={{ "--personal-map-dock-width": `${dockWidth}px` } as CSSProperties}
       >
         <div
-          className={`conversation-graph-viewport${isPanning ? " is-panning" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
+          className={`conversation-graph-viewport${panelView ? " is-analysis-view" : ""}${isPanning ? " is-panning" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
           aria-label="Personal map canvas"
           aria-describedby={keyboardHintId}
           tabIndex={0}
@@ -2215,7 +2427,18 @@ export default function ConversationGraphView({
           ref={viewportRef}
           style={viewportStyle}
         >
-          {showThemeOverview ? <GraphOverviewCanvas items={overviewItems} memberships={overviewMemberships} conversations={conversations} selectedTopicId={navigation.state.overviewTopicId} onSelectTopic={(id) => navigation.update({ overviewTopicId: id })} onOpen={openOverviewItem} onInspectConnection={setInspectedOverviewSources} /> : null}
+          {panelView ? <div className="graph-mode-panel" data-graph-ui="true">
+            {viewMode === "evidence" || navigation.state.contentLens === "concepts" ? <>
+              <GraphEvidenceView concepts={concepts} conversations={conversations}
+                selectedConceptId={navigation.state.selectedConceptId} selectedConversationId={selectedConversationId}
+                onSelectConcept={(id) => navigation.update({ selectedConceptId: id })} onSaveConcepts={saveConcepts}
+                onOpenEvidence={openEvidence} lens={navigation.state.contentLens === "concepts" ? "concepts" : "evidence"} />
+              {conceptSaveError ? <p className="graph-map-storage-error" role="status">Concept changes could not be saved on this device. Keep this view open to retain them.</p> : null}
+            </> : viewMode === "timeline" || viewMode === "matrix" || viewMode === "flow" ? <GraphAnalysisViews mode={viewMode}
+              conversations={scopedConversations} groups={groups} selectedConversationId={selectedConversationId}
+              relationKinds={navigation.state.relationKinds} onOpenConversation={(id) => openEvidence({ conversationId: id, sourceKind: "conversation" })} /> : null}
+          </div> : <>
+          {showThemeOverview ? <GraphOverviewCanvas items={overviewItems} memberships={overviewMemberships} conversations={relationshipConversations} selectedTopicId={navigation.state.overviewTopicId} onSelectTopic={(id) => navigation.update({ overviewTopicId: id })} onOpen={openOverviewItem} onInspectConnection={setInspectedOverviewSources} /> : null}
           <nav
             aria-label="Graph node hierarchy"
             className="conversation-graph-node-breadcrumbs"
@@ -2248,11 +2471,11 @@ export default function ConversationGraphView({
             })}
           </nav>
 
-          {!showThemeOverview && !documentsOnly ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={conversations} viewport={viewport}
+          {!showThemeOverview && !documentsOnly ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={relationshipConversations} viewport={viewport}
             semanticLabels={groupSemantics.categoryLabels}
             mode={browsingGroups || showTerritories ? "overview" : "canvas"} activeTerritoryId={focusedTerritory?.id}
             selectedNodeId={selectedConversationId}
-            nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : compactTerritoryNodes ? compactFootprint : undefined}
+            nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
           <div
             className="conversation-graph-stage"
@@ -2309,7 +2532,7 @@ export default function ConversationGraphView({
               width={scene.width}
             >
               <title>Chat branch relationships</title>
-              {[...scenePlacementsById.values()].flatMap((placement) => (conversations[placement.conversationId]?.linkedConversationIds ?? []).flatMap((targetId) => {
+              {(showLinks ? [...scenePlacementsById.values()] : []).flatMap((placement) => [...new Set(conversations[placement.conversationId]?.linkedConversationIds ?? [])].flatMap((targetId) => {
                 const target = scenePlacementsById.get(targetId);
                 if (!target || hiddenConversationIds.has(placement.conversationId) || hiddenConversationIds.has(targetId)) return [];
                 const x1 = placement.x + placement.width / 2;
@@ -2324,7 +2547,7 @@ export default function ConversationGraphView({
                   <text x={geometry.labelX} y={geometry.labelY - 8}>My connection</text>
                 </g>];
               }))}
-              {aggregateEdges.map((edge) => {
+              {(showBranches ? aggregateEdges : []).map((edge) => {
                 const geometry = curvedGraphConnection(edge);
                 return <g key={edge.id} className="graph-map-aggregate-edge" data-graph-ui="true" role="button" tabIndex={0} aria-label={`Inspect ${edge.count} branch relationship${edge.count === 1 ? "" : "s"}`} onClick={() => setInspectedEdge(edge)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedEdge(edge); } }}>
                   <path className="conversation-graph-edge" d={geometry.path} />
@@ -2333,7 +2556,7 @@ export default function ConversationGraphView({
                 </g>;
               })}
               {relatedEdges.map((edge) => <g key={`related-${edge.id}`} className="graph-map-related-edge"><path d={edge.path ?? buildConnectorPath(edge)} /><title>Possibly related: {conversations[edge.id].title}</title></g>)}
-              {renderedEdges.map((edge) => (
+              {(showBranches ? renderedEdges : []).map((edge) => (
                 <g key={`${edge.parentConversationId}-${edge.childConversationId}`}>
                   <path className="graph-map-edge-hit" data-graph-ui="true" d={edge.path ?? buildConnectorPath(edge)} role="button" tabIndex={0} aria-label={`Show branch source for ${conversations[edge.childConversationId]?.title}`} onClick={() => { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); }} onKeyDown={(event) => { if (event.key === "Enter") { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); } }} />
                   <path
@@ -2360,7 +2583,7 @@ export default function ConversationGraphView({
                 ))}
             </svg>
 
-            {renderedNodePlacements.map((placement) => {
+            {renderedNodeDetails.map(({ placement, screenFootprint, nodeDetail, contentKey }) => {
               const conversation = conversations[placement.conversationId];
               const group =
                 conversationGroupByConversationId.get(
@@ -2370,19 +2593,16 @@ export default function ConversationGraphView({
               return conversation ? (
                 <GraphNode
                   zoomScale={viewport.scale}
-                  screenFootprint={documentsOnly ? documentFootprint : browsingFootprints.get(placement.conversationId) ?? (compactTerritoryNodes ? compactFootprint : undefined)}
+                  screenFootprint={screenFootprint}
                   isConnectionCenter={documentsOnly && documentLayout?.centerNodeId === placement.conversationId}
+                  isPinned={isNetworkMode && Boolean(navigation.state.networkPins[placement.conversationId])}
                   isSpaced={documentsOnly || browsingGroups || focusedLayout?.arranged}
                   actions={renderNodeActions?.(conversation)}
                   menuActions={renderNodeMenuActions?.(conversation)}
                   activeConversationId={activeConversationId}
                   categoryLabel={categoryLabels.get(getConversationRootId(conversations, conversation.id) ?? conversation.id)}
                   conversation={conversation}
-                  detailLevel={
-                    conversation.id === selectedConversation?.id
-                      ? detailLevel
-                      : "compact"
-                  }
+                  detailLevel={nodeDetail}
                   group={group}
                   groups={groups}
                   isMoving={movingConversationIds.has(conversation.id)}
@@ -2395,7 +2615,13 @@ export default function ConversationGraphView({
                   multiSelectionSize={multiSelectedConversationIds.size}
                   onAddChild={addChildConversation}
                   onAssignGroup={onAssignGroup}
-                  onCollapse={() => setDetailLevel("preview")}
+                  onCollapse={() => {
+                    if (screenFootprint) {
+                      const canvas = viewportRef.current;
+                      if (canvas) applyManualViewport(centerNodeInCanvas(placement,
+                        { width: canvas.clientWidth, height: canvas.clientHeight }, viewport.scale * 200 / screenFootprint.width));
+                    } else setDetailLevel("preview");
+                  }}
                   onDock={dockConversation}
                   onExpand={expandConversation}
                   onMakeMain={onActivateConversation}
@@ -2405,12 +2631,8 @@ export default function ConversationGraphView({
                   onOpen={onOpenConversation}
                   onSelect={(id) => connectingConversationId && onConnectConversation ? onConnectConversation(connectingConversationId, id) : selectConversation(id)}
                   placement={placement}
-                  readerContent={
-                    conversation.id === selectedConversation?.id &&
-                    detailLevel === "reader"
-                      ? renderExpandedConversation?.(conversation.id)
-                      : undefined
-                  }
+                  contentReady={visibleContentSet.has(contentKey) && readyContentKeys.has(contentKey)}
+                  renderReader={renderExpandedConversation}
                   semanticLevel={semanticLevel}
                 />
               ) : null;
@@ -2453,14 +2675,14 @@ export default function ConversationGraphView({
             role="group"
             aria-label="Graph navigation"
           >
-            <details className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Arrange</summary><div>
-            {documentsOnly ? <>
+            <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Arrange</summary><div>
+            {isNetworkMode ? <small className="graph-map-layout-context">Use Relax network to rearrange unpinned documents.</small> : documentsOnly ? <>
               {([
                 ["auto", "Auto layout"],
                 ["tree-right", "Tree: left to right"],
                 ["tree-down", "Tree: top down"],
                 ["connections", focusedNodeId ? "Around focused node" : "Most connections"],
-              ] as const).map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentLayoutMode === mode}
+              ] as const).filter(([mode]) => !isLineageMode || mode === "tree-right" || mode === "tree-down").map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentLayoutMode === mode}
                 onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(mode); }}>{label}</button>)}
               {documentLayout?.centerNodeId ? <small className="graph-map-layout-context">Centered on {conversations[documentLayout.centerNodeId]?.title}</small> : null}
             </> : <>
@@ -2520,7 +2742,7 @@ export default function ConversationGraphView({
               Topics
             </button>
             </>}
-            </div></details>
+            </div></DismissibleDetails>
             {selectedConversation && !focusedNodeId ? <button type="button" onClick={() => focusConnections(selectedConversation.id)}>Focus connections</button> : null}
             {selectedConversation ? <button type="button" onClick={revealSelectedConversation}>Center</button> : null}
             <button
@@ -2594,6 +2816,7 @@ export default function ConversationGraphView({
               </svg>
             </div>
           ) : null}
+          </>}
         </div>
 
         {dockedConversation ? (

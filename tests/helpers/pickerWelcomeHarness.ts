@@ -36,9 +36,9 @@ function PickerHost() {
   return createElement("div", null,
     createElement("button", { onClick: () => setOpen(true) }, "Open models"),
     createElement(ServicePickerModal, {
-      currentServiceId: "openai-api", currentModelId: "gpt-5.6", isOpen: open,
+      currentServiceId: "openai-api", currentModelId: "gpt-6-astra", isOpen: open,
       onClose: () => setOpen(false), onSelectModel: (...selection: unknown[]) => selections.push(selection),
-      recentSelections: [{ serviceId: "openai-api", modelId: "gpt-5.6" }, { serviceId: "openai-api", modelId: "gpt-5.6" }],
+      recentSelections: [{ serviceId: "openai-api", modelId: "gpt-6-astra" }, { serviceId: "openai-api", modelId: "gpt-6-astra" }],
     }),
   );
 }
@@ -53,6 +53,7 @@ try {
   assert.equal(dialog.querySelectorAll('[aria-label="Recent models"] .picker-model-row').length, 1);
   assert(dialog.textContent?.includes("AutoDefault"));
   assert.equal(dialog.querySelector('.picker-providers'), null);
+  assert.equal(dialog.querySelectorAll('[aria-label="Featured models"] .picker-model-row').length, 3);
   const first = dialog.querySelector("button")!;
   const last = [...dialog.querySelectorAll("button")].at(-1)!;
   last.focus();
@@ -69,12 +70,12 @@ try {
   checks.push("picker focuses search, traps both Tab directions, and restores trigger on Escape");
 
   await act(async () => { trigger.click(); });
-  await act(async () => { type(browser.document.querySelector('input[type="search"]'), "gpt-5.6"); });
+  await act(async () => { type(browser.document.querySelector('input[type="search"]'), "gpt-6"); });
   const results = browser.document.querySelector('[aria-label="Search results"]')!;
   assert(results);
   assert.equal(results.querySelectorAll('.picker-model-row').length, 6);
   await act(async () => { results.querySelector<HTMLButtonElement>('.picker-model-row')!.click(); });
-  assert.deepEqual(selections, [["openai-api", "gpt-5.6"]]);
+  assert.deepEqual(selections, [["openai-api", "gpt-6-astra"]]);
   assert.equal(browser.document.activeElement, trigger);
   await act(async () => { trigger.click(); });
   await act(async () => { button("Browse by provider").click(); });

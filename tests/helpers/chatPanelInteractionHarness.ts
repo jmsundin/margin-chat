@@ -145,6 +145,14 @@ try {
   assert.deepEqual(removed, ["document"]);
   assert.deepEqual(deleted, []);
   await act(async () => { button("More actions for Research.pdf").click(); });
+  await act(async () => { container.querySelector(".composer-document-menu")!.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true })); });
+  assert(container.querySelector(".composer-document-menu"), "Interacting inside attachment actions keeps the menu open.");
+  await act(async () => { textarea.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true })); });
+  assert.equal(container.querySelector(".composer-document-menu"), null, "Clicking outside attachment actions dismisses the menu.");
+  await act(async () => { button("More actions for Research.pdf").click(); });
+  await act(async () => { textarea.click(); });
+  assert.equal(container.querySelector(".composer-document-menu"), null, "Click-only activation also dismisses attachment actions.");
+  await act(async () => { button("More actions for Research.pdf").click(); });
   await act(async () => { setSubmitting(true); });
   assert.equal(button("Delete from every chat…").disabled, true);
   await act(async () => { button("Delete from every chat…").click(); });

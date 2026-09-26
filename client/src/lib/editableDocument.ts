@@ -2,7 +2,7 @@ import type {
   Conversation, DocumentBlock, DocumentGeneration, DocumentInsertion, DocumentPrompt, EditableDocument,
 } from "@margin-chat/workspace-contracts";
 import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
-import { Lexer } from "marked";
+import { latexMarkdownLexer } from "./latex";
 
 export type { DocumentBlock, DocumentGeneration, DocumentInsertion, DocumentPrompt, EditableDocument } from "@margin-chat/workspace-contracts";
 
@@ -10,7 +10,7 @@ export type { DocumentBlock, DocumentGeneration, DocumentInsertion, DocumentProm
 export function splitDocumentMarkdown(markdown: string): string[] {
   if (!markdown) return [""];
   const parts: string[] = [];
-  for (const token of Lexer.lex(markdown)) {
+  for (const token of latexMarkdownLexer.lexer(markdown)) {
     if (token.type === "space" && parts.length) parts[parts.length - 1] += token.raw;
     else parts.push(token.raw);
   }

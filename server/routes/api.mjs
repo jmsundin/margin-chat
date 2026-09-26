@@ -229,6 +229,19 @@ export function createApiHandler({
         requireExpectedVaultAccount(request, authContext.user);
       }
 
+      if (route?.id === "passwordChange") {
+        const result = await authService.changePassword(
+          authContext.user.id,
+          authContext.sessionId,
+          await readJsonBody(request, 16_384),
+        );
+        sendJson(response, 200, { ok: true }, {
+          "Cache-Control": "no-store",
+          "Set-Cookie": result.cookie,
+        });
+        return;
+      }
+
       if (route?.id === "urlMap") {
         await handleUrlMapRequest({ request, response, user: authContext.user, mapUrl });
         return;

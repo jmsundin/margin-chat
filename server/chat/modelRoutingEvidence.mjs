@@ -3,6 +3,9 @@ import { isBackendModelIdForService } from "../lib/backendModels.mjs";
 // Summaries already reviewed for docs/model-catalog.md on 2026-09-19. These
 // descriptions are not comparative benchmark results, measured latency, or prices.
 const reviewed = {
+  "gpt-6-sol": ["Strong reasoning, coding, and professional work at lower per-token cost than Astra.", "general", "https://developers.openai.com/api/docs/models/gpt-6-sol"],
+  "gpt-6-luna": ["Efficient focused tasks and high-volume workloads.", "economical", "https://developers.openai.com/api/docs/models/gpt-6-luna"],
+  "grok-4.7": ["Frontier coding, agentic tasks, and knowledge work.", "demanding", "https://docs.x.ai/developers/models/grok-4.7"],
   "gpt-6-astra": ["Complex reasoning, coding, and professional work.", "demanding", "https://developers.openai.com/api/docs/models/gpt-6-astra"],
   "gpt-5.6": ["General-purpose reasoning, coding, and professional work; Sol alias.", "general", "https://developers.openai.com/api/docs/models/gpt-5.6-sol"],
   "gpt-5.6-terra": ["Balances capability and cost for everyday production work.", "balanced", "https://developers.openai.com/api/docs/models/gpt-5.6-terra"],
@@ -25,7 +28,7 @@ export function getModelRoutingEvidence(serviceId, model) {
   const entry = isBackendModelIdForService(serviceId, model) ? reviewed[model] : null;
   return entry ? {
     basis: "reviewed-catalog",
-    reviewedAt: "2026-09-19",
+    reviewedAt: "2026-09-26",
     summary: entry[0],
     // This is an explicit application preference, never a measured quality rank.
     preference: entry[1],

@@ -1,3 +1,4 @@
+import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import {
   useEffect,
   useEffectEvent,
@@ -935,6 +936,9 @@ export default function ChatPanel({
   const composerPrimaryRef = useRef<HTMLDivElement>(null);
   const composerTextareaRef = useRef<HTMLTextAreaElement>(null);
   const documentInputRef = useRef<HTMLInputElement>(null);
+  const documentActionsRef = useRef<HTMLDivElement>(null);
+  const documentActionsTriggerRef = useRef<HTMLButtonElement>(null);
+  useOutsideDismiss(Boolean(documentActionId), () => setDocumentActionId(null), documentActionsRef, documentActionsTriggerRef);
   const pendingSideNoteSaveRef = useRef<{
     content: string;
     conversationId: string;
@@ -1950,6 +1954,7 @@ export default function ChatPanel({
                         aria-label={`More actions for ${document.filename}`}
                         aria-expanded={documentActionId === document.id}
                         aria-controls={`document-actions-${conversation.id}`}
+                        ref={documentActionId === document.id ? documentActionsTriggerRef : undefined}
                         disabled={documentUploadState.uploading || isSubmitting}
                         onClick={() => setDocumentActionId((current) => current === document.id ? null : document.id)}
                         type="button"
@@ -1973,7 +1978,7 @@ export default function ChatPanel({
                 ) : null}
               </div>
               {documentActionId && onDeleteDocumentEverywhere ? (
-                <div aria-label="Document actions" className="composer-document-menu" id={`document-actions-${conversation.id}`} role="group">
+                <div ref={documentActionsRef} aria-label="Document actions" className="composer-document-menu" id={`document-actions-${conversation.id}`} role="group">
                   <button disabled={documentUploadState.uploading || isSubmitting} onClick={() => {
                     const selectedDocument = conversation.documents?.find((document) => document.id === documentActionId);
                     if (!selectedDocument) return;
