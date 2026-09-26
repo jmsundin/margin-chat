@@ -19,7 +19,7 @@ function fixture({ status = 201, jobStatus = "succeeded", target = "old", candid
     expect(url.pathname).toBe("/v9/projects/prj_test");
     if (posted) polls++;
     return Response.json({ id: "prj_test", targets: { production: { id: posted && polls > 1 ? "new" : target } },
-      ...(posted ? { lastAliasRequest: { toDeploymentId: "new", jobStatus: polls > 1 ? jobStatus : "pending" } } : {}) });
+      ...(posted ? { lastAliasRequest: polls > 1 && jobStatus === "cleared" ? null : { toDeploymentId: "new", jobStatus: polls > 1 ? jobStatus : "pending" } } : {}) });
   } });
   return { requests, args: { api, projectId: "prj_test", deploymentId: "new", previousDeploymentId: "old", expectedSha: "sha",
     sleep: async (ms: number) => { clock += ms; }, now: () => clock, timeoutMs: 5, pollMs: 1 } };
@@ -32,6 +32,11 @@ test("project-scoped promotion handles empty accepted responses and waits for al
     expect(f.requests.filter(r => r.method === "POST")).toHaveLength(1);
     expect(f.requests.some(r => r.path.includes("user") || r.path.includes("teams"))).toBe(false);
   }
+});
+
+test("promotion accepts the completed target when Vercel clears its alias-job record", async () => {
+  const f = fixture({ jobStatus: "cleared" });
+  expect(await promoteVerifiedDeployment(f.args)).toEqual({ deployment: "new" });
 });
 
 test("promotion refuses changed production, wrong candidates, or a lost release lock before writing", async () => {

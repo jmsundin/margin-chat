@@ -27,8 +27,10 @@ export async function promoteVerifiedDeployment({ api, projectId, deploymentId, 
     if (job?.toDeploymentId === deploymentId && ["failed", "skipped"].includes(job.jobStatus)) {
       throw new Error("Vercel promotion did not complete; inspect deployment alias status before retrying.");
     }
+    // Vercel can clear the job record once aliases finish. The production
+    // readiness checks still verify the public origin after this returns.
     if (current.targets?.production?.id === deploymentId &&
-        job?.toDeploymentId === deploymentId && job.jobStatus === "succeeded") return { deployment: deploymentId };
+        (!job || job.toDeploymentId === deploymentId && job.jobStatus === "succeeded")) return { deployment: deploymentId };
     if (![previousDeploymentId, deploymentId].includes(current.targets?.production?.id)) {
       throw new Error("Production changed during promotion; inspect routing before retrying.");
     }
