@@ -3,9 +3,10 @@ import { createSemanticService } from "../../server/semantic/index.mjs";
 import { createSemanticRouteCandidates, planRoutes } from "../../server/chat/routing.mjs";
 
 export const PINNED_MODEL = "jev-1.13.0";
-export const EVALUATION_VERSION = "margin-jev-synthetic-2026-09-19.1";
+export const EVALUATION_VERSION = "margin-jev-synthetic-2026-09-26.1";
 // Review changed builders/fixtures and bump the evaluation version before updating this pin.
-export const PINNED_SUITE_FINGERPRINT = "66a15ac2016db7cd120f9a5e7d4b0f938fa52db34b4e442c43efd18629ce70cb";
+// Catalog refresh: GPT-6 Sol/Luna and Grok 4.7 update the captured route candidates.
+export const PINNED_SUITE_FINGERPRINT = "c57759af81c002faaf197c4ebd3c11cc71ed83923957c0d5418e6677555b77d4";
 export const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export function assertPinnedSuiteFingerprint(actual) {

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 
 const browser = new Window({ url: "http://search.test/" });
+browser.document.write("<!doctype html><html><head></head><body></body></html>");
+// happy-dom does not expose compatMode; KaTeX requires a standards-mode document.
+Object.defineProperty(browser.document, "compatMode", { value: "CSS1Compat" });
 for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "Event"]) {
   const value = name === "window" ? browser : (browser as any)[name];
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value });
