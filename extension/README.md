@@ -1,8 +1,14 @@
-# Save to Margin · Chrome extension
+# Margin Chat · Chrome extension
 
-Save selected passages, readable articles, and bookmarks to Margin Chat’s Cloud Inbox, with an optional personal note. Captures retain the source URL, title, and capture date. Chrome 127 or newer is required.
+Extension **0.3.0** opens the current Margin Chat workspace above a web page. Highlight and comment on passages, save a readable page or link, edit documents, and ask AI without leaving the page. Captures retain the source URL, title, and capture date. Chrome 127 or newer is required.
 
-## Build and install locally
+The extension bundles the same `App` and `WorkspaceApp` used by the website into an extension-origin `workspace.html` iframe. Its document editors, notes, model controls, AI streaming and branching, workspace search, and Markdown vault sync use the current application code. The visited page hosts the layout controls and passage highlights; private workspace editors run inside the separate extension origin.
+
+**Docked**, **Floating**, and **Expanded** layouts keep the same live workspace mounted. Drag the floating header or resize its corner. Expanded leaves a strip of the source visible; **Uncover page** or **Peek** reveals the page, and **Return to Margin** restores the workspace. Changing layouts does not create another capture or AI request.
+
+Community discussions are unavailable. The Community control explains the future feature; it has no live feed or publishing action. See the [third-space design and implementation notes](../docs/browser-third-space.md).
+
+## Build, install, and upgrade
 
 From the repository root:
 
@@ -11,73 +17,81 @@ bun install
 bun run build:extension
 ```
 
-1. Open `chrome://extensions` in Chrome and enable **Developer mode**.
-2. Choose **Load unpacked** and select this repository’s `extension/dist` directory.
-3. Pin **Save to Margin** to the toolbar.
+1. Deploy the compatible website and API before updating the installed extension. Version 0.3.0 adds workspace-session routes and scoped access to existing application APIs. It reuses the existing extension-session table and requires no new database migration.
+2. Open `chrome://extensions` and enable **Developer mode**.
+3. Choose **Load unpacked** and select `extension/dist`. For an existing unpacked installation, click **Reload** on its card after rebuilding.
+4. Pin **Margin Chat**, reopen the source page if needed, and open the extension's **Settings**.
+5. Choose **Workspace + AI + capture** and sign in again. Existing sessions retain capture-only access; upgrading the package never silently expands their permissions.
 
-The website and server must also run the capture API from this change. The existing schema initialization creates the capture and extension-session tables; deploy the server update before installing extension 0.2.0. Cloud Inbox uses the same paid-plan/admin eligibility as cloud workspace storage.
+Both capture-only and workspace sign-in currently require a paid subscription or admin account, matching Cloud Inbox eligibility. Although the website supports local workspaces for other accounts, 0.3.0 does not provide a free-account or signed-out local workspace through the extension.
 
-## Connect and capture
+## Connect and work above a page
 
-1. Open the extension’s **Settings** and enter your Margin Chat website’s origin (for example, your deployed HTTPS origin, or `http://localhost:5173` for local development). The website address is also shown under **Cloud Inbox → Connect extension** in Margin Chat.
-2. Enter the **email address and password** you use for Margin Chat, click **Sign in**, and grant access to that website. Margin Chat uses email addresses as account identifiers; there is no separate extension username or key to create.
-3. Open a web page and click **Save to Margin**. Highlighted text is selected automatically; otherwise the clipper tries to extract the article. You can also choose Bookmark, or right-click highlighted text and choose **Save selection to Margin**.
-4. Review the capture, adjust the title, add a comment, and click **Save to Cloud Inbox**.
-5. Open the Inbox in Margin Chat, select the capture, then choose **Open as note** to edit it or use the existing note/chat workflow. The original stays in the Inbox. Reopening that capture preserves edits to its workspace note.
+1. Enter your Margin Chat website origin in extension **Settings**, such as your HTTPS deployment or `http://localhost:5173`. The address also appears under **Cloud Inbox → Connect extension** on the website.
+2. Enter your Margin Chat email and password, choose **Workspace + AI + capture**, click **Sign in**, and grant access to that website. The password is sent to that configured origin and is not stored.
+3. Open a normal web page and click the Margin Chat toolbar button. Select a passage on the page, or right-click selected text and choose **Annotate in Margin Chat**.
+4. Open **Page context**. Choose **Selected passage**, **Readable page**, or **Link only**, and review the source preview. In **Annotate / save**, add an optional thought and choose **Save & open document**. The capture is saved to Cloud Inbox and imported as an editable source document in the workspace below.
+5. Choose **Ask page** or **Ask AI**, review the source and question, and press **Save source & ask AI**. That explicit submission saves the source, opens its document, and starts the current Margin Chat document AI flow in the same overlay. Selecting text, opening Ask, saving a note, or switching layouts does not itself call AI.
+6. Continue editing, following up, choosing models, branching conversations, or searching your existing workspace using the normal Margin Chat controls. Source metadata remains in the imported document. Reopening the same saved capture preserves edits already made to that document.
 
-Sign out from the extension’s Settings. Sessions expire according to the server’s `AUTH_SESSION_DAYS` setting (30 days by default). If a session expires, sign in again and retry your pending save. Use the website to create an account or reset a forgotten password.
+Thoughts and AI questions keep separate drafts. **Saved on this page → Find on page** locates a saved passage when its anchor can still be resolved. An altered or ambiguous passage keeps its saved text without guessing a replacement location.
 
-If Margin Chat is already open, use **Refresh** in its Inbox to see new captures.
+The extension mounts on an explicit toolbar or context-menu action and must be reopened after a full navigation. Version 0.3.0 targets normal Chrome windows; its workspace iframe does not support incognito mode. Browser-restricted surfaces and selections inside embedded frames use the original capture popup where possible. Some Chrome surfaces cannot be read or overlaid at all; complex sites may require selected-passage or link-only capture.
 
-## Reliability and permissions
+Use extension Settings to sign out or change connections. Sessions use the server's `AUTH_SESSION_DAYS` lifetime, 30 days by default. Expired sessions require another sign-in. Account creation, password reset, account/security changes, API-key changes, and billing purchases remain on the website; workspace controls open the relevant website settings. Normal AI usage still follows the account's configured models, keys, and billing rules.
 
-- The extension communicates exclusively with the server API. It never connects to Postgres or holds model-provider keys.
-- Passwords are sent only to the configured Margin Chat origin during sign-in and are never stored by the extension. Each browser receives an independent session; signing in on another browser does not disconnect existing browsers. Session credentials are hashed on the server. They authorize upload and connection status only; reading captures or accessing workspace/account/chat endpoints requires the website’s authenticated session.
-- Chrome requests temporary access to the page on an explicit action (`activeTab`). Persistent host access is requested only for the Margin Chat hostname and scheme entered at connection time. Chrome host permissions cover all ports on that host; API requests use the exact configured origin and port.
-- Session credentials and pending saves are stored locally in Chrome, with access restricted to trusted extension contexts. They are not placed in Chrome Sync or exposed to content scripts.
-- A pending save is persisted before upload. Closing the popup or interrupting the connection does not lose that pending capture. Reopen the popup and **Retry save**; the server reuses the same receipt without creating another capture. There is one pending save at a time and no background upload schedule. A pending save is bound to its server origin and account, so signing back into the same account can recover it; switching accounts cannot upload it to a different Inbox.
-- Sign-out revokes that browser’s session and removes its local credential and server permission. If the server is unreachable, the local sign-out still completes and explains that server revocation could not finish. Resetting the account password revokes all extension sessions and legacy capture keys. A pending draft stays until dismissed; uninstalling the extension removes its local storage.
-- Page form fields, scripts, embedded frames, and images are excluded from article extraction. Only content you submit is uploaded. Capture itself makes no AI requests.
-- Captures are stored independently of workspace snapshots. Whole-workspace saves, imports, and resets cannot erase the Inbox.
+## Storage, isolation, and permissions
 
-## Independent releases
+- The workspace iframe is bundled extension code, not a remotely embedded website. The visited page cannot read its private editor DOM through ordinary page scripting. The frame connects through a broker bound to its tab, page, and frame session; credentials are not sent to the page or content scripts.
+- The extension talks to the server API, never directly to Postgres or model providers. Native authenticated requests preserve streamed AI responses and cancellation. The website continues to use its normal same-origin transport.
+- Chrome grants temporary page access through `activeTab`. Persistent host permission is requested only for the configured Margin Chat hostname and scheme; API requests use the exact configured origin and port. Chrome's host permission itself covers all ports on that host.
+- Passwords are never stored. Session tokens are local to trusted extension contexts, not Chrome Sync; the server stores their hashes. Each browser receives an independent session. Resetting the account password revokes extension sessions and legacy capture keys.
+- Documents use the current Markdown vault: local browser files first, then file-level cloud sync and conflict handling. Website and extension origins have separate local stores and exchange documents through the cloud. Extension storage is scoped by server and account; switching accounts does not hydrate the previous account's offline workspace. Clearing extension storage or uninstalling removes local copies, so retain independent vault exports where needed.
+- Source drafts, annotations, and quote anchors are local to this browser, account/server, and exact visited URL. Anchors do not yet synchronize across browsers or merge URL variants. Captured content and comments are saved in Cloud Inbox; imported documents then participate in workspace sync.
+- A pending capture is persisted before upload and bound to its server and account. Retry reuses its capture ID. There is one pending save at a time, with no background upload schedule; another page's pending capture must be reviewed first. The fallback popup persists its capture only after Save is pressed.
+- Signing out in Settings removes the local credential and server permission and attempts server revocation. An unreachable server does not prevent local sign-out; the remaining server session expires normally. Local drafts are retained for the same connection until dismissed or extension storage is removed.
+- Article extraction excludes form fields, scripts, embedded frames, and images. Only submitted capture content is uploaded. Capture by itself does not invoke AI. Source text supplied to AI is reference material, not trusted instructions.
+- Captures remain separate from workspace snapshots. Workspace imports, resets, or whole-workspace saves cannot erase Cloud Inbox captures.
 
-The extension’s version lives in `extension/package.json`; it is written into the built manifest. Website builds stay independent (`bun run build`).
+## Authentication and API compatibility
+
+Installed extensions may lag behind the website. Keep existing `/api/v1` routes and required fields backward-compatible. Add optional fields for v1 evolution; use a new API version for breaking changes.
+
+| Route or capability | Authentication | Behavior |
+| --- | --- | --- |
+| `POST /api/v1/extension-session` | Email and password | Issues a capture-only `mc_extension_…` session without a website cookie. |
+| `POST /api/v1/extension-workspace-session` | Email and password | Issues a distinct `mc_workspace_…` session with `scope: "workspace"`; requires paid/admin capture eligibility. |
+| `DELETE /api/v1/extension-session` | Capture or workspace session | Revokes that session idempotently. |
+| `GET /api/v1/capture-connection` | Capture/workspace session or legacy key | Returns connection identity and expiry. |
+| `POST /api/v1/captures` | Capture/workspace session or legacy key | Saves a validated source and returns its receipt. |
+| `GET /api/v1/captures?cursor=…`, `GET /api/v1/captures/:id` | Website session or workspace session | Reads owner-scoped capture summaries or source content. |
+| Workspace document, Markdown vault, chat, search, and graph APIs | Website session or scoped workspace session | Reuses current application routes with account checks; workspace sessions authorize only their explicit route allowlist. |
+| Account/security/API-key mutations and billing purchases | Website session | Remain website-only. The extension can read its current account and billing state. |
+| `/api/settings/capture-token` | Website session | Maintains legacy capture-key support and its existing settings-write checks. |
+
+Legacy `mc_capture_…` keys and existing `mc_extension_…` sessions do not gain document-reading or AI access. Sign in again with **Workspace + AI + capture** to opt in. Existing legacy pending drafts migrate only when their previous credential can verify the same owner.
+
+Capture payloads contain `schemaVersion: 1`, `clientCaptureId`, `kind` (`selection`, `article`, or `bookmark`), `title`, `sourceUrl`, Markdown `content`, plain-text `comment`, and ISO `capturedAt`. Reusing an ID with a different payload returns 409. Limits remain 200,000 content characters, 10,000 comment characters, 300 title characters, 4,096 URL characters, and 1.5 MB per request. Unsupported versions return 400.
+
+## Release package
+
+The independent extension version is in `extension/package.json` and copied into the built manifest. Website builds remain separate.
 
 ```sh
 bun run release:extension
 ```
 
-This builds and creates `extension/releases/margin-chat-<version>.zip`, containing only extension runtime assets. To release another version, update the extension package version, run tests and the build, inspect the unpacked extension in Chrome, and create a new archive. Uploading an archive to the Chrome Web Store is a separate manual publishing step. Store distribution also requires a listing and privacy disclosures matching the behavior above.
+This builds `extension/dist` and creates `extension/releases/margin-chat-0.3.0.zip` using the system `zip` utility. The archive contains extension runtime assets, including the bundled workspace and local fonts. Uploading it to the Chrome Web Store is a separate publishing step, with listing/privacy disclosures that match the extension's behavior.
 
-The `zip` utility is required for the release command. Rebuilding an unpacked installation requires clicking **Reload** on its card in `chrome://extensions`.
+## Original design preview
 
-## Package boundaries and API compatibility
+```sh
+bun extension/scripts/preview.mjs
+```
 
-- `client/`: Margin Chat web app and Cloud Inbox.
-- `server/`: authentication, capture API, and persistence.
-- `extension/`: independent Chrome package, build, tests, and release archive.
-- `packages/capture-contracts/`: browser-safe v1 payload validation, types, limits, paths, and Markdown conversion; no server or UI dependencies.
+The preview at `http://127.0.0.1:5194/` retains the **original design demo**, implemented by `overlay-ui.ts`. It uses a sample article and in-memory saves, with no server, AI, or social requests. It does not render the new bundled `App`/`WorkspaceApp` integration, is excluded from the release package, and is not proof that the installed extension works in Chrome. Set `MARGIN_PREVIEW_PORT` to change its port.
 
-Installed extensions may lag behind the website. Keep `/api/v1` routes and required fields backward-compatible. Add optional fields for v1 evolution; introduce `/api/v2` for breaking changes while retaining v1 support.
-
-| Route | Authentication | Behavior |
-| --- | --- | --- |
-| `POST /api/v1/extension-session` | Email and password | Create a capture-only session; return `{ token, user: { id, displayName, email }, expiresAt }`, without a web cookie |
-| `DELETE /api/v1/extension-session` | Extension bearer session | Revoke that session (idempotent) |
-| `GET /api/v1/capture-connection` | Extension session or legacy key | User ID, display name, and session expiry |
-| `POST /api/v1/captures` | Extension session or legacy key | Save a v1 payload; return `{ capture: { id, createdAt } }` |
-| `GET /api/v1/captures?cursor=…` | Web session | 30 capture summaries and an opaque next cursor |
-| `GET /api/v1/captures/:id` | Web session | Owner-scoped full capture |
-| `GET/POST/DELETE /api/settings/capture-token` | Web session (legacy v0.1 clients) | Read metadata, replace a key, or revoke it; writes require `X-Margin-Capture-Settings: 1` |
-
-The manual-key settings UI has been removed. Existing v0.1 clients and keys remain supported by the server until expiry/revocation. On upgrade, sign in through the new Settings form. An existing pending draft is migrated only if its old key can still verify ownership of that same account.
-
-Uploads include `schemaVersion: 1`, `clientCaptureId`, `kind` (`selection`, `article`, `bookmark`), `title`, `sourceUrl`, `content` (Markdown), `comment` (plain text), and `capturedAt` (ISO date). Reusing an ID with a different payload returns 409. The limit is 200,000 content characters, 10,000 comment characters, 300 title characters, and 4,096 URL characters; the request byte limit is 1.5 MB. Unsupported versions return 400.
-
-Extension tests cover permission denial, failed sign-in, password clearing, offline sign-out, draft recovery after renewal, legacy draft migration, and account changes while a popup is open.
-
-## Validation and current scope
+## Validation and manual Chrome smoke test
 
 ```sh
 bun test
@@ -85,6 +99,16 @@ bun run build
 bun run build:extension
 ```
 
-Capture integration tests run the real schema and repository queries in isolated PGlite/Postgres, with no access to the configured local or cloud database. They cover password sign-in, independent sessions, sign-out, password-reset revocation, authentication scopes, legacy token rotation/expiry/revocation, payload validation, pagination, duplicate retries, and workspace-save isolation.
+Automated coverage includes session capability boundaries, password-reset revocation, account changes, frame-broker validation, API transport/streaming, source import after vault hydration, retry behavior, and reused client flows. Database integration tests use isolated fixtures rather than the configured local or cloud database.
 
-This MVP captures text and links from normal web pages. PDFs, screenshots, images, transcripts, full-page archiving, automatic tagging, global semantic search, and Inbox deletion/archiving are outside this release. Complex sites may need selection or bookmark mode. The extension does not bypass site access controls. The popup preserves captures after Save is pressed; unfinished comments before submission are not yet persisted.
+An installed Chrome runtime has **not been verified in this implementation session**; the available browser tool could not run Chrome extension pages. Complete this manual check against the updated website/API before treating the package as release-accepted:
+
+1. Load or reload 0.3.0 in Chrome. Confirm the version and sign in through **Workspace + AI + capture** using an eligible test account. Confirm a retained capture-only session requests an explicit new sign-in for workspace access.
+2. Open a normal article, select a passage, inspect its preview, add a thought, and save. Confirm its highlight, Inbox receipt, and editable source document. Repeat with readable-page and link-only context.
+3. Submit **Save source & ask AI**. Confirm the response streams in the same overlay, retains the source, accepts follow-ups, and supports stopping a response. Verify simply opening Ask makes no AI request.
+4. Edit the imported document in the extension and open it on the website. Sync in both directions. Make overlapping edits in both surfaces and verify the existing conflict workflow preserves both versions or resolves them explicitly.
+5. Switch among Docked, Floating, and Expanded while editing and during a response. Move/resize the floating surface, peek at the page, and return. Confirm the live document, draft, and conversation remain intact and no request is duplicated.
+6. Reopen a source URL and locate its saved passage. Navigate to a different URL, including a same-page application route, and confirm the old draft is not attached to the new source. Check popup fallback on a restricted surface or embedded-frame selection.
+7. Switch servers/accounts, including while requests are pending and while offline. Confirm private documents, drafts, and pending captures never appear under another connection. Verify account/security/API-key and billing actions open the website.
+
+Remaining scope includes synchronized anchors, live Community, PDF-specific capture, screenshots/images, transcripts, full-page archiving, automatic capture tagging, and Inbox deletion/archiving. The extension does not bypass website access controls. Keyboard repositioning, detailed focus restoration, and every site-specific layout interaction are not asserted as completed acceptance work.

@@ -91,8 +91,10 @@ export default function SearchModal({ isOpen, onClose, onQueryChange, onSelectRe
   function chooseTopic(facet: SearchFacet) { navigate({ facetIds: [...facetIds.filter((item) => !item.startsWith(`${facet.kind}:`)), facet.id], view: "passages", page: 0, selectedId: null }); }
   function toggleFacet(facet: SearchFacet) { navigate({ facetIds: facetIds.includes(facet.id) ? facetIds.filter((item) => item !== facet.id) : [...facetIds, facet.id], page: 0, selectedId: null }); }
   function openSource(result: DisplayResult) {
-    if (result.evidence && onOpenSource) { onOpenSource(result.evidence); onClose(); }
+    setSelectedId(result.id);
+    if (result.evidence && onOpenSource) onOpenSource(result.evidence);
     else onSelectResult(result.conversationId);
+    onClose();
   }
   useEffect(() => {
     if (!isOpen) return;
@@ -139,8 +141,26 @@ export default function SearchModal({ isOpen, onClose, onQueryChange, onSelectRe
             const titles = [...new Set(entries.filter((entry) => entry.facetIds.includes(facet.id)).map((entry) => entry.title))].slice(0, 2);
             return <button className="search-topic-node" key={facet.id} onClick={() => chooseTopic(facet)} type="button"><span><strong>{facet.label}</strong><span className="search-topic-count">{facet.count}</span></span><span>{titles.length ? titles.join(" · ") : "Explore matching passages"}</span><span className="search-topic-action">View passages <span aria-hidden="true">→</span></span></button>;
           })}</div> : <div className="search-connections-fallback"><p>These passages do not have a shared topic yet.</p><button onClick={() => navigate({ view: "passages" })} type="button">View matching passages</button></div>}</div> : <><div className="search-passage-list">{pageEntries.map((result) => {
-            const expanded = selected?.id === result.id, passage = result.passage ?? result.evidence?.quote ?? result.preview;
-            return <article className={`search-passage-card${expanded ? " is-selected" : ""}`} data-search-result={result.id} key={result.id}><button aria-expanded={expanded} aria-controls={expanded ? `${id}-passage-detail` : undefined} className="search-passage-select" onClick={() => setSelectedId(expanded ? null : result.id)} type="button"><span className="search-passage-meta"><span>{result.matchLabel}</span>{result.localOnly ? <span className="search-passage-private">Private note</span> : null}<time>{result.updatedLabel}</time></span><strong>{highlightQuery(result.title, query)}</strong>{!expanded ? <span className="search-passage-excerpt">{highlightQuery(result.preview, query)}</span> : null}<span className="search-passage-location">{result.rootTitle !== result.title ? `${result.rootTitle} / ` : ""}{result.locationLabel}<span aria-hidden="true">{expanded ? "−" : "+"}</span></span></button>{expanded ? <div className="search-passage-detail" id={`${id}-passage-detail`}><span className="search-passage-detail-label">{result.evidence?.sourceKind === "conversation" ? "Title match" : "Source passage"}</span><blockquote>{typeof window === "undefined" ? passage : <div className="search-passage-markdown" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(passage) }} />}</blockquote><div className="search-passage-actions"><span>{result.localOnly ? "Only included in AI context when you choose to share it." : "Read this passage in its original context."}</span><button className="search-open-source" onClick={() => openSource(result)} type="button">Open source <span aria-hidden="true">↗</span></button></div></div> : null}</article>;
+            const expanded = selected?.id === result.id;
+            const titleMatch = result.evidence?.sourceKind === "conversation";
+            const passage = titleMatch ? result.preview : result.passage ?? result.evidence?.quote ?? result.preview;
+            const context = facets.filter((facet) => result.facetIds.includes(facet.id) &&
+              (facet.kind === "group" || facet.id.startsWith("topic:heading:")));
+            return <article className={`search-passage-card${expanded ? " is-selected" : ""}`} data-search-result={result.id} key={result.id}>
+              <button className="search-passage-select" onClick={() => openSource(result)} type="button">
+                <span className="search-passage-meta"><span>{result.matchLabel}</span>{result.localOnly ? <span className="search-passage-private">Private note</span> : null}<time>Updated {result.updatedLabel}</time></span>
+                <strong>{highlightQuery(result.title, query)}</strong>
+                <span className="search-passage-excerpt">{highlightQuery(result.preview, query)}</span>
+                {context.length ? <span className="search-passage-context">{context.map((facet) => <span key={facet.id}>{facet.kind === "group" ? "Group" : "Section"}: {facet.label}</span>)}</span> : null}
+                <span className="search-passage-location">{result.rootTitle !== result.title ? `${result.rootTitle} / ` : ""}{result.locationLabel}<span className="search-passage-open">Open document <span aria-hidden="true">↗</span></span></span>
+              </button>
+              <button aria-expanded={expanded} aria-controls={expanded ? `${id}-passage-detail` : undefined} aria-label={`${expanded ? "Hide" : "Show"} preview of ${result.title}`} className="search-passage-preview-toggle" onClick={() => setSelectedId(expanded ? null : result.id)} type="button">{expanded ? "Hide preview" : "Preview"}<span aria-hidden="true">{expanded ? "−" : "+"}</span></button>
+              {expanded ? <div className="search-passage-detail" id={`${id}-passage-detail`}>
+                <span className="search-passage-detail-label">{titleMatch ? "Document preview" : "Source passage"}</span>
+                <blockquote>{titleMatch || typeof window === "undefined" ? passage : <div className="search-passage-markdown" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(passage) }} />}</blockquote>
+                <div className="search-passage-actions"><span>{result.localOnly ? "Only included in AI context when you choose to share it." : "Read this passage in its original context."}</span><button className="search-open-source" onClick={() => openSource(result)} type="button">Open document <span aria-hidden="true">↗</span></button></div>
+              </div> : null}
+            </article>;
           })}</div><nav aria-label="Search result pages" className="search-pagination"><span>{visiblePage * PAGE_SIZE + 1}–{Math.min((visiblePage + 1) * PAGE_SIZE, entries.length)} of {total}</span><div><button disabled={visiblePage === 0} onClick={() => { navigate({ page: visiblePage - 1, selectedId: null }); resultHeadingRef.current?.focus(); }} type="button">Previous</button><span>Page {visiblePage + 1} of {pageCount}</span><button disabled={visiblePage + 1 >= pageCount} onClick={() => { navigate({ page: visiblePage + 1, selectedId: null }); resultHeadingRef.current?.focus(); }} type="button">Next</button></div></nav></>}
         </section>
       </div>

@@ -1,4 +1,4 @@
-import { EXTENSION_SESSION_API_PATH, normalizeServerUrl, parseExtensionSession } from "@margin-chat/capture-contracts";
+import { EXTENSION_SESSION_API_PATH, EXTENSION_WORKSPACE_SESSION_API_PATH, normalizeServerUrl, parseExtensionSession, parseWorkspaceExtensionSession } from "@margin-chat/capture-contracts";
 
 async function request<T>(
   serverUrl: string,
@@ -37,6 +37,10 @@ export function captureRequest<T>(settings: { serverUrl: string; token: string }
 
 export function signIn(serverUrl: string, email: string, password: string) {
   return request(serverUrl, EXTENSION_SESSION_API_PATH, "POST", parseExtensionSession, { email, password });
+}
+
+export function signInWorkspace(serverUrl: string, email: string, password: string) {
+  return request(serverUrl, EXTENSION_WORKSPACE_SESSION_API_PATH, "POST", parseWorkspaceExtensionSession, { email, password });
 }
 
 export function signOut(settings: { serverUrl: string; token: string }) {

@@ -100,7 +100,7 @@ async function settle() {
   assert.equal(frames.size, 0, "Workspace animation effects settle.");
 }
 async function click(target: any) { assert(target, "Expected a click target"); await act(async () => target.click()); await settle(); }
-async function switchMode(label: "Document" | "Tiles" | "Map") {
+async function switchMode(label: "Document View" | "Tile View" | "Map View") {
   await click([...container.querySelectorAll(".workspace-mode-trigger")].find(isVisible));
   await click([...browser.document.querySelectorAll('[role="menuitemradio"]')].find((item) => item.textContent?.trim() === label));
 }
@@ -119,7 +119,7 @@ try {
   const editorIds = [...container.querySelectorAll(".document-workspace .tiptap")].map((item: any) => item.editor);
   const initialMounts = editorMounts;
 
-  await switchMode("Tiles");
+  await switchMode("Tile View");
   assert.equal(container.querySelector(".document-workspace"), initialDocument);
   assert(!isVisible(initialDocument), "The retained document is hidden while Tiles is active.");
   assert(initialDocument.closest('[data-workspace-view="chat"]')?.hasAttribute("inert"), "The hidden document cannot receive keyboard or pointer input.");
@@ -127,7 +127,7 @@ try {
   assert.equal(editorMounts, initialMounts);
   checks.push("leaving Document preserves its editor instances and hides the inactive view");
 
-  await switchMode("Document");
+  await switchMode("Document View");
   assert(isVisible(initialDocument));
   assert.equal(element(".document-workspace .tiptap"), initialEditorElement);
   assert.equal(initialEditorElement.editor, initialEditor);
@@ -137,7 +137,7 @@ try {
   assert.equal(editorMounts, initialMounts, "Returning to Document does not recreate existing editors.");
   checks.push("returning to Document preserves edits, scroll position, and every editor instance");
 
-  await switchMode("Map");
+  await switchMode("Map View");
   const initialMap = element(".conversation-graph-viewport");
   assert(isVisible(initialMap));
   const stage = element(".conversation-graph-stage");
@@ -147,12 +147,12 @@ try {
   assert.notEqual(retainedTransform, originalTransform, "The map camera changed before testing retention.");
   const warmMounts = editorMounts;
   const warmDestroys = editorDestroys;
-  for (const label of ["Tiles", "Document", "Map", "Document", "Map"] as const) {
+  for (const label of ["Tile View", "Document View", "Map View", "Document View", "Map View"] as const) {
     await switchMode(label);
     assert.equal(container.querySelector(".conversation-graph-viewport"), initialMap, "Returning to Map retains its canvas instance.");
-    assert.equal(isVisible(initialMap), label === "Map");
-    assert.equal(isVisible(initialDocument), label === "Document");
-    if (label === "Map") assert.equal(stage.style.transform, retainedTransform, "Returning to Map preserves its camera position and zoom.");
+    assert.equal(isVisible(initialMap), label === "Map View");
+    assert.equal(isVisible(initialDocument), label === "Document View");
+    if (label === "Map View") assert.equal(stage.style.transform, retainedTransform, "Returning to Map preserves its camera position and zoom.");
     for (const wrapper of container.querySelectorAll("[data-workspace-view]")) {
       assert.equal(wrapper.hasAttribute("inert"), wrapper.hasAttribute("hidden"), "Only visible views can receive input.");
     }
@@ -161,14 +161,15 @@ try {
   }
   checks.push("repeated Document, Tiles, and Map switches retain the map and perform no editor teardown or setup");
 
-  await switchMode("Tiles");
+  await switchMode("Tile View");
   const unrelatedTile = [...container.querySelectorAll(".thread-tile-card")].find((item) => item.textContent?.includes("Unrelated project"));
   await click(unrelatedTile);
   assert.equal(latest.activeConversationId, unrelated.id);
   const visibleDocument = [...container.querySelectorAll(".document-workspace")].find(isVisible);
   assert(visibleDocument, "Opening a tile activates Document mode.");
   assert(visibleDocument.textContent?.includes("Fresh unrelated document content."), "Retained views receive current workspace data when activated.");
-  assert.equal((visibleDocument.querySelector('[aria-label="Document title"]') as any)?.value, "Unrelated project");
+  assert.equal(visibleDocument.querySelector('[role="tab"][aria-selected="true"] .document-tab-title')?.textContent, "Unrelated project");
+  assert.equal(visibleDocument.querySelector('[aria-label="Document title"]'), null, "The document title appears in its tab without a duplicate body input.");
   checks.push("opening another document from Tiles refreshes the retained document view with its current content");
   console.log(JSON.stringify({ checks }));
 } finally {

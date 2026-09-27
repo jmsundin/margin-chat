@@ -157,7 +157,7 @@ try {
   scope = menu?.querySelector('[role="menuitemcheckbox"]');
   assert.equal(scope?.getAttribute("aria-checked"), "false", "A family-scoped pin clears the cross-document checkbox.");
   await act(async () => browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })));
-  assert.equal(browser.document.activeElement, scope);
+  assert.equal(browser.document.activeElement?.textContent, "Minimize document");
   await act(async () => browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
   assert.equal(browser.document.activeElement, menu?.querySelector('[role="menuitem"]'), "Menu arrow navigation wraps.");
   await click(scope);

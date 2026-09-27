@@ -13,12 +13,26 @@ export function requireCaptureAccess(user) {
 }
 
 export function createCaptureService({ database }) {
+  async function issueSession(user, ttlMs, scope = "capture") {
+    requireCaptureAccess(user);
+    // Hash the complete token, including its capability prefix. Changing a
+    // capture token's prefix can never turn it into a workspace credential.
+    const token = `mc_${scope === "workspace" ? "workspace" : "extension"}_${randomBytes(32).toString("base64url")}`;
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await database.createExtensionSession({ userId: user.id, tokenHash: hash(token), expiresAt });
+    return {
+      token,
+      expiresAt: expiresAt.toISOString(),
+      user: { id: user.id, displayName: user.displayName, email: user.email },
+      ...(scope === "workspace" ? { scope } : {}),
+    };
+  }
   return {
     async connect(request) {
       const authorization = request.headers.authorization;
       if (
         typeof authorization !== "string" ||
-        !/^Bearer mc_(capture|extension)_[A-Za-z0-9_-]{43}$/u.test(authorization)
+        !/^Bearer mc_(capture|extension|workspace)_[A-Za-z0-9_-]{43}$/u.test(authorization)
       ) {
         throw new HttpError(
           401,
@@ -26,9 +40,9 @@ export function createCaptureService({ database }) {
         );
       }
       const token = authorization.slice(7);
-      const user = token.startsWith("mc_extension_")
-        ? await database.authenticateExtensionSession(hash(token))
-        : await database.authenticateCaptureToken(hash(token));
+      const user = token.startsWith("mc_capture_")
+        ? await database.authenticateCaptureToken(hash(token))
+        : await database.authenticateExtensionSession(hash(token));
       if (!user)
         throw new HttpError(
           401,
@@ -37,20 +51,25 @@ export function createCaptureService({ database }) {
       requireCaptureAccess(user);
       return user;
     },
-    async issueSession(user, ttlMs) {
+    issueSession(user, ttlMs) {
+      return issueSession(user, ttlMs);
+    },
+    issueWorkspaceSession(user, ttlMs) {
+      return issueSession(user, ttlMs, "workspace");
+    },
+    async authenticateWorkspace(request) {
+      const authorization = request.headers.authorization;
+      if (typeof authorization !== "string" || !/^Bearer mc_workspace_[A-Za-z0-9_-]{43}$/u.test(authorization)) {
+        throw new HttpError(401, "Sign in again to connect your extension to the Margin Chat workspace.");
+      }
+      const user = await database.authenticateExtensionSession(hash(authorization.slice(7)));
+      if (!user) throw new HttpError(401, "Your workspace session expired or was revoked. Sign in again in extension settings.");
       requireCaptureAccess(user);
-      const token = `mc_extension_${randomBytes(32).toString("base64url")}`;
-      const expiresAt = new Date(Date.now() + ttlMs);
-      await database.createExtensionSession({ userId: user.id, tokenHash: hash(token), expiresAt });
-      return {
-        token,
-        expiresAt: expiresAt.toISOString(),
-        user: { id: user.id, displayName: user.displayName, email: user.email },
-      };
+      return user;
     },
     async signOut(request) {
       const authorization = request.headers.authorization;
-      if (typeof authorization !== "string" || !/^Bearer mc_extension_[A-Za-z0-9_-]{43}$/u.test(authorization)) {
+      if (typeof authorization !== "string" || !/^Bearer mc_(extension|workspace)_[A-Za-z0-9_-]{43}$/u.test(authorization)) {
         throw new HttpError(401, "A valid extension session is required to sign out.");
       }
       // Idempotent, even if expired, already revoked, or the account lost cloud access.

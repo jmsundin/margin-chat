@@ -265,6 +265,129 @@ describe("stable document blocks", () => {
   });
 });
 
+describe("newer recorded wording", () => {
+  const earlier = "2026-09-02T12:00:00.000Z";
+  const later = "2026-09-03T12:00:00.000Z";
+
+  test("chooses newer local wording only in overlaps and keeps independent cloud edits", () => {
+    const fixture = document([["one", "Launch Friday. Owner Pat. Room red."], ["two", "Budget small."]]);
+    const conversation = fixture.state.conversations[fixture.id];
+    const base = fixture.render();
+    const doc = conversation.document!;
+    doc.blocks[0] = { ...doc.blocks[0], content: "Launch Monday. Owner Alex. Room red.", updatedAt: later };
+    conversation.updatedAt = earlier;
+    const local = fixture.render();
+    doc.blocks[0] = { ...doc.blocks[0], content: "Launch Tuesday. Owner Pat. Room blue.", updatedAt: earlier };
+    doc.blocks[1] = { ...doc.blocks[1], content: "Budget large.", updatedAt: later };
+    conversation.updatedAt = later;
+    const remote = fixture.render();
+    const result = merge(base, local, remote);
+    expect(result.conflicted).toBe(true);
+    expect(blocks(result.file!.content)).toEqual([["one", "Launch Monday. Owner Alex. Room blue."], ["two", "Budget large."]]);
+    // Recorded-time comparison is direction independent; repeating a save keeps it.
+    expect(blocks(merge(base, remote, local).file!.content)).toEqual(blocks(result.file!.content));
+    expect(blocks(merge(base, result.file!.content, remote).file!.content)).toEqual(blocks(result.file!.content));
+  });
+
+  test("a newer remote block wins even when another local block raises the document time", () => {
+    const fixture = document([["one", "Launch Friday."], ["two", "Owner Pat."]]);
+    const conversation = fixture.state.conversations[fixture.id];
+    const base = fixture.render();
+    const doc = conversation.document!;
+    doc.blocks[0] = { ...doc.blocks[0], content: "Launch Monday.", updatedAt: earlier };
+    doc.blocks[1] = { ...doc.blocks[1], content: "Owner Alex.", updatedAt: later };
+    conversation.updatedAt = later;
+    const local = fixture.render();
+    doc.blocks[0] = { ...doc.blocks[0], content: "Launch Tuesday.", updatedAt: later };
+    doc.blocks[1] = { ...doc.blocks[1], content: "Owner Pat.", updatedAt: date };
+    conversation.updatedAt = earlier;
+    const result = merge(base, local, fixture.render());
+    expect(blocks(result.file!.content)).toEqual([["one", "Launch Tuesday."], ["two", "Owner Alex."]]);
+  });
+
+  test("equal block timestamps keep cloud wording despite a newer document timestamp", () => {
+    const fixture = document([["one", "Launch Friday."]]);
+    const conversation = fixture.state.conversations[fixture.id];
+    const base = fixture.render();
+    conversation.document!.blocks[0].content = "Launch Monday.";
+    conversation.updatedAt = later;
+    const local = fixture.render();
+    conversation.document!.blocks[0].content = "Launch Tuesday.";
+    conversation.updatedAt = earlier;
+    expect(blocks(merge(base, local, fixture.render()).file!.content)).toEqual([["one", "Launch Tuesday."]]);
+  });
+
+  test("newer timestamps alone do not override an actual one-sided content change", () => {
+    const fixture = document([["one", "Launch Friday."]]);
+    const conversation = fixture.state.conversations[fixture.id];
+    const base = fixture.render();
+    conversation.document!.blocks[0].updatedAt = later;
+    const local = fixture.render();
+    conversation.document!.blocks[0] = { ...conversation.document!.blocks[0], content: "Launch Tuesday.", updatedAt: earlier };
+    const result = merge(base, local, fixture.render());
+    expect(blocks(result.file!.content)).toEqual([["one", "Launch Tuesday."]]);
+    expect(result.conflicted).toBe(false);
+  });
+
+  test("document metadata uses recorded edit times while keeping disjoint settings", () => {
+    const fixture = document([["one", "First."]]);
+    const conversation = fixture.state.conversations[fixture.id];
+    const base = fixture.render();
+    const oldService = conversation.serviceId;
+    conversation.title = "Device title";
+    conversation.serviceId = "local-service";
+    conversation.updatedAt = later;
+    const local = fixture.render();
+    conversation.title = "Cloud title";
+    conversation.serviceId = oldService;
+    conversation.modelId = "cloud-model";
+    conversation.updatedAt = earlier;
+    const result = merge(base, local, fixture.render());
+    const metadata = JSON.parse(result.file!.content.match(/<!-- margin-chat-metadata (.+) -->/)![1]);
+    expect(metadata.conversation.title).toBe("Device title");
+    expect(metadata.conversation.serviceId).toBe("local-service");
+    expect(metadata.conversation.modelId).toBe("cloud-model");
+    expect(result.file?.content).toContain("# Device title");
+  });
+
+  test("legacy message edits use document edit time, not message creation time", () => {
+    const fixture = document([]);
+    const conversation = fixture.state.conversations[fixture.id];
+    conversation.messages = [{ id: "message", role: "user", content: "Launch Friday. Room red.", createdAt: date }];
+    const base = fixture.render();
+    conversation.messages[0].content = "Launch Monday. Room red.";
+    conversation.updatedAt = later;
+    const local = fixture.render();
+    conversation.messages[0].content = "Launch Tuesday. Room blue.";
+    conversation.updatedAt = earlier;
+    const result = merge(base, local, fixture.render());
+    const workspace = discoverMarkdownWorkspace({ "Note.md": result.file!.content });
+    const parsed = parseMarkdownWorkspace(workspace.manifest, workspace.files)!;
+    expect(parsed.conversations[fixture.id].messages[0].content).toBe("Launch Monday. Room blue.");
+  });
+
+  test("plain notes use frontmatter update time and preserve unknown source syntax", () => {
+    const source = (time: string, text: string) => `---\nupdated: '${time}'\ncustom: true\n---\n\n<custom attr='raw'>\n${text}\n</custom>\n`;
+    const result = merge(source(date, "Launch Friday. Room red."), source(later, "Launch Monday. Room red."), source(earlier, "Launch Tuesday. Room blue."));
+    expect(result.file?.content).toBe(source(later, "Launch Monday. Room blue.").replace(`updated: '${later}'`, `updated: "${later}"`));
+    expect(result.conflicted).toBe(true);
+  });
+
+  test.each([undefined, date, "not-a-date"])("missing, equal or invalid note timestamps keep cloud wording: %s", (timestamp) => {
+    const header = timestamp === undefined ? "" : `---\nupdated: ${JSON.stringify(timestamp)}\n---\n\n`;
+    const base = `${header}Launch Friday. Room red.`;
+    const result = merge(base, `${header}Launch Monday. Room red.`, `${header}Launch Tuesday. Room blue.`);
+    expect(result.file?.content).toBe(`${header}Launch Tuesday. Room blue.`);
+  });
+
+  test.each([undefined, "2026-09-04T12:00:00", "2026-09-03T08:00:00-04:00"])("a missing, timezone-less or equal instant does not claim newer wording: %s", (timestamp) => {
+    const source = (updated: string | undefined, text: string) => `${updated ? `---\nupdated: ${JSON.stringify(updated)}\n---\n\n` : ""}${text}`;
+    const result = merge(source(date, "Launch Friday. Room red."), source(timestamp, "Launch Monday. Room red."), source(later, "Launch Tuesday. Room blue."));
+    expect(result.file?.content).toContain("Launch Tuesday. Room blue.");
+    expect(result.file?.content).not.toContain("Monday");
+  });
+});
+
 describe("readable-format merging", () => {
   test("merges compact blocks and regenerates the frontmatter registry", () => {
     const fixture = document([["one", "Launch Friday."], ["two", "Owner Pat."]]);
@@ -298,6 +421,7 @@ describe("readable-format merging", () => {
 
   test.each([true, false])("surviving cloud path retains its managed/external status: %s", (managed) => {
     const fixture = document([["one", "First."], ["two", "Second."]]);
+    fixture.state.conversations[fixture.id].updatedAt = date;
     const source = fixture.render();
     const path = managed ? "Chats/Original.md" : "Archive/My custom name.md";
     function named(managedPath: string, aliases: string[], body = source) {
@@ -308,7 +432,7 @@ describe("readable-format merging", () => {
       }));
     }
     const base = named("Chats/Original.md", ["Chats/Older.md"]);
-    const local = named("Chats/Local title.md", ["Chats/Original.md", "Chats/Local alias.md"], source.replace("First.", "Local first."));
+    const local = named("Chats/Local title.md", ["Chats/Original.md", "Chats/Local alias.md"], source.replace("First.", "Local first.").replaceAll(date, "2026-09-03T00:00:00.000Z"));
     const remote = named("Chats/Original.md", ["Chats/Cloud alias.md"], source.replace("Second.", "Cloud second."));
     const result = mergeVaultFile(path, file(base), file(local), file(remote));
     const metadata = JSON.parse(decodeReadableMarkdown(result.file!.content).match(/<!-- margin-chat-metadata (.+) -->/)![1]);

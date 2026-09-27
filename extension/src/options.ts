@@ -1,6 +1,6 @@
 import { CONNECTION_API_PATH, normalizeServerUrl, parseCaptureConnection } from "@margin-chat/capture-contracts";
 import { connectionIdentity, getPending, getSettings, trustedStorage } from "./storage";
-import { captureRequest, errorText, signIn, signOut } from "./network";
+import { captureRequest, errorText, signIn, signInWorkspace, signOut } from "./network";
 import { serverPermissionPattern } from "./permissions";
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -44,7 +44,8 @@ el("connection-form").addEventListener("submit", async (event) => {
     const allowed = await chrome.permissions.request({ origins: [serverPermissionPattern(serverUrl)] });
     if (!allowed) throw new Error("Allow access to your Margin Chat website to sign in.");
     status.textContent = "Signing in…";
-    const session = await signIn(serverUrl, email, password);
+    const workspaceAccess = el<HTMLSelectElement>("access-mode").value === "workspace";
+    const session = await (workspaceAccess ? signInWorkspace : signIn)(serverUrl, email, password);
     const previous = await getSettings();
     const connectionId = connectionIdentity(serverUrl, session.user.id);
 
@@ -69,12 +70,14 @@ el("connection-form").addEventListener("submit", async (event) => {
         expiresAt: session.expiresAt,
       },
     });
-    if (previous?.token.startsWith("mc_extension_")) await signOut(previous).catch(() => undefined);
+    if (previous && /^mc_(extension|workspace)_/u.test(previous.token)) await signOut(previous).catch(() => undefined);
     if (previous && serverPermissionPattern(previous.serverUrl) !== serverPermissionPattern(serverUrl)) {
       await chrome.permissions.remove({ origins: [serverPermissionPattern(previous.serverUrl)] });
     }
     await initialize();
-    status.textContent = "Signed in. Open a web page and click Save to Margin to capture it.";
+    status.textContent = workspaceAccess
+      ? "Signed in. Open a web page and click Margin Chat to use your documents, notes, and AI above the page."
+      : "Signed in with capture-only access. Choose Workspace + AI above and sign in again to enable the full workspace.";
   } catch (error) {
     status.className = "error";
     status.textContent = errorText(error, "Could not reach Margin Chat. Check your website address and internet connection, then try again.");
@@ -95,7 +98,7 @@ el("disconnect").addEventListener("click", async () => {
     passwordInput.value = "";
     await initialize();
     let revoked = true;
-    if (previous?.token.startsWith("mc_extension_")) {
+    if (previous && /^mc_(extension|workspace)_/u.test(previous.token)) {
       status.textContent = "Signing out…";
       revoked = await signOut(previous).then(() => true, () => false);
     }

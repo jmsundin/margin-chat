@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createEmptyState, createMainConversation, createSideConversation } from "../client/src/initialState";
 import { addChildConversation, addRootConversation, deleteThread } from "../client/src/lib/workspaceCommands";
-import { focusDocument, getDocumentWidth, getDocumentWorkspace, minimizeDocument, reorderDocument, setDocumentWidth } from "../client/src/lib/documentWorkspace";
+import { closeDocument, focusDocument, getDocumentWidth, getDocumentWorkspace, minimizeDocument, reorderDocument, setDocumentWidth } from "../client/src/lib/documentWorkspace";
 import { buildConversationGraphScene } from "../client/src/lib/conversationGraph";
 
 function fixture() {
@@ -51,7 +51,7 @@ describe("side-by-side document workspace", () => {
     expect(reopened.activeConversationId).toBe("nested");
     expect(reopened.rootId).toBe(rootId);
     expect(getDocumentWorkspace(reopened.conversations, "nested").minimizedIds).toEqual([]);
-    expect(minimizeDocument(reopened, rootId)).toBe(reopened);
+    expect(getDocumentWorkspace(minimizeDocument(reopened, rootId).conversations, rootId).minimizedIds).toEqual([rootId]);
   });
 
   test("switching unrelated main documents retains each family's display settings", () => {
@@ -115,3 +115,28 @@ describe("side-by-side document workspace", () => {
     expect(getDocumentWidth(setDocumentWidth(standalone, standalone.rootId, 580).conversations, standalone.rootId)).toBe(580);
   });
 });
+
+ test("closing hides the tab and pane, preserving content, descendants, order and reopenable ancestry", () => {
+  const { state, rootId } = fixture();
+  const originalOrder = getDocumentWorkspace(state.conversations, rootId).documents.map((document) => document.id);
+  let next = closeDocument(focusDocument(state, "a"), "a");
+  let workspace = getDocumentWorkspace(next.conversations, rootId);
+  expect(workspace.closedIds).toEqual(["a"]);
+  expect(workspace.openDocuments.map((document) => document.id)).not.toContain("a");
+  expect(workspace.visibleDocuments.map((document) => document.id)).toContain("nested");
+  expect(next.activeConversationId).toBe(rootId);
+  expect(next.conversations.a).toBe(state.conversations.a);
+  expect(workspace.documents.map((document) => document.id)).toEqual(originalOrder);
+  next = closeDocument(minimizeDocument(next, "nested"), "nested");
+  expect(getDocumentWorkspace(next.conversations, rootId).minimizedIds).not.toContain("nested");
+  next = focusDocument(next, "nested");
+  expect(getDocumentWorkspace(next.conversations, rootId).closedIds).toEqual([]);
+  for (const id of originalOrder) next = closeDocument(next, id);
+  expect(getDocumentWorkspace(next.conversations, rootId).openDocuments).toEqual([]);
+  expect(Object.keys(next.conversations)).toEqual(Object.keys(state.conversations));
+  next = focusDocument(next, rootId);
+  expect(getDocumentWorkspace(next.conversations, rootId).openDocuments.map((document) => document.id)).toEqual([rootId]);
+  next = deleteThread(next, "a", createMainConversation({ id: "unused" }));
+  expect(next.conversations[rootId].documentLayout?.closedIds).not.toContain("a");
+  expect(next.conversations[rootId].documentLayout?.closedIds).not.toContain("nested");
+ });

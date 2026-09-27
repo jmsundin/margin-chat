@@ -73,7 +73,7 @@ describe("multi-device Markdown sync", () => {
     expect(imported.conflicts).toHaveLength(1);
     expect(imported.conflicts[0]).toMatchObject({ path: "Notes/renamed.md", sourcePath: "Notes/original.md", local: older, remote: latest });
     const exported = importVault(exportVault(imported));
-    const descriptor = JSON.parse(exported[`_conflicts/${imported.conflicts[0].id}/conflict.json`].content);
+    const descriptor = JSON.parse(exported[`.margin-chat/history/${imported.conflicts[0].id}/conflict.json`].content);
     expect(exported[descriptor.copy]).toEqual(older);
     expect(exported[descriptor.remoteCopy]).toEqual(latest);
     expect(exported["Attachments/original.bin"].content).toBe("AP8B");
@@ -249,7 +249,7 @@ describe("multi-device Markdown sync", () => {
     expect(conflicted.files["note.md"].content).toBe("computer edit");
     expect(conflicted.conflicts).toHaveLength(1);
     expect(conflicted.conflicts[0].local?.content).toBe("phone edit");
-    expect(Object.entries(conflicted.files).some(([path, value]) => path.startsWith("_conflicts/") && value.content === "phone edit")).toBe(true);
+    expect(Object.entries(conflicted.files).some(([path, value]) => path.startsWith(".margin-chat/history/") && value.content === "phone edit")).toBe(true);
     await phone.resolve(conflicted.conflicts[0].id, "local"); await phone.sync(); await computer.sync();
     expect((await computer.read()).files["note.md"].content).toBe("phone edit");
   });
@@ -384,8 +384,8 @@ describe("multi-device Markdown sync", () => {
     const remote = cloud(); const a = remote.device(); const localStore = store();
     let archiveBatches = 0; let interrupt = true;
     const b = new VaultSync(localStore, { ...remote.transport, async commit(changes) {
-      if (changes.some((change) => change.path.startsWith("_conflicts/"))) {
-        expect(changes.every((change) => change.path.startsWith("_conflicts/"))).toBe(true);
+      if (changes.some((change) => change.path.startsWith(".margin-chat/history/"))) {
+        expect(changes.every((change) => change.path.startsWith(".margin-chat/history/"))).toBe(true);
         archiveBatches++;
         if (archiveBatches === 2 && interrupt) throw new Error("Interrupted recovery upload");
       }
@@ -434,7 +434,7 @@ describe("multi-device Markdown sync", () => {
     const remote = cloud(); const a = remote.device(); const storage = store();
     let failSave = false; let commits = 0;
     const b = new VaultSync({ ...storage, async write(snapshot) {
-      if (failSave && Object.keys(snapshot.files).some((path) => path.startsWith("_conflicts/"))) throw new Error("Storage full");
+      if (failSave && Object.keys(snapshot.files).some((path) => path.startsWith(".margin-chat/history/"))) throw new Error("Storage full");
       await storage.write(snapshot);
     } }, { ...remote.transport, async commit(changes) { commits++; return remote.transport.commit(changes); } });
     const original = "Owner: Alice\n\nVenue: Office\n";
@@ -499,8 +499,8 @@ describe("multi-device Markdown sync", () => {
     await replace(computer, path, incoming); await replace(phone, path, local); await computer.sync();
     const conflicted = await phone.sync();
     const id = conflicted.conflicts[0].id;
-    const descriptorPath = `_conflicts/${id}/conflict.json`;
-    const copyPath = `_conflicts/${id}/local/conflict.json`;
+    const descriptorPath = `.margin-chat/history/${id}/conflict.json`;
+    const copyPath = `.margin-chat/history/${id}/local/conflict.json`;
     expect(JSON.parse(conflicted.files[descriptorPath].content)).toMatchObject({ path, copy: copyPath });
     expect(conflicted.files[copyPath].content).toBe(local);
     expect(conflicted.files[path].content).toBe(incoming);
@@ -531,7 +531,7 @@ describe("multi-device Markdown sync", () => {
     const kept = await b.resolve(conflict.id, "current");
     expect(kept.conflicts).toHaveLength(0);
     expect(kept.files["note.md"].content).toBe("newer intentional edit");
-    expect(Object.entries(kept.files).some(([path, value]) => path.startsWith("_conflicts/") && value.content === "offline")).toBe(true);
+    expect(Object.entries(kept.files).some(([path, value]) => path.startsWith(".margin-chat/history/") && value.content === "offline")).toBe(true);
     await b.sync(); await a.sync();
     expect((await a.read()).files["note.md"].content).toBe("newer intentional edit");
   });

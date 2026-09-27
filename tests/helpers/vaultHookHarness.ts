@@ -116,6 +116,12 @@ const remote = createVaultService({ storage: createFileVaultStorage(storageDirec
 const emptySettingsScenario = process.argv.includes("--empty-settings");
 const historyScenario = process.argv.includes("--chat-history");
 const focusScenario = process.argv.includes("--document-focus");
+const projectionScenario = process.argv.includes("--projection-pending");
+let projectionPending = projectionScenario;
+let commitRequests = 0;
+function vaultResponse(result: any) {
+  return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest.revision } } : result);
+}
 if (!emptySettingsScenario && !historyScenario && !focusScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
@@ -124,17 +130,23 @@ globalThis.fetch = (async (input: any, init: any) => {
   const url = new URL(String(input), "http://fixture.test");
   if (url.pathname === "/api/vault") {
     if (!networkReleased) { networkEntered.resolve(); await initialNetwork.promise; }
-    return Response.json(await remote.status(user.id));
+    return vaultResponse(await remote.status(user.id));
   }
   if (url.pathname === "/api/vault/file") {
-    if (init?.method === "PUT") return Response.json(await remote.commitBinary(user.id, {
-      path: url.searchParams.get("path"), baseRevision: url.searchParams.get("baseRevision") || null,
-      bytes: Buffer.from(init.body), contentType: new Headers(init.headers).get("Content-Type"),
-    }));
+    if (init?.method === "PUT") {
+      commitRequests++;
+      return vaultResponse(await remote.commitBinary(user.id, {
+        path: url.searchParams.get("path"), baseRevision: url.searchParams.get("baseRevision") || null,
+        bytes: Buffer.from(init.body), contentType: new Headers(init.headers).get("Content-Type"),
+      }));
+    }
     const source = await remote.readFile({ userId: user.id, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
     return new Response(source.bytes, { headers: { "Content-Type": source.contentType } });
   }
-  if (url.pathname === "/api/vault/commit") return Response.json(await remote.commit(user.id, JSON.parse(init.body).changes));
+  if (url.pathname === "/api/vault/commit") {
+    commitRequests++;
+    return vaultResponse(await remote.commit(user.id, JSON.parse(init.body).changes));
+  }
   throw new Error(`Unexpected fixture request: ${url.pathname}`);
 }) as typeof fetch;
 let current: any;
@@ -163,6 +175,33 @@ function type(content: string) {
       { id: "typed-message", role: "user", createdAt: "2026-09-13T00:00:00.000Z", content },
     ] },
   } }));
+}
+async function checkProjectionPending() {
+  const { pendingVaultChanges } = await import("../../client/src/lib/vaultSync");
+  networkReleased = true;
+  initialNetwork.resolve();
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready && current.vault.matchesCloud && !current.vault.saving, "The pending projection prevented cloud hydration.");
+  assert.equal(current.vault.storageMode, "server");
+  assert.match(current.vault.message, /files are saved in the cloud.*features are still updating/);
+
+  await act(async () => { type("Cloud content survives a pending feature projection."); });
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(current.vault.matchesCloud, true, "Saved Blob content was incorrectly shown as pending upload.");
+  assert.equal(pendingVaultChanges((await local.read())!).length, 0, "A pending projection left successful uploads unacknowledged.");
+  assert.match(current.vault.message, /features are still updating/);
+  const writes = commitRequests;
+  assert(writes > 0, "The edited file was never uploaded.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(commitRequests, writes, "Projection retries uploaded already saved files again.");
+  assert.match(current.vault.message, /features are still updating/);
+
+  projectionPending = false;
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(current.vault.message, null, "The recovered projection warning did not clear.");
+  assert.equal(current.vault.matchesCloud, true);
+  assert.equal(commitRequests, writes, "Projection recovery created a redundant upload.");
+  console.log(JSON.stringify({ checks: ["pending projection is visible after hydration", "successful uploads remain acknowledged", "pending feature retries do not reupload files", "ready projection clears the warning"] }));
 }
 async function checkDocumentFocus() {
   const { createMainConversation, createChildConversation } = await import("../../client/src/initialState");
@@ -580,7 +619,8 @@ async function checkPopulatedWorkspace() {
   console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
 }
 try {
-  if (focusScenario) await checkDocumentFocus();
+  if (projectionScenario) await checkProjectionPending();
+  else if (focusScenario) await checkDocumentFocus();
   else if (historyScenario) await checkChatHistory();
   else if (emptySettingsScenario) await checkEmptyWorkspaceSettings();
   else await checkPopulatedWorkspace();

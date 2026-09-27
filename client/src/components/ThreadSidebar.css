@@ -63,8 +63,7 @@
 .sidebar-outline-title .sidebar-icon { color: var(--accent); flex: 0 0 17px; height: 17px; margin-top: 1px; width: 17px; }
 .sidebar-outline-title span { display: -webkit-box; min-width: 0; overflow: hidden; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .sidebar-outline-title:focus { outline: none; }
-.is-expanded-panel > .grouped-chat-outline { flex: 1; }
-.is-expanded-panel .outline-navigation-tools { background: var(--rail-body-bg); position: sticky; top: 0; z-index: 1; }
+.is-expanded-panel > .document-content-outline { flex: 1; }
 
 @media (pointer: coarse), (max-width: 600px) {
   .sidebar-content-switcher button { min-height: 44px; }

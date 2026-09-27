@@ -14,6 +14,7 @@
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
+    "@excalidraw/excalidraw": "^0.18.1",
     "@lezer/markdown": "^1.7.2",
     "@margin-chat/capture-contracts": "workspace:*",
     "@margin-chat/workspace-contracts": "workspace:*",

@@ -7,7 +7,7 @@ import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
 import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
 import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
 export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
-export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 4;
+export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 5;
 
 function decodeWorkspace(workspace) {
     if (!workspace) return undefined;
@@ -142,7 +142,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
             || (!previous.managedPath && previous.path === legacyMarkdownPath(folder, id));
         let path = previous?.path;
         if ((!preservePaths && owned) || !path) {
-            const desired = titleMarkdownPath(folder, title, id);
+            const desired = titleMarkdownPath("", title, id);
             path = desired;
             let ordinal = 2;
             while (reserved.has(pathKey(path)) && pathKey(path) !== pathKey(previous?.path ?? "")) {
@@ -278,7 +278,7 @@ export function parseMarkdownWorkspaceManifest(input) {
     if (!input || typeof input !== "object" || Array.isArray(input))
         return null;
     const candidate = input;
-    if (![3, MARKDOWN_WORKSPACE_FORMAT_VERSION].includes(candidate.formatVersion) ||
+    if (![3, 4, MARKDOWN_WORKSPACE_FORMAT_VERSION].includes(candidate.formatVersion) ||
         typeof candidate.savedAt !== "string" ||
         Number.isNaN(Date.parse(candidate.savedAt)) ||
         !candidate.workspace ||
@@ -920,11 +920,11 @@ function renderFrontmatter(conversation, kind) {
     return [
         "---",
         `margin-chat-id: ${JSON.stringify(conversation.id)}`,
-        `margin-chat-kind: ${kind}`,
+        "margin-chat-kind: document",
         `title: ${JSON.stringify(conversation.title)}`,
         `created: ${JSON.stringify(conversation.createdAt)}`,
         `updated: ${JSON.stringify(conversation.updatedAt)}`,
-        `tags: [margin-chat, ${kind}]`,
+        "tags: [margin-chat, document]",
         ...(publicTopic ? [
             `public-topic-id: ${JSON.stringify(publicTopic.id)}`,
             `public-topic-label: ${JSON.stringify(publicTopic.label)}`,
@@ -940,12 +940,11 @@ function renderNoteFrontmatter(note, title) {
     return [
         "---",
         `margin-chat-id: ${JSON.stringify(note.id)}`,
-        "margin-chat-kind: note",
-        `margin-chat-note-kind: ${note.kind ?? "comment"}`,
+        "margin-chat-kind: document",
         `title: ${JSON.stringify(title)}`,
         `created: ${JSON.stringify(note.createdAt)}`,
         `updated: ${JSON.stringify(note.updatedAt)}`,
-        "tags: [margin-chat, note]",
+        "tags: [margin-chat, document]",
         "---",
     ].join("\n");
 }
@@ -1021,7 +1020,7 @@ export function isSafeMarkdownPath(path) {
         && path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".." && !segment.startsWith("."));
 }
 function isAuxiliaryMarkdownPath(path) {
-    return /^(?:_conflicts|attachments)\//i.test(path);
+    return /^(?:_conflicts|attachments|\.margin-chat)\//i.test(path);
 }
 function getLinkTargetAliases(path) {
     const withoutExtension = path.replace(/\.md$/i, "");

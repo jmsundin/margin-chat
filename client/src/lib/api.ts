@@ -1,3 +1,4 @@
+import { apiFetch, hasApiTransport } from "./apiTransport";
 import { ApiError } from "./apiError";
 import { readChatReplyStream, type ChatReplyResponse } from "./chatStream";
 import type { ConversationContext } from "./chatContext";
@@ -142,7 +143,7 @@ export async function requestChatReply(args: {
 }): Promise<ChatReplyResponse> {
   const { onDelta, onMetadata, signal, expectedUserId, ...requestBody } = args;
   const promptMessage = ({ id, role, content, createdAt }: Message) => ({ id, role, content, createdAt });
-  const response = await fetch("/api/chat", {
+  const response = await apiFetch("/api/chat", {
     // Receipts belong in persistence, not a new prompt's transport payload.
     body: JSON.stringify({
       ...requestBody,
@@ -197,7 +198,7 @@ export async function requestChatTitle(args: {
   serviceId: BackendServiceId;
 }): Promise<string> {
   const { expectedUserId, ...body } = args;
-  const response = await fetch("/api/chat/title", {
+  const response = await apiFetch("/api/chat/title", {
     body: JSON.stringify(body),
     credentials: "same-origin",
     headers: {
@@ -231,7 +232,7 @@ export async function requestUploadDocument(
   const form = new FormData();
   form.set("file", file);
   if (ai) form.set("ai", JSON.stringify(ai));
-  const response = await fetch("/api/documents", {
+  const response = await apiFetch("/api/documents", {
     headers: expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {},
     body: form,
     credentials: "same-origin",
@@ -257,7 +258,7 @@ export async function requestUploadDocument(
 }
 
 export async function requestDeleteDocument(documentId: string, expectedUserId?: string): Promise<void> {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/documents/${encodeURIComponent(documentId)}`,
     {
       headers: expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {},
@@ -271,7 +272,7 @@ export async function requestDeleteDocument(documentId: string, expectedUserId?:
 }
 
 export async function requestStoredState(): Promise<StoredWorkspace | null> {
-  const response = await fetch("/api/state", {
+  const response = await apiFetch("/api/state", {
     credentials: "same-origin",
   });
 
@@ -315,7 +316,7 @@ export async function persistStoredState(
   state: AppState,
   baseRevision: number | null = null,
 ): Promise<number> {
-  const response = await fetch("/api/state", {
+  const response = await apiFetch("/api/state", {
     body: JSON.stringify({
       baseRevision,
       workspace: createWorkspaceDocument(state),
@@ -359,6 +360,12 @@ export function persistStoredStateWithProgress(
   const totalBytes = new TextEncoder().encode(body).byteLength;
 
   onProgress({ totalBytes, uploadedBytes: 0 });
+  if (hasApiTransport()) {
+    return persistStoredState(state, baseRevision).then((revision) => {
+      onProgress({ totalBytes, uploadedBytes: totalBytes });
+      return revision;
+    });
+  }
 
   return new Promise((resolve, reject) => {
     const request = new XMLHttpRequest();
@@ -425,7 +432,7 @@ export function persistStoredStateWithProgress(
 }
 
 export async function requestAuthSession(): Promise<AuthenticatedUser | null> {
-  const response = await fetch("/api/auth/session", {
+  const response = await apiFetch("/api/auth/session", {
     credentials: "same-origin",
     cache: "no-store",
     signal: AbortSignal.timeout(5_000),
@@ -445,7 +452,7 @@ export async function requestLogin(args: {
   email: string;
   password: string;
 }): Promise<AuthenticatedUser> {
-  const response = await fetch("/api/auth/login", {
+  const response = await apiFetch("/api/auth/login", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: {
@@ -469,7 +476,7 @@ export async function requestSignup(args: {
   email: string;
   password: string;
 }): Promise<AuthenticatedUser> {
-  const response = await fetch("/api/auth/signup", {
+  const response = await apiFetch("/api/auth/signup", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: {
@@ -491,7 +498,7 @@ export async function requestSignup(args: {
 export async function requestPasswordReset(args: {
   email: string;
 }): Promise<PasswordResetRequestResponse> {
-  const response = await fetch("/api/auth/password-reset/request", {
+  const response = await apiFetch("/api/auth/password-reset/request", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: {
@@ -514,7 +521,7 @@ export async function requestPasswordResetConfirm(args: {
   password: string;
   token: string;
 }): Promise<void> {
-  const response = await fetch("/api/auth/password-reset/confirm", {
+  const response = await apiFetch("/api/auth/password-reset/confirm", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: {
@@ -535,7 +542,7 @@ export async function requestChangePassword(args: {
   currentPassword: string;
   password: string;
 }): Promise<void> {
-  const response = await fetch("/api/auth/password/change", {
+  const response = await apiFetch("/api/auth/password/change", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: { "Content-Type": "application/json" },
@@ -555,7 +562,7 @@ export async function requestChangePassword(args: {
 }
 
 export async function requestLogout(): Promise<void> {
-  const response = await fetch("/api/auth/logout", {
+  const response = await apiFetch("/api/auth/logout", {
     credentials: "same-origin",
     method: "POST",
   });
@@ -568,7 +575,7 @@ export async function requestUpdateProfile(args: {
   displayName: string;
   email: string;
 }): Promise<AuthenticatedUser> {
-  const response = await fetch("/api/auth/profile", {
+  const response = await apiFetch("/api/auth/profile", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: {
@@ -590,7 +597,7 @@ export async function requestUpdateProfile(args: {
 export async function requestUpdateApiKeys(args: {
   keys: Partial<Record<ApiKeyProvider, string | null>>;
 }): Promise<ApiKeySettings> {
-  const response = await fetch("/api/settings/api-keys", {
+  const response = await apiFetch("/api/settings/api-keys", {
     body: JSON.stringify(args),
     credentials: "same-origin",
     headers: {
@@ -618,7 +625,7 @@ export async function requestUpdateApiKeys(args: {
 }
 
 export async function requestCreateCheckoutSession(expectedUserId?: string): Promise<string> {
-  const response = await fetch("/api/billing/checkout", {
+  const response = await apiFetch("/api/billing/checkout", {
     credentials: "same-origin",
     headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
     method: "POST",
@@ -638,7 +645,7 @@ export async function requestConfirmCheckoutSession(
   sessionId: string,
   expectedUserId?: string,
 ): Promise<CheckoutConfirmation> {
-  const response = await fetch("/api/billing/checkout/confirm", {
+  const response = await apiFetch("/api/billing/checkout/confirm", {
     body: JSON.stringify({ sessionId }),
     credentials: "same-origin",
     headers: {
@@ -674,7 +681,7 @@ export async function requestConfirmCheckoutSession(
 }
 
 export async function requestBillingDashboard(expectedUserId?: string): Promise<BillingDashboardData> {
-  const response = await fetch("/api/billing/dashboard", {
+  const response = await apiFetch("/api/billing/dashboard", {
     credentials: "same-origin", cache: "no-store",
     headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
   });
@@ -703,7 +710,7 @@ export async function requestCreateTopUpSession(amountCents: number, expectedUse
   if (!Number.isInteger(amountCents) || amountCents < 500 || amountCents > 50000) {
     throw new Error("Enter an amount from $5 to $500, with no more than two decimal places.");
   }
-  const response = await fetch("/api/billing/topup", {
+  const response = await apiFetch("/api/billing/topup", {
     body: JSON.stringify({ amountCents }), credentials: "same-origin", method: "POST",
     headers: { "Content-Type": "application/json", ...(expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : {}) },
   });
@@ -714,7 +721,7 @@ export async function requestCreateTopUpSession(amountCents: number, expectedUse
 }
 
 export async function requestCreateBillingPortalSession(expectedUserId?: string): Promise<string> {
-  const response = await fetch("/api/billing/portal", {
+  const response = await apiFetch("/api/billing/portal", {
     credentials: "same-origin",
     headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
     method: "POST",

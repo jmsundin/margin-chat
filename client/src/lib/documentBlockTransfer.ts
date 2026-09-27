@@ -1,5 +1,5 @@
 import { normalizeEditableDocument, type AppState, type Conversation, type DocumentBlock, type DocumentGeneration, type DocumentLink, type EditableDocument, type Message } from "@margin-chat/workspace-contracts";
-import { getEditableDocument, retainDocumentBlockSource } from "./editableDocument";
+import { getDocumentBlockAuthorship, getEditableDocument, retainDocumentBlockSource } from "./editableDocument";
 import { remapDocumentAnchor } from "./documentAnchors";
 import { remapDocumentReplacement } from "./documentVersions";
 import { remapDocumentLinks } from "./documentLinks";
@@ -104,6 +104,7 @@ export function transferDocumentBlock(
   const copiedSourceMessageId = copyMessage(block.sourceMessageId);
   const moved: DocumentBlock = {
     id: newId, kind: block.kind, content: block.content, createdAt: block.createdAt, updatedAt,
+    authorship: getDocumentBlockAuthorship(block, source.messages),
     ...(copiedSourceMessageId ? { sourceMessageId: copiedSourceMessageId } : {}),
     ...(copiedGeneration ? { generationId: copiedGeneration.id } : {}),
   };

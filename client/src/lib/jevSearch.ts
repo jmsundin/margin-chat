@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiTransport";
 import type { Conversation } from "../types";
 import type { SearchFacet, SearchPassageResult } from "./searchExploration";
 import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
@@ -125,7 +126,7 @@ export function applyJevSearchRanking<T extends { id: string; localOnly?: boolea
 }
 
 export async function requestJevSearch(userId: string, snapshot: JevSearchSnapshot, signal: AbortSignal): Promise<JevSearchResult> {
-  const response = await fetch("/api/jev/search", {
+  const response = await apiFetch("/api/jev/search", {
     credentials: "same-origin", method: "POST", signal,
     headers: { "Content-Type": "application/json", "X-Margin-Vault-User": userId },
     body: JSON.stringify({ enabled: true, ...snapshot }),

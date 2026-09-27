@@ -1,3 +1,4 @@
+import { migrateMarginNotes } from "@margin-chat/workspace-contracts";
 import { describe, expect, test } from "bun:test";
 import { createChildConversation, createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
 import {
@@ -29,8 +30,8 @@ function authoredWorkspace() {
 }
 
 function authoredContents(state: AppState) {
-  return Object.fromEntries(Object.entries(state.conversations).map(([id, item]) => [id, {
-    title: item.title, parentId: item.parentId, messages: item.messages, notes: item.notes, documents: item.documents,
+  return Object.fromEntries(Object.entries(migrateMarginNotes(state.conversations)).map(([id, item]) => [id, {
+    title: item.title, parentId: item.parentId, messages: item.messages, notes: item.notes, documents: item.documents, document: item.document,
   }]));
 }
 

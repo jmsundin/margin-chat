@@ -258,6 +258,32 @@ describe("versioned database releases", () => {
 });
 
 describe("database release configuration", () => {
+  test("local API startup verifies remote databases unless migration is explicitly selected", () => {
+    const remote = "postgresql://operator:example@ep-example.neon.tech/margin?sslmode=require";
+    for (const key of ["DATABASE_URL", "POSTGRES_URL", "POSTGRES_PRISMA_URL"]) {
+      expect(resolveSchemaMode({ [key]: remote })).toBe("verify");
+    }
+    for (const key of ["PGHOST", "POSTGRES_HOST"]) {
+      expect(resolveSchemaMode({ [key]: "ep-example.neon.tech" })).toBe("verify");
+    }
+    expect(resolveSchemaMode({ DATABASE_URL: remote, PGHOST: "127.0.0.1" })).toBe("verify");
+    expect(resolveSchemaMode({ DATABASE_URL: "not-a-valid-url" })).toBe("verify");
+    expect(resolveSchemaMode({ DATABASE_URL: remote, DB_SCHEMA_MODE: "migrate" })).toBe("migrate");
+    expect(resolveSchemaMode({ DATABASE_URL: remote }, "migrate")).toBe("migrate");
+  });
+
+  test("loopback databases retain automatic development migrations with connection precedence", () => {
+    for (const host of ["localhost", "127.0.0.1", "[::1]"]) {
+      expect(resolveSchemaMode({ DATABASE_URL: `postgresql://local:example@${host}/margin` })).toBe("migrate");
+    }
+    for (const host of ["localhost", "127.0.0.1", "::1"]) {
+      expect(resolveSchemaMode({ PGHOST: host })).toBe("migrate");
+    }
+    expect(resolveSchemaMode({ PGDATABASE: "local_margin", PGUSER: "local_user" })).toBe("migrate");
+    expect(resolveSchemaMode({ DATABASE_URL: "postgresql://local:example@localhost/margin", PGHOST: "ep-example.neon.tech" })).toBe("migrate");
+    expect(resolveSchemaMode({ PGHOST: "127.0.0.1", POSTGRES_HOST: "ep-example.neon.tech" })).toBe("migrate");
+  });
+
   test("production can only verify, while local auto-migration can be explicitly disabled", () => {
     expect(resolveSchemaMode({})).toBe("migrate");
     expect(resolveSchemaMode({ DB_SCHEMA_MODE: "verify" })).toBe("verify");

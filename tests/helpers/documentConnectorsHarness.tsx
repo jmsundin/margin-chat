@@ -26,6 +26,7 @@ try {
   assert.equal(container.querySelectorAll(".connector-path").length, 0);
   const button = container.querySelector<HTMLButtonElement>(".connector-continuation")!;
   assert(button.getAttribute("aria-label")?.includes("Linked document"));
+  assert.equal(button.querySelector(".connector-continuation-detail")?.textContent, "To · in another documentLinked document", "The expanded control should preview its destination and direction");
   assert.equal(button.closest("svg"), null, "Pinned labels must remain outside the curve's mask");
   assert.equal(container.querySelector("mask rect[fill='black']")?.getAttribute("width"), "352");
   await act(async () => button.click());
@@ -36,16 +37,23 @@ try {
   const details = container.querySelector<HTMLDetailsElement>("details")!;
   assert(details);
   assert.equal(container.querySelectorAll("summary").length, 1, "Colliding labels should share one control");
-  details.setAttribute("open", "");
+  await act(async () => details.querySelector("summary")!.focus());
+  assert.equal(details.hasAttribute("open"), true, "Keyboard focus must reveal relationship destinations before navigation");
   const linkedButtons = details.querySelectorAll<HTMLButtonElement>("button");
   assert.equal(linkedButtons.length, 2);
   await act(async () => linkedButtons[1].click());
   assert.deepEqual(opened.at(-1), { conversationId: "other", anchorId: "source-passage" });
   assert.equal(details.hasAttribute("open"), false);
   details.setAttribute("open", "");
+  await act(async () => linkedButtons[0].focus());
   await act(async () => details.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   assert.equal(details.hasAttribute("open"), false);
   assert.equal(browser.document.activeElement, details.querySelector("summary"));
+  await act(async () => (details.querySelector("summary") as HTMLElement).blur());
+  await act(async () => details.dispatchEvent(new browser.MouseEvent("mouseover", { bubbles: true })));
+  assert.equal(details.hasAttribute("open"), true, "Hover must reveal the relationship list without requiring a click");
+  await act(async () => details.dispatchEvent(new browser.MouseEvent("mouseout", { bubbles: true })));
+  assert.equal(details.hasAttribute("open"), false);
   console.log("document connector interactions passed");
 } finally {
   await act(async () => root.unmount());

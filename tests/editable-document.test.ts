@@ -112,7 +112,7 @@ describe("editable document migration and edits", () => {
     expect(insertDocumentGeneration(pending, "alternative", { blockId: "message:answer", offset: 500 })).toBe(pending);
     const accepted = insertDocumentGeneration(pending, "alternative", { blockId: "message:answer", offset: 7, replaceTo: 15 }, later);
     expect(accepted.document!.blocks.map((block) => block.content)).toEqual(["Before ", "A new alternative.", " after"]);
-    expect(accepted.document!.generations.find((entry) => entry.id === "alternative")?.replacement).toEqual({ blockId: "message:answer", offset: 7, content: "selected" });
+    expect(accepted.document!.generations.find((entry) => entry.id === "alternative")?.replacement).toEqual({ blockId: "message:answer", offset: 7, content: "selected", authorship: "ai" });
   });
 
   test("remaps untouched ranges and marks overlapping edits stale", () => {
@@ -169,7 +169,7 @@ describe("editable document persistence", () => {
     const renderer = createMarkdownWorkspaceRenderer();
     const workspace = renderer(stateWith(value), now);
     const path = workspace.manifest.files.find((entry) => entry.id === value.id)!.path;
-    const external = { ...workspace, files: { ...workspace.files, [path]: workspace.files[path].replace("\nUser draft.\n\n\n<!--", "\nExternally edited draft.\n\n\n<!--") + "\n\n<!-- Personal footer -->" } };
+    const external = { ...workspace, files: { ...workspace.files, [path]: workspace.files[path].replace("\nUser draft.\n\n", "\nExternally edited draft.\n\n") + "\n\n<!-- Personal footer -->" } };
     const parsed = parseMarkdownWorkspace(external.manifest, external.files)!;
     expect(parsed.conversations[value.id].document!.blocks[0].content).toBe("Externally edited draft.\n\n");
     const moved = moveDocumentBlock(parsed.conversations[value.id], "message:answer", null, later);

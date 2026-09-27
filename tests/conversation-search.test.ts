@@ -5,6 +5,7 @@ import {
   createStandaloneNoteConversation,
 } from "../client/src/initialState";
 import {
+  buildDocumentSummaries,
   buildSearchResults,
   buildThreadSummaries,
 } from "../client/src/lib/conversationSearch";
@@ -51,6 +52,19 @@ describe("conversation search and summaries", () => {
       preview: "No messages yet.",
     });
     expect(conversations).toEqual(original);
+  });
+
+  test("document summaries retain each document's original creation time after edits", () => {
+    const conversations = makeConversations();
+    conversations.root.updatedAt = "2026-09-27";
+    const summaries = buildDocumentSummaries(conversations);
+    expect(summaries).toHaveLength(3);
+    for (const document of Object.values(conversations)) {
+      const summary = summaries.find(({ id }) => id === document.id)!;
+      expect(summary.createdAt).toBe(document.createdAt);
+      expect(summary.createdLabel).toBeTruthy();
+    }
+    expect(summaries.find(({ id }) => id === "root")!.updatedAt).toBe("2026-09-27");
   });
 
   test("finds branch messages case-insensitively with their root context", () => {

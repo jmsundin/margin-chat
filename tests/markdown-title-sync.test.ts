@@ -64,7 +64,7 @@ describe("title filenames across devices and portable imports", () => {
     await edit(desktop, (current) => { current.conversations.document.title = "Renamed project 東京"; });
     await edit(offline, (current) => { current.conversations.document.document!.blocks[0].content = "Offline writing must survive."; });
     const renamedPath = record(await desktop.read()).path;
-    expect(renamedPath).toBe(titleMarkdownPath("Chats", "Renamed project 東京", "document"));
+    expect(renamedPath).toBe(titleMarkdownPath("", "Renamed project 東京", "document"));
     const renameCommitsStart = remote.commits.length;
     await desktop.sync();
     const renameCommits = remote.commits.slice(renameCommitsStart);
@@ -90,7 +90,7 @@ describe("title filenames across devices and portable imports", () => {
     expect(body(await offline.read()).document!.blocks[0].content).toBe("Cloud paragraph.");
     expect(body(await offline.read()).title).toBe("Offline title");
     await edit(offline, (current) => { current.conversations.document.title = "Next intended title"; });
-    expect(record(await offline.read()).path).toBe(titleMarkdownPath("Chats", "Next intended title", "document"));
+    expect(record(await offline.read()).path).toBe(titleMarkdownPath("", "Next intended title", "document"));
   });
 
   test("two offline documents with the same title remain separate after both devices synchronize", async () => {
@@ -117,7 +117,7 @@ describe("title filenames across devices and portable imports", () => {
     expect(record(before).managedPath).toBe(record(before).path);
     await edit(fresh, (current) => { current.conversations.document.title = "Fresh device title"; });
     const after = await fresh.read();
-    expect(record(after).path).toBe(titleMarkdownPath("Chats", "Fresh device title", "document"));
+    expect(record(after).path).toBe(titleMarkdownPath("", "Fresh device title", "document"));
     expect(record(after).aliases).toContain(record(before).path);
     await fresh.sync(); await original.sync();
     expect(record(await original.read()).path).toBe(record(after).path);
@@ -202,6 +202,6 @@ describe("title filenames across devices and portable imports", () => {
     await device.resolve(conflict.id, "local");
     expect(body(await device.read()).document!.blocks[0].content).toBe("Original paragraph.");
     await edit(device, (current) => { current.conversations.document.title = "Restored then renamed"; });
-    expect(record(await device.read()).path).toBe(external ? customPath : titleMarkdownPath("Chats", "Restored then renamed", "document"));
+    expect(record(await device.read()).path).toBe(external ? customPath : titleMarkdownPath("", "Restored then renamed", "document"));
   });
 });

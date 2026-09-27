@@ -2,17 +2,18 @@ import { mkdir, readFile, rm, copyFile, writeFile } from "node:fs/promises";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Resvg } from "@resvg/resvg-js";
+import { build as buildWorkspace } from "vite";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outdir = resolve(root, "dist");
 await rm(outdir, { recursive: true, force: true });
 await mkdir(resolve(outdir, "icons"), { recursive: true });
-for (const entry of ["background", "popup", "options", "content"]) {
+for (const entry of ["background", "popup", "options", "content", "overlay"]) {
   const result = await Bun.build({
     entrypoints: [resolve(root, `src/${entry}.ts`)],
     outdir,
     target: "browser",
-    format: entry === "content" ? "iife" : "esm",
+    format: entry === "content" || entry === "overlay" ? "iife" : "esm",
     minify: true,
   });
   if (!result.success) throw new Error(result.logs.join("\n"));
@@ -44,4 +45,5 @@ await writeFile(
   resolve(outdir, "manifest.json"),
   JSON.stringify(manifest, null, 2) + "\n",
 );
+await buildWorkspace({ configFile: resolve(root, "vite.config.ts"), logLevel: "warn" });
 console.log(`Extension ${manifest.version} built in extension/dist.`);

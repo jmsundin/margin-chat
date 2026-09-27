@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildConnectorCurve, buildConnectorOcclusions, buildDocumentConnector, groupConnectorContinuations, intersectConnectorRects, type DocumentConnectorEndpoint } from "../client/src/lib/documentConnectors";
+import { buildConnectorCurve, buildConnectorOcclusions, buildDocumentConnector, CONNECTOR_MARKER_SIZE, groupConnectorContinuations, intersectConnectorRects, type DocumentConnectorEndpoint } from "../client/src/lib/documentConnectors";
 
 const workspace = { left: 0, top: 48, right: 1000, bottom: 800 };
 const left = { left: 8, top: 60, right: 328, bottom: 780 };
@@ -59,7 +59,33 @@ describe("document edge visibility", () => {
     const hidden = { ...endpoint("target", right), anchor: null };
     const label = connect(source, hidden)!.continuation!;
     expect(label.top).toBeGreaterThanOrEqual(left.top);
-    expect(label.left + label.width).toBeLessThanOrEqual(left.right);
+    expect(label.left + CONNECTOR_MARKER_SIZE).toBeLessThanOrEqual(left.right);
+    expect(label.left).toBe(left.right - CONNECTOR_MARKER_SIZE - 2);
+    expect(label.top + CONNECTOR_MARKER_SIZE / 2).toBeGreaterThanOrEqual(left.top);
+  });
+
+  test("continuations use a visible document margin instead of a clipped text edge", () => {
+    const source = endpoint("source");
+    const hidden = { ...endpoint("target", right), anchor: null };
+    const rightMargin = connect(source, hidden)!.continuation!;
+    expect(rightMargin.marginSide).toBe("right");
+    expect(rightMargin.top + CONNECTOR_MARKER_SIZE / 2).toBe(162);
+    source.viewport = { ...left, right: 240 };
+    const leftMargin = connect(source, hidden)!.continuation!;
+    expect(leftMargin.marginSide).toBe("left");
+    expect(leftMargin.left).toBe(left.left + 2);
+    source.viewport = { ...source.viewport, left: 24 };
+    expect(connect(source, hidden)).toBeNull();
+  });
+
+  test("expanded detail widths stay within narrow panes and unusable margins are omitted", () => {
+    const source = endpoint("source", { ...left, right: 128 });
+    const hidden = { ...endpoint("target", right), anchor: null };
+    const marker = connect(source, hidden)!.continuation!;
+    expect(marker.width).toBe(112);
+    expect(marker.left + CONNECTOR_MARKER_SIZE - marker.width).toBeGreaterThanOrEqual(left.left);
+    source.viewport = { ...source.panel!, bottom: 175, top: 150 };
+    expect(connect(source, hidden)).toBeNull();
   });
 
   test("same-document links avoid curves over text but retain offscreen navigation", () => {
@@ -100,5 +126,16 @@ describe("document edge visibility", () => {
     expect(groups[0].connections.map((item) => item.continuation?.target.conversationId)).toEqual(["target", "second"]);
     const distant = { ...second, id: "third-link", continuation: { ...second.continuation!, top: second.continuation!.top + 100 } };
     expect(groupConnectorContinuations([first, second, distant])).toHaveLength(2);
+    const neighboringMargin = { ...second, id: "neighboring-pane", continuation: { ...second.continuation!, left: second.continuation!.left + 40 } };
+    expect(groupConnectorContinuations([first, neighboringMargin])).toHaveLength(2);
   });
 });
+
+ test("header relationships keep continuation controls below the document window buttons", () => {
+  const source = endpoint("source", left, { left: 20, right: 220, top: 66, bottom: 90 });
+  source.markerViewport = { ...left, top: 104 };
+  const hidden = { ...endpoint("target", right), anchor: null };
+  expect(connect(source, hidden)?.continuation?.top).toBe(108);
+  source.markerViewport = null;
+  expect(connect(source, hidden)).toBeNull();
+ });

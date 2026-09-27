@@ -31,15 +31,15 @@ function preserveConflict(snapshot: VaultSnapshot, path: string, local: VaultFil
   if (recovery.conflicted !== false) snapshot.conflicts.push({ id, path, local, remote, createdAt,
     automatic: true, result, ...(recovery.base !== undefined ? { base: recovery.base } : {}),
     ...(sourcePath ? { sourcePath } : {}) });
-  const backupPath = `_conflicts/${id}/local/${path.split("/").pop()}`;
-  const remotePath = `_conflicts/${id}/remote/${path.split("/").pop()}`;
+  const backupPath = `.margin-chat/history/${id}/local/${path.split("/").pop()}`;
+  const remotePath = `.margin-chat/history/${id}/remote/${path.split("/").pop()}`;
   if (local) snapshot.files[backupPath] = { ...local };
   if (remote) snapshot.files[remotePath] = { ...remote };
-  const basePath = `_conflicts/${id}/base/${path.split("/").pop()}`;
-  const resultPath = `_conflicts/${id}/result/${path.split("/").pop()}`;
+  const basePath = `.margin-chat/history/${id}/base/${path.split("/").pop()}`;
+  const resultPath = `.margin-chat/history/${id}/result/${path.split("/").pop()}`;
   if (recovery.base) snapshot.files[basePath] = { ...recovery.base };
   if (result) snapshot.files[resultPath] = { ...result };
-  snapshot.files[`_conflicts/${id}/conflict.json`] = {
+  snapshot.files[`.margin-chat/history/${id}/conflict.json`] = {
     content: JSON.stringify({ path, createdAt, localDeleted: !local, remoteDeleted: !remote, copy: local ? backupPath : null,
       remoteCopy: remote ? remotePath : null, localEncoding: local?.encoding ?? "utf8", remoteEncoding: remote?.encoding ?? "utf8",
       automatic: true, conflicted: recovery.conflicted !== false,
@@ -109,7 +109,7 @@ function nextVaultBatch(snapshot: VaultSnapshot): VaultChange[] {
   const pending = pendingVaultChanges(snapshot);
   // Finish uploading every recovery object before publishing working documents.
   // A large/binary archive may span batches; a failed upload must leave the cloud document untouched.
-  const recovery = pending.filter((change) => /^_conflicts\//iu.test(change.path));
+  const recovery = pending.filter((change) => /^(?:_conflicts|\.margin-chat\/history)\//iu.test(change.path));
   const changes = recovery.length ? recovery : pending;
   const byPath = new Map(changes.map((change) => [change.path, change]));
   const previousFiles = Object.fromEntries(Object.entries(snapshot.base)

@@ -109,7 +109,7 @@ test("headings-only inputs and orphan responses keep their navigation targets", 
   expect(orphan[0].responses[0].headings).toEqual(headings);
 });
 
-test("grouped outline navigation and heading disclosure remain independent", async () => {
+test("outline view shows only document headings and preserves navigation", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/chatOutlineHarness.ts"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
   });

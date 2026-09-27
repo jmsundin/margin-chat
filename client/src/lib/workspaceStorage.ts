@@ -339,7 +339,7 @@ function markdownContentFiles(files: Record<string, string>) {
 }
 
 function isCompanionPath(path: string) {
-  return path === "workspace.json" || /^(?:attachments|_conflicts)\/.+/i.test(path);
+  return path === "workspace.json" || /^(?:attachments|_conflicts|\.margin-chat)\/.+/i.test(path);
 }
 
 function companionFiles(files: Record<string, VaultFile>) {
@@ -383,7 +383,7 @@ export async function readConnectedDirectoryCompanions(
   const paths: string[] = [...Object.keys(known ?? {}), "workspace.json"];
   const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
   for await (const [name, entry] of entries.entries()) {
-    if (entry.kind === "directory" && /^(?:attachments|_conflicts)$/i.test(name)) {
+    if (entry.kind === "directory" && /^(?:attachments|_conflicts|\.margin-chat)$/i.test(name)) {
       await collectCompanionPaths(entry as FileSystemDirectoryHandle, name, paths);
     }
   }
@@ -395,7 +395,7 @@ export async function readConnectedDirectoryCompanions(
   }
   const binaryCopies = new Set<string>();
   for (const [path, bytes] of bytesByPath) {
-    if (!/^_conflicts\/[^/]+\/conflict\.json$/i.test(path)) continue;
+    if (!/^(?:_conflicts|\.margin-chat\/history)\/[^/]+\/conflict\.json$/i.test(path)) continue;
     try {
       const descriptor = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
       if (descriptor.localEncoding === "base64" && typeof descriptor.copy === "string") binaryCopies.add(descriptor.copy);
@@ -519,7 +519,7 @@ async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, prefix =
   for await (const [name, entry] of entries.entries()) {
     if (name.startsWith(".")) continue;
     const path = prefix ? `${prefix}/${name}` : name;
-    if (/^(?:attachments|_conflicts)(?:\/|$)/i.test(path)) continue;
+    if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
     if (entry.kind === "directory") {
       const child = await scanMarkdownDirectory(entry as FileSystemDirectoryHandle, path);
       Object.assign(files, child.files);
@@ -544,6 +544,8 @@ async function removeDirectoryFile(handle: FileSystemDirectoryHandle, path: stri
 function supportsDirectoryPicker() {
   return (
     typeof window !== "undefined" &&
+    // Chrome only permits the directory picker in a top-level browsing context.
+    window.top === window &&
     typeof (window as Partial<DirectoryPickerWindow>).showDirectoryPicker ===
       "function" &&
     typeof indexedDB !== "undefined"

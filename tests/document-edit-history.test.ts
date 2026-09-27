@@ -7,6 +7,18 @@ const block = (content: string, id = "first"): DocumentBlock => ({ id, kind: "ma
 const focus = (blockId: string, offset: number) => ({ blockId, from: offset, to: offset });
 
 describe("document editing history", () => {
+  test("undo restores AI origin, redo restores mixed authorship, and external provenance invalidates history", () => {
+    const start: DocumentBlock[] = [{ ...block("AI wording"), authorship: "ai" }];
+    const edited: DocumentBlock[] = [{ ...block("AI wording with my addition"), authorship: "mixed" }];
+    const history = new DocumentEditHistory(start);
+    history.record(start, edited);
+    expect(history.undo(edited)?.blocks).toEqual(start);
+    expect(history.redo(start)?.blocks).toEqual(edited);
+    const imported: DocumentBlock[] = [{ ...edited[0], authorship: "user" }];
+    expect(history.undo(imported)).toBeNull();
+    expect(history.redo(imported)).toBeNull();
+  });
+
   test("groups consecutive typing and restores the first and last selections", () => {
     const start = [block("")];
     const first = [block("H")];

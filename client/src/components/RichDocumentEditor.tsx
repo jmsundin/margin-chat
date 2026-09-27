@@ -10,15 +10,21 @@ import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import type { DocumentBlock } from "@margin-chat/workspace-contracts";
+import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { getDocumentBlockAuthorship, type DocumentBlock, type Message } from "@margin-chat/workspace-contracts";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { documentPositionAtMarkdownOffset, getRichDocumentFallbackReason, markdownOffsetAtDocumentPosition } from "../lib/richDocumentMarkdown";
 import { createDocumentMathExtensions, type EditEquation } from "../lib/documentMath";
 import MathEquationDialog from "./MathEquationDialog";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import type { DocumentEditFocus, DocumentEditOptions } from "../lib/documentEditHistory";
+import { DocumentTable } from "../lib/documentTable";
+import { formatDocumentDateTime } from "../lib/documentDateTime";
+import { updateRichDocumentContent } from "../lib/updateRichDocumentContent";
+import { drawingMarkdown, EMPTY_DRAWING, isDrawingMarkdown, readDrawing } from "../lib/documentDrawing";
 import "./RichDocumentEditor.css";
+const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
+const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
 
 export type RichDocumentRect = { left: number; top: number; width: number; height: number };
 export interface RichDocumentSelection {
@@ -48,6 +54,7 @@ export interface RichDocumentDecoration {
 export interface RichDocumentEditorProps {
   conversationId: string;
   blocks: DocumentBlock[];
+  sourceMessages?: ReadonlyArray<Pick<Message, "id" | "role">>;
   onUpdateBlock: (blockId: string, markdown: string, edit?: DocumentEditOptions) => void;
   onReorderBlock?: (blockId: string, beforeBlockId: string | null) => void;
   moveTargets?: Array<{ id: string; title: string }>;
@@ -89,7 +96,7 @@ export function createRichDocumentExtensions(extra: Extension[] = [], options: {
   return [
     StarterKit.configure({ link: { openOnClick: false }, underline: false, trailingNode: false, codeBlock: false, ...starterOptions }),
     CodeBlockLowlight.configure({ lowlight }),
-    TableKit.configure({ table: { resizable: false, renderWrapper: true } }),
+    TableKit.configure({ table: false }), DocumentTable.configure({ resizable: false, renderWrapper: true }),
     TaskList, TaskItem.configure({ nested: true }), Highlight,
     ...createDocumentMathExtensions(onEditEquation),
     Markdown.configure({ markedOptions: { gfm: true, breaks: false } }), ...extra,
@@ -172,6 +179,8 @@ type BlockProps = RichDocumentEditorProps & {
 
 function RichBlock(props: BlockProps) {
   const { block, index } = props;
+  const authorship = getDocumentBlockAuthorship(block, props.sourceMessages);
+  const authorshipLabel = authorship === "ai" ? "AI" : authorship === "mixed" ? "AI · edited by you" : "You";
   const latest = useRef(props);
   latest.current = props;
   const content = useRef(block.content);
@@ -182,6 +191,8 @@ function RichBlock(props: BlockProps) {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkUrl, setLinkUrl] = useState("");
   const [equation, setEquation] = useState<{ latex: string; display: boolean; from: number; to: number; original?: string; document: Editor["state"]["doc"] } | null>(null);
+  const [drawing, setDrawing] = useState<{ markdown: string; original?: string } | null>(null);
+  const [drawingError, setDrawingError] = useState("");
   const [equationError, setEquationError] = useState<string | null>(null);
   const [, updateToolbar] = useState(0);
   const [focused, setFocused] = useState(false);
@@ -192,7 +203,9 @@ function RichBlock(props: BlockProps) {
   const linkFormRef = useRef<HTMLFormElement>(null);
   const linkButtonRef = useRef<HTMLButtonElement>(null);
   const readOnly = props.readOnlyBlockIds?.includes(block.id) ?? false;
-  const fallback = useMemo(() => getRichDocumentFallbackReason(block.content), [block.content]);
+  const isDrawing = isDrawingMarkdown(block.content);
+  const fallback = useMemo(() => readOnly ? null : getRichDocumentFallbackReason(block.content), [block.content, readOnly]);
+  const decorationKey = JSON.stringify(props.decorations?.[block.id] ?? []);
   const editorSource = useRef(fallback ? "" : block.content);
   const editorRef = useRef<Editor | null>(null);
   const beforeEditFocus = useRef<DocumentEditFocus | undefined>(undefined);
@@ -288,6 +301,11 @@ function RichBlock(props: BlockProps) {
           event.preventDefault();
           return true;
         }
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "d") {
+          event.preventDefault();
+          currentEditor.commands.insertContent({ type: "text", text: formatDocumentDateTime() });
+          return true;
+        }
         if (event.key !== " ") suppressSpace.current = false;
         const { $from, empty, from } = view.state.selection;
         const plainModifier = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
@@ -301,6 +319,18 @@ function RichBlock(props: BlockProps) {
             event.preventDefault();
             if (doubleSpace) currentEditor.commands.deleteRange({ from: from - 1, to: from });
             return invoke(currentEditor, doubleSpace ? 2 : 1);
+          }
+        }
+        if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          if (currentEditor.isActive("table")) {
+            event.preventDefault();
+            return currentEditor.commands.setHardBreak();
+          }
+          if (event.shiftKey && !inCode) {
+            // A new paragraph inside this document block supports Markdown
+            // input rules (headings, lists, quotes), unlike a hard break.
+            event.preventDefault();
+            return currentEditor.commands.splitBlock();
           }
         }
         if (event.key === "Enter" && plainModifier && empty && $from.depth === 1 && ["paragraph", "heading"].includes($from.parent.type.name) && latest.current.onSplitBlock) {
@@ -372,7 +402,7 @@ function RichBlock(props: BlockProps) {
     content.current = block.content;
     if (block.content === editorSource.current || fallback || sourceMode) return;
     externalUpdate.current = true;
-    try { editor.chain().setMeta("addToHistory", false).setContent(block.content, { contentType: "markdown", emitUpdate: false }).run(); editorSource.current = block.content; }
+    try { updateRichDocumentContent(editor, block.content); editorSource.current = block.content; }
     finally { externalUpdate.current = false; }
   }, [editor, block.content, fallback, sourceMode]);
 
@@ -384,7 +414,7 @@ function RichBlock(props: BlockProps) {
   }, [editor, index, placeholder]);
   useEffect(() => {
     if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta("documentAnnotationRanges", true));
-  }, [editor, props.decorations?.[block.id]]);
+  }, [editor, decorationKey]);
   useLayoutEffect(() => {
     shellRef.current?.querySelectorAll("h1,h2,h3").forEach((heading, headingIndex) => { (heading as HTMLElement).dataset.chatOutlineId = `heading-document:${block.id}-${headingIndex}`; });
     if (sourceRef.current) { sourceRef.current.style.height = "auto"; sourceRef.current.style.height = `${Math.max(96, sourceRef.current.scrollHeight)}px`; }
@@ -425,6 +455,25 @@ function RichBlock(props: BlockProps) {
     updateToolbar((value) => value + 1);
   }
 
+  function openDrawing() {
+    setDrawingError("");
+    if (isDrawing) {
+      try { readDrawing(block.content); } catch (error) { setDrawingError(error instanceof Error ? error.message : "Invalid drawing."); return; }
+    }
+    closeToolbar();
+    setDrawing({ markdown: isDrawing ? block.content : drawingMarkdown(EMPTY_DRAWING), original: isDrawing ? block.content : undefined });
+  }
+  function saveDrawing(markdown: string) {
+    if (!drawing || readOnly) return;
+    if (drawing.original !== undefined && block.content !== drawing.original) {
+      setDrawingError("This drawing changed while it was open. Close the editor and reopen the latest drawing before saving.");
+      return;
+    }
+    if (drawing.original !== undefined || !block.content.trim()) props.onUpdateBlock(block.id, markdown);
+    else props.onInsertBlock?.(block.id, markdown);
+    setDrawing(null);
+  }
+
   function openEquation() {
     if (!editor || readOnly) return;
     const { from, to } = editor.state.selection;
@@ -453,7 +502,7 @@ function RichBlock(props: BlockProps) {
   }
 
   return <section ref={shellRef} className={`rich-document-block${focused ? " is-focused" : ""}${props.draggingBlock === block.id ? " is-dragging" : ""}${props.dropEdge ? ` is-drop-${props.dropEdge}` : ""}${readOnly ? " is-streaming" : ""}${props.isDraft ? " is-continuation" : ""}${!block.content ? " is-empty" : ""}`}
-    data-document-block-id={block.id} data-message-id={sourceId} data-conversation-id={props.conversationId} data-message-bubble="true" data-selection-source="document" data-chat-outline-id={`message-document:${block.id}`}>
+    data-document-block-id={block.id} data-authorship={authorship} data-message-id={sourceId} data-conversation-id={props.conversationId} data-message-bubble="true" data-selection-source="document" data-chat-outline-id={`message-document:${block.id}`}>
     <div className="rich-document-block-gutter" contentEditable={false}>
       <button ref={gripRef} type="button" className="rich-document-grip" aria-label={`Block ${index + 1} actions and formatting`} title="Drag to move · Click for formatting" aria-expanded={toolbarOpen} aria-controls={toolbarId}
         disabled={readOnly || props.isDraft} draggable={Boolean(props.onReorderBlock || props.onMoveBlock) && !readOnly && !props.isDraft}
@@ -479,6 +528,7 @@ function RichBlock(props: BlockProps) {
           <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={openEquation} title="Insert a LaTeX equation">Math</button>
           {editor.isActive("table") && <><button type="button" onClick={() => editor.chain().focus().addRowAfter().run()}>+ Row</button><button type="button" onClick={() => editor.chain().focus().addColumnAfter().run()}>+ Column</button></>}
         </>}
+        <button type="button" onClick={openDrawing} disabled={!isDrawing && Boolean(block.content.trim()) && !props.onInsertBlock}>Drawing</button>
         {props.onInvokeAI && <button type="button" className="rich-document-ask" onMouseDown={(event) => event.preventDefault()} onClick={() => { if (editor && !fallback && !sourceMode) invoke(editor); else { const field = sourceRef.current; props.onInvokeAI?.({ blockId: block.id, markdown: content.current, offset: field?.selectionStart ?? content.current.length, rect: shellRef.current!.getBoundingClientRect(), restoreFocus() { field?.focus(); } }); } }}>Ask AI</button>}
         <button type="button" onClick={() => { if (sourceMode) finishSource(); else { setSourceMode(true); setTimeout(() => sourceRef.current?.focus(), 0); } }}>{sourceMode ? "Done" : "Edit Markdown"}</button>
         {props.onReorderBlock && <><button type="button" disabled={!index} onClick={() => props.onReorderBlock?.(block.id, props.blocks[index - 1].id)} aria-label="Move block up">↑</button><button type="button" disabled={index === props.blocks.length - 1} onClick={() => props.onReorderBlock?.(block.id, props.blocks[index + 2]?.id ?? null)} aria-label="Move block down">↓</button></>}
@@ -493,15 +543,33 @@ function RichBlock(props: BlockProps) {
           <input aria-label="Link address" placeholder="https://…" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} autoFocus />
           <button type="submit">Apply link</button><button type="button" onClick={() => { editor.chain().focus().extendMarkRange("link").unsetLink().run(); setLinkOpen(false); }}>Remove link</button>
         </form>}
+        {block.content && !props.isDraft && <span className="rich-document-authorship" contentEditable={false} role="note" aria-label={`Authorship: ${authorshipLabel}`} data-label={`Authorship: ${authorshipLabel}`}
+          title={authorship === "user" ? "Your writing" : authorship === "mixed" ? "AI-origin text with your edits; attribution applies to this whole block" : "AI-origin text; attribution applies to this whole block"} />}
       </div>}
+      {drawingError && <p role="alert">{drawingError}</p>}
+      {drawing && <Suspense fallback={<p role="status">Opening drawing editor…</p>}><DrawingDialog markdown={drawing.markdown} error={drawingError} onSave={saveDrawing} onClose={() => setDrawing(null)} /></Suspense>}
       {readOnly && <div className="rich-document-streaming-label" role="status">Writing…</div>}
       {sourceMode ? <div className="rich-document-source"><div className="rich-document-source-label"><span>Markdown source</span><button type="button" onClick={finishSource}>Done</button></div><textarea ref={sourceRef} value={block.content} readOnly={readOnly} aria-label={`Markdown for block ${index + 1}`} spellCheck={false}
+        onKeyDown={(event) => {
+          sourceBeforeFocus.current = { blockId: block.id, from: event.currentTarget.selectionStart, to: event.currentTarget.selectionEnd };
+          if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finishSource(); return; }
+          if (readOnly || event.nativeEvent.isComposing || event.repeat || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "d") return;
+          event.preventDefault();
+          const field = event.currentTarget;
+          const from = field.selectionStart, to = field.selectionEnd;
+          const stamp = formatDocumentDateTime();
+          const markdown = field.value.slice(0, from) + stamp + field.value.slice(to);
+          content.current = markdown;
+          props.onUpdateBlock(block.id, markdown, { beforeFocus: { blockId: block.id, from, to }, afterFocus: { blockId: block.id, from: from + stamp.length, to: from + stamp.length } });
+          requestAnimationFrame(() => field.setSelectionRange(from + stamp.length, from + stamp.length));
+        }}
         onBeforeInput={(event) => { sourceBeforeFocus.current = { blockId: block.id, from: event.currentTarget.selectionStart, to: event.currentTarget.selectionEnd }; }}
         onChange={(event) => { content.current = event.target.value; props.onUpdateBlock(block.id, event.target.value, {
           group: `${block.id}:source`, beforeFocus: sourceBeforeFocus.current,
           afterFocus: { blockId: block.id, from: event.currentTarget.selectionStart, to: event.currentTarget.selectionEnd },
         }); }} onSelect={sourceSelection}
-        onKeyDown={(event) => { sourceBeforeFocus.current = { blockId: block.id, from: event.currentTarget.selectionStart, to: event.currentTarget.selectionEnd }; if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finishSource(); } }} /></div>
+        /></div>
+        : isDrawing && !readOnly ? <Suspense fallback={<p role="status">Loading drawing…</p>}><DocumentDrawing markdown={block.content} readOnly={readOnly} onEdit={openDrawing} /></Suspense>
         : fallback ? <div className="rich-document-preserved"><div className="rich-document-preserved-preview">{props.renderBlockPreview?.(block) ?? (typeof window === "undefined" ? <pre>{block.content}</pre> : <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(block.content) }} />)}</div><button type="button" className="rich-document-source-action" disabled={readOnly} onClick={() => { setSourceMode(true); setTimeout(() => sourceRef.current?.focus(), 0); }}>Edit {fallback.toLowerCase()} source</button></div>
         : <EditorContent editor={editor} />}
     </div>
@@ -738,7 +806,7 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
     onKeyDownCapture={(event) => {
       if (!props.onHistory || !(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "z" || event.nativeEvent.isComposing) return;
       const target = event.target instanceof Element ? event.target : null;
-      if (!target || target.closest(".document-ai-composer, .document-prompt-history, .rich-document-link-form, .math-equation-dialog, .is-streaming")) return;
+      if (!target || target.closest(".document-ai-composer, .document-prompt-history, .rich-document-link-form, .math-equation-dialog, .document-drawing-dialog, .is-streaming")) return;
       if (target.closest("input, textarea") && !target.closest(".rich-document-source")) return;
       event.preventDefault();
       event.stopPropagation();

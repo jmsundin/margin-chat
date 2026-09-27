@@ -37,7 +37,7 @@ function equalBlocks(first: DocumentBlock[], second: DocumentBlock[]) {
     const other = second[index];
     return block.id === other.id && block.kind === other.kind && block.content === other.content
       && block.createdAt === other.createdAt && block.sourceMessageId === other.sourceMessageId
-      && block.generationId === other.generationId;
+      && block.generationId === other.generationId && block.authorship === other.authorship;
   });
 }
 

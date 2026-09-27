@@ -22,7 +22,7 @@ function fixture(): AppState {
   const nested = createSideConversation({ id: "side-nested", sourceConversation: first, createdAt });
   first.childIds = [nested.id];
   root.childIds = [first.id, second.id];
-  root.documentLayout = { order: [second.id, root.id, first.id, nested.id], minimizedIds: [first.id],
+  root.documentLayout = { order: [second.id, root.id, first.id, nested.id], minimizedIds: [first.id], closedIds: [second.id],
     widthsById: { [root.id]: 680, [first.id]: 420, [nested.id]: 835 } };
   state.conversations = { ...state.conversations, [first.id]: first, [second.id]: second, [nested.id]: nested,
     other: createMainConversation({ id: "other", createdAt }) };
@@ -61,9 +61,9 @@ describe("document layout persistence", () => {
     const state = fixture();
     const root = state.conversations[state.rootId];
     root.documentLayout = { order: ["other", "missing", "side-second", "side-second", root.id, "side-nested", 42],
-      minimizedIds: [root.id, "other", "side-first", "missing", "side-first"] } as unknown as DocumentLayout;
+      minimizedIds: [root.id, "other", "side-first", "missing", "side-first"], closedIds: ["side-second", "other", "side-second", "missing"] } as unknown as DocumentLayout;
     state.conversations["side-first"].documentLayout = { order: ["side-first", "side-nested"], minimizedIds: [] };
-    const expected = { order: ["side-second", root.id, "side-nested"], minimizedIds: ["side-first"] };
+    const expected = { order: ["side-second", root.id, "side-nested"], minimizedIds: [root.id, "side-first"], closedIds: ["side-second"] };
     const markdown = createMarkdownWorkspace(state);
     for (const restored of [hydratePersistedState(state), createAppStateFromWorkspaceDocument(createWorkspaceDocument(state)),
       parseMarkdownWorkspace(markdown.manifest, markdown.files)]) {

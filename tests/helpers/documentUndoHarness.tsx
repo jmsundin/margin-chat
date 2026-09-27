@@ -13,6 +13,7 @@ Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, 
 const { act, createElement, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: DocumentPanel } = await import("../../client/src/components/DocumentPanel");
+const { default: DocumentMenu } = await import("../../client/src/components/DocumentMenu");
 const { createMainConversation } = await import("../../client/src/initialState");
 const { getEditableDocument } = await import("../../client/src/lib/editableDocument");
 const date = "2026-09-25T00:00:00.000Z";
@@ -36,6 +37,9 @@ function Host({ initial }: { initial: Conversation[] }) {
   replace = (id, value) => setConversations((current) => ({ ...current, [id]: value }));
   return createElement("div", null, Object.values(conversations).map((value) => createElement("div", { key: value.id, "data-test-document": value.id }, createElement(DocumentPanel, {
     conversation: value, isActive: true, isSubmitting: false, aiControls: null, recentModelSelections: [], anchors: [], theme: "light",
+    documentMenu: createElement(DocumentMenu, { conversation: value,
+      onRename: (id, title) => setConversations((current) => ({ ...current, [id]: { ...current[id], title } })),
+    }),
     onChange: (document) => setConversations((current) => ({ ...current, [value.id]: { ...current[value.id], document } })),
     onRename: (title) => setConversations((current) => ({ ...current, [value.id]: { ...current[value.id], title } })),
     onSubmit() {}, onStop() {}, onSelection() {}, onClearSelection() {}, onOpenBranch() {}, onOpenNote() {}, onModelChange() {},
@@ -233,9 +237,13 @@ try {
 
   await mount(conversation("inputs", ["Body", ""]));
   await type("inputs-0", " edit");
-  const title = element('[aria-label="Document title"]');
-  await act(async () => title.focus());
-  assert.equal((await key(title, "z", { metaKey: true })).defaultPrevented, false, "Title input keeps its native editing shortcut.");
+  await click(element('[aria-label="Options for Document inputs"]'));
+  await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.trim() === "Rename document"));
+  const name = browser.document.querySelector('[aria-label="Document name"]') as any;
+  assert(name, "The document menu exposes a rename field after removing the body title.");
+  await act(async () => name.focus());
+  assert.equal((await key(name, "z", { metaKey: true })).defaultPrevented, false, "Document name keeps its native editing shortcut.");
+  await click([...browser.document.querySelectorAll('[role="dialog"] button')].find((item) => item.textContent?.trim() === "Cancel"));
   await focus("inputs-1");
   await key(editor("inputs-1").view.dom, " ");
   const prompt = element('textarea[aria-label="AI prompt"]');
@@ -248,7 +256,7 @@ try {
   assert.deepEqual(contents("inputs"), ["Body edit", ""]);
   await undo("inputs-0");
   assert.deepEqual(contents("inputs"), ["Body", ""], "Input shortcuts do not consume document history.");
-  checks.push("title, AI prompt, and link fields retain native shortcuts without undoing the document");
+  checks.push("document name, AI prompt, and link fields retain native shortcuts without undoing the document");
 
   await mount(conversation("external", ["Original"]));
   await type("external-0", " edit");

@@ -13,14 +13,17 @@
   padding: 8px 12px 0;
   overflow-x: auto;
   scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
   overscroll-behavior-x: contain;
 }
 
 .document-tab {
   display: flex;
   align-items: center;
-  flex: 0 0 auto;
-  min-width: 140px;
+  flex: 1 1 260px;
+  min-width: 84px;
+  container-type: inline-size;
+  container-name: document-tab;
   max-width: 260px;
   border: 1px solid transparent;
   border-bottom: 0;
@@ -87,9 +90,26 @@
 .document-tab-minimized-label { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
 .document-tab-select:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .document-tab-menu-trigger { margin-right: 4px; }
+.document-tabs .document-tab.is-pinned { position: relative; flex: 0 0 40px; width: 40px; min-width: 40px; max-width: 40px; }
+.document-tab.is-pinned .document-tab-select { justify-content: center; padding: 8px; }
+.document-tab.is-pinned :is(.document-tab-title, .document-tab-pin, .document-tab-minimized-label) { display: none; }
+.document-tab.is-pinned .document-tab-menu-trigger { position: absolute; inset: 4px; width: 30px; height: 30px; margin: 0; opacity: 0; pointer-events: none; }
+.document-tab.is-pinned .document-tab-menu-trigger:is(:focus-visible, [aria-expanded="true"]) { opacity: 1; pointer-events: auto; background: var(--panel-strong); }
 .document-tabs-instructions { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 @media (max-width: 640px) {
   .document-tabs { padding-inline: 8px; }
-  .document-tab { min-width: 120px; max-width: 220px; }
+  .document-tab { max-width: 220px; }
+}
+
+/* Keep the overflow cue below the labels, even with non-overlay system scrollbars. */
+@supports selector(::-webkit-scrollbar) {
+  .document-tabs { scrollbar-width: auto; }
+}
+.document-tabs::-webkit-scrollbar { height: 4px; }
+.document-tabs::-webkit-scrollbar-track { background: transparent; }
+.document-tabs::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
+@container document-tab (max-width: 160px) {
+  .document-tab-minimized-label { display: none; }
+  .document-tab-select { padding-inline: 6px; gap: 5px; }
 }

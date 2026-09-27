@@ -13,6 +13,7 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLDivEl
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: DocumentDock } = await import("../../client/src/components/DocumentDock");
+const { default: DocumentMenu } = await import("../../client/src/components/DocumentMenu");
 const { default: DocumentWorkspaceLayout } = await import("../../client/src/components/DocumentWorkspaceLayout");
 const { createMainConversation } = await import("../../client/src/initialState");
 const { filterDocumentDock, listPinnedDocumentIds, removePinnedDocument } = await import("../../client/src/lib/documentDock");
@@ -30,6 +31,7 @@ let dockPosition: DockPosition = "left";
 let dockWidth = 0.4;
 let positionUpdates = 0;
 const scoped: string[] = [];
+const controlsClicked: string[] = [];
 const unpinned: string[] = [];
 const checks: string[] = [];
 const container = browser.document.createElement("div");
@@ -46,6 +48,8 @@ function render() {
     onToggleScope(id) { scoped.push(id); },
     onChange(next) { assert(next); tree = next; updates++; render(); },
     renderDocument(conversation) { return createElement("div", { className: "document-body" }, createElement("textarea", { "aria-label": `Editor ${conversation.id}`, defaultValue: conversation.title })); },
+    renderDocumentMenu(conversation) { return createElement(DocumentMenu, { conversation, pinned: true, onTogglePin: () => {} }); },
+    renderDocumentControls(conversation) { return createElement("button", { type: "button", "aria-label": `Children for ${conversation.title}`, onClick: () => controlsClicked.push(conversation.id) }, "1⌄"); },
   });
   root.render(workspacePlacement ? createElement(DocumentWorkspaceLayout, {
     dock, position: dockPosition, width: dockWidth,
@@ -72,6 +76,39 @@ try {
   await act(async () => element('[aria-label="Editor b"]').focus());
   assert.equal(selected, "b");
   checks.push("hidden family panes are filtered while focusing another editor selects it");
+
+  const menuTrigger = element('[aria-label="Options for Reference"]');
+  const menuSlot = pane("a").querySelector(".document-dock-menu");
+  assert.equal(pane("a").querySelector(".document-dock-actions").lastElementChild, menuSlot);
+  const beforeMenuGesture = tree;
+  hitElement = pane("b");
+  hitElement.getBoundingClientRect = () => new browser.DOMRect(0, 0, 800, 600);
+  await pointer(menuSlot, "pointerdown", 100, 100);
+  await pointer(browser, "pointermove", 790, 300);
+  await pointer(browser, "pointerup", 790, 300);
+  assert.equal(tree, beforeMenuGesture);
+  assert.equal(container.querySelector(".document-dock.is-arranging"), null);
+  await act(async () => menuTrigger.focus());
+  await click(menuTrigger);
+  const menuPopup = browser.document.querySelector('[role="menu"][aria-label="Options for Reference"]');
+  assert(menuPopup);
+  assert(menuPopup.contains(browser.document.activeElement));
+  assert.equal(selected, "a");
+  await key(browser.document.activeElement, "Escape");
+  assert.equal(browser.document.querySelector('[role="menu"]'), null);
+  assert.equal(browser.document.activeElement, menuTrigger);
+  checks.push("the rightmost header menu opens without dragging and restores focus on dismissal");
+
+  const childrenControl = element('[aria-label="Children for Reference"]');
+  assert(childrenControl.closest(".document-dock-pane-header"));
+  assert.equal(childrenControl.closest(".document-dock-pane-body"), null);
+  await pointer(childrenControl.parentElement, "pointerdown", 100, 100);
+  await pointer(browser, "pointermove", 790, 300);
+  await pointer(browser, "pointerup", 790, 300);
+  assert.equal(tree, beforeMenuGesture);
+  await click(childrenControl);
+  assert.deepEqual(controlsClicked, ["a"]);
+  checks.push("document controls live in the header and activate without starting pane movement");
 
   const editor = element('[aria-label="Editor a"]');
   editor.value = "Typing stays intact while resizing";
@@ -265,6 +302,42 @@ try {
     assert(Math.abs(dockWidth - 0.55) < 0.00001, `Dragging the ${position} divider saves the final proportion.`);
   }
   checks.push("resizing works in the correct direction after moving to any workspace edge");
+  workspacePlacement = false;
+  visibleDocumentIds.splice(0, visibleDocumentIds.length, 'a', 'b', 'hidden');
+  tree = { type: 'split', id: 'stack', direction: 'vertical', ratio: .6,
+    first: { type: 'split', id: 'nested-stack', direction: 'vertical', ratio: .5,
+      first: { type: 'pane', documentId: 'a' }, second: { type: 'pane', documentId: 'b' } },
+    second: { type: 'pane', documentId: 'hidden' } };
+  await act(async () => render());
+  element('[data-dock-split-id="stack"]').getBoundingClientRect = () => new browser.DOMRect(0, 0, 400, 600);
+  element('[data-dock-split-id="nested-stack"]').getBoundingClientRect = () => new browser.DOMRect(0, 0, 400, 356);
+  const divider = element('[data-dock-split-id="nested-stack"] > .document-dock-divider');
+  divider.getBoundingClientRect = () => new browser.DOMRect(0, 175, 400, 7);
+  const keptEditor = element('[aria-label="Editor a"]');
+  keptEditor.value = 'Keep this draft while stacking';
+  pane('a').querySelector('.document-body').scrollTop = 180;
+  const originalStack = tree;
+  const beforeStackUpdates = updates;
+  await pointer(divider, 'pointerdown', 200, 178);
+  await pointer(browser, 'pointermove', 200, 1000);
+  assert.equal(updates, beforeStackUpdates);
+  assert.equal(element('[data-dock-split-id="stack"] > .document-dock-divider').getAttribute('aria-valuenow'), '100');
+  await key(browser, 'Escape');
+  assert.equal(tree, originalStack);
+  await pointer(divider, 'pointerdown', 200, 178);
+  await pointer(browser, 'pointerup', 200, 1000);
+  assert.equal(updates, beforeStackUpdates + 1);
+  assert(tree.type === 'split' && tree.first.type === 'split');
+  assert.equal(tree.ratio, .8);
+  assert.equal(tree.first.ratio, .8);
+  assert.equal(element('[aria-label="Editor a"]'), keptEditor);
+  assert.equal(keptEditor.value, 'Keep this draft while stacking');
+  assert.equal(pane('a').querySelector('.document-body').scrollTop, 180);
+  await key(divider, 'Home');
+  assert(tree.type === 'split' && tree.first.type === 'split');
+  assert.equal(tree.first.ratio, .2);
+  assert.equal(element('[aria-label="Editor a"]'), keptEditor);
+  checks.push('nested vertical dividers push neighboring content into headers, cancel safely, and expand again without replacing editors');
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

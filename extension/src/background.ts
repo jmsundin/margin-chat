@@ -1,14 +1,22 @@
 import {
   CAPTURE_API_PATH,
+  CAPTURE_KINDS,
+  CAPTURE_LIMITS,
   normalizeCapture,
+  normalizeServerUrl,
   parseCaptureReceipt,
+  type CaptureInput,
 } from "@margin-chat/capture-contracts";
 import {
+  getOverlayPage,
   getPending,
   getSettings,
   trustedStorage,
+  updateOverlayPage,
   type PendingSave,
+  type SelectionDraft,
 } from "./storage";
+import type { OverlayAnnotation, OverlayDraft, OverlayState, TextQuoteAnchor } from "./overlay-types";
 import { captureRequest, errorText } from "./network";
 
 void trustedStorage();
@@ -16,37 +24,140 @@ chrome.runtime.onInstalled.addListener(() => {
   void chrome.contextMenus.removeAll().then(() =>
     chrome.contextMenus.create({
       id: "save-selection",
-      title: "Save selection to Margin",
+      title: "Annotate in Margin Chat",
       contexts: ["selection"],
       documentUrlPatterns: ["http://*/*", "https://*/*"],
     }),
   );
 });
+
+function pageUrl(value: unknown): string {
+  if (typeof value !== "string" || value.length > CAPTURE_LIMITS.url)
+    throw new Error("Open a regular web page to use Margin Chat.");
+  const url = new URL(value);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password)
+    throw new Error("Open a regular web page to use Margin Chat.");
+  return url.href;
+}
+
+async function openPopup(tab?: chrome.tabs.Tab, selection?: SelectionDraft) {
+  if (selection) await chrome.storage.session.set({ selectionDraft: selection });
+  try {
+    await chrome.action.openPopup(tab ? { windowId: tab.windowId } : {});
+  } catch {
+    await chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
+  }
+}
+
+async function showOverlay(tab: chrome.tabs.Tab, selection?: SelectionDraft) {
+  try {
+    if (typeof tab.id !== "number") throw new Error("Missing tab.");
+    const expectedUrl = pageUrl(tab.url);
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      world: "ISOLATED",
+      files: ["overlay.js"],
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      world: "ISOLATED",
+      func: (url: string, draft: SelectionDraft | null) => {
+        if (location.href !== url) return;
+        const overlay = (globalThis as unknown as {
+          marginOverlay: { toggle(): void; open(selection?: SelectionDraft): void };
+        }).marginOverlay;
+        if (draft) overlay.open(draft);
+        else overlay.toggle();
+      },
+      args: [expectedUrl, selection ?? null],
+    });
+  } catch {
+    await openPopup(tab, selection);
+  }
+}
+
+chrome.action.onClicked.addListener((tab) => { void showOverlay(tab); });
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "save-selection" || !tab) return;
-  void chrome.storage.session
-    .set({
-      selectionDraft: {
-        text: info.selectionText ?? "",
-        sourceUrl: info.frameUrl ?? info.pageUrl ?? tab.url ?? "",
-        title: tab.title ?? "Saved passage",
-      },
-    })
-    .then(async () => {
-      try {
-        await chrome.action.openPopup({ windowId: tab.windowId });
-      } catch {
-        await chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
-      }
-    });
+  const selection: SelectionDraft = {
+    text: info.selectionText ?? "",
+    sourceUrl: info.frameUrl ?? info.pageUrl ?? tab.url ?? "",
+    title: tab.title ?? "Saved passage",
+  };
+  // Selections inside a frame belong to that document, not its parent page.
+  if (info.frameId && info.frameId !== 0) void openPopup(tab, selection);
+  else void showOverlay(tab, selection);
 });
 
+function record(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Invalid page draft.");
+  return value as Record<string, unknown>;
+}
+function textValue(value: unknown, limit: number, label: string): string {
+  if (typeof value !== "string" || value.length > limit || value.includes("\0"))
+    throw new Error(`Invalid ${label}.`);
+  return value;
+}
+function normalizeAnchor(value: unknown): TextQuoteAnchor | undefined {
+  if (value === undefined) return undefined;
+  const anchor = record(value);
+  const exact = textValue(anchor.exact, CAPTURE_LIMITS.content, "selected text");
+  if (!exact.trim() || !Number.isSafeInteger(anchor.start) || !Number.isSafeInteger(anchor.end) ||
+      (anchor.start as number) < 0 || (anchor.end as number) <= (anchor.start as number))
+    throw new Error("Invalid selected passage anchor.");
+  return {
+    exact,
+    prefix: textValue(anchor.prefix, 512, "passage prefix"),
+    suffix: textValue(anchor.suffix, 512, "passage suffix"),
+    start: anchor.start as number,
+    end: anchor.end as number,
+  };
+}
+function normalizeDraft(value: unknown): OverlayDraft | null {
+  if (value === null) return null;
+  const draft = record(value);
+  if (!CAPTURE_KINDS.includes(draft.kind as CaptureInput["kind"]))
+    throw new Error("Invalid capture kind.");
+  if (draft.mode !== undefined && !["annotate", "comment", "ingest", "ask"].includes(String(draft.mode)))
+    throw new Error("Invalid capture mode.");
+  return {
+    title: textValue(draft.title, CAPTURE_LIMITS.title, "title"),
+    kind: draft.kind as CaptureInput["kind"],
+    content: textValue(draft.content, CAPTURE_LIMITS.content, "content"),
+    comment: textValue(draft.comment, CAPTURE_LIMITS.comment, "comment"),
+    ...(draft.question === undefined ? {} : { question: textValue(draft.question, CAPTURE_LIMITS.comment, "question") }),
+    ...(draft.mode === undefined ? {} : { mode: draft.mode as OverlayDraft["mode"] }),
+    ...(draft.anchor === undefined ? {} : { anchor: normalizeAnchor(draft.anchor) }),
+  };
+}
+function annotationFor(capture: CaptureInput, value: unknown): OverlayAnnotation {
+  const metadata = value === undefined ? {} : record(value);
+  return {
+    id: capture.clientCaptureId,
+    title: capture.title,
+    kind: capture.kind,
+    excerpt: capture.content.slice(0, 400),
+    comment: capture.comment,
+    capturedAt: capture.capturedAt,
+    ...(metadata.anchor === undefined ? {} : { anchor: normalizeAnchor(metadata.anchor) }),
+  };
+}
+async function recordSavedAnnotation(pending: PendingSave) {
+  if (!pending.overlayAnnotation || !pending.receipt) return;
+  const annotation = { ...pending.overlayAnnotation, captureId: pending.receipt.id };
+  const existing = await getOverlayPage(pending.connectionId, pending.capture.sourceUrl);
+  if (existing.annotations.some((item) => item.id === annotation.id && item.captureId === annotation.captureId)) return;
+  await updateOverlayPage(pending.connectionId, pending.capture.sourceUrl, (page) => ({
+    ...page,
+    annotations: [...page.annotations.filter((item) => item.id !== annotation.id), annotation],
+  }));
+}
+
 let saving = false;
-async function save(input: unknown, retry: boolean, expectedConnection: unknown) {
+async function save(input: unknown, retry: boolean, expectedConnection: unknown, annotation?: OverlayAnnotation, expectedSourceUrl?: string) {
   if (saving)
-    throw new Error(
-      "A capture is already being saved. Reopen the popup to check its status.",
-    );
+    throw new Error("A capture is already being saved. Check its status before saving again.");
   saving = true;
   try {
     await trustedStorage();
@@ -54,42 +165,38 @@ async function save(input: unknown, retry: boolean, expectedConnection: unknown)
     if (!settings)
       throw new Error("Sign in to your account in extension settings first.");
     if (expectedConnection !== settings.connectionId)
-      throw new Error("The signed-in account changed. Reopen the popup before saving.");
+      throw new Error("The signed-in account changed. Reopen Margin Chat before saving.");
     let pending: PendingSave | null = await getPending();
     if (retry) {
       if (!pending) throw new Error("There is no saved draft to retry.");
       if (pending.connectionId !== settings.connectionId)
-        throw new Error(
-          "This draft belongs to a previous connection. Start a new capture for this account.",
-        );
-      if (pending.receipt) return pending.receipt;
+        throw new Error("This draft belongs to a previous connection. Start a new capture for this account.");
+      if (expectedSourceUrl && pending.capture.sourceUrl !== expectedSourceUrl)
+        throw new Error("This page has no pending capture for the signed-in account.");
+      if (pending.receipt) {
+        await recordSavedAnnotation(pending);
+        return pending.receipt;
+      }
     } else {
       if (pending && !pending.receipt)
-        throw new Error(
-          "Retry or dismiss the previous capture before saving another.",
-        );
+        throw new Error("Retry or dismiss the previous capture before saving another.");
       pending = {
         capture: normalizeCapture(input),
         connectionId: settings.connectionId,
+        ...(annotation ? { overlayAnnotation: annotation } : {}),
       };
     }
-    // Persist before sending. A closed popup, interrupted worker, or lost response is retryable.
+    // Persist before sending. A closed panel, interrupted worker, or lost response is retryable.
     await chrome.storage.local.set({ pendingSave: pending });
     try {
-      const result = await captureRequest(
-        settings,
-        CAPTURE_API_PATH,
-        parseCaptureReceipt,
-        pending.capture,
-      );
-      await chrome.storage.local.set({
-        pendingSave: { ...pending, receipt: result.capture, error: undefined },
-      });
-      return result.capture;
+      const result = await captureRequest(settings, CAPTURE_API_PATH, parseCaptureReceipt, pending.capture);
+      // Explicitly copy receipt fields: future server fields must not cross into content scripts.
+      pending = { ...pending, receipt: { id: result.capture.id, createdAt: result.capture.createdAt }, error: undefined };
+      await chrome.storage.local.set({ pendingSave: pending });
+      await recordSavedAnnotation(pending);
+      return pending.receipt;
     } catch (error) {
-      await chrome.storage.local.set({
-        pendingSave: { ...pending, error: errorText(error) },
-      });
+      await chrome.storage.local.set({ pendingSave: { ...pending, error: errorText(error) } });
       throw error;
     }
   } finally {
@@ -97,31 +204,216 @@ async function save(input: unknown, retry: boolean, expectedConnection: unknown)
   }
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Only our own popup can initiate uploads; content scripts and web pages cannot.
-  if (
-    sender.id !== chrome.runtime.id ||
-    sender.url !== chrome.runtime.getURL("popup.html")
-  )
-    return;
-  if (
-    message?.type !== "save" &&
-    message?.type !== "retry" &&
-    message?.type !== "dismiss"
-  )
-    return;
-  if (message.type === "dismiss") {
-    if (saving) {
-      sendResponse({ error: "Wait for the current save to finish." });
-      return;
+async function requireConnection(expected: unknown) {
+  const settings = await getSettings();
+  if (!settings) throw new Error("Sign in to your account in extension settings first.");
+  if (settings.connectionId !== expected)
+    throw new Error("The signed-in account changed. Reopen Margin Chat before continuing.");
+  return settings;
+}
+async function pagePending(connectionId: string, sourceUrl: string) {
+  const pending = await getPending();
+  if (!pending || pending.connectionId !== connectionId || pending.capture.sourceUrl !== sourceUrl)
+    throw new Error("This page has no pending capture for the signed-in account.");
+  return pending;
+}
+async function dismiss(expectedConnection?: unknown, sourceUrl?: string) {
+  if (saving) throw new Error("Wait for the current save to finish.");
+  saving = true;
+  try {
+    if (sourceUrl) {
+      const settings = await requireConnection(expectedConnection);
+      await pagePending(settings.connectionId, sourceUrl);
     }
-    void chrome.storage.local
-      .remove("pendingSave")
-      .then(() => sendResponse({ ok: true }));
-  } else {
-    void save(message.capture, message.type === "retry", message.connectionId)
-      .then((receipt) => sendResponse({ receipt }))
-      .catch((error) => sendResponse({ error: errorText(error) }));
+    const pending = await getPending();
+    if (pending) await recordSavedAnnotation(pending);
+    await chrome.storage.local.remove("pendingSave");
+    return { ok: true };
+  } finally {
+    saving = false;
   }
+}
+async function overlayMessage(message: Record<string, unknown>, sourceUrl: string) {
+  await trustedStorage();
+  if (message.type === "overlay:settings") {
+    await chrome.runtime.openOptionsPage();
+    return { ok: true };
+  }
+  if (message.type === "overlay:pending") {
+    await chrome.tabs.create({ url: chrome.runtime.getURL("popup.html") });
+    return { ok: true };
+  }
+  if (message.type === "overlay:state") {
+    const settings = await getSettings();
+    if (!settings) return { connection: null, pending: null, hasOtherPending: false, page: { annotations: [], draft: null } } satisfies OverlayState;
+    const pending = await getPending();
+    const samePage = pending?.connectionId === settings.connectionId && pending.capture.sourceUrl === sourceUrl;
+    // A worker can stop after storing the server receipt and before writing the
+    // page index. Finish that durable operation before displaying the page.
+    if (samePage) await recordSavedAnnotation(pending);
+    return {
+      connection: { connectionId: settings.connectionId, displayName: settings.displayName },
+      pending: samePage ? {
+        capture: pending.capture,
+        connectionId: pending.connectionId,
+        ...(pending.receipt ? { receipt: { id: pending.receipt.id, createdAt: pending.receipt.createdAt } } : {}),
+        ...(pending.error ? { error: pending.error } : {}),
+        ...(pending.overlayAnnotation ? { overlayAnnotation: pending.overlayAnnotation } : {}),
+      } : null,
+      hasOtherPending: Boolean(pending && !pending.receipt && !samePage),
+      page: await getOverlayPage(settings.connectionId, sourceUrl),
+    } satisfies OverlayState;
+  }
+  const settings = await requireConnection(message.connectionId);
+  if (message.type === "overlay:draft") {
+    const draft = normalizeDraft(message.draft);
+    const page = await updateOverlayPage(settings.connectionId, sourceUrl, (current) => ({ ...current, draft }));
+    return { ok: true, page };
+  }
+  if (message.type === "overlay:save") {
+    const capture = normalizeCapture(message.capture);
+    if (capture.sourceUrl !== sourceUrl) throw new Error("The page changed. Capture it again before saving.");
+    const receipt = await save(capture, false, message.connectionId, annotationFor(capture, message.annotation));
+    return { receipt, page: await getOverlayPage(settings.connectionId, sourceUrl) };
+  }
+  if (message.type === "overlay:retry") {
+    const receipt = await save(undefined, true, message.connectionId, undefined, sourceUrl);
+    return { receipt, page: await getOverlayPage(settings.connectionId, sourceUrl) };
+  }
+  if (message.type === "overlay:dismiss") return dismiss(message.connectionId, sourceUrl);
+  if (message.type === "overlay:open") {
+    if (typeof message.captureId !== "string" || !["ask", "note"].includes(String(message.intent)))
+      throw new Error("Choose a saved capture to open.");
+    const page = await getOverlayPage(settings.connectionId, sourceUrl);
+    const pending = await getPending();
+    const belongsToPage = page.annotations.some((annotation) => annotation.captureId === message.captureId) ||
+      (pending?.connectionId === settings.connectionId && pending.capture.sourceUrl === sourceUrl && pending.receipt?.id === message.captureId);
+    if (!belongsToPage) throw new Error("This capture does not belong to this page and account.");
+    const url = new URL(`${normalizeServerUrl(settings.serverUrl)}/`);
+    url.searchParams.set("inbox", "1");
+    url.searchParams.set("capture", message.captureId);
+    url.searchParams.set("intent", String(message.intent));
+    await requireConnection(message.connectionId);
+    await chrome.tabs.create({ url: url.href });
+    return { ok: true };
+  }
+  throw new Error("Unsupported Margin Chat action.");
+}
+
+interface FrameSession {
+  tabId: number;
+  session: string;
+  sourceUrl: string;
+  documentId?: string;
+}
+const frameSessionKey = (tabId: number) => `workspaceFrame:${tabId}`;
+async function storedFrame(tabId: number): Promise<FrameSession | undefined> {
+  const key = frameSessionKey(tabId);
+  return (await chrome.storage.session.get(key))[key] as FrameSession | undefined;
+}
+async function registerFrame(sender: chrome.runtime.MessageSender, sourceUrl: string) {
+  const tabId = sender.tab!.id!;
+  // Registration only follows a toolbar injection in the isolated main frame.
+  // Persist the nonce across service-worker restarts; local storage never exposes it.
+  const current = await storedFrame(tabId);
+  if (current && current.documentId === sender.documentId && current.sourceUrl === sourceUrl) return { tabId, session: current.session };
+  const frame: FrameSession = { tabId, sourceUrl, session: crypto.randomUUID(), ...(sender.documentId ? { documentId: sender.documentId } : {}) };
+  await chrome.storage.session.set({ [frameSessionKey(tabId)]: frame });
+  return { tabId, session: frame.session };
+}
+async function updateFramePage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender, sourceUrl: string) {
+  const tabId = sender.tab!.id!;
+  const frame = await storedFrame(tabId);
+  if (!frame || frame.session !== message.session || frame.documentId !== sender.documentId) throw new Error("Reopen Margin Chat for this page.");
+  await chrome.storage.session.set({ [frameSessionKey(tabId)]: { ...frame, sourceUrl } });
+  return { ok: true };
+}
+function workspaceSender(sender: chrome.runtime.MessageSender): URL | null {
+  try {
+    const url = new URL(sender.url!);
+    const expected = new URL(chrome.runtime.getURL("workspace.html"));
+    if (url.protocol !== expected.protocol || url.host !== expected.host || url.pathname !== expected.pathname || url.hash) return null;
+    return url;
+  } catch { return null; }
+}
+async function validateFrame(message: Record<string, unknown>, sender: chrome.runtime.MessageSender) {
+  const url = workspaceSender(sender);
+  if (!url || !Number.isSafeInteger(message.tabId) || typeof message.session !== "string") throw new Error("Open Margin Chat using the extension toolbar.");
+  const tabId = message.tabId as number;
+  // A nonce copied into a different tab (or an extension popup) cannot claim the
+  // source page. No window.postMessage channel can request private account data.
+  if (sender.tab?.id !== tabId || sender.frameId === 0 || url.searchParams.get("tab") !== String(tabId) || url.searchParams.get("session") !== message.session) throw new Error("This workspace does not belong to this page.");
+  const frame = await storedFrame(tabId);
+  if (!frame || frame.session !== message.session) throw new Error("This workspace session has expired. Reopen Margin Chat.");
+  const tab = await chrome.tabs.get(tabId);
+  if (pageUrl(tab.url) !== frame.sourceUrl) throw new Error("The page changed. Wait a moment, then try again.");
+  return frame;
+}
+async function workspaceMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender) {
+  const frame = await validateFrame(message, sender);
+  if (message.type !== "workspace:connect" && message.type !== "workspace:context" &&
+      ((message.sourceUrl !== undefined && message.sourceUrl !== frame.sourceUrl) || (message.type === "workspace:draft" && message.sourceUrl === undefined)))
+    throw new Error("The page changed. Capture it again before continuing.");
+  if (message.type === "workspace:connect") {
+    const settings = await getSettings();
+    return { tabId: frame.tabId, sourceUrl: frame.sourceUrl, connection: settings ? { connectionId: settings.connectionId, displayName: settings.displayName } : null };
+  }
+  if (message.type === "workspace:context") {
+    if (!["current", "selection", "article", "bookmark"].includes(String(message.kind ?? "current"))) throw new Error("Unsupported page context.");
+    const context = await chrome.tabs.sendMessage(frame.tabId, { type: "margin:page-context", kind: message.kind ?? "current", session: frame.session }, { frameId: 0 });
+    if (context?.error) throw new Error(context.error);
+    if (context?.sourceUrl !== frame.sourceUrl) throw new Error("The page changed. Capture it again before continuing.");
+    return context;
+  }
+  if (message.type === "workspace:locate" || message.type === "workspace:highlights") {
+    // Only page-derived anchor text crosses into the content script, never notes,
+    // account details, document content, or AI replies.
+    const payload = message.type === "workspace:locate"
+      ? { anchor: normalizeAnchor(message.anchor) }
+      : { anchors: Array.isArray(message.anchors) && message.anchors.length <= 1000 ? message.anchors.map(normalizeAnchor) : (() => { throw new Error("Invalid page highlights."); })() };
+    return chrome.tabs.sendMessage(frame.tabId, { type: message.type === "workspace:locate" ? "margin:page-locate" : "margin:page-highlights", session: frame.session, ...payload }, { frameId: 0 });
+  }
+  const action = String(message.type).replace(/^workspace:/, "overlay:");
+  if (!["overlay:state", "overlay:draft", "overlay:save", "overlay:retry", "overlay:dismiss", "overlay:open", "overlay:settings", "overlay:pending"].includes(action)) throw new Error("Unsupported workspace action.");
+  // Read state and mutate drafts only for the account rendered by this frame.
+  if (action === "overlay:state") {
+    const settings = await getSettings();
+    if (settings && settings.connectionId !== message.connectionId) throw new Error("The signed-in account changed. Reopen Margin Chat before continuing.");
+  }
+  // A queued draft retains its original URL even if the page navigates while
+  // storage was being read. Check again before dispatching page mutations.
+  const current = await validateFrame(message, sender);
+  if (current.sourceUrl !== frame.sourceUrl) throw new Error("The page changed. Capture it again before continuing.");
+  return overlayMessage({ ...message, type: action }, frame.sourceUrl);
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id) return;
+  if (typeof message?.type === "string" && message.type.startsWith("workspace:")) {
+    if (!workspaceSender(sender)) return;
+    void workspaceMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ error: errorText(error) }));
+    return true;
+  }
+  if (typeof message?.type === "string" && message.type.startsWith("overlay:")) {
+    // Only our injected, main-frame script can use the page broker. No page-window
+    // message bridge or externally_connectable channel is provided.
+    if (typeof sender.tab?.id !== "number" || sender.frameId !== 0) return;
+    let sourceUrl: string;
+    try { sourceUrl = pageUrl(sender.url); } catch { return; }
+    const operation = message.type === "overlay:frame" ? registerFrame(sender, sourceUrl)
+      : message.type === "overlay:page" ? updateFramePage(message, sender, sourceUrl)
+      : overlayMessage(message, sourceUrl);
+    void operation
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: errorText(error) }));
+    return true;
+  }
+  // Preserve the popup's upload and recovery interface.
+  if (sender.url !== chrome.runtime.getURL("popup.html")) return;
+  if (!["save", "retry", "dismiss"].includes(message?.type)) return;
+  const operation = message.type === "dismiss"
+    ? dismiss()
+    : save(message.capture, message.type === "retry", message.connectionId).then((receipt) => ({ receipt }));
+  void operation.then(sendResponse).catch((error) => sendResponse({ error: errorText(error) }));
   return true;
 });

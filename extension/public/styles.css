@@ -86,10 +86,12 @@ label .subtle {
 }
 input,
 textarea,
+select,
 button {
   font: inherit;
 }
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #cbd2c6;

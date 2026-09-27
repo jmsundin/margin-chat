@@ -86,12 +86,16 @@ export async function authenticateExtensionSession(client, tokenHash) {
     `update marginchat_extension_sessions s set last_used_at = now()
      from marginchat_users u
      where s.token_hash = $1 and s.expires_at > now() and u.id = s.user_id
-     returning u.id, u.display_name, u.role, u.billing_status, s.expires_at`,
+     returning u.id, u.email, u.display_name, u.role, u.billing_status,
+       u.stripe_customer_id, u.billing_price_id, u.billing_current_period_end,
+       u.billing_cancel_at_period_end, u.trial_api_calls_used,
+       u.trial_api_calls_limit, u.hosted_credit_balance_micros, s.expires_at`,
     [tokenHash],
   );
   const row = result.rows[0];
   return row ? {
     id: row.id,
+    email: row.email,
     displayName: row.display_name,
     role: row.role,
     billing: mapBillingRow(row),

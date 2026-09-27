@@ -1,7 +1,7 @@
 import type { AppState, ConversationDocument } from "./types.mjs";
 import type { WorkspaceDocumentMetadata } from "./workspaceModel.mjs";
 
-export const MARKDOWN_WORKSPACE_FORMAT_VERSION: 4;
+export const MARKDOWN_WORKSPACE_FORMAT_VERSION: 5;
 
 export interface MarkdownWorkspaceFileRecord {
   id: string;
@@ -30,7 +30,9 @@ export function createMarkdownWorkspace(
   options?: { preservePaths?: boolean },
 ): MarkdownWorkspace;
 /** Supply immutable editor states and the previous result; external snapshots reset the cache. */
-export function createMarkdownWorkspaceRenderer(): typeof createMarkdownWorkspace;
+export function createMarkdownWorkspaceRenderer(): (
+  state: AppState, savedAt?: string, previousWorkspace?: MarkdownWorkspace,
+) => MarkdownWorkspace;
 export function parseMarkdownWorkspaceManifest(input: unknown): MarkdownWorkspaceManifest | null;
 export function discoverMarkdownWorkspace(
   files: Record<string, string>,

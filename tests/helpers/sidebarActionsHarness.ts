@@ -114,6 +114,7 @@ try {
       element(selector).dispatchEvent(event);
     });
   }
+  await click('[aria-label="Show groups"]');
   await drag("dragstart", ".thread-item-main");
   assert(container.querySelector('[data-thread-drop-target="pinned"]'));
   await drag("drop", '[data-thread-drop-target="pinned"]');

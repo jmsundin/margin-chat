@@ -230,6 +230,8 @@ export function buildDocumentSummaries(
         kind: conversation.kind === "note" ? ("note" as const) : ("chat" as const),
         preview,
         title: conversation.title,
+        createdAt: conversation.createdAt,
+        createdLabel: formatRelativeTime(conversation.createdAt),
         updatedAt: conversation.updatedAt,
         updatedLabel: formatRelativeTime(conversation.updatedAt),
       };

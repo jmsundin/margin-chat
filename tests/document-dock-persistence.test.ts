@@ -23,7 +23,7 @@ function fixture(): AppState {
   root.childIds = [side.id];
   state.conversations = { ...state.conversations, [side.id]: side,
     other: createMainConversation({ id: "other", createdAt }) };
-  state.documentDock = { width: .45, tree: { type: "split", id: "across-families", direction: "vertical", ratio: .35,
+  state.documentDock = { width: .45, tree: { type: "split", id: "across-families", direction: "vertical", ratio: .2,
     first: pane(side.id), second: pane("other") } };
   return state;
 }

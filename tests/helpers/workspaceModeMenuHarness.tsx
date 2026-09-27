@@ -35,14 +35,14 @@ async function key(target: any, key: string) {
 try {
   await act(async () => root.render(createElement(Host)));
   assert.equal(container.querySelectorAll("button").length, 1);
-  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Document");
-  assert.equal(trigger().querySelector(".workspace-mode-label")?.textContent, "Document");
+  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Document View");
+  assert.equal(trigger().querySelector(".workspace-mode-label")?.textContent, "Document View");
   assert.equal(trigger().getAttribute("aria-expanded"), "false");
   await click(trigger());
   assert.equal(menu().parentElement, browser.document.body, "The menu avoids sidebar clipping.");
   assert.equal(menu().getAttribute("aria-label"), "Workspace mode");
   assert.equal(trigger().getAttribute("aria-controls"), menu().id);
-  assert.deepEqual(items().map((item) => item.textContent), ["Document", "Tiles", "Map"]);
+  assert.deepEqual(items().map((item) => item.textContent), ["Document View", "Tile View", "Map View"]);
   assert.deepEqual(items().map((item) => item.getAttribute("aria-checked")), ["true", "false", "false"]);
   assert.equal(browser.document.activeElement, items()[0]);
   checks.push("compact trigger identifies the current mode and exposes a portaled radio menu");
@@ -51,18 +51,18 @@ try {
   assert.deepEqual(selected, ["tiles"]);
   assert.equal(menu(), null);
   assert.equal(browser.document.activeElement, trigger());
-  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Tiles");
-  assert.equal(trigger().querySelector(".workspace-mode-label")?.textContent, "Tiles");
+  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Tile View");
+  assert.equal(trigger().querySelector(".workspace-mode-label")?.textContent, "Tile View");
   await click(trigger());
   assert.equal(browser.document.activeElement, items()[1]);
   assert.deepEqual(items().map((item) => item.getAttribute("aria-checked")), ["false", "true", "false"]);
   await click(items()[2]);
   assert.deepEqual(selected, ["tiles", "graph"]);
-  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Map");
+  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Map View");
   await click(trigger());
   await click(items()[0]);
   assert.deepEqual(selected, ["tiles", "graph", "chat"]);
-  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Document");
+  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Document View");
   checks.push("selecting any mode updates the visible indicator, checked item, and restores focus");
 
   await key(trigger(), "ArrowUp");
@@ -110,7 +110,7 @@ try {
   await act(async () => changeMode("graph"));
   assert.equal(menu(), null);
   assert.equal(browser.document.activeElement, trigger());
-  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Map");
+  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Map View");
   checks.push("external mode changes close the menu and retain a useful focus target");
 
   await click(trigger());
@@ -118,7 +118,7 @@ try {
   await click(items()[2]);
   assert.equal(selected.length, beforeSelection + 1);
   assert.equal(menu(), null);
-  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Map");
+  assert.equal(trigger().getAttribute("aria-label"), "Workspace mode: Map View");
   checks.push("selecting the current mode also dismisses the menu");
   console.log(JSON.stringify({ checks }));
 } finally {

@@ -36,6 +36,9 @@ export interface ExtensionSession {
   user: { id: string; displayName: string; email: string };
   expiresAt: string;
 }
+export interface WorkspaceExtensionSession extends ExtensionSession {
+  scope: "workspace";
+}
 export interface CaptureTokenSummary {
   createdAt: string;
   expiresAt: string;
@@ -44,6 +47,7 @@ export interface CaptureTokenSummary {
 export const CAPTURE_API_PATH: "/api/v1/captures";
 export const CONNECTION_API_PATH: "/api/v1/capture-connection";
 export const EXTENSION_SESSION_API_PATH: "/api/v1/extension-session";
+export const EXTENSION_WORKSPACE_SESSION_API_PATH: "/api/v1/extension-workspace-session";
 export const CAPTURE_LIMITS: Readonly<{
   title: number;
   url: number;
@@ -54,6 +58,7 @@ export const CAPTURE_KINDS: readonly CaptureKind[];
 export function normalizeCapture(input: unknown): CaptureInput;
 export function parseCaptureReceipt(input: unknown): CaptureReceipt;
 export function parseExtensionSession(input: unknown): ExtensionSession;
+export function parseWorkspaceExtensionSession(input: unknown): WorkspaceExtensionSession;
 export function parseCaptureConnection(input: unknown): CaptureConnection;
 export function parseCapture(input: unknown): Capture;
 export function parseCaptureDetail(input: unknown): CaptureDetail;

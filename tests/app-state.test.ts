@@ -72,8 +72,12 @@ describe("saved workspace recovery", () => {
     expect(recovered.conversations[root.id]).toMatchObject({
       documents: [],
       kind: "chat",
-      notes: [{ id: "note", content: "Keep this annotation", kind: "comment" }],
+      notes: [],
+      childIds: ["note"],
     });
+    expect(recovered.conversations.note).toMatchObject({ parentId: root.id,
+      document: { marginNote: { display: "compact" }, blocks: [{ content: "Keep this annotation" }] } });
+    expect(hydratePersistedState(recovered)).toEqual(recovered);
   });
 
   test("infers a missing default provider from the active conversation", () => {

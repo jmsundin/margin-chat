@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 
 const browser = new Window({ url: "http://rich-document.test" });
-for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
+for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "NodeFilter", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });
 }
@@ -14,6 +14,7 @@ const { createRoot } = await import("react-dom/client");
 const { Editor } = await import("@tiptap/core");
 const { default: RichDocumentEditor, createRichDocumentExtensions } = await import("../../client/src/components/RichDocumentEditor");
 const { markdownOffsetAtDocumentPosition, documentPositionAtMarkdownOffset, splitRichDocumentMarkdown, getRichDocumentFallbackReason } = await import("../../client/src/lib/richDocumentMarkdown");
+const { createSearchPassageRange } = await import("../../client/src/lib/searchSource");
 const checks: string[] = [];
 const date = "2026-09-20T00:00:00.000Z";
 const initial = [
@@ -40,6 +41,7 @@ function Host() {
   latestBlocks = blocks;
   return createElement(RichDocumentEditor, {
     conversationId: "conversation", blocks, readOnlyBlockIds: ["stream"], hidePlaceholder,
+    sourceMessages: [{ id: "original-response", role: "assistant" }],
     decorations: { first: [{ from: 17, to: 25, branchIds: ["branch"] }] },
     onUpdateBlock(id: string, markdown: string) { updates.push({ id, markdown }); setBlocks((items) => items.map((item) => item.id === id ? { ...item, content: markdown } : item)); },
     onInvokeAI(value: any) { invocations.push(value); }, onSelectionChange(value: any) { selections.push(value); },
@@ -68,6 +70,26 @@ try {
   assert.equal(updates.length, 0, "Mount must not normalize or overwrite original Markdown.");
   assert.equal(editor("stream").isEditable, false);
   assert.equal(first.isEditable, true);
+  assert.equal(container.querySelector(".rich-document-authorship"), null, "Authorship stays hidden while block actions are closed.");
+  await act(async () => (block("first").querySelector(".rich-document-grip") as any).click());
+  const label = block("first").querySelector('.rich-document-toolbar [role="note"][aria-label="Authorship: AI"]');
+  assert(label, "Legacy assistant sources receive an accessible AI label.");
+  assert.equal(label.getAttribute("data-label"), "Authorship: AI");
+  assert.equal(label.textContent, "", "Authorship is displayed without adding document text nodes.");
+  await act(async () => (block("first").querySelector('[aria-label="Close block actions"]') as any).click());
+  assert.equal(container.querySelector(".rich-document-authorship"), null);
+  await act(async () => (block("advanced").querySelector(".rich-document-grip") as any).click());
+  assert(block("advanced").querySelector('.rich-document-toolbar [aria-label="Authorship: You"]'), "Preserved Markdown exposes authorship in its block actions too.");
+  await act(async () => (block("advanced").querySelector('[aria-label="Close block actions"]') as any).click());
+  const multiBlockSource = browser.document.createElement("div");
+  for (const text of ["First passage.", "Second passage."]) {
+    const shell = block("first").cloneNode(true) as HTMLElement;
+    shell.querySelector(".tiptap")!.innerHTML = `<p>${text}</p>`;
+    multiBlockSource.append(shell as any);
+  }
+  const passageRange = createSearchPassageRange(multiBlockSource as unknown as HTMLElement, "First passage. Second passage.");
+  assert.equal(passageRange?.toString(), "First passage.Second passage.", "Cross-block source searches and copied ranges exclude authorship labels.");
+  assert.equal(createSearchPassageRange(multiBlockSource as unknown as HTMLElement, "AI"), null, "Authorship labels are not searchable document passages.");
   checks.push("formatted content and compatible source IDs without mount writes");
 
   assert.equal(hintedBlocks().length, 1, "Existing empty blocks and the continuation share one writing hint.");
@@ -187,6 +209,59 @@ try {
   assert(empty.isFocused, "Arrow Up at the start should return to the preceding block.");
   checks.push("Enter creates independent blocks with formatting preserved and focus moved");
 
+  const multiline = editor("split-1");
+  await act(async () => { multiline.commands.setContent("First line", { contentType: "markdown" }); multiline.commands.setTextSelection(11); });
+  const splitCountBeforeNewline = splits.length;
+  await key(multiline.view, "Enter", { shiftKey: true });
+  assert.equal(splits.length, splitCountBeforeNewline, "Shift+Enter stays inside the document block.");
+  assert.equal(multiline.state.doc.childCount, 2);
+  await act(async () => multiline.commands.insertContent("##"));
+  // Dispatch through the input pipeline so the heading input rule actually runs.
+  await act(async () => multiline.view.someProp("handleTextInput", (handler: any) => handler(multiline.view, multiline.state.selection.from, multiline.state.selection.to, " ", () => multiline.state.tr.insertText(" "))));
+  assert.equal(multiline.state.doc.lastChild?.type.name, "heading");
+  await act(async () => multiline.commands.insertContent("New heading"));
+  assert(multiline.getMarkdown().includes("## New heading"));
+  checks.push("Shift+Enter retains one block with a new Markdown-aware paragraph");
+
+  await act(async () => multiline.commands.setContent("Before after", { contentType: "markdown" }));
+  await act(async () => multiline.commands.setTextSelection({ from: 8, to: 13 }));
+  assert((await key(multiline.view, "d", { metaKey: true })).defaultPrevented);
+  assert.match(multiline.getText(), /^Before \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} GMT[^ ]* \([^)]+\)$/);
+  assert.equal((await key(multiline.view, "d", { metaKey: true, altKey: true })).defaultPrevented, false);
+  checks.push("Command+D replaces the current selection with an unambiguous local timestamp");
+
+  await act(async () => multiline.commands.setContent("| First | Second |\n| --- | --- |\n| Alpha | Beta |", { contentType: "markdown" }));
+  let alpha = 0;
+  multiline.state.doc.descendants((node, position) => { if (node.isText && node.text === "Alpha") alpha = position; });
+  await act(async () => multiline.commands.setTextSelection(alpha + 5));
+  await key(multiline.view, "Enter");
+  await act(async () => multiline.commands.insertContent("Next line"));
+  assert(multiline.getMarkdown().includes("Alpha<br>Next line"));
+  assert.equal(getRichDocumentFallbackReason(multiline.getMarkdown()), null);
+  assert.equal(editor("split-1"), multiline, "A cell newline must not replace the live editor with a source fallback.");
+  assert(block("split-1").querySelector("td br"));
+  const reloadedTable = new Editor({ extensions: createRichDocumentExtensions(), content: multiline.getMarkdown(), contentType: "markdown" });
+  assert.deepEqual(reloadedTable.getJSON(), multiline.getJSON());
+  reloadedTable.destroy();
+  const tableBefore = block("split-1").querySelector("table")!;
+  await act(async () => (block("split-1").querySelector('[aria-label="Add row to table"]') as any).click());
+  assert.equal(tableBefore.querySelectorAll("tr").length, 3);
+  await act(async () => (block("split-1").querySelector('[aria-label="Add column to table"]') as any).click());
+  assert.equal(tableBefore.querySelectorAll("tr")[0].children.length, 3);
+  assert.equal(block("split-1").querySelector("table"), tableBefore);
+  assert(!multiline.getMarkdown().includes("Add row"));
+  checks.push("table cell newlines stay editable and persist while edge controls append rows and columns without replacing the table");
+
+  await act(async () => updateBlocks((items: any[]) => items.map((item) => item.id === "stream" ? { ...item, content: "## Stable heading\n\nGrowing text" } : item)));
+  const headingBefore = block("stream").querySelector("h2");
+  const paragraphBefore = block("stream").querySelector("p");
+  for (const suffix of [" continues", " continues with **bold**", " continues with **bold** and a table\n\n| A | B |\n| --- | --- |\n| One | Two |"] ) {
+    await act(async () => updateBlocks((items: any[]) => items.map((item) => item.id === "stream" ? { ...item, content: "## Stable heading\n\nGrowing text" + suffix } : item)));
+    assert.equal(block("stream").querySelector("h2"), headingBefore, "Streaming preserves unchanged heading DOM.");
+    assert.equal(block("stream").querySelector("p"), paragraphBefore, "Appending stream text retains its paragraph DOM.");
+  }
+  checks.push("streaming patches changed content while retaining existing rendered nodes");
+
   const advanced = block("advanced");
   assert.equal(advanced.querySelector(".tiptap"), null);
   assert(advanced.textContent?.includes("Edit callout source") || advanced.textContent?.includes("Edit wiki link source"));
@@ -196,6 +271,12 @@ try {
   await act(async () => source.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
   assert.equal(block("advanced").querySelector("textarea"), null);
   assert.equal(latestBlocks.find((item) => item.id === "advanced").content, initial[3].content);
+  await act(async () => (advanced.querySelector(".rich-document-source-action") as any).click());
+  const dateSource = advanced.querySelector("textarea") as HTMLTextAreaElement;
+  dateSource.setSelectionRange(dateSource.value.length, dateSource.value.length);
+  await act(async () => dateSource.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "d", metaKey: true, bubbles: true, cancelable: true })));
+  assert.match(dateSource.value.slice(initial[3].content.length), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} GMT[^ ]* \([^)]+\)$/);
+  await act(async () => dateSource.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
   checks.push("advanced Markdown has readable preview and a lossless source fallback");
 
   await act(async () => (block("first").querySelector(".rich-document-grip") as any).click());

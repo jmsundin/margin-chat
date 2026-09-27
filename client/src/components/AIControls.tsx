@@ -50,7 +50,7 @@ export default function AIControls({ conversation, conversations, disabled, onCh
       </fieldset>
       {!permitted.length ? <p role="status">Choose at least one provider before sending a message.</p> : null}
       {!permitted.includes("openai") ? <p className="ai-context-help">Attachment search uses OpenAI. With OpenAI excluded, original files are saved but their contents are not indexed or searched.</p> : null}
-      <p className="ai-context-help">Personal margin notes and side notes stay private. Context uses your latest local edits. Each response records the sources and model it used.</p>
+      <p className="ai-context-help">Context uses your latest document edits, including margin documents within the selected scope. Each response records the sources and model it used.</p>
     </div>
   </DismissibleDetails>;
 }

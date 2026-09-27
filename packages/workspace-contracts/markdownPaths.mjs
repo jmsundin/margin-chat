@@ -61,5 +61,5 @@ export function titleMarkdownPath(folder, title, id) {
         used += bytes;
     }
     stem = stem.replace(/[. ]+$/u, "") || "Untitled";
-    return `${folder}/${stem}${suffix}`;
+    return `${folder ? `${folder}/` : ""}${stem}${suffix}`;
 }

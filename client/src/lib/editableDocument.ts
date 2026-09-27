@@ -1,10 +1,12 @@
 import type {
   Conversation, DocumentBlock, DocumentGeneration, DocumentInsertion, DocumentPrompt, EditableDocument,
 } from "@margin-chat/workspace-contracts";
+import { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
 import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
 import { latexMarkdownLexer } from "./latex";
 
 export type { DocumentBlock, DocumentGeneration, DocumentInsertion, DocumentPrompt, EditableDocument } from "@margin-chat/workspace-contracts";
+export { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
 
 /** Complete top-level Markdown units; lists, fenced code and tables remain intact. */
 export function splitDocumentMarkdown(markdown: string): string[] {
@@ -22,7 +24,8 @@ function sourceBlocks(baseId: string, content: string, createdAt: string, source
   let offset = 0;
   return splitDocumentMarkdown(content).map((part, index) => {
     const block: DocumentBlock = { id: index ? `${baseId}:part:${offset}` : baseId, kind: "markdown", content: part,
-      createdAt, updatedAt: createdAt, ...(sourceMessageId ? { sourceMessageId } : {}), ...(generationId ? { generationId } : {}) };
+      createdAt, updatedAt: createdAt, authorship: sourceMessageId || generationId ? "ai" : "user",
+      ...(sourceMessageId ? { sourceMessageId } : {}), ...(generationId ? { generationId } : {}) };
     offset += part.length;
     return block;
   });
@@ -54,7 +57,7 @@ export function getEditableDocument(conversation: Conversation): EditableDocumen
         status: message.execution?.status ?? "complete", blockIds: blocks.map((block) => block.id), acceptedAt: message.createdAt });
     }
   }
-  if (!document.blocks.length) document.blocks.push({ id: `empty:${conversation.id}`, kind: "markdown", content: "", createdAt: conversation.createdAt, updatedAt: conversation.updatedAt });
+  if (!document.blocks.length) document.blocks.push({ id: `empty:${conversation.id}`, kind: "markdown", content: "", createdAt: conversation.createdAt, updatedAt: conversation.updatedAt, authorship: "user" });
   return document;
 }
 
@@ -94,7 +97,8 @@ export function updateDocumentBlock(conversation: Conversation, blockId: string,
   const document = getEditableDocument(conversation);
   const existing = document.blocks.find((block) => block.id === blockId);
   if (!existing || existing.content === content) return conversation;
-  return save(conversation, { ...document, blocks: document.blocks.map((block) => block.id === blockId ? { ...block, content, updatedAt } : block) }, updatedAt);
+  const authorship = getDocumentBlockAuthorship(existing, conversation.messages) === "user" ? "user" : "mixed";
+  return save(conversation, { ...document, blocks: document.blocks.map((block) => block.id === blockId ? { ...block, content, updatedAt, authorship } : block) }, updatedAt);
 }
 
 /** Inserting into a block splits it without losing its stable original ID or provenance. */
@@ -172,7 +176,8 @@ export function insertDocumentGeneration(conversation: Conversation, generationI
   const insertion = location ?? generation.insertion;
   const target = insertion?.blockId ? document.blocks.find((block) => block.id === insertion.blockId) : undefined;
   const replacement = target && insertion?.replaceTo !== undefined && insertion.replaceTo > insertion.offset
-    ? { blockId: target.id, offset: insertion.offset, content: target.content.slice(insertion.offset, insertion.replaceTo) } : undefined;
+    ? { blockId: target.id, offset: insertion.offset, content: target.content.slice(insertion.offset, insertion.replaceTo),
+      authorship: getDocumentBlockAuthorship(target, conversation.messages) } : undefined;
   const blocks = sourceBlocks(uniqueBlockId(`generation:${generation.id}`, document.blocks), message.content, updatedAt, message.id, generationId);
   for (let index = 0; index < blocks.length; index += 1) blocks[index] = { ...blocks[index], id: uniqueBlockId(blocks[index].id, [...document.blocks, ...blocks.slice(0, index)]) };
   let inserted = insertDocumentBlock(conversation, blocks[0], insertion, updatedAt);

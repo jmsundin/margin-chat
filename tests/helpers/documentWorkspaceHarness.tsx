@@ -44,9 +44,11 @@ unrelated.title = "Unrelated project";
 initial.conversations[unrelated.id] = unrelated;
 browser.localStorage.setItem(getStateStorageKey(billingUser.id), JSON.stringify(initial));
 let latest: AppState = initial;
+let publishVaultState: (state: AppState) => void;
 const observedStates: AppState[] = [];
 mock.module("../../client/src/lib/useMarkdownVault", () => ({
-  useMarkdownVault(args: { state: AppState }) {
+  useMarkdownVault(args: { state: AppState; setState: (state: AppState) => void }) {
+    publishVaultState = args.setState;
     latest = args.state;
     observedStates.push(args.state);
     return { ready: true, storageMode: "local", matchesCloud: false, message: null, conflicts: [], saving: false,
@@ -59,6 +61,15 @@ mock.module("../../client/src/lib/useMarkdownVault", () => ({
 mock.module("../../client/src/lib/useJevAssistance", () => ({
   useJevPreference: () => [false, () => {}],
   useJevAssistance: () => ({ status: "off", categories: {}, groupSuggestions: {}, related: [] }),
+}));
+const api = await import("../../client/src/lib/api");
+let streamDelta: (delta: string) => void;
+let finishStream: () => void;
+mock.module("../../client/src/lib/api", () => ({ ...api,
+  requestChatReply: ({ onDelta }: { onDelta: (delta: string) => void }) => {
+    streamDelta = onDelta;
+    return new Promise<void>((resolve) => { finishStream = resolve; });
+  },
 }));
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
@@ -101,15 +112,16 @@ async function settle() {
   }
   assert.equal(frames.size, 0, "Workspace animation effects settle.");
 }
-async function click(target: any) { await act(async () => target.click()); await settle(); }
+async function click(target: any) { assert(target, `Click target must exist after: ${checks.at(-1)}`); await act(async () => target.click()); await settle(); }
 async function rename(id: string, title: string) {
+  await click(element(`[data-document-tab-id="${id}"] .document-tab-menu-trigger`));
+  await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.trim() === 'Rename document'));
   await act(async () => {
-    const input = pane(id).querySelector('[aria-label="Document title"]');
-    input.focus();
-    Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(input, title);
+    const input = browser.document.querySelector('[aria-label="Document name"]')!;
+    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, title);
     input.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
-  await act(async () => pane(id).querySelector('[aria-label="Document title"]').blur());
+  await act(async () => browser.document.querySelector('form[aria-label="Rename document"]')!.dispatchEvent(new browser.Event('submit', { bubbles: true, cancelable: true })));
   await settle();
 }
 async function createSide() {
@@ -128,6 +140,22 @@ try {
   assert.equal(container.querySelector('.thread-sidebar [aria-label="New side document"]'), null);
   const initialEditor = editor(mainId);
   const contentBeforeSidebarShortcuts = structuredClone(latest.conversations[mainId].document);
+  for (const modifier of ["metaKey", "ctrlKey"] as const) {
+    await act(async () => initialEditor.view.dom.focus());
+    const shortcut = new browser.KeyboardEvent("keydown", { key: "o", [modifier]: true, bubbles: true, cancelable: true });
+    await act(async () => initialEditor.view.dom.dispatchEvent(shortcut));
+    await settle();
+    assert(shortcut.defaultPrevented, "Global search suppresses the browser's Open File action.");
+    const searchInput = browser.document.querySelector('.search-modal input[type="search"]');
+    assert(searchInput, `${modifier}+O opens global search from the document editor.`);
+    assert.equal(browser.document.activeElement, searchInput, "Global search is ready to type into.");
+    assert.deepEqual(latest.conversations[mainId].document, contentBeforeSidebarShortcuts, "Opening global search does not edit the document.");
+    await act(async () => searchInput.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    await settle();
+    assert.equal(browser.document.querySelector('.search-modal'), null);
+    assert.equal(browser.document.activeElement, initialEditor.view.dom, "Closing search returns focus to the editor.");
+  }
+
   await act(async () => {
     initialEditor.commands.setTextSelection({ from: 1, to: initialEditor.state.doc.content.size - 1 });
     initialEditor.view.dom.focus();
@@ -219,7 +247,7 @@ try {
   assert.equal(element('[role="tablist"][aria-label="Document tabs"]').closest(".document-workspace-toolbar"), toolbar, "Document tabs and the hierarchy control share one toolbar.");
   assert.equal(container.querySelector('[aria-label="Conversation hierarchy"]'), null, "The hierarchy no longer consumes a separate navigation row.");
   assert.equal(container.querySelector(".document-context-header"), null, "Side documents no longer repeat their parent context above the content.");
-  await click(viewsTrigger);
+  await click(element('[aria-label="Document views"]'));
   await click(browser.document.querySelector('[role="menuitemcheckbox"][aria-controls="branch-navigation-map"]'));
   assert.equal(latest.railOpen, true);
   assert.equal(branch("Nested research").getAttribute("aria-current"), "page");
@@ -416,6 +444,48 @@ try {
   readingPopover.remove();
   checks.push("diagonal gestures scroll the nearest available textarea or popover before the document body while keeping panes stationary");
 
+  const readingBlock = readingBody.querySelector("[data-document-block-id]");
+  const codeSurface = browser.document.createElement("pre");
+  const codeText = browser.document.createElement("code");
+  codeText.textContent = "A long code line";
+  codeSurface.append(codeText);
+  codeSurface.style.overflowX = "auto";
+  codeSurface.style.overflowY = "auto";
+  Object.defineProperties(codeSurface, {
+    clientWidth: { configurable: true, value: 200 }, scrollWidth: { configurable: true, value: 800 },
+    clientHeight: { configurable: true, value: 100 }, scrollHeight: { configurable: true, value: 100 },
+  });
+  readingBlock.append(codeSurface);
+  await act(async () => readingBlock.querySelector(".tiptap").focus());
+  const blockCanvasX = canvas.scrollLeft;
+  const blockBodyY = readingBody.scrollTop;
+  assert((await readingWheel(codeText, 100, 10)).defaultPrevented);
+  assert.equal(codeSurface.scrollLeft, 100);
+  assert.equal(canvas.scrollLeft, blockCanvasX);
+  assert.equal(readingBody.scrollTop, blockBodyY);
+  await readingWheel(codeText, -60, 0);
+  assert.equal(codeSurface.scrollLeft, 40);
+  await readingWheel(codeText, 0, 2, { shiftKey: true, deltaMode: 1 });
+  assert.equal(codeSurface.scrollLeft, 72, "Shift-wheel line deltas normalize exactly once.");
+  await readingWheel(codeText, 0, 1, { shiftKey: true, deltaMode: 2 });
+  assert.equal(codeSurface.scrollLeft, 272, "Page deltas use the block width.");
+  for (const [position, delta] of [[0, -100], [600, 100]]) {
+    codeSurface.scrollLeft = position;
+    assert((await readingWheel(codeText, delta, 0)).defaultPrevented);
+    assert.equal(codeSurface.scrollLeft, position);
+    assert.equal(canvas.scrollLeft, blockCanvasX, "Code boundaries never scroll the workspace.");
+  }
+  Object.defineProperty(codeSurface, "scrollHeight", { configurable: true, value: 400 });
+  await readingWheel(codeText, 10, 70);
+  assert.equal(codeSurface.scrollTop, 70);
+  codeSurface.scrollTop = 300;
+  await readingWheel(codeText, 0, 70);
+  assert.equal(codeSurface.scrollTop, 300);
+  assert.equal(readingBody.scrollTop, blockBodyY, "A vertically scrollable block contains movement at its boundary.");
+  assert.equal((await readingWheel(codeText, 100, 0, { ctrlKey: true })).defaultPrevented, false);
+  codeSurface.remove();
+  checks.push("focused overflowing blocks own horizontal, vertical, shifted and boundary gestures without moving the document workspace");
+
   const beforeHorizontalBodyScroll = readingBody.scrollTop;
   const explicitHorizontal = await readingWheel(readingBody, 100, 20);
   assert.equal(canvas.scrollLeft, readingX + 100, "A clearly horizontal trackpad swipe still traverses documents.");
@@ -438,22 +508,24 @@ try {
   checks.push("map scene retains main-to-side and nested child edges after document layout interactions");
   async function menuAction(id: string, label: string) {
     await click(element(`[data-document-tab-id="${id}"] [aria-haspopup="menu"]`));
-    const action = [...browser.document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((item) => item.textContent?.trim().replace(/^✓\s*/, "") === label);
+    const action = [...browser.document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((item) => (item.getAttribute("aria-label") ?? item.textContent?.trim().replace(/^✓\s*/, "")) === label);
     assert(action, `Missing menu action ${label}`);
     await click(action);
   }
   const dockPane = (id: string) => element(`[data-dock-document-id="${id}"]`);
-  await menuAction(mainId, "Pin document");
   await menuAction(siblingId, "Minimize document");
-  assert.equal(pane(nestedId).querySelector(".document-child-tabs"), null, "Grandchildren do not show the pinned grandparent's direct-child tabs.");
+  assert.equal(pane(nestedId).querySelector(".document-child-tabs-trigger"), null, "Leaf documents omit the empty children menu.");
   await click(pane(sideId).querySelector(".document-child-tabs-trigger"));
-  const childTabs = [...pane(sideId).querySelectorAll<HTMLButtonElement>(".document-child-tabs-list > button")];
-  assert.deepEqual(childTabs.map((button) => button.querySelector("span")?.textContent), ["Sibling research", "Side research"]);
+  assert.deepEqual([...browser.document.querySelectorAll(".document-child-title")].map((node) => node.textContent), ["Nested research"], "An unpinned child owns its direct children, not its siblings.");
+  await click(browser.document.body);
+  await click(pane(mainId).querySelector(".document-child-tabs-trigger"));
+  const childTabs = [...browser.document.querySelectorAll<HTMLButtonElement>(".document-child-tabs-list > button")];
+  assert.deepEqual(childTabs.map((button) => button.querySelector(".document-child-title")?.textContent), ["Sibling research", "Side research"]);
   assert(childTabs[0].textContent.includes("Minimized"));
-  const childTabList = pane(sideId).querySelector<HTMLElement>(".document-child-tabs-list")!;
+  const childTabList = browser.document.querySelector<HTMLElement>(".document-child-tabs-list")!;
   Object.defineProperties(childTabList, {
-    clientWidth: { configurable: true, value: 240 },
-    scrollWidth: { configurable: true, value: 840 },
+    clientHeight: { configurable: true, value: 240 },
+    scrollHeight: { configurable: true, value: 840 },
   });
   const canvasBeforeChildScroll = canvas.scrollLeft;
   const bodyBeforeChildScroll = pane(sideId).querySelector(".document-body").scrollTop;
@@ -465,20 +537,20 @@ try {
     { deltaY: 2, deltaMode: 1 },
     { deltaY: 1, deltaMode: 2 },
   ]) {
-    childTabList.scrollLeft = 0;
+    childTabList.scrollTop = 0;
     const wheel = new browser.WheelEvent("wheel", { ...gesture, bubbles: true, cancelable: true });
     Object.defineProperty(wheel, "shiftKey", { value: "shiftKey" in gesture && gesture.shiftKey });
     await act(async () => childTabs[0].querySelector("span")!.dispatchEvent(wheel));
     assert(wheel.defaultPrevented, "The dropdown owns non-zoom wheel gestures.");
-    assert(childTabList.scrollLeft > 0, "Wheel gestures scroll the child tabs, including mouse wheels and diagonal swipes.");
+    assert(childTabList.scrollTop > 0, "Wheel gestures scroll the child tabs, including mouse wheels and diagonal swipes.");
     assert.equal(canvas.scrollLeft, canvasBeforeChildScroll, "Scrolling child tabs never moves the outer canvas.");
     assert.equal(pane(sideId).querySelector(".document-body").scrollTop, bodyBeforeChildScroll);
   }
   for (const [position, delta] of [[0, -90], [600, 90]]) {
-    childTabList.scrollLeft = position;
+    childTabList.scrollTop = position;
     const wheel = new browser.WheelEvent("wheel", { deltaX: delta, bubbles: true, cancelable: true });
     await act(async () => childTabs[0].dispatchEvent(wheel));
-    assert.equal(childTabList.scrollLeft, position);
+    assert.equal(childTabList.scrollTop, position);
     assert.equal(canvas.scrollLeft, canvasBeforeChildScroll, "Reaching either edge does not chain to the canvas.");
     assert(wheel.defaultPrevented);
   }
@@ -486,22 +558,39 @@ try {
   Object.defineProperty(pinch, "ctrlKey", { value: true });
   await act(async () => childTabs[0].dispatchEvent(pinch));
   assert.equal(pinch.defaultPrevented, false, "Pinch zoom stays native.");
-  Object.defineProperty(childTabList, "scrollWidth", { configurable: true, value: 240 });
-  childTabList.scrollLeft = 0;
+  Object.defineProperty(childTabList, "scrollHeight", { configurable: true, value: 240 });
+  childTabList.scrollTop = 0;
   const headerWheel = new browser.WheelEvent("wheel", { deltaY: 90, bubbles: true, cancelable: true });
-  await act(async () => pane(sideId).querySelector(".document-child-tabs-heading").dispatchEvent(headerWheel));
+  await act(async () => browser.document.querySelector(".document-child-tabs-heading").dispatchEvent(headerWheel));
   assert(headerWheel.defaultPrevented, "The entire dropdown contains scrolling even when all tabs fit.");
-  assert.equal(childTabList.scrollLeft, 0);
+  assert.equal(childTabList.scrollTop, 0);
   assert.equal(canvas.scrollLeft, canvasBeforeChildScroll);
   await click(childTabs[0]);
   assert.equal(latest.activeConversationId, siblingId);
   assert(panes().includes(siblingId));
   assert.equal(centered.at(-1), siblingId);
-  assert(dockPane(mainId), "Navigating child tabs leaves the parent pinned.");
+  assert(panes().includes(mainId), "Opening children keeps their parent open.");
+  assert(pane(sideId).querySelector('.document-origin button').textContent.includes("Main research"), "Every child has a named parent link, including children without quoted anchors.");
+  await click(pane(sideId).querySelector('.document-origin button'));
+  assert.equal(latest.activeConversationId, mainId);
+  await menuAction(mainId, "Pin document");
+  assert(dockPane(mainId).querySelector('.document-dock-pane-header .document-menu-trigger'));
+  assert.equal(dockPane(mainId).querySelector('.document-body .document-menu-trigger'), null);
+  assert(dockPane(mainId).querySelector('.document-dock-pane-header .document-child-tabs-trigger'));
+  await click(dockPane(mainId).querySelector(".document-child-tabs-trigger"));
+  assert.equal(browser.document.querySelectorAll(".document-child-title").length, 2, "Pinned parents retain the same children control.");
+  await click(browser.document.querySelector(".document-child-tabs-list > button"));
+  assert(dockPane(mainId), "Child navigation leaves the parent pinned.");
+  await click(sidebar("Unrelated project"));
+  await click(dockPane(mainId).querySelector(".document-child-tabs-trigger"));
+  assert.deepEqual([...browser.document.querySelectorAll(".document-child-title")].map((node) => node.textContent), ["Sibling research", "Side research"], "Pinned parents retain their own children while another family is open.");
+  await click(browser.document.querySelector(".document-child-tabs-list > button"));
+  assert.equal(latest.activeConversationId, siblingId);
+  assert(panes().includes(siblingId));
   await menuAction(mainId, "Unpin document");
-  assert.equal(container.querySelector(".document-child-tabs"), null, "Unpinning removes the child hover controls.");
+  assert(pane(mainId).querySelector(".document-child-tabs-trigger"), "Unpinning retains child navigation.");
   await click(tab(nestedId));
-  checks.push("pinned parents expose direct-child tabs in saved order and selecting a minimized child restores and focuses it");
+  checks.push("all document headers expose direct children in saved order, restore minimized children and navigate back to named parents");
   pane(nestedId).querySelector(".document-body").scrollTop = 175;
   await menuAction(nestedId, "Pin document");
   assert(dockPane(nestedId));
@@ -609,6 +698,7 @@ try {
     }
   }
   const defaultDocumentWidths = documentWidths();
+  assert(Object.values(defaultDocumentWidths).every((width) => width >= 500), "Additional documents keep readable default widths instead of compressing into three columns.");
   let resizePointerId = 100;
   async function dragResize(id: string, edge: ResizeEdge, physicalDelta: number) {
     const before = documentWidths();
@@ -807,6 +897,137 @@ try {
   assert(editor(mainId).isEditable);
   assert.deepEqual(relationships(latest), relationshipsBeforeMove);
   checks.push("reopening retains moved block formatting and destination order while the emptied source stays writable");
+  // Exercise the real stream controller and document update path during a drag.
+  await act(async () => editor(mainId).commands.insertContent("Resize while writing."));
+  await settle();
+  const streamBlockGrip = pane(mainId).querySelector(".rich-document-grip");
+  if (streamBlockGrip.getAttribute("aria-expanded") !== "true") await click(streamBlockGrip);
+  await click(pane(mainId).querySelector(".rich-document-ask"));
+  await act(async () => {
+    const prompt = pane(mainId).querySelector('[aria-label="AI prompt"]');
+    Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "Continue this document");
+    prompt.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  await act(async () => pane(mainId).querySelector(".document-ai-composer").dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })));
+  assert.equal(typeof streamDelta!, "function");
+  async function emitText(delta: string) {
+    await act(async () => { streamDelta(delta); await new Promise((resolve) => setTimeout(resolve, 45)); });
+    await settle();
+  }
+  await emitText("Streaming response");
+  for (const id of [mainId, nestedId]) {
+    const before = documentWidths();
+    const handle = resizeHandle(id, "right");
+    const pointerId = ++resizePointerId;
+    await act(async () => handle.dispatchEvent(new browser.PointerEvent("pointerdown", {
+      button: 0, isPrimary: true, pointerId, clientX: 500, bubbles: true, cancelable: true,
+    })));
+    await act(async () => browser.dispatchEvent(new browser.PointerEvent("pointermove", { pointerId, clientX: 580, bubbles: true, cancelable: true })));
+    assertOnlyPaneWidth(before, id, before[id] + 80);
+    await emitText(" during resize");
+    assertOnlyPaneWidth(before, id, before[id] + 80);
+    await act(async () => browser.dispatchEvent(new browser.PointerEvent("pointerup", { pointerId, clientX: 580, bubbles: true, cancelable: true })));
+    await emitText(" after resize");
+    assertOnlyPaneWidth(before, id, before[id] + 80);
+    assert.equal(latest.conversations[mainId].documentLayout?.widthsById?.[id], before[id] + 80);
+  }
+  const widthsDuringStream = documentWidths();
+  const savedDuringStream = structuredClone(latest);
+  const refreshedDuringStream = structuredClone(latest);
+  delete refreshedDuringStream.conversations[mainId].documentLayout!.widthsById;
+  await act(async () => publishVaultState(refreshedDuringStream));
+  await emitText(" after content refresh");
+  assert.deepEqual(documentWidths(), widthsDuringStream, "A content snapshot with older layout metadata cannot reset this session's explicit document sizes.");
+  // A canceled second drag restores the retained choice, even while the
+  // synchronized snapshot still carries the older default size.
+  await act(async () => resizeHandle(mainId, "right").dispatchEvent(new browser.PointerEvent("pointerdown", {
+    button: 0, isPrimary: true, pointerId: 1200, clientX: 500, bubbles: true, cancelable: true,
+  })));
+  await act(async () => browser.dispatchEvent(new browser.PointerEvent("pointermove", { pointerId: 1200, clientX: 550, bubbles: true, cancelable: true })));
+  await act(async () => browser.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+  assert.deepEqual(documentWidths(), widthsDuringStream);
+  await act(async () => publishVaultState({ ...latest, conversations: { ...latest.conversations, [mainId]: {
+    ...latest.conversations[mainId], documentLayout: savedDuringStream.conversations[mainId].documentLayout,
+  } } }));
+  await act(async () => finishStream());
+  await settle();
+  assert.deepEqual(documentWidths(), widthsDuringStream);
+  checks.push("root and side document widths survive deltas during a drag, after release, and after generation completes");
+
+  await click(sidebar(latest.conversations[sideId].title));
+  const savedSide = structuredClone(latest.conversations[sideId]);
+  const controls = pane(sideId).querySelector('.document-header-toolbar');
+  assert(controls.firstElementChild.classList.contains('document-minimize-button'));
+  assert(controls.lastElementChild.classList.contains('document-close-button'));
+  await click(controls.querySelector('.document-minimize-button'));
+  assert(!panes().includes(sideId));
+  assert(tab(sideId).getAttribute('aria-label').includes('minimized'));
+  await click(tab(sideId));
+  await click(pane(sideId).querySelector('.document-close-button'));
+  assert(!panes().includes(sideId));
+  assert.equal(container.querySelector(`[data-document-tab-id="${sideId}"]`), null);
+  assert.deepEqual(latest.conversations[sideId], savedSide);
+  assert(sidebar(savedSide.title));
+  await click(pane(mainId).querySelector('.document-child-tabs-trigger'));
+  await click([...browser.document.querySelectorAll('.document-child-tabs-list > button')].find((button) => button.querySelector('.document-child-title')?.textContent === savedSide.title));
+  assert(panes().includes(sideId));
+  assert(tab(sideId));
+  checks.push('header minimize retains the tab, close removes the tab without deleting, and Children reopens the saved document');
+
+  await menuAction(sideId, 'Close document');
+  assert.equal(container.querySelector(`[data-document-tab-id="${sideId}"]`), null);
+  await click(sidebar(savedSide.title));
+  await menuAction(sideId, 'Pin document');
+  await click(dockPane(sideId).querySelector('.document-close-button'));
+  assert.equal(container.querySelector(`[data-dock-document-id="${sideId}"]`), null);
+  assert.equal(container.querySelector(`[data-document-tab-id="${sideId}"]`), null);
+  assert.deepEqual(latest.conversations[sideId], savedSide);
+  await click(sidebar(savedSide.title));
+  await menuAction(sideId, 'Pin document');
+  await click(dockPane(sideId).querySelector('.document-minimize-button'));
+  assert.equal(container.querySelector(`[data-dock-document-id="${sideId}"]`), null);
+  assert(tab(sideId).getAttribute('aria-label').includes('minimized'));
+  await click(tab(sideId));
+  checks.push('tab menus close documents and pinned pane minimize and close actions preserve the saved document');
+
+  const savedDocuments = Object.fromEntries(Object.values(latest.conversations).map((document) => [document.id, structuredClone({ document: document.document, parentId: document.parentId, childIds: document.childIds })]));
+  await menuAction(sideId, 'Pin document');
+  const openIds = [...container.querySelectorAll('[data-document-tab-id]')].map((node) => node.getAttribute('data-document-tab-id'));
+  await click(element('[aria-label="Document views"]'));
+  await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Minimize all documents'));
+  assert.deepEqual(panes(), []);
+  assert.equal(container.querySelector('[data-dock-document-id]'), null);
+  assert.deepEqual([...container.querySelectorAll('[data-document-tab-id]')].map((node) => node.getAttribute('data-document-tab-id')), openIds);
+  assert(openIds.every((id) => tab(id!).getAttribute('aria-label').includes('minimized')));
+  await click(element('[aria-label="Document views"]'));
+  assert([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Minimize all documents')?.hasAttribute('disabled'));
+  await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Close all documents'));
+  assert.equal(container.querySelector('[data-document-tab-id]'), null);
+  assert.deepEqual(panes(), []);
+  await click(sidebar(savedSide.title));
+  assert(pane(sideId));
+  checks.push('views menu minimizes all panes including pins while retaining tabs, then closes minimized tabs and allows reopening');
+
+  await click(sidebar('Unrelated project'));
+  await menuAction('unrelated', 'Pin document');
+  await click(sidebar(savedSide.title));
+  await click(tab('unrelated'));
+  assert(dockPane('unrelated'));
+  await click(element('[aria-label="Document views"]'));
+  await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Close all documents'));
+  assert.equal(container.querySelector('[data-document-tab-id]'), null);
+  assert.equal(container.querySelector('[data-dock-document-id]'), null);
+  assert.deepEqual(panes(), []);
+  assert.equal(latest.rootId, mainId, 'Closing a focused foreign pin keeps the current workspace empty.');
+  for (const [id, saved] of Object.entries(savedDocuments)) {
+    const document = latest.conversations[id];
+    assert.deepEqual({ document: document.document, parentId: document.parentId, childIds: document.childIds }, saved);
+  }
+  await click(element('[aria-label="Document views"]'));
+  for (const name of ['Close all documents', 'Minimize all documents']) {
+    assert([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === name)?.hasAttribute('disabled'));
+  }
+  checks.push('close all includes foreign pinned documents without changing family or deleting content and relationships');
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

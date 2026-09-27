@@ -20,9 +20,9 @@ const documentSelections: Array<{ id: string; options?: { keepSidebarOpen?: bool
 const checks: string[] = [];
 const noop = () => {};
 const threads: ThreadSummary[] = [
-  { id: "angular", title: "Angular", categoryId: "other", categoryLabel: "Other", conversationCount: 1, preview: "Angular concepts", updatedAt: "2026-09-25T00:00:00.000Z", updatedLabel: "now" },
-  { id: "launch", title: "Launch planning", categoryId: "other", categoryLabel: "Other", conversationCount: 1, preview: "Launch plan", updatedAt: "2026-09-24T00:00:00.000Z", updatedLabel: "yesterday" },
-  { id: "empty", title: "Empty document", categoryId: "other", categoryLabel: "Other", conversationCount: 1, preview: "", updatedAt: "2026-09-23T00:00:00.000Z", updatedLabel: "2 days ago" },
+  { id: "angular", title: "Angular", categoryId: "other", categoryLabel: "Other", conversationCount: 1, preview: "Angular concepts", createdAt: "2026-09-01", createdLabel: "Sep 1", updatedAt: "2026-09-25T00:00:00.000Z", updatedLabel: "now" },
+  { id: "launch", title: "Launch planning", categoryId: "other", categoryLabel: "Other", conversationCount: 1, preview: "Launch plan", groupId: "planning", createdAt: "2026-09-22", createdLabel: "3 days ago", updatedAt: "2026-09-24T00:00:00.000Z", updatedLabel: "yesterday" },
+  { id: "empty", title: "Empty document", categoryId: "other", categoryLabel: "Other", conversationCount: 1, preview: "", createdAt: "2026-09-23", createdLabel: "2 days ago", updatedAt: "2026-09-23T00:00:00.000Z", updatedLabel: "2 days ago" },
 ];
 const outlines = {
   angular: buildChatOutline({ messages: [
@@ -41,6 +41,7 @@ function Harness() {
   const [activeId, setActiveId] = useState<keyof typeof outlines>("angular");
   const [activeOutlineItemId, setActiveOutlineItemId] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [groupCollapsed, setGroupCollapsed] = useState(false);
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
   const [mapExplorerActive, setMapExplorerActive] = useState(false);
   changeDocument = (id) => { setActiveId(id); setActiveOutlineItemId(null); };
@@ -57,7 +58,7 @@ function Harness() {
       }, label))),
     activeOutlineItemId, activeThreadId: activeId, collapsed,
     currentChatOutline: outlines[activeId], currentChatTitle: threads.find((thread) => thread.id === activeId)!.title,
-    groups: {}, mainViewMode, mapExplorerActive, mapExplorerRef: noop,
+    groups: { planning: { id: "planning", name: "Planning", color: "#4fbf9f", collapsed: groupCollapsed, conversationIds: ["launch"] } }, mainViewMode, mapExplorerActive, mapExplorerRef: noop,
     onSelectSidebarSection: (section) => setMapExplorerActive(section === "explore"),
     onAssignGroup: noop, onCreateGroup: noop, onDeleteThread: noop,
     onNewChat: () => events.push("new"), onNewNote: noop, onOpenInbox: () => events.push("inbox"),
@@ -69,7 +70,7 @@ function Harness() {
       events.push(`select:${id}`);
       changeDocument(id as keyof typeof outlines);
     },
-    onToggleGroup: noop,
+    onToggleGroup: () => setGroupCollapsed((value) => !value),
     onToggleTheme: () => events.push("theme"), onUnpinThread: noop,
     pinnedThreads: [threads[0]], streamingThreadIds: new Set<string>(), theme: "dark", threads,
   });
@@ -107,7 +108,27 @@ try {
   assert(element('[data-testid="workspace-brand-header"]').textContent?.includes("Margin Chat"));
   assert(element('[data-testid="workspace-brand-header"]').closest(".thread-sidebar"), "The optional mobile header must render inside the sidebar.");
   const list = element(".thread-list");
+  assert.deepEqual([...list.querySelectorAll(".thread-item-main")].map((row) => row.getAttribute("title")), ["Empty document", "Launch planning", "Angular"]);
+  assert.equal(list.querySelector(".thread-sidebar-section"), null);
+  assert.equal(list.querySelector('.thread-item-date[title="Created"]')?.textContent, "2 days ago");
   list.scrollTop = 215;
+  await click('[aria-label="Show groups"]');
+  assert(visible('[aria-label="Pinned documents"]'));
+  assert(visible('[aria-label="Planning group"]'));
+  assert(visible('[aria-label="Ungrouped documents"]'));
+  assert.equal(list.querySelectorAll(".thread-item").length, 3);
+  assert.equal(list.scrollTop, 0);
+  list.scrollTop = 95;
+  await click('[aria-label="Planning group"] .thread-group-section-header button');
+  assert.equal(list.querySelector('.thread-item-main[title="Launch planning"]'), null);
+  await click('[aria-label="Show documents"]');
+  assert.equal(list.scrollTop, 215);
+  assert.equal(list.querySelectorAll(".thread-item").length, 3, "Collapsed groups must not hide documents in the flat list.");
+  await click('[aria-label="Show groups"]');
+  assert.equal(list.scrollTop, 95);
+  assert.equal(list.querySelector('.thread-item-main[title="Launch planning"]'), null);
+  await click('[aria-label="Show documents"]');
+  checks.push("Documents uses creation order while Groups retains pinning, collapse state, and independent scroll position");
   assert.equal(element('[aria-label="Show documents"]').getAttribute("aria-pressed"), "true");
   await click('[aria-label="Expand outline for Angular"]');
   const angularOutline = outline("Angular");
@@ -122,12 +143,10 @@ try {
   await clickText("Components", ".outline-heading-link");
   assert.equal(events.at(-1), "outline:angular:heading-angular-answer-1");
   assert.equal(angularOutline.querySelector('[aria-current="location"]')?.textContent, "Components");
-  await click('[aria-label="Collapse headings for ai response 1"]');
-  assert.equal(angularOutline.querySelector(".outline-response-headings"), null);
-  await clickText("AI response 1", ".outline-response-link");
-  assert.equal(events.at(-1), "outline:angular:message-angular-answer");
-  assert.equal(angularOutline.querySelector(".outline-response-headings"), null);
-  checks.push("outline heading and response navigation keep independent disclosure state");
+  assert.equal(angularOutline.querySelectorAll('.outline-heading-link').length, 3);
+  assert(!angularOutline.textContent?.includes('AI response'));
+  assert(!angularOutline.textContent?.includes('What are the main Angular concepts?'));
+  checks.push("outline shows only document headings and preserves heading navigation");
 
   await click('[aria-label="Show documents"]');
   assert(visible(".thread-list"));
@@ -136,9 +155,8 @@ try {
   assert(!visible('nav[aria-label="Outline for Angular"]'));
   await click('[aria-label="Show document outline"]');
   assert.equal(outline("Angular"), angularOutline, "Switching sidebar content should retain the outline instance.");
-  assert.equal(angularOutline.querySelector(".outline-response-headings"), null);
-  assert(visible('[aria-label="Expand headings for ai response 1"]'));
-  checks.push("switching Documents and Outline preserves list position and collapsed headings");
+  assert.equal(angularOutline.querySelector('[aria-current="location"]')?.textContent, "Components");
+  checks.push("switching Documents and Outline preserves list position and the active heading");
 
   for (const label of ["New document", "Search documents", "Open profile", "Open settings", "Switch to light theme"]) {
     await click(`[aria-label="${label}"]`);
@@ -161,7 +179,7 @@ try {
   assert.equal(events.at(-1), "outline:launch:heading-launch-answer-1");
   await act(async () => { changeDocument("angular"); });
   assert(visible('nav[aria-label="Outline for Angular"]'));
-  assert(outline("Angular").textContent?.includes("What are the main Angular concepts?"));
+  assert(outline("Angular").textContent?.includes("Angular concepts"));
   assert(!outline("Angular").textContent?.includes("First week"));
   checks.push("inactive-row outline selection and later active-document changes show the correct document");
 

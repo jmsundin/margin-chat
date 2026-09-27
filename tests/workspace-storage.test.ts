@@ -233,6 +233,25 @@ describe("connected folder safety", () => {
 });
 
 describe("portable folder companions", () => {
+  test("keeps hidden recovery history out of documents while synchronizing it as companions", async () => {
+    const original = createMarkdownWorkspace(createEmptyState());
+    const livePath = original.manifest.files[0].path;
+    const history = ".margin-chat/history/merge/result/Previous title.md";
+    const binary = ".margin-chat/history/merge/base/Previous title.md";
+    const descriptor = ".margin-chat/history/merge/conflict.json";
+    const folder = memoryDirectory({ ...original.files,
+      [history]: original.files[livePath], [binary]: new Uint8Array([255, 0]),
+      [descriptor]: JSON.stringify({ path: livePath, baseCopy: binary, baseEncoding: "base64" }),
+    });
+    const workspace = await readDirectoryWorkspace(folder.handle, "user");
+    expect(workspace.workspace.manifest.files.map((record) => record.path)).toEqual([livePath]);
+    expect(workspace.workspace.files[history]).toBeUndefined();
+    const companions = await readConnectedDirectoryCompanions(folder.handle);
+    expect(companions[history].content).toBe(original.files[livePath]);
+    expect(companions[binary]).toEqual({ content: "/wA=", encoding: "base64" });
+    expect(companions[descriptor]).toBeDefined();
+  });
+
   test("discovers only managed attachments/conflicts/settings and keeps Markdown attachments binary", async () => {
     const folder = memoryDirectory({
       "Attachments/doc/original.md": new Uint8Array([35, 32, 83, 111, 117, 114, 99, 101]),

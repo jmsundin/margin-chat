@@ -150,6 +150,8 @@ bun --no-env-file scripts/database.mjs migrate --target production --expected-ho
 
 The CLI rejects pooled Neon endpoints and does not silently fall back to the application URL. Routine deployments should use the release runner so rehearsal and recovery capture are included.
 
+Local API startup defaults to automatic migration only for loopback databases. Remote connections default to schema verification, even when the API runs in development; local schema changes do not propagate to Neon automatically. A nonproduction process can explicitly select `DB_SCHEMA_MODE=migrate`, but use the target-checked migration CLI above for remote administration. Verification controls schema changes only: ordinary application requests still write to the configured database.
+
 ## Other persistence changes
 
 Register static jobs in `server/releases/job-registry.mjs` with `definePersistenceJob`, then add their IDs to the release recipe. Each receives `{ userId, client, database, vaultService }`. New transformations need immutable IDs/versions and relevant helper source in their checksum inputs.

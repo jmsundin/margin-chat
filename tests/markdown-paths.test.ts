@@ -93,3 +93,11 @@ describe("legacy Markdown path recognition", () => {
     expect(legacyMarkdownPath("Chats", "chat-123")).toBe("Chats/chat-chat-123-1to5mh2.md");
   });
 });
+
+
+test("flat document names share one namespace regardless of document kind", () => {
+  const path = titleMarkdownPath("", "My project", "same-document");
+  expect(path).toStartWith("My project — ");
+  expect(path).not.toContain("/");
+  expect(path).toEndWith(".md");
+});

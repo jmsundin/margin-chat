@@ -43,6 +43,16 @@ function generatedFixture(): AppState {
 }
 
 describe("cross-document block transfer", () => {
+  test("preserves mixed and explicit user attribution when source history is copied", () => {
+    for (const authorship of ["mixed", "user"] as const) {
+      const state = generatedFixture();
+      state.conversations[state.rootId].document!.blocks[0].authorship = authorship;
+      const next = move(state);
+      expect(next.conversations.target.document!.blocks[1].authorship).toBe(authorship);
+      expect(normalizeEditableDocument(next.conversations.target.document)?.blocks[1].authorship).toBe(authorship);
+    }
+  });
+
   test("atomically moves exact Markdown at the requested position without changing ancestry or input", () => {
     const state = fixture();
     const before = structuredClone(state);

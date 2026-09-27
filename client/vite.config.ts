@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
+import { excalidrawAssetsPlugin } from "./build/excalidraw-assets.mjs";
 import { offlineAppShellPlugin } from "./build/offline-service-worker.mjs";
 
 function apiProxy(target: string): ProxyOptions {
@@ -42,7 +43,8 @@ export default defineConfig(({ mode }) => {
 
   return {
     envDir: "..",
-    plugins: [react(), offlineAppShellPlugin()],
+    plugins: [react(), excalidrawAssetsPlugin(), offlineAppShellPlugin()],
+    define: { "process.env.IS_PREACT": "false" },
     // Workspace links and editor peer dependencies must share the renderer's React instance.
     resolve: { dedupe: ["react", "react-dom"] },
     server: {

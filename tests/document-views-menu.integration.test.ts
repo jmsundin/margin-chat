@@ -8,5 +8,5 @@ test("document views menu preserves views, counts, dismissal, and keyboard navig
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   clearTimeout(timeout);
   if (code !== 0) throw new Error(`Document views menu integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(8);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(10);
 }, 25000);

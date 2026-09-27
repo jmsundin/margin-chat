@@ -15,6 +15,7 @@ browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
 const choices: Array<[string, string]> = [];
 let syncs = 0;
+let downloads = 0;
 const conflict: VaultConflict = {
   id: "saved", path: "Notes/Plans.md", createdAt: "2026-09-25T12:00:00.000Z",
   base: { content: "Original plan" }, local: { content: "Device plan" }, remote: { content: "Synced plan" },
@@ -24,17 +25,12 @@ const vault = {
   ready: true, storageMode: "server", matchesCloud: true, message: null, saving: false, localSaveError: null,
   conflicts: [conflict],
   localDirectoryStatus: { directoryName: null, fileName: "workspace.md", permission: "unselected", supported: false },
-  async syncNow() { syncs += 1; }, async download() {}, async importArchive() {}, async chooseDirectory() {}, async clearDirectory() {},
+  async syncNow() { syncs += 1; }, async download() { downloads += 1; }, async importArchive() {}, async chooseDirectory() {}, async clearDirectory() {},
   async resolveConflict(id: string, choice: "local" | "remote" | "current") { choices.push([id, choice]); },
 } as Parameters<typeof VaultPanel>[0]["vault"];
 function button(label: string) {
   const element = [...container.querySelectorAll("button")].find((item) => item.textContent === label);
   assert(element, `Expected button: ${label}`);
-  return element;
-}
-function preview(label: string) {
-  const element = [...container.querySelectorAll("label")].find((item) => item.firstChild?.textContent === label)?.querySelector("textarea");
-  assert(element, `Expected saved preview: ${label}`);
   return element;
 }
 async function click(label: string) { await act(async () => button(label).click()); }
@@ -43,42 +39,38 @@ const checks: string[] = [];
 
 try {
   await render();
+  assert(container.textContent?.includes("Saved in this browser"));
   assert(container.textContent?.includes("Up to date"));
-  assert(container.textContent?.includes("Alternative versions saved"));
-  assert(container.textContent?.includes("Reviewing these saved versions is optional"));
   assert.equal(container.querySelector('[role="alert"]'), null);
-  assert.equal(container.querySelector("details")?.open, false, "Saved alternatives start collapsed.");
+  const legacy: VaultConflict = { id: "legacy", path: "Notes/Deleted.md", createdAt: conflict.createdAt, local: { content: "Offline writing" }, remote: null };
+  for (const history of [[conflict], [legacy], [{ ...legacy, local: null, remote: { content: "Cloud writing" }, result: null, automatic: true }]]) {
+    vault.conflicts = history;
+    await render();
+    assert(container.textContent?.includes("Up to date"));
+    assert.equal(container.querySelectorAll("details, textarea").length, 0);
+    assert(!/alternative|restore|dismiss|review/i.test(container.textContent ?? ""));
+    assert(!container.textContent?.includes(history[0].path));
+  }
+  assert.deepEqual(choices, [], "Rendering must not dismiss or restore retained history.");
+  assert.equal(vault.conflicts.length, 1, "Recovery records are kept intact.");
+  checks.push("background history does not change saved status or request a choice");
+
   assert.equal(button("Sync now").disabled, false);
   await click("Sync now");
-  assert.equal(syncs, 1, "Saved alternatives must not prevent syncing.");
-  checks.push("alternatives do not block cloud status or sync");
+  await click("Download vault");
+  assert.equal(syncs, 1);
+  assert.equal(downloads, 1);
+  assert.equal(button("Import vault").disabled, false);
+  checks.push("sync and independent backup actions remain available");
 
-  assert.equal(preview("Saved device version").value, "Device plan");
-  assert.equal(preview("Saved synced version").value, "Synced plan");
-  assert.equal(preview("Saved automatic result").value, "Automatic combined plan");
-  assert(container.textContent?.includes("Restoring replaces the entire current file"));
-  await click("Restore entire device version");
-  await click("Restore entire synced version");
-  await click("Dismiss · keep current file");
-  assert.deepEqual(choices, [["saved", "local"], ["saved", "remote"], ["saved", "current"]]);
-  checks.push("whole-version restore and keep-current actions remain distinct");
-
-  const legacy: VaultConflict = { id: "legacy", path: "Notes/Deleted.md", createdAt: conflict.createdAt, local: { content: "Offline writing" }, remote: null };
-  vault.conflicts = [legacy];
+  vault.matchesCloud = false;
+  vault.message = "Cloud sync is unavailable. Your edits are saved on this device.";
+  vault.localSaveError = "This device is out of storage.";
   await render();
-  assert.equal(container.querySelectorAll("textarea").length, 2, "Legacy records have no invented automatic result.");
-  assert.equal(preview("Saved synced version").value, "File deleted in the synced copy");
-  assert(container.textContent?.includes("Restoring a deletion removes the current file"));
-  assert.equal(button("Sync now").disabled, false);
-  await click("Restore synced deletion");
-  await click("Dismiss · keep current file");
-  assert.deepEqual(choices.slice(-2), [["legacy", "remote"], ["legacy", "current"]]);
-  vault.conflicts = [{ ...legacy, local: null, remote: { content: "Cloud writing" }, result: null, automatic: true }];
-  await render();
-  assert.equal(preview("Saved automatic result").value, "File remains deleted");
-  await click("Restore device deletion");
-  assert.deepEqual(choices.at(-1), ["legacy", "local"]);
-  checks.push("legacy records and deletions remain optional and explicit");
+  assert(container.textContent?.includes("Changes waiting to sync"));
+  assert(container.textContent?.includes("Save needs attention"));
+  assert.equal(container.querySelector('[role="alert"]')?.textContent, vault.message);
+  checks.push("real storage and sync errors remain visible");
 
   console.log(JSON.stringify({ checks }));
 } finally {

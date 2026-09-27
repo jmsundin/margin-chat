@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Conversation, DocumentDockNode, DocumentDockPosition } from "../types";
-import { filterDocumentDock, getDocumentDockDropEdge, listPinnedDocumentIds, MAX_DOCK_SPLIT_RATIO, MIN_DOCK_SPLIT_RATIO, movePinnedDocument, resizeDocumentDockSplit, type DocumentDockEdge } from "../lib/documentDock";
+import { applyDockRatios, findDockNode, getDockSplitFraction, getDockMinimumHeight, resizeVerticalDockStack, filterDocumentDock, getDocumentDockDropEdge, listPinnedDocumentIds, MAX_DOCK_SPLIT_RATIO, MIN_DOCK_SPLIT_RATIO, movePinnedDocument, resizeDocumentDockSplit, type DocumentDockEdge } from "../lib/documentDock";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import "./DocumentDock.css";
 
@@ -12,11 +12,15 @@ interface DocumentDockProps {
   visibleDocumentIds?: string[];
   onSelect: (documentId: string) => void;
   onUnpin: (documentId: string) => void;
+  onMinimize?: (documentId: string) => void;
+  onClose?: (documentId: string) => void;
   onToggleScope?: (documentId: string) => void;
   dockPosition?: DocumentDockPosition;
   onMoveDock?: (position: DocumentDockPosition) => void;
   onChange: (tree: DocumentDockNode | null) => void;
   renderDocument: (conversation: Conversation) => ReactNode;
+  renderDocumentControls?: (conversation: Conversation) => ReactNode;
+  renderDocumentMenu?: (conversation: Conversation) => ReactNode;
 }
 
 type DropTarget = { kind: "pane"; documentId: string; edge: DocumentDockEdge }
@@ -36,11 +40,15 @@ type Interaction = {
   direction: "horizontal" | "vertical";
   bounds: DOMRect;
   ratio: number;
+  stack?: DocumentDockNode;
+  headers?: Record<string, number>;
+  preview?: DocumentDockNode;
 };
 
 const placementLabels: Record<DocumentDockEdge, string> = { left: "left", right: "right", top: "above", bottom: "below" };
 
-function MovePaneControls({ documentId, conversations, ids, trigger, onMove, onClose, dockPosition, onMoveDock }: {
+function MovePaneControls({ documentId, conversations, ids, trigger, onMove, onClose, dockPosition, onMoveDock, floating = false }: {
+  floating?: boolean;
   documentId: string;
   conversations: Record<string, Conversation>;
   ids: string[];
@@ -59,7 +67,11 @@ function MovePaneControls({ documentId, conversations, ids, trigger, onMove, onC
   const currentTarget = available.includes(target) ? target : available[0] ?? "";
   useOutsideDismiss(true, onClose, popupRef, triggerRef);
   useEffect(() => { (selectRef.current ?? popupRef.current?.querySelector<HTMLButtonElement>(".document-dock-move-actions button"))?.focus(); }, []);
-  return <div className="document-dock-move" ref={popupRef} role="dialog" aria-label="Move pinned document" onPointerDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
+  const anchor = floating ? trigger?.getBoundingClientRect() : null;
+  const top = anchor ? Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - 260)) : 0;
+  const content = <div className="document-dock-move" ref={popupRef}
+    style={anchor ? { position: 'fixed', zIndex: 120, top, left: Math.max(8, Math.min(anchor.left, window.innerWidth - 302)),
+      width: Math.min(290, window.innerWidth - 16), maxHeight: window.innerHeight - top - 12 } : undefined} role="dialog" aria-label="Move pinned document" onPointerDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
   }}>
     <div className="document-dock-move-heading"><strong>Move pane</strong><button type="button" aria-label="Close move pane controls" onClick={onClose}>×</button></div>
@@ -79,6 +91,7 @@ function MovePaneControls({ documentId, conversations, ids, trigger, onMove, onC
       </div>
     </> : <p>Pin another document to arrange panes beside one another.</p>}
   </div>;
+  return floating ? createPortal(content, document.body) : content;
 }
 
 /** The dock owns pointer previews; only completed gestures persist a new tree. */
@@ -94,12 +107,47 @@ export default function DocumentDock(props: DocumentDockProps) {
   const [interaction, setInteraction] = useState<Interaction | null>(null);
   const [moveControls, setMoveControls] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const [headerHeights, setHeaderHeights] = useState<Record<string, number>>({});
+  const [collapsedIds, setCollapsedIds] = useState<string[]>([]);
   const visibleIds = props.visibleDocumentIds ? new Set(props.visibleDocumentIds) : null;
   const renderTree = filterDocumentDock(props.tree, (id) => Boolean(props.conversations[id]) && (!visibleIds || visibleIds.has(id)));
   const ids = listPinnedDocumentIds(renderTree);
   // Contracts normalization may recreate tree objects while editing. Restore
   // scroll only when the layout changes, so typing can scroll the caret normally.
   const layoutKey = JSON.stringify(renderTree);
+
+  useLayoutEffect(() => {
+    const panes = [...(dockRef.current?.querySelectorAll<HTMLElement>('[data-dock-document-id]') ?? [])];
+    function measure() {
+      const heights: Record<string, number> = {};
+      const collapsed: string[] = [];
+      for (const pane of panes) {
+        const header = pane.querySelector<HTMLElement>(':scope > .document-dock-pane-header');
+        const height = header?.getBoundingClientRect().height ?? 0;
+        if (!height) continue;
+        const id = pane.dataset.dockDocumentId!;
+        heights[id] = Math.ceil(height + 2);
+        const paneHeight = pane.getBoundingClientRect().height;
+        if (paneHeight > 0 && paneHeight <= heights[id] + 1) collapsed.push(id);
+      }
+      setHeaderHeights((current) => JSON.stringify(current) === JSON.stringify(heights) ? current : heights);
+      setCollapsedIds((current) => current.join('|') === collapsed.join('|') ? current : collapsed);
+    }
+    const observer = new ResizeObserver(measure);
+    for (const pane of panes) {
+      observer.observe(pane);
+      const header = pane.querySelector('.document-dock-pane-header');
+      if (header) observer.observe(header);
+    }
+    measure();
+    return () => observer.disconnect();
+  }, [ids.join('|')]);
+
+  function verticalStack(element: HTMLElement, node: Extract<DocumentDockNode, { type: "split" }>) {
+    let stackElement = element;
+    while (stackElement.parentElement?.classList.contains('is-vertical')) stackElement = stackElement.parentElement;
+    return { stack: findDockNode(renderTree, stackElement.dataset.dockSplitId!) ?? node, bounds: stackElement.getBoundingClientRect() };
+  }
 
   function captureScrollPositions() {
     dockRef.current?.querySelectorAll<HTMLElement>("[data-dock-document-id]").forEach((pane) => {
@@ -159,8 +207,13 @@ export default function DocumentDock(props: DocumentDockProps) {
       if (current.kind === "resize") {
         const size = current.direction === "horizontal" ? current.bounds.width : current.bounds.height;
         const offset = current.direction === "horizontal" ? event.clientX - current.bounds.left : event.clientY - current.bounds.top;
-        const ratio = Math.min(MAX_DOCK_SPLIT_RATIO, Math.max(MIN_DOCK_SPLIT_RATIO, offset / Math.max(size, 1)));
-        updateInteraction({ ...current, ratio });
+        if (current.stack) {
+          const preview = resizeVerticalDockStack(current.stack, current.splitId, offset, size, current.headers);
+          updateInteraction({ ...current, preview });
+        } else {
+          const ratio = Math.min(MAX_DOCK_SPLIT_RATIO, Math.max(MIN_DOCK_SPLIT_RATIO, offset / Math.max(size, 1)));
+          updateInteraction({ ...current, ratio });
+        }
         event.preventDefault();
         return;
       }
@@ -192,7 +245,7 @@ export default function DocumentDock(props: DocumentDockProps) {
       if (!current || current.pointerId !== event.pointerId) return;
       if (current.kind === "resize") {
         const original = latestProps.current.tree;
-        const next = resizeDocumentDockSplit(original, current.splitId, current.ratio);
+        const next = current.preview ? applyDockRatios(original, current.preview) : resizeDocumentDockSplit(original, current.splitId, current.ratio);
         if (next !== original) commitTree(next);
       } else if (current.moved && current.target) {
         if (current.target.kind === "workspace") moveDock(current.target.edge, current.documentId);
@@ -234,9 +287,12 @@ export default function DocumentDock(props: DocumentDockProps) {
 
   function beginResize(event: ReactPointerEvent, node: Extract<DocumentDockNode, { type: "split" }>) {
     if (event.button !== 0 || !event.isPrimary) return;
-    const bounds = event.currentTarget.parentElement!.getBoundingClientRect();
+    const group = node.direction === "vertical" ? verticalStack(event.currentTarget.parentElement!, node) : null;
+    const bounds = group?.bounds ?? event.currentTarget.parentElement!.getBoundingClientRect();
     setMoveControls(null);
-    updateInteraction({ kind: "resize", pointerId: event.pointerId, splitId: node.id, direction: node.direction, bounds, ratio: node.ratio });
+    captureScrollPositions();
+    updateInteraction({ kind: "resize", pointerId: event.pointerId, splitId: node.id, direction: node.direction, bounds, ratio: node.ratio,
+      ...(group ? { stack: group.stack, headers: headerHeights } : {}) });
     try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch { /* Synthetic pointer events may not have an active pointer. */ }
     event.preventDefault();
   }
@@ -249,15 +305,30 @@ export default function DocumentDock(props: DocumentDockProps) {
     });
   }
 
-  const viewTree = interaction?.kind === "resize" ? resizeDocumentDockSplit(renderTree, interaction.splitId, interaction.ratio) : renderTree;
+  const viewTree = interaction?.kind === "resize" ? interaction.preview ? applyDockRatios(renderTree, interaction.preview)
+    : resizeDocumentDockSplit(renderTree, interaction.splitId, interaction.ratio) : renderTree;
   function renderNode(node: DocumentDockNode): ReactNode {
     if (node.type === "split") {
       const horizontal = node.direction === "horizontal";
-      return <div className={`document-dock-split is-${node.direction}`} data-dock-split-id={node.id} key={node.id} style={{ "--dock-first": `${node.ratio}fr`, "--dock-second": `${1 - node.ratio}fr` } as CSSProperties}>
+      const fraction = getDockSplitFraction(node);
+      return <div className={`document-dock-split is-${node.direction}`} data-dock-split-id={node.id} key={node.id} style={{ "--dock-first": `${fraction}fr`, "--dock-second": `${1 - fraction}fr`,
+        "--dock-min-first": `${getDockMinimumHeight(node.first, headerHeights)}px`, "--dock-min-second": `${getDockMinimumHeight(node.second, headerHeights)}px`,
+        minHeight: getDockMinimumHeight(node, headerHeights) } as CSSProperties}>
         {renderNode(node.first)}
-        <div className="document-dock-divider" role="separator" tabIndex={0} aria-label={horizontal ? "Resize pinned pane widths" : "Resize pinned pane heights"} aria-orientation={horizontal ? "vertical" : "horizontal"} aria-valuenow={Math.round(node.ratio * 100)} aria-valuemin={MIN_DOCK_SPLIT_RATIO * 100} aria-valuemax={MAX_DOCK_SPLIT_RATIO * 100} onPointerDown={(event) => beginResize(event, node)} onKeyDown={(event) => {
+        <div className="document-dock-divider" role="separator" tabIndex={0} aria-label={horizontal ? "Resize pinned pane widths" : "Resize pinned pane heights"} aria-orientation={horizontal ? "vertical" : "horizontal"} aria-valuenow={Math.round(fraction * 100)} aria-valuemin={horizontal ? MIN_DOCK_SPLIT_RATIO * 100 : 0} aria-valuemax={horizontal ? MAX_DOCK_SPLIT_RATIO * 100 : 100} onPointerDown={(event) => beginResize(event, node)} onKeyDown={(event) => {
           const negative = horizontal ? "ArrowLeft" : "ArrowUp";
           const positive = horizontal ? "ArrowRight" : "ArrowDown";
+          if (!horizontal) {
+            if (![negative, positive, "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const { stack, bounds } = verticalStack(event.currentTarget.parentElement!, node);
+            const step = Math.max(10, bounds.height * (event.shiftKey ? .1 : .02));
+            const current = event.currentTarget.getBoundingClientRect().top - bounds.top;
+            const offset = event.key === "Home" ? 0 : event.key === "End" ? bounds.height
+              : current + (event.key === negative ? -step : step);
+            commitTree(applyDockRatios(props.tree, resizeVerticalDockStack(stack, node.id, offset, bounds.height, headerHeights)));
+            return;
+          }
           let ratio = node.ratio;
           if (event.key === negative) ratio -= event.shiftKey ? 0.1 : 0.02;
           else if (event.key === positive) ratio += event.shiftKey ? 0.1 : 0.02;
@@ -275,21 +346,29 @@ export default function DocumentDock(props: DocumentDockProps) {
     const title = conversation.title || "Untitled document";
     const target = interaction?.kind === "drag" && interaction.moved ? interaction.target : null;
     const dragging = interaction?.kind === "drag" && interaction.moved && interaction.documentId === node.documentId;
-    return <section className={`document-dock-pane${props.activeDocumentId === node.documentId ? " is-active" : ""}${dragging ? " is-dragging" : ""}`} key={node.documentId} data-dock-document-id={node.documentId} aria-label={`Pinned document: ${title}`} onPointerDownCapture={() => props.onSelect(node.documentId)} onFocusCapture={() => props.onSelect(node.documentId)}>
+    return <section style={{ minHeight: getDockMinimumHeight(node, headerHeights) }} className={`document-dock-pane${collapsedIds.includes(node.documentId) ? " is-header-only" : ""}${props.activeDocumentId === node.documentId ? " is-active" : ""}${dragging ? " is-dragging" : ""}`} key={node.documentId} data-dock-document-id={node.documentId} aria-label={`Pinned document: ${title}`} onPointerDownCapture={() => props.onSelect(node.documentId)} onFocusCapture={() => props.onSelect(node.documentId)}>
       <header className="document-dock-pane-header" onPointerDown={(event) => {
         if (!(event.target as HTMLElement).closest("button, select, input")) beginDrag(event, node.documentId);
       }}>
+        <div className="document-dock-heading">
+        {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${title}`} title="Minimize document" onClick={() => props.onMinimize?.(node.documentId)}>−</button> : null}
         <button type="button" className="document-dock-grip" ref={(element) => { if (element) moveButtonsRef.current.set(node.documentId, element); else moveButtonsRef.current.delete(node.documentId); }} data-dock-move-id={node.documentId} title={ids.length === 1 && props.onMoveDock ? "Drag to a workspace edge, or click to choose a position" : "Drag to arrange panes, or click for placement controls"} aria-label={`Move pinned document: ${title}`} aria-expanded={moveControls === node.documentId} aria-haspopup="dialog" onPointerDown={(event) => beginDrag(event, node.documentId)} onClick={(event) => {
           if (suppressMoveClick.current && event.detail !== 0) { suppressMoveClick.current = false; return; }
           suppressMoveClick.current = false;
           setMoveControls(moveControls === node.documentId ? null : node.documentId);
         }}><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="currentColor"><circle cx="5" cy="4" r="1.2"/><circle cx="11" cy="4" r="1.2"/><circle cx="5" cy="8" r="1.2"/><circle cx="11" cy="8" r="1.2"/><circle cx="5" cy="12" r="1.2"/><circle cx="11" cy="12" r="1.2"/></svg></button>
         <span className="document-dock-pane-title" title={title}>{title}</span>
+        </div>
+        {props.renderDocumentControls && <div className="document-dock-controls" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>{props.renderDocumentControls(conversation)}</div>}
+        <div className="document-dock-actions">
         {props.onToggleScope && <button type="button" className="document-dock-scope" aria-label={`Keep ${title} visible across documents`} aria-pressed={node.scope !== "family"} title={node.scope === "family" ? "Pinned within this document family. Click to keep visible across documents." : "Pinned across documents. Click to show only within this document family."} onClick={() => props.onToggleScope?.(node.documentId)}><svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="9" cy="9" r="6.5"/><ellipse cx="9" cy="9" rx="2.7" ry="6.5"/><path d="M3 6.5h12M3 11.5h12"/></svg></button>}
         <button type="button" className="document-dock-unpin" title="Return document to the scrolling workspace" aria-label={`Unpin document: ${title}`} onClick={() => props.onUnpin(node.documentId)}><svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m10 2 6 6-2 1-1 4-2 1-7-7 1-2 4-1 1-2Z M7 11l-5 5 M2 2l14 14"/></svg><span>Unpin</span></button>
+        {props.renderDocumentMenu && <div className="document-dock-menu" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>{props.renderDocumentMenu(conversation)}</div>}
+        {props.onClose ? <button type="button" className="document-window-button document-close-button" aria-label={`Close document: ${title}`} title="Close document" onClick={() => props.onClose?.(node.documentId)}>×</button> : null}
+        </div>
       </header>
-      <div className="document-dock-pane-body">{props.renderDocument(conversation)}</div>
-      {moveControls === node.documentId && <MovePaneControls documentId={node.documentId} conversations={props.conversations} ids={ids} trigger={moveButtonsRef.current.get(node.documentId) ?? null} onMove={(targetId, edge) => { move(node.documentId, targetId, edge); }} onClose={closeMoveControls}
+      <div className="document-dock-pane-body" inert={collapsedIds.includes(node.documentId)}>{props.renderDocument(conversation)}</div>
+      {moveControls === node.documentId && <MovePaneControls floating={collapsedIds.includes(node.documentId)} documentId={node.documentId} conversations={props.conversations} ids={ids} trigger={moveButtonsRef.current.get(node.documentId) ?? null} onMove={(targetId, edge) => { move(node.documentId, targetId, edge); }} onClose={closeMoveControls}
         dockPosition={props.dockPosition ?? "left"} onMoveDock={props.onMoveDock ? (position) => moveDock(position, node.documentId) : undefined} />}
       {target?.kind === "pane" && target.documentId === node.documentId && <div className={`document-dock-drop is-${target.edge}`}><span>Place {placementLabels[target.edge]}</span></div>}
     </section>;

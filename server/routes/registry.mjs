@@ -2,6 +2,7 @@ import {
   CAPTURE_API_PATH,
   CONNECTION_API_PATH,
   EXTENSION_SESSION_API_PATH,
+  EXTENSION_WORKSPACE_SESSION_API_PATH,
 } from "@margin-chat/capture-contracts";
 
 // Both the local server and the deployed catch-all dispatch this same registry.
@@ -10,6 +11,7 @@ export const API_ROUTES = Object.freeze([
   { id: "health", methods: ["GET"], path: "/api/health" },
   { id: "billingWebhook", methods: ["POST"], path: "/api/billing/webhook" },
   { id: "extensionSession", methods: ["POST", "DELETE"], path: EXTENSION_SESSION_API_PATH },
+  { id: "extensionWorkspaceSession", methods: ["POST"], path: EXTENSION_WORKSPACE_SESSION_API_PATH },
   { id: "captureCreate", methods: ["POST"], path: CAPTURE_API_PATH },
   { id: "captureConnection", methods: ["GET"], path: CONNECTION_API_PATH },
   { id: "authSession", methods: ["GET"], path: "/api/auth/session" },

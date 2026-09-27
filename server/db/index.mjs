@@ -50,7 +50,11 @@ const { Pool } = pg;
 
 export function resolveSchemaMode(env, requestedMode) {
   const production = env.NODE_ENV === "production" || Boolean(env.VERCEL);
-  const schemaMode = requestedMode ?? env.DB_SCHEMA_MODE ?? (production ? "verify" : "migrate");
+  const host = getConnectionMetadata(env).host ?? buildConnectionOptions(env).host;
+  const localDatabase = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host);
+  // A local API can use the production database. Automatic migrations are only
+  // a loopback development default; remote schema changes need explicit intent.
+  const schemaMode = requestedMode ?? env.DB_SCHEMA_MODE ?? (!production && localDatabase ? "migrate" : "verify");
   if (!["verify", "migrate"].includes(schemaMode)) throw new Error("DB_SCHEMA_MODE must be verify or migrate.");
   if (production && schemaMode !== "verify") throw new Error("Production applications must use DB_SCHEMA_MODE=verify; run migrations separately before deploying.");
   return schemaMode;

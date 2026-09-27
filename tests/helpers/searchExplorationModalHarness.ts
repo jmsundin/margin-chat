@@ -105,7 +105,9 @@ try {
   await click(button("Clear filters"));
   const first = cards()[0];
   const result = buildSearchExploration({ conversations, groups, categories, query: "needle" }).results.find((entry) => entry.id === first.dataset.searchResult)!;
-  await click(first.querySelector(".search-passage-select")!);
+  assert(cards().some((card) => card.querySelector(".search-passage-context")?.textContent?.includes("Section: Background")));
+  await click(first.querySelector(".search-passage-preview-toggle")!);
+  assert.equal(opened.length, 0, "Previewing keeps the document search open.");
   const renderedPassage = dialog().querySelector(".search-passage-detail blockquote")!.textContent!;
   assert(renderedPassage.length > 10);
   assert(!renderedPassage.includes("**"), "Markdown should read as formatted text in the passage preview.");
@@ -124,9 +126,9 @@ try {
   assert(dialog().querySelector(".search-pagination")!.textContent?.includes("of 47"), "Context boosts must not exclude other chats.");
   await click(facetButton("Private notes"));
   assert.equal(cards().length, 1);
-  await click(cards()[0].querySelector(".search-passage-select")!);
   assert(dialog().querySelector(".search-passage-private"));
-  await click(dialog().querySelector(".search-open-source")!);
+  await click(cards()[0].querySelector(".search-passage-select")!);
+  assert.equal(dialog(), null, "Clicking a private result opens its source immediately.");
   assert.equal(opened.at(-1)?.sourceKind, "annotation");
   assert.equal(opened.at(-1)?.noteId, "private-note");
   assert.equal(networkCalls, 0, "Private/local searching must not make model requests when assistance is disabled.");
@@ -165,9 +167,20 @@ try {
 
   await act(async () => { root.render(createElement(SearchModal, { isOpen: true, onClose() {}, onQueryChange() {}, onSelectResult(id: string) { legacyOpened.push(id); }, query: "legacy", results: [{ conversationId: "legacy-id", title: "Legacy result", preview: "Legacy passage", rootTitle: "Legacy result", matchLabel: "Message", locationLabel: "Main chat", updatedLabel: "today" }] })); });
   await click(cards()[0].querySelector(".search-passage-select")!);
-  await click(dialog().querySelector(".search-open-source")!);
   assert.deepEqual(legacyOpened, ["legacy-id"], "The original result-only props retain their source-opening callback.");
   checks.push("existing result-only callers retain a useful fallback");
+
+  await act(async () => { root.render(createElement(Host)); });
+  await act(async () => { setOpen(true); });
+  await type("Archive 0");
+  const titleCard = cards().find((card) => card.querySelector("strong")?.textContent === "Archive 0")!;
+  assert(titleCard.querySelector(".search-passage-excerpt")?.textContent?.includes("We decided needle"), "Title matches include document content before any click.");
+  assert(titleCard.querySelector(".search-passage-context")?.textContent?.includes("Group: Launch"));
+  await click(titleCard.querySelector(".search-passage-select")!);
+  assert.equal(dialog(), null, "Clicking a title result opens the document in one step.");
+  assert.equal(opened.at(-1)?.conversationId, "chat-00");
+  assert.equal(opened.at(-1)?.sourceKind, "conversation");
+
 
   const assistanceRequests: any[] = [];
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (url: string, init: RequestInit) => {

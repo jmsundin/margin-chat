@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { Conversation } from "../../client/src/types";
-import { buildChatOutline } from "../../client/src/lib/chatOutline";
+import { buildChatOutline, buildEditableDocumentOutline } from "../../client/src/lib/chatOutline";
 
 const browser = new Window({ url: "http://chat-outline.test" });
 for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Document", "DocumentFragment", "MutationObserver", "Event", "MouseEvent", "KeyboardEvent"]) {
@@ -35,40 +35,38 @@ const button = (label: string) => {
 const checks: string[] = [];
 try {
   await act(async () => { root.render(createElement(ChatOutline, props)); });
-  assert.equal(container.querySelectorAll('.outline-conversation-section').length, 2);
-  assert.equal(container.querySelectorAll('.outline-response-link').length, 3);
+  assert.deepEqual([...container.querySelectorAll('button')].map((item) => item.textContent),
+    ['Launch plan', 'First week', 'Interviews', 'Learning goals', 'Retention']);
   assert.equal(container.querySelector('[aria-current="location"]')?.textContent, 'First week');
-  assert.equal(container.querySelector('.is-current-response .outline-response-link')?.textContent, 'AI response 1');
   assert(container.querySelector('.outline-heading-level-3'));
-  checks.push('prompts separate response groups while nested headings retain active location');
+  assert(!container.textContent?.includes('AI response'));
+  assert(!container.textContent?.includes('Help me plan a launch'));
+  checks.push('only document headings appear, in order and with their depth and active location');
 
-  await act(async () => { button('Collapse headings for ai response 1').click(); });
-  assert.equal(container.querySelector('#outline-sections-message-answer-1'), null);
-  assert.deepEqual(selected, []);
-  await act(async () => { button('AI response 1').click(); });
-  assert.deepEqual(selected, ['message-answer-1']);
-  assert.equal(container.querySelector('#outline-sections-message-answer-1'), null, 'Jumping should not reopen headings.');
-  await act(async () => { button('Expand headings for ai response 1').click(); });
   await act(async () => { button('First week').click(); });
-  assert.deepEqual(selected, ['message-answer-1', 'heading-answer-1-1']);
-  checks.push('response jumps and separate disclosure buttons never steal one another’s action');
+  assert.deepEqual(selected, ['heading-answer-1-1']);
+  await act(async () => { root.render(createElement(ChatOutline, { ...props, activeItemId: 'message-answer-2' })); });
+  assert.equal(container.querySelector('[aria-current="location"]')?.textContent, 'Interviews');
+  checks.push('heading jumps retain their targets and paragraph navigation retains the preceding heading');
 
-  await act(async () => { button('Collapse headings').click(); });
-  assert.equal(container.querySelectorAll('.outline-response-headings').length, 0);
-  assert.equal(container.querySelectorAll('.outline-response-link').length, 3);
-  await act(async () => { button('AI response 2').click(); });
-  assert.equal(selected.at(-1), 'message-answer-2');
-  await act(async () => { button('Prompt 2What should we measure?').click(); });
-  assert.equal(selected.at(-1), 'message-prompt-2');
-  await act(async () => { button('Expand headings').click(); });
-  assert.equal(container.querySelectorAll('.outline-response-headings').length, 2);
-  checks.push('response-only scan keeps every prompt and answer reachable and restores subdivisions');
+  const documentItems = buildEditableDocumentOutline({ ...conversation, document: {
+    schemaVersion: 1, prompts: [], generations: [], blocks: [
+      { id: 'authored', kind: 'markdown', content: '# Written content', createdAt: '', updatedAt: '' },
+      { id: 'prose', kind: 'markdown', content: 'A paragraph without headings.', createdAt: '', updatedAt: '' },
+    ],
+  } });
+  await act(async () => { root.render(createElement(ChatOutline, { ...props, items: documentItems })); });
+  assert.equal(container.textContent, 'Written content');
+  await act(async () => { button('Written content').click(); });
+  assert.equal(selected.at(-1), 'heading-document:authored-0');
+  checks.push('editable document headings retain their targets without written section metadata');
 
-  await act(async () => { root.render(createElement(ChatOutline, { ...props, items: items.filter((item) => item.kind === 'heading'), activeItemId: 'heading-answer-3-0' })); });
-  assert.equal(container.querySelectorAll('.outline-response-link').length, 0);
-  assert.equal(container.querySelectorAll('.outline-heading-link').length, 5);
-  assert.equal(container.querySelector('[aria-current="location"]')?.textContent, 'Learning goals');
-  checks.push('headings-only outlines remain navigable without invented AI response groups');
+  for (const emptyItems of [[], items.filter((item) => item.kind !== 'heading')]) {
+    await act(async () => { root.render(createElement(ChatOutline, { ...props, items: emptyItems })); });
+    assert.equal(container.querySelectorAll('button').length, 0);
+    assert.equal(container.querySelector('.chat-outline-empty')?.textContent, 'Add headings to your document to see its outline.');
+  }
+  checks.push('empty and heading-free documents explain how to populate the outline');
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => { root.unmount(); });

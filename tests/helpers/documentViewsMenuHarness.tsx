@@ -14,8 +14,13 @@ let setEmpty: (empty: boolean) => void;
 let setBranchesEnabled: (enabled: boolean) => void;
 const selected: string[] = [];
 let branchToggles = 0;
+let setBulkActions: (enabled: boolean) => void;
+let minimizedAll = 0;
+let closedAll = 0;
 function Host() {
   const [id, updateId] = useState("main");
+  const [bulkActions, updateBulkActions] = useState(false);
+  setBulkActions = updateBulkActions;
   const [empty, updateEmpty] = useState(false);
   const [branchesOpen, updateBranchesOpen] = useState(false);
   const [branchesEnabled, updateBranchesEnabled] = useState(true);
@@ -23,6 +28,9 @@ function Host() {
   setEmpty = updateEmpty;
   setBranchesEnabled = updateBranchesEnabled;
   return createElement(DocumentViewsMenu, {
+    onMinimizeAll: bulkActions ? () => { minimizedAll++; } : undefined,
+    onCloseAll: bulkActions ? () => { closedAll++; } : undefined,
+    canMinimizeAll: !empty, canCloseAll: !empty,
     currentDocumentId: id, relatedItems: empty ? [] : [{ id: "note", title: "Reference note", kind: "note" }, { id: "chat", title: "Supporting chat", kind: "chat" }],
     relatedWarning: "Results may be incomplete.", onSelectRelated: (id) => selected.push(id),
     branchCount: empty ? 0 : 3, branchesOpen, branchesEnabled,
@@ -128,6 +136,27 @@ try {
   assert.equal(items().length, 1);
   assert.equal(items()[0].getAttribute("aria-label"), "Related notes and chats (2)");
   checks.push("unavailable branch access is omitted without hiding related results");
+  await key(menu(), "Escape");
+  await act(async () => setBulkActions(true));
+  await key(trigger(), "ArrowUp");
+  assert.equal(browser.document.activeElement.textContent.trim(), 'Close all documents');
+  await click(browser.document.activeElement);
+  assert.equal(closedAll, 1);
+  assert.equal(menu(), null);
+  assert.equal(browser.document.activeElement, trigger());
+  await click(trigger());
+  await click(items().find((item) => item.textContent.trim() === 'Minimize all documents'));
+  assert.equal(minimizedAll, 1);
+  assert.equal(menu(), null);
+  assert.equal(browser.document.activeElement, trigger());
+  checks.push('bulk document actions support keyboard navigation and restore focus to the views trigger');
+  await act(async () => setEmpty(true));
+  await click(trigger());
+  assert(items().every((item) => item.disabled));
+  await click(items().find((item) => item.textContent.trim() === 'Close all documents'));
+  assert.equal(closedAll, 1);
+  await key(menu(), 'Escape');
+  checks.push('empty workspaces keep bulk actions visible and disabled');
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

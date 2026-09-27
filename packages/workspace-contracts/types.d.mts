@@ -105,6 +105,8 @@ export interface DocumentInsertion {
   replaceTo?: number;
 }
 
+export type DocumentBlockAuthorship = "ai" | "user" | "mixed";
+
 export interface DocumentBlock {
   id: string;
   kind: "markdown";
@@ -113,6 +115,8 @@ export interface DocumentBlock {
   updatedAt: string;
   sourceMessageId?: string;
   generationId?: string;
+  /** Block-level origin; human edits retain AI origin as mixed authorship. */
+  authorship?: DocumentBlockAuthorship;
 }
 
 /** A user-authored passage link; it does not change either document's ancestry. */
@@ -156,11 +160,20 @@ export interface DocumentGeneration {
   acceptedAt?: string;
   /** Authored blocks replaced when accepting a rerun, retained for an exact undo. */
   previousBlocks?: DocumentBlock[];
-  replacement?: { blockId: string; offset: number; content: string };
+  replacement?: { blockId: string; offset: number; content: string; authorship?: DocumentBlockAuthorship };
 }
 
 export interface EditableDocument {
   schemaVersion: 1;
+  /** Presentation only: margin notes retain the complete document editor and data model. */
+  marginNote?: {
+    display: "compact" | "full";
+    /** Remember the compact frame size independently of the full document layout. */
+    size?: { width: number; height: number };
+    /** Migration identity and original reference, retained even if the passage is gone. */
+    legacyNoteId?: string;
+    source?: Pick<ConversationNote, "sourceMessageId" | "sourceBlockId" | "startOffset" | "endOffset" | "quote">;
+  };
   blocks: DocumentBlock[];
   prompts: DocumentPrompt[];
   generations: DocumentGeneration[];
@@ -183,8 +196,10 @@ export interface PublicTopicSource {
 export interface DocumentLayout {
   /** Horizontal document positions within this root's family; ancestry is unchanged. */
   order: string[];
-  /** Side documents retained as tabs while their panes are hidden. */
+  /** Documents retained as tabs while their panes are hidden. */
   minimizedIds: string[];
+  /** Documents hidden from both panes and tabs, available to reopen without deletion. */
+  closedIds?: string[];
   /** User-selected widths in CSS pixels, keyed by document in this root's family. */
   widthsById?: Record<string, number>;
 }

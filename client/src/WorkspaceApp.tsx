@@ -1,9 +1,13 @@
+import { apiStorageNamespace } from "./lib/apiTransport";
+import { useBrowserWorkspaceCapture, type BrowserCaptureRequest } from "./lib/browserWorkspace";
+import { createMarginDocument, isCompactDocument } from "@margin-chat/workspace-contracts";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
 import "./document-workspace.css";
 import { getChatPanelLayout, resizeChatPanel } from "./lib/chatPanelLayout";
 import { getConversationAnnotationPreview, summarizeAnnotationText } from "./lib/annotationPreview";
 import {
+  Fragment,
   startTransition,
   type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -22,6 +26,7 @@ import AppSettingsModal from "./components/AppSettingsModal";
 import BranchRail from "./components/BranchRail";
 import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
+import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import DocumentTabs from "./components/DocumentTabs";
 import DocumentChildTabs from "./components/DocumentChildTabs";
@@ -32,7 +37,7 @@ import WorkspaceView from "./components/WorkspaceView";
 import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
-import { focusDocument, getDocumentWidth, getDocumentWorkspace, minimizeDocument, reorderDocument, setDocumentWidth } from "./lib/documentWorkspace";
+import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, minimizeDocument, reorderDocument, setDocumentWidth } from "./lib/documentWorkspace";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
@@ -46,7 +51,7 @@ import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
 import { applyJevCategories, withJevConsent } from "./lib/jevAssistance";
 import { applyJevGroupSuggestions } from "./lib/jevGrouping";
 import { getThreadCategoryLabel } from "./lib/threadCategories";
-import { normalizeAISettings, normalizeDocumentDock, type DocumentDockNode } from "@margin-chat/workspace-contracts";
+import { getDocumentBlockAuthorship, normalizeAISettings, normalizeDocumentDock, type DocumentDockNode } from "@margin-chat/workspace-contracts";
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
@@ -59,11 +64,10 @@ import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
 import { ConversationGroupPickerContext } from "./components/ConversationGroupControls";
 import MainChatTileView from "./components/MainChatTileView";
-import MarginNoteTreeNode from "./components/MarginNoteTreeNode";
 import ProfileModal from "./components/ProfileModal";
 import ChatHistoryImport from "./components/ChatHistoryImport";
 import CaptureInbox from "./components/CaptureInbox";
-import { openCaptureAsNote } from "./lib/captures";
+import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
 import SearchSourceFocus from "./components/SearchSourceFocus";
 import { resolveSearchSource } from "./lib/searchSource";
@@ -339,6 +343,10 @@ const INITIAL_LEFT_SIDEBAR_OPEN = loadInitialLeftSidebarOpen();
 const INITIAL_CHAT_PANEL_WIDTH = loadInitialChatPanelWidth();
 
 interface WorkspaceAppProps {
+  storageNamespace?: string;
+  browserCaptureRequest?: BrowserCaptureRequest | null;
+  onBrowserCaptureHandled?: (id: string) => void;
+  onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys") => void;
   billingDashboard: import("./types").BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
@@ -619,6 +627,7 @@ function hasOverlappingAnchor(
 }
 
 export default function WorkspaceApp({
+  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, onOpenWebsiteSettings,
   billingDashboard, billingDashboardLoading, billingDashboardError, billingOpenRequest, onRefreshBilling, onAddMoney,
   billingNotice,
   onDismissBillingNotice,
@@ -636,10 +645,11 @@ export default function WorkspaceApp({
   theme,
   user,
 }: WorkspaceAppProps) {
-  const stateStorageKey = getStateStorageKey(user.id);
-  const stateSavedAtStorageKey = getStateSavedAtStorageKey(user.id);
+  const storageUserId = storageNamespace ?? apiStorageNamespace(user.id);
+  const stateStorageKey = getStateStorageKey(storageUserId);
+  const stateSavedAtStorageKey = getStateSavedAtStorageKey(storageUserId);
   const recentModelSelectionsStorageKey = getRecentModelSelectionsStorageKey(
-    user.id,
+    storageUserId,
   );
   const initialStoredStateRef = useRef<ReturnType<typeof loadStoredState> | null>(
     null,
@@ -659,12 +669,13 @@ export default function WorkspaceApp({
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
-  const vault = useMarkdownVault({ user, state, setState, legacyHasState: initialStoredStateRef.current.hasStoredState });
+  const vault = useMarkdownVault({ user, storageUserId, state, setState, legacyHasState: initialStoredStateRef.current.hasStoredState });
   const storageMode = vault.storageMode;
   const cloudBackupMatchesLocal = vault.matchesCloud;
   const localDirectoryStatus = vault.localDirectoryStatus;
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
-  const [noteOpenRequest, setNoteOpenRequest] = useState<{ noteId: string; sequence: number } | null>(null);
+  const [closedMarginNotes, setClosedMarginNotes] = useState<Record<string, boolean>>({});
+  const [marginResizePreviews, setMarginResizePreviews] = useState<Record<string, MarginDocumentSize | undefined>>({});
   const [graphFocusRequest, setGraphFocusRequest] = useState<{
     conversationId: string;
     requestId: number;
@@ -696,7 +707,7 @@ export default function WorkspaceApp({
   const [resizingChatPanelConversationId, setResizingChatPanelConversationId] =
     useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [selectionResponseDestination, setSelectionResponseDestination] = useState<"inline" | "side">("inline");
+  const [selectionResponseDestination, setSelectionResponseDestination] = useState<"inline" | "side">("side");
   const [selectionReplaceText, setSelectionReplaceText] = useState(false);
   const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
   const { executions: chatExecutions, pendingConversationIds } = useChatStreams(appendAssistantDelta, saveExecutionDetails);
@@ -713,10 +724,13 @@ export default function WorkspaceApp({
   const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
   const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
-  const [jevEnabled, setJevEnabled] = useJevPreference(user.id);
-  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
+  const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
-  const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage" | "billing">("account");
+  const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage" | "billing" | "api-keys">(() => {
+    const tab = new URLSearchParams(window.location.search).get("settings");
+    return tab === "billing" || tab === "api-keys" ? tab : "account";
+  });
   const previousPendingChats = useRef(pendingConversationIds);
   const refreshBillingAfterChat = useEffectEvent(() => { void onRefreshBilling(); });
   useEffect(() => {
@@ -729,7 +743,39 @@ export default function WorkspaceApp({
     setProfileInitialTab("billing");
     setProfileModalOpen(true);
   }, [billingOpenRequest]);
-  const [captureInboxOpen, setCaptureInboxOpen] = useState(() => new URLSearchParams(window.location.search).has("inbox"));
+  const [captureHandoff, setCaptureHandoff] = useState(() => readCaptureHandoff(window.location.search));
+  const [captureInboxOpen, setCaptureInboxOpen] = useState(() => new URLSearchParams(window.location.search).has("inbox") || !!readCaptureHandoff(window.location.search));
+  const [captureAIRequest, setCaptureAIRequest] = useState<{ conversationId: string; prompt: string } | null>(null);
+  function closeCaptureInbox() {
+    setCaptureInboxOpen(false);
+    setCaptureHandoff(null);
+    const url = new URL(window.location.href);
+    for (const key of ["capture", "intent", "inbox"]) url.searchParams.delete(key);
+    window.history.replaceState(window.history.state, "", url);
+  }
+  const submitCaptureAI = useEffectEvent((conversationId: string, prompt: string) => {
+    const source = currentStateRef.current.conversations[conversationId];
+    const request = source && createCaptureAIRequest(source, prompt);
+    if (request) handleDocumentSubmit(conversationId, request);
+  });
+  useEffect(() => {
+    if (!captureAIRequest || !state.conversations[captureAIRequest.conversationId]) return;
+    setCaptureAIRequest(null);
+    submitCaptureAI(captureAIRequest.conversationId, captureAIRequest.prompt);
+  }, [captureAIRequest, state.conversations]);
+  useBrowserWorkspaceCapture(vault.ready, browserCaptureRequest, (request) => {
+    setSelectionDraft(null);
+    setMainViewMode("chat");
+    setState((current) => {
+      const next = openCaptureAsNote(current, request.capture);
+      currentStateRef.current = next;
+      return next;
+    });
+    if (request.prompt?.trim()) {
+      setCaptureAIRequest({ conversationId: `web-capture-${request.capture.id}`, prompt: request.prompt.trim() });
+    }
+    if (isMobileViewport) setLeftSidebarOpen(false);
+  }, onBrowserCaptureHandled);
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
   const [searchModalOpen, setSearchModalOpen] = useState(false);
@@ -745,6 +791,8 @@ export default function WorkspaceApp({
   >([]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(0);
+  // Keep this session's explicit sizes separate from streamed/synchronized
+  // conversation snapshots. Persist them too, but don't discard them on release.
   const [resizedPanelWidths, setResizedPanelWidths] = useState<Record<string, number>>({});
   const toolbarRef = useRef<HTMLFormElement>(null);
   const documentPanelRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -779,6 +827,7 @@ export default function WorkspaceApp({
   const panelResizeStateRef = useRef<{
     conversationId: string;
     originWidth: number;
+    previousWidthOverride: number | undefined;
     latestWidth: number;
     startClientX: number;
     direction: 1 | -1;
@@ -805,6 +854,8 @@ export default function WorkspaceApp({
   const activeConversation =
     state.conversations[state.activeConversationId] ??
     state.conversations[state.rootId];
+  const activeMarginNotesVisible = !closedMarginNotes[activeConversation.id]
+    && activeConversation.childIds.some((id) => isCompactDocument(state.conversations[id]));
   const documentAnchorLinks = useMemo(() => {
     const cache = new Map<string, MessageAnchorLink[]>();
     return (conversationId: string) => {
@@ -823,6 +874,7 @@ export default function WorkspaceApp({
   const workspaceFocusId = pinnedDocumentIds.includes(activeConversation.id) && state.conversations[scrollingDocumentId]
     ? scrollingDocumentId : activeConversation.id;
   const documentWorkspace = getDocumentWorkspace(state.conversations, workspaceFocusId);
+  const documentChildrenByParent = useMemo(() => getDocumentChildrenByParent(state.conversations), [state.conversations]);
   const minimizedSideDocumentsByParent = useMemo(() => {
     const children = new Map<string, Conversation[]>();
     for (const root of Object.values(state.conversations)) {
@@ -848,10 +900,11 @@ export default function WorkspaceApp({
   }
   collectFamilyPins(documentDock?.tree ?? null);
   const visiblePinnedDocumentIds = pinnedDocumentIds.filter((id) => !familyPinnedDocumentIds.includes(id) || familyDocumentIds.has(id));
-  const scrollingDocuments = documentWorkspace.visibleDocuments.filter((document) => !pinnedDocumentIds.includes(document.id));
+  const scrollingDocuments = documentWorkspace.visibleDocuments.filter((document) => !pinnedDocumentIds.includes(document.id)
+    && (!isCompactDocument(document) || !document.parentId));
   const tabDocuments = [
     ...visiblePinnedDocumentIds.filter((id) => !familyDocumentIds.has(id)).map((id) => state.conversations[id]),
-    ...documentWorkspace.documents,
+    ...documentWorkspace.openDocuments,
   ];
   useEffect(() => {
     if (!pinnedDocumentIds.includes(activeConversation.id)) setScrollingDocumentId(activeConversation.id);
@@ -877,9 +930,6 @@ export default function WorkspaceApp({
     hasSideItems: scrollingDocuments.length > 1,
     mobile: isMobileViewport,
   });
-  if (!isMobileViewport && canvasWidth >= 1150 && scrollingDocuments.length >= 3) {
-    chatPanelLayout.width = Math.min(chatPanelWidth, (canvasWidth - 112) / 3);
-  }
   const panelMaximumWidth = Math.max(CHAT_PANEL_MIN_WIDTH_PX, Math.min(CHAT_PANEL_MAX_WIDTH_PX, canvasWidth - 48));
   function getRenderedPanelWidth(conversationId: string) {
     if (isMobileViewport) return chatPanelLayout.width;
@@ -1085,7 +1135,7 @@ export default function WorkspaceApp({
         setState((current) => setDocumentWidth(current, resizeState.conversationId, resizeState.latestWidth));
       }
       if (!completed) pendingPanelResizeScroll.current = resizeState.startScrollLeft;
-      clearPanelWidthPreview(resizeState.conversationId);
+      if (!completed) restorePanelWidthOverride(resizeState);
       setIsResizingChatPanel(false);
       setResizingChatPanelConversationId(null);
       if (resizeState.handle.hasPointerCapture?.(resizeState.pointerId)) resizeState.handle.releasePointerCapture(resizeState.pointerId);
@@ -1157,7 +1207,7 @@ export default function WorkspaceApp({
 
     const resizing = panelResizeStateRef.current;
     panelResizeStateRef.current = null;
-    clearPanelWidthPreview(resizing.conversationId);
+    restorePanelWidthOverride(resizing);
     setIsResizingChatPanel(false);
     setResizingChatPanelConversationId(null);
     if (resizing.handle.hasPointerCapture?.(resizing.pointerId)) resizing.handle.releasePointerCapture(resizing.pointerId);
@@ -1184,6 +1234,19 @@ export default function WorkspaceApp({
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
+  }, []);
+
+  const openSearchFromShortcut = useEffectEvent(() => handleOpenSearch());
+  useEffect(() => {
+    function handleSearchShortcut(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.isComposing || event.key.toLowerCase() !== "o") return;
+      // Capture before editor keymaps and suppress the browser's Open File action.
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) openSearchFromShortcut();
+    }
+    document.addEventListener("keydown", handleSearchShortcut, true);
+    return () => document.removeEventListener("keydown", handleSearchShortcut, true);
   }, []);
 
   const toggleSidebarFromShortcut = useEffectEvent(() => handleToggleLeftSidebar());
@@ -1219,12 +1282,24 @@ export default function WorkspaceApp({
     if (pinnedDocumentIds.includes(state.activeConversationId)) return;
 
     const panel = panelRefs.current[state.activeConversationId];
+    const notes = panel?.closest("[data-document-id]")?.nextElementSibling;
+    if (panel && !isCompactDocument(activeConversation) && activeMarginNotesVisible && notes instanceof HTMLElement && notes.dataset.marginNotesFor === activeConversation.id && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const panelBounds = panel.getBoundingClientRect();
+      const groupWidth = notes.getBoundingClientRect().right - panelBounds.left;
+      canvas.scrollTo({
+        left: canvas.scrollLeft + panelBounds.left - canvas.getBoundingClientRect().left
+          - Math.max(0, (canvas.clientWidth - groupWidth) / 2),
+        behavior: "smooth",
+      });
+      return;
+    }
     panel?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
       inline: "center",
     });
-  }, [mainViewMode, state.activeConversationId, canvasWidth, chatPanelLayout.width, chatPanelLayout.fitsPair, vault.ready, isResizingSidebar, documentFocusSequence]);
+  }, [mainViewMode, state.activeConversationId, canvasWidth, chatPanelLayout.width, chatPanelLayout.fitsPair, vault.ready, isResizingSidebar, documentFocusSequence, activeMarginNotesVisible]);
 
   useEffect(() => {
     setActiveOutlineItemId((current) =>
@@ -1262,6 +1337,42 @@ export default function WorkspaceApp({
       deltaY,
       shiftKey: event.shiftKey,
     });
+
+    // A block's own scrolling surface gets first refusal, including at its
+    // boundaries. Otherwise the capture listener steals code/table scrolling
+    // before the browser or editor can handle it.
+    const block = target instanceof Element ? target.closest("[data-document-block-id]") : null;
+    let blockSurface = block && target instanceof Element ? target : null;
+    while (blockSurface && block?.contains(blockSurface)) {
+      if (blockSurface instanceof HTMLElement) {
+        const style = window.getComputedStyle(blockSurface);
+        const scrollX = /^(auto|scroll|overlay)$/.test(style.overflowX)
+          && blockSurface.scrollWidth > blockSurface.clientWidth;
+        const scrollY = /^(auto|scroll|overlay)$/.test(style.overflowY)
+          && blockSurface.scrollHeight > blockSurface.clientHeight;
+        const blockDeltaX = normalizeWheelDelta(event.deltaX, event.deltaMode, blockSurface.clientWidth);
+        const blockDeltaY = normalizeWheelDelta(event.deltaY, event.deltaMode, blockSurface.clientHeight);
+        const blockHorizontalDelta = getHorizontalWheelDelta({
+          deltaX: blockDeltaX,
+          deltaY: event.shiftKey ? normalizeWheelDelta(event.deltaY, event.deltaMode, blockSurface.clientWidth) : blockDeltaY,
+          shiftKey: event.shiftKey,
+        });
+        if ((scrollX && Math.abs(blockHorizontalDelta) >= 0.5)
+          || (scrollY && !event.shiftKey && Math.abs(blockDeltaY) >= 0.5)) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (scrollX) blockSurface.scrollLeft = clamp(
+            blockSurface.scrollLeft + (event.shiftKey ? blockHorizontalDelta : blockDeltaX),
+            0, blockSurface.scrollWidth - blockSurface.clientWidth,
+          );
+          if (scrollY && !event.shiftKey) blockSurface.scrollTop = clamp(
+            blockSurface.scrollTop + blockDeltaY, 0, blockSurface.scrollHeight - blockSurface.clientHeight,
+          );
+          return;
+        }
+      }
+      blockSurface = blockSurface.parentElement;
+    }
 
     if (Math.abs(horizontalDelta) < 0.5) {
       // Let ordinary vertical wheels use native scrolling. For a vertical
@@ -1445,12 +1556,15 @@ export default function WorkspaceApp({
         function endpoint(conversation: Conversation, element: Element | null | undefined, target: DocumentConnectorEndpoint["target"]): DocumentConnectorEndpoint {
           const panel = panelRefs.current[conversation.id];
           const panelRect = getElementRect(panel);
-          if (!panelViewports.has(conversation.id)) {
-            const body = panel?.querySelector<HTMLElement>(".document-body") ?? panel;
+          const body = panel?.querySelector<HTMLElement>(".document-body") ?? panel;
+          const inHeader = Boolean(element && panel?.contains(element) && !body?.contains(element));
+          const viewportKey = `${conversation.id}:${inHeader ? "header" : "body"}`;
+          if (!panelViewports.has(viewportKey)) {
             let viewport: ConnectorRect | null = workspaceRect;
             // Each document scrolls independently; a DOM rect alone does not
             // tell us whether its text is clipped by its body or the canvas.
-            for (let ancestor: Element | null = body ?? null; ancestor && viewport; ancestor = ancestor.parentElement) {
+            // Header controls are outside that scroller and remain visible.
+            for (let ancestor: Element | null = (inHeader ? panel : body) ?? null; ancestor && viewport; ancestor = ancestor.parentElement) {
               const style = window.getComputedStyle(ancestor);
               const clipX = /(auto|scroll|hidden|clip)/.test(style.overflowX);
               const clipY = /(auto|scroll|hidden|clip)/.test(style.overflowY);
@@ -1463,13 +1577,15 @@ export default function WorkspaceApp({
                 bottom: clipY ? rect.bottom : viewport.bottom,
               });
             }
-            panelViewports.set(conversation.id, viewport);
+            panelViewports.set(viewportKey, viewport);
           }
-          const viewport = panelViewports.get(conversation.id) ?? null;
+          const viewport = panelViewports.get(viewportKey) ?? null;
           const lineRects = element ? Array.from(element.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0) : [];
           const anchor = lineRects.filter((rect) => viewport && intersectConnectorRects(rect, viewport)).at(-1)
             ?? lineRects.at(-1) ?? getElementRect(element ?? null);
-          return { title: conversation.title || "Untitled document", target, panel: panelRect, viewport, anchor };
+          const bodyRect = getElementRect(body);
+          return { title: conversation.title || "Untitled document", target, panel: panelRect, viewport, anchor,
+            markerViewport: viewport && bodyRect ? intersectConnectorRects(viewport, bodyRect) : viewport };
         }
 
         const activePath = getConversationPath(
@@ -1513,7 +1629,7 @@ export default function WorkspaceApp({
             if (!panelRefs.current[conversation.id] && !targetPanel) continue;
             const targetElement = link.targetBlockId
               ? Array.from(targetPanel?.querySelectorAll<HTMLElement>("[data-document-block-id]") ?? []).find((element) => element.dataset.documentBlockId === link.targetBlockId)
-              : targetPanel?.querySelector(".document-header");
+              : targetPanel?.querySelector(".document-header") ?? targetPanel?.querySelector("[data-document-block-id]") ?? targetPanel;
             const targetEndpoint = endpoint(linked.conversation, targetElement, { conversationId: linked.conversation.id, blockId: link.targetBlockId });
             if (linked.block) targetEndpoint.title = `${linked.conversation.title || "Untitled document"} · ${excerpt(linked.block.content.replace(/[#*_`]/g, ""), 48)}`;
             const connection = buildDocumentConnector({
@@ -1582,7 +1698,7 @@ export default function WorkspaceApp({
     state.railOpen,
   ]);
 
-  function clearPanelWidthPreview(conversationId: string) {
+  function clearPanelWidthOverride(conversationId: string) {
     setResizedPanelWidths((current) => {
       if (!(conversationId in current)) return current;
       const next = { ...current };
@@ -1591,8 +1707,13 @@ export default function WorkspaceApp({
     });
   }
 
+  function restorePanelWidthOverride(resize: { conversationId: string; previousWidthOverride: number | undefined }) {
+    if (resize.previousWidthOverride === undefined) clearPanelWidthOverride(resize.conversationId);
+    else setResizedPanelWidths((current) => ({ ...current, [resize.conversationId]: resize.previousWidthOverride! }));
+  }
+
   function handleResetChatPanelWidth(conversation: Conversation) {
-    clearPanelWidthPreview(conversation.id);
+    clearPanelWidthOverride(conversation.id);
     setState((current) => setDocumentWidth(current, conversation.id, undefined));
   }
 
@@ -1620,6 +1741,7 @@ export default function WorkspaceApp({
     panelResizeStateRef.current = {
       conversationId,
       originWidth: info.width,
+      previousWidthOverride: resizedPanelWidths[conversationId],
       latestWidth: info.width,
       startClientX: event.clientX,
       direction: edge === "left" ? -1 : 1,
@@ -1651,6 +1773,7 @@ export default function WorkspaceApp({
     const next = resizeChatPanel({ ...info, delta });
     pendingPanelResizeScroll.current = (canvasRef.current?.scrollLeft ?? 0)
       + (edge === "left" ? next.width - info.width : 0);
+    setResizedPanelWidths((current) => ({ ...current, [conversation.id]: next.width }));
     setState((current) => setDocumentWidth(current, conversation.id, next.width));
   }
 
@@ -1791,11 +1914,11 @@ export default function WorkspaceApp({
     const generation: DocumentGeneration = { id: generationId, promptId, messageId, createdAt: now,
       serviceId: target.serviceId, modelId: target.modelId, ai: target.ai, status: "streaming", blockIds: rerun ? [] : [outputBlockId],
       ...(rerun ? {alternativeOf: rerun.id} : {acceptedAt: now}), insertion,
-      ...(request.replaceSelection && sourceBlock ? {replacement: {blockId:sourceBlock.id,offset:request.from,content:sourceBlock.content.slice(request.from,request.to)}} : {}) };
+      ...(request.replaceSelection && sourceBlock ? {replacement: {blockId:sourceBlock.id,offset:request.from,content:sourceBlock.content.slice(request.from,request.to),authorship:getDocumentBlockAuthorship(sourceBlock,source.messages)}} : {}) };
     let prepared: Conversation = { ...target, messages: [...target.messages, userMessage], updatedAt: now,
       title: [DEFAULT_MAIN_CHAT_TITLE, DEFAULT_SIDE_CHAT_TITLE, "Side chat", "Untitled document", "New note"].includes(target.title) ? excerpt(userMessage.content, 52) : target.title,
       document: { ...getEditableDocument(target), prompts: [...getEditableDocument(target).prompts, promptRecord], generations: [...getEditableDocument(target).generations, generation] } };
-    if (!rerun) prepared = insertDocumentBlock(prepared, { id: outputBlockId, kind: "markdown", content: "", createdAt: now, updatedAt: now, sourceMessageId: messageId, generationId }, insertion, now);
+    if (!rerun) prepared = insertDocumentBlock(prepared, { id: outputBlockId, kind: "markdown", content: "", authorship: "ai", createdAt: now, updatedAt: now, sourceMessageId: messageId, generationId }, insertion, now);
     const targetId = prepared.id;
     setDocumentErrors((current) => ({...current,[conversationId]:"",[targetId]:""}));
     setState((current) => {
@@ -2607,54 +2730,50 @@ export default function WorkspaceApp({
     sourceBlockId?: string;
     startOffset?: number | null;
   }) {
-    const content = args.kind === "side-chat" ? args.content : args.content.trim();
-    if (!content.trim()) return "";
     const now = new Date().toISOString();
-    const note: ConversationNote = {
-      id: createId("note"),
-      content,
-      kind: args.kind ?? "comment",
-      sourceMessageId: args.sourceMessageId,
-      ...(args.sourceBlockId ? {sourceBlockId: args.sourceBlockId} : {}),
-      startOffset: args.startOffset ?? null,
-      endOffset: args.endOffset ?? null,
-      quote: args.quote ?? null,
-      createdAt: now,
-      updatedAt: now,
-    };
-
+    const id = createId("document");
+    const note: ConversationNote = { id, content: args.content, kind: "comment",
+      sourceMessageId: args.sourceMessageId, sourceBlockId: args.sourceBlockId,
+      startOffset: args.startOffset ?? null, endOffset: args.endOffset ?? null,
+      quote: args.quote ?? null, createdAt: now, updatedAt: now };
     setState((current) => {
-      const conversation = current.conversations[args.conversationId];
-      if (!conversation) return current;
-      const sourceNote = args.sourceStandaloneNoteId
-        ? (conversation.notes ?? []).find(
-            (candidate) =>
-              candidate.id === args.sourceStandaloneNoteId &&
-              candidate.kind === "standalone",
-          )
-        : null;
-      return {
-        ...current,
-        conversations: {
-          ...current.conversations,
-          [conversation.id]: {
-            ...conversation,
-            document: args.sourceBlockId ? getEditableDocument(conversation) : conversation.document,
-            messages: args.sourceBlockId && !conversation.messages.some((message)=>message.id === args.sourceMessageId) ? [...conversation.messages, {id:args.sourceMessageId!,role:"user",content:getEditableDocument(conversation).blocks.find((block)=>block.id===args.sourceBlockId)?.content || args.quote || content,createdAt:now}] : sourceNote
-              ? upsertStandaloneNoteContextMessage(
-                  conversation.messages,
-                  sourceNote,
-                  now,
-                )
-              : conversation.messages,
-            notes: [...(conversation.notes ?? []), note],
-            updatedAt: now,
-          },
-        },
-      };
+      const original = current.conversations[args.conversationId];
+      if (!original) return current;
+      const parent = { ...original, document: getEditableDocument(original),
+        childIds: [...original.childIds, id], updatedAt: now };
+      const child = createMarginDocument(parent, note);
+      return focusDocument({ ...current, conversations: { ...current.conversations, [parent.id]: parent, [id]: child } }, id);
     });
+    setClosedMarginNotes((current) => ({ ...current, [args.conversationId]: false }));
+    setDocumentFocusSequence((sequence) => sequence + 1);
+    return id;
+  }
 
-    return note.id;
+  function handleToggleMarginPresentation(conversationId: string) {
+    const conversation = state.conversations[conversationId];
+    if (!conversation?.document?.marginNote) return;
+    const display = isCompactDocument(conversation) ? "full" : "compact";
+    setState((current) => {
+      const target = current.conversations[conversationId];
+      if (!target?.document?.marginNote) return current;
+      return focusDocument({ ...current, conversations: { ...current.conversations, [conversationId]: {
+        ...target, updatedAt: new Date().toISOString(), document: { ...target.document,
+          marginNote: { ...target.document.marginNote, display } },
+      } } }, conversationId);
+    });
+    if (conversation.parentId) setClosedMarginNotes((current) => ({ ...current, [conversation.parentId!]: false }));
+    setDocumentFocusSequence((sequence) => sequence + 1);
+  }
+
+  function handleResizeMarginDocument(conversationId: string, size: MarginDocumentSize) {
+    setState((current) => {
+      const target = current.conversations[conversationId];
+      if (!target?.document?.marginNote) return current;
+      return { ...current, conversations: { ...current.conversations, [conversationId]: {
+        ...target, updatedAt: new Date().toISOString(), document: { ...target.document,
+          marginNote: { ...target.document.marginNote, size } },
+      } } };
+    });
   }
 
   function handleCreateSelectionNote() {
@@ -2672,26 +2791,6 @@ export default function WorkspaceApp({
     });
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
-  }
-
-  function handleUpdateNote(conversationId: string, noteId: string, content: string) {
-    const value = content;
-    const now = new Date().toISOString();
-    setState((current) => {
-      const conversation = current.conversations[conversationId];
-      if (!conversation) return current;
-      return {
-        ...current,
-        conversations: {
-          ...current.conversations,
-          [conversationId]: {
-            ...conversation,
-            notes: (conversation.notes ?? []).map((note) => note.id === noteId ? { ...note, content: value, updatedAt: now } : note),
-            updatedAt: now,
-          },
-        },
-      };
-    });
   }
 
   function handleUpdateStandaloneNote(
@@ -2737,31 +2836,6 @@ export default function WorkspaceApp({
         },
       };
     });
-  }
-
-  function handleDeleteNote(conversationId: string, noteId: string) {
-    setState((current) => {
-      const conversation = current.conversations[conversationId];
-      if (!conversation) return current;
-      const currentNotes = conversation.notes ?? [];
-      const notes = currentNotes.filter((note) => note.id !== noteId);
-      if (notes.length === currentNotes.length) return current;
-      return {
-        ...current,
-        conversations: {
-          ...current.conversations,
-          [conversationId]: { ...conversation, notes, updatedAt: new Date().toISOString() },
-        },
-      };
-    });
-  }
-
-  function handleUseNote(conversationId: string, content: string) {
-    const conversation=currentStateRef.current.conversations[conversationId];
-    if(!conversation)return;
-    const now=new Date().toISOString();
-    const document=getEditableDocument(conversation);
-    handleDocumentChange(conversationId,{...document,blocks:[...document.blocks,{id:createId("block"),kind:"markdown",content,createdAt:now,updatedAt:now}]});
   }
 
   function handleCreateMainConversation() {
@@ -2979,18 +3053,23 @@ export default function WorkspaceApp({
   }
 
   function handleOpenSearchSource(source: SearchEvidenceRef) {
+    if (source.sourceKind === "annotation" && source.noteId) {
+      const migrated = Object.values(state.conversations).find((item) => item.parentId === source.conversationId && item.document?.marginNote?.legacyNoteId === source.noteId);
+      if (migrated) {
+        handleOpenSearchSource({ ...source, conversationId: migrated.id, sourceKind: "document",
+          sourceBlockId: migrated.document!.blocks[0]?.id, noteId: undefined, messageId: undefined });
+        return;
+      }
+    }
     if (resolveSearchSource(state.conversations, source).status === "missing") return;
     setSearchModalOpen(false);
     handleSelectConversation(source.conversationId, { nextViewMode: "chat" });
-    if (source.sourceKind === "annotation" && source.noteId) {
-      setNoteOpenRequest((current) => ({ noteId: source.noteId!, sequence: (current?.sequence ?? 0) + 1 }));
-    }
     setSearchSourceRequest((current) => ({ source, sequence: (current?.sequence ?? 0) + 1 }));
   }
 
   function handleSelectSearchResult(conversationId: string) {
     handleCloseSearch();
-    handleRevealConversation(conversationId);
+    handleSelectConversation(conversationId, { nextViewMode: "chat" });
   }
 
   function handleFocusVisibleDocument(conversationId: string) {
@@ -3007,8 +3086,36 @@ export default function WorkspaceApp({
     } : current, conversationId));
   }
 
+  function handleCloseDocument(conversationId: string) {
+    if (selectionDraft?.conversationId === conversationId) setSelectionDraft(null);
+    setState((current) => closeDocument(current.documentDock ? {
+      ...current, documentDock: { ...current.documentDock, tree: removePinnedDocument(current.documentDock.tree, conversationId) },
+    } : current, conversationId));
+  }
+
+  function handleHideAllDocuments(action: "minimize" | "close") {
+    // Snapshot the tabs before changing focus or removing pinned panes.
+    const ids = tabDocuments.map((document) => document.id);
+    if (!ids.length) return;
+    setSelectionDraft(null);
+    setScrollingDocumentId(workspaceFocusId);
+    setState((current) => {
+      const hide = action === "close" ? closeDocument : minimizeDocument;
+      let next = current;
+      for (const id of ids) {
+        if (next.documentDock) next = { ...next, documentDock: { ...next.documentDock,
+          tree: removePinnedDocument(next.documentDock.tree, id) } };
+        next = hide(next, id);
+      }
+      // Keep the same document family on screen instead of switching to a closed pin's family.
+      const family = getDocumentWorkspace(next.conversations, workspaceFocusId);
+      return family.root ? { ...next, activeConversationId: workspaceFocusId, rootId: family.root.id } : next;
+    });
+  }
+
   function handleToggleDocumentPin(conversationId: string) {
     setSelectionDraft(null);
+    revealMarginAncestors(conversationId);
     const body = panelRefs.current[conversationId]?.querySelector<HTMLElement>(".document-body");
     if (body) panelScrollPositionsRef.current[conversationId] = body.scrollTop;
     setState((current) => {
@@ -3041,6 +3148,16 @@ export default function WorkspaceApp({
     });
   }
 
+  function revealMarginAncestors(conversationId: string) {
+    setClosedMarginNotes((current) => {
+      const next = { ...current };
+      for (const item of getConversationPath(state.conversations, conversationId)) {
+        if (item.parentId && isCompactDocument(item)) next[item.parentId] = false;
+      }
+      return next;
+    });
+  }
+
   function handleSelectConversation(
     conversationId: string,
     options: {
@@ -3049,6 +3166,7 @@ export default function WorkspaceApp({
       keepSidebarOpen?: boolean;
     } = {},
   ) {
+    revealMarginAncestors(conversationId);
     suppressNextChatAutoCenterRef.current = false;
     if (!pinnedDocumentIds.includes(conversationId) || familyPinnedDocumentIds.includes(conversationId)) {
       setScrollingDocumentId(conversationId);
@@ -3512,23 +3630,62 @@ export default function WorkspaceApp({
   } as CSSProperties;
   const conversationCanvasStyle = {
     "--chat-panel-width": `${chatPanelLayout.width}px`,
+    // Leading space belongs to the first document group. Changing editor focus
+    // must not move a note's controls between pointerdown and click.
+    "--document-focus-width": `${getRenderedPanelWidth(scrollingDocuments[0]?.id ?? activeConversation.id)}px`,
+    "--document-notes-space": scrollingDocuments[0] && !closedMarginNotes[scrollingDocuments[0].id]
+      && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
   } as CSSProperties;
 
-  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat") {
-    return <DocumentPanel key={conversation.id} conversation={conversation}
-      documentMenu={<DocumentMenu conversation={conversation}
+  function renderDocumentMenu(conversation: Conversation) {
+    return <DocumentMenu conversation={conversation}
         className="document-header-menu-trigger"
         pinned={pinnedDocumentIds.includes(conversation.id)} familyPinned={familyPinnedDocumentIds.includes(conversation.id)}
         minimized={documentWorkspace.minimizedIds.includes(conversation.id)}
         onTogglePin={handleToggleDocumentPin} onTogglePinScope={handleToggleDocumentPinScope}
-        onMinimize={handleMinimizeDocument} onRestore={handleSelectConversation}
+        onMinimize={handleMinimizeDocument} onClose={handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
+        onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
             .filter((button) => !button.closest("[hidden]"));
           (triggers.find((button) => button.closest<HTMLElement>("[data-document-tab-id]")?.dataset.documentTabId === conversation.id)
             ?? triggers.find((button) => button.closest<HTMLElement>("[data-document-tab-id]")?.dataset.documentTabId === currentStateRef.current.activeConversationId))?.focus();
-        }} />}
+        }} />;
+  }
+
+  function renderDocumentControls(conversation: Conversation, view: "chat" | "graph" = "chat") {
+    const noteCount = getMarginDocuments(conversation).length;
+    const childDocuments = documentChildrenByParent.get(conversation.id) ?? [];
+    if (!childDocuments.length && !(view === "chat" && noteCount) && !conversation.document?.marginNote) return null;
+    return <>
+      {childDocuments.length ? <DocumentChildTabs parent={conversation} documents={childDocuments}
+        currentDocumentId={activeConversation.id}
+        openDocumentIds={[...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]}
+        minimizedDocumentIds={[...minimizedSideDocumentsByParent.values()].flatMap((documents) => documents.map((document) => document.id))}
+        onSelect={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
+      {view === "chat" && noteCount ? <button type="button" className="document-margin-notes-toggle"
+        aria-label={`${closedMarginNotes[conversation.id] ? "Show" : "Hide"} margin notes for ${conversation.title}`}
+        aria-expanded={!closedMarginNotes[conversation.id]}
+        onClick={() => setClosedMarginNotes((current) => ({ ...current, [conversation.id]: !current[conversation.id] }))}>
+        Notes <span>{noteCount}</span>
+      </button> : null}
+      {conversation.document?.marginNote ? <button type="button" className="document-presentation-toggle"
+        aria-label={`${isCompactDocument(conversation) ? "Expand" : "Compact"} margin note ${conversation.title}`}
+        title={isCompactDocument(conversation) ? "Expand to full document" : "Show as a margin note"}
+        onClick={() => handleToggleMarginPresentation(conversation.id)}>{isCompactDocument(conversation) ? "↗" : "↙"}</button> : null}
+    </>;
+  }
+
+  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat") {
+    const dockHeader = view === "chat" && pinnedDocumentIds.includes(conversation.id);
+    return <DocumentPanel key={conversation.id} conversation={conversation}
+      compact={isCompactDocument(conversation)}
+      onMinimize={view === "chat" && !dockHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
+      onClose={view === "chat" && !dockHeader ? () => handleCloseDocument(conversation.id) : undefined}
+      parentDocument={conversation.parentId ? state.conversations[conversation.parentId] : undefined}
+      headerControls={dockHeader ? null : renderDocumentControls(conversation, view)}
+      documentMenu={dockHeader ? null : renderDocumentMenu(conversation)}
       minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
@@ -3538,12 +3695,15 @@ export default function WorkspaceApp({
       onChange={(document) => handleDocumentChange(conversation.id, document)}
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
-      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionLinkError(null); setSelectionResponseDestination("inline"); setSelectionReplaceText(false); }}
+      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionLinkError(null); setSelectionResponseDestination("side"); setSelectionReplaceText(false); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
       onClearSelection={() => setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current)}
       onOpenBranch={(id) => handleOpenDocumentReference(conversation.id, id)}
       onRemoveLink={(id) => handleRemoveDocumentLink(conversation.id, id)}
-      onOpenNote={(noteId) => { handleFocusVisibleDocument(conversation.id); setNoteOpenRequest((current) => ({noteId, sequence:(current?.sequence ?? 0)+1})); }}
+      onOpenNote={(noteId) => {
+        const migrated = Object.values(state.conversations).find((item) => item.parentId === conversation.id && item.document?.marginNote?.legacyNoteId === noteId);
+        if (migrated) handleSelectConversation(migrated.id);
+      }}
       onModelChange={(serviceId,modelId) => handleModelChange(conversation.id,serviceId,modelId)}
       onUpload={(files) => {void handleUploadDocuments(conversation.id,files);}}
       onRemoveAttachment={(id) => handleRemoveDocument(conversation.id,id)} uploading={documentUploadByConversationId[conversation.id]?.uploading}
@@ -3554,9 +3714,59 @@ export default function WorkspaceApp({
     />;
   }
 
+  function getMarginDocuments(conversation: Conversation) {
+    return (documentChildrenByParent.get(conversation.id) ?? []).filter((child) => child.parentId === conversation.id
+      && isCompactDocument(child) && !getDocumentWorkspace(state.conversations, child.id).closedIds.includes(child.id) && !pinnedDocumentIds.includes(child.id)
+      && !(minimizedSideDocumentsByParent.get(conversation.id) ?? []).some((item) => item.id === child.id));
+  }
+
+  function getMarginColumnWidth(conversation: Conversation, includePreview = true): number {
+    const notes = getMarginDocuments(conversation);
+    return 8 + Math.max(0, ...notes.map((note) => Math.max(
+      getMarginDocumentSize(includePreview ? marginResizePreviews[note.id] ?? note.document?.marginNote?.size : note.document?.marginNote?.size).width,
+      !closedMarginNotes[note.id] && getMarginDocuments(note).length ? getMarginColumnWidth(note, includePreview) + 21 : 0,
+    )));
+  }
+
+  function renderDocumentMarginNotes(conversation: Conversation, view: "chat" | "graph" = "chat"): React.ReactNode {
+    const notes = getMarginDocuments(conversation);
+    if (!notes.length || closedMarginNotes[conversation.id]) return null;
+    return <aside className="document-margin-notes" aria-label={`Notes for ${conversation.title}`} data-margin-notes-for={conversation.id}
+      style={{ "--margin-column-width": `${getMarginColumnWidth(conversation)}px` } as CSSProperties}>
+      <header className="document-margin-notes-header">
+        <div><strong>Margin notes</strong><span title={conversation.title}>{conversation.title}</span></div>
+        <button type="button" aria-label={`Close margin notes for ${conversation.title}`} title="Close margin notes"
+          onClick={() => {
+            setClosedMarginNotes((current) => ({ ...current, [conversation.id]: true }));
+            if (getConversationPath(state.conversations, activeConversation.id).some((item) => item.id === conversation.id)) handleFocusVisibleDocument(conversation.id);
+            const panel = panelRefs.current[conversation.id];
+            (panel?.querySelector<HTMLButtonElement>(".document-margin-notes-toggle")
+              ?? panel?.closest("[data-dock-document-id]")?.querySelector<HTMLButtonElement>(".document-margin-notes-toggle"))?.focus();
+          }}>×</button>
+      </header>
+      <div className="document-margin-notes-list">
+        {notes.map((note) => <div className="margin-document-family" key={note.id}>
+          <MarginDocumentFrame data-document-id={note.id} size={note.document?.marginNote?.size}
+            onResize={(size) => handleResizeMarginDocument(note.id, size)}
+            onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
+            onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
+            onFocusCapture={() => handleFocusVisibleDocument(note.id)}>
+            {renderConversationChatPanel(note, view)}
+          </MarginDocumentFrame>
+          {renderDocumentMarginNotes(note, view)}
+        </div>)}
+      </div>
+    </aside>;
+  }
+
+  function renderDocumentWithMarginNotes(conversation: Conversation, view: "chat" | "graph" = "chat") {
+    return <div className="document-with-margin-notes">
+      {renderConversationChatPanel(conversation, view)}
+      {view === "chat" ? renderDocumentMarginNotes(conversation, view) : null}
+    </div>;
+  }
+
   function renderExpandedTreeConversation(conversation: Conversation) {
-    const pinnedParent = conversation.parentId && visiblePinnedDocumentIds.includes(conversation.parentId)
-      ? state.conversations[conversation.parentId] : null;
     const resizeInfo = getPanelResizeInfo(conversation);
     const resizeMinimum = resizeChatPanel({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
     const resizeMaximum = resizeChatPanel({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
@@ -3578,10 +3788,6 @@ export default function WorkspaceApp({
         key={conversation.id}
         style={{ "--chat-panel-width": `${resizeInfo.width}px` } as CSSProperties}
       >
-        {pinnedParent && <DocumentChildTabs key={pinnedParent.id} parent={pinnedParent}
-          documents={documentWorkspace.documents.filter((document) => document.parentId === pinnedParent.id)}
-          currentDocumentId={conversation.id} minimizedDocumentIds={documentWorkspace.minimizedIds}
-          onSelect={handleSelectConversation} />}
         {renderConversationChatPanel(conversation)}
         {(["left", "right"] as const).map((edge) => <div
           key={edge}
@@ -3667,7 +3873,7 @@ export default function WorkspaceApp({
             onDismiss={onDismissBillingNotice}
           />
           <NotificationToast
-            message={vault.message ?? (vault.conflicts.length ? `${vault.conflicts.length} alternative ${vault.conflicts.length === 1 ? "version" : "versions"} saved. You can keep writing.` : null)}
+            message={vault.message}
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />
         </div>
@@ -3754,7 +3960,7 @@ export default function WorkspaceApp({
                     : "canvas-section"
               }
             >
-              {Object.values(state.conversations).every((chat) => !chat.messages.length && !chat.notes?.length && !chat.documents?.length) &&
+              {Object.values(state.conversations).every((chat) => !chat.messages.length && !chat.notes?.length && !chat.documents?.length && !chat.document?.blocks.some((block) => block.content.trim())) &&
                 <aside className="history-import-welcome">
                   <div><strong>Start with your conversations</strong><p>Bring chats from ChatGPT and pick up where you left off.</p></div>
                   <button type="button" className="thread-dialog-button" onClick={() => setHistoryImportOpen(true)}>Bring your chat history</button>
@@ -3808,7 +4014,7 @@ export default function WorkspaceApp({
                   mapEditMessage={mapEditMessage}
                   canUndoMapEdit={Boolean(mapUndoRef.current)}
                   key={`graph-${user.id}`}
-                  workspaceKey={user.id}
+                  workspaceKey={storageUserId}
                   threads={threadSummaries}
                   activeConversationId={activeConversation.id}
                   conversations={state.conversations}
@@ -3838,7 +4044,7 @@ export default function WorkspaceApp({
                             source={source}
                             getPanelElement={() => graphPanelRefs.current[conversationId] ?? null}
                           />
-                          {renderConversationChatPanel(conversation, "graph")}
+                          {renderDocumentWithMarginNotes(conversation, "graph")}
                         </>
                       : null;
                   }}
@@ -3846,7 +4052,7 @@ export default function WorkspaceApp({
                     const conversation = state.conversations[conversationId];
 
                     return conversation
-                      ? renderConversationChatPanel(conversation, "graph")
+                      ? renderDocumentWithMarginNotes(conversation, "graph")
                       : null;
                   }}
                 />
@@ -3866,6 +4072,7 @@ export default function WorkspaceApp({
                     <DocumentTabs documents={tabDocuments}
                       groups={state.groups}
                       onAssignGroup={handleAssignConversationGroup}
+                      onRename={handleRenameThread}
                       activeDocumentId={activeConversation.id}
                       minimizedDocumentIds={documentWorkspace.minimizedIds}
                       pinnedDocumentIds={pinnedDocumentIds}
@@ -3875,11 +4082,16 @@ export default function WorkspaceApp({
                       canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
                       onSelect={handleSelectConversation}
                       onMinimize={handleMinimizeDocument}
+                      onClose={handleCloseDocument}
                       onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
                       onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
                     />
                     <div className="document-workspace-actions">
                       <DocumentViewsMenu currentDocumentId={activeConversation.id}
+                        onMinimizeAll={() => handleHideAllDocuments("minimize")}
+                        onCloseAll={() => handleHideAllDocuments("close")}
+                        canMinimizeAll={tabDocuments.some((document) => pinnedDocumentIds.includes(document.id) || !documentWorkspace.minimizedIds.includes(document.id))}
+                        canCloseAll={tabDocuments.length > 0}
                         relatedItems={jev.status === "ready" ? jev.related.filter((item) => item.id !== activeConversation.id && state.conversations[item.id]).slice(0, 5)
                           .map(({ id }) => ({ id, title: state.conversations[id].title, kind: state.conversations[id].kind })) : []}
                         relatedWarning={jev.warning} onSelectRelated={handleRevealConversation}
@@ -3892,29 +4104,25 @@ export default function WorkspaceApp({
                     dock={documentDock?.tree && visiblePinnedDocumentIds.length ? <DocumentDock
                       tree={documentDock.tree} conversations={state.conversations} activeDocumentId={activeConversation.id}
                       visibleDocumentIds={visiblePinnedDocumentIds}
+                      onMinimize={handleMinimizeDocument} onClose={handleCloseDocument}
                       onSelect={handleFocusVisibleDocument} onUnpin={handleToggleDocumentPin} onToggleScope={handleToggleDocumentPinScope}
                       dockPosition={documentDock.position}
                       onMoveDock={(position) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree: current.documentDock?.tree ?? null, width: current.documentDock?.width ?? 0.4, position } }))}
                       onChange={(tree) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree, width: current.documentDock?.width ?? 0.4 } }))}
-                      renderDocument={renderConversationChatPanel}
+                      renderDocument={renderDocumentWithMarginNotes}
+                      renderDocumentMenu={renderDocumentMenu}
+                      renderDocumentControls={renderDocumentControls}
                     /> : null}>
                   <div className={`conversation-canvas is-tree-browser is-document-workspace${isResizingChatPanel ? " is-resizing-panel" : ""}`}
                     aria-label="Documents side by side" ref={canvasRef} style={conversationCanvasStyle}>
-                    {scrollingDocuments.map((conversation) => renderExpandedTreeConversation(conversation))}
+                    {scrollingDocuments.map((conversation) => <Fragment key={conversation.id}>
+                      {renderExpandedTreeConversation(conversation)}
+                      {renderDocumentMarginNotes(conversation)}
+                    </Fragment>)}
                     {!scrollingDocuments.length ? <div className="document-workspace-empty">
-                      <p>These documents are pinned. Open another document from the sidebar or add a side document here.</p>
+                      <p>Open a document from the sidebar or add a side document here.</p>
                       <button type="button" onClick={() => handleAddSideChat(activeConversation.id)}>New side document</button>
                     </div> : null}
-                    {(activeConversation.notes ?? []).some((note) => note.kind !== "standalone") ? (
-                      <aside className="document-margin-notes" aria-label={`Notes for ${activeConversation.title}`}>
-                        {(activeConversation.notes ?? []).filter((note) => note.kind !== "standalone").map((note) => (
-                          <MarginNoteTreeNode key={note.id} conversationId={activeConversation.id} note={note}
-                            openRequest={noteOpenRequest?.noteId === note.id ? noteOpenRequest.sequence : undefined}
-                            onDelete={handleDeleteNote} onUpdate={handleUpdateNote}
-                            onUse={activeConversation.kind === "note" ? undefined : handleUseNote} />
-                        ))}
-                      </aside>
-                    ) : null}
                   </div>
                   </DocumentWorkspaceLayout>
                 </div>
@@ -4024,7 +4232,7 @@ export default function WorkspaceApp({
                 {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event)=>setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
               </div> : null}
               {selectionIntent === "note" ? (
-                <p className="selection-note-privacy">Margin note · Not sent to AI</p>
+                <p className="selection-note-privacy">Small document linked to this passage</p>
               ) : null}
               {selectionIntent === "link" ? <DocumentLinkPicker
                 conversations={state.conversations} sourceConversationId={selectionDraft.conversationId}
@@ -4101,12 +4309,26 @@ export default function WorkspaceApp({
           />
 
           {captureInboxOpen ? <CaptureInbox
-            onClose={() => setCaptureInboxOpen(false)}
+            initialCaptureId={captureHandoff?.captureId}
+            initialIntent={captureHandoff?.intent}
+            onClose={closeCaptureInbox}
             onOpenNote={(capture) => {
               setSelectionDraft(null);
               setMainViewMode("chat");
               setState((current) => openCaptureAsNote(current, capture));
-              setCaptureInboxOpen(false);
+              closeCaptureInbox();
+              if (isMobileViewport) setLeftSidebarOpen(false);
+            }}
+            onAskAI={(capture, prompt) => {
+              setSelectionDraft(null);
+              setMainViewMode("chat");
+              setState((current) => {
+                const next = openCaptureAsNote(current, capture);
+                currentStateRef.current = next;
+                return next;
+              });
+              setCaptureAIRequest({ conversationId: `web-capture-${capture.id}`, prompt });
+              closeCaptureInbox();
               if (isMobileViewport) setLeftSidebarOpen(false);
             }}
           /> : null}
@@ -4119,6 +4341,7 @@ export default function WorkspaceApp({
           />}
           <ProfileModal
             initialTab={profileInitialTab}
+            onOpenWebsiteSettings={onOpenWebsiteSettings}
             billingDashboard={billingDashboard}
             billingDashboardLoading={billingDashboardLoading}
             billingDashboardError={billingDashboardError}

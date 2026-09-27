@@ -107,6 +107,7 @@ describe("selection replacement undo", () => {
       const undone = undoDocumentInsertion(edited, "replacement", later);
       expect(undone.document!.blocks.map((value) => value.content)).toEqual(missingSource ? ["selected", " after"] : ["Before ", "selected", " after"]);
       expect(undone.document!.blocks.some((value) => value.id.startsWith("restored:replacement"))).toBe(true);
+      expect(undone.document!.blocks.find((value) => value.id.startsWith("restored:replacement"))?.authorship).toBe("mixed");
       expect(normalizeEditableDocument(undone.document)).toEqual(undone.document);
     }
   });
@@ -117,6 +118,16 @@ describe("selection replacement undo", () => {
     const before = [block("message:original", "Before after")];
     const after = [block("message:original", "Completely changed")];
     const rebased = remapDocumentReplacement(generation, before, after);
-    expect(rebased.replacement).toEqual({ blockId: "restore:replacement", offset: 0, content: "selected" });
+    expect(rebased.replacement).toEqual({ blockId: "restore:replacement", offset: 0, content: "selected", authorship: "mixed" });
+  });
+
+  test("restoring an AI selection retains its origin after the original block is removed", () => {
+    const original = candidate(fixture(), "replacement", "New output");
+    const accepted = insertDocumentGeneration(original, "replacement", { blockId: "message:original", offset: 0, replaceTo: 8 }, later);
+    expect(accepted.document!.generations.find((generation) => generation.id === "replacement")!.replacement?.authorship).toBe("ai");
+    accepted.document!.blocks = accepted.document!.blocks.filter((value) => value.id !== "message:original");
+    const undone = undoDocumentInsertion(accepted, "replacement", later);
+    expect(undone.document!.blocks.find((value) => value.id.startsWith("restored:replacement"))).toMatchObject({ content: "Original", authorship: "ai" });
+    expect(normalizeEditableDocument(undone.document)).toEqual(undone.document);
   });
 });

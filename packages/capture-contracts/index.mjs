@@ -2,6 +2,7 @@
 export const CAPTURE_API_PATH = "/api/v1/captures";
 export const CONNECTION_API_PATH = "/api/v1/capture-connection";
 export const EXTENSION_SESSION_API_PATH = "/api/v1/extension-session";
+export const EXTENSION_WORKSPACE_SESSION_API_PATH = "/api/v1/extension-workspace-session";
 export const CAPTURE_LIMITS = Object.freeze({
   title: 300,
   url: 4096,
@@ -119,6 +120,18 @@ export function parseExtensionSession(input) {
       isText(input.user.displayName) && isText(input.user.email) &&
       isDate(input.expiresAt) && Date.parse(input.expiresAt) > Date.now(),
     "This server did not return a valid session. Update your Margin Chat server and try again.",
+  );
+  return input;
+}
+
+export function parseWorkspaceExtensionSession(input) {
+  requireResponse(
+    isRecord(input) && input.scope === "workspace" && typeof input.token === "string" &&
+      /^mc_workspace_[A-Za-z0-9_-]{43}$/u.test(input.token) &&
+      isRecord(input.user) && isText(input.user.id) &&
+      isText(input.user.displayName) && isText(input.user.email) &&
+      isDate(input.expiresAt) && Date.parse(input.expiresAt) > Date.now(),
+    "This server did not return a valid workspace session. Update your Margin Chat server and try again.",
   );
   return input;
 }

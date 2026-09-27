@@ -17,7 +17,8 @@ import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import type { StateUploadProgress } from "../lib/api";
 
 interface ProfileModalProps {
-  initialTab?: "account" | "storage" | "billing";
+  initialTab?: "account" | "storage" | "billing" | "api-keys";
+  onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys") => void;
   billingDashboard: BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
@@ -144,6 +145,7 @@ export default function ProfileModal({
   onSaveApiKeys,
   onStartSubscription,
   onSave,
+  onOpenWebsiteSettings,
   user,
 }: ProfileModalProps) {
   const displayNameInputRef = useRef<HTMLInputElement>(null);
@@ -438,6 +440,13 @@ export default function ProfileModal({
                 </button>
               </section>
 
+              {onOpenWebsiteSettings ? <div className="thread-dialog-form">
+                <p className="thread-dialog-copy">Signed in as {user.email}. Manage your profile and password on the Margin Chat website.</p>
+                <div className="thread-dialog-actions">
+                  <button className="thread-dialog-button" type="button" onClick={() => void onLogout()}>Log out</button>
+                  <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("account")}>Manage account on website</button>
+                </div>
+              </div> : <>
               <form
                 className="thread-dialog-form"
                 onSubmit={(event) => {
@@ -515,6 +524,7 @@ export default function ProfileModal({
                 </div>
               </form>
               <PasswordChangeForm disabled={isSaving} key={user.id} onChangePassword={changePassword} />
+              </>}
             </div>
           ) : null}
 
@@ -533,6 +543,11 @@ export default function ProfileModal({
               id="profile-panel-api-keys"
               role="tabpanel"
             >
+              {onOpenWebsiteSettings ? <>
+                <h3>API keys</h3>
+                <p className="thread-dialog-copy">Your saved provider keys are available to AI conversations here. Add or remove keys on the Margin Chat website.</p>
+                <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("api-keys")}>Manage API keys on website</button>
+              </> : <>
               <div className="profile-api-key-heading">
                 <div>
                   <p className="eyebrow">Model providers</p>
@@ -620,6 +635,7 @@ export default function ProfileModal({
               >
                 {apiKeySaving ? "Saving keys..." : "Save API keys"}
               </button>
+              </>}
             </section>
           ) : null}
 

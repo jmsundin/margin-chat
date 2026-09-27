@@ -1,3 +1,5 @@
+import { apiStorageNamespace } from "./lib/apiTransport";
+import type { BrowserCaptureRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
 import {
@@ -19,7 +21,19 @@ function getErrorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
-export default function App() {
+export interface AppProps {
+  extension?: {
+    serverUrl: string;
+    userId?: string;
+    onConnect(): void;
+    onLogout(): Promise<void>;
+    openExternal(url: string): void;
+  };
+  browserCaptureRequest?: BrowserCaptureRequest | null;
+  onBrowserCaptureHandled?: (id: string) => void;
+}
+
+export default function App({ extension, browserCaptureRequest, onBrowserCaptureHandled }: AppProps = {}) {
   // Removing a used reset token must not restart session hydration and race a new login.
   const [hasPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).has("reset_token"));
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
@@ -95,6 +109,9 @@ export default function App() {
           return;
         }
 
+        if (extension?.userId && user && user.id !== extension.userId) {
+          throw new ApiError(409, "The extension account changed. Reconnect Margin Chat to open this workspace.");
+        }
         if (user) rememberOfflineUser(user); else forgetOfflineUser();
         setAuthUser(user);
         setAuthStatus(user ? "authenticated" : "unauthenticated");
@@ -104,7 +121,8 @@ export default function App() {
           return;
         }
 
-        const offlineUser = loadOfflineUser();
+        const cachedUser = error instanceof ApiError && [401, 409].includes(error.statusCode) ? null : loadOfflineUser();
+        const offlineUser = extension?.userId && cachedUser?.id !== extension.userId ? null : cachedUser;
         setAuthUser(offlineUser);
         setAuthStatus(offlineUser ? "authenticated" : "unauthenticated");
         setAuthError(offlineUser ? null : getErrorText(error, "Unable to verify your session."));
@@ -116,7 +134,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [hasPasswordResetToken]);
+  }, [hasPasswordResetToken, extension?.serverUrl, extension?.userId]);
 
   useEffect(() => {
     if (!checkoutReturn || authStatus !== "authenticated" || !authUser?.id) return;
@@ -280,7 +298,8 @@ export default function App() {
   async function handleLogout() {
     forgetOfflineUser();
     try {
-      await requestLogout();
+      if (extension) await extension.onLogout();
+      else await requestLogout();
     } catch (error) {
       console.warn("Unable to clear the server session.", error);
     } finally {
@@ -294,10 +313,24 @@ export default function App() {
     }
   }
 
+  function openWebsiteSettings(tab: "account" | "billing" | "api-keys") {
+    if (!extension) return;
+    const url = new URL(extension.serverUrl);
+    url.searchParams.set("settings", tab);
+    extension.openExternal(url.toString());
+  }
+
+  function requireWebsiteSettings(tab: "account" | "api-keys") {
+    if (!extension) return;
+    openWebsiteSettings(tab);
+    throw new Error("Manage account details and API keys on the Margin Chat website.");
+  }
+
   async function handleUpdateProfile(args: {
     displayName: string;
     email: string;
   }) {
+    requireWebsiteSettings("account");
     const user = await requestUpdateProfile(args);
     rememberOfflineUser(user);
     setAuthUser(user);
@@ -306,6 +339,7 @@ export default function App() {
   }
 
   async function handleChangePassword(args: { currentPassword: string; password: string }) {
+    requireWebsiteSettings("account");
     try {
       await requestChangePassword(args);
     } catch (error) {
@@ -317,6 +351,7 @@ export default function App() {
   async function handleUpdateApiKeys(args: {
     keys: Partial<Record<ApiKeyProvider, string | null>>;
   }) {
+    requireWebsiteSettings("api-keys");
     const apiKeys = await requestUpdateApiKeys(args);
     setAuthUser((current) => (current ? { ...current, apiKeys } : current));
     return apiKeys;
@@ -342,6 +377,7 @@ export default function App() {
   }
 
   async function handleStartSubscription() {
+    if (extension) { openWebsiteSettings("billing"); return; }
     await redirectToStripe(
       requestCreateCheckoutSession,
       "Unable to start the Stripe checkout flow.",
@@ -349,10 +385,12 @@ export default function App() {
   }
 
   async function handleAddMoney(amountCents: number) {
+    if (extension) { openWebsiteSettings("billing"); return; }
     await redirectToStripe((userId) => requestCreateTopUpSession(amountCents, userId), "Unable to open Checkout to add money.");
   }
 
   async function handleManageBilling() {
+    if (extension) { openWebsiteSettings("billing"); return; }
     await redirectToStripe(
       requestCreateBillingPortalSession,
       "Unable to open the Stripe billing portal.",
@@ -376,7 +414,16 @@ export default function App() {
     );
   }
 
-  if (authStatus !== "authenticated" || !authUser) {
+  if (authStatus !== "authenticated" || !authUser || (extension?.userId && authUser.id !== extension.userId)) {
+    if (extension) return (
+      <div className="app-shell"><div className="app-chrome auth-chrome"><div className="auth-loading-card">
+        <p className="eyebrow">Margin Chat</p>
+        <h1>Connect your workspace</h1>
+        <p className="auth-copy">Sign in through the extension settings to open your documents, notes, and AI conversations above this page.</p>
+        {authError && <p role="alert">{authError}</p>}
+        <button className="thread-dialog-button is-primary" onClick={extension.onConnect} type="button">Connect Margin Chat</button>
+      </div></div></div>
+    );
     return (
       <div className="app-shell">
         <div className="app-chrome auth-chrome">
@@ -398,6 +445,10 @@ export default function App() {
   return (
     <Suspense fallback={<div className="app-shell"><div className="auth-loading-card" role="status">Opening your workspace…</div></div>}>
     <WorkspaceApp
+      browserCaptureRequest={browserCaptureRequest}
+      onBrowserCaptureHandled={onBrowserCaptureHandled}
+      onOpenWebsiteSettings={extension ? openWebsiteSettings : undefined}
+      storageNamespace={apiStorageNamespace(authUser.id)}
       billingNotice={billingNotice}
       billingDashboard={billingDashboard}
       billingDashboardLoading={billingDashboardLoading}
@@ -407,7 +458,7 @@ export default function App() {
       onAddMoney={handleAddMoney}
       billingErrorMessage={billingError}
       billingSubmitting={billingSubmitting}
-      key={authUser.id}
+      key={apiStorageNamespace(authUser.id)}
       onAuthExpired={handleAuthExpired}
       onDismissBillingNotice={() => setBillingNotice(null)}
       onBillingRequired={handleBillingRequired}

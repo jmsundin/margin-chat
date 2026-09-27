@@ -34,6 +34,16 @@ function requireExpectedVaultAccount(request, user) {
   }
 }
 
+// The extension can operate on workspace content, but account administration
+// and billing mutations still require the website's cookie session.
+const EXTENSION_WORKSPACE_ROUTES = new Set([
+  "authSession", "captureList", "captureGet", "stateRead",
+  "vaultStatus", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
+  "chat", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
+  "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
+  "billingDashboard", "apiKeysRead",
+]);
+
 export function createApiHandler({
   captureService,
   apiKeyService,
@@ -103,11 +113,13 @@ export function createApiHandler({
         return;
       }
 
-      if (route?.id === "extensionSession") {
+      if (route?.id === "extensionSession" || route?.id === "extensionWorkspaceSession") {
         response.setHeader("Cache-Control", "no-store");
         if (request.method === "POST") {
           const user = await authService.authenticateCredentials(await readJsonBody(request, 16_384));
-          const session = await captureService.issueSession(user, runtimeConfig.authSessionTtlMs);
+          const session = route.id === "extensionWorkspaceSession"
+            ? await captureService.issueWorkspaceSession(user, runtimeConfig.authSessionTtlMs)
+            : await captureService.issueSession(user, runtimeConfig.authSessionTtlMs);
           sendJson(response, 201, session);
         } else {
           await captureService.signOut(request);
@@ -116,7 +128,7 @@ export function createApiHandler({
         return;
       }
 
-      // Capture credentials never authenticate workspace, chat, or account endpoints.
+      // Existing capture credentials remain restricted to capture operations.
       if (route?.id === "captureCreate" || route?.id === "captureConnection") {
         const user = await captureService.connect(request);
         if (request.method === "GET") {
@@ -128,7 +140,22 @@ export function createApiHandler({
         return;
       }
 
-      const authContext = await authService.getAuthContext(request);
+      const workspaceCredential = typeof request.headers.authorization === "string"
+        && request.headers.authorization.startsWith("Bearer mc_workspace_");
+      async function getRequestAuthContext() {
+        if (!workspaceCredential) return authService.getAuthContext(request);
+        const user = await captureService.authenticateWorkspace(request);
+        return {
+          user: apiKeyService ? await apiKeyService.decorateUser(user) : user,
+          sessionId: null,
+          shouldClearSession: false,
+        };
+      }
+      if (workspaceCredential) response.setHeader("Cache-Control", "private, no-store");
+      const authContext = await getRequestAuthContext();
+      if (workspaceCredential && !EXTENSION_WORKSPACE_ROUTES.has(route?.id)) {
+        throw new HttpError(403, "Manage account and billing settings on the Margin Chat website.");
+      }
       const authHeaders = authContext.shouldClearSession
         ? {
             "Set-Cookie": authService.buildClearedSessionCookie(),
@@ -225,7 +252,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["documentUpload", "documentDelete", "chat", "chatTitle", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch"].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch"].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -243,12 +270,12 @@ export function createApiHandler({
       }
 
       if (route?.id === "urlMap") {
-        await handleUrlMapRequest({ request, response, user: authContext.user, mapUrl });
+        await handleUrlMapRequest({ request, response, user: authContext.user, mapUrl, workspaceCredential });
         return;
       }
 
       if (route?.id === "topicExpansion") {
-        await handleTopicExpansionRequest({ request, response, user: authContext.user, expandTopic });
+        await handleTopicExpansionRequest({ request, response, user: authContext.user, expandTopic, workspaceCredential });
         return;
       }
 
@@ -258,7 +285,7 @@ export function createApiHandler({
       }
 
       if (route?.id === "jevWorkspace" || route?.id === "jevSearch") {
-        if (request.headers["sec-fetch-site"] === "cross-site"
+        if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site")
           || !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
           throw new HttpError(403, "Use Jev assistance from your Margin Chat workspace.");
         }
@@ -304,7 +331,7 @@ export function createApiHandler({
 
       if (route?.id === "billingDashboard") {
         const dashboard = await billingService.getBillingDashboard(authContext.user.id);
-        const fresh = await authService.getAuthContext(request);
+        const fresh = await getRequestAuthContext();
         sendJson(response, 200, { ...dashboard, user: fresh.user }, { "Cache-Control": "no-store" });
         return;
       }
@@ -407,6 +434,7 @@ export function createApiHandler({
         if (route?.id === "vaultFileRead") {
           const file = await vaultService.readFile({ userId, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
           response.writeHead(200, {
+            ...jsonHeaders,
             "Cache-Control": "private, no-store",
             "Content-Type": file.contentType,
             "Content-Length": file.bytes.length,
@@ -418,7 +446,7 @@ export function createApiHandler({
           return;
         }
         if (route?.id === "vaultFileWrite") {
-          if (request.headers["x-margin-vault-write"] !== "1" || request.headers["sec-fetch-site"] === "cross-site") {
+          if (request.headers["x-margin-vault-write"] !== "1" || (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site")) {
             throw new HttpError(403, "Upload vault files from Margin Chat.");
           }
           const result = await vaultService.commitBinary(userId, {
@@ -431,7 +459,7 @@ export function createApiHandler({
           return;
         }
         if (route?.id === "vaultCommit" || route?.id === "vaultRebuild") {
-          if (request.headers["sec-fetch-site"] === "cross-site" ||
+          if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
               !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
             throw new HttpError(403, "Update your vault from Margin Chat.");
           }
@@ -524,6 +552,7 @@ export function createApiHandler({
           return;
         }
         response.writeHead(200, {
+          ...jsonHeaders,
           "Cache-Control": "private, no-store",
           "Content-Type": original.mimeType || "application/octet-stream",
           "Content-Length": original.bytes.length,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
-import { getEditableDocument } from "../lib/editableDocument";
+import { getDocumentBlockAuthorship, getEditableDocument } from "../lib/editableDocument";
 import type { DocumentAIRequest } from "../lib/documentAI";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { DocumentEditHistory, type DocumentEditOptions } from "../lib/documentEditHistory";
@@ -10,7 +10,6 @@ import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
-import AutoSizingDocumentTitle from "./AutoSizingDocumentTitle";
 import "./DocumentPanel.css";
 
 type DocumentValue = NonNullable<Conversation["document"]>;
@@ -25,6 +24,14 @@ export interface DocumentPanelProps {
   isSubmitting: boolean;
   aiControls: ReactNode;
   documentMenu?: ReactNode;
+  headerControls?: ReactNode;
+  onMinimize?: () => void;
+  onClose?: () => void;
+  marginNotesToggle?: ReactNode;
+  compact?: boolean;
+  presentationToggle?: ReactNode;
+  childNavigation?: ReactNode;
+  parentDocument?: Pick<Conversation, "id" | "title">;
   /** @deprecated Group assignment is available in the document menu. */
   groupControl?: ReactNode;
   recentModelSelections: RecentBackendServiceSelection[];
@@ -54,7 +61,7 @@ export interface DocumentPanelProps {
 
 function freshBlock(content = ""): Block {
   const now = new Date().toISOString();
-  return { id: `block-${crypto.randomUUID()}`, kind: "markdown", content, createdAt: now, updatedAt: now };
+  return { id: `block-${crypto.randomUUID()}`, kind: "markdown", content, createdAt: now, updatedAt: now, authorship: "user" };
 }
 
 export default function DocumentPanel(props: DocumentPanelProps) {
@@ -75,7 +82,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const [replaceSelection, setReplaceSelection] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [openPromptId, setOpenPromptId] = useState<string | null>(null);
-  const [title, setTitle] = useState(conversation.title);
   const [rerunText, setRerunText] = useState("");
   const [hiddenVersions, setHiddenVersions] = useState<string[]>([]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -86,7 +92,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     setPrompt("");
   }, composerRef);
   useOutsideDismiss(Boolean(openPromptId), () => setOpenPromptId(null), promptHistoryRef);
-  useEffect(() => setTitle(conversation.title), [conversation.title]);
   useEffect(() => { if (invocation) promptRef.current?.focus(); }, [invocation]);
   useEffect(() => {
     if (!invocation || document.blocks.some((block) => block.id === invocation.blockId)) return;
@@ -101,7 +106,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   function updateBlock(id: string, content: string, edit?: DocumentEditOptions) {
     const current = latestDocument.current;
     if (current.blocks.find((block) => block.id === id)?.content === content) return;
-    change({ ...current, blocks: current.blocks.map((block) => block.id === id ? { ...block, content, updatedAt: new Date().toISOString() } : block) }, edit);
+    change({ ...current, blocks: current.blocks.map((block) => block.id === id ? { ...block, content, updatedAt: new Date().toISOString(),
+      authorship: getDocumentBlockAuthorship(block, conversation.messages) === "user" ? "user" : "mixed" } : block) }, edit);
   }
   function insertBlock(afterId: string | null, content: string, edit?: DocumentEditOptions) {
     const current = latestDocument.current;
@@ -119,7 +125,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const current = latestDocument.current;
     const source = current.blocks.find((block) => block.id === id);
     if (!source) return "";
-    const block = { ...freshBlock(after), sourceMessageId: source.sourceMessageId, generationId: source.generationId };
+    const block: Block = { ...freshBlock(after), sourceMessageId: source.sourceMessageId, generationId: source.generationId,
+      authorship: after ? getDocumentBlockAuthorship(source, conversation.messages) : "user" };
     const blocks = current.blocks.flatMap((item) => item.id === id ? [{ ...item, content: before, updatedAt: new Date().toISOString() }, block] : [item]);
     change({ ...current, blocks }, { ...edit, group: undefined, afterFocus: { blockId: block.id, from: 0, to: 0 } });
     return block.id;
@@ -229,7 +236,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     return <div className="document-prompt-marker" key={item.id} ref={openPromptId === item.id ? promptHistoryRef : undefined} data-chat-outline-id={`message-${item.sourceMessageId ?? `document-prompt:${item.id}`}`}>
       <button className="document-prompt-icon" aria-label={`Show AI prompt: ${item.content.slice(0,70)}`} aria-expanded={openPromptId === item.id} type="button"
         title="AI prompt and versions" onClick={() => { setOpenPromptId(openPromptId === item.id ? null : item.id); setRerunText(activePrompt.content); }}>
-        <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8l-6 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/><path d="M8 8h8M8 12h5"/></svg>
+        <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><path d="m10 2 2.2 5.8L18 10l-5.8 2.2L10 18l-2.2-5.8L2 10l5.8-2.2Z"/></svg>
       </button>
       {openPromptId === item.id ? <section className="document-prompt-history" aria-label="AI prompt and versions" onKeyDown={(event) => { if(event.key === "Escape") {event.stopPropagation();setOpenPromptId(null);} }}>
         <header><strong>AI prompt</strong><button aria-label="Close prompt history" type="button" onClick={() => setOpenPromptId(null)}>×</button></header>
@@ -250,7 +257,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     </div>;
   }
 
-  return <article className={`chat-panel document-panel${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
+  return <article className={`chat-panel document-panel${props.compact ? " is-compact-document" : ""}${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
     {minimizedSideDocuments.length ? <nav className="document-side-restores" aria-label="Minimized side documents">
       {minimizedSideDocuments.map((sideDocument) => <button key={sideDocument.id} type="button"
         className="document-side-restore" aria-label={`Open side document: ${sideDocument.title || "Untitled document"}`}
@@ -262,15 +269,25 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </svg>
       </button>)}
     </nav> : null}
-    <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
-      <header className="document-header">
-        {conversation.branchAnchor ? <div className="document-origin" ref={props.registerBranchOriginRef}><button type="button" onClick={() => props.onOpenBranch(conversation.parentId!)}>← Source document</button><span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span></div> : null}
-        <div className="document-header-title-row">
-          <AutoSizingDocumentTitle value={title} onChange={setTitle} onCommit={() => { const value=title.trim() || "Untitled document";setTitle(value);if(value!==conversation.title)props.onRename(value); }}/>
-          {props.documentMenu}
+      {(props.onMinimize || props.onClose || conversation.parentId || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu) ? <header className="document-header">
+        <div className="document-header-toolbar">
+          {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${conversation.title || "Untitled document"}`} title="Minimize document" onClick={props.onMinimize}>−</button> : null}
+          {conversation.parentId ? <div className="document-origin" ref={props.registerBranchOriginRef}>
+            <button type="button" title={`Open parent: ${props.parentDocument?.title || "Source document"}`} onClick={() => props.onOpenBranch(conversation.parentId!)}>← {props.parentDocument?.title || "Source document"}</button>
+            {!document.marginNote && conversation.branchAnchor ? <span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span> : null}
+          </div> : null}
+          <div className={`document-header-actions${document.marginNote ? " document-margin-actions" : ""}`}>
+            {props.headerControls}
+            {props.childNavigation}
+            {props.marginNotesToggle}
+            {props.presentationToggle}
+            {props.documentMenu}
+          </div>
+          {props.onClose ? <button type="button" className="document-window-button document-close-button" aria-label={`Close document: ${conversation.title || "Untitled document"}`} title="Close document" onClick={props.onClose}>×</button> : null}
         </div>
-      </header>
-      <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
+      </header> : null}
+    <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+      <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
         onUpdateBlock={updateBlock} onInsertBlock={insertBlock} onSplitBlock={splitBlock}
         onHistory={historyAction}
@@ -283,7 +300,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           change({...current,blocks}, { ...edit, afterFocus: { blockId: focus.id, from: focus.content.length, to: focus.content.length } });
         }}
         onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks}, { beforeFocus: { blockId: id, from: 0, to: 0 }, afterFocus: { blockId: id, from: 0, to: 0 } });}}
-        onInvokeAI={(next) => {props.onClearSelection?.();setInvocation(next);setReplaceSelection(false);setOpenPromptId(null);}}
+        onInvokeAI={(next) => {props.onClearSelection?.();setInvocation(next);setDestination(next.selection ? "side" : "inline");setReplaceSelection(false);setOpenPromptId(null);}}
         onSelectionChange={(selection) => { if(selection)props.onSelection({...selection,prompt:"",sourceKind:"message",sourceContent:document.blocks.find((block)=>block.id===selection.sourceBlockId)?.content}); else props.onClearSelection?.(); }}
         renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering theme={props.theme}/>}
         renderAfterBlock={(block) => <>

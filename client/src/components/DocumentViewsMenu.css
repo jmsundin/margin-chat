@@ -56,3 +56,5 @@
 .document-views-kind { flex: 0 0 29px; color: var(--muted); font-size: 10px; }
 .document-views-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .document-views-menu p { margin: 8px 10px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+
+.document-views-separator { height: 1px; margin: 5px; background: var(--line); }

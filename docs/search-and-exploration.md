@@ -4,6 +4,9 @@ Search opens a single **Search & explore** session. Query, temporary filters,
 selected passage, pagination and navigation history survive closing it to read a
 source. The Passages and Connections views share that state.
 
+Press **Command+O** on Mac or **Ctrl+O** on Windows/Linux to open global search,
+including while editing a document. Command/Ctrl+K remains available as well.
+
 ## Local retrieval
 
 The search corpus includes titles and bounded passages from user/assistant
@@ -55,11 +58,13 @@ provide embedding-based semantic retrieval or infer an unspoken user intent.
 
 ## Opening a source
 
-Open source returns to the chat/note, opens an annotation editor when appropriate,
+Clicking a result opens its document directly, opens an annotation editor when appropriate,
 and reveals the matching passage. The reference is checked against current
 content before applying any range. Edited quotes are recovered only when unique;
 stale offsets never select unrelated text. Returning to search preserves the
-exploration session.
+exploration session. Results show a longer excerpt, update date, group and matching
+section. Title matches preview the current document body. A separate Preview
+control expands a passage without leaving search.
 
 Saved highlights also show a delayed hover preview of the linked side chat/note.
 Keyboard focus opens the same preview. Text selection suppresses it, Escape

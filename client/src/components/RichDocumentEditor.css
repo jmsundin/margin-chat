@@ -68,6 +68,9 @@
 .rich-document-toolbar button:hover, .rich-document-toolbar button[aria-pressed="true"] { background: var(--button-active-surface); border-color: var(--button-active-border); }
 .rich-document-toolbar .rich-document-ask { color: var(--sage); font-weight: 600; }
 .rich-document-toolbar .rich-document-toolbar-close { margin-left: auto; }
+.rich-document-authorship { border-top: 1px solid var(--line); color: var(--muted); flex: 0 0 100%; font-size: .7rem; line-height: 1.5; padding: 6px 8px 2px; box-sizing: border-box; user-select: none; }
+/* Keep attribution out of copied text and cross-block source range offsets. */
+.rich-document-authorship::before { content: attr(data-label); }
 .rich-document-link-form { align-items: center; display: flex; flex-wrap: wrap; gap: 4px; width: 100%; }
 .rich-document-link-form input { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 5px; color: var(--ink); flex: 1; font: inherit; min-height: 34px; min-width: 120px; padding: 5px 8px; }
 .rich-document-source { background: var(--bg-deep); border: 1px solid var(--line-strong); border-radius: 8px; overflow: hidden; }
@@ -92,3 +95,13 @@
 }
 @media (hover: none), (pointer: coarse) { .rich-document-grip { opacity: .8; transition: none; } }
 @media (prefers-reduced-motion: reduce) { .rich-document-block-main { transition: none; } .rich-document-grip { transition-duration: 0ms; } }
+
+.rich-document-content .document-table { position: relative; padding: 0 28px 28px 0; overflow-y: hidden; }
+.document-table-controls { pointer-events: none; }
+.document-table-controls button { position: absolute; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--panel-strong); color: var(--accent); font-family: inherit; font-size: 18px; line-height: 1; cursor: pointer; pointer-events: auto; opacity: 0; }
+.document-table-add-row { bottom: 2px; left: calc(50% - 24px); }
+.document-table-add-column { right: 2px; top: 8px; }
+.document-table:hover .document-table-controls button, .document-table:focus-within .document-table-controls button { opacity: 1; }
+.document-table-controls button:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 2px; }
+.rich-document-content[contenteditable="false"] .document-table-controls { display: none; }
+@media (hover: none) { .document-table-controls button { opacity: 1; } }

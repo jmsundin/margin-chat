@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiTransport";
 import type { AISettings, AppState, BackendServiceId, Conversation } from "../types";
 import { createStandaloneNoteConversation } from "../initialState";
 import { addRootConversation } from "./workspaceCommands";
@@ -30,7 +31,7 @@ export function isUrlMapGraph(value: unknown): value is UrlMapGraph {
 
 export async function requestUrlMap(args: UrlMapAIOptions & { url: string; focus?: string; expectedUserId: string; signal: AbortSignal; onProgress: (message: string) => void }): Promise<UrlMapGraph> {
   const { expectedUserId, signal, onProgress, ...payload } = args;
-  const response = await fetch("/api/graph/url", { method: "POST", credentials: "same-origin", signal,
+  const response = await apiFetch("/api/graph/url", { method: "POST", credentials: "same-origin", signal,
     headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", "X-Margin-Vault-User": expectedUserId }, body: JSON.stringify(payload) });
   if (!response.ok) {
     const body = await response.json().catch(() => null);

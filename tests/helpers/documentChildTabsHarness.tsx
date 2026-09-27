@@ -11,12 +11,13 @@ const { default: DocumentChildTabs } = await import("../../client/src/components
 const { createMainConversation } = await import("../../client/src/initialState");
 const parent = { ...createMainConversation({ id: "parent" }), title: "Angular" };
 const children = ["Components", "Services", "Routing"].map((title, i) => ({ ...createMainConversation({ id: `child-${i}` }), parentId: parent.id, title }));
+children[0].messages = [{ id: "preview", role: "assistant", content: "**Component** preview text.", createdAt: parent.createdAt }];
 const selected: string[] = [];
 const container = browser.document.createElement("div");
 browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
 const trigger = () => container.querySelector("button")!;
-const panel = () => container.querySelector("nav");
+const panel = () => browser.document.querySelector("nav");
 const items = () => [...panel()!.querySelectorAll("button")];
 const wait = (ms: number) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
 async function pointer(type: string, pointerType = "mouse", buttons = 0) {
@@ -25,7 +26,7 @@ async function pointer(type: string, pointerType = "mouse", buttons = 0) {
 async function click(node: any) { await act(async () => node.click()); }
 async function key(node: any, key: string) { await act(async () => node.dispatchEvent(new browser.KeyboardEvent("keydown", { bubbles: true, key, cancelable: true }))); }
 try {
-  await act(async () => root.render(createElement(DocumentChildTabs, { parent, documents: children, currentDocumentId: children[0].id, minimizedDocumentIds: [children[2].id], onSelect: id => selected.push(id) })));
+  await act(async () => root.render(createElement(DocumentChildTabs, { parent, documents: children, currentDocumentId: children[0].id, minimizedDocumentIds: [children[2].id], openDocumentIds: [children[0].id], onSelect: id => selected.push(id) })));
   assert.equal(panel(), null);
   await pointer("pointerover");
   await wait(100);
@@ -36,6 +37,14 @@ try {
   await wait(500);
   assert(panel(), "Pausing over the hot zone reveals tabs.");
   assert.equal(items().length, 3);
+  assert.equal(panel().parentElement, browser.document.body, "Dropdown escapes document clipping.");
+  assert(items()[0].textContent.includes("Open"));
+  assert(items()[0].textContent.includes("Component preview text."));
+  assert(items()[1].textContent.includes("Not open"));
+  assert(items()[1].textContent.includes("No content yet"));
+  assert.equal(trigger().textContent, "3⌄", "The closed control only displays the count and chevron.");
+  assert.equal(trigger().getAttribute("aria-label"), "Children of Angular (3)");
+  assert.equal(panel().querySelector(".document-child-tabs-heading")?.textContent, "Children of Angular");
   assert.equal(items()[0].getAttribute("aria-current"), "page");
   assert(items()[2].textContent.includes("Minimized"));
   await pointer("pointerout");
@@ -54,9 +63,10 @@ try {
   assert.deepEqual(selected, [children[2].id], "Selecting a minimized child delegates to document restoration.");
   assert.equal(panel(), null);
   await act(async () => trigger().focus());
-  assert(panel(), "Keyboard focus reveals navigation.");
+  await key(trigger(), "ArrowDown");
+  assert(panel(), "Keyboard activation reveals navigation.");
   await act(async () => items()[0].focus());
-  await key(items()[0], "ArrowRight");
+  await key(items()[0], "ArrowDown");
   assert.equal(browser.document.activeElement, items()[1]);
   await key(items()[1], "End");
   assert.equal(browser.document.activeElement, items()[2]);
@@ -66,6 +76,13 @@ try {
   await click(trigger());
   await click(browser.document.body);
   assert.equal(panel(), null, "Clicking outside dismisses the strip.");
+  await click(trigger());
+  assert(panel());
+  await act(async () => root.render(createElement(DocumentChildTabs, { parent, documents: [], currentDocumentId: parent.id, minimizedDocumentIds: [], onSelect: id => selected.push(id) })));
+  assert.equal(trigger(), null, "Documents without children have no Children dropdown.");
+  assert.equal(panel(), null, "Removing the last child also removes an open dropdown.");
+  await act(async () => root.render(createElement(DocumentChildTabs, { parent, documents: children, currentDocumentId: parent.id, minimizedDocumentIds: [], onSelect: id => selected.push(id) })));
+  assert.equal(panel(), null, "The dropdown stays closed when a document gains children again.");
   await pointer("pointerover");
   await act(async () => root.unmount());
   await wait(500);

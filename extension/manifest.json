@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Save to Margin",
-  "description": "Save passages, articles, and bookmarks to your Margin Chat Cloud Inbox.",
+  "name": "Margin Chat",
+  "description": "Your thinking space above the web: highlight, comment, save sources, and take page context into AI conversations.",
   "minimum_chrome_version": "127",
   "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
   "optional_host_permissions": [
@@ -11,10 +11,13 @@
   ],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": {
-    "default_title": "Save to Margin",
-    "default_popup": "popup.html"
+    "default_title": "Open Margin on this page"
   },
   "options_ui": { "page": "options.html", "open_in_tab": true },
+  "web_accessible_resources": [{
+    "resources": ["workspace.html", "assets/*", "excalidraw/*"],
+    "matches": ["http://*/*", "https://*/*"]
+  }],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
   }

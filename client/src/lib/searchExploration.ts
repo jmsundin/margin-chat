@@ -135,6 +135,15 @@ type ParsedSource = {
 // Query/filter changes should not parse every message's Markdown again. Immutable
 // conversation objects keep this cache bounded to currently referenced workspace data.
 const parsedSources = new WeakMap<Conversation, Map<string, ParsedSource>>();
+const documentPreviews = new WeakMap<Conversation, string>();
+function documentPreview(conversation: Conversation) {
+  let preview = documentPreviews.get(conversation);
+  if (preview === undefined) {
+    preview = summarizeAnnotationText(getCurrentDocumentText(conversation), 420) || "Empty document";
+    documentPreviews.set(conversation, preview);
+  }
+  return preview;
+}
 function parseSource(conversation: Conversation, source: SearchEvidenceRef, content: string) {
   let sources = parsedSources.get(conversation);
   if (!sources) { sources = new Map(); parsedSources.set(conversation, sources); }
@@ -174,7 +183,7 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
   for (const conversation of Object.values(conversations)) {
     const rootId = getConversationRootId(conversations, conversation.id) ?? conversation.id;
     const rootTitle = conversations[rootId]?.title ?? conversation.title;
-    const locationLabel = conversation.kind === "note" ? "Standalone note" : conversation.parentId ? "Branch conversation" : "Main chat";
+    const locationLabel = conversation.document ? (conversation.parentId ? "Side document" : "Document") : conversation.kind === "note" ? "Standalone note" : conversation.parentId ? "Branch conversation" : "Main chat";
     const memberships = groupIds.get(conversation.id) ?? ["group:ungrouped"];
     const assignedCategory = Object.hasOwn(categories, conversation.id) ? categories[conversation.id] : undefined;
 
@@ -204,13 +213,14 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
         const nextWord = plain.indexOf(" ", previewStart);
         if (previewStart && nextWord >= 0 && nextWord < firstMatch) previewStart = nextWord + 1;
         const previewText = plain.slice(previewStart);
-        const previewLimit = previewStart ? 219 : 220;
+        const previewLimit = previewStart ? 419 : 420;
         const preview = `${previewStart ? "…" : ""}${previewText.length <= previewLimit ? previewText : `${previewText.slice(0, previewLimit - 1).trimEnd()}…`}`;
         const relatedWords = currentWords.size ? [...currentWords].filter((word) => words.includes(normalizedWords(word))).length : 0;
         corpus.push({
           id: JSON.stringify([conversation.id, source.sourceKind, source.sourceBlockId ?? source.messageId ?? source.noteId ?? "", part.start]),
           conversationId: conversation.id, title: conversation.title, rootTitle, locationLabel, matchLabel,
-          preview, passage: part.text, evidence, updatedAt, updatedLabel: dateLabel(updatedAt),
+          preview: source.sourceKind === "conversation" ? documentPreview(conversation) : preview,
+          passage: part.text, evidence, updatedAt, updatedLabel: dateLabel(updatedAt),
           facetIds: [...topics, ...memberships, `type:${type}`, ...purposeIds.map((id) => `purpose:${id}`)],
           purposeIds, localOnly,
           rank: matches ? (exactQuery?.test(part.text) ? 10 : 0) + (source.sourceKind === "conversation" && terms.length ? 2 : 0) + Math.min(relatedWords, 6) : -1,
@@ -218,7 +228,7 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
       }
     }
 
-    add(conversation.title, { conversationId: conversation.id, sourceKind: "conversation" }, conversation.kind === "note" ? "Note title" : "Chat title", conversation.updatedAt);
+    add(conversation.title, { conversationId: conversation.id, sourceKind: "conversation" }, conversation.document ? "Document title" : conversation.kind === "note" ? "Note title" : "Chat title", conversation.updatedAt);
     for (const source of getPrimaryDocumentSources(conversation)) {
       add(source.content, { conversationId: conversation.id, sourceKind: source.sourceKind, sourceBlockId: source.sourceBlockId, messageId: source.messageId, noteId: source.noteId },
         source.sourceKind === "document" ? "Document passage" : source.sourceKind === "standalone-note" ? "Note content" : source.role === "assistant" ? "Assistant message" : "Your message", source.updatedAt);

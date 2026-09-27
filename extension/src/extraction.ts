@@ -6,7 +6,7 @@ export function extractArticle(document: Document) {
   const clone = document.cloneNode(true) as Document;
   clone
     .querySelectorAll(
-      "script,style,form,input,textarea,select,button,iframe,object,embed,img,svg,canvas,[hidden],[aria-hidden='true']",
+      "script,style,form,input,textarea,select,button,iframe,object,embed,img,svg,canvas,[hidden],[aria-hidden='true'],[contenteditable]:not([contenteditable='false']),[data-margin-overlay]",
     )
     .forEach((node) => node.remove());
   clone.querySelectorAll("a[href]").forEach((link) => {

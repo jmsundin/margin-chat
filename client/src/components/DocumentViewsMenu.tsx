@@ -12,10 +12,15 @@ export interface DocumentViewsMenuProps {
   branchesOpen: boolean;
   branchesEnabled?: boolean;
   onToggleBranches: () => void;
+  onMinimizeAll?: () => void;
+  onCloseAll?: () => void;
+  canMinimizeAll?: boolean;
+  canCloseAll?: boolean;
 }
 
 export default function DocumentViewsMenu({ currentDocumentId, relatedItems, relatedWarning, onSelectRelated,
-  branchCount, branchesOpen, branchesEnabled = true, onToggleBranches }: DocumentViewsMenuProps) {
+  branchCount, branchesOpen, branchesEnabled = true, onToggleBranches,
+  onMinimizeAll, onCloseAll, canMinimizeAll = true, canCloseAll = true }: DocumentViewsMenuProps) {
   const popupId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
@@ -111,6 +116,17 @@ export default function DocumentViewsMenu({ currentDocumentId, relatedItems, rel
           onClick={() => { close(true); onToggleBranches(); }}>
           <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="4" r="2"/><circle cx="5" cy="16" r="2"/><circle cx="15" cy="6" r="2"/><path d="M5 6v8m0-4h6a4 4 0 0 0 4-4"/></svg>
           <span>Branches</span><span className="document-views-count" aria-hidden="true">{branchCount}</span><span className="document-views-check" aria-hidden="true">{branchesOpen ? "✓" : ""}</span>
+        </button> : null}
+        {onMinimizeAll || onCloseAll ? <div className="document-views-separator" role="separator" /> : null}
+        {onMinimizeAll ? <button type="button" role="menuitem" disabled={!canMinimizeAll}
+          onClick={() => { close(true); onMinimizeAll(); }}>
+          <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M4 10h12" /></svg>
+          <span>Minimize all documents</span>
+        </button> : null}
+        {onCloseAll ? <button type="button" role="menuitem" disabled={!canCloseAll}
+          onClick={() => { close(true); onCloseAll(); }}>
+          <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m5 5 10 10M15 5 5 15" /></svg>
+          <span>Close all documents</span>
         </button> : null}
       </> : <>
         <button type="button" role="menuitem" className="document-views-back" onClick={() => setView("views")}>

@@ -54,7 +54,8 @@ async function createOptions(fetchImpl: typeof fetch, storage: Record<string, an
   const input = (id: string) => element(id) as unknown as HTMLInputElement;
   return {
     storage, requested, removed, element, input, accessLevel: () => accessLevel,
-    async login(email = "reader@example.test", server = "https://margin.example") {
+    async login(email = "reader@example.test", server = "https://margin.example", access = "capture") {
+      (element("access-mode") as unknown as HTMLSelectElement).value = access;
       input("server-url").value = server;
       input("email").value = email;
       input("password").value = " my account password ";
@@ -69,6 +70,24 @@ async function createOptions(fetchImpl: typeof fetch, storage: Record<string, an
 }
 
 describe("extension password sign-in", () => {
+  test("workspace access explicitly requests the new session and preserves a pending capture through upgrade", async () => {
+    const existing = { serverUrl: "https://margin.example", token: response().token, connectionId: connectionIdentity("https://margin.example", "reader"), userId: "reader", displayName: "Reader" };
+    const storage: Record<string, any> = { connection: existing, pendingSave: { connectionId: existing.connectionId, capture: { title: "Keep my pending save" } } };
+    const calls: string[] = [];
+    const app = await createOptions((async (url, init) => {
+      calls.push(`${init?.method} ${url}`);
+      if (init?.method === "DELETE") return Response.json({ ok: true });
+      return Response.json({ ...response(), token: `mc_workspace_${"W".repeat(43)}`, scope: "workspace" });
+    }) as typeof fetch, storage);
+    await app.login("reader@example.test", "https://margin.example", "workspace");
+    expect(calls).toEqual(["POST https://margin.example/api/v1/extension-workspace-session", "DELETE https://margin.example/api/v1/extension-session"]);
+    expect(storage.connection.token).toBe(`mc_workspace_${"W".repeat(43)}`);
+    expect(storage.pendingSave.connectionId).toBe(storage.connection.connectionId);
+    expect(app.element("status").textContent).toContain("documents, notes, and AI");
+    await app.logout();
+    expect(storage.connection).toBeUndefined();
+    expect(calls.at(-1)).toBe("DELETE https://margin.example/api/v1/extension-session");
+  });
   test("requests access before sending credentials, stores only a scoped session, and clears the password", async () => {
     let app: Awaited<ReturnType<typeof createOptions>>;
     app = await createOptions((async (url, init) => {
@@ -83,7 +102,7 @@ describe("extension password sign-in", () => {
       return Response.json(response());
     }) as typeof fetch);
     await app.login();
-    expect(app.element("status").textContent).toContain("Signed in.");
+    expect(app.element("status").textContent).toContain("Signed in with capture-only access.");
     expect(app.input("password").value).toBe("");
     expect(app.storage.connection).toMatchObject({ userId: "reader", token: response().token });
     expect(app.storage.connection.connectionId).toBe(connectionIdentity("https://margin.example", "reader"));

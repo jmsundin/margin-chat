@@ -157,7 +157,7 @@ describe("shared Markdown runtime", () => {
     const workspace = browser.createMarkdownWorkspace(state);
     const path = workspace.manifest.files[0].path;
     for (const source of [workspace.files[path], browser.decodeReadableMarkdown(workspace.files[path])]) {
-      const damaged = source.replace(/^<!-- margin-chat-(?:message|msg)-end(?: .+)? -->\r?$/m, "");
+      const damaged = source.replace(/^(?:<!-- margin-chat-(?:message|msg)-end(?: .+)? -->|<\/(?:ai|user|system)>)\r?$/m, "");
       expect(damaged).not.toBe(source);
       for (const files of [{}, { [path]: damaged }]) {
         expect(browser.parseMarkdownWorkspace(workspace.manifest, files)).toBeNull();
@@ -166,9 +166,9 @@ describe("shared Markdown runtime", () => {
     }
   });
 
-  test("both runtimes read version 3 and 4 manifests and reject broken readable registries", () => {
+  test("both runtimes read version 3, 4 and 5 manifests and reject broken readable registries", () => {
     const workspace = browser.createMarkdownWorkspace(createEmptyState());
-    for (const formatVersion of [3, 4]) {
+    for (const formatVersion of [3, 4, 5]) {
       expect(browser.parseMarkdownWorkspaceManifest({ ...workspace.manifest, formatVersion })).not.toBeNull();
       expect(server.parseMarkdownWorkspaceManifest({ ...workspace.manifest, formatVersion })).not.toBeNull();
     }

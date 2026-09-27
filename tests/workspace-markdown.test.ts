@@ -136,8 +136,8 @@ describe("Markdown local workspace", () => {
       'title: "Renamed in Obsidian"',
     );
     workspace.files[notePath] = workspace.files[notePath].replace(
-      "\n## Note\n\nOriginal note text",
-      "\n## Note\n\nNote text edited in Obsidian",
+      /(<user note-id="[^\"]+">\r?\n(?:\r?\n)?)Original note text/,
+      (_match, opening) => `${opening}Note text edited in Obsidian`,
     );
 
     const parsed = parseMarkdownWorkspace(workspace.manifest, workspace.files);
@@ -153,13 +153,60 @@ describe("Markdown local workspace", () => {
 });
 
 describe("readable portable Markdown", () => {
+  test("places AI conversations, standalone notes and annotations in one flat document namespace", () => {
+    const state = createEmptyState();
+    const root = state.conversations[state.rootId];
+    root.title = "Project";
+    root.messages = [{ id: "ai", role: "assistant", content: "An AI suggestion.", createdAt: root.createdAt }];
+    root.notes = [{ id: "annotation", kind: "comment", content: "My annotation", createdAt: root.createdAt,
+      updatedAt: root.updatedAt, sourceMessageId: null, startOffset: null, endOffset: null, quote: null }];
+    const note = createStandaloneNoteConversation({ id: "own-note", noteId: "own-body" });
+    note.title = "Project";
+    note.notes![0].content = "My own writing.";
+    state.conversations[note.id] = note;
+    const workspace = createMarkdownWorkspace(state);
+    expect(workspace.manifest.files).toHaveLength(3);
+    expect(new Set(workspace.manifest.files.map((record) => record.path)).size).toBe(3);
+    for (const record of workspace.manifest.files) {
+      expect(record.path).not.toContain("/");
+      expect(workspace.files[record.path]).toContain("margin-chat-kind: document");
+    }
+    expect(parseMarkdownWorkspace(workspace.manifest, workspace.files)?.conversations[note.id].notes![0].content).toBe("My own writing.");
+  });
+
+  test("migrates managed folders into the flat namespace with relationships and attachments intact", () => {
+    const state = createEmptyState();
+    const root = state.conversations[state.rootId];
+    root.title = "Migrating title";
+    root.documents = [{ id: "attachment", filename: "source.pdf", createdAt: root.createdAt,
+      mimeType: "application/pdf", sizeBytes: 1, status: "ready", error: null }];
+    const current = createMarkdownWorkspace(state);
+    const path = current.manifest.files[0].path;
+    const oldPath = `Chats/${path}`;
+    const legacySource = decodeReadableMarkdown(current.files[path])
+      .replace(/^<!-- margin-chat-metadata (.+) -->$/m, (_line, json) => {
+        const metadata = JSON.parse(json);
+        metadata.file.managedPath = oldPath;
+        return `<!-- margin-chat-metadata ${JSON.stringify(metadata)} -->`;
+      }).replace("](Attachments/", "](../Attachments/");
+    const legacy = { ...current, manifest: { ...current.manifest, formatVersion: 4,
+      files: [{ ...current.manifest.files[0], path: oldPath, managedPath: oldPath }] }, files: { [oldPath]: legacySource } };
+    const parsed = parseMarkdownWorkspace(legacy.manifest, legacy.files)!;
+    const migrated = createMarkdownWorkspace(parsed, undefined, legacy);
+    expect(migrated.manifest.files[0].path).toBe(path);
+    expect(migrated.manifest.files[0].aliases).toContain(oldPath);
+    expect(migrated.files[oldPath]).toBeUndefined();
+    expect(migrated.files[path]).toContain("](Attachments/attachment/source.pdf)");
+    expect(parseMarkdownWorkspace(migrated.manifest, migrated.files)?.conversations[root.id].documents).toEqual(root.documents);
+  });
+
   test("uses title-first filenames with stable suffixes for same-title offline documents", () => {
     const first = createEmptyState();
     first.conversations[first.rootId].title = "Architecture";
     const firstWorkspace = createMarkdownWorkspace(first);
     const firstPath = firstWorkspace.manifest.files[0].path;
-    expect(firstPath).toMatch(/^Chats\/Architecture.+\.md$/);
-    expect(firstPath).not.toBe("Chats/Architecture.md");
+    expect(firstPath).toMatch(/^Architecture.+\.md$/);
+    expect(firstPath).not.toBe("Architecture.md");
     expect(createMarkdownWorkspace(first).manifest.files[0].path).toBe(firstPath);
 
     const second = createEmptyState();
@@ -168,11 +215,11 @@ describe("readable portable Markdown", () => {
     second.activeConversationId = other.id;
     second.conversations = { [other.id]: other };
     const secondPath = createMarkdownWorkspace(second).manifest.files[0].path;
-    expect(secondPath).toMatch(/^Chats\/Architecture.+\.md$/);
+    expect(secondPath).toMatch(/^Architecture.+\.md$/);
     expect(secondPath.toLocaleLowerCase()).not.toBe(firstPath.toLocaleLowerCase());
   });
 
-  test("moves structured metadata to the header while keeping readable body text and compact identities", () => {
+  test("moves structured metadata to the header while keeping one readable body and authorship markup", () => {
     const state = createEmptyState();
     const conversation = state.conversations[state.rootId];
     conversation.title = "Portable plan";
@@ -182,14 +229,15 @@ describe("readable portable Markdown", () => {
     const source = Object.values(workspace.files)[0];
     const header = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(source)!;
     const body = source.slice(header[0].length);
-    expect(workspace.manifest.formatVersion).toBe(4);
+    expect(workspace.manifest.formatVersion).toBe(5);
     expect(isReadableMarkdown(source)).toBe(true);
     expect(header[1]).toContain("margin-chat: |-");
-    expect(header[1]).toContain('"schemaVersion": 2');
-    expect(body).toContain('<!-- margin-chat-block "block-one" -->');
-    expect(body).toContain('<!-- margin-chat-msg "message-one" -->');
+    expect(header[1]).toContain('"schemaVersion": 3');
+    expect(body).toContain('<user id="block-one">');
+    expect(body).not.toContain('message-id="message-one"');
     expect(body).toContain("Readable **answer**.\n\n[[Related|Reference]]");
-    expect(body).toContain("Readable question.");
+    expect(body).not.toContain("Readable question.");
+    expect(header[1]).toContain("Readable question.");
     expect(body).not.toContain("<!-- margin-chat-metadata");
     expect(body).not.toContain('"contentLength"');
     expect(parseMarkdownWorkspace(workspace.manifest, workspace.files)?.conversations[state.rootId].document).toEqual(conversation.document);
@@ -209,8 +257,8 @@ describe("readable portable Markdown", () => {
     root.title = "System design";
     const updated = createMarkdownWorkspace(state, undefined, original);
     const record = updated.manifest.files.find((record) => record.id === root.id)!;
-    expect(record.path).toMatch(/^Chats\/System design.+\.md$/);
-    expect(record.path.slice("Chats/System design".length)).toBe(oldPath.slice("Chats/Architecture".length));
+    expect(record.path).toMatch(/^System design.+\.md$/);
+    expect(record.path.slice("System design".length)).toBe(oldPath.slice("Architecture".length));
     expect(record.aliases).toContain(oldPath);
     expect(updated.files[oldPath]).toBeUndefined();
     expect(updated.files[childPath]).toContain(`[[${record.path.replace(/\.md$/, "")}|System design]]`);
@@ -414,7 +462,7 @@ describe("authoritative Markdown files", () => {
     const workspace = createMarkdownWorkspace(state);
     const raw = Object.values(workspace.files)[0];
     expect(raw).toContain("## Attachments");
-    expect(raw).toContain("../Attachments/source_123/Design%20%5Bdraft%5D%20%282%29.pdf");
+    expect(raw).toContain("Attachments/source_123/Design%20%5Bdraft%5D%20%282%29.pdf");
     expect(getAttachmentVaultPath({ id: "id", filename: "metadata.json" })).toBe("Attachments/id/original-metadata.json");
     expect(getAttachmentVaultPath({ id: "id", filename: ".." })).toBe("Attachments/id/attachment");
     expect(getAttachmentVaultPath({ id: "../bad", filename: "x" })).toBeNull();

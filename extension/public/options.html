@@ -3,17 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Sign in to Save to Margin</title>
+    <title>Connect Margin Chat workspace</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body class="options">
     <main class="connection-card">
       <div class="brand">
         <img src="icons/icon-48.png" width="40" height="40" alt="" /><span
-          >Margin<span class="subtle">Web clipper</span></span
+          >Margin<span class="subtle">Your browser workspace</span></span
         >
       </div>
-      <h1>A place for what you find.</h1>
+      <h1>Your workspace, beside the web.</h1>
       <p>Sign in with the email and password you use for Margin Chat.</p>
       <div id="connected" hidden>
         <p id="account"></p>
@@ -43,7 +43,10 @@
           required
           maxlength="200"
           autocomplete="current-password"
-        /><button id="connect" class="primary" type="submit">Sign in</button>
+        /><label for="access-mode">Extension access</label>
+        <select id="access-mode"><option value="workspace">Workspace + AI + capture</option><option value="capture">Capture only</option></select>
+        <p class="subtle">Workspace access lets this browser read and edit your cloud documents and run AI using your Margin Chat account. Account security and payments stay on the website. Existing capture-only sessions keep their original access until you sign in again.</p>
+        <button id="connect" class="primary" type="submit">Sign in</button>
       </form>
       <p id="status" role="status" aria-live="polite"></p>
       <p class="fine-print">

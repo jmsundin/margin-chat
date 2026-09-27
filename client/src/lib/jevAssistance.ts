@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiTransport";
 import { normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { AISettings, Conversation, ConversationGroup, ThreadCategoryId, ThreadSummary } from "../types";
 import { getStandaloneNote } from "./standaloneNotes";
@@ -136,7 +137,7 @@ export function applyJevCategories(threads: ThreadSummary[], categories: Record<
 }
 
 export async function requestJevStatus(userId: string, signal: AbortSignal): Promise<boolean> {
-  const response = await fetch("/api/jev/status", { credentials: "same-origin", cache: "no-store", headers: { "X-Margin-Vault-User": userId }, signal });
+  const response = await apiFetch("/api/jev/status", { credentials: "same-origin", cache: "no-store", headers: { "X-Margin-Vault-User": userId }, signal });
   if (!response.ok) throw new Error("Jev is temporarily unavailable.");
   const value = await response.json();
   if (typeof value?.configured !== "boolean") throw new Error("Jev returned an invalid status.");
@@ -144,7 +145,7 @@ export async function requestJevStatus(userId: string, signal: AbortSignal): Pro
 }
 
 export async function requestJevWorkspace(userId: string, snapshot: JevWorkspaceSnapshot, categories: boolean | readonly string[], signal: AbortSignal): Promise<JevWorkspaceResult> {
-  const response = await fetch("/api/jev/workspace", {
+  const response = await apiFetch("/api/jev/workspace", {
     credentials: "same-origin", method: "POST", signal,
     headers: { "Content-Type": "application/json", "X-Margin-Vault-User": userId },
     body: JSON.stringify({ enabled: true, ...snapshot,

@@ -4,6 +4,7 @@ import ThreadSidebar from "../client/src/components/ThreadSidebar";
 import {
   getSidebarThreadDropAction,
   sortThreadsByRecentActivity,
+  sortDocumentsByCreation,
 } from "../client/src/lib/sidebarThreads";
 import type {
   ConversationGroup,
@@ -67,14 +68,14 @@ function renderSidebar(
 }
 
 describe("thread sidebar pinning", () => {
-  test("moves pinned threads into a dedicated group without duplicating them", () => {
+  test("includes pinned documents once in the flat default view", () => {
     const markup = renderSidebar([thread("pinned", "Pinned conversation")]);
 
-    expect(markup).toContain('aria-label="Pinned documents"');
-    expect(markup).toContain('data-thread-drop-target="pinned"');
-    expect(markup).toContain("Ungrouped");
-    expect(markup.indexOf("Pinned conversation")).toBeLessThan(
-      markup.indexOf("Recent conversation"),
+    expect(markup).not.toContain('aria-label="Pinned documents"');
+    expect(markup).not.toContain('data-thread-drop-target="pinned"');
+    expect(markup).not.toContain("Ungrouped");
+    expect(markup.indexOf("Recent conversation")).toBeLessThan(
+      markup.indexOf("Pinned conversation"),
     );
     expect(markup.match(/class="thread-item is-pinned"/g)).toHaveLength(1);
     expect(markup).not.toContain('aria-label="Unpin Pinned conversation"');
@@ -86,7 +87,7 @@ describe("thread sidebar pinning", () => {
 
     expect(markup).not.toContain("Drop here to pin");
     expect(markup).not.toContain('aria-label="Pinned documents"');
-    expect(markup).toContain("Ungrouped");
+    expect(markup).not.toContain("Ungrouped");
 
     const emptyMarkup = renderSidebar([], new Set(), []);
     expect(emptyMarkup).not.toContain('aria-label="Ungrouped documents"');
@@ -182,13 +183,15 @@ describe("thread sidebar pinning", () => {
     ).toEqual(["newest-note", "recent-chat", "older-chat"]);
   });
 
-  test("orders pinned chats by recent activity while keeping pins first", () => {
+  test("orders pinned documents by creation time even after an older one is edited", () => {
     const olderPinned = {
       ...thread("older-pinned", "Older pinned"),
-      updatedAt: "2026-08-12T08:00:00.000Z",
+      createdAt: "2026-08-10T08:00:00.000Z",
+      updatedAt: "2026-08-13T08:00:00.000Z",
     };
     const newerPinned = {
       ...thread("newer-pinned", "Newer pinned"),
+      createdAt: "2026-08-12T08:00:00.000Z",
       updatedAt: "2026-08-12T12:00:00.000Z",
     };
     const markup = renderSidebar(
@@ -202,7 +205,7 @@ describe("thread sidebar pinning", () => {
     );
   });
 
-  test("keeps grouped sections above ungrouped items", () => {
+  test("interleaves grouped and ungrouped documents by creation time", () => {
     const olderGrouped = {
       ...thread("older-grouped", "Older grouped chat"),
       groupId: "project",
@@ -228,9 +231,19 @@ describe("thread sidebar pinning", () => {
       },
     );
 
-    expect(markup.indexOf("Older grouped chat")).toBeLessThan(
-      markup.indexOf("Newest ungrouped note"),
+    expect(markup.indexOf("Newest ungrouped note")).toBeLessThan(
+      markup.indexOf("Older grouped chat"),
     );
+  });
+
+  test("creation sorting preserves input and supports older summaries without creation metadata", () => {
+    const input = [
+      { ...thread("older", "Older"), createdAt: "2026-08-01", updatedAt: "2026-09-01" },
+      thread("legacy", "Legacy"),
+      { ...thread("new", "New"), createdAt: "2026-08-20" },
+    ];
+    expect(sortDocumentsByCreation(input).map(({ id }) => id)).toEqual(["new", "legacy", "older"]);
+    expect(input.map(({ id }) => id)).toEqual(["older", "legacy", "new"]);
   });
 
   test("maps sidebar drops to pin, group, and ungroup actions", () => {

@@ -18,6 +18,7 @@ export function splitRichDocumentMarkdown(markdown: string): string[] {
 
 /** These constructs require the existing Markdown renderer and lossless source editing. */
 export function getRichDocumentFallbackReason(markdown: string): string | null {
+  if (/^\s*(`{3,}|~{3,})excalidraw\s*\n/i.test(markdown)) return "Drawing";
   const inline = findObsidianInlineTokens(markdown);
   if (inline.some((token) => token.kind === "wikilink" || token.kind === "embed")) return "Wiki link";
   if (inline.some((token) => token.kind === "comment")) return "Hidden comment";
@@ -29,7 +30,7 @@ export function getRichDocumentFallbackReason(markdown: string): string | null {
     if (reason) return;
     if (token.type === "code" && token.lang?.trim().toLowerCase() === "mermaid") reason = "Diagram";
     else if (token.type === "image") reason = "Image";
-    else if (token.type === "html") reason = token.raw.startsWith("<!--") ? "Hidden comment" : "Embedded markup";
+    else if (token.type === "html" && !/^<br\s*\/?\s*>$/i.test(token.raw.trim())) reason = token.raw.startsWith("<!--") ? "Hidden comment" : "Embedded markup";
   });
   return reason;
 }

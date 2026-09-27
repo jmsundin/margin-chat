@@ -10,9 +10,9 @@ export interface WorkspaceModeMenuProps {
 }
 
 const modes: Array<{ mode: MainViewMode; label: string }> = [
-  { mode: "chat", label: "Document" },
-  { mode: "tiles", label: "Tiles" },
-  { mode: "graph", label: "Map" },
+  { mode: "chat", label: "Document View" },
+  { mode: "tiles", label: "Tile View" },
+  { mode: "graph", label: "Map View" },
 ];
 
 function ModeIcon({ mode }: { mode: MainViewMode }) {

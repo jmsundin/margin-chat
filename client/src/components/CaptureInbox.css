@@ -1,0 +1,35 @@
+.capture-ask-form {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--button-surface);
+}
+
+.capture-ask-form label {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.capture-ask-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 84px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  background: var(--bg);
+  font: inherit;
+  resize: vertical;
+}
+
+.capture-ask-form textarea:focus-visible {
+  outline: 2px solid var(--sage);
+  outline-offset: 2px;
+}
+
+.capture-ask-form .capture-muted { margin: 0; }

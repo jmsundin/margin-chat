@@ -1,3 +1,4 @@
+import { apiFetch } from "./apiTransport";
 import type { AISettings, BackendServiceId } from "../types";
 import { ApiError } from "./apiError";
 
@@ -58,7 +59,7 @@ export function isTopicExpansion(value: unknown): value is TopicExpansion {
 export async function requestTopicExpansion(args: TopicExpansionRequest): Promise<TopicExpansion> {
   const { topic, noteContent, existingTitles, serviceId, modelId, ai, expectedUserId, signal, onProgress } = args;
   signal.throwIfAborted();
-  const response = await fetch("/api/graph/topic", {
+  const response = await apiFetch("/api/graph/topic", {
     method: "POST", credentials: "same-origin", signal,
     headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", "X-Margin-Vault-User": expectedUserId },
     body: JSON.stringify({ topic, noteContent, existingTitles, serviceId, modelId, ai }),

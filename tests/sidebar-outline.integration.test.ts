@@ -12,5 +12,5 @@ test("the expanded sidebar outline keeps navigation and workspace actions reacha
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Sidebar outline regression failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(8);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(9);
 }, 15000);

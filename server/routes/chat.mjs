@@ -36,7 +36,7 @@ export async function handleChatRequest({ request, response, user, executeChatRe
         onReady(metadata) {
           response.writeHead(200, {
             "Access-Control-Allow-Origin": "*",
-            "Cache-Control": "no-cache, no-transform",
+            "Cache-Control": "no-store, no-transform",
             "Content-Type": "application/x-ndjson; charset=utf-8",
             "X-Accel-Buffering": "no",
           });

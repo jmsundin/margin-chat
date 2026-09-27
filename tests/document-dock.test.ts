@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { DocumentDockNode } from "../client/src/types";
-import { addPinnedDocument, filterDocumentDock, getDocumentDockDropEdge, listPinnedDocumentIds, movePinnedDocument, removePinnedDocument, resizeDocumentDockSplit } from "../client/src/lib/documentDock";
+import { getDockSplitFraction, getDockMinimumHeight, resizeVerticalDockStack, applyDockRatios, addPinnedDocument, filterDocumentDock, getDocumentDockDropEdge, listPinnedDocumentIds, movePinnedDocument, removePinnedDocument, resizeDocumentDockSplit } from "../client/src/lib/documentDock";
 
 const pane = (documentId: string, scope?: "family" | "workspace"): DocumentDockNode => ({ type: "pane", documentId, ...(scope ? { scope } : {}) });
 function fixture(): DocumentDockNode {
@@ -79,4 +79,45 @@ describe("pinned document grid", () => {
     expect(getDocumentDockDropEdge(wide, 550, 290)).toBe("bottom");
     expect(getDocumentDockDropEdge({ left: 0, top: 0, width: 200, height: 1000 }, 195, 500)).toBe("right");
   });
+});
+
+function stack(): DocumentDockNode {
+  return { type: "split", id: "stack", direction: "vertical", ratio: .6,
+    first: { type: "split", id: "top", direction: "vertical", ratio: .5, first: pane("a"), second: pane("b") }, second: pane("c") };
+}
+function heights(node: DocumentDockNode, height: number, headers: Record<string, number> = {}): Record<string, number> {
+  if (node.type === "pane") return { [node.documentId]: height };
+  const first = Math.max(getDockMinimumHeight(node.first, headers), Math.min(height - 7 - getDockMinimumHeight(node.second, headers), (height - 7) * getDockSplitFraction(node)));
+  return { ...heights(node.first, first, headers), ...heights(node.second, height - 7 - first, headers) };
+}
+test("vertical dividers push past nested splits and leave every neighboring header visible", () => {
+  const original = stack();
+  const expanded = resizeVerticalDockStack(original, "top", 1000, 600);
+  const sizes = heights(expanded, 600);
+  expect(sizes.a).toBeCloseTo(512);
+  expect(sizes.b).toBeCloseTo(37);
+  expect(sizes.c).toBeCloseTo(37);
+  expect(listPinnedDocumentIds(expanded)).toEqual(["a", "b", "c"]);
+  const reversed = resizeVerticalDockStack(expanded, "top", 0, 600);
+  expect(heights(reversed, 600).a).toBeCloseTo(37);
+  expect(heights(reversed, 600).b).toBeCloseTo(512);
+  const bottom = resizeVerticalDockStack(original, "stack", 0, 600);
+  expect(heights(bottom, 600)).toMatchObject({ a: 37, b: 37 });
+  expect(heights(bottom, 600).c).toBeCloseTo(512);
+  expect(original).toEqual(stack());
+});
+test("vertical resize respects measured header sizes, snapping and horizontal subgroups", () => {
+  const expanded = resizeVerticalDockStack(stack(), "top", 1000, 600, { a: 45, b: 50, c: 40 });
+  expect(expanded).toMatchObject({ ratio: .8, first: { ratio: .8 } });
+  expect(heights(expanded, 600, { a: 45, b: 50, c: 40 })).toEqual({ a: 496, b: 50, c: 40 });
+  expect(getDockMinimumHeight(stack(), { a: 45, b: 50, c: 40 })).toBe(149);
+  const mixed = fixture();
+  expect(getDockMinimumHeight(mixed)).toBe(81);
+  const resized = resizeVerticalDockStack(mixed, "outer", 1000, 600);
+  expect(resized.type === "split" && resized.second).toEqual(mixed.type === "split" && mixed.second);
+  expect(resizeVerticalDockStack(stack(), "missing", 100, 600)).toEqual(stack());
+  const original = stack();
+  expect(resizeVerticalDockStack(original, "top", NaN, 600)).toBe(original);
+  const hidden = { type: "split", id: "hidden-group", direction: "horizontal", ratio: .4, first: pane("hidden"), second: original } as DocumentDockNode;
+  expect(applyDockRatios(hidden, expanded)).toMatchObject({ id: "hidden-group", ratio: .4, first: pane("hidden"), second: expanded });
 });

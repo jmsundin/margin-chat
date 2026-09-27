@@ -22,13 +22,14 @@ remains empty, and temporarily orphaned annotation files remain preserved on dis
 Markdown updates preserve original source bytes outside fields actually edited by
 the app. Keep those preservation tests when changing the codec.
 
-New Markdown uses manifest version 4, while version 3 remains readable. The YAML
-header's `margin-chat: |-` field contains an indented JSON registry with
-`schemaVersion: 2`, the document metadata, and block/message metadata keyed by
-stable ID. The body retains authoritative Markdown text and compact paired
-`margin-chat-block` / `margin-chat-msg` identity comments. Document and attachment
-boundaries remain. A compatibility comment in the header prevents older readers
-from silently treating the new structure as a plain note.
+New Markdown uses manifest version 5, while versions 3 and 4 remain readable. The
+YAML header's `margin-chat: |-` field holds an indented JSON registry with
+`schemaVersion: 3`. Current blocks use `<ai id="…">` / `<user id="…">` wrappers;
+AI-origin blocks edited by a user use `edited-by="user"`. Original messages and
+note bodies remain header history when editable blocks exist, leaving one visible
+current body. Stable IDs support merging and moves; whole-block authorship is
+normalized as `ai`, `user`, or `mixed`. A compatibility comment prevents older
+readers from treating the new structure as a plain note.
 
 `encodeReadableMarkdown`, `decodeReadableMarkdown`, and `isReadableMarkdown`
 bridge the readable representation and legacy JSON-bearing marker format.
@@ -37,7 +38,7 @@ readable-source edits as well: decoding every test input would miss regressions
 in external editing, newline preservation, and header updates. Reading a legacy
 file leaves it intact; an authored edit can migrate it to the current format.
 
-Generated paths start with the title and always include a short stable ID suffix.
+Generated paths share the vault root, start with the title, and include a short stable ID suffix.
 App-managed title changes rename the file and update managed incoming links;
 external paths remain stable. Path aliases preserve old relationship targets.
 Test same-title offline creation, renames, external filenames, and byte

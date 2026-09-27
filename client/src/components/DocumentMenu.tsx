@@ -15,7 +15,10 @@ export interface DocumentMenuProps {
   onTogglePin?: (id: string) => void;
   onTogglePinScope?: (id: string) => void;
   onMinimize?: (id: string) => void;
+  onClose?: (id: string) => void;
   onRestore?: (id: string) => void;
+  onNewMarginNote?: (id: string) => void;
+  onRename?: (id: string, title: string) => void;
   groups?: Record<string, ConversationGroup>;
   onAssignGroup?: (conversationId: string, groupId: string | null) => void;
   className?: string;
@@ -24,10 +27,15 @@ export interface DocumentMenuProps {
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false,
-  onTogglePin, onTogglePinScope, onMinimize, onRestore, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTitle, setRenameTitle] = useState("");
+  const renameDialog = useRef<HTMLFormElement>(null);
+  const renameInput = useRef<HTMLInputElement>(null);
+  const renameInputId = useId();
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -88,9 +96,53 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!renameOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    renameInput.current?.focus();
+    renameInput.current?.select();
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setRenameOpen(false);
+      } else if (event.key === "Tab") {
+        const controls = [...(renameDialog.current?.querySelectorAll<HTMLElement>('input, button:not(:disabled)') ?? [])];
+        const first = controls[0], last = controls.at(-1);
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      }
+    }
+    function keepFocusInside(event: FocusEvent) {
+      if (event.target instanceof Node && !renameDialog.current?.contains(event.target)) renameInput.current?.focus();
+    }
+    document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("focusin", keepFocusInside);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("focusin", keepFocusInside);
+      document.body.style.overflow = previousOverflow;
+      if (trigger.current?.isConnected) trigger.current.focus();
+      else focusFallback.current?.();
+    };
+  }, [renameOpen]);
+
   function action(callback: ((id: string) => void) | undefined) {
     close(true);
     callback?.(conversation.id);
+  }
+
+  function rename() {
+    const nextTitle = renameTitle.trim();
+    if (!nextTitle) return;
+    onRename?.(conversation.id, nextTitle);
+    setRenameOpen(false);
   }
 
   return <>
@@ -119,20 +171,44 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       <button type="button" role="menuitem" disabled={!onTogglePin} onClick={() => action(onTogglePin)}>
         {pinned ? "Unpin document" : "Pin document"}
       </button>
+      {onRename ? <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => {
+        close(true); setRenameTitle(conversation.title); setRenameOpen(true);
+      }}>Rename document</button> : null}
+      {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
       {pinned ? <button type="button" role="menuitemcheckbox" aria-checked={!familyPinned} disabled={!onTogglePinScope}
         title="When off, show this pane only with this main document and its side documents."
         onClick={() => action(onTogglePinScope)}>
         <span className="document-menu-check" aria-hidden="true">{familyPinned ? "" : "✓"}</span>
         <span>Keep visible across documents</span>
       </button> : null}
-      {conversation.parentId !== null && !pinned && !minimized && onMinimize
+      {!minimized && onMinimize
         ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
       {minimized && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Restore document</button> : null}
+      {onClose ? <button type="button" role="menuitem" aria-label="Close document" onClick={() => action(onClose)}><span aria-hidden="true">×</span> Close document</button> : null}
       {onAssignGroup ? <button type="button" role="menuitem" className="document-menu-group-setting"
         aria-label={`Group for ${title}: ${groupName}`} aria-haspopup="dialog"
         onClick={() => { close(true); setGroupOpen(true); }}>
         <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
       </button> : null}
+    </div>, document.body) : null}
+    {renameOpen && onRename ? createPortal(<div className="document-rename-backdrop"
+      onPointerDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
+      onClick={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) setRenameOpen(false); }}>
+      <form ref={renameDialog} className="document-rename-dialog" role="dialog" aria-modal="true" aria-label="Rename document"
+        onSubmit={(event) => { event.preventDefault(); rename(); }}>
+        <h2>Rename document</h2>
+        <label htmlFor={renameInputId}>Document name</label>
+        <input ref={renameInput} id={renameInputId} aria-label="Document name" value={renameTitle} autoComplete="off"
+          onChange={(event) => setRenameTitle(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); rename(); }
+          }} />
+        <div className="document-rename-actions">
+          <button type="button" onClick={() => setRenameOpen(false)}>Cancel</button>
+          <button type="submit" disabled={!renameTitle.trim()}>Save</button>
+        </div>
+      </form>
     </div>, document.body) : null}
     {groupOpen && onAssignGroup ? <GroupPickerModal isOpen groups={groups} currentGroupId={groupId}
       suggestion={groupPicker.getSuggestion?.(conversation.id)} isSuggesting={groupPicker.isSuggesting} status={groupPicker.status}

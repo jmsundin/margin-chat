@@ -1,5 +1,5 @@
 import type { Conversation, DocumentBlock, DocumentGeneration, EditableDocument } from "@margin-chat/workspace-contracts";
-import { insertDocumentGeneration, remapDocumentRange } from "./editableDocument";
+import { getDocumentBlockAuthorship, insertDocumentGeneration, remapDocumentRange } from "./editableDocument";
 
 function familyId(document: EditableDocument, generation: DocumentGeneration): string {
   const visited = new Set<string>();
@@ -69,11 +69,16 @@ export function undoDocumentInsertion(conversation: Conversation, generationId: 
   if (replacement?.content) {
     const target = blocks.find((block) => block.id === replacement.blockId);
     if (target && Number.isSafeInteger(replacement.offset) && replacement.offset >= 0 && replacement.offset <= target.content.length) {
+      const targetAuthorship = getDocumentBlockAuthorship(target, conversation.messages);
+      const authorship = replacement.authorship === undefined ? targetAuthorship : !target.content ? replacement.authorship
+        : replacement.authorship === targetAuthorship ? targetAuthorship : "mixed";
       blocks = blocks.map((block) => block === target ? { ...block, updatedAt,
+        authorship,
         content: block.content.slice(0, replacement.offset) + replacement.content + block.content.slice(replacement.offset),
       } : block);
     } else {
-      restored.push({ id: restoredBlockId(generationId, blocks), kind: "markdown", content: replacement.content, createdAt: updatedAt, updatedAt });
+      restored.push({ id: restoredBlockId(generationId, blocks), kind: "markdown", content: replacement.content, createdAt: updatedAt, updatedAt,
+        ...(replacement.authorship ? { authorship: replacement.authorship } : {}) });
     }
   }
   const presentIds = new Set([...blocks, ...restored].map((block) => block.id));

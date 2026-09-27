@@ -115,6 +115,8 @@ export interface BillingNotice {
 }
 
 export interface ThreadSummary {
+  createdAt?: string;
+  createdLabel?: string;
   categoryId: ThreadCategoryId;
   categoryLabel: string;
   conversationCount: number;
@@ -166,6 +168,7 @@ export interface ConnectionLine {
     left: number;
     top: number;
     width: number;
+    marginSide: "left" | "right";
   };
 }
 

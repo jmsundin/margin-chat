@@ -25,7 +25,8 @@ export function normalizeDocumentLayout(input, rootId, conversations) {
     : {};
   return {
     order: normalizeIds(input.order),
-    minimizedIds: normalizeIds(input.minimizedIds).filter((id) => id !== rootId),
+    minimizedIds: normalizeIds(input.minimizedIds),
+    ...(Array.isArray(input.closedIds) ? { closedIds: normalizeIds(input.closedIds) } : {}),
     ...(Object.keys(widthsById).length ? { widthsById } : {}),
   };
 }

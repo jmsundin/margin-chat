@@ -190,6 +190,26 @@ describe("Markdown vault synchronization", () => {
     expect(Object.keys(saved.manifest.files)).toEqual(["local.md"]);
   });
 
+  test("legacy migration preserves an authored document in a starter chat without AI messages", async () => {
+    const state = createEmptyState();
+    const conversation = state.conversations[state.rootId];
+    conversation.document = {
+      schemaVersion: 1,
+      blocks: [{ id: "authored-block", kind: "markdown", content: "My handwritten draft", authorship: "user",
+        createdAt: conversation.createdAt, updatedAt: conversation.updatedAt }],
+      prompts: [],
+      generations: [],
+    };
+    const server = createVaultService({ storage: memoryStorage(), database: { async loadWorkspace() { return { state }; } } });
+
+    const saved = await server.commit("alice", [edit("device.md", "# A device note")]);
+    expect(saved.manifest.revision).toBe(2);
+    const restored = await server.readWorkspace("alice");
+    expect(restored.conversations[state.rootId].document).toEqual(conversation.document);
+    expect(restored.conversations[state.rootId].messages).toEqual([]);
+    expect((await server.readFile({ userId: "alice", path: "device.md" })).bytes.toString()).toBe("# A device note");
+  });
+
   test("missing cloud configuration never writes authoritative content into Postgres", async () => {
     let writes = 0;
     const server = createVaultService({ env: {}, storage: null, database: { async saveState() { writes++; } } });

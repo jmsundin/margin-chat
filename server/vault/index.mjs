@@ -162,8 +162,11 @@ export function createVaultService({ database, env = process.env, storage = crea
     if (current.manifest.revision !== 0) return current.manifest;
     const legacy = await database?.loadWorkspace?.(userId);
     const conversations = Object.values(legacy?.state?.conversations ?? {});
+    // Authored document content is independent of messages and notes. An explicit
+    // document (including its edit history) must survive first-vault migration.
     const onlyDraft = conversations.length === 1 && conversations[0].kind !== "note" &&
       conversations[0].title === "New chat" && !conversations[0].messages?.length &&
+      !conversations[0].document &&
       !conversations[0].notes?.length && !conversations[0].documents?.length &&
       !Object.keys(legacy.state.groups ?? {}).length && !legacy.state.pinnedThreadIds?.length;
     const changes = [];
@@ -183,7 +186,7 @@ export function createVaultService({ database, env = process.env, storage = crea
 
   async function readWorkspace(userId, manifest) {
     manifest ??= (await snapshot(userId)).manifest;
-    const records = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && !/^(?:_conflicts|attachments)\//iu.test(path)
+    const records = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && !/^(?:_conflicts|attachments|\.margin-chat)\//iu.test(path)
       && ((/\.md$/iu.test(path) && entry.encoding !== "base64") || path === "workspace.json"));
     if (!records.length) return null;
     const files = Object.fromEntries(await mapConcurrent(records, async ([path, entry]) => [path, (await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8")]));

@@ -45,6 +45,26 @@ function manualBlock(): DocumentBlock {
 }
 
 describe("editable document database and local persistence", () => {
+  test("legacy annotations migrate to documents and retain presentation and passages through database saves", async () => {
+    const { client, pg } = database();
+    await migrateDatabase(client, { migrations: await loadMigrations() });
+    await pg.query("insert into marginchat_users (id,email,password_hash,display_name) values ('margin-user','margin@example.test','hash','Margin documents')");
+    const legacy = fixture();
+    const note = legacy.conversations[legacy.rootId].notes![0];
+    await writeState(client, "margin-user", normalizeAppState(legacy));
+    const migrated = hydratePersistedState(await readState(client, "margin-user"))!;
+    const document = migrated.conversations[note.id];
+    expect(document.document!.blocks[0].content).toBe(note.content);
+    await writeState(client, "margin-user", normalizeAppState(migrated));
+    const restored = await readState(client, "margin-user");
+    expect(restored.conversations[note.id].document).toEqual(document.document);
+    expect(restored.conversations[note.id].branchAnchor).toEqual(document.branchAnchor);
+    expect(restored.conversations[legacy.rootId].notes).toEqual([]);
+    document.document!.marginNote!.display = "full";
+    await writeState(client, "margin-user", normalizeAppState(migrated));
+    expect((await readState(client, "margin-user")).conversations[note.id].document.marginNote.display).toBe("full");
+  }, 30_000);
+
   test("migration adds document storage, retains unrelated foreign keys, and round-trips main/side documents and block anchors", async () => {
     const { client, pg } = database();
     const migrations = await loadMigrations();

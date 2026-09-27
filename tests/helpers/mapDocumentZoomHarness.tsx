@@ -196,12 +196,19 @@ try {
     assert.deepEqual(camera(), before, `Vertical reading gestures preserve the map at scroll position ${scrollTop}`);
     assert.equal(event.defaultPrevented, false, "The document retains native wheel scrolling");
   }
-  for (const target of [element('[data-document-block-id="message:answer"] .tiptap'), element('[aria-label="Document title"]')]) {
+  const emptyEditor = [...card().querySelectorAll(".tiptap")].at(-1) as any;
+  await act(async () => {
+    emptyEditor.editor.commands.focus();
+    emptyEditor.dispatchEvent(new browser.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+  });
+  await settle();
+  for (const target of [element('[data-document-block-id="message:answer"] .tiptap'), element('textarea[aria-label="AI prompt"]')]) {
     const before = camera();
     await act(async () => target.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })));
     await settle();
     assert.deepEqual(camera(), before, "Caret movement inside document controls never pans the map");
   }
+  await click(element('[aria-label="Close AI prompt"]'));
   const beforePinch = camera();
   await wheel(body, -20, true);
   assert(camera().scale > beforePinch.scale, "Pinching over document content still zooms the map");

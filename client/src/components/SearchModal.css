@@ -65,10 +65,14 @@
 .search-passage-meta { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: .66rem; gap: 8px; line-height: 1.4; width: 100%; }
 .search-passage-meta time { margin-left: auto; }
 .search-passage-private { border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
-.search-passage-excerpt { color: var(--muted); display: -webkit-box; font-size: .81rem; line-height: 1.55; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.search-passage-excerpt { color: var(--muted); display: -webkit-box; font-size: .81rem; line-height: 1.55; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
 .search-explore mark { background: var(--accent-soft); border-radius: 2px; color: var(--ink); }
 .search-passage-location { align-items: center; color: var(--muted); display: flex; font-size: .67rem; gap: 12px; line-height: 1.5; width: 100%; }
-.search-passage-location > span { color: var(--ink); font-size: 1rem; margin-left: auto; }
+.search-passage-location > .search-passage-open { color: var(--ink); flex-shrink: 0; margin-left: auto; }
+.search-passage-context { color: var(--muted); display: flex; flex-wrap: wrap; font-size: .7rem; gap: 4px 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.search-passage-preview-toggle { align-items: center; background: transparent; border: 0; border-top: 1px solid var(--line); color: var(--muted); display: flex; font-size: .72rem !important; gap: 12px; min-height: 36px; padding: 8px 17px; width: 100%; }
+.search-passage-preview-toggle:hover { background: var(--button-surface); color: var(--ink); }
+.search-passage-preview-toggle > span { margin-left: auto; }
 .search-passage-detail { border-top: 1px solid var(--line); padding: 16px 17px; }
 .search-passage-detail-label { color: var(--muted); font-size: .67rem; font-weight: 600; letter-spacing: .045em; text-transform: uppercase; }
 .search-passage-detail blockquote { border-left: 2px solid var(--accent); color: var(--ink); font-size: .88rem; line-height: 1.7; margin: 12px 0 18px; max-height: 380px; overflow: auto; overflow-wrap: anywhere; padding: 1px 0 1px 14px; white-space: pre-wrap; }
@@ -135,6 +139,8 @@
   .search-topic-neighborhood { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .search-topic-node { padding: 12px; }
   .search-passage-select, .search-passage-detail { padding: 13px; }
+  .search-passage-preview-toggle { min-height: 44px; padding: 8px 13px; }
+  .search-passage-location { flex-wrap: wrap; }
   .search-passage-detail blockquote { font-size: .85rem; }
   .search-pagination > div { flex: 1; justify-content: space-between; gap: 8px; }
   .search-pagination button { min-height: 44px; }

@@ -13,7 +13,11 @@ export interface DocumentConnectorEndpoint {
   panel: ConnectorRect | null;
   viewport: ConnectorRect | null;
   anchor: ConnectorRect | null;
+  /** Keep continuation controls below fixed headers while header anchors remain visible. */
+  markerViewport?: ConnectorRect | null;
 }
+
+export const CONNECTOR_MARKER_SIZE = 24;
 
 export function intersectConnectorRects(...rects: ConnectorRect[]): ConnectorRect | null {
   if (!rects.length) return null;
@@ -74,12 +78,17 @@ export function buildDocumentConnector({ id, source, target, active }: {
     const visible = sourceAnchor ? source : target;
     const hidden = sourceAnchor ? target : source;
     const anchor = sourceAnchor ?? targetAnchor!;
-    const bounds = intersectConnectorRects(visible.panel!, visible.viewport!)!;
-    // The label belongs to the visible passage, so it remains inside that pane.
-    const width = Math.min(208, bounds.right - bounds.left - 16);
-    if (width < 80 || bounds.bottom - bounds.top < 32) return null;
-    const top = Math.max(bounds.top + 4, Math.min(center(anchor).y - 32, bounds.bottom - 30));
-    const left = Math.max(bounds.left + 8, bounds.right - width - 8);
+    const bounds = intersectConnectorRects(visible.panel!, visible.viewport!, visible.markerViewport ?? visible.viewport!);
+    if (!bounds || visible.markerViewport === null) return null;
+    // Keep the collapsed control in a real document margin. If the right
+    // margin is scrolled away, use the left one; a clipped slice of document
+    // text must not acquire a floating control across its reading area.
+    const marginSide = visible.panel!.right <= visible.viewport!.right ? "right"
+      : visible.panel!.left >= visible.viewport!.left ? "left" : null;
+    const width = Math.min(280, bounds.right - bounds.left - 8);
+    if (!marginSide || width < CONNECTOR_MARKER_SIZE || bounds.bottom - bounds.top < CONNECTOR_MARKER_SIZE + 8) return null;
+    const top = Math.max(bounds.top + 4, Math.min(center(anchor).y - CONNECTOR_MARKER_SIZE / 2, bounds.bottom - CONNECTOR_MARKER_SIZE - 4));
+    const left = marginSide === "right" ? bounds.right - CONNECTOR_MARKER_SIZE - 2 : bounds.left + 2;
     return {
       id, active, start: center(anchor), end: center(anchor),
       continuation: {
@@ -87,7 +96,7 @@ export function buildDocumentConnector({ id, source, target, active }: {
         direction: getHiddenDirection(hidden, visible),
         relation: sourceAnchor ? "target" : "source",
         target: hidden.target,
-        left, top, width,
+        left, top, width, marginSide,
       },
     };
   }
@@ -112,14 +121,14 @@ export function buildDocumentConnector({ id, source, target, active }: {
 }
 
 export function groupConnectorContinuations(connections: ConnectionLine[]) {
-  const groups: { connections: ConnectionLine[]; left: number; top: number; width: number }[] = [];
+  const groups: { connections: ConnectionLine[]; left: number; top: number; width: number; marginSide: "left" | "right" }[] = [];
   for (const connection of connections) {
     const label = connection.continuation;
     if (!label) continue;
     const group = groups.find((candidate) =>
-      candidate.left < label.left + label.width && candidate.left + candidate.width > label.left && Math.abs(candidate.top - label.top) < 32);
+      candidate.marginSide === label.marginSide && candidate.left < label.left + CONNECTOR_MARKER_SIZE && candidate.left + CONNECTOR_MARKER_SIZE > label.left && Math.abs(candidate.top - label.top) < CONNECTOR_MARKER_SIZE + 4);
     if (group) group.connections.push(connection);
-    else groups.push({ connections: [connection], left: label.left, top: label.top, width: label.width });
+    else groups.push({ connections: [connection], left: label.left, top: label.top, width: label.width, marginSide: label.marginSide });
   }
   return groups;
 }

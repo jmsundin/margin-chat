@@ -1,3 +1,4 @@
+import { apiServerUrl } from "../lib/apiTransport";
 import { useEffect, useRef, useState } from "react";
 import {
   captureToMarkdown,
@@ -9,10 +10,14 @@ import {
   loadCapture,
 } from "../lib/captures";
 import { renderMarkdownToHtml } from "../lib/markdown";
+import "./CaptureInbox.css";
 
 interface Props {
   onClose: () => void;
   onOpenNote: (capture: Capture) => void;
+  onAskAI?: (capture: Capture, prompt: string) => void;
+  initialCaptureId?: string;
+  initialIntent?: "ask" | "note";
 }
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Unable to reach your Cloud Inbox.";
@@ -30,7 +35,7 @@ function ExtensionConnection() {
       <input
         id="capture-website"
         readOnly
-        value={window.location.origin}
+        value={apiServerUrl()}
         onFocus={(event) => event.target.select()}
       />
       <p className="capture-muted">
@@ -42,7 +47,7 @@ function ExtensionConnection() {
   );
 }
 
-export default function CaptureInbox({ onClose, onOpenNote }: Props) {
+export default function CaptureInbox({ onClose, onOpenNote, onAskAI, initialCaptureId, initialIntent }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const requestId = useRef(0);
   const [captures, setCaptures] = useState<CaptureSummary[]>([]);
@@ -53,10 +58,13 @@ export default function CaptureInbox({ onClose, onOpenNote }: Props) {
   const [loading, setLoading] = useState(true);
   const [loadingCapture, setLoadingCapture] = useState(false);
   const [error, setError] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [question, setQuestion] = useState("");
 
   useEffect(() => {
     const dialog = dialogRef.current;
     dialog?.showModal();
+    if (initialCaptureId) void selectCapture(initialCaptureId, initialIntent === "ask");
     let active = true;
     void listCaptures()
       .then((result) => {
@@ -101,16 +109,22 @@ export default function CaptureInbox({ onClose, onOpenNote }: Props) {
       setLoading(false);
     }
   }
-  async function selectCapture(id: string) {
+  async function selectCapture(id: string, ask = false) {
     const sequence = ++requestId.current;
     setConnecting(false);
     setSelectedId(id);
     setSelected(null);
+    setAsking(ask);
+    setQuestion("");
     setLoadingCapture(true);
     setError("");
     try {
       const result = await loadCapture(id);
-      if (sequence === requestId.current) setSelected(result.capture);
+      if (sequence === requestId.current) {
+        setSelected(result.capture);
+        // Only an explicit Ask handoff treats the extension's comment as a question.
+        if (ask) setQuestion(result.capture.comment);
+      }
     } catch (error) {
       if (sequence === requestId.current) setError(errorText(error));
     } finally {
@@ -225,18 +239,46 @@ export default function CaptureInbox({ onClose, onOpenNote }: Props) {
                   >
                     Visit original page ↗
                   </a>
-                  <button
-                    className="thread-dialog-button is-primary"
-                    onClick={() => onOpenNote(selected)}
-                    type="button"
-                  >
-                    Open as note
-                  </button>
+                  <div className="capture-actions">
+                    <button
+                      className="thread-dialog-button is-primary"
+                      onClick={() => onOpenNote(selected)}
+                      type="button"
+                    >
+                      Open as note
+                    </button>
+                    {onAskAI ? <button
+                      className="thread-dialog-button"
+                      onClick={() => setAsking((current) => !current)}
+                      type="button"
+                      aria-expanded={asking}
+                      aria-controls="capture-ask-form"
+                    >
+                      Ask AI
+                    </button> : null}
+                  </div>
                 </div>
                 <p className="capture-muted">
                   An editable note opens in your workspace. The original capture
                   stays in your Inbox.
                 </p>
+                {asking && onAskAI ? <form id="capture-ask-form" className="capture-ask-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (question.trim()) onAskAI(selected, question.trim());
+                  }}>
+                  <label htmlFor="capture-question">Ask about this page</label>
+                  <textarea id="capture-question" value={question} autoFocus rows={3}
+                    placeholder="What would you like to understand or explore?"
+                    onChange={(event) => setQuestion(event.target.value)} />
+                  <p className="capture-muted">
+                    The saved page and your notes become an editable source in your workspace.
+                    Your question opens a linked AI conversation beside it.
+                  </p>
+                  <button className="thread-dialog-button is-primary" type="submit" disabled={!question.trim()}>
+                    Ask AI in workspace
+                  </button>
+                </form> : null}
                 <div
                   className="capture-markdown"
                   dangerouslySetInnerHTML={{

@@ -1,5 +1,5 @@
 import { createEmptyState } from "../initialState";
-import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock } from "@margin-chat/workspace-contracts";
+import { migrateMarginNotes, normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { normalizeConversationGroups } from "./conversationGroups";
 import { normalizeGraphLayouts } from "./graphLayout";
@@ -80,7 +80,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
     }
 
     const conversations = deriveChildIds(
-      Object.fromEntries(
+      migrateMarginNotes(Object.fromEntries(
         Object.entries(parsed.conversations).map(
           ([conversationId, conversation]) => [
             conversationId,
@@ -126,7 +126,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
             })(),
           ],
         ),
-      ),
+      )),
     );
     const rootConversations = getRootConversations(conversations);
 

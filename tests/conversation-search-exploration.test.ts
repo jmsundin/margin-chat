@@ -20,6 +20,24 @@ const index = (...items: Conversation[]) => Object.fromEntries(items.map((item) 
 const count = (result: ReturnType<typeof buildSearchExploration>, facetId: string) => result.facets.find((facet) => facet.id === facetId)?.count ?? 0;
 
 describe("search exploration", () => {
+  test("title results preview current document text while preserving canonical title evidence", () => {
+    const a = chat("a", "Obsolete history");
+    a.document = { schemaVersion: 1, prompts: [], generations: [], blocks: [{
+      id: "body", kind: "markdown", content: "## Project overview\n\nThe **current** document details.", createdAt: a.createdAt, updatedAt: a.updatedAt,
+    }] };
+    a.notes = [{ ...note("private", "Private annotation").notes![0], kind: "comment" }];
+    const result = buildSearchExploration({ conversations: index(a), query: a.title }).results[0];
+    expect(result.preview).toBe("Project overview The current document details.");
+    expect(result.matchLabel).toBe("Document title");
+    expect(result.evidence).toMatchObject({ sourceKind: "conversation", quote: a.title, startOffset: 0, endOffset: a.title.length });
+    const edited = { ...a, document: { ...a.document, blocks: [{ ...a.document.blocks[0], content: "Updated details" }] } };
+    expect(buildSearchExploration({ conversations: index(edited), query: a.title }).results[0].preview).toBe("Updated details");
+    const standalone = note("journal", "A **standalone** document body.");
+    expect(buildSearchExploration({ conversations: index(standalone), query: standalone.title }).results[0].preview).toBe("A standalone document body.");
+    const empty = chat("empty", "");
+    expect(buildSearchExploration({ conversations: index(empty), query: empty.title }).results[0].preview).toBe("Empty document");
+  });
+
   test("offers source headings as specific topic filters and excludes code-like headings", () => {
     const a = chat("a", "## Returning to saved ideas\n\nHelp readers recover a saved passage.\n\n## Reminder fatigue\n\nReaders may ignore too many reminders.\n\n```md\n# Fake topic\n```");
     const result = buildSearchExploration({ conversations: index(a), query: "readers" });

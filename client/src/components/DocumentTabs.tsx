@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Conversation, ConversationGroup } from "../types";
 import DocumentMenu from "./DocumentMenu";
+import PinnedDocumentPreview from "./PinnedDocumentPreview";
 import "./DocumentTabs.css";
 
 export interface DocumentTabsProps {
@@ -9,6 +10,7 @@ export interface DocumentTabsProps {
   minimizedDocumentIds: string[];
   onSelect: (id: string) => void;
   onMinimize: (id: string) => void;
+  onClose?: (id: string) => void;
   onReorder: (draggedId: string, targetId: string) => void;
   canReorder?: (draggedId: string, targetId: string) => boolean;
   onNewSideDocument: () => void;
@@ -18,10 +20,12 @@ export interface DocumentTabsProps {
   onTogglePinScope?: (id: string) => void;
   groups?: Record<string, ConversationGroup>;
   onAssignGroup?: (conversationId: string, groupId: string | null) => void;
+  onRename?: (id: string, title: string) => void;
 }
 
-export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, onSelect, onMinimize, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup }: DocumentTabsProps) {
+export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, onSelect, onMinimize, onClose, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename }: DocumentTabsProps) {
   const instructionsId = useId();
+  const previewId = useId();
   const tabs = useRef(new Map<string, HTMLButtonElement>());
   const tablist = useRef<HTMLDivElement>(null);
   const draggedId = useRef<string | null>(null);
@@ -31,17 +35,68 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
+  const [preview, setPreview] = useState<{ documentId: string; anchor: HTMLElement } | null>(null);
+  const previewCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dismissedPreviewId = useRef<string | null>(null);
   const activeDocumentRef = useRef(activeDocumentId);
   activeDocumentRef.current = activeDocumentId;
   const tabStopId = documents.some((document) => document.id === focusedId)
     ? focusedId : documents.find((document) => document.id === activeDocumentId)?.id ?? documents[0]?.id;
+  const previewDocument = preview && pinnedDocumentIds.includes(preview.documentId)
+    ? documents.find((document) => document.id === preview.documentId) : undefined;
 
   useEffect(() => {
     setFocusedId(activeDocumentId);
     tabs.current.get(activeDocumentId)?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [activeDocumentId]);
 
-  useEffect(() => () => pointerDrag.current?.cancel(), []);
+  useEffect(() => () => {
+    pointerDrag.current?.cancel();
+    if (previewCloseTimer.current) clearTimeout(previewCloseTimer.current);
+  }, []);
+
+  useEffect(() => {
+    if (!preview) return;
+    function dismiss(event: globalThis.KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      dismissedPreviewId.current = preview?.documentId ?? null;
+      hidePreview();
+    }
+    window.addEventListener("keydown", dismiss);
+    return () => window.removeEventListener("keydown", dismiss);
+  }, [preview]);
+
+  useEffect(() => {
+    if (preview && (!previewDocument || !preview.anchor.isConnected)) hidePreview();
+  }, [preview, previewDocument]);
+
+  function keepPreview() {
+    if (previewCloseTimer.current) clearTimeout(previewCloseTimer.current);
+    previewCloseTimer.current = null;
+  }
+
+  function hidePreview() {
+    keepPreview();
+    setPreview(null);
+  }
+
+  function schedulePreviewClose() {
+    keepPreview();
+    previewCloseTimer.current = setTimeout(() => setPreview(null), 120);
+  }
+
+  function showPreview(documentId: string, anchor: HTMLElement) {
+    keepPreview();
+    if (!pinnedDocumentIds.includes(documentId)) { hidePreview(); return; }
+    if (draggingId || dismissedPreviewId.current === documentId
+      || anchor.querySelector('.document-tab-menu-trigger[aria-expanded="true"]')) { hidePreview(); return; }
+    setPreview({ documentId, anchor });
+  }
+
+  function openPinnedMenu(element: HTMLElement) {
+    hidePreview();
+    element.querySelector<HTMLButtonElement>(".document-tab-menu-trigger")?.click();
+  }
 
   function reorder(id: string, targetId: string) {
     if (id === targetId || !canReorder(id, targetId)) return;
@@ -54,6 +109,11 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
 
   function handleKeyDown(event: KeyboardEvent<HTMLButtonElement>, id: string) {
     suppressPointerClick.current = false;
+    if (pinnedDocumentIds.includes(id) && (event.key === "ContextMenu" || event.key === "F10" && event.shiftKey)) {
+      event.preventDefault();
+      openPinnedMenu(event.currentTarget.parentElement!);
+      return;
+    }
     const index = documents.findIndex((document) => document.id === id);
     const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
     if (event.altKey && direction) {
@@ -107,6 +167,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
       if (!moved && Math.hypot(pointer.clientX - startX, pointer.clientY - startY) < 6) return;
       if (!moved) {
         moved = true;
+        hidePreview();
         suppressPointerClick.current = true;
         setDraggingId(id);
         // Window listeners also cover browsers and synthetic gestures without capture support.
@@ -166,6 +227,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
       Select a tab to focus or restore its document. Pin documents from their menu to keep them in the fixed pane area.
       Use Left and Right arrows to move between tabs, Enter to select, and Alt plus Left or Right to reorder.
       Drag tabs to change document positions. Minimize hides a side document without deleting it.
+      Hover or focus pinned tabs to preview them. Right-click or press Shift plus F10 for document options.
     </p>
     <div ref={tablist} className={`document-tabs${draggingId ? " is-reordering" : ""}`}>
       <div className="document-tabs-list" role="tablist" aria-label="Document tabs" aria-orientation="horizontal" aria-describedby={instructionsId}>
@@ -179,7 +241,21 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
           data-document-tab-id={document.id}
           className={`document-tab${active ? " is-active" : ""}${pinned ? " is-pinned" : ""}${minimized ? " is-minimized" : ""}${draggingId === document.id ? " is-dragging" : ""}${dropTargetId === document.id ? " is-drop-target" : ""}${dropTargetId === document.id && documents.findIndex((item) => item.id === draggingId) < documents.indexOf(document) ? " is-drop-after" : ""}`}
           onPointerDown={(event) => startPointerDrag(event, document.id)}
+          onPointerEnter={(event) => showPreview(document.id, event.currentTarget)}
+          onPointerLeave={() => { dismissedPreviewId.current = null; schedulePreviewClose(); }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              dismissedPreviewId.current = null;
+              schedulePreviewClose();
+            }
+          }}
+          onContextMenu={(event) => {
+            if (!pinned || !event.currentTarget.contains(event.target as Node)) return;
+            event.preventDefault();
+            openPinnedMenu(event.currentTarget);
+          }}
           onClickCapture={(event) => {
+            if ((event.target as Element).closest(".document-menu-trigger")) hidePreview();
             if (suppressPointerClick.current && event.detail !== 0) {
               suppressPointerClick.current = false;
               event.preventDefault();
@@ -192,6 +268,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
             // HTML drag events remain a fallback, but must never run the same gesture twice.
             if (pointerDrag.current) { event.preventDefault(); return; }
             draggedId.current = document.id;
+            hidePreview();
             setDraggingId(document.id);
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData("application/x-margin-document", document.id);
@@ -216,9 +293,9 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
           <button type="button" role="tab" className="document-tab-select"
             ref={(element) => { if (element) tabs.current.set(document.id, element); else tabs.current.delete(document.id); }}
             aria-selected={active} aria-label={`${title}${pinned ? ", pinned" : ""}${minimized ? ", minimized. Restore document" : ""}`}
-            aria-describedby={instructionsId} tabIndex={tabStopId === document.id ? 0 : -1}
-            title={`${title}${minimized ? " — minimized; click to restore" : ""}`}
-            onFocus={() => setFocusedId(document.id)}
+            aria-describedby={`${instructionsId}${previewDocument?.id === document.id ? ` ${previewId}` : ""}`} tabIndex={tabStopId === document.id ? 0 : -1}
+            title={pinned ? undefined : `${title}${minimized ? " — minimized; click to restore" : ""}`}
+            onFocus={(event) => { dismissedPreviewId.current = null; setFocusedId(document.id); showPreview(document.id, event.currentTarget.parentElement!); }}
             onKeyDown={(event) => handleKeyDown(event, document.id)}
             onClick={() => onSelect(document.id)}>
             <svg className="document-tab-icon" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
@@ -228,9 +305,9 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
             {pinned ? <svg className="document-tab-pin" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m7 2 6 0-1 5 3 3v2H5v-2l3-3-1-5ZM10 12v6"/></svg> : null}
             {minimized ? <span className="document-tab-minimized-label" aria-hidden="true">Minimized</span> : null}
           </button>
-          <DocumentMenu conversation={document} pinned={pinned} familyPinned={familyPinnedDocumentIds.includes(document.id)}
+          <DocumentMenu conversation={document} onRename={onRename} pinned={pinned} familyPinned={familyPinnedDocumentIds.includes(document.id)}
             minimized={minimized} onTogglePin={onTogglePin} onTogglePinScope={onTogglePinScope}
-            onMinimize={onMinimize} onRestore={onSelect} groups={groups} onAssignGroup={onAssignGroup}
+            onMinimize={onMinimize} onClose={onClose} onRestore={onSelect} groups={groups} onAssignGroup={onAssignGroup}
             className="document-tab-menu-trigger"
             onFocusFallback={() => (tabs.current.get(activeDocumentRef.current) ?? tabs.current.values().next().value)?.focus()} />
         </div>;
@@ -242,6 +319,10 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
         <span aria-hidden="true">+</span>
       </button>
     </div>
+    {preview && previewDocument
+      ? <PinnedDocumentPreview id={previewId} conversation={previewDocument}
+          anchor={preview.anchor} familyPinned={familyPinnedDocumentIds.includes(preview.documentId)}
+          onPointerEnter={keepPreview} onPointerLeave={schedulePreviewClose} /> : null}
     <span className="document-tabs-instructions" role="status" aria-live="polite">{announcement}</span>
   </div>;
 }

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ConversationGroupSelect } from "./ConversationGroupControls";
 import type { ChatOutlineItem } from "../lib/chatOutline";
 import ChatOutline from "./ChatOutline";
 import {
   getSidebarThreadDropAction,
   sortThreadsByRecentActivity,
+  sortDocumentsByCreation,
 } from "../lib/sidebarThreads";
 import type { ConversationGroup, MainViewMode, ThreadSummary } from "../types";
 import "./ThreadSidebar.css";
@@ -328,7 +329,7 @@ export default function ThreadSidebar({
   const [renameTarget, setRenameTarget] = useState<ThreadActionTarget | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ThreadActionTarget | null>(null);
-  const [sidebarContent, setSidebarContent] = useState<"documents" | "outline">("documents");
+  const [sidebarContent, setSidebarContent] = useState<"documents" | "groups" | "outline">("documents");
   const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const [workspaceActionsOpen, setWorkspaceActionsOpen] = useState(false);
@@ -337,6 +338,18 @@ export default function ThreadSidebar({
   const workspaceActionsRef = useRef<HTMLDivElement>(null);
   const workspaceActionsTriggerRef = useRef<HTMLButtonElement>(null);
   const outlineTitleRef = useRef<HTMLHeadingElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const listScroll = useRef({ documents: 0, groups: 0 });
+
+  function showSidebarContent(next: "documents" | "groups" | "outline") {
+    if (sidebarContent !== "outline" && listRef.current) listScroll.current[sidebarContent] = listRef.current.scrollTop;
+    setOpenMenuState(null);
+    setSidebarContent(next);
+  }
+
+  useLayoutEffect(() => {
+    if (sidebarContent !== "outline" && listRef.current) listRef.current.scrollTop = listScroll.current[sidebarContent];
+  }, [sidebarContent]);
 
   useEffect(() => {
     if (sidebarContent === "outline") outlineTitleRef.current?.focus();
@@ -530,9 +543,8 @@ export default function ThreadSidebar({
   }
 
   function handleOpenOutline(threadId: string) {
-    setOpenMenuState(null);
     if (threadId !== activeThreadId) onSelectThread(threadId, { keepSidebarOpen: true });
-    setSidebarContent("outline");
+    showSidebarContent("outline");
   }
 
   function handleThreadDragStart(
@@ -612,6 +624,7 @@ export default function ThreadSidebar({
 
   const pinnedThreadIds = new Set(pinnedThreads.map((thread) => thread.id));
   const recentThreads = sortThreadsByRecentActivity(threads);
+  const createdThreads = sortDocumentsByCreation(threads);
   const recentPinnedThreads = recentThreads.filter((thread) =>
     pinnedThreadIds.has(thread.id),
   );
@@ -635,11 +648,11 @@ export default function ThreadSidebar({
     unpinnedThreads.filter((thread) => thread.groupId === group.id),
   );
   const ungroupedThreads = unpinnedThreads.filter((thread) => !thread.groupId);
-  const orderedThreads = [
+  const orderedThreads = sidebarContent === "groups" ? [
     ...recentPinnedThreads,
     ...groupedThreads,
     ...ungroupedThreads,
-  ];
+  ] : createdThreads;
 
   function renderThreadItem(thread: ThreadSummary) {
     const isExpanded = sidebarContent === "outline" && thread.id === activeThreadId;
@@ -677,9 +690,6 @@ export default function ThreadSidebar({
           type="button"
         >
           <span className="thread-item-title">
-            <span aria-hidden="true" className="thread-item-kind-icon">
-              <DocumentIcon />
-            </span>
             <span>{thread.title}</span>
           </span>
           <span className="thread-item-meta">
@@ -689,7 +699,7 @@ export default function ThreadSidebar({
                 <span className="thread-streaming-label">Streaming</span>
               </span>
             ) : null}
-            <span className="thread-item-date">{thread.updatedLabel}</span>
+            <span className="thread-item-date" title={sidebarContent === "groups" ? "Last updated" : "Created"}>{sidebarContent === "groups" ? thread.updatedLabel : thread.createdLabel ?? thread.updatedLabel}</span>
           </span>
         </button>
 
@@ -754,8 +764,10 @@ export default function ThreadSidebar({
         <div className="sidebar-secondary-row">
           <button
             aria-label="Search documents"
+            aria-keyshortcuts="Meta+O Control+O Meta+K Control+K"
             className="sidebar-search-button"
             onClick={onOpenSearch}
+            title="Search documents (⌘O / Ctrl+O)"
             type="button"
           >
             <SearchIcon />
@@ -912,11 +924,14 @@ export default function ThreadSidebar({
         <div className="sidebar-document-browser">
           <div className="sidebar-content-switcher" role="group" aria-label="Sidebar content">
             <button type="button" aria-label="Show documents" aria-pressed={sidebarContent === "documents"}
-              aria-controls="sidebar-document-list" onClick={() => setSidebarContent("documents")}>Documents</button>
+              aria-controls="sidebar-document-list" onClick={() => showSidebarContent("documents")}>Documents</button>
+            <button type="button" aria-label="Show groups" aria-pressed={sidebarContent === "groups"}
+              aria-controls="sidebar-document-list" onClick={() => showSidebarContent("groups")}>Groups</button>
             <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
               aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button>
           </div>
-          <div className="thread-list" id="sidebar-document-list" hidden={sidebarContent !== "documents"}>
+          <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline"}>
+            {sidebarContent !== "groups" ? createdThreads.map(renderThreadItem) : <>
             {recentPinnedThreads.length || draggedThreadId ? (
               <section
                 aria-label="Pinned documents"
@@ -1044,6 +1059,7 @@ export default function ThreadSidebar({
                 )}
               </section>
             ) : null}
+            </>}
           </div>
           <nav aria-label={`Outline for ${currentChatTitle}`} className="chat-outline is-expanded-panel"
             id={`chat-outline-${activeThreadId}`} hidden={sidebarContent !== "outline"}>

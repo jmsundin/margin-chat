@@ -72,11 +72,13 @@ export function deleteThread(state: AppState, id: string, replacement: Conversat
     const widthsById = Object.fromEntries(Object.entries(conversation.documentLayout?.widthsById ?? {})
       .filter(([documentId]) => !removed.has(documentId)));
     const documentLayout = conversation.documentLayout && {
+      ...(conversation.documentLayout.closedIds ? { closedIds: conversation.documentLayout.closedIds.filter((documentId) => !removed.has(documentId)) } : {}),
       order: conversation.documentLayout.order.filter((documentId) => !removed.has(documentId)),
       minimizedIds: conversation.documentLayout.minimizedIds.filter((documentId) => !removed.has(documentId)),
       ...(Object.keys(widthsById).length ? { widthsById } : {}),
     };
     const layoutChanged = documentLayout && (
+      documentLayout.closedIds?.length !== conversation.documentLayout!.closedIds?.length ||
       documentLayout.order.length !== conversation.documentLayout!.order.length ||
       documentLayout.minimizedIds.length !== conversation.documentLayout!.minimizedIds.length ||
       Object.keys(widthsById).length !== Object.keys(conversation.documentLayout!.widthsById ?? {}).length

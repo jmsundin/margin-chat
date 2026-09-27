@@ -82,7 +82,8 @@ try {
   await act(async () => root.render(createElement(Host)));
   await settle();
   const headerOptions = element('.document-header .document-menu-trigger');
-  assert(headerOptions.closest('.document-body'), "The title and menu share the document's sticky reading header.");
+  assert(headerOptions.closest('.document-header-actions'), "The menu sits in the document's top-right reading toolbar.");
+  assert.equal(container.querySelector('[aria-label="Document title"]'), null, "Document bodies omit the repeated title section.");
   await click(headerOptions);
   const headerMenu = browser.document.querySelector('[role="menu"]');
   assert(headerMenu);
@@ -94,10 +95,19 @@ try {
   checks.push("the document header exposes shared document actions in an accessible portaled menu");
   assert.equal(container.querySelectorAll(".document-prompt-icon").length, 1);
   assert.equal(container.querySelector(".document-prompt-history"), null, "Historical prompts start compact.");
+  assert.equal(element('[data-document-block-id="message:answer"]').dataset.authorship, "ai");
+  assert.equal(container.querySelector(".rich-document-authorship"), null);
+  await click(element('[data-document-block-id="message:answer"] .rich-document-grip'));
+  assert.equal(element('.rich-document-toolbar [aria-label="Authorship: AI"]').dataset.label, "Authorship: AI");
   await act(async () => { const value = editor("message:answer"); value.commands.setTextSelection(value.state.doc.content.size - 1); value.commands.insertContent(" My manual refinement."); });
   const manual = latest.document!.blocks.find((block) => block.id === "message:answer")!.content;
   assert(manual.includes("My manual refinement."));
   assert.equal(latest.messages[1].content, "Keep one useful idea.", "Direct editing must leave generation history intact.");
+  assert.equal(latest.document!.blocks.find((block) => block.id === "message:answer")!.authorship, "mixed");
+  assert.equal(element('[data-document-block-id="message:answer"]').dataset.authorship, "mixed");
+  assert.equal(element('.rich-document-toolbar [aria-label="Authorship: AI · edited by you"]').dataset.label, "Authorship: AI · edited by you");
+  await click(element('[aria-label="Close block actions"]'));
+  assert.equal(container.querySelector(".rich-document-authorship"), null);
   checks.push("current text is editable while historical output and compact prompt remain intact");
 
   await act(async () => { editor("message:answer").commands.focus(); });
@@ -131,13 +141,12 @@ try {
   assert(element(".document-ai-composer"), "Closing the model picker backdrop preserves the composer.");
   assert.equal(container.querySelector('.document-ai-composer .conversation-group-trigger'), null,
     "Group settings live in the tab menu rather than the AI composer.");
-  const titleInput = element('[aria-label="Document title"]');
   await act(async () => {
-    titleInput.focus();
-    titleInput.dispatchEvent(new browser.Event("pointerdown", { bubbles: true }));
+    headerOptions.focus();
+    headerOptions.dispatchEvent(new browser.Event("pointerdown", { bubbles: true }));
   });
   assert.equal(container.querySelector(".document-ai-composer"), null, "An outside pointer press closes the AI composer.");
-  assert.equal(browser.document.activeElement, titleInput, "Outside dismissal leaves focus on the clicked control.");
+  assert.equal(browser.document.activeElement, headerOptions, "Outside dismissal leaves focus on the clicked control.");
   await space("empty");
   await fill("AI prompt", "Add a practical action.");
   await click(button("Generate ↑"));
@@ -155,10 +164,20 @@ try {
   assert.equal(latest.document!.blocks.find((block) => block.id === "message:answer")!.content, manual);
   checks.push("side-document destination submits without replacing current authored text");
 
+  await act(async () => { const target = editor("message:answer"); target.commands.focus(); target.commands.setTextSelection({ from: 1, to: 5 }); });
+  const selectedBlock = element('[data-document-block-id="message:answer"]');
+  await click(selectedBlock.querySelector(".rich-document-grip"));
+  await click(selectedBlock.querySelector(".rich-document-ask"));
+  assert.equal(button("Side document ↗").getAttribute("aria-pressed"), "true", "Selected-passage prompts default to a side document.");
+  await fill("AI prompt", "Explain this selection.");
+  await click(button("Generate ↑"));
+  assert.equal(submissions.at(-1).destination, "side");
+  assert(submissions.at(-1).quote);
+
   await click(element(".document-prompt-icon"));
   await click(element('textarea[aria-label="Saved AI prompt"]'));
   assert(element(".document-prompt-history"), "Clicks within saved prompt history preserve it.");
-  await click(element('[aria-label="Document title"]'));
+  await click(element('.document-header'));
   assert.equal(container.querySelector(".document-prompt-history"), null, "Clicks outside saved prompt history close it.");
   await click(element(".document-prompt-icon"));
   await click(element(".document-prompt-icon"));
@@ -226,6 +245,10 @@ try {
     "Group settings do not occupy document content space.");
   await act(async () => editor(emptyBlockId).commands.insertContent('A new idea written directly into the empty document.'));
   assert.equal(latest.document!.blocks[0].content, 'A new idea written directly into the empty document.');
+  assert.equal(latest.document!.blocks[0].authorship, "user");
+  assert.equal(container.querySelector(".rich-document-authorship"), null);
+  await click(element(`[data-document-block-id="${emptyBlockId}"] .rich-document-grip`));
+  assert.equal(element('.rich-document-toolbar [aria-label="Authorship: You"]').dataset.label, "Authorship: You");
   assert.equal(latest.messages.length, 0);
   checks.push("new documents start typing directly without blank-focus writes or redundant header labels");
   console.log(JSON.stringify({ checks }));

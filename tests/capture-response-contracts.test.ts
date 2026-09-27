@@ -7,6 +7,7 @@ import {
   parseCapturePage,
   parseCaptureReceipt,
   parseExtensionSession,
+  parseWorkspaceExtensionSession,
 } from "@margin-chat/capture-contracts";
 
 const capturedAt = "2026-09-12T12:30:00.000Z";
@@ -73,6 +74,17 @@ describe("capture response contracts", () => {
       { ...session(), expiresAt: new Date(Date.now() - 60_000).toISOString() },
     ]) {
       expect(() => parseExtensionSession(value)).toThrow("valid session");
+    }
+  });
+
+  test("workspace sessions explicitly identify their capability and cannot be confused with capture sessions", () => {
+    const workspace = { ...session(), token: `mc_workspace_${"A".repeat(43)}`, scope: "workspace" };
+    expect(parseWorkspaceExtensionSession(workspace)).toBe(workspace);
+    expect(() => parseExtensionSession(workspace)).toThrow("valid session");
+    for (const invalid of [session(), { ...workspace, scope: undefined }, { ...workspace, scope: "capture" },
+      { ...workspace, token: `mc_extension_${"A".repeat(43)}` }, { ...workspace, user: {} },
+      { ...workspace, expiresAt: new Date(Date.now() - 1000).toISOString() }]) {
+      expect(() => parseWorkspaceExtensionSession(invalid)).toThrow("valid workspace session");
     }
   });
 

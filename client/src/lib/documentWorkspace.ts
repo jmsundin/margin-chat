@@ -1,5 +1,37 @@
 import type { AppState, Conversation } from "../types";
 import { getConversationPath } from "./tree";
+import { getDocumentLinkTarget } from "./documentLinks";
+
+/** Children navigation includes both direct branches and documents linked from this document. */
+export function getDocumentChildrenByParent(conversations: Record<string, Conversation>) {
+  const children = new Map<string, Conversation[]>();
+  const seen = new Map<string, Set<string>>();
+  function add(parentId: string, child: Conversation) {
+    if (parentId === child.id || !Object.hasOwn(conversations, parentId)) return;
+    const ids = seen.get(parentId) ?? new Set<string>();
+    if (ids.has(child.id)) return;
+    ids.add(child.id);
+    seen.set(parentId, ids);
+    const entries = children.get(parentId) ?? [];
+    entries.push(child);
+    children.set(parentId, entries);
+  }
+  // Preserve the saved ordering of existing branches.
+  for (const root of Object.values(conversations)) {
+    if (root.parentId !== null) continue;
+    for (const document of getDocumentWorkspace(conversations, root.id).documents) {
+      if (document.parentId) add(document.parentId, document);
+    }
+  }
+  for (const document of Object.values(conversations)) {
+    if (document.parentId) add(document.parentId, document);
+    for (const link of document.document?.links ?? []) {
+      const target = getDocumentLinkTarget(link, conversations);
+      if (target) add(document.id, target.conversation);
+    }
+  }
+  return children;
+}
 
 /** A document family has its own visual order, independent of its graph edges. */
 export function getDocumentWorkspace(conversations: Record<string, Conversation>, focusedId: string) {
@@ -18,15 +50,16 @@ export function getDocumentWorkspace(conversations: Record<string, Conversation>
   const order = [...new Set([...(root?.documentLayout?.order ?? []), ...family.map((document) => document.id)])]
     .filter((id) => visited.has(id));
   const minimizedIds = [...new Set(root?.documentLayout?.minimizedIds ?? [])]
-    .filter((id) => visited.has(id) && id !== root?.id);
-  const minimized = new Set(minimizedIds);
+    .filter((id) => visited.has(id));
+  const closedIds = [...new Set(root?.documentLayout?.closedIds ?? [])].filter((id) => visited.has(id));
+  const minimized = new Set([...minimizedIds, ...closedIds]);
   const documents = order.map((id) => conversations[id]);
-  return { root, documents, minimizedIds, visibleDocuments: documents.filter((document) => !minimized.has(document.id)) };
+  return { root, documents, minimizedIds, closedIds, openDocuments: documents.filter((document) => !closedIds.includes(document.id)), visibleDocuments: documents.filter((document) => !minimized.has(document.id)) };
 }
 
-function saveLayout(state: AppState, root: Conversation, order: string[], minimizedIds: string[]): AppState {
+function saveLayout(state: AppState, root: Conversation, order: string[], minimizedIds: string[], closedIds = root.documentLayout?.closedIds ?? []): AppState {
   return { ...state, conversations: { ...state.conversations, [root.id]: {
-    ...root, documentLayout: { ...root.documentLayout, order, minimizedIds },
+    ...root, documentLayout: { ...root.documentLayout, order, minimizedIds, ...(closedIds.length || root.documentLayout?.closedIds ? { closedIds } : {}) },
   } } };
 }
 
@@ -76,25 +109,39 @@ export function placeNewSideDocument(state: AppState, childId: string): AppState
 /** Opening independently restores the path back to the original main document. */
 export function focusDocument(state: AppState, id: string, restoreAncestors = true): AppState {
   if (!state.conversations[id]) return state;
-  const { root, documents, minimizedIds } = getDocumentWorkspace(state.conversations, id);
+  const { root, documents, minimizedIds, closedIds } = getDocumentWorkspace(state.conversations, id);
   if (!root) return state;
   const restored = new Set(restoreAncestors
     ? getConversationPath(state.conversations, id).map((document) => document.id)
     : [id]);
   const nextMinimized = minimizedIds.filter((candidate) => !restored.has(candidate));
-  const next = nextMinimized.length === minimizedIds.length ? state
-    : saveLayout(state, root, documents.map((document) => document.id), nextMinimized);
+  const nextClosed = closedIds.filter((candidate) => !restored.has(candidate));
+  const next = nextMinimized.length === minimizedIds.length && nextClosed.length === closedIds.length ? state
+    : saveLayout(state, root, documents.map((document) => document.id), nextMinimized, nextClosed);
   if (next.activeConversationId === id && next.rootId === root.id) return next;
   return { ...next, activeConversationId: id, rootId: root.id };
 }
 
-export function minimizeDocument(state: AppState, id: string): AppState {
-  const { root, documents, minimizedIds } = getDocumentWorkspace(state.conversations, id);
-  if (!root || root.id === id || minimizedIds.includes(id)) return state;
-  const nextMinimized = [...minimizedIds, id];
-  const next = saveLayout(state, root, documents.map((document) => document.id), nextMinimized);
+/** Hiding a pane never deletes its content, links, children, or saved position. */
+function hideDocument(state: AppState, id: string, close: boolean): AppState {
+  if (!state.conversations[id]) return state;
+  const { root, documents, minimizedIds, closedIds } = getDocumentWorkspace(state.conversations, id);
+  if (!root || closedIds.includes(id) || (!close && minimizedIds.includes(id))) return state;
+  const nextMinimized = close ? minimizedIds.filter((candidate) => candidate !== id) : [...minimizedIds, id];
+  const nextClosed = close ? [...closedIds, id] : closedIds;
+  const next = saveLayout(state, root, documents.map((document) => document.id), nextMinimized, nextClosed);
   if (state.activeConversationId !== id) return next;
+  const hidden = new Set([...nextMinimized, ...nextClosed]);
   const path = getConversationPath(state.conversations, id).slice(0, -1).reverse();
-  const fallback = path.find((document) => !nextMinimized.includes(document.id)) ?? root;
-  return { ...next, activeConversationId: fallback.id, rootId: root.id };
+  const fallback = [...path, ...documents].find((document) => !hidden.has(document.id));
+  // An empty workspace retains its family context; sidebar navigation can reopen any document.
+  return fallback ? { ...next, activeConversationId: fallback.id, rootId: root.id } : next;
+}
+
+export function minimizeDocument(state: AppState, id: string): AppState {
+  return hideDocument(state, id, false);
+}
+
+export function closeDocument(state: AppState, id: string): AppState {
+  return hideDocument(state, id, true);
 }

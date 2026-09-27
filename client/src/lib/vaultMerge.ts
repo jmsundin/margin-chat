@@ -6,13 +6,14 @@ type Patch = { start: number; end: number; insert: string[] };
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 const absent = Symbol("absent");
 type OptionalJson = Json | typeof absent;
+type PreferredSide = "local" | "remote";
 const MAX_SOURCE = 1_000_000;
 const MAX_DIFF_CELLS = 1_000_000;
 const MAX_MERGE_CELLS = 4_000_000;
 type DiffBudget = { remainingCells: number };
 
 /** A deterministic three-way merge. The caller must durably retain all inputs
- * before publishing the result, including when an ambiguous passage picks cloud. */
+ * before publishing the result, including when an ambiguous passage is selected. */
 export function mergeVaultFile(path: string, base: VaultFile | null, local: VaultFile | null, remote: VaultFile | null): { file: VaultFile | null; conflicted: boolean } {
   if (sameVaultFile(local, remote)) return { file: remote, conflicted: false };
   if (sameVaultFile(base, local)) return { file: remote, conflicted: false };
@@ -57,29 +58,43 @@ function record(value: unknown): value is Record<string, Json> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function mergeJson(base: OptionalJson, local: OptionalJson, remote: OptionalJson, key = "", depth = 0): Result<OptionalJson> {
+function recordedTime(value: unknown): number | undefined {
+  // Timezone-less clock times would compare differently on different devices.
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))?$/.test(value)) return undefined;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : undefined;
+}
+
+/** Recorded edit times choose only unresolved wording. Missing or tied times
+ * keep cloud; client clock skew and external edits can make these times stale. */
+function newerSide(local: unknown, remote: unknown): PreferredSide {
+  const left = recordedTime(local);
+  const right = recordedTime(remote);
+  return left !== undefined && right !== undefined && left > right ? "local" : "remote";
+}
+
+function mergeJson(base: OptionalJson, local: OptionalJson, remote: OptionalJson, key = "", depth = 0, preferred: PreferredSide = "remote"): Result<OptionalJson> {
   if (equal(local, remote) || equal(base, local)) return { value: remote, conflicted: false };
   if (equal(base, remote)) return { value: local, conflicted: false };
   if (local === absent || remote === absent) return { value: absent, conflicted: true };
   // Edit timestamps are observations, not competing authored passages.
-  if (["updatedAt", "savedAt", "updated"].includes(key) && typeof local === "string" && typeof remote === "string"
-    && Number.isFinite(Date.parse(local)) && Number.isFinite(Date.parse(remote))) {
-    return { value: Date.parse(local) > Date.parse(remote) ? local : remote, conflicted: false };
+  if (["updatedAt", "savedAt", "updated"].includes(key) && recordedTime(local) !== undefined && recordedTime(remote) !== undefined) {
+    return { value: newerSide(local, remote) === "local" ? local : remote, conflicted: false };
   }
-  if (depth > 40) return { value: remote, conflicted: true };
+  if (depth > 40) return { value: preferred === "local" ? local : remote, conflicted: true };
   if (record(base) && record(local) && record(remote)) {
     const entries: [string, Json][] = [];
     let conflicted = false;
     for (const name of new Set([...Object.keys(remote), ...Object.keys(local), ...Object.keys(base)])) {
       const read = (value: Record<string, Json>) => Object.hasOwn(value, name) ? value[name] : absent;
-      const merged = mergeJson(read(base), read(local), read(remote), name, depth + 1);
+      const merged = mergeJson(read(base), read(local), read(remote), name, depth + 1, preferred);
       conflicted ||= merged.conflicted;
       if (merged.value !== absent) entries.push([name, merged.value]);
     }
     return { value: Object.fromEntries(entries), conflicted };
   }
   if (Array.isArray(base) && Array.isArray(local) && Array.isArray(remote)) {
-    if ([base, local, remote].some((items) => items.length > 2_000)) return { value: remote, conflicted: true };
+    if ([base, local, remote].some((items) => items.length > 2_000)) return { value: preferred === "local" ? local : remote, conflicted: true };
     const keyed = (items: Json[]) => items.every((item) => record(item) && typeof item.id === "string")
       && new Set(items.map((item) => (item as Record<string, Json>).id)).size === items.length;
     if ([base, local, remote].every(keyed)) {
@@ -87,7 +102,7 @@ function mergeJson(base: OptionalJson, local: OptionalJson, remote: OptionalJson
       const values = new Map<string, Json>();
       let conflicted = false;
       for (const id of new Set(maps.flatMap((map) => [...map.keys()]))) {
-        const merged = mergeJson(maps[0].get(id) ?? absent, maps[1].get(id) ?? absent, maps[2].get(id) ?? absent, "", depth + 1);
+        const merged = mergeJson(maps[0].get(id) ?? absent, maps[1].get(id) ?? absent, maps[2].get(id) ?? absent, "", depth + 1, preferred);
         conflicted ||= merged.conflicted;
         if (merged.value !== absent) values.set(id, merged.value);
       }
@@ -95,7 +110,7 @@ function mergeJson(base: OptionalJson, local: OptionalJson, remote: OptionalJson
       return { value: order.value.map((id) => values.get(id)!), conflicted: conflicted || order.conflicted };
     }
   }
-  return { value: remote, conflicted: true };
+  return { value: preferred === "local" ? local : remote, conflicted: true };
 }
 
 /** Keep an unopposed move; competing moves use cloud order. Independent new
@@ -165,12 +180,12 @@ function overlaps(a: Patch, b: Patch) {
   return a.start < b.end && b.start < a.end;
 }
 
-function mergeTokens(base: string[], local: string[], remote: string[], budget: DiffBudget, refine?: (base: string, local: string, remote: string) => Result<string>): Result<string> {
+function mergeTokens(base: string[], local: string[], remote: string[], budget: DiffBudget, preferred: PreferredSide, refine?: (base: string, local: string, remote: string) => Result<string>): Result<string> {
   if (local.join("") === remote.join("") || base.join("") === local.join("")) return { value: remote.join(""), conflicted: false };
   if (base.join("") === remote.join("")) return { value: local.join(""), conflicted: false };
   const left = patches(base, local, budget);
   const right = patches(base, remote, budget);
-  if (!left || !right) return { value: remote.join(""), conflicted: true };
+  if (!left || !right) return { value: (preferred === "local" ? local : remote).join(""), conflicted: true };
   const accepted = [...right];
   let conflicted = false;
   // Connected overlapping patches form one ambiguity region. Resolve the whole
@@ -192,7 +207,7 @@ function mergeTokens(base: string[], local: string[], remote: string[], budget: 
     const l = render(group);
     const r = render(remoteGroup);
     const resolution = l === r ? { value: r, conflicted: false }
-      : refine ? refine(base.slice(start, end).join(""), l, r) : { value: r, conflicted: true };
+      : refine ? refine(base.slice(start, end).join(""), l, r) : { value: preferred === "local" ? l : r, conflicted: true };
     conflicted ||= resolution.conflicted;
     for (const patch of remoteGroup) accepted.splice(accepted.indexOf(patch), 1);
     accepted.push({ start, end, insert: [resolution.value] });
@@ -211,10 +226,10 @@ function applyPatches(base: string[], edits: Patch[]): string {
   return output.join("");
 }
 
-function mergeText(base: string, local: string, remote: string, budget: DiffBudget): Result<string> {
+function mergeText(base: string, local: string, remote: string, budget: DiffBudget, preferred: PreferredSide = "remote"): Result<string> {
   const lines = (value: string) => value.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const words = (value: string) => value.match(/\0[^\0]*\0|[\p{L}\p{N}_]+|[^\S\r\n]+|\r\n|[^\p{L}\p{N}_\s\0]+|[\r\n]/gu) ?? [];
-  return mergeTokens(lines(base), lines(local), lines(remote), budget, (b, l, r) => mergeTokens(words(b), words(l), words(r), budget));
+  return mergeTokens(lines(base), lines(local), lines(remote), budget, preferred, (b, l, r) => mergeTokens(words(b), words(l), words(r), budget, preferred));
 }
 
 type Node = { key: string; kind: string; metadata: Record<string, Json>; content?: string; raw: string; newline: string };
@@ -309,15 +324,24 @@ function parseMarkdown(source: string): Parsed {
   return { source: skeleton, nodes, identity };
 }
 
-function mergeNode(base: Node | undefined, local: Node | undefined, remote: Node | undefined, budget: DiffBudget): Result<Node | undefined> {
+function documentUpdatedAt(parsed: Parsed): unknown {
+  const metadata = parsed.nodes.get("metadata")?.metadata;
+  const entity = metadata && (record(metadata.conversation) ? metadata.conversation : record(metadata.note) ? metadata.note : undefined);
+  return recordedTime(entity?.updatedAt) !== undefined ? entity!.updatedAt : parsed.nodes.get("frontmatter-updated")?.metadata.updated;
+}
+
+function mergeNode(base: Node | undefined, local: Node | undefined, remote: Node | undefined, budget: DiffBudget, documentPreference: PreferredSide): Result<Node | undefined> {
   if (local?.raw === remote?.raw || base?.raw === local?.raw) return { value: remote, conflicted: false };
   if (base?.raw === remote?.raw) return { value: local, conflicted: false };
   if (!local || !remote) return { value: undefined, conflicted: true };
   if (!base) return { value: remote, conflicted: true };
+  // A newer edit to a different block must not decide this block's wording.
+  // Legacy message creation dates cannot order later edits; use the document.
+  const preferred = local.kind === "document-block" ? newerSide(local.metadata.updatedAt, remote.metadata.updatedAt) : documentPreference;
   const withoutLength = (node: Node) => Object.fromEntries(Object.entries(node.metadata).filter(([key]) => key !== "contentLength"));
-  const metadata = mergeJson(withoutLength(base), withoutLength(local), withoutLength(remote));
+  const metadata = mergeJson(withoutLength(base), withoutLength(local), withoutLength(remote), "", 0, preferred);
   if (!record(metadata.value)) return { value: remote, conflicted: true };
-  const body = base.content === undefined ? { value: undefined, conflicted: false } : mergeText(base.content, local.content!, remote.content!, budget);
+  const body = base.content === undefined ? { value: undefined, conflicted: false } : mergeText(base.content, local.content!, remote.content!, budget, preferred);
   const value = { ...remote, metadata: metadata.value, content: body.value };
   if (value.kind === "frontmatter-updated") {
     value.raw = `updated: ${JSON.stringify(value.metadata.updated)}${remote.raw.endsWith("\r") ? "\r" : ""}`;
@@ -333,13 +357,14 @@ function mergeMarkdown(base: string, local: string, remote: string, path: string
   // this merge. A document with many difficult blocks must not freeze saving.
   const budget: DiffBudget = { remainingCells: MAX_MERGE_CELLS };
   const [b, l, r] = [base, local, remote].map(parseMarkdown);
+  const preferred = newerSide(documentUpdatedAt(l), documentUpdatedAt(r));
   if (b.identity !== l.identity || b.identity !== r.identity) return { value: remote, conflicted: true };
   const frontmatterId = (source: string) => /^margin-chat-id:[ \t]*(.+?)\r?$/m.exec(source)?.[1];
   if (frontmatterId(base) !== frontmatterId(local) || frontmatterId(base) !== frontmatterId(remote)) return { value: remote, conflicted: true };
   const nodes = new Map<string, Node>();
   let conflicted = false;
   for (const key of new Set([...b.nodes.keys(), ...l.nodes.keys(), ...r.nodes.keys()])) {
-    const merged = mergeNode(b.nodes.get(key), l.nodes.get(key), r.nodes.get(key), budget);
+    const merged = mergeNode(b.nodes.get(key), l.nodes.get(key), r.nodes.get(key), budget, preferred);
     conflicted ||= merged.conflicted;
     if (merged.value) {
       if (key === "metadata") {
@@ -375,14 +400,14 @@ function mergeMarkdown(base: string, local: string, remote: string, path: string
     conflicted ||= order.conflicted;
     const layout = remoteLayout.ids.length ? remoteLayout : localLayout.ids.length ? localLayout : baseLayout;
     const separator = `${layout.newline}${layout.newline}`;
-    const prefix = mergeText(baseLayout.prefix, localLayout.prefix, remoteLayout.prefix, budget);
-    const suffix = mergeText(baseLayout.suffix, localLayout.suffix, remoteLayout.suffix, budget);
+    const prefix = mergeText(baseLayout.prefix, localLayout.prefix, remoteLayout.prefix, budget, preferred);
+    const suffix = mergeText(baseLayout.suffix, localLayout.suffix, remoteLayout.suffix, budget, preferred);
     conflicted ||= prefix.conflicted || suffix.conflicted;
     const body = order.value.map((id, index) => {
       if (index === 0) return token(id);
       const pair = JSON.stringify([order.value[index - 1], id]);
       const gaps = [baseLayout, localLayout, remoteLayout].map((item) => item.gaps.get(pair));
-      const gap = gaps.every((value) => value !== undefined) ? mergeText(gaps[0]!, gaps[1]!, gaps[2]!, budget)
+      const gap = gaps.every((value) => value !== undefined) ? mergeText(gaps[0]!, gaps[1]!, gaps[2]!, budget, preferred)
         : { value: gaps[2] ?? gaps[1] ?? gaps[0] ?? separator, conflicted: false };
       conflicted ||= gap.conflicted;
       return gap.value + token(id);
@@ -392,7 +417,7 @@ function mergeMarkdown(base: string, local: string, remote: string, path: string
     documentSource = prefix.value + body + suffix.value;
     sources = sources.map((source, index) => source.replace(layouts[index]!.raw, token("document-container")));
   }
-  const source = mergeText(sources[0], sources[1], sources[2], budget);
+  const source = mergeText(sources[0], sources[1], sources[2], budget, preferred);
   conflicted ||= source.conflicted;
   let skeleton = source.value;
   if (documentSource !== undefined) skeleton = skeleton.replace(token("document-container"), () => documentSource!);

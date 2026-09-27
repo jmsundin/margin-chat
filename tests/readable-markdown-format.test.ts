@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { decodeReadableMarkdown, encodeReadableMarkdown, isReadableMarkdown } from "../packages/workspace-contracts/markdownReadable.mjs";
-import { createEmptyState } from "../client/src/initialState";
+import { createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
 import { createMarkdownWorkspace, discoverMarkdownWorkspace, parseMarkdownWorkspace } from "../client/src/lib/workspaceMarkdown";
+import { marked } from "marked";
 
 const now = "2026-09-25T10:00:00.000Z";
 function fixture(content = "First paragraph.\n\n**Markdown** stays readable.") {
@@ -23,10 +24,12 @@ describe("readable Markdown transport", () => {
     const legacy = fixture();
     const source = encodeReadableMarkdown(legacy);
     expect(isReadableMarkdown(source)).toBe(true);
-    expect(source).toContain("margin-chat: |-\n  {\n    \"schemaVersion\": 2,");
-    expect(source).toContain("# <!-- margin-chat-metadata: frontmatter format 4 -->");
-    expect(source).toContain('<!-- margin-chat-block "one" -->\nFirst paragraph.');
-    expect(source).toContain('<!-- margin-chat-msg "message" -->\nSource message content.');
+    expect(source).toContain("margin-chat: |-\n  {\n    \"schemaVersion\": 3,");
+    expect(source).toContain("# <!-- margin-chat-metadata: frontmatter format 5 -->");
+    expect(source).toContain('<user id="one">\n\nFirst paragraph.');
+    const body = source.slice(source.indexOf("\n---\n") + 5);
+    expect(body).not.toContain("Source message content.");
+    expect(body).not.toContain("## Messages");
     expect(source).not.toContain('<!-- margin-chat-document-block {');
     expect(source).not.toContain('<!-- margin-chat-message {');
     expect(source.match(/First paragraph\./g)).toHaveLength(1);
@@ -81,6 +84,16 @@ describe("readable Markdown transport", () => {
     expect(parsed(source).document!.blocks[0].content).toBe(content);
   });
 
+  test.each(["LF to CRLF", "CRLF to LF"])("external %s conversion preserves literal closing tags and AI provenance", (conversion) => {
+    const content = "First line.\n\n</ai>\n\nA literal tag is authored text.";
+    const legacy = fixture(content).replace('"kind":"markdown"', '"kind":"markdown","authorship":"ai"');
+    const original = encodeReadableMarkdown(conversion === "CRLF to LF" ? legacy.replaceAll("\n", "\r\n") : legacy);
+    const converted = conversion === "LF to CRLF" ? original.replaceAll("\n", "\r\n") : original.replaceAll("\r\n", "\n");
+    const block = parsed(converted).document!.blocks[0];
+    expect(block.content).toBe(content);
+    expect(block.authorship).toBe("ai");
+  });
+
   test("recognizes only a reserved header field, never prose or fenced examples", () => {
     const ordinary = "# Notes\n\n```yaml\nmargin-chat: |-\n  {}\n```\n";
     expect(isReadableMarkdown(ordinary)).toBe(false);
@@ -91,20 +104,20 @@ describe("readable Markdown transport", () => {
 
   test("missing registries, duplicate anchors and broken boundaries are rejected", () => {
     const source = encodeReadableMarkdown(fixture());
-    const block = source.match(/<!-- margin-chat-block "one" -->[\s\S]*?<!-- margin-chat-block-end "one" -->/)![0];
+    const block = source.match(/<user id="one">[\s\S]*?<\/user>/)![0];
     const cases = [
       source.replace('"blocks": {', '"badBlocks": {'),
-      source.replace('<!-- margin-chat-block "one" -->', '<!-- margin-chat-block "unknown" -->'),
-      source.replace('<!-- margin-chat-block-end "one" -->', '<!-- margin-chat-block-end "unknown" -->'),
+      source.replace('<user id="one">', '<user id="unknown">'),
+      source.replace('</user>', '</ai>'),
       source.replace(block, () => `${block}\n\n${block}`),
       source.replace("margin-chat: |-", "margin-chat: invalid"),
-      source.replace("    \"schemaVersion\": 2,", "    \"schemaVersion\": 99,"),
+      source.replace("    \"schemaVersion\": 3,", "    \"schemaVersion\": 99,"),
     ];
     for (const malformed of cases) expect(() => decodeReadableMarkdown(malformed)).toThrow("preserved");
   });
 
   test("externally deleted blocks do not reappear from stale registry entries", () => {
-    const source = encodeReadableMarkdown(fixture()).replace(/<!-- margin-chat-block "one" -->[\s\S]*?<!-- margin-chat-block-end "one" -->/, "");
+    const source = encodeReadableMarkdown(fixture()).replace(/<user id="one">[\s\S]*?<\/user>/, "");
     expect(parsed(source).document!.blocks).toEqual([]);
     expect(parsed(source).messages[0].content).toBe("Source message content.");
   });
@@ -114,5 +127,122 @@ describe("readable Markdown transport", () => {
     const source = encodeReadableMarkdown(legacy);
     expect(decodeReadableMarkdown(source)).toBe(legacy);
     expect(parsed(source).document!.blocks[0].id).toBe("$&\0id");
+  });
+
+  test("AI, user, and mixed provenance use the same file and survive edits", () => {
+    const ai = fixture("AI writing.").replace('"kind":"markdown"', '"kind":"markdown","authorship":"ai"');
+    const source = encodeReadableMarkdown(ai);
+    expect(source).toContain('<ai id="one">\n\nAI writing.\n\n</ai>');
+    expect(parsed(source).document!.blocks[0].authorship).toBe("ai");
+    const changed = source.replace("AI writing.", "AI writing, edited externally.");
+    const result = parsed(changed).document!.blocks[0];
+    expect(result.content).toBe("AI writing, edited externally.");
+    expect(result.authorship).toBe("mixed");
+    const updated = encodeReadableMarkdown(decodeReadableMarkdown(changed));
+    expect(updated).toContain('<ai id="one" edited-by="user">');
+    expect(parsed(updated).document!.blocks[0].authorship).toBe("mixed");
+  });
+
+  test("infer AI from assistant source messages without adding optional state fields", () => {
+    const legacy = fixture("AI writing.").replace('"kind":"markdown"', '"kind":"markdown","sourceMessageId":"message"').replace('"role":"user"', '"role":"assistant"');
+    const source = encodeReadableMarkdown(legacy);
+    expect(source).toContain('<ai id="one">');
+    expect(decodeReadableMarkdown(source)).toBe(legacy);
+  });
+
+  test("fenced literal tags and owned blank lines survive an external edit", () => {
+    const content = '\nStart.\n\n```html\n<user id="example">\n\nExample\n\n</user>\n```\n\nEnd.\n';
+    const legacy = fixture(content);
+    const source = encodeReadableMarkdown(legacy);
+    const changed = source.replace("Start.", "A longer start.");
+    expect(parsed(changed).document!.blocks[0].content).toBe(content.replace("Start.", "A longer start."));
+    expect(decodeReadableMarkdown(source)).toBe(legacy);
+  });
+
+  test("a literal fenced closing tag cannot replace a deleted real boundary", () => {
+    const content = 'Before\n\n```html\n\n</ai>\n```\n\nAfter';
+    const legacy = fixture(content).replace('"kind":"markdown"', '"kind":"markdown","authorship":"ai"');
+    const source = encodeReadableMarkdown(legacy);
+    const closing = source.lastIndexOf("</ai>");
+    const malformed = source.slice(0, closing) + source.slice(closing + "</ai>".length);
+    expect(() => decodeReadableMarkdown(malformed)).toThrow("preserved");
+  });
+
+  test("an unclosed authored code fence does not consume the next stable block", () => {
+    const state = createEmptyState();
+    const conversation = state.conversations[state.rootId];
+    conversation.document = { schemaVersion: 1, prompts: [], generations: [], blocks: [
+      { id: "first", kind: "markdown", authorship: "ai", content: "```js\nconst a=1;", createdAt: now, updatedAt: now },
+      { id: "second", kind: "markdown", authorship: "ai", content: "Second block survives.", createdAt: now, updatedAt: now },
+    ] };
+    const source = Object.values(createMarkdownWorkspace(state).files)[0];
+    expect(parsed(source).document!.blocks.map(({ id, content, authorship }) => [id, content, authorship])).toEqual([
+      ["first", "```js\nconst a=1;", "ai"], ["second", "Second block survives.", "ai"],
+    ]);
+  });
+
+  test("a missing closing tag cannot consume the next stable block", () => {
+    const state = createEmptyState();
+    state.conversations[state.rootId].document = { schemaVersion: 1, prompts: [], generations: [], blocks: [
+      { id: "first", kind: "markdown", authorship: "ai", content: "First body.", createdAt: now, updatedAt: now },
+      { id: "second", kind: "markdown", authorship: "ai", content: "Second body.", createdAt: now, updatedAt: now },
+    ] };
+    const source = Object.values(createMarkdownWorkspace(state).files)[0];
+    expect(() => decodeReadableMarkdown(source.replace("</ai>", ""))).toThrow("preserved");
+  });
+
+  test.each(["ai", "user"])("ordinary Markdown renderers process headings, bold and lists inside %s wrappers", (author) => {
+    const content = "# A heading\n\n**Bold passage**\n\n- First item\n- Second item";
+    const legacy = fixture(content).replace('"kind":"markdown"', `"kind":"markdown","authorship":"${author}"`);
+    const source = encodeReadableMarkdown(legacy);
+    const body = source.slice(source.indexOf("\n---\n") + 5);
+    const html = marked.parse(body, { async: false });
+    expect(html).toContain("<h1>A heading</h1>");
+    expect(html).toContain("<strong>Bold passage</strong>");
+    expect(html).toContain("<li>First item</li>");
+    expect(html).toContain("<li>Second item</li>");
+  });
+
+  test("custom footer examples are preserved outside current document content", () => {
+    const footer = '\n\n## Appendix\n\n```html\n<ai id="example">\n\nExample\n\n</ai>\n```\n';
+    const legacy = fixture() + footer;
+    const source = encodeReadableMarkdown(legacy);
+    expect(source.endsWith(footer)).toBe(true);
+    expect(decodeReadableMarkdown(source)).toBe(legacy);
+  });
+
+  test("structured notes use user wrappers; original note text becomes history once there is a current document", () => {
+    const state = createEmptyState();
+    const note = createStandaloneNoteConversation({ id: "note", noteId: "body", createdAt: now });
+    note.notes![0].content = "My note body.";
+    state.conversations = { [note.id]: note };
+    state.rootId = note.id;
+    state.activeConversationId = note.id;
+    const source = Object.values(createMarkdownWorkspace(state).files)[0];
+    expect(source).toContain('<user note-id="body">\n\nMy note body.\n\n</user>');
+    expect(parsed(source).notes![0].content).toBe("My note body.");
+    note.document = { schemaVersion: 1, blocks: [{ id: "current", kind: "markdown", content: "Current note body.", createdAt: now, updatedAt: now }], prompts: [], generations: [] };
+    const updated = Object.values(createMarkdownWorkspace(state).files)[0];
+    const body = updated.slice(updated.indexOf("\n---\n") + 5);
+    expect(body).toContain("Current note body.");
+    expect(body).not.toContain("My note body.");
+    expect(body).not.toContain("## Note");
+    expect(parsed(updated).notes![0].content).toBe("My note body.");
+    expect(parsed(updated).document!.blocks[0].content).toBe("Current note body.");
+  });
+
+  test("ordinary Markdown stays exact and v4 compact documents still decode", () => {
+    const legacy = fixture("Legacy content.");
+    const metadata = JSON.parse(legacy.match(/<!-- margin-chat-metadata (.+) -->/)![1]);
+    const block = JSON.parse(legacy.match(/<!-- margin-chat-document-block (.+) -->/)![1]);
+    const registry = { schemaVersion: 2, metadata, blocks: { one: block }, messages: {} };
+    const old = `---\nmargin-chat-id: "${metadata.conversation.id}"\n# <!-- margin-chat-metadata: frontmatter format 4 -->\nmargin-chat: |-\n${JSON.stringify(registry, null, 2).split("\n").map((line) => `  ${line}`).join("\n")}\n---\n\n<!-- margin-chat-document -->\n\n## Document\n\n<!-- margin-chat-block "one" -->\nLegacy content.\n<!-- margin-chat-block-end "one" -->\n\n<!-- margin-chat-document-end -->`;
+    expect(parsed(old).document!.blocks[0].content).toBe("Legacy content.");
+    const migrated = encodeReadableMarkdown(old);
+    expect(migrated).toContain('<user id="one">');
+    expect(parsed(migrated).document!.blocks[0].content).toBe("Legacy content.");
+    const ordinary = "# My note\n\n<ai>an example</ai>\n";
+    expect(encodeReadableMarkdown(ordinary)).toBe(ordinary);
+    expect(decodeReadableMarkdown(ordinary)).toBe(ordinary);
   });
 });

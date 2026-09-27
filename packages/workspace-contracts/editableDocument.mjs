@@ -6,6 +6,7 @@ const string = (value) => typeof value === "string";
 const offset = (value) => Number.isSafeInteger(value) && value >= 0;
 const services = new Set(["backend-services", "openai-api", "openai-agent", "gemini-api", "huggingface-api", "xai-api"]);
 const statuses = new Set(["streaming", "complete", "stopped", "failed"]);
+const authorships = new Set(["ai", "user", "mixed"]);
 const optionalId = (value) => value === undefined || id(value);
 const dated = (value) => string(value) && Number.isFinite(Date.parse(value));
 const unique = (values) => new Set(values.map((value) => value.id)).size === values.length;
@@ -14,11 +15,13 @@ const settings = (value) => ({ serviceId: value.serviceId, modelId: value.modelI
 const validSettings = (value) => services.has(value.serviceId) && id(value.modelId);
 const validBlock = (block) => record(block) && id(block.id) && block.kind === "markdown" &&
   string(block.content) && dated(block.createdAt) && dated(block.updatedAt) &&
-  optionalId(block.sourceMessageId) && optionalId(block.generationId);
+  optionalId(block.sourceMessageId) && optionalId(block.generationId) &&
+  (block.authorship === undefined || authorships.has(block.authorship));
 const normalizeBlock = (block) => ({ id: block.id, kind: "markdown", content: block.content,
   createdAt: block.createdAt, updatedAt: block.updatedAt,
   ...(block.sourceMessageId ? { sourceMessageId: block.sourceMessageId } : {}),
-  ...(block.generationId ? { generationId: block.generationId } : {}) });
+  ...(block.generationId ? { generationId: block.generationId } : {}),
+  ...(block.authorship ? { authorship: block.authorship } : {}) });
 const validLink = (link) => record(link) && id(link.id) && id(link.sourceMessageId) &&
   optionalId(link.sourceBlockId) && offset(link.startOffset) && offset(link.endOffset) &&
   link.endOffset > link.startOffset && string(link.quote) && link.quote.length > 0 &&
@@ -29,11 +32,29 @@ const normalizeLink = (link) => ({ id: link.id, sourceMessageId: link.sourceMess
   targetConversationId: link.targetConversationId,
   ...(link.targetBlockId ? { targetBlockId: link.targetBlockId } : {}), createdAt: link.createdAt });
 
+const validMarginNote = (value) => record(value) && ["compact", "full"].includes(value.display)
+  && (value.size === undefined || record(value.size)
+    && Number.isSafeInteger(value.size.width) && value.size.width > 0
+    && Number.isSafeInteger(value.size.height) && value.size.height > 0)
+  && optionalId(value.legacyNoteId) && (value.source === undefined || record(value.source)
+    && (value.source.sourceMessageId === null || id(value.source.sourceMessageId))
+    && optionalId(value.source.sourceBlockId)
+    && (value.source.startOffset === null || offset(value.source.startOffset))
+    && (value.source.endOffset === null || offset(value.source.endOffset))
+    && (value.source.quote === null || string(value.source.quote)));
+
+/** Preserve explicit provenance, and infer the origin of older blocks from their source. */
+export function getDocumentBlockAuthorship(block, messages = []) {
+  if (authorships.has(block.authorship)) return block.authorship;
+  return block.generationId || messages.some((message) => message.id === block.sourceMessageId && message.role === "assistant") ? "ai" : "user";
+}
+
 /** Reject malformed authored documents as a whole; never truncate or silently lose text. */
 export function normalizeEditableDocument(input) {
   if (!record(input) || input.schemaVersion !== 1 || !Array.isArray(input.blocks) ||
       !Array.isArray(input.prompts) || !Array.isArray(input.generations)) return undefined;
   if (!input.blocks.every(validBlock) || !unique(input.blocks)) return undefined;
+  if (input.marginNote !== undefined && !validMarginNote(input.marginNote)) return undefined;
   if (input.links !== undefined && (!Array.isArray(input.links) || !input.links.every(validLink) || !unique(input.links))) return undefined;
   if (!input.prompts.every((prompt) => record(prompt) && id(prompt.id) && string(prompt.content) &&
       dated(prompt.createdAt) && optionalId(prompt.sourceMessageId) && validSettings(prompt) &&
@@ -52,10 +73,18 @@ export function normalizeEditableDocument(input) {
         (generation.insertion.blockId === null || id(generation.insertion.blockId)) && offset(generation.insertion.offset) &&
         (generation.insertion.replaceTo === undefined || offset(generation.insertion.replaceTo) && generation.insertion.replaceTo >= generation.insertion.offset)) &&
       (generation.replacement === undefined || record(generation.replacement) && id(generation.replacement.blockId) &&
-        offset(generation.replacement.offset) && string(generation.replacement.content))) || !unique(input.generations)) return undefined;
+        offset(generation.replacement.offset) && string(generation.replacement.content) &&
+        (generation.replacement.authorship === undefined || authorships.has(generation.replacement.authorship)))) || !unique(input.generations)) return undefined;
   // References to removed blocks and older generations deliberately remain valid history.
   return {
     schemaVersion: 1,
+    ...(input.marginNote ? { marginNote: { display: input.marginNote.display,
+      ...(input.marginNote.size ? { size: { width: input.marginNote.size.width, height: input.marginNote.size.height } } : {}),
+      ...(input.marginNote.legacyNoteId ? { legacyNoteId: input.marginNote.legacyNoteId } : {}),
+      ...(input.marginNote.source ? { source: { sourceMessageId: input.marginNote.source.sourceMessageId,
+        ...(input.marginNote.source.sourceBlockId ? { sourceBlockId: input.marginNote.source.sourceBlockId } : {}),
+        startOffset: input.marginNote.source.startOffset, endOffset: input.marginNote.source.endOffset,
+        quote: input.marginNote.source.quote } } : {}) } } : {}),
     blocks: input.blocks.map(normalizeBlock),
     ...(input.links ? { links: input.links.map(normalizeLink) } : {}),
     prompts: input.prompts.map((prompt) => ({ id: prompt.id, content: prompt.content, createdAt: prompt.createdAt,
@@ -68,6 +97,7 @@ export function normalizeEditableDocument(input) {
       ...(generation.previousBlocks ? { previousBlocks: generation.previousBlocks.map(normalizeBlock) } : {}),
       ...(generation.insertion ? { insertion: { blockId: generation.insertion.blockId, offset: generation.insertion.offset,
         ...(generation.insertion.replaceTo !== undefined ? { replaceTo: generation.insertion.replaceTo } : {}) } } : {}),
-      ...(generation.replacement ? { replacement: { blockId: generation.replacement.blockId, offset: generation.replacement.offset, content: generation.replacement.content } } : {}) })),
+      ...(generation.replacement ? { replacement: { blockId: generation.replacement.blockId, offset: generation.replacement.offset, content: generation.replacement.content,
+        ...(generation.replacement.authorship ? { authorship: generation.replacement.authorship } : {}) } } : {}) })),
   };
 }
