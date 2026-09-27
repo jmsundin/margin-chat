@@ -114,7 +114,7 @@ Protected Neon recovery branches require a plan supporting that feature and are 
 | Checkpoint | Create a protected recovery branch and an isolated rehearsal branch at the same production LSN. Copy private Blob objects and verify a backup inventory. Record resource identities as they are created. |
 | Rehearse | Restore Blob into a unique prefix in the separate rehearsal store. Migrate the isolated database; check account identity, money, captures, and encrypted-key invariants; run jobs; recheck invariants; exercise the real API. |
 | Migrate | Apply pending checksummed SQL migrations once. Production startup verifies the migration ledger rather than executing DDL. |
-| Stage | Create a Vercel production candidate with `--prod --skip-domain`; verify its project, readiness, and commit metadata. |
+| Stage | Upload source as a compressed archive with `--archive=tgz`, excluding local build output and the knowledge graph. Create a Vercel production candidate with `--prod --skip-domain`; verify its project, readiness, and commit metadata. |
 | Jobs | Run declared jobs with durable progress. Every declared job must finish before promotion; no jobs run implicitly. |
 | Verify candidate | Check fresh database/schema readiness and release identity, then login/save/read/conflict/history/binary/deletion/projection behavior through the candidate. |
 | Promote | Confirm production routing has not changed outside this release, then promote the verified candidate. |

@@ -1,6 +1,13 @@
 .env*
 client/.env*
-.codex-artifacts/
-.margin-chat-vault/
-extension/releases/
+.codex-artifacts
+.margin-chat-vault
+extension/releases
 *.log
+
+# Omit trailing slashes so archive uploads exclude the directories themselves.
+# Generated locally; Vercel builds the application from source.
+/graphify-out
+/dist
+/client/dist
+/extension/dist
