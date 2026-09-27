@@ -388,6 +388,34 @@ describe("release Neon provider", () => {
     expect(fake.requests.every((request) => request.method !== "DELETE")).toBe(true);
   });
 
+  test("explains exhausted branch capacity without leaking errors or retrying creation", async () => {
+    const fake = neonFake();
+    let creations = 0;
+    const provider = createNeonReleaseProvider({ config, env: { NEON_API_KEY: "secret-token" }, fetchImpl: async (input: string, options: any) => {
+      if (options.method === "POST") {
+        creations++;
+        return Response.json({ code: "BRANCHES_LIMIT_EXCEEDED", message: "postgresql://owner:password-secret@host/db", request_id: "secret-token" }, { status: 422 });
+      }
+      return fake.fetchImpl(input, options);
+    } });
+    const error = await provider.ensureReleaseBranches("capacity").catch((error: Error) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("HTTP 422");
+    expect(error.message).toContain("BRANCHES_LIMIT_EXCEEDED");
+    expect(error.message).toContain("two free branch slots");
+    expect(error.message).not.toContain("password-secret");
+    expect(error.message).not.toContain("secret-token");
+    expect(creations).toBe(1);
+    expect(fake.branches).toHaveLength(1);
+    expect(fake.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  test("keeps unknown JSON error fields out of release reports", async () => {
+    const provider = createNeonReleaseProvider({ config, env: { NEON_API_KEY: "secret-token" }, fetchImpl: async () =>
+      Response.json({ code: "secret-token", message: "postgresql://password-secret", request_id: "secret-token" }, { status: 422 }) });
+    await expect(provider.validateProduction()).rejects.toThrow(/^Neon GET request returned HTTP 422\.$/);
+  });
+
   test("does not expose provider error bodies or connection secrets", async () => {
     const provider = createNeonReleaseProvider({ config, env: { NEON_API_KEY: "secret-token" }, fetchImpl: async () => new Response("postgresql://password-secret", { status: 403 }) });
     await expect(provider.validateProduction()).rejects.toThrow("HTTP 403");

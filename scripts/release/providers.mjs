@@ -36,7 +36,16 @@ export function createNeonReleaseProvider({ config, env = process.env, fetchImpl
       // Provider error payloads can contain connection strings; never forward them.
       throw new Error(`Neon ${method} request failed or timed out; inspect retained release resources before retrying.`);
     }
-    if (!response.ok) throw new Error(`Neon ${method} request returned HTTP ${response.status}.`);
+    if (!response.ok) {
+      let errorCode;
+      try { errorCode = (await response.json())?.code; } catch { /* Non-JSON errors keep the HTTP fallback. */ }
+      // Only translate known codes into local text. Arbitrary provider messages
+      // and other response fields may contain credentials or connection strings.
+      const guidance = errorCode === "BRANCHES_LIMIT_EXCEEDED"
+        ? " BRANCHES_LIMIT_EXCEEDED: Neon branch capacity is exhausted. A fresh release needs two free branch slots for recovery and rehearsal. Review retained release branches and remove only those no longer needed, or increase the project branch limit; then retry. No branches were automatically deleted."
+        : "";
+      throw new Error(`Neon ${method} request returned HTTP ${response.status}.${guidance}`);
+    }
     try { return await response.json(); }
     catch { throw new Error("Neon returned an invalid JSON response."); }
   }
