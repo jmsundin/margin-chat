@@ -1,3 +1,5 @@
+import { useVisualViewport } from "./lib/useVisualViewport";
+import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } from "./components/MobileKeyboard";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { useBrowserWorkspaceCapture, type BrowserCaptureRequest } from "./lib/browserWorkspace";
 import { createMarginDocument, isCompactDocument } from "@margin-chat/workspace-contracts";
@@ -627,7 +629,11 @@ function hasOverlappingAnchor(
   });
 }
 
-export default function WorkspaceApp({
+export default function WorkspaceApp(props: WorkspaceAppProps) {
+  return <MobileKeyboardProvider><WorkspaceAppContent {...props} /></MobileKeyboardProvider>;
+}
+
+function WorkspaceAppContent({
   storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, onOpenWebsiteSettings,
   billingDashboard, billingDashboardLoading, billingDashboardError, billingOpenRequest, onRefreshBilling, onAddMoney,
   billingNotice,
@@ -646,6 +652,7 @@ export default function WorkspaceApp({
   theme,
   user,
 }: WorkspaceAppProps) {
+  const mobileKeyboard = useMobileKeyboard();
   const storageUserId = storageNamespace ?? apiStorageNamespace(user.id);
   const stateStorageKey = getStateStorageKey(storageUserId);
   const stateSavedAtStorageKey = getStateSavedAtStorageKey(storageUserId);
@@ -720,7 +727,7 @@ export default function WorkspaceApp({
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
     null,
   );
-  const [selectionViewport, setSelectionViewport] = useState({ top: 0, height: window.innerHeight });
+  const selectionViewport = useVisualViewport(Boolean(selectionDraft) && !mobileKeyboard.mobile);
   const [selectionActionsExpanded, setSelectionActionsExpanded] = useState(false);
   const [selectionIntent, setSelectionIntent] = useState<"branch" | "note" | "link">("branch");
   const [selectionModelOpen, setSelectionModelOpen] = useState(false);
@@ -1461,7 +1468,7 @@ export default function WorkspaceApp({
     function handlePointerDown(event: PointerEvent) {
       const target = event.target as HTMLElement;
 
-      if (selectionModelOpen || toolbarRef.current?.contains(target)) {
+      if (selectionModelOpen || target.closest?.("[data-mobile-keyboard-toggle]") || toolbarRef.current?.contains(target)) {
         return;
       }
 
@@ -1508,24 +1515,11 @@ export default function WorkspaceApp({
     };
   }, [selectionDraft, selectionModelOpen]);
 
-  const hasSelectionDraft = Boolean(selectionDraft);
   useEffect(() => {
-    if (!hasSelectionDraft) return;
-    const viewport = window.visualViewport;
-    function measureViewport() {
-      const next = { top: viewport?.offsetTop ?? 0, height: viewport?.height ?? window.innerHeight };
-      setSelectionViewport((current) => current.top === next.top && current.height === next.height ? current : next);
+    if (mobileKeyboard.mobile && selectionActionsExpanded && selectionIntent !== "link") {
+      toolbarRef.current?.querySelector<HTMLInputElement>("#branch-prompt")?.focus({ preventScroll: true });
     }
-    measureViewport();
-    viewport?.addEventListener("resize", measureViewport);
-    viewport?.addEventListener("scroll", measureViewport);
-    window.addEventListener("resize", measureViewport);
-    return () => {
-      viewport?.removeEventListener("resize", measureViewport);
-      viewport?.removeEventListener("scroll", measureViewport);
-      window.removeEventListener("resize", measureViewport);
-    };
-  }, [hasSelectionDraft]);
+  }, [mobileKeyboard.mobile, selectionActionsExpanded, selectionIntent]);
 
   useEffect(() => { setSelectionActionsExpanded(false); }, [selectionDraft?.conversationId, selectionDraft?.messageId, selectionDraft?.startOffset, selectionDraft?.endOffset]);
 
@@ -4190,8 +4184,9 @@ export default function WorkspaceApp({
           ) : null}
 
           {!isTileView && selectionDraft ? (
+            <SelectionComposerFrame mobile={mobileKeyboard.mobile}>
             <form
-              className={`selection-tooltip${isMobileViewport && !selectionActionsExpanded ? " is-compact-selection" : ""}`}
+              className={`selection-tooltip${mobileKeyboard.mobile && !selectionActionsExpanded ? " is-compact-selection" : ""}`}
               data-testid="branch-composer"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -4199,9 +4194,9 @@ export default function WorkspaceApp({
                 else if (selectionIntent === "branch") handleCreateBranch();
               }}
               ref={toolbarRef}
-              style={toolbarStyle}
+              style={mobileKeyboard.mobile ? undefined : toolbarStyle}
             >
-              {isMobileViewport && !selectionActionsExpanded ? <div className="selection-touch-summary">
+              {mobileKeyboard.mobile && !selectionActionsExpanded ? <div className="selection-touch-summary">
                 <span>Drag the handles to adjust</span>
                 <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setSelectionActionsExpanded(true)}>Use selection</button>
                 <button type="button" aria-label="Clear text selection" onClick={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}>×</button>
@@ -4230,6 +4225,7 @@ export default function WorkspaceApp({
                   <CloseIcon />
                 </button>
               </div>
+              <div className="selection-composer-fields">
               <p className="selection-tooltip-quote">
                 “{excerpt(selectionDraft.quote, 132)}”
               </p>
@@ -4282,10 +4278,14 @@ export default function WorkspaceApp({
                 conversations={state.conversations} sourceConversationId={selectionDraft.conversationId}
                 sourceBlockId={selectionDraft.sourceBlockId} onSelect={handleCreateDocumentLink}
                 onCancel={() => setSelectionIntent("branch")} error={selectionLinkError ?? undefined}
-              /> : <div className="selection-input-row">
+              /> : null}
+              </div>
+              <div className={`selection-composer-entry${selectionIntent === "note" ? " is-note" : ""}`}>
+              {selectionIntent !== "link" ? <div className="selection-input-row">
                 <input
                   aria-label={selectionIntent === "note" ? "Margin note" : "Branch prompt"}
                   id="branch-prompt"
+                  data-mobile-keyboard inputMode={mobileKeyboard.inputMode}
                   onChange={(event) =>
                     setSelectionDraft((current) =>
                       current
@@ -4305,7 +4305,7 @@ export default function WorkspaceApp({
                 >
                   <SendIcon />
                 </button>
-              </div>}
+              </div> : null}
               {selectionIntent === "branch" ? <div className="selection-actions">
                 {selectionConversation ? <button type="button" className="selection-explain" aria-label="Choose AI model and provider"
                   aria-haspopup="dialog" aria-expanded={selectionModelOpen} onClick={() => setSelectionModelOpen(true)}>
@@ -4319,8 +4319,10 @@ export default function WorkspaceApp({
                   Explain selection
                 </button>
               </div> : null}
+              </div>
               </>}
             </form>
+            </SelectionComposerFrame>
           ) : null}
 
           {selectionConversation && selectionIntent === "branch" ? <ServicePickerModal
@@ -4440,4 +4442,8 @@ export default function WorkspaceApp({
     </div>
     </ConversationGroupPickerContext.Provider>
   );
+}
+
+function SelectionComposerFrame({ mobile, children }: { mobile: boolean; children: React.ReactNode }) {
+  return mobile ? <MobileComposerViewport>{children}</MobileComposerViewport> : <>{children}</>;
 }

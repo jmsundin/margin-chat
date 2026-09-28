@@ -8,6 +8,7 @@ export function useOutsideDismiss(
 ) {
   const handleOutside = useEffectEvent((event: Event) => {
     if (!(event.target instanceof Node)) return;
+    if (event.target instanceof Element && event.target.closest("[data-mobile-keyboard-toggle]")) return;
     if (boundaries.some(({ current }) => current?.contains(event.target as Node))) return;
     // A nested modal may live in a portal. Keep its underlying popup mounted
     // until that modal (including its backdrop) has handled the interaction.

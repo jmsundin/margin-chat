@@ -111,8 +111,18 @@ async function selectPassage() {
     assert.equal(native.toString(), "selected passage", "Dragging native handles must not clear the range even when their target is outside the editor.");
     assert(element(".is-compact-selection"));
     await click(button("Use selection"));
-    assert(element('[aria-label="Branch prompt"]'));
+    assert.equal(element('[aria-label="Branch prompt"]').getAttribute("inputmode"), "none");
+    await act(async () => {
+      const keyboard = element('[aria-label="Show keyboard"]');
+      keyboard.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch" }));
+      keyboard.click();
+    });
+    assert.equal(element('[aria-label="Branch prompt"]').getAttribute("inputmode"), "text");
+    assert(element(".selection-tooltip"), "The keyboard button must not dismiss the selected-passage composer.");
+    await click(element('[aria-label="Hide keyboard"]'));
     assert.equal(browser.document.querySelector(".is-compact-selection"), null);
+    await act(async () => current.commands.focus());
+    await settle();
     await act(async () => current.commands.setTextSelection({ from, to: from + 8 }));
     await settle();
     assert(element(".is-compact-selection"), "Adjusting the selection returns to the compact control.");

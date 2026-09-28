@@ -10,6 +10,7 @@ import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
+import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
 import "./DocumentPanel.css";
 
 type DocumentValue = NonNullable<Conversation["document"]>;
@@ -66,6 +67,7 @@ function freshBlock(content = ""): Block {
 
 export default function DocumentPanel(props: DocumentPanelProps) {
   const { conversation } = props;
+  const mobileKeyboard = useMobileKeyboard();
   const minimizedSideDocuments = props.minimizedSideDocuments ?? [];
   const document = useMemo(() => getEditableDocument(conversation), [conversation]);
   const historyRef = useRef<{ conversationId: string; history: DocumentEditHistory } | null>(null);
@@ -257,6 +259,21 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     </div>;
   }
 
+  function renderAIComposer() {
+    if (!invocation) return null;
+    return <form ref={composerRef} className="document-ai-composer" onSubmit={(event) => {event.preventDefault();submit();}} onKeyDown={(event)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();dismissAI();}}}>
+            <div className="document-ai-heading"><strong>✦ Ask AI</strong><button type="button" aria-label="Close AI prompt" onClick={()=>dismissAI()}>×</button></div>
+            <div className="document-ai-fields">
+            {invocation.selection?.quote ? <blockquote>{invocation.selection.quote}</blockquote> : null}
+            <textarea data-mobile-keyboard inputMode={mobileKeyboard.inputMode} aria-label="AI prompt" placeholder="What would you like to write or explore?" value={prompt} onChange={(event)=>setPrompt(event.target.value)} ref={promptRef} rows={2} onKeyDown={(event)=>{if(event.key==="Enter"&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();submit();}}}/>
+            <div className="document-ai-options"><div role="group" aria-label="Response destination"><button aria-pressed={destination==="inline"} onClick={()=>setDestination("inline")} type="button">In this document</button><button aria-pressed={destination==="side"} onClick={()=>setDestination("side")} type="button">Side document ↗</button></div>
+              {invocation.selection && destination==="inline" ? <label><input type="checkbox" checked={replaceSelection} onChange={(event)=>setReplaceSelection(event.target.checked)}/>Replace selection</label> : null}</div>
+            </div>
+            <div className="document-ai-toolbar"><button type="button" aria-label="Attach documents" onClick={()=>fileRef.current?.click()}>＋ Attach</button><button type="button" aria-label="Choose AI model" onClick={()=>setModelOpen(true)}>{modelLabel}⌄</button><button className="document-ai-send" type="submit" disabled={!prompt.trim()||props.isSubmitting}>Generate ↑</button></div>
+            <small className="document-ai-hint">Uses this document{invocation.selection?.quote ? " and the selected passage" : ""} · Enter to send</small>
+          </form>;
+  }
+
   return <article className={`chat-panel document-panel${props.compact ? " is-compact-document" : ""}${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
     {minimizedSideDocuments.length ? <nav className="document-side-restores" aria-label="Minimized side documents">
       {minimizedSideDocuments.map((sideDocument) => <button key={sideDocument.id} type="button"
@@ -305,21 +322,14 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering theme={props.theme}/>}
         renderAfterBlock={(block) => <>
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPrompt)}
-          {invocation?.blockId === block.id ? <form ref={composerRef} className="document-ai-composer" onSubmit={(event) => {event.preventDefault();submit();}} onKeyDown={(event)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();dismissAI();}}}>
-            <div className="document-ai-heading"><strong>✦ Ask AI</strong><button type="button" aria-label="Close AI prompt" onClick={()=>dismissAI()}>×</button></div>
-            {invocation.selection?.quote ? <blockquote>{invocation.selection.quote}</blockquote> : null}
-            <textarea aria-label="AI prompt" placeholder="What would you like to write or explore?" value={prompt} onChange={(event)=>setPrompt(event.target.value)} ref={promptRef} rows={2} onKeyDown={(event)=>{if(event.key==="Enter"&&!event.shiftKey&&!event.nativeEvent.isComposing){event.preventDefault();submit();}}}/>
-            <div className="document-ai-options"><div role="group" aria-label="Response destination"><button aria-pressed={destination==="inline"} onClick={()=>setDestination("inline")} type="button">In this document</button><button aria-pressed={destination==="side"} onClick={()=>setDestination("side")} type="button">Side document ↗</button></div>
-              {invocation.selection && destination==="inline" ? <label><input type="checkbox" checked={replaceSelection} onChange={(event)=>setReplaceSelection(event.target.checked)}/>Replace selection</label> : null}</div>
-            <div className="document-ai-toolbar"><button type="button" aria-label="Attach documents" onClick={()=>fileRef.current?.click()}>＋ Attach</button><button type="button" aria-label="Choose AI model" onClick={()=>setModelOpen(true)}>{modelLabel}⌄</button><button className="document-ai-send" type="submit" disabled={!prompt.trim()||props.isSubmitting}>Generate ↑</button></div>
-            <small>Uses this document{invocation.selection?.quote ? " and the selected passage" : ""} · Enter to send</small>
-          </form> : null}
+          {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
         </>}/>
       {props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}
       {props.error ? <p className="document-error" role="alert">{props.error}</p> : null}
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>
     </div>
+    {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}
     <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>
     <ServicePickerModal contextControls={props.aiControls} currentModelId={conversation.modelId} currentServiceId={conversation.serviceId} isOpen={modelOpen} onClose={()=>setModelOpen(false)} onSelectModel={props.onModelChange} recentSelections={props.recentModelSelections}/>
   </article>;

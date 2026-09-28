@@ -23,6 +23,7 @@ import { DocumentTable } from "../lib/documentTable";
 import { formatDocumentDateTime } from "../lib/documentDateTime";
 import { updateRichDocumentContent } from "../lib/updateRichDocumentContent";
 import { drawingMarkdown, EMPTY_DRAWING, isDrawingMarkdown, readDrawing } from "../lib/documentDrawing";
+import { useMobileKeyboard } from "./MobileKeyboard";
 import "./RichDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
@@ -180,6 +181,7 @@ type BlockProps = RichDocumentEditorProps & {
 
 function RichBlock(props: BlockProps) {
   const { block, index } = props;
+  const mobileKeyboard = useMobileKeyboard();
   const authorship = getDocumentBlockAuthorship(block, props.sourceMessages);
   const authorshipLabel = authorship === "ai" ? "AI" : authorship === "mixed" ? "AI · edited by you" : "You";
   const latest = useRef(props);
@@ -304,7 +306,7 @@ function RichBlock(props: BlockProps) {
     shouldRerenderOnTransaction: false,
     editorProps: {
       attributes: { class: "rich-document-content message-content", role: "textbox", "aria-multiline": "true", "aria-label": `Document block ${index + 1}`,
-        "data-placeholder": placeholder, spellcheck: "true" },
+        "data-placeholder": placeholder, "data-mobile-keyboard": "", inputmode: mobileKeyboard.inputMode, spellcheck: "true" },
       handleKeyDown(view, event): boolean {
         const currentEditor = editorRef.current;
         literalSpaceInput.current = event.key === " " && (event.repeat || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey);
@@ -439,8 +441,8 @@ function RichBlock(props: BlockProps) {
   useEffect(() => {
     if (!editor) return;
     const editorProps = editor.options.editorProps;
-    editor.setOptions({ editorProps: { ...editorProps, attributes: { ...(typeof editorProps.attributes === "object" ? editorProps.attributes : {}), "aria-label": `Document block ${index + 1}`, "data-placeholder": placeholder } } });
-  }, [editor, index, placeholder]);
+    editor.setOptions({ editorProps: { ...editorProps, attributes: { ...(typeof editorProps.attributes === "object" ? editorProps.attributes : {}), "aria-label": `Document block ${index + 1}`, "data-placeholder": placeholder, inputmode: mobileKeyboard.inputMode } } });
+  }, [editor, index, placeholder, mobileKeyboard.inputMode]);
   useEffect(() => {
     if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta("documentAnnotationRanges", true));
   }, [editor, decorationKey]);
@@ -579,7 +581,7 @@ function RichBlock(props: BlockProps) {
       {drawingError && <p role="alert">{drawingError}</p>}
       {drawing && <Suspense fallback={<p role="status">Opening drawing editor…</p>}><DrawingDialog markdown={drawing.markdown} error={drawingError} onSave={saveDrawing} onClose={() => setDrawing(null)} /></Suspense>}
       {readOnly && <div className="rich-document-streaming-label" role="status">Writing…</div>}
-      {sourceMode ? <div className="rich-document-source"><div className="rich-document-source-label"><span>Markdown source</span><button type="button" onClick={finishSource}>Done</button></div><textarea ref={sourceRef} value={block.content} readOnly={readOnly} aria-label={`Markdown for block ${index + 1}`} spellCheck={false}
+      {sourceMode ? <div className="rich-document-source"><div className="rich-document-source-label"><span>Markdown source</span><button type="button" onClick={finishSource}>Done</button></div><textarea data-mobile-keyboard inputMode={mobileKeyboard.inputMode} ref={sourceRef} value={block.content} readOnly={readOnly} aria-label={`Markdown for block ${index + 1}`} spellCheck={false}
         onKeyDown={(event) => {
           sourceBeforeFocus.current = { blockId: block.id, from: event.currentTarget.selectionStart, to: event.currentTarget.selectionEnd };
           if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finishSource(); return; }
