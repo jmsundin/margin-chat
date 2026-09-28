@@ -1,5 +1,15 @@
 const SELECTION_TOOLTIP_GAP_PX = 12;
 
+export function isNativeSelectionInteraction(event: Pick<PointerEvent, "pointerType" | "target">, selection: Selection | null) {
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
+  // iOS selection handles aren't DOM nodes, so their event target may be outside
+  // the selected block. Never remove the native range at the start of a touch.
+  if (event.pointerType === "touch") return true;
+  const source = (selection.anchorNode instanceof Element ? selection.anchorNode : selection.anchorNode?.parentElement)
+    ?.closest("[data-selection-source], [data-message-bubble='true']");
+  return Boolean(source && event.target instanceof Node && source.contains(event.target));
+}
+
 export function getSelectionTooltipLayout(args: {
   rect: {
     height: number;
@@ -10,6 +20,7 @@ export function getSelectionTooltipLayout(args: {
   tooltipHeight: number;
   tooltipWidth: number;
   viewportHeight: number;
+  viewportTop?: number;
   viewportMargin: number;
   viewportWidth: number;
 }) {
@@ -24,7 +35,9 @@ export function getSelectionTooltipLayout(args: {
           Math.max(args.rect.left + args.rect.width / 2, minimumLeft),
           maximumLeft,
         );
-  const selectionBottom = args.rect.top + args.rect.height;
+  const viewportTop = args.viewportTop ?? 0;
+  const rectTop = args.rect.top - viewportTop;
+  const selectionBottom = rectTop + args.rect.height;
   const topBelow = Math.max(
     selectionBottom + SELECTION_TOOLTIP_GAP_PX,
     args.viewportMargin,
@@ -34,7 +47,7 @@ export function getSelectionTooltipLayout(args: {
     0,
   );
   const availableAbove = Math.max(
-    args.rect.top - SELECTION_TOOLTIP_GAP_PX - args.viewportMargin,
+    rectTop - SELECTION_TOOLTIP_GAP_PX - args.viewportMargin,
     0,
   );
   // A destination picker can be taller than either side of the selection.
@@ -42,7 +55,7 @@ export function getSelectionTooltipLayout(args: {
   const renderAbove = args.tooltipHeight > availableBelow && availableAbove > availableBelow;
   const top = renderAbove
     ? Math.max(
-        args.rect.top - SELECTION_TOOLTIP_GAP_PX - args.tooltipHeight,
+        rectTop - SELECTION_TOOLTIP_GAP_PX - args.tooltipHeight,
         args.viewportMargin,
       )
     : topBelow;
@@ -51,7 +64,7 @@ export function getSelectionTooltipLayout(args: {
     left,
     maxHeight: renderAbove ? availableAbove : availableBelow,
     placement: renderAbove ? "above" : "below",
-    top,
+    top: top + viewportTop,
   };
 }
 

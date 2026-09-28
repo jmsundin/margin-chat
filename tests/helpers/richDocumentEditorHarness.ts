@@ -185,6 +185,63 @@ try {
   assert.equal(empty.getText(), "Hello  ");
   checks.push("empty and double-space AI invocation with lossless dismissal");
 
+  async function input(editor: InstanceType<typeof Editor>, text: string, extras: Record<string, unknown> = {}) {
+    const event = new browser.InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: text, ...extras });
+    await act(async () => editor.view.dom.dispatchEvent(event));
+    return event;
+  }
+  await act(async () => { empty.commands.setContent("", { contentType: "markdown" }); empty.commands.focus(); empty.commands.setTextSelection(1); });
+  await input(empty, "a"); // Actual text input resets dismissal suppression without a keydown.
+  let beforeMobile = invocations.length;
+  await key(empty.view, " ", { shiftKey: true });
+  assert.equal((await input(empty, " ")).defaultPrevented, false, "Modified space stays literal through the input pipeline.");
+  await key(empty.view, " ", { repeat: true });
+  assert.equal((await input(empty, " ")).defaultPrevented, false, "Repeated space stays literal through the input pipeline.");
+  await key(empty.view, "Unidentified");
+  assert((await input(empty, " ")).defaultPrevented);
+  assert.equal(invocations.length, beforeMobile + 1);
+  assert.equal(invocations.at(-1).markdown, "");
+  await act(async () => invocations.at(-1).restoreFocus({ restoreSpaces: true }));
+  await key(empty.view, "Unidentified");
+  assert.equal((await input(empty, " ")).defaultPrevented, false);
+  assert.equal(empty.getText(), " ");
+  await input(empty, "a");
+  await act(async () => { empty.commands.setContent("Hello ", { contentType: "markdown" }); empty.commands.setTextSelection(7); });
+  assert((await input(empty, "\u00a0")).defaultPrevented);
+  assert.equal(invocations.at(-1).markdown, "Hello");
+  await act(async () => invocations.at(-1).restoreFocus({ restoreSpaces: true }));
+  assert.equal(empty.getText(), "Hello  ");
+  await input(empty, "a");
+  await act(async () => { empty.commands.setContent("Hello ", { contentType: "markdown" }); empty.commands.setTextSelection(7); });
+  const textNode = empty.view.dom.querySelector("p")!.firstChild!;
+  const replacement = new browser.InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: ". " });
+  Object.defineProperty(replacement, "getTargetRanges", { value: () => [{ startContainer: textNode, startOffset: 5, endContainer: textNode, endOffset: 6 }] });
+  await act(async () => empty.view.dom.dispatchEvent(replacement));
+  assert(replacement.defaultPrevented);
+  assert.equal(invocations.at(-1).markdown, "Hello");
+  assert.equal(invocations.at(-1).offset, 5);
+  beforeMobile = invocations.length;
+  assert.equal((await input(empty, ". ")).defaultPrevented, false, "Literal punctuation is not the space shortcut.");
+  assert.equal((await input(empty, " ", { inputType: "insertFromPaste" })).defaultPrevented, false);
+  assert.equal((await input(empty, " ", { isComposing: true })).defaultPrevented, false);
+  await act(async () => { empty.commands.setContent("```js\nx \n```", { contentType: "markdown" }); empty.commands.setTextSelection(3); });
+  assert.equal((await input(empty, " ")).defaultPrevented, false);
+  assert.equal(invocations.length, beforeMobile);
+  await act(async () => { empty.commands.setContent("Hello ", { contentType: "markdown" }); empty.commands.setTextSelection(7); });
+  await act(async () => empty.view.someProp("handleTextInput", (handler: any) => handler(empty.view, 7, 7, " ", () => empty.state.tr.insertText(" "))));
+  assert.equal(invocations.length, beforeMobile + 1, "DOM-diff input also triggers AI without keydown.");
+  assert.equal(invocations.at(-1).markdown, "Hello");
+  checks.push("mobile beforeinput, punctuation replacement, dismissal, and DOM input fallback");
+
+  await act(async () => { empty.commands.setContent("Select this **passage**", { contentType: "markdown" }); empty.commands.focus(); });
+  const touchActions = block("empty").querySelector(".rich-document-touch-actions")!;
+  await act(async () => ([...touchActions.querySelectorAll("button")].find((button) => button.getAttribute("aria-label") === "Select block") as any).click());
+  assert.equal(selections.at(-1).quote, "Select this **passage**");
+  await act(async () => (touchActions.querySelector("button") as any).click());
+  assert.equal(invocations.at(-1).selection.quote, "Select this **passage**");
+  assert.equal(block("stream").querySelector(".rich-document-touch-actions"), null);
+  checks.push("touch actions select a complete block and invoke AI on that exact passage");
+
   const countBeforeGuards = invocations.length;
   await act(async () => { empty.commands.setContent("", { contentType: "markdown" }); empty.commands.focus(); empty.commands.setTextSelection(1); });
   await key(empty.view, "a");

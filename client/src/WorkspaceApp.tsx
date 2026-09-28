@@ -100,6 +100,7 @@ import {
 } from "./lib/conversationGroups";
 import {
   getSelectionTooltipLayout,
+  isNativeSelectionInteraction,
   writeSelectedQuoteToClipboard,
 } from "./lib/selectionTooltip";
 import {
@@ -719,6 +720,8 @@ export default function WorkspaceApp({
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
     null,
   );
+  const [selectionViewport, setSelectionViewport] = useState({ top: 0, height: window.innerHeight });
+  const [selectionActionsExpanded, setSelectionActionsExpanded] = useState(false);
   const [selectionIntent, setSelectionIntent] = useState<"branch" | "note" | "link">("branch");
   const [selectionModelOpen, setSelectionModelOpen] = useState(false);
   const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
@@ -1455,13 +1458,16 @@ export default function WorkspaceApp({
 
     const selectedQuote = selectionDraft.quote;
 
-    function handlePointerDown(event: MouseEvent) {
+    function handlePointerDown(event: PointerEvent) {
       const target = event.target as HTMLElement;
 
       if (selectionModelOpen || toolbarRef.current?.contains(target)) {
         return;
       }
 
+      // Native selection handles can target the text or a surrounding element.
+      // Let the browser finish touch selection before deciding whether to clear it.
+      if (isNativeSelectionInteraction(event, window.getSelection())) return;
       setSelectionDraft(null);
       window.getSelection()?.removeAllRanges();
     }
@@ -1502,6 +1508,27 @@ export default function WorkspaceApp({
     };
   }, [selectionDraft, selectionModelOpen]);
 
+  const hasSelectionDraft = Boolean(selectionDraft);
+  useEffect(() => {
+    if (!hasSelectionDraft) return;
+    const viewport = window.visualViewport;
+    function measureViewport() {
+      const next = { top: viewport?.offsetTop ?? 0, height: viewport?.height ?? window.innerHeight };
+      setSelectionViewport((current) => current.top === next.top && current.height === next.height ? current : next);
+    }
+    measureViewport();
+    viewport?.addEventListener("resize", measureViewport);
+    viewport?.addEventListener("scroll", measureViewport);
+    window.addEventListener("resize", measureViewport);
+    return () => {
+      viewport?.removeEventListener("resize", measureViewport);
+      viewport?.removeEventListener("scroll", measureViewport);
+      window.removeEventListener("resize", measureViewport);
+    };
+  }, [hasSelectionDraft]);
+
+  useEffect(() => { setSelectionActionsExpanded(false); }, [selectionDraft?.conversationId, selectionDraft?.messageId, selectionDraft?.startOffset, selectionDraft?.endOffset]);
+
   useLayoutEffect(() => {
     if (!selectionDraft || !toolbarRef.current) {
       return;
@@ -1515,7 +1542,7 @@ export default function WorkspaceApp({
     const observer = new ResizeObserver(measure);
     observer.observe(toolbar);
     return () => observer.disconnect();
-  }, [selectionDraft, selectionIntent]);
+  }, [selectionDraft, selectionIntent, selectionActionsExpanded]);
 
   useEffect(() => {
     if (mainViewMode !== "chat") {
@@ -2522,17 +2549,28 @@ export default function WorkspaceApp({
       queueSelectionSync();
     }
 
+    function handleNativeSelectionChange() {
+      window.cancelAnimationFrame(selectionSyncFrameRef.current);
+      selectionSyncFrameRef.current = window.requestAnimationFrame(() => {
+        if (selectionModelOpen || toolbarRef.current?.contains(document.activeElement)) return;
+        const selection = window.getSelection();
+        if (selection?.isCollapsed) setSelectionDraft(null);
+        else syncSelectionDraft();
+      });
+    }
+    document.addEventListener("selectionchange", handleNativeSelectionChange);
     document.addEventListener("mouseup", handleDocumentMouseUp);
     document.addEventListener("pointerup", handleDocumentPointerUp);
     document.addEventListener("keyup", handleDocumentKeyUp);
 
     return () => {
       window.cancelAnimationFrame(selectionSyncFrameRef.current);
+      document.removeEventListener("selectionchange", handleNativeSelectionChange);
       document.removeEventListener("mouseup", handleDocumentMouseUp);
       document.removeEventListener("pointerup", handleDocumentPointerUp);
       document.removeEventListener("keyup", handleDocumentKeyUp);
     };
-  }, [isMobileViewport, state.conversations]);
+  }, [isMobileViewport, selectionModelOpen, state.conversations]);
 
   function handleUpdateGraphNodeLayouts(
     nextLayouts: Record<string, Partial<GraphNodeLayout>>,
@@ -3618,7 +3656,8 @@ export default function WorkspaceApp({
           rect: selectionDraft.rect,
           tooltipHeight: toolbarSize.height,
           tooltipWidth: toolbarSize.width,
-          viewportHeight: window.innerHeight,
+          viewportHeight: selectionViewport.height,
+          viewportTop: selectionViewport.top,
           viewportMargin: TOOLTIP_VIEWPORT_MARGIN,
           viewportWidth: window.innerWidth,
         })
@@ -4152,7 +4191,7 @@ export default function WorkspaceApp({
 
           {!isTileView && selectionDraft ? (
             <form
-              className="selection-tooltip"
+              className={`selection-tooltip${isMobileViewport && !selectionActionsExpanded ? " is-compact-selection" : ""}`}
               data-testid="branch-composer"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -4162,6 +4201,11 @@ export default function WorkspaceApp({
               ref={toolbarRef}
               style={toolbarStyle}
             >
+              {isMobileViewport && !selectionActionsExpanded ? <div className="selection-touch-summary">
+                <span>Drag the handles to adjust</span>
+                <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setSelectionActionsExpanded(true)}>Use selection</button>
+                <button type="button" aria-label="Clear text selection" onClick={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}>×</button>
+              </div> : <>
               <div className="selection-tooltip-head">
                 <p className="eyebrow">
                   {selectionIntent === "link" ? "Link this passage" : selectionIntent === "note"
@@ -4275,6 +4319,7 @@ export default function WorkspaceApp({
                   Explain selection
                 </button>
               </div> : null}
+              </>}
             </form>
           ) : null}
 

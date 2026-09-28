@@ -5,6 +5,16 @@ import {
 } from "../client/src/lib/selectionTooltip";
 
 describe("selected text popup positioning", () => {
+  test("keeps actions above the software keyboard in a scrolled visual viewport", () => {
+    const layout = getSelectionTooltipLayout({
+      rect: { height: 24, left: 30, top: 510, width: 250 },
+      tooltipHeight: 64, tooltipWidth: 366, viewportHeight: 360,
+      viewportTop: 220, viewportMargin: 12, viewportWidth: 390,
+    });
+    expect(layout.placement).toBe("above");
+    expect(layout.top).toBe(434);
+    expect(layout.top + 64).toBeLessThan(580);
+  });
   test("places the popup below the selected text", () => {
     const layout = getSelectionTooltipLayout({
       rect: { height: 36, left: 240, top: 180, width: 160 },

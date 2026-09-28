@@ -85,6 +85,13 @@
 .rich-note-editor .rich-document-editor { padding-bottom: 8px; }
 .rich-note-editor .rich-document-content { font-size: .88rem; }
 .rich-note-placeholder { color: var(--muted); font-size: .8rem; margin: 0 0 4px 36px; }
+.rich-document-touch-actions { display: none; user-select: none; -webkit-user-select: none; }
+.rich-document-touch-actions button::before { content: attr(data-label); }
+@media (max-width: 600px), (hover: none), (pointer: coarse) {
+  .rich-document-block:is(.is-focused, .is-empty, :focus-within) .rich-document-touch-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .rich-document-touch-actions button { min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); color: var(--sage); font-size: .85rem; touch-action: manipulation; }
+  .rich-document-content { -webkit-user-select: text; user-select: text; touch-action: auto; }
+}
 @media (max-width: 600px) {
   .rich-document-editor { padding-inline: 0; }
   .rich-document-block { grid-template-columns: 30px minmax(0, 1fr); }

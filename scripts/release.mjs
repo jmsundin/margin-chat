@@ -15,7 +15,7 @@ import { PERSISTENCE_JOB_REGISTRY } from "../server/releases/job-registry.mjs";
 import { readReleaseConfig, configurationGaps, redact } from "./release/config.mjs";
 import { executeRelease, RELEASE_STEPS, VERCEL_SYNC_STEPS } from "./release/sequence.mjs";
 import { readVercelUpdates, describeVercelUpdates, assertDeployedCommit, assertProductionAlias, createVercelApi, planVercelUpdates, applyVercelUpdates } from "./release/vercel-updates.mjs";
-import { checkReadiness, runPersistenceSmoke } from "./release/smoke.mjs";
+import { checkReadiness, waitForProductionReadiness, runPersistenceSmoke } from "./release/smoke.mjs";
 import { promoteVerifiedDeployment } from "./release/promote.mjs";
 import { createNeonReleaseProvider, validateBlobStoreTokens, backupBlobStore, restoreBlobBackup } from "./release/providers.mjs";
 
@@ -277,6 +277,8 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       },
       async verifyProduction() {
         await assertLock();
+        await waitForProductionReadiness({ baseUrl: config.productionUrl, expectedSha: plan.sha,
+          previousSha: previous.meta?.marginReleaseSha, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET, assertLock });
         for (let index = 0; index < config.observation.checks; index += 1) {
           if (index) await delay(config.observation.intervalSeconds * 1000);
           await assertLock();

@@ -118,7 +118,7 @@ Protected Neon recovery branches require a plan supporting that feature and are 
 | Jobs | Run declared jobs with durable progress. Every declared job must finish before promotion; no jobs run implicitly. |
 | Verify candidate | Check fresh database/schema readiness and release identity, then login/save/read/conflict/history/binary/deletion/projection behavior through the candidate. |
 | Promote | Confirm production routing has not changed outside this release, then promote the verified candidate. |
-| Verify production | Observe readiness on the public origin, repeat persistence checks, and verify the migration ledger. |
+| Verify production | Allow up to three minutes for the public origin to move from the known previous release to the promoted release. Unknown releases and unhealthy storage fail immediately. Then observe readiness, repeat persistence checks, and verify the migration ledger. |
 
 Smoke checks create a unique synthetic admin account with a random password and write only its vault. They remove its SQL records and exact Blob prefix afterward. They do not send email, buy credits, call model providers, or use real user credentials. Cleanup failure fails the release. Rehearsal uses an explicit environment without local dotenv or production integration secrets.
 

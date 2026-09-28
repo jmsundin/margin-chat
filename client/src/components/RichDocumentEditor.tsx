@@ -13,6 +13,7 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { getDocumentBlockAuthorship, type DocumentBlock, type Message } from "@margin-chat/workspace-contracts";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
+import { documentAIInput } from "../lib/documentAIInput";
 import { documentPositionAtMarkdownOffset, getRichDocumentFallbackReason, markdownOffsetAtDocumentPosition } from "../lib/richDocumentMarkdown";
 import { createDocumentMathExtensions, type EditEquation } from "../lib/documentMath";
 import MathEquationDialog from "./MathEquationDialog";
@@ -186,6 +187,7 @@ function RichBlock(props: BlockProps) {
   const content = useRef(block.content);
   const externalUpdate = useRef(false);
   const suppressSpace = useRef(false);
+  const literalSpaceInput = useRef(false);
   const [sourceMode, setSourceMode] = useState(false);
   const [toolbarOpen, setToolbarOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
@@ -266,6 +268,16 @@ function RichBlock(props: BlockProps) {
     return true;
   }
 
+  function handleAIInput(editor: Editor, from: number, to: number, text: string) {
+    if (editor.view.composing || !editor.isEditable || !latest.current.onInvokeAI) return false;
+    if (text !== " " && text !== "\u00a0" && !/^\.[ \u00a0]$/.test(text)) { suppressSpace.current = false; literalSpaceInput.current = false; }
+    if (suppressSpace.current || literalSpaceInput.current) return false;
+    const trigger = documentAIInput(editor.state, from, to, text);
+    if (!trigger) return false;
+    if (trigger.to > trigger.from) editor.commands.deleteRange(trigger);
+    return invoke(editor, trigger.spaces);
+  }
+
   const editor: Editor | null = useEditor({
     extensions: createRichDocumentExtensions([
       Extension.create({
@@ -295,6 +307,7 @@ function RichBlock(props: BlockProps) {
         "data-placeholder": placeholder, spellcheck: "true" },
       handleKeyDown(view, event): boolean {
         const currentEditor = editorRef.current;
+        literalSpaceInput.current = event.key === " " && (event.repeat || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey);
         if (!currentEditor || event.isComposing || view.composing || event.repeat || latest.current.readOnlyBlockIds?.includes(latest.current.block.id)) return false;
         if (event.target instanceof Element && event.target.closest(".message-anchor") && (event.key === " " || event.key === "Enter")) {
           // The annotation preview/source handler owns activation of a focused saved highlight.
@@ -306,19 +319,14 @@ function RichBlock(props: BlockProps) {
           currentEditor.commands.insertContent({ type: "text", text: formatDocumentDateTime() });
           return true;
         }
-        if (event.key !== " ") suppressSpace.current = false;
+        if (event.key !== " " && event.key !== "Unidentified" && event.key !== "Process") suppressSpace.current = false;
         const { $from, empty, from } = view.state.selection;
         const plainModifier = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey;
         const inCode = $from.parent.type.spec.code || $from.marks().some((mark) => mark.type.name === "code");
         if (event.key === " " && plainModifier && empty && !inCode && !suppressSpace.current && latest.current.onInvokeAI) {
-          const emptyParagraph = $from.depth === 1 && $from.parent.isTextblock && !$from.parent.textContent;
-          const preceding = $from.parent.textBetween(0, $from.parentOffset, "", "");
-          // Two deliberate spaces after text summon AI; indentation and code stay ordinary typing.
-          const doubleSpace = /\S $/.test(preceding);
-          if (emptyParagraph || doubleSpace) {
+          if (handleAIInput(currentEditor, from, from, " ")) {
             event.preventDefault();
-            if (doubleSpace) currentEditor.commands.deleteRange({ from: from - 1, to: from });
-            return invoke(currentEditor, doubleSpace ? 2 : 1);
+            return true;
           }
         }
         if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
@@ -364,7 +372,28 @@ function RichBlock(props: BlockProps) {
         }
         return false;
       },
+      // Software keyboards may never emit a usable keydown. beforeinput keeps
+      // focus changes in the user gesture; handleTextInput covers DOM-diff input.
+      handleTextInput(_view, from, to, text) {
+        const editor = editorRef.current;
+        return editor ? handleAIInput(editor, from, to, text) : false;
+      },
       handleDOMEvents: {
+        beforeinput(view, event) {
+          const editor = editorRef.current;
+          if (!editor || event.isComposing || !event.cancelable || !["insertText", "insertReplacementText"].includes(event.inputType) || !event.data) return false;
+          let { from, to } = view.state.selection;
+          const range = event.getTargetRanges?.()[0];
+          if (range) {
+            try {
+              from = view.posAtDOM(range.startContainer, range.startOffset);
+              to = view.posAtDOM(range.endContainer, range.endOffset);
+            } catch { return false; }
+          }
+          if (!handleAIInput(editor, from, to, event.data)) return false;
+          event.preventDefault();
+          return true;
+        },
         mouseup() { const editor = editorRef.current; if (editor) queueMicrotask(() => { if (!editor.isDestroyed) notifySelection(editor); }); return false; },
       },
     },
@@ -546,6 +575,7 @@ function RichBlock(props: BlockProps) {
         {block.content && !props.isDraft && <span className="rich-document-authorship" contentEditable={false} role="note" aria-label={`Authorship: ${authorshipLabel}`} data-label={`Authorship: ${authorshipLabel}`}
           title={authorship === "user" ? "Your writing" : authorship === "mixed" ? "AI-origin text with your edits; attribution applies to this whole block" : "AI-origin text; attribution applies to this whole block"} />}
       </div>}
+
       {drawingError && <p role="alert">{drawingError}</p>}
       {drawing && <Suspense fallback={<p role="status">Opening drawing editor…</p>}><DrawingDialog markdown={drawing.markdown} error={drawingError} onSave={saveDrawing} onClose={() => setDrawing(null)} /></Suspense>}
       {readOnly && <div className="rich-document-streaming-label" role="status">Writing…</div>}
@@ -572,6 +602,10 @@ function RichBlock(props: BlockProps) {
         : isDrawing && !readOnly ? <Suspense fallback={<p role="status">Loading drawing…</p>}><DocumentDrawing markdown={block.content} readOnly={readOnly} onEdit={openDrawing} /></Suspense>
         : fallback ? <div className="rich-document-preserved"><div className="rich-document-preserved-preview">{props.renderBlockPreview?.(block) ?? (typeof window === "undefined" ? <pre>{block.content}</pre> : <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(block.content) }} />)}</div><button type="button" className="rich-document-source-action" disabled={readOnly} onClick={() => { setSourceMode(true); setTimeout(() => sourceRef.current?.focus(), 0); }}>Edit {fallback.toLowerCase()} source</button></div>
         : <EditorContent editor={editor} />}
+      {!readOnly && !fallback && !sourceMode && editor && <div className="rich-document-touch-actions" contentEditable={false}>
+        {props.onInvokeAI && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Ask AI" data-label="✦ Ask AI" onClick={() => invoke(editor)} />}
+        {block.content && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Select block" data-label="Select block" onClick={() => editor.chain().focus().selectAll().run()} />}
+      </div>}
     </div>
     {props.renderAfterBlock?.(block)}
     {equation && !readOnly && <MathEquationDialog latex={equation.latex} display={equation.display} editing={equation.original !== undefined} error={equationError} onSave={saveEquation} onClose={closeEquation} />}

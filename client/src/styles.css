@@ -12457,3 +12457,13 @@ body .live-markdown-editor {
     width: 320px;
   }
 }
+
+/* Leave room for native touch handles until the reader chooses an action. */
+.selection-tooltip.is-compact-selection { padding: 6px 8px; border-radius: 12px; }
+.selection-touch-summary { display: flex; align-items: center; gap: 8px; }
+.selection-touch-summary span { flex: 1; color: var(--muted); font-size: 12px; }
+.selection-touch-summary button { min-height: 44px; min-width: 44px; padding: 8px; border: 0; border-radius: 8px; background: var(--button-active-surface); color: var(--ink); font: inherit; font-size: 14px; }
+@media (pointer: coarse) {
+  .selection-tooltip :is(button, input), .document-ai-composer :is(button, textarea) { min-height: 44px; }
+  .selection-tooltip input, .document-ai-composer textarea { font-size: 16px; }
+}

@@ -5,7 +5,8 @@ import type { AppState, Conversation } from "../../client/src/types";
 import { billingUser } from "./billingFixture";
 
 const browser = new Window({ url: "http://document-links.test" });
-browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
+const mobileSelectionTest = process.env.TEST_MOBILE_SELECTION === "1";
+browser.happyDOM.setWindowSize({ width: mobileSelectionTest ? 390 : 1600, height: 844 });
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "HTMLDivElement", "HTMLInputElement", "HTMLTextAreaElement", "Element", "Node", "Text", "NodeFilter", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });
@@ -97,6 +98,28 @@ async function selectPassage() {
   assert(from >= 0, "The selected passage still exists in the real editor.");
   await act(async () => current.commands.setTextSelection({ from, to: from + "selected passage".length }));
   await settle();
+  if (mobileSelectionTest) {
+    assert(element(".is-compact-selection"));
+    assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Selecting text does not open the full prompt.");
+    const native = browser.getSelection()!;
+    const textNode = current.view.dom.querySelector("p").firstChild;
+    const range = browser.document.createRange();
+    const start = textNode.textContent.indexOf("selected passage");
+    range.setStart(textNode, start); range.setEnd(textNode, start + 16);
+    await act(async () => { native.removeAllRanges(); native.addRange(range); });
+    await act(async () => browser.document.body.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" })));
+    assert.equal(native.toString(), "selected passage", "Dragging native handles must not clear the range even when their target is outside the editor.");
+    assert(element(".is-compact-selection"));
+    await click(button("Use selection"));
+    assert(element('[aria-label="Branch prompt"]'));
+    assert.equal(browser.document.querySelector(".is-compact-selection"), null);
+    await act(async () => current.commands.setTextSelection({ from, to: from + 8 }));
+    await settle();
+    assert(element(".is-compact-selection"), "Adjusting the selection returns to the compact control.");
+    await act(async () => current.commands.setTextSelection({ from, to: from + "selected passage".length }));
+    await settle();
+    await click(button("Use selection"));
+  }
   assert(element(".selection-tooltip-quote").textContent.includes("selected passage"));
   await click(element('[aria-label="Choose AI model and provider"]'));
   const search = element('[aria-label="Search AI models"]');
@@ -136,6 +159,9 @@ try {
   await act(async () => root.render(createElement(WorkspaceApp, props)));
   await settle();
   await selectPassage();
+  if (mobileSelectionTest) {
+    checks.push("touch selection preserves native ranges, uses compact actions, and retains the chosen passage through model selection");
+  } else {
   await click(element('[aria-label="Browse blocks in Destination research"]'));
   await click(button("Block 2", element(".document-link-picker")));
   const link = latest.conversations.source.document!.links![0];
@@ -202,6 +228,7 @@ try {
   assert.deepEqual(ancestry(latest), originalAncestry);
   assert.equal(Object.keys(latest.conversations).length, 3);
   checks.push("the same selection action connects to an entire existing document and navigates without manufacturing a side document");
+  }
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

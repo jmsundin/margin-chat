@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { checkReadiness, runPersistenceSmoke } from "../scripts/release/smoke.mjs";
+import { checkReadiness, waitForProductionReadiness, runPersistenceSmoke } from "../scripts/release/smoke.mjs";
 import { createCaptureTestDatabase } from "./helpers/captureDatabase.mjs";
 import { createApiHandler } from "../server/routes/api.mjs";
 import { createAuthService } from "../server/auth/index.mjs";
@@ -45,6 +45,54 @@ describe("production persistence readiness", () => {
         fetchImpl: async () => Response.json(payload, { status }),
       })).rejects.toThrow(message);
     }
+  });
+
+  function propagationFixture(releases: Array<string | undefined>) {
+    let clock = 0, reads = 0, locks = 0;
+    return {
+      counts: () => ({ clock, reads, locks }),
+      options: {
+        baseUrl: "https://release.example.test", expectedSha: "expected-release", previousSha: "previous-release",
+        timeoutMs: 30, pollMs: 10, now: () => clock,
+        sleep: async (ms: number) => { clock += ms; },
+        assertLock: async () => { locks++; },
+        fetchImpl: async () => Response.json({ ...healthy, release: releases[Math.min(reads++, releases.length - 1)] }),
+      },
+    };
+  }
+
+  test("waits for the known previous release to yield to the promoted release", async () => {
+    const f = propagationFixture(["previous-release", "previous-release", "expected-release"]);
+    expect((await waitForProductionReadiness(f.options)).release).toBe("expected-release");
+    expect(f.counts()).toEqual({ clock: 20, reads: 3, locks: 3 });
+    const immediate = propagationFixture(["expected-release"]);
+    await waitForProductionReadiness(immediate.options);
+    expect(immediate.counts()).toEqual({ clock: 0, reads: 1, locks: 1 });
+  });
+
+  test("bounds propagation waiting when the public origin keeps serving the previous release", async () => {
+    const f = propagationFixture(["previous-release"]);
+    await expect(waitForProductionReadiness(f.options)).rejects.toThrow("Timed out");
+    expect(f.counts()).toEqual({ clock: 30, reads: 3, locks: 3 });
+  });
+
+  test("does not treat missing or unrelated release identity as propagation", async () => {
+    for (const release of [undefined, "unrelated-release"]) {
+      const f = propagationFixture([release]);
+      await expect(waitForProductionReadiness(f.options)).rejects.toThrow("unexpected release");
+      expect(f.counts().reads).toBe(1);
+      expect(f.counts().clock).toBe(0);
+    }
+    const f = propagationFixture(["previous-release"]);
+    await expect(waitForProductionReadiness({ ...f.options, previousSha: undefined })).rejects.toThrow("unexpected release");
+  });
+
+  test("propagation waiting still fails immediately for unhealthy storage or a lost lock", async () => {
+    const f = propagationFixture(["previous-release"]);
+    await expect(waitForProductionReadiness({ ...f.options, fetchImpl: async () => Response.json(healthy, { status: 503 }) })).rejects.toThrow("Database readiness failed");
+    await expect(waitForProductionReadiness({ ...f.options, assertLock: async () => { throw new Error("lost lock"); } })).rejects.toThrow("lost lock");
+    expect(f.counts().clock).toBe(0);
+    expect(f.counts().reads).toBe(0);
   });
 });
 

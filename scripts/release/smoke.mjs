@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID, randomBytes } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { hashPassword } from "../../server/auth/passwords.mjs";
 import { digest } from "../../server/vault/storage.mjs";
 
-export async function checkReadiness({ baseUrl, expectedSha, fetchImpl = fetch, bypassSecret }) {
+export async function checkReadiness({ baseUrl, expectedSha, fetchImpl = fetch, bypassSecret, requestTimeoutMs = 60_000 }) {
   const response = await fetchImpl(new URL("/api/health", baseUrl), {
     headers: bypassSecret ? { "x-vercel-protection-bypass": bypassSecret } : {},
-    redirect: "error", signal: AbortSignal.timeout(60_000),
+    redirect: "error", signal: AbortSignal.timeout(requestTimeoutMs),
   });
   assert.equal(response.status, 200, "Database readiness failed.");
   const payload = await response.json();
@@ -15,6 +16,26 @@ export async function checkReadiness({ baseUrl, expectedSha, fetchImpl = fetch, 
   assert.equal(payload.storage?.vault?.kind, "blob", "Production release requires Blob storage.");
   if (expectedSha) assert.equal(payload.release, expectedSha, "The URL is serving a different release.");
   return { database: "ready", vault: "configured", release: payload.release };
+}
+
+/** Promotion can finish before the public origin stops serving the old release. */
+export async function waitForProductionReadiness({ expectedSha, previousSha, assertLock = async () => {},
+  sleep = delay, now = Date.now, timeoutMs = 180_000, pollMs = 1_000, ...options }) {
+  if (!expectedSha || !(timeoutMs > 0) || !(pollMs > 0)) throw new Error("Invalid production readiness polling options.");
+  const deadline = now() + timeoutMs;
+  while (now() < deadline) {
+    await assertLock();
+    const remaining = deadline - now();
+    if (remaining <= 0) break;
+    const result = await checkReadiness({ ...options, requestTimeoutMs: Math.min(60_000, remaining) });
+    if (now() >= deadline) break;
+    if (result.release === expectedSha) return result;
+    // Only the known previous release is a propagation delay. Missing identity,
+    // an unrelated release, and unhealthy storage must still fail immediately.
+    if (!previousSha || result.release !== previousSha) throw new Error("The production URL is serving an unexpected release after promotion.");
+    await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
+  }
+  throw new Error("Timed out waiting for the production URL to serve the promoted release.");
 }
 
 /** A fresh synthetic account owns every write. Never accepts an existing user ID. */
