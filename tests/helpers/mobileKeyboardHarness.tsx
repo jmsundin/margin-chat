@@ -46,6 +46,23 @@ async function click(selector: string) {
     target.click();
   });
 }
+async function touchButton(selector: string, gesture: "tap" | "drag" | "cancel" = "tap") {
+  await act(async () => {
+    const button = element(selector);
+    const touch = new browser.Touch({ identifier: 1, target: button, clientX: 20, clientY: 20 });
+    button.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch" }));
+    button.dispatchEvent(new browser.TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch] }));
+    if (gesture === "drag") button.dispatchEvent(new browser.TouchEvent("touchmove", {
+      bubbles: true, cancelable: true, touches: [new browser.Touch({ identifier: 1, target: button, clientX: 60, clientY: 60 })],
+    }));
+    activationPhase = "touchend";
+    button.dispatchEvent(new browser.TouchEvent(gesture === "cancel" ? "touchcancel" : "touchend", {
+      bubbles: true, cancelable: true, touches: [], changedTouches: [touch],
+    }));
+    activationPhase = "after";
+  });
+}
+let activationPhase = "idle";
 async function resize(height: number, top: number) {
   await act(async () => { viewport.height = height; viewport.offsetTop = top; viewport.dispatchEvent(new browser.Event("resize")); });
 }
@@ -58,8 +75,21 @@ try {
   const quote = browser.getSelection()!.toString();
   assert.equal(quote, "Select this");
   assert(element('[aria-label="Show keyboard"]'));
-  await click('[aria-label="Show keyboard"]');
-  assert.equal(editor.view.dom.getAttribute("inputmode"), "text");
+  const nativeFocus = editor.view.dom.focus.bind(editor.view.dom);
+  const focusRequests: Array<{ phase: string; inputMode: string | null; options: unknown }> = [];
+  editor.view.dom.focus = (options?: FocusOptions) => {
+    focusRequests.push({ phase: activationPhase, inputMode: editor.view.dom.getAttribute("inputmode"), options });
+    nativeFocus(options);
+  };
+  await touchButton('[aria-label="Show keyboard"]', "drag");
+  assert.equal(editor.view.dom.getAttribute("inputmode"), "none", "Dragging across the control is not a keyboard request.");
+  await touchButton('[aria-label="Show keyboard"]', "cancel");
+  assert.equal(editor.view.dom.getAttribute("inputmode"), "none", "Cancelled touches don't open the keyboard.");
+  await touchButton('[aria-label="Show keyboard"]');
+  assert(focusRequests.some((request) => request.phase === "touchend" && request.inputMode === "text" && request.options === undefined),
+    "Request native keyboard focus synchronously during touchend, after typing is enabled, without relying on a click or preventScroll.");
+  await act(async () => element('[aria-label="Hide keyboard"]').dispatchEvent(new browser.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 })));
+  assert.equal(editor.view.dom.getAttribute("inputmode"), "text", "The compatibility click must not immediately hide the keyboard again.");
   assert.equal(browser.getSelection()!.toString(), quote, "Requesting the keyboard retains the passage for replacement.");
   assert.equal(editor.state.selection.from, 1);
   assert.equal(editor.state.selection.to, 12);
@@ -86,7 +116,7 @@ try {
     prompt.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
   prompt.setSelectionRange(2, 7);
-  await click('[aria-label="Hide keyboard"]');
+  await touchButton('[aria-label="Hide keyboard"]');
   assert.equal(element(".document-ai-composer"), form, "The keyboard control does not dismiss or remount the prompt.");
   assert.equal(prompt.getAttribute("inputmode"), "none");
   assert.equal(prompt.selectionStart, 2);

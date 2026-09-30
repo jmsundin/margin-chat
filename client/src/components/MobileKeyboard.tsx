@@ -13,6 +13,8 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false);
   const [hasTarget, setHasTarget] = useState(false);
   const target = useRef<HTMLElement | null>(null);
+  const touchGesture = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+  const lastTouchActivation = useRef(-Infinity);
   const keyboardSession = useRef<{ height: number; width: number; reduced: boolean } | null>(null);
   const viewport = useVisualViewport(mobile);
   const safeBottom = viewport.height < window.innerHeight - 100 ? "0px" : "env(safe-area-inset-bottom, 0px)";
@@ -59,10 +61,14 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     // Mount/update attributes and focus synchronously in the tap gesture, which
     // iOS requires for opening its software keyboard. Keep the exact selection.
     keyboardSession.current = enabled ? null : { height: viewport.height, width: viewport.width, reduced: false };
-    field.blur();
     flushSync(() => setEnabled(!enabled));
     field.setAttribute("inputmode", enabled ? "none" : "text");
-    field.focus({ preventScroll: true });
+    // Finish React/ProseMirror updates before restarting the input session.
+    // Opening uses native focus in the touch-end gesture (like Tiptap's iOS
+    // focus path), rather than a scroll-suppressed or deferred focus request.
+    field.blur();
+    if (enabled) field.focus({ preventScroll: true });
+    else field.focus();
     if (input && start != null && end != null) input.setSelectionRange(start, end);
     else if (range && native) { native.removeAllRanges(); native.addRange(range); }
   }
@@ -73,7 +79,32 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     {mobile && hasTarget && createPortal(<button type="button" className="mobile-keyboard-toggle" data-mobile-keyboard-toggle
       aria-label={enabled ? "Hide keyboard" : "Show keyboard"} title={enabled ? "Hide keyboard" : "Show keyboard"} aria-pressed={enabled}
       style={{ top: `calc(${viewport.top + viewport.height - 56}px - ${safeBottom})`, left: viewport.left + viewport.width - 60 }}
-      onPointerDown={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()} onClick={toggle}>
+      onPointerDown={(event) => { if (event.pointerType === "mouse") lastTouchActivation.current = -Infinity; event.preventDefault(); }}
+      onMouseDown={(event) => event.preventDefault()}
+      onTouchStart={(event) => {
+        const touch = event.touches[0];
+        touchGesture.current = event.touches.length === 1 ? { x: touch.clientX, y: touch.clientY, moved: false } : null;
+      }}
+      onTouchMove={(event) => {
+        const gesture = touchGesture.current;
+        const touch = event.touches[0];
+        if (gesture && (!touch || event.touches.length !== 1 || Math.hypot(touch.clientX - gesture.x, touch.clientY - gesture.y) > 10)) gesture.moved = true;
+      }}
+      onTouchCancel={() => { touchGesture.current = null; }}
+      onTouchEnd={(event) => {
+        const gesture = touchGesture.current;
+        touchGesture.current = null;
+        // A scroll/cancel must not open the keyboard or synthesize a toggle.
+        event.preventDefault();
+        lastTouchActivation.current = event.timeStamp;
+        if (gesture && !gesture.moved && event.touches.length === 0) toggle();
+      }}
+      onClick={(event) => {
+        // Some WebKit versions still deliver a compatibility click. Keyboard
+        // and assistive-technology activation (detail=0) must keep working.
+        if (event.detail !== 0 && event.timeStamp - lastTouchActivation.current < 800) { event.preventDefault(); return; }
+        toggle();
+      }}>
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
         <rect x="2" y="5" width="20" height="14" rx="3" />
         <path d="M5 9h2m2 0h2m2 0h2m2 0h2M5 12h2m2 0h2m2 0h2m2 0h2M7 16h10" />

@@ -438,9 +438,11 @@ function RichBlock(props: BlockProps) {
   }, [editor, block.content, fallback, sourceMode]);
 
   useEffect(() => { editor?.setEditable(!readOnly, false); }, [editor, readOnly]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!editor) return;
     const editorProps = editor.options.editorProps;
+    // The keyboard button refocuses synchronously in a touch gesture. Apply
+    // inputmode before that focus, including ProseMirror's stored attributes.
     editor.setOptions({ editorProps: { ...editorProps, attributes: { ...(typeof editorProps.attributes === "object" ? editorProps.attributes : {}), "aria-label": `Document block ${index + 1}`, "data-placeholder": placeholder, inputmode: mobileKeyboard.inputMode } } });
   }, [editor, index, placeholder, mobileKeyboard.inputMode]);
   useEffect(() => {
