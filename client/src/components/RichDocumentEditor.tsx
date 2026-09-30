@@ -18,6 +18,7 @@ import { documentPositionAtMarkdownOffset, getRichDocumentFallbackReason, markdo
 import { createDocumentMathExtensions, type EditEquation } from "../lib/documentMath";
 import MathEquationDialog from "./MathEquationDialog";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
+import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { DocumentEditFocus, DocumentEditOptions } from "../lib/documentEditHistory";
 import { DocumentTable } from "../lib/documentTable";
 import { formatDocumentDateTime } from "../lib/documentDateTime";
@@ -45,6 +46,8 @@ export interface RichDocumentInvocation {
   offset: number;
   selection?: { startOffset: number; endOffset: number; quote: string };
   rect: RichDocumentRect;
+  /** A Space shortcut continues an existing typing interaction. */
+  typing?: boolean;
   restoreFocus: (options?: { restoreSpaces?: boolean }) => void;
 }
 export interface RichDocumentDecoration {
@@ -198,6 +201,9 @@ function RichBlock(props: BlockProps) {
   const [drawing, setDrawing] = useState<{ markdown: string; original?: string } | null>(null);
   const [drawingError, setDrawingError] = useState("");
   const [equationError, setEquationError] = useState<string | null>(null);
+  useAppUpdateGuard("document-dialog", {
+    check: () => linkOpen || equation || drawing ? "Finish or close the link, equation, or drawing editor in each tab before restarting." : null,
+  });
   const [, updateToolbar] = useState(0);
   const [focused, setFocused] = useState(false);
   const sourceRef = useRef<HTMLTextAreaElement>(null);
@@ -256,7 +262,7 @@ function RichBlock(props: BlockProps) {
     const markdown = content.current;
     const offset = rawOffset(editor, markdown, from);
     const endOffset = rawOffset(editor, markdown, to, -1);
-    current.onInvokeAI({ blockId: current.block.id, markdown, offset, rect: cursorRect(editor),
+    current.onInvokeAI({ blockId: current.block.id, markdown, offset, rect: cursorRect(editor), typing: spaces > 0,
       selection: !empty && endOffset > offset ? { startOffset: offset, endOffset, quote: markdown.slice(offset, endOffset) } : undefined,
       restoreFocus(options) {
         suppressSpace.current = true;

@@ -1,5 +1,8 @@
 import { useVisualViewport } from "./lib/useVisualViewport";
+import { useAppUpdateGuard } from "./lib/appUpdateSafety";
 import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } from "./components/MobileKeyboard";
+import MobileAIComposer from "./components/MobileAIComposer";
+import { MobileSelectionActions } from "./components/MobileSelectionActions";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { useBrowserWorkspaceCapture, type BrowserCaptureRequest } from "./lib/browserWorkspace";
 import { createMarginDocument, isCompactDocument } from "@margin-chat/workspace-contracts";
@@ -168,6 +171,7 @@ const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
 const NOTE_PROMPT_PLACEHOLDER = "Add a private thought about this text...";
 const EXPLAIN_SELECTION_PROMPT = "Explain the selected text.";
+const REWRITE_SELECTION_PROMPT = "Rewrite the selected text for clarity and flow, preserving its meaning and tone. Return only the rewritten passage.";
 const TOOLTIP_VIEWPORT_MARGIN = 16;
 const CHAT_PANEL_DEFAULT_WIDTH_PX = 760;
 const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
@@ -729,6 +733,7 @@ function WorkspaceAppContent({
   );
   const selectionViewport = useVisualViewport(Boolean(selectionDraft) && !mobileKeyboard.mobile);
   const [selectionActionsExpanded, setSelectionActionsExpanded] = useState(false);
+  const [selectionOptionsInitiallyOpen, setSelectionOptionsInitiallyOpen] = useState(false);
   const [selectionIntent, setSelectionIntent] = useState<"branch" | "note" | "link">("branch");
   const [selectionModelOpen, setSelectionModelOpen] = useState(false);
   const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
@@ -788,6 +793,16 @@ function WorkspaceAppContent({
   }, onBrowserCaptureHandled);
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
+  useAppUpdateGuard("workspace", {
+    busy: () => Object.values(pendingConversationIds).some(Boolean) || !!topicExpansion.pendingId || Object.values(documentUploadByConversationId).some((item) => item.uploading) || profileSaving,
+    check: () => {
+      if (Object.values(pendingConversationIds).some(Boolean) || topicExpansion.pendingId) return "A response is still running in a tab. Let it finish or stop it, then try again.";
+      if (Object.values(documentUploadByConversationId).some((item) => item.uploading)) return "An attachment is still uploading in a tab. Wait for it to finish, then try again.";
+      if (profileSaving || historyImportOpen || captureInboxOpen) return "Finish the open import, capture, or settings operation in each tab, then try again.";
+      if (Object.values(drafts).some((draft) => draft.trim()) || selectionDraft?.prompt.trim()) return "An unsent draft is open in a tab. Send or clear it before restarting.";
+      return null;
+    },
+  });
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSourceRequest, setSearchSourceRequest] = useState<{ source: SearchEvidenceRef; sequence: number } | null>(null);
@@ -1514,12 +1529,6 @@ function WorkspaceAppContent({
       document.removeEventListener("copy", handleCopy);
     };
   }, [selectionDraft, selectionModelOpen]);
-
-  useEffect(() => {
-    if (mobileKeyboard.mobile && selectionActionsExpanded && selectionIntent !== "link") {
-      toolbarRef.current?.querySelector<HTMLInputElement>("#branch-prompt")?.focus({ preventScroll: true });
-    }
-  }, [mobileKeyboard.mobile, selectionActionsExpanded, selectionIntent]);
 
   useEffect(() => { setSelectionActionsExpanded(false); }, [selectionDraft?.conversationId, selectionDraft?.messageId, selectionDraft?.startOffset, selectionDraft?.endOffset]);
 
@@ -2353,10 +2362,10 @@ function WorkspaceAppContent({
   }
 
   function handleBranchFromMessage(draft: SelectionDraft) {
-    window.getSelection()?.removeAllRanges();
+    if (!mobileKeyboard.mobile) window.getSelection()?.removeAllRanges();
     setSelectionDraft(draft);
     setSelectionIntent("branch");
-    window.requestAnimationFrame(() => document.getElementById("branch-prompt")?.focus());
+    if (!mobileKeyboard.mobile) window.requestAnimationFrame(() => document.getElementById("branch-prompt")?.focus());
   }
 
   function handleModelChange(
@@ -2547,6 +2556,9 @@ function WorkspaceAppContent({
       window.cancelAnimationFrame(selectionSyncFrameRef.current);
       selectionSyncFrameRef.current = window.requestAnimationFrame(() => {
         if (selectionModelOpen || toolbarRef.current?.contains(document.activeElement)) return;
+        // The compact prompt owns a saved passage after Ask. Blurring the
+        // document to dismiss its keyboard must not discard that context.
+        if (mobileKeyboard.mobile && selectionActionsExpanded && selectionIntent === "branch") return;
         const selection = window.getSelection();
         if (selection?.isCollapsed) setSelectionDraft(null);
         else syncSelectionDraft();
@@ -2564,7 +2576,7 @@ function WorkspaceAppContent({
       document.removeEventListener("pointerup", handleDocumentPointerUp);
       document.removeEventListener("keyup", handleDocumentKeyUp);
     };
-  }, [isMobileViewport, selectionModelOpen, state.conversations]);
+  }, [isMobileViewport, mobileKeyboard.mobile, selectionActionsExpanded, selectionIntent, selectionModelOpen, state.conversations]);
 
   function handleUpdateGraphNodeLayouts(
     nextLayouts: Record<string, Partial<GraphNodeLayout>>,
@@ -2699,6 +2711,28 @@ function WorkspaceAppContent({
 
   function handleExplainSelection() {
     handleCreateBranch(EXPLAIN_SELECTION_PROMPT);
+  }
+
+  function handleSelectionQuickAction(prompt: string) {
+    const draft = selectionDraft;
+    if (!draft || pendingConversationIds[draft.conversationId]) return;
+    // Quick actions generate a reviewable side document, regardless of options
+    // left over from an earlier custom request. The selected source stays intact.
+    if (draft.sourceBlockId) {
+      handleDocumentSubmit(draft.conversationId, {
+        blockId: draft.sourceBlockId, from: draft.startOffset, to: draft.endOffset,
+        quote: draft.quote, sourceContent: draft.sourceContent, prompt,
+        destination: "side", replaceSelection: false,
+      });
+    } else handleCreateBranch(prompt);
+  }
+
+  function openMobileSelectionPrompt(showOptions = false) {
+    setSelectionIntent("branch");
+    setSelectionOptionsInitiallyOpen(showOptions);
+    setSelectionActionsExpanded(true);
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.matches("[contenteditable='true'], input, textarea")) active.blur();
   }
 
   function handleCreateDocumentLink(target: { conversationId: string; blockId?: string }) {
@@ -4184,9 +4218,45 @@ function WorkspaceAppContent({
           ) : null}
 
           {!isTileView && selectionDraft ? (
+            mobileKeyboard.mobile && !selectionActionsExpanded ? <MobileSelectionActions
+              rect={selectionDraft.rect} formRef={toolbarRef}
+              disabled={Boolean(pendingConversationIds[selectionDraft.conversationId])}
+              onExplain={() => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT)}
+              onRewrite={() => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
+              onAsk={() => openMobileSelectionPrompt()}
+              onMore={() => openMobileSelectionPrompt(true)}
+              onClose={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}
+            /> : mobileKeyboard.mobile && selectionIntent === "branch" ? <MobileComposerViewport>
+              <MobileAIComposer formRef={toolbarRef} testId="branch-composer" className="selection-mobile-composer"
+                textareaId="branch-prompt" promptLabel="Branch prompt" quote={selectionDraft.quote}
+                prompt={selectionDraft.prompt}
+                onPromptChange={(prompt) => setSelectionDraft((current) => current ? { ...current, prompt } : current)}
+                onSubmit={() => handleCreateBranch()}
+                onClose={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}
+                disabled={Boolean(pendingConversationIds[selectionDraft.conversationId])}
+                initiallyOpenOptions={selectionOptionsInitiallyOpen}
+                options={<>
+                  {selectionConversation ? <button type="button" aria-label="Choose AI model and provider"
+                    aria-haspopup="dialog" aria-expanded={selectionModelOpen} onClick={() => setSelectionModelOpen(true)}>
+                    Model: {selectionConversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(selectionConversation.serviceId, selectionConversation.modelId)?.label ?? selectionConversation.modelId} ⌄
+                  </button> : null}
+                  {selectionDraft.sourceBlockId ? <div className="document-ai-options">
+                    <div role="group" aria-label="Response destination">
+                      <button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={() => setSelectionResponseDestination("inline")}>In this document</button>
+                      <button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={() => setSelectionResponseDestination("side")}>Side document ↗</button>
+                    </div>
+                    {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event) => setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
+                  </div> : null}
+                  <button type="button" aria-label={selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note"}
+                    onClick={() => setSelectionIntent("note")}>{selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}</button>
+                  <button type="button" aria-label="Link selected text to an existing document or block"
+                    onClick={() => { setSelectionLinkError(null); setSelectionIntent("link"); }}>Link to existing</button>
+                </>}
+              />
+            </MobileComposerViewport> :
             <SelectionComposerFrame mobile={mobileKeyboard.mobile}>
             <form
-              className={`selection-tooltip${mobileKeyboard.mobile && !selectionActionsExpanded ? " is-compact-selection" : ""}`}
+              className="selection-tooltip"
               data-testid="branch-composer"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -4196,11 +4266,6 @@ function WorkspaceAppContent({
               ref={toolbarRef}
               style={mobileKeyboard.mobile ? undefined : toolbarStyle}
             >
-              {mobileKeyboard.mobile && !selectionActionsExpanded ? <div className="selection-touch-summary">
-                <span>Drag the handles to adjust</span>
-                <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => setSelectionActionsExpanded(true)}>Use selection</button>
-                <button type="button" aria-label="Clear text selection" onClick={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}>×</button>
-              </div> : <>
               <div className="selection-tooltip-head">
                 <p className="eyebrow">
                   {selectionIntent === "link" ? "Link this passage" : selectionIntent === "note"
@@ -4285,7 +4350,7 @@ function WorkspaceAppContent({
                 <input
                   aria-label={selectionIntent === "note" ? "Margin note" : "Branch prompt"}
                   id="branch-prompt"
-                  data-mobile-keyboard inputMode={mobileKeyboard.inputMode}
+                  inputMode="text"
                   onChange={(event) =>
                     setSelectionDraft((current) =>
                       current
@@ -4320,7 +4385,6 @@ function WorkspaceAppContent({
                 </button>
               </div> : null}
               </div>
-              </>}
             </form>
             </SelectionComposerFrame>
           ) : null}

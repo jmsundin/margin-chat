@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
+import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
 import { getDocumentBlockAuthorship, getEditableDocument } from "../lib/editableDocument";
 import type { DocumentAIRequest } from "../lib/documentAI";
@@ -10,6 +12,7 @@ import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
+import MobileAIComposer from "./MobileAIComposer";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
 import "./DocumentPanel.css";
 
@@ -85,6 +88,9 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const [modelOpen, setModelOpen] = useState(false);
   const [openPromptId, setOpenPromptId] = useState<string | null>(null);
   const [rerunText, setRerunText] = useState("");
+  useAppUpdateGuard("document-prompt", {
+    check: () => prompt.trim() || (openPromptId && rerunText.trim()) ? "An unsent document prompt is open in a tab. Send or clear it before restarting." : null,
+  });
   const [hiddenVersions, setHiddenVersions] = useState<string[]>([]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
@@ -94,7 +100,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     setPrompt("");
   }, composerRef);
   useOutsideDismiss(Boolean(openPromptId), () => setOpenPromptId(null), promptHistoryRef);
-  useEffect(() => { if (invocation) promptRef.current?.focus(); }, [invocation]);
+  useEffect(() => { if (invocation && !mobileKeyboard.mobile) promptRef.current?.focus(); }, [invocation, mobileKeyboard.mobile]);
   useEffect(() => {
     if (!invocation || document.blocks.some((block) => block.id === invocation.blockId)) return;
     setInvocation(null);
@@ -261,6 +267,21 @@ export default function DocumentPanel(props: DocumentPanelProps) {
 
   function renderAIComposer() {
     if (!invocation) return null;
+    if (mobileKeyboard.mobile) return <MobileAIComposer formRef={composerRef} textareaRef={promptRef}
+      prompt={prompt} onPromptChange={setPrompt} onSubmit={submit} onClose={() => dismissAI()}
+      quote={invocation.selection?.quote} disabled={props.isSubmitting}
+      options={<>
+        <div className="document-ai-options"><div role="group" aria-label="Response destination">
+          <button aria-pressed={destination === "inline"} onClick={() => setDestination("inline")} type="button">In this document</button>
+          <button aria-pressed={destination === "side"} onClick={() => setDestination("side")} type="button">Side document ↗</button>
+        </div>
+          {invocation.selection && destination === "inline" ? <label><input type="checkbox" checked={replaceSelection} onChange={(event) => setReplaceSelection(event.target.checked)}/>Replace selection</label> : null}
+        </div>
+        <div className="mobile-ai-options-actions">
+          <button type="button" aria-label="Attach documents" onClick={() => fileRef.current?.click()}>＋ Attach</button>
+          <button type="button" aria-label="Choose AI model" onClick={() => setModelOpen(true)}>{modelLabel} ⌄</button>
+        </div>
+      </>}/>;
     return <form ref={composerRef} className="document-ai-composer" onSubmit={(event) => {event.preventDefault();submit();}} onKeyDown={(event)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();dismissAI();}}}>
             <div className="document-ai-heading"><strong>✦ Ask AI</strong><button type="button" aria-label="Close AI prompt" onClick={()=>dismissAI()}>×</button></div>
             <div className="document-ai-fields">
@@ -317,7 +338,23 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           change({...current,blocks}, { ...edit, afterFocus: { blockId: focus.id, from: focus.content.length, to: focus.content.length } });
         }}
         onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks}, { beforeFocus: { blockId: id, from: 0, to: 0 }, afterFocus: { blockId: id, from: 0, to: 0 } });}}
-        onInvokeAI={(next) => {props.onClearSelection?.();setInvocation(next);setDestination(next.selection ? "side" : "inline");setReplaceSelection(false);setOpenPromptId(null);}}
+        onInvokeAI={(next) => {
+          const open = () => { props.onClearSelection?.(); setInvocation(next); setDestination(next.selection ? "side" : "inline"); setReplaceSelection(false); setOpenPromptId(null); };
+          if (mobileKeyboard.mobile && next.typing) {
+            // Keep a keyboard shortcut in its active input session. Tapping
+            // Ask AI leaves the document readable until the prompt is tapped.
+            flushSync(open);
+            promptRef.current?.focus();
+          } else {
+            open();
+            if (mobileKeyboard.mobile) {
+              const active = window.document.activeElement;
+              // The Ask button preserves the selection on pointer-down. End
+              // its editor input session now that the invocation is captured.
+              if (active instanceof HTMLElement && (active.isContentEditable || active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)) active.blur();
+            }
+          }
+        }}
         onSelectionChange={(selection) => { if(selection)props.onSelection({...selection,prompt:"",sourceKind:"message",sourceContent:document.blocks.find((block)=>block.id===selection.sourceBlockId)?.content}); else props.onClearSelection?.(); }}
         renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering theme={props.theme}/>}
         renderAfterBlock={(block) => <>

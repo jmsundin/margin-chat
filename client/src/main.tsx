@@ -5,26 +5,12 @@ import "./styles.css";
 import "katex/dist/katex.min.css";
 import "./components/MathEquation.css";
 import { Analytics } from "@vercel/analytics/react"
-
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    void navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" })
-      .then((registration) => {
-        document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "visible") {
-            void registration.update().catch(() => undefined);
-          }
-        });
-      })
-      .catch((error) => {
-        console.warn("Offline application caching is unavailable.", error);
-      });
-  });
-}
+import AppUpdateNotice from "./components/AppUpdateNotice";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <Analytics />
     <App />
+    {import.meta.env.PROD && <AppUpdateNotice commit={import.meta.env.VITE_APP_COMMIT} />}
   </React.StrictMode>,
 );

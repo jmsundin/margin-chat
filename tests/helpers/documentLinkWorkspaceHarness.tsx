@@ -57,6 +57,21 @@ mock.module("../../client/src/lib/useJevAssistance", () => ({
   useJevPreference: () => [false, () => {}],
   useJevAssistance: () => ({ status: "off", categories: {}, groupSuggestions: {}, related: [] }),
 }));
+const api = await import("../../client/src/lib/api");
+type ChatRequest = Parameters<typeof api.requestChatReply>[0];
+const chatRequests: ChatRequest[] = [];
+const finishRequests: Array<(reply: string) => void> = [];
+mock.module("../../client/src/lib/api", () => ({ ...api,
+  requestChatReply: (request: ChatRequest) => {
+    chatRequests.push(request);
+    return new Promise<Awaited<ReturnType<typeof api.requestChatReply>>>((resolve) => {
+      finishRequests.push((reply) => {
+        request.onDelta?.(reply);
+        resolve({ reply, metadata: { model: request.modelId, requestedServiceId: request.serviceId, resolvedServiceId: request.serviceId } });
+      });
+    });
+  },
+}));
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: WorkspaceApp } = await import("../../client/src/WorkspaceApp");
@@ -86,9 +101,9 @@ async function settle() {
   assert.equal(frames.size, 0, "Workspace animation effects settle.");
 }
 async function click(target: any) { await act(async () => target.click()); await settle(); }
-async function selectPassage() {
+async function selectSourcePassage() {
   const current = editor("source-block");
-  await act(async () => current.commands.focus());
+  await act(async () => { current.commands.focus(); current.commands.setTextSelection(1); });
   await settle();
   let from = -1;
   current.state.doc.descendants((node: any, position: number) => {
@@ -98,38 +113,10 @@ async function selectPassage() {
   assert(from >= 0, "The selected passage still exists in the real editor.");
   await act(async () => current.commands.setTextSelection({ from, to: from + "selected passage".length }));
   await settle();
-  if (mobileSelectionTest) {
-    assert(element(".is-compact-selection"));
-    assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Selecting text does not open the full prompt.");
-    const native = browser.getSelection()!;
-    const textNode = current.view.dom.querySelector("p").firstChild;
-    const range = browser.document.createRange();
-    const start = textNode.textContent.indexOf("selected passage");
-    range.setStart(textNode, start); range.setEnd(textNode, start + 16);
-    await act(async () => { native.removeAllRanges(); native.addRange(range); });
-    await act(async () => browser.document.body.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" })));
-    assert.equal(native.toString(), "selected passage", "Dragging native handles must not clear the range even when their target is outside the editor.");
-    assert(element(".is-compact-selection"));
-    await click(button("Use selection"));
-    assert.equal(element('[aria-label="Branch prompt"]').getAttribute("inputmode"), "none");
-    await act(async () => {
-      const keyboard = element('[aria-label="Show keyboard"]');
-      keyboard.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, cancelable: true, pointerType: "touch" }));
-      keyboard.click();
-    });
-    assert.equal(element('[aria-label="Branch prompt"]').getAttribute("inputmode"), "text");
-    assert(element(".selection-tooltip"), "The keyboard button must not dismiss the selected-passage composer.");
-    await click(element('[aria-label="Hide keyboard"]'));
-    assert.equal(browser.document.querySelector(".is-compact-selection"), null);
-    await act(async () => current.commands.focus());
-    await settle();
-    await act(async () => current.commands.setTextSelection({ from, to: from + 8 }));
-    await settle();
-    assert(element(".is-compact-selection"), "Adjusting the selection returns to the compact control.");
-    await act(async () => current.commands.setTextSelection({ from, to: from + "selected passage".length }));
-    await settle();
-    await click(button("Use selection"));
-  }
+  return { current, from };
+}
+async function selectPassage() {
+  await selectSourcePassage();
   assert(element(".selection-tooltip-quote").textContent.includes("selected passage"));
   await click(element('[aria-label="Choose AI model and provider"]'));
   const search = element('[aria-label="Search AI models"]');
@@ -149,6 +136,132 @@ async function selectPassage() {
   assert(element(".selection-tooltip-quote"), "Escape closes only the model picker.");
   await click(element('[aria-label="Link selected text to an existing document or block"]'));
 }
+async function testMobileSelectionActions() {
+  const sourceBlocks = structuredClone(latest.conversations.source.document!.blocks);
+  const { current, from } = await selectSourcePassage();
+  const actionBar = element('[data-testid="branch-composer"]');
+  for (const label of ["Explain", "Rewrite", "Ask"]) assert(button(label, actionBar));
+  assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Selecting text must not open the typing UI.");
+  assert.equal(current.view.dom.getAttribute("inputmode"), "none", "Reading and selection keep the native keyboard suppressed.");
+  const native = browser.getSelection()!;
+  const textNode = current.view.dom.querySelector("p").firstChild;
+  const range = browser.document.createRange();
+  const start = textNode.textContent.indexOf("selected passage");
+  range.setStart(textNode, start); range.setEnd(textNode, start + 16);
+  await act(async () => { native.removeAllRanges(); native.addRange(range); });
+  await act(async () => browser.document.body.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, pointerType: "touch" })));
+  assert.equal(native.toString(), "selected passage", "Dragging native handles outside the editor must retain the range.");
+  assert.equal(chatRequests.length, 0, "Selection and handle gestures do not generate AI responses.");
+  await click(button("Ask", element('[data-testid="branch-composer"]')));
+  assert(element('[aria-label="Branch prompt"]'));
+  await act(async () => current.commands.focus());
+  await settle();
+  await act(async () => current.commands.setTextSelection({ from, to: from + 8 }));
+  await settle();
+  assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Adjusting the selected passage returns to the quick actions.");
+  assert(button("Explain", element('[data-testid="branch-composer"]')));
+  checks.push("native selection handles remain usable, no keyboard opens, and adjusting the passage restores quick actions");
+
+  for (const [label, expectedPrompt] of [
+    ["Explain", "Explain the selected text."],
+    ["Rewrite", "Rewrite the selected text for clarity and flow, preserving its meaning and tone. Return only the rewritten passage."],
+  ]) {
+    await selectSourcePassage();
+    const before = chatRequests.length;
+    const action = button(label, element('[data-testid="branch-composer"]'));
+    await act(async () => {
+      action.dispatchEvent(new browser.TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [] }));
+      action.dispatchEvent(new browser.MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    });
+    await settle();
+    assert.equal(chatRequests.length, before + 1, `${label} generates exactly once from a single tap, without opening a prompt.`);
+    assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null);
+    const request = chatRequests.at(-1)!;
+    assert(request.messages.at(-1)!.content.endsWith(`User request:\n\n${expectedPrompt}`));
+    assert(request.messages.at(-1)!.content.includes('"selectedPassage":"selected passage"'));
+    assert(request.messages.at(-1)!.content.includes("Alpha selected passage omega."));
+    const resultId = request.conversation.id;
+    assert.notEqual(resultId, "source", `${label} creates an inspectable suggestion in a side document.`);
+    const result = latest.conversations[resultId];
+    assert.equal(result.parentId, "source");
+    assert.equal(result.branchAnchor!.sourceBlockId, "source-block");
+    assert.equal(result.branchAnchor!.quote, "selected passage");
+    assert.equal(result.branchAnchor!.startOffset, 6);
+    assert.equal(result.branchAnchor!.endOffset, 22);
+    assert.deepEqual(latest.conversations.source.document!.blocks, sourceBlocks, `${label} must preserve the original passage.`);
+    await act(async () => finishRequests[before](`${label} generated result.`));
+    await settle();
+    assert(latest.conversations[resultId].document!.blocks.some((block) => block.content === `${label} generated result.`));
+    assert.equal(latest.conversations[resultId].document!.generations[0].status, "complete");
+    assert.deepEqual(latest.conversations.source.document!.blocks, sourceBlocks, "Completing a rewrite must not replace the original.");
+    assert.equal(chatRequests.length, before + 1, "Streaming completion must not retrigger the action.");
+    checks.push(`${label.toLowerCase()} immediately generates once with the selected source and preserves the original document`);
+    await click(element('[data-document-tab-id="source"] [role="tab"]'));
+  }
+
+  const { current: editingSource } = await selectSourcePassage();
+  await click(element('[aria-label="Show keyboard"]'));
+  assert.equal(browser.document.activeElement, editingSource.view.dom);
+  assert.equal(editingSource.view.dom.getAttribute("inputmode"), "text", "Ask is exercised from an active document editing session.");
+  let collapsedOnBlur = false;
+  editingSource.view.dom.addEventListener("blur", () => {
+    collapsedOnBlur = true;
+    browser.getSelection()!.removeAllRanges();
+    browser.document.dispatchEvent(new browser.Event("selectionchange"));
+  }, { once: true });
+  const beforeAsk = chatRequests.length;
+  await click(button("Ask", element('[data-testid="branch-composer"]')));
+  assert(collapsedOnBlur, "Ask must blur the source editor to end its input session.");
+  assert.notEqual(browser.document.activeElement, editingSource.view.dom, "The source must not remain focused behind the prompt.");
+  await act(async () => browser.document.dispatchEvent(new browser.Event("selectionchange")));
+  await settle();
+  const prompt = element('[aria-label="Branch prompt"]');
+  const composer = element(".mobile-ai-composer");
+  assert.equal(prompt.tagName, "TEXTAREA");
+  assert.equal(prompt.getAttribute("inputmode"), "text", "Tapping the custom prompt uses normal native keyboard behavior.");
+  assert.equal(prompt.hasAttribute("data-mobile-keyboard"), false, "Typing a prompt must not depend on the document keyboard toggle.");
+  assert.notEqual(browser.document.activeElement, prompt, "Opening Ask retains reading mode until the user taps the input.");
+  assert.equal(chatRequests.length, beforeAsk, "Ask never starts generation just by opening.");
+  assert.equal(container.contains(composer), false, "The compact prompt is portaled outside document scrolling.");
+  assert.equal(composer.querySelector('[aria-label="Choose AI model and provider"]'), null, "Model and destination controls stay tucked away initially.");
+  await click(element('[aria-label="Show selected text"]'));
+  assert(composer.querySelector("blockquote").textContent.includes("selected passage"), "The saved quote survives native selection collapse when Ask blurs the editor.");
+  await click(element('button[aria-label="Prompt options"]'));
+  await click(element('[aria-label="Choose AI model and provider"]'));
+  const search = element('[aria-label="Search AI models"]');
+  await act(async () => {
+    search.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true }));
+    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(search, "GPT-6 Sol");
+    search.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  assert.equal(element(".mobile-ai-composer"), composer, "The model picker does not dismiss or remount the custom prompt.");
+  await click(element('[aria-label="Search results"] .picker-model-row'));
+  assert.equal(latest.conversations.source.modelId, "gpt-6-sol");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null);
+  await click(element('[aria-label="Choose AI model and provider"]'));
+  await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  assert.equal(element(".mobile-ai-composer"), composer, "Escape from the model picker keeps the selected passage composer.");
+  await act(async () => {
+    prompt.focus();
+    Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "Compare this with the rest of my notes.");
+    prompt.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  assert.equal(browser.document.activeElement, prompt);
+  assert.equal(element('button[aria-label="Prompt options"]').getAttribute("aria-expanded"), "false", "Typing collapses secondary controls to leave document space.");
+  assert.equal(chatRequests.length, beforeAsk, "Typing waits for an explicit send.");
+  await act(async () => composer.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })));
+  await settle();
+  assert.equal(chatRequests.length, beforeAsk + 1);
+  const customRequest = chatRequests.at(-1)!;
+  assert(customRequest.messages.at(-1)!.content.endsWith("Compare this with the rest of my notes."));
+  assert(customRequest.messages.at(-1)!.content.includes('"selectedPassage":"selected passage"'));
+  assert.equal(customRequest.modelId, "gpt-6-sol");
+  await act(async () => finishRequests[beforeAsk]("Custom generated result."));
+  await settle();
+  assert.deepEqual(latest.conversations.source.document!.blocks, sourceBlocks);
+  checks.push("Ask uses a compact normal typing field, retains context through model selection, and generates only on send");
+}
+
 async function openPreview() {
   await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
   await settle();
@@ -168,10 +281,10 @@ const checks: string[] = [];
 try {
   await act(async () => root.render(createElement(WorkspaceApp, props)));
   await settle();
-  await selectPassage();
   if (mobileSelectionTest) {
-    checks.push("touch selection preserves native ranges, uses compact actions, and retains the chosen passage through model selection");
+    await testMobileSelectionActions();
   } else {
+  await selectPassage();
   await click(element('[aria-label="Browse blocks in Destination research"]'));
   await click(button("Block 2", element(".document-link-picker")));
   const link = latest.conversations.source.document!.links![0];

@@ -1,3 +1,12 @@
+.app-update-notice { position: fixed; left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); z-index: 1000; max-width: min(360px, calc(100vw - 32px)); font-size: 13px; color: var(--ink); }
+.app-update-card { display: flex; align-items: flex-start; gap: 16px; padding: 16px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel-strong); box-shadow: var(--shadow); }
+.app-update-card p { margin: 6px 0 0; line-height: 1.5; color: var(--muted); }
+.app-update-card code { color: var(--ink); }
+.app-update-card button { flex-shrink: 0; width: 28px; height: 28px; border: 0; border-radius: 6px; background: var(--button-surface); color: var(--ink); cursor: pointer; font-size: 20px; }
+.app-version-button { padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); color: var(--muted); cursor: pointer; font: inherit; font-size: 11px; }
+.app-update-card .app-update-restart { width: auto; height: auto; margin-top: 12px; padding: 8px 12px; font: inherit; background: var(--accent-soft); }
+.app-update-card .app-update-restart:disabled { opacity: .6; cursor: wait; }
+
 /* Web captures remain in a cloud Inbox, independent of workspace snapshots. */
 .capture-inbox { width: min(1020px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--bg); color: var(--ink); box-shadow: var(--shadow); }
 .capture-inbox::backdrop { background: rgba(0, 0, 0, .6); backdrop-filter: blur(5px); }

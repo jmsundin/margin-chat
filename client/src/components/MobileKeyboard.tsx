@@ -1,10 +1,10 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useVisualViewport } from "../lib/useVisualViewport";
 import "./MobileKeyboard.css";
 
 const mobileQueries = ["(max-width: 700px)", "(pointer: coarse)"];
-const MobileKeyboardContext = createContext({ mobile: false, inputMode: "text" as "none" | "text" });
+const MobileKeyboardContext = createContext({ mobile: false, inputMode: "text" as "none" | "text", registerComposer: () => () => {} });
 export const useMobileKeyboard = () => useContext(MobileKeyboardContext);
 
 /** Keep native editable selection, but let the reader explicitly request the software keyboard. */
@@ -12,6 +12,14 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(() => mobileQueries.some((query) => window.matchMedia(query).matches));
   const [enabled, setEnabled] = useState(false);
   const [hasTarget, setHasTarget] = useState(false);
+  const [composerCount, setComposerCount] = useState(0);
+  const registerComposer = useCallback(() => {
+    // The AI textarea has its own native typing session. Return the document
+    // to selection mode so closing the dock doesn't reopen its keyboard.
+    setEnabled(false);
+    setComposerCount((count) => count + 1);
+    return () => setComposerCount((count) => count - 1);
+  }, []);
   const target = useRef<HTMLElement | null>(null);
   const touchGesture = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const lastTouchActivation = useRef(-Infinity);
@@ -73,10 +81,10 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     else if (range && native) { native.removeAllRanges(); native.addRange(range); }
   }
 
-  const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const }), [mobile, enabled]);
+  const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const, registerComposer }), [mobile, enabled, registerComposer]);
   return <MobileKeyboardContext.Provider value={value}>
     {children}
-    {mobile && hasTarget && createPortal(<button type="button" className="mobile-keyboard-toggle" data-mobile-keyboard-toggle
+    {mobile && hasTarget && composerCount === 0 && createPortal(<button type="button" className="mobile-keyboard-toggle" data-mobile-keyboard-toggle
       aria-label={enabled ? "Hide keyboard" : "Show keyboard"} title={enabled ? "Hide keyboard" : "Show keyboard"} aria-pressed={enabled}
       style={{ top: `calc(${viewport.top + viewport.height - 56}px - ${safeBottom})`, left: viewport.left + viewport.width - 60 }}
       onPointerDown={(event) => { if (event.pointerType === "mouse") lastTouchActivation.current = -Infinity; event.preventDefault(); }}
@@ -115,6 +123,8 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
 
 /** Portaling avoids clipping and transformed containing blocks in document panes. */
 export function MobileComposerViewport({ children }: { children: ReactNode }) {
+  const { registerComposer } = useMobileKeyboard();
+  useEffect(() => registerComposer(), [registerComposer]);
   const viewport = useVisualViewport(true);
   const safeBottom = viewport.height < window.innerHeight - 100 ? "0px" : "env(safe-area-inset-bottom, 0px)";
   return createPortal(<div className="mobile-composer-viewport" style={{ top: viewport.top, left: viewport.left, width: viewport.width, height: viewport.height, paddingBottom: `calc(8px + ${safeBottom})` }}>{children}</div>, document.body);

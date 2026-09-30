@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { installUpdateProtocol } from "./worker-update-protocol.mjs";
 
 const PUBLIC_FILES = ["/favicon.svg", "/icon.svg", "/manifest.webmanifest"];
 
@@ -10,6 +11,7 @@ const CACHE_NAME = CACHE_PREFIX + ${JSON.stringify(version)};
 const SHELL_FILES = ${JSON.stringify(files)};
 const SHELL_PATHS = new Set(SHELL_FILES);
 const SHELL_HTML = ${JSON.stringify(html)};
+(${installUpdateProtocol.toString()})(self);
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -22,15 +24,20 @@ self.addEventListener('install', (event) => {
       headers: { 'Content-Type': 'text/html; charset=utf-8' }
     }));
   })());
-  // Do not skipWaiting: an open tab must retain the worker/assets it loaded.
+  // Wait by default. Restart now activates only after all open tabs are ready.
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    const names = await caches.keys();
-    await Promise.all(names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
-      .map((name) => caches.delete(name)));
-    // Existing uncontrolled pages keep their original assets until navigation.
+    const clients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    // Retain old chunks through a coordinated restart (and any new-tab race).
+    // A later activation without live pages can safely reclaim old generations.
+    if (!clients.length) {
+      const names = await caches.keys();
+      await Promise.all(names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
+        .map((name) => caches.delete(name)));
+    }
+    await self.clients.claim();
   })());
 });
 
@@ -42,13 +49,22 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET' || url.origin !== self.location.origin ||
       url.pathname === '/api' || url.pathname.startsWith('/api/')) return;
   const isNavigation = request.mode === 'navigate';
-  if (!isNavigation && !SHELL_PATHS.has(url.pathname)) return;
+  const isOldChunk = url.pathname.startsWith('/assets/') && /-[A-Za-z0-9_-]{8,}\\.[^/]+$/.test(url.pathname);
+  if (!isNavigation && !SHELL_PATHS.has(url.pathname) && !isOldChunk) return;
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
     // HTML and all build assets come from the same generation, including online.
     // A new build is used only when its fully installed worker activates.
     const cached = await cache.match(isNavigation ? '/index.html' : url.pathname);
-    return cached || fetch(request);
+    if (cached) return cached;
+    if (isOldChunk) {
+      for (const name of await caches.keys()) {
+        if (!name.startsWith(CACHE_PREFIX) || name === CACHE_NAME) continue;
+        const old = await (await caches.open(name)).match(url.pathname);
+        if (old) return old;
+      }
+    }
+    return fetch(request);
   })());
 });
 `;

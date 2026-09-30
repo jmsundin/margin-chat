@@ -1,4 +1,5 @@
 import { apiFetch } from "./apiTransport";
+import { isAppUpdateLocked, useAppUpdateGuard } from "./appUpdateSafety";
 import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { AppState, AuthenticatedUser } from "../types";
 import type { StateUploadProgress } from "./api";
@@ -64,6 +65,15 @@ export function useMarkdownVault(args: {
   const initialized = useRef(false);
   const hasVaultContent = useRef(false);
   const writing = useRef(false);
+
+  useAppUpdateGuard("vault", {
+    check: () => !ready ? "A workspace is still loading. Wait a moment and try again." : null,
+    canReload: () => stateRef.current === displayedState.current && !localInFlight.current && !writing.current,
+    flush: async () => {
+      await queue.current;
+      await saveAppState();
+    },
+  });
 
   function enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const next = queue.current.then(operation);
@@ -264,6 +274,7 @@ export function useMarkdownVault(args: {
   }
 
   function scheduleAutomaticRefresh() {
+    if (isAppUpdateLocked()) return;
     // A slow/offline request must not accumulate one queued sync per keystroke,
     // focus event, or interval. Local saves remain independent of this queue.
     if (automaticRefreshPending.current) return;

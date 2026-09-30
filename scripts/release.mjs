@@ -246,7 +246,8 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         await assertLock();
         await assertReleaseInputs();
         const args = ["--no-env-file", "x", "--no-install", "vercel", "deploy", "--yes", "--prod", "--skip-domain", "--archive=tgz",
-          "--meta", "marginPersistenceProtocol=1", "--meta", `marginReleaseSha=${plan.sha}`];
+          "--meta", "marginPersistenceProtocol=1", "--meta", `marginReleaseSha=${plan.sha}`,
+          "--build-env", `MARGIN_RELEASE_SHA=${plan.sha}`];
         for (const [key, value] of Object.entries({ DATABASE_URL: pooledUrl, BLOB_READ_WRITE_TOKEN: env.BLOB_READ_WRITE_TOKEN,
           BLOB_STORE_ID: "", VAULT_STORAGE_DIR: "", VAULT_STORAGE_PREFIX: "", DB_SCHEMA_MODE: "verify", MARGIN_RELEASE_SHA: plan.sha })) {
           args.push("--env", `${key}=${value}`);

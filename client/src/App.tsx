@@ -1,4 +1,5 @@
 import { apiStorageNamespace } from "./lib/apiTransport";
+import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
 import type { BrowserCaptureRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
@@ -52,6 +53,13 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
   const authUserIdRef = useRef(authUser?.id);
   authUserIdRef.current = authUser?.id;
   const billingRefreshSequence = useRef(0);
+  useAppUpdateGuard("app", {
+    check: () => {
+      if (authStatus === "checking" || authSubmitting || billingSubmitting || (authStatus === "authenticated" && !hasAppUpdateGuard("workspace"))) return "A tab is still opening or completing an account operation. Try again when it finishes.";
+      if (authStatus === "unauthenticated" && [...document.querySelectorAll<HTMLInputElement>("form input")].some((input) => input.type !== "hidden" && input.value)) return "Finish or clear the sign-in form in each tab before restarting.";
+      return null;
+    },
+  });
 
   const refreshBilling = useCallback(async () => {
     const userId = authUserIdRef.current;

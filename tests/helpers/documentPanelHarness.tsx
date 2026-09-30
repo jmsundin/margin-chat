@@ -149,6 +149,14 @@ try {
   assert.equal(browser.document.activeElement, headerOptions, "Outside dismissal leaves focus on the clicked control.");
   await space("empty");
   await fill("AI prompt", "Add a practical action.");
+  const restartControl = browser.document.createElement("button");
+  restartControl.setAttribute("data-app-update-notice", "");
+  browser.document.body.append(restartControl);
+  await click(restartControl);
+  assert.equal((element('textarea[aria-label="AI prompt"]') as any).value, "Add a practical action.", "Update controls must not dismiss an unsent draft before readiness checks.");
+  const { flushForAppUpdate } = await import("../../client/src/lib/appUpdateSafety");
+  await assert.rejects(flushForAppUpdate(), /unsent document prompt/);
+  restartControl.remove();
   await click(button("Generate ↑"));
   assert.equal(submissions.at(-1).destination, "inline");
   assert.equal(submissions.at(-1).blockId, "empty");

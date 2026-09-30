@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 import { renderOfflineServiceWorker } from "../client/build/offline-service-worker.mjs";
 
-function worker() {
+function worker(liveClients: object[] = []) {
   const handlers = new Map<string, (event: any) => void>();
   const entries = new Map<string, string>([
     ["/index.html", "matching build HTML"], ["/assets/app-hash.js", "matching build JS"],
@@ -24,14 +24,16 @@ function worker() {
     Response,
     Request: class { url: string; constructor(path: string) { this.url = path; } },
     caches: {
-      open: async () => cache,
+      open: async (name: string) => name === "marginchat-app-shell-older"
+        ? { match: async (path: string) => path === "/assets/lazy-oldhash12.js" ? "old lazy chunk" : undefined }
+        : cache,
       keys: async () => cached,
       delete: async (name: string) => { deleted.push(name); return true; },
     },
     fetch: async () => { networkRequests++; throw new Error("offline"); },
     self: {
       location: { origin: "https://margin.test" },
-      clients: { claim: async () => undefined },
+      clients: { claim: async () => undefined, matchAll: async () => liveClients },
       addEventListener: (name: string, callback: (event: any) => void) => handlers.set(name, callback),
       skipWaiting: () => { forcedActivation = true; },
     },
@@ -78,5 +80,14 @@ describe("offline application shell", () => {
     sw.handlers.get("activate")!(event);
     await pending;
     expect(sw.deleted).toEqual(["marginchat-app-shell-older"]);
+  });
+  test("retains old asset caches while tabs transition to a newly activated worker", async () => {
+    const sw = worker([{ id: "old-tab" }]);
+    let pending: Promise<unknown> | undefined;
+    sw.handlers.get("activate")!({ waitUntil: (promise: Promise<unknown>) => { pending = promise; } });
+    await pending;
+    expect(sw.deleted).toEqual([]);
+    expect(await sw.request("/assets/lazy-oldhash12.js")).toBe("old lazy chunk");
+    expect(sw.networkRequests).toBe(0);
   });
 });
