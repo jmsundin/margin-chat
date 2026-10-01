@@ -1,2 +1,3 @@
 .workspace-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 .workspace-view[hidden] { display: none; }
+.workspace-view-loading { color: var(--muted); margin: auto; padding: 24px; }

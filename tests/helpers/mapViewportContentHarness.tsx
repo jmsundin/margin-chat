@@ -30,6 +30,8 @@ const { act, createElement, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: ConversationGraphView } = await import("../../client/src/components/ConversationGraphView");
 const { default: DocumentPanel } = await import("../../client/src/components/DocumentPanel");
+// The block editor is a lazy chunk; load it first so the panel renders it without a placeholder.
+await import("../../client/src/components/RichDocumentEditor");
 const { createMainConversation } = await import("../../client/src/initialState");
 const { createDefaultGraphNodeLayout } = await import("../../client/src/lib/graphLayout");
 const { getEditableDocument } = await import("../../client/src/lib/editableDocument");

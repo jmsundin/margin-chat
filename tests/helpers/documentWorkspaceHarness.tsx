@@ -74,6 +74,8 @@ mock.module("../../client/src/lib/api", () => ({ ...api,
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: WorkspaceApp } = await import("../../client/src/WorkspaceApp");
+// The block editor and Map View are lazy chunks; load them first so views render without placeholders.
+await Promise.all([import("../../client/src/components/RichDocumentEditor"), import("../../client/src/components/KnowledgeGraphWorkspace")]);
 const container = browser.document.createElement("div");
 browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);

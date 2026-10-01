@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { EditorView } from "@codemirror/view";
+import type { EditorView } from "@codemirror/view";
 import type { Conversation } from "../types";
 import type { SearchEvidenceRef } from "../lib/conversationSearch";
 import { createSearchPassageRange, resolveSearchSource } from "../lib/searchSource";
@@ -20,6 +20,7 @@ export default function SearchSourceFocus({ request, conversations, getPanelElem
     let target: HTMLElement | null = null;
     let passageTarget: HTMLElement | null = null;
     let timeout = 0;
+    let cancelled = false;
     const highlightKey = "margin-search-source";
     const removeHighlight = () => {
       target?.classList.remove("is-search-source");
@@ -54,32 +55,38 @@ export default function SearchSourceFocus({ request, conversations, getPanelElem
         return;
       }
       target.classList.add("is-search-source");
-      const editorElement = target.querySelector<HTMLElement>(".cm-editor");
-      const editor = editorElement ? EditorView.findFromDOM(editorElement) : null;
-      if (editor && editor.state.doc.toString() === resolution.content) {
-        if (resolution.highlight) editor.dispatch({
-          selection: { anchor: resolution.highlight.startOffset, head: resolution.highlight.endOffset },
-          effects: EditorView.scrollIntoView(resolution.highlight.startOffset, { y: "center" }),
-        });
-        target.scrollIntoView({ block: "nearest", inline: "nearest" });
-        editor.focus();
-      } else {
-        const content = acrossBlocks ? target : target.querySelector<HTMLElement>(".tiptap, .message-content, .markdown-note-reading") ?? target;
-        const range = resolution.highlight && source.quote ? createSearchPassageRange(content, source.quote) : null;
-        if (range && typeof Highlight !== "undefined" && typeof CSS !== "undefined" && "highlights" in CSS) CSS.highlights.set(highlightKey, new Highlight(range));
-        if (range) {
-          const first = range.startContainer.parentElement;
-          passageTarget = first?.closest<HTMLElement>("p,li,pre,h1,h2,h3,h4,h5,h6,blockquote") ?? first ?? null;
-          if (passageTarget && target.contains(passageTarget)) passageTarget.classList.add("is-search-passage");
+      const focusTarget = target;
+      const finish = (view: typeof import("@codemirror/view") | null, editor: EditorView | null) => {
+        if (view && editor && editor.state.doc.toString() === resolution.content) {
+          if (resolution.highlight) editor.dispatch({
+            selection: { anchor: resolution.highlight.startOffset, head: resolution.highlight.endOffset },
+            effects: view.EditorView.scrollIntoView(resolution.highlight.startOffset, { y: "center" }),
+          });
+          focusTarget.scrollIntoView({ block: "nearest", inline: "nearest" });
+          editor.focus();
+        } else {
+          const content = acrossBlocks ? focusTarget : focusTarget.querySelector<HTMLElement>(".tiptap, .message-content, .markdown-note-reading") ?? focusTarget;
+          const range = resolution.highlight && source.quote ? createSearchPassageRange(content, source.quote) : null;
+          if (range && typeof Highlight !== "undefined" && typeof CSS !== "undefined" && "highlights" in CSS) CSS.highlights.set(highlightKey, new Highlight(range));
+          if (range) {
+            const first = range.startContainer.parentElement;
+            passageTarget = first?.closest<HTMLElement>("p,li,pre,h1,h2,h3,h4,h5,h6,blockquote") ?? first ?? null;
+            if (passageTarget && focusTarget.contains(passageTarget)) passageTarget.classList.add("is-search-passage");
+          }
+          const anchor = range?.startContainer.parentElement ?? focusTarget;
+          anchor.scrollIntoView({ block: "center", inline: "nearest" });
+          focusTarget.focus({ preventScroll: true });
         }
-        const anchor = range?.startContainer.parentElement ?? target;
-        anchor.scrollIntoView({ block: "center", inline: "nearest" });
-        target.focus({ preventScroll: true });
-      }
-      timeout = window.setTimeout(removeHighlight, 6500);
+        timeout = window.setTimeout(removeHighlight, 6500);
+      };
+      const editorElement = target.querySelector<HTMLElement>(".cm-editor");
+      // CodeMirror is already loaded whenever one of its editors is on the page.
+      if (editorElement) void import("@codemirror/view").then((view) => { if (!cancelled) finish(view, view.EditorView.findFromDOM(editorElement)); });
+      else finish(null, null);
     };
     frame = window.requestAnimationFrame(reveal);
     return () => {
+      cancelled = true;
       window.cancelAnimationFrame(frame);
       window.clearTimeout(timeout);
       removeHighlight();

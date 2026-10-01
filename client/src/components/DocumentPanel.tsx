@@ -7,7 +7,8 @@ import type { DocumentAIRequest } from "../lib/documentAI";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { DocumentEditHistory, type DocumentEditOptions } from "../lib/documentEditHistory";
 import { getBackendServiceModel, type RecentBackendServiceSelection } from "../lib/services";
-import RichDocumentEditor, { type RichDocumentInvocation, type RichDocumentDecoration, type RichDocumentEditorProps } from "./RichDocumentEditor";
+import type { RichDocumentInvocation, RichDocumentDecoration, RichDocumentEditorProps } from "./RichDocumentEditor";
+import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentEditor";
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import MarkdownMessage from "./MarkdownMessage";
@@ -81,6 +82,20 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   latestDocument.current = document;
   const bodyRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Each block is its own editor, so documents far outside the viewport wait
+  // until they are scrolled near (or focused) before mounting them.
+  const [editorMounted, setEditorMounted] = useState(() => props.isActive || typeof IntersectionObserver === "undefined");
+  useEffect(() => {
+    if (editorMounted) return;
+    if (props.isActive) { setEditorMounted(true); return; }
+    const body = bodyRef.current;
+    if (!body) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) setEditorMounted(true);
+    }, { rootMargin: "100%" });
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [editorMounted, props.isActive]);
   const [invocation, setInvocation] = useState<RichDocumentInvocation | null>(null);
   const [prompt, setPrompt] = useState("");
   const [destination, setDestination] = useState<"inline" | "side">("inline");
@@ -325,7 +340,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </div>
       </header> : null}
     <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
-      <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
+      {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
         onUpdateBlock={updateBlock} onInsertBlock={insertBlock} onSplitBlock={splitBlock}
         onHistory={historyAction}
@@ -360,7 +375,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         renderAfterBlock={(block) => <>
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPrompt)}
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
-        </>}/>
+        </>}/> : <RichDocumentPlaceholder blocks={document.blocks} />}
       {props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}
       {props.error ? <p className="document-error" role="alert">{props.error}</p> : null}
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
