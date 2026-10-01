@@ -3,6 +3,7 @@ import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
 import type { BrowserCaptureRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
+import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
   requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession,
   requestCreateCheckoutSession, requestLogin, requestLogout, requestPasswordReset,
@@ -13,7 +14,11 @@ import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type Them
 import { getCheckoutConfirmationNotice, getCheckoutReturn } from "./lib/billing";
 import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData } from "./types";
 
-const WorkspaceApp = lazy(() => import("./WorkspaceApp"));
+// Documents open in the block editor, so fetch its chunk alongside the workspace rather than after it renders.
+const WorkspaceApp = lazy(() => {
+  void loadRichDocumentEditor();
+  return import("./WorkspaceApp");
+});
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 const INITIAL_THEME = loadInitialTheme();
 syncTheme(INITIAL_THEME);

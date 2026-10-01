@@ -20,6 +20,8 @@ const { act, createElement, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { MobileKeyboardProvider } = await import("../../client/src/components/MobileKeyboard");
 const { default: DocumentPanel } = await import("../../client/src/components/DocumentPanel");
+// The block editor is a lazy chunk; load it first so the panel renders it without a placeholder.
+await import("../../client/src/components/RichDocumentEditor");
 const { createMainConversation } = await import("../../client/src/initialState");
 const { getEditableDocument } = await import("../../client/src/lib/editableDocument");
 const initial = createMainConversation({ id: "mobile" });

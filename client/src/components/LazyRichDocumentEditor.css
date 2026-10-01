@@ -1,0 +1,3 @@
+/* Approximates the block editor's spacing so swapping it in does not shift the page. */
+.rich-document-editor-loading { color: var(--muted); min-width: 0; padding: 8px 4px 28px; }
+.rich-document-loading-block { margin-left: 34px; overflow-wrap: anywhere; padding: 4px 8px 8px; white-space: pre-wrap; }

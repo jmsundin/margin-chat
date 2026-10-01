@@ -13,6 +13,8 @@ Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, 
 const { act, createElement, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: DocumentPanel } = await import("../../client/src/components/DocumentPanel");
+// The block editor is a lazy chunk; load it first so the panel renders it without a placeholder.
+await import("../../client/src/components/RichDocumentEditor");
 const { default: DocumentMenu } = await import("../../client/src/components/DocumentMenu");
 const { createMainConversation } = await import("../../client/src/initialState");
 const { getEditableDocument } = await import("../../client/src/lib/editableDocument");

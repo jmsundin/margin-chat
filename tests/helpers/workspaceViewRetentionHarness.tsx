@@ -70,6 +70,8 @@ let editorDestroys = 0;
 Editor.prototype.mount = function (...args) { editorMounts += 1; return originalMount.apply(this, args); };
 Editor.prototype.destroy = function (...args) { editorDestroys += 1; return originalDestroy.apply(this, args); };
 const { default: WorkspaceApp } = await import("../../client/src/WorkspaceApp");
+// The block editor and Map View are lazy chunks; load them first so views render without placeholders.
+await Promise.all([import("../../client/src/components/RichDocumentEditor"), import("../../client/src/components/KnowledgeGraphWorkspace")]);
 const container = browser.document.createElement("div");
 browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
