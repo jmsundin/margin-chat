@@ -28,6 +28,9 @@ export function createRuntimeConfig(env) {
       env.SECURE_AUTH_COOKIES,
       env.NODE_ENV === "production",
     ),
+    // Client IP forwarding headers are spoofable unless a trusted proxy
+    // overwrites them; Vercel does, a bare Node server does not.
+    trustProxyHeaders: parseBoolean(env.TRUST_PROXY_HEADERS, Boolean(env.VERCEL)),
     xaiModel: normalizeBackendModelId("xai-api", env.XAI_MODEL),
     port: parsePort(env.PORT ?? env.BACKEND_PORT, 8787),
   };

@@ -1,5 +1,8 @@
 import { readJsonBody } from "../http/json.mjs";
 
+// A conversation can carry attached documents and long history.
+const CHAT_BODY_LIMIT = 8 * 1024 * 1024;
+
 export function writeChatStreamEvent(response, event) {
   response.write(`${JSON.stringify(event)}\n`);
   response.flush?.();
@@ -27,7 +30,7 @@ export async function handleChatRequest({ request, response, user, executeChatRe
   const scope = createRequestAbortScope(request, response);
   try {
     scope.signal.throwIfAborted();
-    const payload = await readJsonBody(request);
+    const payload = await readJsonBody(request, CHAT_BODY_LIMIT);
     const result = await executeChatReply({
       payload,
       user,

@@ -5,7 +5,7 @@ import {
   createClearedAuthSessionCookie,
   readAuthSessionId,
 } from "./cookies.mjs";
-import { hashPassword, verifyPassword } from "./passwords.mjs";
+import { hashPassword, verifyPassword, verifyPasswordAgainstDecoy } from "./passwords.mjs";
 import { getPasswordResetEmailConfiguration, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
 import {
   normalizeLoginPayload,
@@ -69,7 +69,11 @@ export function createAuthService({
     const input = normalizeLoginPayload(payload);
     const user = await database.findUserForLogin(input.email);
 
-    if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
+    const passwordMatches = user
+      ? await verifyPassword(input.password, user.passwordHash)
+      : await verifyPasswordAgainstDecoy(input.password);
+
+    if (!user || !passwordMatches) {
       throw createStatusError(401, "Email or password is incorrect.");
     }
 
