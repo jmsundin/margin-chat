@@ -4,7 +4,7 @@ import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } fro
 import MobileAIComposer from "./components/MobileAIComposer";
 import { MobileSelectionActions } from "./components/MobileSelectionActions";
 import { apiStorageNamespace } from "./lib/apiTransport";
-import { useBrowserWorkspaceCapture, type BrowserCaptureRequest } from "./lib/browserWorkspace";
+import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
 import { createMarginDocument, isCompactDocument } from "@margin-chat/workspace-contracts";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
@@ -353,6 +353,8 @@ interface WorkspaceAppProps {
   storageNamespace?: string;
   browserCaptureRequest?: BrowserCaptureRequest | null;
   onBrowserCaptureHandled?: (id: string) => void;
+  browserThreadRequests?: readonly BrowserThreadRequest[] | null;
+  onBrowserThreadHandled?: (request: BrowserThreadRequest) => void;
   onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys") => void;
   billingDashboard: import("./types").BillingDashboardData | null;
   billingDashboardLoading: boolean;
@@ -638,7 +640,7 @@ export default function WorkspaceApp(props: WorkspaceAppProps) {
 }
 
 function WorkspaceAppContent({
-  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, onOpenWebsiteSettings,
+  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled, onOpenWebsiteSettings,
   billingDashboard, billingDashboardLoading, billingDashboardError, billingOpenRequest, onRefreshBilling, onAddMoney,
   billingNotice,
   onDismissBillingNotice,
@@ -791,6 +793,14 @@ function WorkspaceAppContent({
     }
     if (isMobileViewport) setLeftSidebarOpen(false);
   }, onBrowserCaptureHandled);
+  useBrowserThreadImports(vault.ready, browserThreadRequests, (request) => {
+    if (request.focus) { setSelectionDraft(null); setMainViewMode("chat"); if (isMobileViewport) setLeftSidebarOpen(false); }
+    setState((current) => {
+      const next = openThreadAsChat(current, request.thread, request.focus);
+      currentStateRef.current = next;
+      return next;
+    });
+  }, onBrowserThreadHandled);
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
   useAppUpdateGuard("workspace", {

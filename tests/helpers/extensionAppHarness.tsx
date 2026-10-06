@@ -39,6 +39,12 @@ try {
   assert.equal(loadOfflineUser(), null);
   setApiTransport({ serverUrl: extension.serverUrl, fetch: delegated });
   checks.push("server-scoped offline identities and storage preserve the real authenticated account ID");
+  const threadRequests = [{ id: "thread-1:import", focus: false, thread: { id: "thread-1", createdAt: "2026-10-06T10:00:00Z", title: "Why?", userContent: "> quote\n\nWhy?", answer: "Because." } }];
+  const threadHandled = () => {};
+  await act(async () => root.render(createElement(App, { extension, browserThreadRequests: threadRequests, onBrowserThreadHandled: threadHandled })));
+  assert.equal(workspace.browserThreadRequests, threadRequests);
+  assert.equal(workspace.onBrowserThreadHandled, threadHandled);
+  checks.push("page conversations pass through the shared App to the workspace");
   await act(async () => {
     await workspace.onAddMoney(500); await workspace.onStartSubscription(); await workspace.onManageBilling();
     workspace.onOpenWebsiteSettings("api-keys");

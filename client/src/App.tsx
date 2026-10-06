@@ -1,6 +1,6 @@
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
-import type { BrowserCaptureRequest } from "./lib/browserWorkspace";
+import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
 import {
@@ -32,9 +32,11 @@ export interface AppProps {
   };
   browserCaptureRequest?: BrowserCaptureRequest | null;
   onBrowserCaptureHandled?: (id: string) => void;
+  browserThreadRequests?: readonly BrowserThreadRequest[] | null;
+  onBrowserThreadHandled?: (request: BrowserThreadRequest) => void;
 }
 
-export default function App({ extension, browserCaptureRequest, onBrowserCaptureHandled }: AppProps = {}) {
+export default function App({ extension, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled }: AppProps = {}) {
   // Removing a used reset token must not restart session hydration and race a new login.
   const [hasPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).has("reset_token"));
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
@@ -455,6 +457,8 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     <WorkspaceApp
       browserCaptureRequest={browserCaptureRequest}
       onBrowserCaptureHandled={onBrowserCaptureHandled}
+      browserThreadRequests={browserThreadRequests}
+      onBrowserThreadHandled={onBrowserThreadHandled}
       onOpenWebsiteSettings={extension ? openWebsiteSettings : undefined}
       storageNamespace={apiStorageNamespace(authUser.id)}
       billingNotice={billingNotice}

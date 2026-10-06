@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CAPTURE_LIMITS, normalizeCapture, type Capture, type CaptureKind } from "@margin-chat/capture-contracts";
 import App from "../../client/src/App";
+import type { BrowserThreadRequest } from "../../client/src/lib/browserWorkspace";
 import { setApiTransport } from "../../client/src/lib/apiTransport";
-import { getSettings, trustedStorage, type ConnectionSettings } from "./storage";
+import { getSettings, isThreadsKey, trustedStorage, type ConnectionSettings } from "./storage";
+import { threadMarkdown, threadTitle, type PageThread } from "./page-ai";
 import { createWorkspaceFetch } from "./workspace-transport";
 import { signOut } from "./network";
 import type { OverlayDraft, OverlayState, TextQuoteAnchor } from "./overlay-types";
@@ -40,6 +42,8 @@ function BrowserWorkspace() {
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
   const [captureRequest, setCaptureRequest] = useState<ImportRequest | null>(null);
+  const [threadRequests, setThreadRequests] = useState<BrowserThreadRequest[]>([]);
+  const threadOpens = useRef(new Map<string, string | undefined>());
   const controller = useRef<AbortController | null>(null);
   const bootSequence = useRef(0);
   const pageSequence = useRef(0);
@@ -76,6 +80,32 @@ function BrowserWorkspace() {
     await message("highlights", { anchors: state.page.annotations.flatMap((item) => item.anchor ? [item.anchor] : []) });
   }, [message]);
 
+  /** Pick up answers made on pages (here or in other tabs) that the vault has not imported yet. */
+  const loadThreads = useCallback(async () => {
+    const connectionId = connectionRef.current?.connectionId;
+    if (!connectionId) return;
+    const reply = await message("threads") as { threads?: PageThread[] };
+    // A malformed reply must never reach a state updater, where it would break rendering.
+    const threads = Array.isArray(reply.threads) ? reply.threads : [];
+    if (connectionRef.current?.connectionId !== connectionId) return;
+    setThreadRequests((current) => {
+      const known = new Set(current.map((request) => request.id));
+      const added = threads.flatMap((thread): BrowserThreadRequest[] => {
+        const id = `${thread.id}:${thread.openRequestId ?? "import"}`;
+        if (known.has(id)) return [];
+        threadOpens.current.set(id, thread.openRequestId);
+        return [{ id, focus: !!thread.openRequestId, thread: { id: thread.id, createdAt: thread.createdAt, title: threadTitle(thread), userContent: threadMarkdown(thread), answer: thread.answer } }];
+      });
+      return added.length ? [...current, ...added] : current;
+    });
+  }, [message]);
+  const threadHandled = useCallback((request: BrowserThreadRequest) => {
+    const openRequestId = threadOpens.current.get(request.id);
+    threadOpens.current.delete(request.id);
+    setThreadRequests((current) => current.filter((item) => item.id !== request.id));
+    void message("thread-imported", { id: request.thread.id, ...(openRequestId ? { openRequestId } : {}) }).catch(() => undefined);
+  }, [message]);
+
   useEffect(() => {
     let disposed = false;
     async function boot() {
@@ -84,7 +114,7 @@ function BrowserWorkspace() {
       controller.current?.abort(); controller.current = new AbortController();
       setChecking(true); setError(""); setConnection(null); connectionRef.current = null;
       setCaptureOnly(false);
-      setCaptureRequest(null); setPageState(null); setThought(""); setQuestion("");
+      setCaptureRequest(null); setThreadRequests([]); threadOpens.current.clear(); setPageState(null); setThought(""); setQuestion("");
       setBusy(false); setNotice(""); setDetailsOpen(false); setCommunityOpen(false); setMode("note");
       contextRef.current = null; setContext(null); setApiTransport(null);
       try {
@@ -106,6 +136,7 @@ function BrowserWorkspace() {
         const current = await message("context", { kind: "current" }) as PageContext;
         if (disposed || sequence !== bootSequence.current) return;
         await applyPage(current, true);
+        await loadThreads().catch(() => undefined);
       } catch (failure) { if (!disposed && sequence === bootSequence.current) setError(describe(failure)); }
       finally { if (!disposed && sequence === bootSequence.current) setChecking(false); }
     }
@@ -115,7 +146,16 @@ function BrowserWorkspace() {
     };
     chrome.storage.onChanged.addListener(changed);
     return () => { disposed = true; bootSequence.current++; controller.current?.abort(); setApiTransport(null); chrome.storage.onChanged.removeListener(changed); };
-  }, [message, applyPage]);
+  }, [message, applyPage, loadThreads]);
+
+  useEffect(() => {
+    if (!connection) return;
+    const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "local" && Object.keys(changes).some((key) => isThreadsKey(key))) void loadThreads().catch(() => undefined);
+    };
+    chrome.storage.onChanged.addListener(changed);
+    return () => chrome.storage.onChanged.removeListener(changed);
+  }, [connection, loadThreads]);
 
   useEffect(() => {
     if (!connection) return;
@@ -240,7 +280,7 @@ function BrowserWorkspace() {
       {pageState?.pending && !pageState.pending.receipt && <div className="browser-notice">Your previous capture is kept for retry. <button disabled={busy} onClick={() => void save(true)}>Retry save</button><button disabled={busy} onClick={() => void message("dismiss").then(() => message("state")).then(setPageState).catch((failure) => setError(describe(failure)))}>Dismiss</button></div>}
       {(error || notice) && <p className={`browser-notice${error ? " is-error" : ""}`} role="status">{error || notice}</p>}
     </section>
-    <div className="browser-current-app"><App key={connection.connectionId} extension={{ serverUrl: connection.serverUrl, userId: connection.userId, onConnect: settings, onLogout: logout, openExternal }} browserCaptureRequest={captureRequest ?? undefined} onBrowserCaptureHandled={onHandled} /></div>
+    <div className="browser-current-app"><App key={connection.connectionId} extension={{ serverUrl: connection.serverUrl, userId: connection.userId, onConnect: settings, onLogout: logout, openExternal }} browserCaptureRequest={captureRequest ?? undefined} onBrowserCaptureHandled={onHandled} browserThreadRequests={threadRequests} onBrowserThreadHandled={threadHandled} /></div>
   </div>;
 }
 

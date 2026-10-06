@@ -104,6 +104,12 @@ async function frame(options: {
     async submit() { browser.document.querySelector("form")!.dispatchEvent(new browser.Event("submit", { cancelable: true, bubbles: true })); await Bun.sleep(5); },
     async poll() { await Promise.all([...intervals.values()].map((callback) => callback())); await Bun.sleep(5); },
     page(next: Page, draft: any = null) { page = next; pageState = state(draft); },
+    async changeStorage(changes: Record<string, unknown>) {
+      // Passive effects (the workspace's storage listeners) flush just after the DOM appears.
+      await until(() => storageListeners.size >= 2);
+      for (const callback of [...storageListeners]) callback(changes, "local");
+      await Bun.sleep(10);
+    },
     async switchAccount(userId: string, draft: any = null) {
       settings = connection(userId); pageState = state(draft);
       for (const callback of storageListeners) callback({ connection: { newValue: settings } }, "local");
@@ -162,6 +168,53 @@ describe("protected extension workspace frame", () => {
     expect(imported.prompt).toBe("How does this connect to my research?");
     expect(imported.capture.content).toBe(firstPage().content);
     expect(imported.capture.comment).toBe(imported.prompt);
+  });
+
+  const pageThread = (overrides: Record<string, unknown> = {}) => ({ id: "thread-0001", createdAt: "2026-10-06T10:00:00.000Z", sourceUrl: "https://source.test/first", title: "Current source", quote: "A selected passage", intent: "ask", prompt: "Why?", answer: "Because.", pinned: false, ...overrides });
+  test("answers made on pages reach the shared App once and are acknowledged after import", async () => {
+    let threads: any[] = [pageThread()];
+    const view = await frame({ respond: (request, normal) => request.type === "workspace:threads" ? { threads: structuredClone(threads) } : normal() });
+    await view.ready();
+    await until(() => view.probe().props.browserThreadRequests?.length === 1);
+    const [request] = view.probe().props.browserThreadRequests;
+    expect(request).toMatchObject({ id: "thread-0001:import", focus: false, thread: { id: "thread-0001", title: "Why?", answer: "Because." } });
+    expect(request.thread.userContent).toContain("> A selected passage");
+    expect(request.thread.userContent).toContain("[Current source](https://source.test/first)");
+    view.probe().props.onBrowserThreadHandled(request);
+    await until(() => view.messages.some((message) => message.type === "workspace:thread-imported"));
+    const ack = view.messages.find((message) => message.type === "workspace:thread-imported");
+    expect(ack).toMatchObject({ id: "thread-0001", connectionId: "margin-reader", tabId: 7, session: "valid-frame" });
+    expect(ack).not.toHaveProperty("openRequestId");
+    await until(() => view.probe().props.browserThreadRequests.length === 0);
+    // The same delivery coming back (a storage change before the worker marks it imported) is not queued twice.
+    await view.changeStorage({ "pageThreads:margin-reader": { newValue: [] } });
+    expect(view.probe().props.browserThreadRequests.length).toBe(1);
+  });
+
+  test("opening a conversation from the page asks the app to focus it, and acknowledges that request id", async () => {
+    let threads: any[] = [];
+    const view = await frame({ respond: (request, normal) => request.type === "workspace:threads" ? { threads: structuredClone(threads) } : normal() });
+    await view.ready();
+    expect(view.probe().props.browserThreadRequests).toEqual([]);
+    threads = [pageThread({ importedAt: "2026-10-06T10:05:00.000Z", openRequestId: "open-1" })];
+    await view.changeStorage({ "pageThreads:margin-reader": { newValue: threads } });
+    await until(() => view.probe().props.browserThreadRequests.length === 1);
+    const [request] = view.probe().props.browserThreadRequests;
+    expect(request).toMatchObject({ id: "thread-0001:open-1", focus: true });
+    view.probe().props.onBrowserThreadHandled(request);
+    await until(() => view.messages.some((message) => message.type === "workspace:thread-imported"));
+    expect(view.messages.find((message) => message.type === "workspace:thread-imported")).toMatchObject({ id: "thread-0001", openRequestId: "open-1" });
+    // Unrelated storage changes do not poll the worker.
+    const before = view.messages.filter((message) => message.type === "workspace:threads").length;
+    await view.changeStorage({ pendingSave: { newValue: null } });
+    expect(view.messages.filter((message) => message.type === "workspace:threads").length).toBe(before);
+  });
+
+  test("a malformed thread reply is ignored instead of breaking the workspace", async () => {
+    const view = await frame({ respond: (request, normal) => request.type === "workspace:threads" ? { threads: "nope" } : normal() });
+    await view.ready();
+    expect(view.probe().props.browserThreadRequests).toEqual([]);
+    expect(view.browser.document.querySelector('[data-testid="shared-app"]')).not.toBeNull();
   });
 
   test("switching accounts clears draft input and aborts the previous account's transport", async () => {

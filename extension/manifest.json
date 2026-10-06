@@ -15,7 +15,7 @@
   },
   "options_ui": { "page": "options.html", "open_in_tab": true },
   "web_accessible_resources": [{
-    "resources": ["workspace.html", "assets/*", "excalidraw/*"],
+    "resources": ["workspace.html", "assistant.html", "assets/*", "excalidraw/*"],
     "matches": ["http://*/*", "https://*/*"]
   }],
   "content_security_policy": {

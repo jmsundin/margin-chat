@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Margin Chat answer</title>
+    <style>
+      :root { color-scheme: light dark; --paper:#faf8f1; --ink:#243a2f; --muted:#667660; --line:#d8ddd0; --accent:#315b45; --accent-ink:#faf8f1; --soft:#eef1e6; --danger:#a34632; }
+      @media (prefers-color-scheme: dark) { :root { --paper:#1f2723; --ink:#e4ebe2; --muted:#9fb09a; --line:#38443d; --accent:#7fb08f; --accent-ink:#13201a; --soft:#28332d; --danger:#e08c78; } }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body { background: var(--paper); color: var(--ink); font: 13px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+      [hidden] { display: none !important; }
+      #card { display: flex; flex-direction: column; height: 100%; outline: none; }
+      header { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--soft); }
+      .mark { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; background: var(--accent); color: var(--accent-ink); font: italic 600 14px/1 Georgia, serif; }
+      header strong { font-size: 12px; letter-spacing: .02em; }
+      header .tag { margin-left: auto; font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 20px; padding: 2px 8px; white-space: nowrap; }
+      button { font: inherit; font-size: 12px; color: inherit; cursor: pointer; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-height: 28px; }
+      button:hover { background: var(--soft); }
+      button:focus-visible, textarea:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      button.icon { border: 0; font-size: 18px; line-height: 1; padding: 2px 8px; }
+      main { flex: 1; overflow: auto; padding: 12px 14px; overscroll-behavior: contain; }
+      #sub { margin: 0 0 8px; font-weight: 600; font-size: 13px; }
+      blockquote { margin: 0 0 10px; padding: 2px 0 2px 10px; border-left: 2px solid var(--accent); font: 13px/1.5 Georgia, serif; color: var(--muted); overflow-wrap: anywhere; white-space: pre-wrap; }
+      .context { margin: 0 0 8px; font-size: 11px; color: var(--muted); }
+      .answer { font-size: 13.5px; overflow-wrap: anywhere; }
+      .answer p { margin: 0 0 10px; } .answer p.heading { font-weight: 650; }
+      .answer ul, .answer ol { margin: 0 0 10px; padding-left: 20px; }
+      .answer code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--soft); border-radius: 4px; padding: 1px 4px; }
+      .answer pre { margin: 0 0 10px; padding: 9px 10px; background: var(--soft); border-radius: 8px; overflow: auto; }
+      .answer pre code { background: none; padding: 0; }
+      .answer a { color: var(--accent); }
+      form { display: grid; gap: 8px; }
+      textarea { width: 100%; min-height: 84px; max-height: 200px; resize: vertical; font: inherit; font-size: 13px; color: inherit; background: var(--paper); border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+      .chips button { font-size: 11px; border-radius: 15px; padding: 4px 9px; color: var(--muted); }
+      .primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+      .primary:hover { background: var(--accent); filter: brightness(1.08); }
+      .status { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+      .error { color: var(--danger); margin: 0 0 8px; }
+      #actions { display: grid; gap: 4px; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--soft); }
+      #actions .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+      #actions .spacer { flex: 1; }
+      #actions .quiet button { border: 0; background: transparent; color: var(--muted); font-size: 11px; padding: 3px 6px; min-height: 24px; }
+      #actions .quiet button:hover { color: var(--ink); background: transparent; text-decoration: underline; }
+      #pin { font-weight: 600; }
+      .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    </style>
+  </head>
+  <body>
+    <div id="card" tabindex="-1">
+      <header>
+        <span class="mark" aria-hidden="true">m</span><strong id="heading">AI answer</strong>
+        <span class="tag">Margin · not part of this page</span>
+        <button id="close" class="icon" type="button" aria-label="Close">×</button>
+      </header>
+      <main>
+        <p id="sub" hidden></p>
+        <blockquote id="quote" hidden></blockquote>
+        <p id="context" class="context" hidden></p>
+        <p id="loading" class="status">Opening…</p>
+        <section id="connect" hidden>
+          <p id="connect-text"></p>
+          <button id="settings" class="primary" type="button">Connect Workspace + AI</button>
+        </section>
+        <form id="ask" hidden>
+          <label for="prompt" class="sr">Your question about this passage</label>
+          <textarea id="prompt" placeholder="Ask about this passage…"></textarea>
+          <div id="chips" class="chips"></div>
+          <div><button class="primary" type="submit">Ask</button> <button id="explain-chip" type="button">Just explain it</button></div>
+        </form>
+        <p id="status" class="status" hidden></p>
+        <div id="answer" class="answer" hidden></div>
+        <p id="error" class="error" role="alert" hidden></p>
+      </main>
+      <div id="actions" hidden>
+        <div class="row">
+          <button id="stop" type="button" hidden>Stop</button>
+          <button id="pin" type="button" aria-pressed="false" hidden>Pin as margin note</button>
+          <button id="open" type="button" hidden>Open in workspace ↗</button>
+        </div>
+        <div class="row quiet">
+          <button id="copy" type="button" hidden>Copy</button>
+          <button id="retry" type="button" hidden>Try again</button>
+          <span class="spacer"></span>
+          <button id="delete" type="button" hidden>Delete</button>
+        </div>
+      </div>
+      <p id="live" class="sr" role="status" aria-live="polite"></p>
+    </div>
+    <script type="module" src="assistant.js"></script>
+  </body>
+</html>

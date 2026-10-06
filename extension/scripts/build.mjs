@@ -8,7 +8,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outdir = resolve(root, "dist");
 await rm(outdir, { recursive: true, force: true });
 await mkdir(resolve(outdir, "icons"), { recursive: true });
-for (const entry of ["background", "popup", "options", "content", "overlay"]) {
+for (const entry of ["background", "popup", "options", "content", "overlay", "assistant"]) {
   const result = await Bun.build({
     entrypoints: [resolve(root, `src/${entry}.ts`)],
     outdir,
@@ -18,7 +18,7 @@ for (const entry of ["background", "popup", "options", "content", "overlay"]) {
   });
   if (!result.success) throw new Error(result.logs.join("\n"));
 }
-for (const file of ["popup.html", "options.html", "styles.css"]) {
+for (const file of ["popup.html", "options.html", "assistant.html", "styles.css"]) {
   await copyFile(resolve(root, "public", file), resolve(outdir, file));
 }
 const manifest = JSON.parse(

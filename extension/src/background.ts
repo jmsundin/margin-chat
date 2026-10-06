@@ -11,13 +11,17 @@ import {
   getOverlayPage,
   getPending,
   getSettings,
+  getThreads,
   trustedStorage,
   updateOverlayPage,
+  updateThreads,
   type PendingSave,
   type SelectionDraft,
 } from "./storage";
 import type { OverlayAnnotation, OverlayDraft, OverlayState, TextQuoteAnchor } from "./overlay-types";
 import { captureRequest, errorText } from "./network";
+import { assertThreadCapacity, pageNotes, normalizeThread, upsertThread } from "./page-ai";
+import { normalizeAnchor, record, textValue } from "./validate";
 
 void trustedStorage();
 chrome.runtime.onInstalled.addListener(() => {
@@ -89,31 +93,6 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   else void showOverlay(tab, selection);
 });
 
-function record(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Invalid page draft.");
-  return value as Record<string, unknown>;
-}
-function textValue(value: unknown, limit: number, label: string): string {
-  if (typeof value !== "string" || value.length > limit || value.includes("\0"))
-    throw new Error(`Invalid ${label}.`);
-  return value;
-}
-function normalizeAnchor(value: unknown): TextQuoteAnchor | undefined {
-  if (value === undefined) return undefined;
-  const anchor = record(value);
-  const exact = textValue(anchor.exact, CAPTURE_LIMITS.content, "selected text");
-  if (!exact.trim() || !Number.isSafeInteger(anchor.start) || !Number.isSafeInteger(anchor.end) ||
-      (anchor.start as number) < 0 || (anchor.end as number) <= (anchor.start as number))
-    throw new Error("Invalid selected passage anchor.");
-  return {
-    exact,
-    prefix: textValue(anchor.prefix, 512, "passage prefix"),
-    suffix: textValue(anchor.suffix, 512, "passage suffix"),
-    start: anchor.start as number,
-    end: anchor.end as number,
-  };
-}
 function normalizeDraft(value: unknown): OverlayDraft | null {
   if (value === null) return null;
   const draft = record(value);
@@ -264,6 +243,11 @@ async function overlayMessage(message: Record<string, unknown>, sourceUrl: strin
       page: await getOverlayPage(settings.connectionId, sourceUrl),
     } satisfies OverlayState;
   }
+  if (message.type === "overlay:notes") {
+    // Page-derived anchors and opaque ids only: never prompts or answers.
+    const settings = await getSettings();
+    return { notes: settings ? pageNotes(await getThreads(settings.connectionId), sourceUrl) : [] };
+  }
   const settings = await requireConnection(message.connectionId);
   if (message.type === "overlay:draft") {
     const draft = normalizeDraft(message.draft);
@@ -328,16 +312,17 @@ async function updateFramePage(message: Record<string, unknown>, sender: chrome.
   await chrome.storage.session.set({ [frameSessionKey(tabId)]: { ...frame, sourceUrl } });
   return { ok: true };
 }
-function workspaceSender(sender: chrome.runtime.MessageSender): URL | null {
+type FramePage = "workspace.html" | "assistant.html";
+function workspaceSender(sender: chrome.runtime.MessageSender, page: FramePage = "workspace.html"): URL | null {
   try {
     const url = new URL(sender.url!);
-    const expected = new URL(chrome.runtime.getURL("workspace.html"));
+    const expected = new URL(chrome.runtime.getURL(page));
     if (url.protocol !== expected.protocol || url.host !== expected.host || url.pathname !== expected.pathname || url.hash) return null;
     return url;
   } catch { return null; }
 }
-async function validateFrame(message: Record<string, unknown>, sender: chrome.runtime.MessageSender) {
-  const url = workspaceSender(sender);
+async function validateFrame(message: Record<string, unknown>, sender: chrome.runtime.MessageSender, page: FramePage = "workspace.html") {
+  const url = workspaceSender(sender, page);
   if (!url || !Number.isSafeInteger(message.tabId) || typeof message.session !== "string") throw new Error("Open Margin Chat using the extension toolbar.");
   const tabId = message.tabId as number;
   // A nonce copied into a different tab (or an extension popup) cannot claim the
@@ -373,6 +358,22 @@ async function workspaceMessage(message: Record<string, unknown>, sender: chrome
       : { anchors: Array.isArray(message.anchors) && message.anchors.length <= 1000 ? message.anchors.map(normalizeAnchor) : (() => { throw new Error("Invalid page highlights."); })() };
     return chrome.tabs.sendMessage(frame.tabId, { type: message.type === "workspace:locate" ? "margin:page-locate" : "margin:page-highlights", session: frame.session, ...payload }, { frameId: 0 });
   }
+  if (message.type === "workspace:threads" || message.type === "workspace:thread-imported") {
+    const settings = await requireConnection(message.connectionId);
+    if (message.type === "workspace:threads") {
+      // The workspace is a trusted extension origin; it receives full conversations.
+      const threads = (await getThreads(settings.connectionId)).filter((thread) => !thread.importedAt || thread.openRequestId);
+      return { threads: [...threads].reverse() };
+    }
+    const id = textValue(message.id, 100, "conversation id");
+    await updateThreads(settings.connectionId, (threads) => threads.map((thread) => {
+      if (thread.id !== id) return thread;
+      const { openRequestId, ...rest } = thread;
+      // A newer open request must survive an older import's acknowledgement.
+      return { ...rest, importedAt: thread.importedAt ?? new Date().toISOString(), ...(openRequestId && openRequestId !== message.openRequestId ? { openRequestId } : {}) };
+    }));
+    return { ok: true };
+  }
   const action = String(message.type).replace(/^workspace:/, "overlay:");
   if (!["overlay:state", "overlay:draft", "overlay:save", "overlay:retry", "overlay:dismiss", "overlay:open", "overlay:settings", "overlay:pending"].includes(action)) throw new Error("Unsupported workspace action.");
   // Read state and mutate drafts only for the account rendered by this frame.
@@ -387,8 +388,78 @@ async function workspaceMessage(message: Record<string, unknown>, sender: chrome
   return overlayMessage({ ...message, type: action }, frame.sourceUrl);
 }
 
+async function pageMessage(tabId: number, message: Record<string, unknown>) {
+  const result = await chrome.tabs.sendMessage(tabId, message, { frameId: 0 });
+  if (result?.error) throw new Error(result.error);
+  return result;
+}
+/** Tell the page which passages carry a pinned note. Delivery is best effort. */
+async function syncPageNotes(frame: FrameSession, connectionId: string) {
+  const notes = pageNotes(await getThreads(connectionId), frame.sourceUrl);
+  await chrome.tabs.sendMessage(frame.tabId, { type: "margin:page-notes", session: frame.session, notes }, { frameId: 0 }).catch(() => undefined);
+}
+async function assistantMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender) {
+  const frame = await validateFrame(message, sender, "assistant.html");
+  const settings = await getSettings();
+  const type = String(message.type);
+  if (type === "assistant:connect")
+    return { tabId: frame.tabId, sourceUrl: frame.sourceUrl, connection: settings ? { connectionId: settings.connectionId, displayName: settings.displayName, ...(settings.userId ? { userId: settings.userId } : {}) } : null };
+  // Everything below reads or changes the signed-in account's conversations.
+  if (!settings || settings.connectionId !== message.connectionId) throw new Error("The signed-in account changed. Reopen Margin Chat before continuing.");
+  const account = settings.connectionId;
+  const own = async (id: unknown) => {
+    const thread = (await getThreads(account)).find((item) => item.id === textValue(id, 100, "conversation id"));
+    if (!thread || thread.sourceUrl !== frame.sourceUrl) throw new Error("This conversation does not belong to this page.");
+    return thread;
+  };
+  if (type === "assistant:request")
+    return pageMessage(frame.tabId, { type: "margin:page-request", session: frame.session, id: textValue(message.id, 100, "request id") });
+  if (type === "assistant:article") {
+    // Reading the page is optional context; the card continues without it.
+    try { return await pageMessage(frame.tabId, { type: "margin:page-article", session: frame.session }); }
+    catch (error) { return { unavailable: errorText(error, "The page could not be read.") }; }
+  }
+  if (type === "assistant:close") {
+    await chrome.tabs.sendMessage(frame.tabId, { type: "margin:page-close-card", session: frame.session }, { frameId: 0 }).catch(() => undefined);
+    return { ok: true };
+  }
+  if (type === "assistant:thread-save") {
+    const thread = normalizeThread(message.thread);
+    if (thread.sourceUrl !== frame.sourceUrl) throw new Error("The page changed. Ask again on the current page.");
+    await updateThreads(account, (threads) => {
+      const next = upsertThread(threads, thread);
+      assertThreadCapacity(next);
+      return next;
+    });
+    await syncPageNotes(frame, account);
+    return { ok: true };
+  }
+  if (type === "assistant:thread-get") return { thread: await own(message.id) };
+  if (type === "assistant:thread-pin" || type === "assistant:thread-delete") {
+    const target = await own(message.id);
+    await updateThreads(account, (threads) => type === "assistant:thread-delete"
+      ? threads.filter((thread) => thread.id !== target.id)
+      : threads.map((thread) => thread.id === target.id ? { ...thread, pinned: message.pinned === true } : thread));
+    await syncPageNotes(frame, account);
+    return { ok: true };
+  }
+  if (type === "assistant:open-workspace") {
+    const target = await own(message.id);
+    const openRequestId = crypto.randomUUID();
+    await updateThreads(account, (threads) => threads.map((thread) => thread.id === target.id ? { ...thread, openRequestId } : thread));
+    await chrome.tabs.sendMessage(frame.tabId, { type: "margin:page-open-workspace", session: frame.session }, { frameId: 0 }).catch(() => undefined);
+    return { ok: true };
+  }
+  throw new Error("Unsupported assistant action.");
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return;
+  if (typeof message?.type === "string" && message.type.startsWith("assistant:")) {
+    if (!workspaceSender(sender, "assistant.html")) return;
+    void assistantMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ error: errorText(error, "Margin Chat could not complete that action.") }));
+    return true;
+  }
   if (typeof message?.type === "string" && message.type.startsWith("workspace:")) {
     if (!workspaceSender(sender)) return;
     void workspaceMessage(message, sender).then(sendResponse).catch((error) => sendResponse({ error: errorText(error) }));
