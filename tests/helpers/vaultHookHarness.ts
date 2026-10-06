@@ -220,8 +220,10 @@ async function checkDocumentFocus() {
   await local.write(snapshot);
   const onlineFetch = globalThis.fetch;
   globalThis.fetch = (async () => { throw new TypeError("Offline fixture"); }) as typeof fetch;
-  const reopen = async () => {
+  const reopen = async (beforeMount?: () => Promise<void> | void) => {
     await act(async () => { root.unmount(); });
+    // The app remounts the workspace per account, so switch accounts only while unmounted.
+    await beforeMount?.();
     current = null;
     root = createRoot(container as unknown as Element);
     await act(async () => { root.render(createElement(Host)); });
@@ -239,12 +241,12 @@ async function checkDocumentFocus() {
 
   // An account with identical document IDs must keep its own selection.
   const originalUserId = user.id;
-  user.id = "another-focus-user";
-  await createBrowserVaultStore(user.id).write(snapshot);
-  await reopen();
+  await reopen(async () => {
+    user.id = "another-focus-user";
+    await createBrowserVaultStore(user.id).write(snapshot);
+  });
   assert.notEqual(current.state.activeConversationId, child.id, "Another account inherited the focused document.");
-  user.id = originalUserId;
-  await reopen();
+  await reopen(() => { user.id = originalUserId; });
   assert.equal(current.state.activeConversationId, child.id);
 
   // The remembered document may arrive after the initial local hydration.

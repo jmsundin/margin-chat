@@ -5,6 +5,7 @@ import {
   readRawBody,
   sendJson,
 } from "../http/json.mjs";
+import { createRateLimiter, getClientAddress } from "../http/rateLimit.mjs";
 import { sendStreamingJson } from "../http/streamingJson.mjs";
 import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
@@ -25,6 +26,30 @@ export function canUseCloudWorkspaceStorage(user) {
   return (
     user?.role === "admin" || user?.billing?.accessKind === "subscription"
   );
+}
+
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+// Failed-login budgets are per client address and per account email; signup and
+// reset routes count every attempt per address because each one is expensive.
+export const DEFAULT_AUTH_RATE_LIMITS = Object.freeze({
+  loginFailuresByAddress: { max: 30, windowMs: FIFTEEN_MINUTES_MS },
+  loginFailuresByEmail: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
+  signupsByAddress: { max: 20, windowMs: 60 * 60 * 1000 },
+  passwordResetsByAddress: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
+  passwordChangeFailuresByUser: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
+});
+
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const AUTH_BODY_LIMIT = 16_384;
+// Whole conversations and legacy whole-workspace uploads are the largest JSON bodies.
+const LARGE_JSON_BODY_LIMIT = 8 * 1024 * 1024;
+
+function decodePathParameter(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    throw new HttpError(400, "The request path is invalid.");
+  }
 }
 
 function requireExpectedVaultAccount(request, user) {
@@ -57,12 +82,48 @@ export function createApiHandler({
   semanticService,
   urlMapService,
   topicExpansionService,
+  rateLimits,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
   const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
+
+  const limits = { ...DEFAULT_AUTH_RATE_LIMITS, ...rateLimits };
+  const loginByAddress = createRateLimiter(limits.loginFailuresByAddress);
+  const loginByEmail = createRateLimiter(limits.loginFailuresByEmail);
+  const signupByAddress = createRateLimiter(limits.signupsByAddress);
+  const resetByAddress = createRateLimiter(limits.passwordResetsByAddress);
+  const passwordChangeByUser = createRateLimiter(limits.passwordChangeFailuresByUser);
+  const clientAddress = (request) =>
+    getClientAddress(request, { trustProxyHeaders: runtimeConfig.trustProxyHeaders === true });
+
+  // Checks run before the password hash is computed, so a throttled caller
+  // costs nothing. Only failed credentials count, and success clears the email.
+  async function throttleLogin(request, payload, run) {
+    const address = clientAddress(request);
+    const email = typeof payload?.email === "string" ? payload.email.trim().toLowerCase().slice(0, 320) : null;
+    loginByAddress.check(address);
+    if (email) loginByEmail.check(email);
+    try {
+      const result = await run();
+      if (email) loginByEmail.reset(email);
+      return result;
+    } catch (error) {
+      if (error?.statusCode === 401) {
+        loginByAddress.record(address);
+        if (email) loginByEmail.record(email);
+      }
+      throw error;
+    }
+  }
+
+  function throttleAttempt(limiter, request) {
+    const address = clientAddress(request);
+    limiter.check(address);
+    limiter.record(address);
+  }
 
   return async function handleRequest(request, response) {
     try {
@@ -116,7 +177,8 @@ export function createApiHandler({
       if (route?.id === "extensionSession" || route?.id === "extensionWorkspaceSession") {
         response.setHeader("Cache-Control", "no-store");
         if (request.method === "POST") {
-          const user = await authService.authenticateCredentials(await readJsonBody(request, 16_384));
+          const credentials = await readJsonBody(request, AUTH_BODY_LIMIT);
+          const user = await throttleLogin(request, credentials, () => authService.authenticateCredentials(credentials));
           const session = route.id === "extensionWorkspaceSession"
             ? await captureService.issueWorkspaceSession(user, runtimeConfig.authSessionTtlMs)
             : await captureService.issueSession(user, runtimeConfig.authSessionTtlMs);
@@ -152,6 +214,13 @@ export function createApiHandler({
         };
       }
       if (workspaceCredential) response.setHeader("Cache-Control", "private, no-store");
+      // Cookie sessions are ambient credentials, so a cross-site page must not be
+      // able to drive any state-changing route (login and signup included).
+      // Bearer credentials are sent deliberately and are exempt.
+      if (!workspaceCredential && UNSAFE_METHODS.has(request.method)
+        && request.headers["sec-fetch-site"] === "cross-site") {
+        throw new HttpError(403, "Use Margin Chat from its own site.");
+      }
       const authContext = await getRequestAuthContext();
       if (workspaceCredential && !EXTENSION_WORKSPACE_ROUTES.has(route?.id)) {
         throw new HttpError(403, "Manage account and billing settings on the Margin Chat website.");
@@ -175,7 +244,8 @@ export function createApiHandler({
       }
 
       if (route?.id === "authSignup") {
-        const body = await readJsonBody(request);
+        throttleAttempt(signupByAddress, request);
+        const body = await readJsonBody(request, AUTH_BODY_LIMIT);
         const result = await authService.signup(body);
 
         sendJson(
@@ -192,8 +262,8 @@ export function createApiHandler({
       }
 
       if (route?.id === "authLogin") {
-        const body = await readJsonBody(request);
-        const result = await authService.login(body);
+        const body = await readJsonBody(request, AUTH_BODY_LIMIT);
+        const result = await throttleLogin(request, body, () => authService.login(body));
 
         sendJson(
           response,
@@ -209,14 +279,16 @@ export function createApiHandler({
       }
 
       if (route?.id === "passwordResetRequest") {
-        const result = await authService.requestPasswordReset(await readJsonBody(request));
+        throttleAttempt(resetByAddress, request);
+        const result = await authService.requestPasswordReset(await readJsonBody(request, AUTH_BODY_LIMIT));
 
         sendJson(response, 200, result);
         return;
       }
 
       if (route?.id === "passwordResetConfirm") {
-        const result = await authService.resetPassword(await readJsonBody(request));
+        throttleAttempt(resetByAddress, request);
+        const result = await authService.resetPassword(await readJsonBody(request, AUTH_BODY_LIMIT));
 
         sendJson(response, 200, result, {
           "Set-Cookie": authService.buildClearedSessionCookie(),
@@ -257,11 +329,16 @@ export function createApiHandler({
       }
 
       if (route?.id === "passwordChange") {
-        const result = await authService.changePassword(
-          authContext.user.id,
-          authContext.sessionId,
-          await readJsonBody(request, 16_384),
-        );
+        const changeBody = await readJsonBody(request, AUTH_BODY_LIMIT);
+        passwordChangeByUser.check(authContext.user.id);
+        let result;
+        try {
+          result = await authService.changePassword(authContext.user.id, authContext.sessionId, changeBody);
+          passwordChangeByUser.reset(authContext.user.id);
+        } catch (error) {
+          if (error?.statusCode === 400) passwordChangeByUser.record(authContext.user.id);
+          throw error;
+        }
         sendJson(response, 200, { ok: true }, {
           "Cache-Control": "no-store",
           "Set-Cookie": result.cookie,
@@ -541,7 +618,7 @@ export function createApiHandler({
 
       if (route?.id === "documentOriginal") {
         requireExpectedVaultAccount(request, authContext.user);
-        const documentId = decodeURIComponent(route.params.id);
+        const documentId = decodePathParameter(route.params.id);
         const original = vaultService?.configured
           ? await vaultService.readAttachment({ userId: authContext.user.id, documentId })
           : await database.getVaultAttachment({ userId: authContext.user.id, documentId });
@@ -564,10 +641,8 @@ export function createApiHandler({
       }
 
       if (route?.id === "documentDelete") {
-        const deleted = await documentService.delete(
-          decodeURIComponent(route.params.id),
-          authContext.user.id,
-        );
+        const documentId = decodePathParameter(route.params.id);
+        const deleted = await documentService.delete(documentId, authContext.user.id);
 
         if (!deleted) {
           throw new HttpError(404, "Document not found.");
@@ -589,7 +664,7 @@ export function createApiHandler({
           throw new HttpError(409, "This workspace uses Markdown file sync. Reload Margin Chat to update this older client. Whole-workspace uploads are disabled.");
         }
 
-        const body = await readJsonBody(request);
+        const body = await readJsonBody(request, LARGE_JSON_BODY_LIMIT);
         const workspaceState = body?.workspace
           ? createAppStateFromWorkspaceDocument(body.workspace)
           : body;
@@ -676,7 +751,7 @@ export function createApiHandler({
         }
         sendJson(response, error.statusCode, {
           error: error.message,
-        });
+        }, error.headers);
         return;
       }
 

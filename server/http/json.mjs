@@ -8,7 +8,10 @@ export const jsonHeaders = Object.freeze({
   "Content-Type": "application/json; charset=utf-8",
 });
 
-export async function readJsonBody(request, maxBytes = Infinity) {
+// Every route sets its own limit; this default only bounds routes that do not.
+export const DEFAULT_JSON_BODY_LIMIT = 1024 * 1024;
+
+export async function readJsonBody(request, maxBytes = DEFAULT_JSON_BODY_LIMIT) {
   const body = await readRawBody(request, maxBytes);
 
   if (!body.length) {

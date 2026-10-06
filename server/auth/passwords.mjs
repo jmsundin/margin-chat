@@ -35,3 +35,16 @@ export async function verifyPassword(password, storedHash) {
 
   return timingSafeEqual(expectedKey, actualKey);
 }
+
+let decoyHash;
+
+/**
+ * Verifies against a throwaway hash so a login for an unknown email costs the
+ * same scrypt work as one for a real account; response time must not reveal
+ * which emails are registered.
+ */
+export async function verifyPasswordAgainstDecoy(password) {
+  decoyHash ??= hashPassword(randomBytes(16).toString("hex"));
+  await verifyPassword(password, await decoyHash);
+  return false;
+}

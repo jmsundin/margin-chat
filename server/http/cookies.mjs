@@ -1,3 +1,14 @@
+// A cookie value that is not valid percent-encoding must not fail the request:
+// any sibling-subdomain page can set one, and the HttpOnly session cookie cannot
+// be cleared by the client. Treat the raw value as the cookie's value instead.
+function decodeCookieValue(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function parseCookieHeader(headerValue) {
   if (!headerValue || typeof headerValue !== "string") {
     return {};
@@ -17,7 +28,7 @@ export function parseCookieHeader(headerValue) {
 
         return [
           part.slice(0, separatorIndex).trim(),
-          decodeURIComponent(part.slice(separatorIndex + 1).trim()),
+          decodeCookieValue(part.slice(separatorIndex + 1).trim()),
         ];
       }),
   );

@@ -26,3 +26,7 @@ extension/releases/
 
 # Local Markdown vault object store (VAULT_STORAGE_DIR example).
 .margin-chat-vault/
+
+# Browser-automation snapshots and generated design/screenshot output.
+.playwright-mcp/
+/output/

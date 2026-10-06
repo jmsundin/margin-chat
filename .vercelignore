@@ -11,3 +11,7 @@ extension/releases
 /dist
 /client/dist
 /extension/dist
+
+# Generated locally; not needed to build.
+.playwright-mcp
+/output
