@@ -217,13 +217,21 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     return ranges;
   }, [document, props.anchors, conversation.notes]);
   useEffect(() => {
-    const ids: string[] = [];
-    const frame=window.requestAnimationFrame(() => {
+    let ids: string[] = [];
+    let frame = 0;
+    const register = () => {
+      ids.forEach((id)=>props.registerAnchorRef(id,null));
+      ids = [];
       bodyRef.current?.querySelectorAll<HTMLSpanElement>("[data-annotation-branches]").forEach((element)=>{
         try { for(const id of JSON.parse(element.dataset.annotationBranches ?? "[]")) {if(typeof id === "string") {props.registerAnchorRef(id,element);ids.push(id);}} } catch { /* A stale decoration is ignored. */ }
       });
-    });
-    return () => {window.cancelAnimationFrame(frame);ids.forEach((id)=>props.registerAnchorRef(id,null));};
+    };
+    const schedule = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(register); };
+    schedule();
+    // The block editor loads and mounts lazily, so its decorations can appear after this effect first runs.
+    const observer = typeof MutationObserver === "undefined" || !bodyRef.current ? null : new MutationObserver(schedule);
+    if (bodyRef.current) observer?.observe(bodyRef.current, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-annotation-branches"] });
+    return () => {observer?.disconnect();window.cancelAnimationFrame(frame);ids.forEach((id)=>props.registerAnchorRef(id,null));};
   },[document,props.anchors]);
   function reportVisibleOutline() {
     const panel = bodyRef.current;
