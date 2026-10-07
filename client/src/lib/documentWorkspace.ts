@@ -1,3 +1,4 @@
+import { isCompactDocument } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { getConversationPath } from "./tree";
 import { getDocumentLinkTarget } from "./documentLinks";
@@ -106,20 +107,84 @@ export function placeNewSideDocument(state: AppState, childId: string): AppState
   return saveLayout(state, root, order, minimizedIds.filter((id) => id !== childId));
 }
 
+function restoreDocuments(state: AppState, id: string, ids: string[], order?: string[]): AppState {
+  const { root, documents, minimizedIds, closedIds } = getDocumentWorkspace(state.conversations, id);
+  if (!root) return state;
+  const restored = new Set(ids);
+  const nextMinimized = minimizedIds.filter((candidate) => !restored.has(candidate));
+  const nextClosed = closedIds.filter((candidate) => !restored.has(candidate));
+  return !order && nextMinimized.length === minimizedIds.length && nextClosed.length === closedIds.length ? state
+    : saveLayout(state, root, order ?? documents.map((document) => document.id), nextMinimized, nextClosed);
+}
+
+function activate(state: AppState, id: string): AppState {
+  const root = getConversationPath(state.conversations, id)[0];
+  if (!root || (state.activeConversationId === id && state.rootId === root.id)) return state;
+  return { ...state, activeConversationId: id, rootId: root.id };
+}
+
 /** Opening independently restores the path back to the original main document. */
 export function focusDocument(state: AppState, id: string, restoreAncestors = true): AppState {
   if (!state.conversations[id]) return state;
-  const { root, documents, minimizedIds, closedIds } = getDocumentWorkspace(state.conversations, id);
-  if (!root) return state;
-  const restored = new Set(restoreAncestors
+  return activate(restoreDocuments(state, id, restoreAncestors
     ? getConversationPath(state.conversations, id).map((document) => document.id)
-    : [id]);
-  const nextMinimized = minimizedIds.filter((candidate) => !restored.has(candidate));
-  const nextClosed = closedIds.filter((candidate) => !restored.has(candidate));
-  const next = nextMinimized.length === minimizedIds.length && nextClosed.length === closedIds.length ? state
-    : saveLayout(state, root, documents.map((document) => document.id), nextMinimized, nextClosed);
-  if (next.activeConversationId === id && next.rootId === root.id) return next;
-  return { ...next, activeConversationId: id, rootId: root.id };
+    : [id]), id);
+}
+
+/** Compact margin notes render in their host's margin, so showing one also shows its host. */
+export function getMarginHostPath(conversations: Record<string, Conversation>, id: string): string[] {
+  const path: string[] = [];
+  let current: Conversation | undefined = conversations[id];
+  while (current && !path.includes(current.id)) {
+    path.unshift(current.id);
+    if (!isCompactDocument(current) || !current.parentId) break;
+    current = conversations[current.parentId];
+  }
+  return path;
+}
+
+/** Tabs and breadcrumbs focus one document without reopening ancestors the user closed. */
+export function showDocument(state: AppState, id: string): AppState {
+  if (!state.conversations[id]) return state;
+  return activate(restoreDocuments(state, id, getMarginHostPath(state.conversations, id)), id);
+}
+
+function placeBeside(order: string[], id: string, anchorId: string, after: boolean) {
+  const next = order.filter((candidate) => candidate !== id);
+  const index = next.indexOf(anchorId);
+  if (index < 0) return order;
+  next.splice(index + (after ? 1 : 0), 0, id);
+  return next;
+}
+
+/** Expand here: the target takes the current document's place, which closes until Back reopens it. */
+export function replaceDocument(state: AppState, currentId: string, targetId: string): AppState {
+  const target = state.conversations[targetId];
+  if (!target || currentId === targetId) return state;
+  const { root, documents, minimizedIds, closedIds } = getDocumentWorkspace(state.conversations, targetId);
+  const order = documents.map((document) => document.id);
+  if (!root || !order.includes(currentId)) return showDocument(state, targetId);
+  const restored = new Set(getMarginHostPath(state.conversations, targetId).filter((id) => id !== currentId));
+  // Compact notes keep their place in the margin; documents take over the current pane slot.
+  const nextOrder = isCompactDocument(target) && target.parentId ? order : placeBeside(order, targetId, currentId, false);
+  const next = saveLayout(state, root, nextOrder,
+    minimizedIds.filter((id) => !restored.has(id) && id !== currentId),
+    [...closedIds.filter((id) => !restored.has(id) && id !== currentId), currentId]);
+  return activate(next, targetId);
+}
+
+/** Open beside: the target opens right after the anchor, and focus stays on the anchor. */
+export function openDocumentBeside(state: AppState, anchorId: string | null, targetId: string): AppState {
+  if (!state.conversations[targetId] || anchorId === targetId) return state;
+  const path = getMarginHostPath(state.conversations, targetId);
+  const { documents, minimizedIds, closedIds } = getDocumentWorkspace(state.conversations, targetId);
+  const order = documents.map((document) => document.id);
+  const hostId = path[0];
+  // Documents already on screen keep the position the user gave them.
+  const hidden = minimizedIds.includes(hostId) || closedIds.includes(hostId);
+  const nextOrder = anchorId && hidden && hostId !== anchorId && order.includes(anchorId)
+    ? placeBeside(order, hostId, anchorId, true) : undefined;
+  return restoreDocuments(state, targetId, path, nextOrder);
 }
 
 /** Hiding a pane never deletes its content, links, children, or saved position. */

@@ -1,7 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Conversation } from "../types";
-import { getCurrentDocumentText } from "../lib/documentSources";
+import { getDocumentPreview } from "../lib/documentSources";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import "./DocumentChildTabs.css";
 
@@ -12,12 +12,6 @@ interface Props {
   minimizedDocumentIds: string[];
   openDocumentIds?: string[];
   onSelect: (id: string) => void;
-}
-
-function preview(document: Conversation) {
-  return getCurrentDocumentText(document).slice(0, 600)
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
-    .replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim().slice(0, 140) || "No content yet";
 }
 
 /** Branches and linked documents share one Children list, independently of pane position. */
@@ -131,7 +125,7 @@ export default function DocumentChildTabs({ parent, documents, currentDocumentId
           onClick={() => { close(); onSelect(document.id); }}>
           <span className="document-child-item-heading"><span className="document-child-title">{document.title || "Untitled document"}</span>
             <small>{openDocumentIds.includes(document.id) ? "Open" : minimizedDocumentIds.includes(document.id) ? "Minimized" : "Not open"}</small></span>
-          <span className="document-child-preview">{preview(document)}</span>
+          <span className="document-child-preview">{getDocumentPreview(document)}</span>
         </button>)}
       </div>
     </nav>, document.body)}
