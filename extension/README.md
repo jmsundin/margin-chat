@@ -8,6 +8,10 @@ The extension bundles the same `App` and `WorkspaceApp` used by the website into
 
 Community discussions are unavailable. The Community control explains the future feature; it has no live feed or publishing action. See the [third-space design and implementation notes](../docs/browser-third-space.md).
 
+## Ask about the page
+
+Click the toolbar button once on a page to arm it; select text and a small popover offers **Explain** and **Ask…**. The answer streams into a card beside the passage, using the passage as the focus and the readable page as context. Choose **Pin as margin note** to leave a marker in the page's right margin and a dotted underline under the passage, or **Open in workspace** to continue it as a chat. Answers are saved to your workspace automatically. The card, your question and the answer live in the extension's own frame; the page itself never contains them. See the [design and implementation notes](../docs/extension-page-ai.md).
+
 ## Build, install, and upgrade
 
 From the repository root:

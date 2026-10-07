@@ -85,12 +85,18 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width || floating.width, height: rect.height || floating.height }; }
     layout = next; peeking = false; render();
   }
-  async function connect() {
+  /** Register this page's session without showing any panel. The nonce is stable for the page. */
+  async function register(): Promise<{ tabId: number; session: string }> {
     const response = await send({ type: "overlay:frame" });
     if (response?.error || !response?.session || !Number.isInteger(response.tabId)) throw new Error(response?.error || "Unable to open Margin Chat. Reload the page and try again.");
-    if (session !== response.session) {
-      session = response.session;
-      const url = new URL(frameUrl); url.searchParams.set("tab", String(response.tabId)); url.searchParams.set("session", session);
+    session = response.session;
+    return { tabId: response.tabId, session };
+  }
+  async function connect() {
+    const previous = session;
+    const { tabId, session: current } = await register();
+    if (previous !== current || !frame.src) {
+      const url = new URL(frameUrl); url.searchParams.set("tab", String(tabId)); url.searchParams.set("session", current);
       frame.src = url.href;
     }
     frame.hidden = false; status.hidden = true;
@@ -158,7 +164,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   const resized = () => { if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; } render(); };
   win.addEventListener("resize", resized);
   const navigationCheck = win.setInterval(() => { void changedPage().catch(() => undefined); }, 500);
-  return { open, close, toggle: () => active ? close() : void open(), handleMessage,
+  return { open, close, register, toggle: () => active ? close() : void open(), handleMessage,
     destroy() { win.clearInterval(navigationCheck); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },
   };
 }

@@ -19,5 +19,5 @@ test("extension App keeps identity scoped and opens website settings for account
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   clearTimeout(timeout);
   if (code !== 0) throw new Error(`Extension App integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(4);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(5);
 }, 20000);

@@ -2,6 +2,8 @@
 
 Margin makes any supported web page a place to think, work, and eventually talk with other people. The browser presents the source; Margin holds the reader’s relationship to it: passages, notes, questions, documents, and conversations. A reader can stay beside a page or temporarily make the workspace their main surface without losing the page underneath.
 
+See also [Page-aware AI in the extension](extension-page-ai.md) for the select-and-ask flow, margin notes, and how results reach the workspace.
+
 Extension **0.3.0** now bundles the current Margin Chat `App` and `WorkspaceApp` inside an extension-origin `workspace.html` iframe. Documents, notes, model choices, streamed AI conversations, branching, workspace search, and Markdown vault synchronization reuse the current application. Page capture and an explicit AI question can now open a source document and conversation in that same overlay. Community remains future work.
 
 This document distinguishes the implemented integration from the wider product direction. The original interaction demo remains available through `bun extension/scripts/preview.mjs` at `http://127.0.0.1:5194/`; it uses `overlay-ui.ts`, a sample article, and in-memory saves. It does not run the new full workspace, AI, or a social service. See the [extension README](../extension/README.md) for installation, access requirements, and the pending manual Chrome smoke test.
