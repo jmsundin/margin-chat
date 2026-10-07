@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createChatService } from "../server/chat/index.mjs";
 import {
+  DOCUMENT_TITLE_MODEL_ID,
   sanitizeGeneratedChatTitle,
   validateChatTitleRequest,
 } from "../server/chat/title.mjs";
+import { createEmptyState } from "../client/src/initialState";
+import { getDocumentTitleSource } from "../client/src/lib/documentTitle";
 
 const originalFetch = globalThis.fetch;
 
@@ -14,7 +17,7 @@ afterEach(() => {
 function createService() {
   return createChatService({
     database: {},
-    env: { GEMINI_API_KEY: "gemini-test-key" },
+    env: { GEMINI_API_KEY: "gemini-test-key", OPENAI_API_KEY: "openai-test-key" },
     runtimeConfig: {
       defaultBackendProvider: "gemini-api",
       geminiModel: "gemini-3.1-pro-preview",
@@ -74,5 +77,53 @@ describe("semantic chat titles", () => {
         serviceId: "gemini-api",
       }),
     ).toThrow("8,000 characters or fewer");
+  });
+});
+
+describe("document titles", () => {
+  test("always use OpenAI Luna with document instructions", async () => {
+    let url = "";
+    let requestBody: Record<string, any> | null = null;
+
+    globalThis.fetch = (async (input, init) => {
+      url = String(input);
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({ output_text: "Quarterly Hiring Plan" });
+    }) as typeof fetch;
+
+    const result = await createService().generateTitle({
+      kind: "document",
+      modelId: "gemini-3.1-pro-preview",
+      prompt: "We plan to hire two engineers and a designer next quarter.",
+      serviceId: "gemini-api",
+    });
+
+    expect(DOCUMENT_TITLE_MODEL_ID).toBe("gpt-6-luna");
+    expect(result.title).toBe("Quarterly Hiring Plan");
+    expect(url).toBe("https://api.openai.com/v1/responses");
+    expect(requestBody?.model).toBe("gpt-6-luna");
+    expect(JSON.stringify(requestBody)).toContain("title for a document from its content");
+  });
+
+  test("only titles documents with a placeholder title and enough content", () => {
+    const state = createEmptyState();
+    const base = state.conversations[state.rootId];
+    const content = "Notes on migrating the billing service to Postgres. ".repeat(5);
+    const withContent = (title: string, text = content) => ({
+      ...base,
+      title,
+      document: {
+        schemaVersion: 1 as const,
+        blocks: [{ id: "a", kind: "markdown" as const, content: text, createdAt: base.createdAt, updatedAt: base.createdAt }],
+        prompts: [],
+        generations: [],
+      },
+    });
+
+    expect(getDocumentTitleSource(withContent("Untitled document"))).toContain("billing service");
+    expect(getDocumentTitleSource(withContent(""))).toContain("billing service");
+    expect(getDocumentTitleSource(withContent("My billing notes"))).toBeNull();
+    expect(getDocumentTitleSource(withContent("Untitled document", "Too short"))).toBeNull();
+    expect(getDocumentTitleSource(withContent("Untitled document", "x".repeat(9_000)))).toHaveLength(6_000);
   });
 });

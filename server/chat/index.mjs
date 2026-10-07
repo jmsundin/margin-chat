@@ -289,7 +289,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
   }
 
   async function generateTitle(payload, context = {}) {
-    const result = await execute(titleChatRequest(payload), context, null, buildChatTitleInstruction());
+    const { kind } = validateChatTitleRequest(payload);
+    const result = await execute(titleChatRequest(payload), context, null, buildChatTitleInstruction(kind));
     const generated = sanitizeGeneratedChatTitle(result.reply);
     if (!generated) throw new HttpError(502, "The model returned an empty chat title.");
     return { title: generated, ...(context.usageMeter ? { billing: context.usageMeter.summary() } : {}) };
