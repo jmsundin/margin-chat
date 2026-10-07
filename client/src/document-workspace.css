@@ -83,7 +83,8 @@
   .conversation-canvas.is-tree-browser.is-document-workspace { gap: 16px; padding: 0 0 10px; }
 }
 
-/* Tabs are the workspace heading; navigation stays in the same compact row. */
+/* Tabs are the workspace heading; navigation stays in the same compact row. The focused
+   tab covers the bottom rule so it joins the breadcrumb bar beneath it. */
 .document-workspace-toolbar {
   display: flex;
   align-items: center;
@@ -91,7 +92,7 @@
   gap: 4px;
   min-width: 0;
   padding: 0 8px;
-  border-bottom: 1px solid var(--line);
+  box-shadow: inset 0 -1px var(--line);
   background: var(--panel);
 }
 .document-workspace-toolbar > .workspace-menu-button { flex: 0 0 36px; }

@@ -115,7 +115,7 @@ function getThreadPreview(
   return getThreadPreviewFromConversations([rootConversation]);
 }
 
-function formatRelativeTime(value: string) {
+export function formatRelativeTime(value: string) {
   const elapsedMs = Date.now() - new Date(value).getTime();
   const elapsedMinutes = Math.max(0, Math.round(elapsedMs / 60000));
 

@@ -1,0 +1,52 @@
+/* The bar shares the focused tab's surface, so the tab reads as joined to its address bar. */
+.document-breadcrumbs { display: flex; align-items: center; flex: 0 0 auto; gap: 6px; min-width: 0; min-height: 40px; box-sizing: border-box; padding: 4px 12px 4px 8px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.document-breadcrumbs-back { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--button-surface); color: var(--ink); cursor: pointer; }
+.document-breadcrumbs-back:hover:not(:disabled) { border-color: var(--accent); }
+.document-breadcrumbs-back:disabled { opacity: .35; cursor: default; }
+.document-breadcrumbs-back-icon { width: 15px; height: 15px; }
+.document-breadcrumbs-list { display: flex; align-items: center; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; overflow-x: auto; scrollbar-width: none; }
+.document-breadcrumbs-list::-webkit-scrollbar { display: none; }
+.document-breadcrumb { display: flex; align-items: center; flex: 0 0 auto; min-width: 0; }
+.document-breadcrumb-separator { padding: 0 2px; color: var(--breadcrumb-separator, var(--muted)); font-size: 14px; }
+.document-breadcrumb-trigger { display: flex; align-items: center; gap: 6px; max-width: 240px; padding: 4px 6px 4px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.document-breadcrumb-trigger:hover, .document-breadcrumb-trigger[aria-expanded="true"] { border-color: var(--line); background: var(--button-surface); }
+.document-breadcrumb-trigger[aria-current="page"] { font-weight: 600; }
+.document-breadcrumb.is-children .document-breadcrumb-trigger { border-color: var(--line-strong); border-style: dashed; color: var(--muted); }
+.document-breadcrumb-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.document-breadcrumb-icon { flex: 0 0 auto; width: 14px; height: 14px; color: var(--muted); }
+.document-breadcrumb-chevron { flex: 0 0 auto; width: 13px; height: 13px; color: var(--muted); }
+.document-breadcrumb-streaming { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
+.document-breadcrumbs :is(button):focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.document-breadcrumb-menu { position: fixed; z-index: 220; display: flex; flex-direction: column; box-sizing: border-box; padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 8px 24px #0003; }
+.document-breadcrumb-menu-heading { flex: 0 0 auto; padding: 6px 8px 8px; overflow: hidden; color: var(--muted); font-size: 12px; white-space: nowrap; text-overflow: ellipsis; }
+.document-breadcrumb-menu-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.document-breadcrumb-row { display: flex; align-items: center; flex: 0 0 auto; gap: 4px; padding: 2px 4px 2px 2px; border-radius: 7px; }
+.document-breadcrumb-row:is(:hover, :focus-within) { background: var(--button-surface); }
+.document-breadcrumb-row:is(.is-open, .is-here) { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.document-breadcrumb-row:is(.is-open, .is-here):is(:hover, :focus-within) { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.document-breadcrumb-row-title { display: flex; align-items: center; flex: 1; gap: 8px; min-width: 0; padding: 7px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.document-breadcrumb-row-label { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.document-breadcrumb-tag { flex: 0 0 auto; padding: 0 7px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; color: var(--accent); font-size: 10px; line-height: 16px; }
+.document-breadcrumb-tag.is-here { border-color: var(--accent); background: var(--accent); color: var(--primary-ink, var(--panel)); }
+.document-breadcrumb-tag.is-minimized { border-color: var(--line-strong); color: var(--muted); }
+.document-breadcrumb-action { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: var(--button-surface); color: var(--muted); cursor: pointer; }
+.document-breadcrumb-action:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+.document-breadcrumb-action:disabled { opacity: .3; cursor: default; }
+.document-breadcrumb-action-icon { width: 14px; height: 14px; }
+.document-breadcrumb-menu button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.document-breadcrumb-detail { position: fixed; z-index: 221; box-sizing: border-box; width: 300px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 8px 24px #0003; pointer-events: none; }
+.document-breadcrumb-detail-kind { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 11px; }
+.document-breadcrumb-detail-kind .document-breadcrumb-streaming { margin-left: auto; }
+.document-breadcrumb-detail-title { display: block; margin: 6px 0; font-size: 14px; overflow-wrap: anywhere; }
+.document-breadcrumb-detail blockquote { margin: 0 0 8px; padding-left: 8px; border-left: 2px solid var(--accent); color: var(--muted); font-size: 12px; font-style: italic; overflow-wrap: anywhere; }
+.document-breadcrumb-detail p { display: -webkit-box; margin: 0; overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.document-breadcrumb-detail-meta { display: flex; gap: 12px; margin-top: 8px; color: var(--muted); font-size: 11px; }
+
+@media (max-width: 640px) {
+  .document-breadcrumbs { padding-inline: 6px; }
+  .document-breadcrumb-trigger { max-width: 170px; }
+  .document-breadcrumb-row-title { min-height: 40px; }
+  .document-breadcrumb-action { flex-basis: 40px; width: 40px; height: 40px; }
+}

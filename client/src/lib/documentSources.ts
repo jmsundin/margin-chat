@@ -30,6 +30,13 @@ export function getCurrentDocumentText(conversation: Conversation): string {
   return conversation.document ? getEditableDocumentText(conversation) : getPrimaryDocumentSources(conversation).map((source) => source.content).join("\n\n");
 }
 
+/** A short plain-text excerpt for previews in navigation lists. */
+export function getDocumentPreview(conversation: Conversation, length = 140): string {
+  return getCurrentDocumentText(conversation).slice(0, 600)
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim().slice(0, length) || "No content yet";
+}
+
 /** Legacy references resolve against surviving blocks, never deleted history. */
 export function resolvePrimaryDocumentSource(conversation: Conversation, source: {
   sourceKind: "conversation" | "message" | "standalone-note" | "document";

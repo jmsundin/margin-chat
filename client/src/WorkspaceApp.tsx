@@ -37,6 +37,7 @@ import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } f
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import DocumentTabs from "./components/DocumentTabs";
 import DocumentChildTabs from "./components/DocumentChildTabs";
+import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import DocumentMenu from "./components/DocumentMenu";
 import DocumentViewsMenu from "./components/DocumentViewsMenu";
 import WorkspaceModeMenu from "./components/WorkspaceModeMenu";
@@ -44,7 +45,8 @@ import WorkspaceView from "./components/WorkspaceView";
 import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
-import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, minimizeDocument, reorderDocument, setDocumentWidth } from "./lib/documentWorkspace";
+import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
+import { getDocumentBackTarget, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
@@ -683,6 +685,9 @@ function WorkspaceAppContent({
     () => initialStoredStateRef.current!.state,
   );
   const [scrollingDocumentId, setScrollingDocumentId] = useState(state.activeConversationId);
+  // Back history per tab for breadcrumb navigation; it lasts for the session only.
+  const [documentHistory, setDocumentHistory] = useState<DocumentHistory>({});
+  const [besideRequest, setBesideRequest] = useState<{ id: string; sequence: number } | null>(null);
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
@@ -1333,6 +1338,11 @@ function WorkspaceAppContent({
       inline: "center",
     });
   }, [mainViewMode, state.activeConversationId, canvasWidth, chatPanelLayout.width, chatPanelLayout.fitsPair, vault.ready, isResizingSidebar, documentFocusSequence, activeMarginNotesVisible]);
+
+  useEffect(() => {
+    if (!besideRequest || mainViewMode !== "chat") return;
+    panelRefs.current[besideRequest.id]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+  }, [besideRequest]);
 
   useEffect(() => {
     setActiveOutlineItemId((current) =>
@@ -3266,6 +3276,10 @@ function WorkspaceAppContent({
       nextViewMode?: MainViewMode;
       preserveRail?: boolean;
       keepSidebarOpen?: boolean;
+      /** False focuses only this document (tabs, breadcrumbs) instead of reopening its closed ancestors. */
+      restorePath?: boolean;
+      /** Expand here: this document takes the replaced document's place, which closes. */
+      replaceId?: string;
     } = {},
   ) {
     revealMarginAncestors(conversationId);
@@ -3291,7 +3305,9 @@ function WorkspaceAppContent({
         }
 
         return {
-          ...focusDocument(current, conversationId),
+          ...(options.replaceId ? replaceDocument(current, options.replaceId, conversationId)
+            : options.restorePath === false ? showDocument(current, conversationId)
+            : focusDocument(current, conversationId)),
           railOpen: options.preserveRail ? current.railOpen : false,
         };
       });
@@ -3300,6 +3316,59 @@ function WorkspaceAppContent({
     if (isMobileViewport && !options.keepSidebarOpen) {
       setLeftSidebarOpen(false);
     }
+  }
+
+  /** Scrolling panes, pinned panes and the margin notes shown beside them. */
+  function getOnScreenDocumentIds() {
+    const ids = new Set([...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]);
+    function addNotes(conversation: Conversation) {
+      if (closedMarginNotes[conversation.id]) return;
+      for (const note of getMarginDocuments(conversation)) { ids.add(note.id); addNotes(note); }
+    }
+    for (const id of [...ids]) if (state.conversations[id]) addNotes(state.conversations[id]);
+    return ids;
+  }
+
+  function isDocumentOnScreen(conversationId: string) {
+    return getOnScreenDocumentIds().has(conversationId);
+  }
+
+  /** Expand here: like a browser tab, the focused document's place goes to the chosen document. */
+  function handleExpandDocumentHere(conversationId: string) {
+    const currentId = activeConversation.id;
+    const target = state.conversations[conversationId];
+    if (!target || conversationId === currentId) return;
+    // Visible documents, compact notes and pinned panes keep their places; focus moves to them.
+    if (isDocumentOnScreen(conversationId) || isCompactDocument(target) || pinnedDocumentIds.includes(currentId)) {
+      handleSelectConversation(conversationId, { restorePath: false });
+      return;
+    }
+    setDocumentHistory((history) => recordDocumentNavigation(history, currentId, conversationId));
+    handleSelectConversation(conversationId, { replaceId: currentId });
+  }
+
+  /** Open beside: show a document next to the focused one while focus stays put. */
+  function handleOpenDocumentBeside(conversationId: string) {
+    const anchorId = activeConversation.id;
+    if (!state.conversations[conversationId] || conversationId === anchorId) return;
+    revealMarginAncestors(conversationId);
+    if (!isDocumentOnScreen(conversationId)) {
+      const anchorPinned = pinnedDocumentIds.includes(anchorId);
+      const hostId = getMarginHostPath(state.conversations, conversationId)[0];
+      // A pinned document has no place in the scrolling strip, so the strip shows the target's family.
+      if (anchorPinned && !pinnedDocumentIds.includes(hostId)) setScrollingDocumentId(hostId);
+      setState((current) => openDocumentBeside(current, anchorPinned ? null : anchorId, conversationId));
+    }
+    setBesideRequest((current) => ({ id: conversationId, sequence: (current?.sequence ?? 0) + 1 }));
+  }
+
+  function handleDocumentBack() {
+    const currentId = activeConversation.id;
+    const previousId = getDocumentBackTarget(documentHistory, currentId, state.conversations);
+    if (!previousId) return;
+    const replace = !isDocumentOnScreen(previousId) && !pinnedDocumentIds.includes(currentId);
+    setDocumentHistory((history) => takeDocumentBack(history, currentId, state.conversations, replace));
+    handleSelectConversation(previousId, replace ? { replaceId: currentId } : { restorePath: false });
   }
 
   function handleRevealConversation(conversationId: string, options: { keepSidebarOpen?: boolean } = {}) {
@@ -3739,6 +3808,15 @@ function WorkspaceAppContent({
     "--document-notes-space": scrollingDocuments[0] && !closedMarginNotes[scrollingDocuments[0].id]
       && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
   } as CSSProperties;
+
+  function renderDocumentBreadcrumbs() {
+    const backId = getDocumentBackTarget(documentHistory, activeConversation.id, state.conversations);
+    return <DocumentBreadcrumbs conversations={state.conversations} focusedId={activeConversation.id}
+      onScreenIds={getOnScreenDocumentIds()} streamingIds={streamingThreadIds}
+      minimizedIds={new Set(getDocumentWorkspace(state.conversations, activeConversation.id).minimizedIds)}
+      backTitle={backId ? state.conversations[backId].title || "Untitled document" : null} onBack={handleDocumentBack}
+      onExpand={handleExpandDocumentHere} onOpenBeside={handleOpenDocumentBeside} />;
+  }
 
   function renderDocumentMenu(conversation: Conversation) {
     return <DocumentMenu conversation={conversation}
@@ -4185,7 +4263,7 @@ function WorkspaceAppContent({
                       onTogglePin={handleToggleDocumentPin}
                       onTogglePinScope={handleToggleDocumentPinScope}
                       canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
-                      onSelect={handleSelectConversation}
+                      onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
                       onMinimize={handleMinimizeDocument}
                       onClose={handleCloseDocument}
                       onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
@@ -4204,6 +4282,7 @@ function WorkspaceAppContent({
                         onToggleBranches={handleToggleRail} />
                     </div>
                   </header>
+                  {renderDocumentBreadcrumbs()}
                   <DocumentWorkspaceLayout width={documentDock?.width ?? 0.4} position={documentDock?.position}
                     onWidthChange={(width) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree: current.documentDock?.tree ?? null, width } }))}
                     dock={documentDock?.tree && visiblePinnedDocumentIds.length ? <DocumentDock
