@@ -13,7 +13,9 @@ import { getChatPanelLayout, resizeChatPanel } from "./lib/chatPanelLayout";
 import { getConversationAnnotationPreview, summarizeAnnotationText } from "./lib/annotationPreview";
 import {
   Fragment,
+  lazy,
   startTransition,
+  Suspense,
   type Dispatch,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -60,7 +62,6 @@ import { getDocumentBlockAuthorship, normalizeAISettings, normalizeDocumentDock,
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
-import KnowledgeGraphWorkspace from "./components/KnowledgeGraphWorkspace";
 import { saveUrlMapNode } from "./lib/urlMap";
 import { findSavedPublicTopic, savePublicTopic } from "./lib/publicTopicWorkspace";
 import type { PublicTopic } from "./lib/publicKnowledge";
@@ -77,7 +78,6 @@ import SearchModal from "./components/SearchModal";
 import SearchSourceFocus from "./components/SearchSourceFocus";
 import { resolveSearchSource } from "./lib/searchSource";
 import type { SearchEvidenceRef } from "./lib/conversationSearch";
-import StandaloneNotePanel from "./components/StandaloneNotePanel";
 import ThreadSidebar from "./components/ThreadSidebar";
 import ResizableSidebar from "./components/ResizableSidebar";
 import {
@@ -167,6 +167,9 @@ import type {
   MessageAnchorLink,
   SelectionDraft,
 } from "./types";
+
+// Map View pulls in the graph canvases and ELK layout; load it on first visit.
+const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWorkspace"));
 
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
@@ -4090,72 +4093,74 @@ function WorkspaceAppContent({
                 />
               </WorkspaceView>
               <WorkspaceView mode="graph" active={isGraphView}>
-                <KnowledgeGraphWorkspace
-                  isVisible={isGraphView}
-                  onToggleSidebar={handleToggleLeftSidebar}
-                  sidebarOpen={leftSidebarOpen}
-                  onAddChildNote={handleAddMapChildNote}
-                  onExpandTopicWithAI={(id) => { void topicExpansion.expand(id); }}
-                  onCancelTopicExpansion={topicExpansion.cancel}
-                  expandingTopicId={topicExpansion.pendingId}
-                  topicExpansionProgress={topicExpansion.progress}
-                  topicExpansionError={topicExpansion.error}
-                  onDismissTopicExpansionError={topicExpansion.dismissError}
-                  explorerContainer={graphExplorerContainer}
-                  onOpenExplorer={() => { setMapSidebarSection("explore"); setLeftSidebarOpen(true); }}
-                  onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
-                  onSaveUrlMapNode={(graph, nodeId) => setState((current) => saveUrlMapNode(current, graph, nodeId))}
-                  urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
-                  onSavePublicTopic={handleSavePublicTopic}
-                  onCreateMapNote={handleCreateMapNote}
-                  onSetMapConnection={handleSetMapConnection}
-                  onRemoveMapNote={handleRemoveMapNote}
-                  onUndoMapEdit={handleUndoMapEdit}
-                  mapEditMessage={mapEditMessage}
-                  canUndoMapEdit={Boolean(mapUndoRef.current)}
-                  key={`graph-${user.id}`}
-                  workspaceKey={storageUserId}
-                  threads={threadSummaries}
-                  activeConversationId={activeConversation.id}
-                  conversations={state.conversations}
-                  focusRequest={graphFocusRequest}
-                  onFocusRequestHandled={(requestId) => setGraphFocusRequest((current) => current?.requestId === requestId ? null : current)}
-                  graphLayouts={state.graphLayouts}
-                  groups={state.groups}
-                  relatedItems={jev.related}
-                  relatedStatus={jev.status}
-                  jev={{ userId: user.id, enabled: jevEnabled, ready: vault.ready }}
-                  onActivateConversation={handleSelectConversation}
-                  onAssignGroup={handleAssignConversationGroup}
-                  onCreateChildConversation={handleAddGraphChildChat}
-                  onOpenConversation={(conversationId) =>
-                    handleSelectConversation(conversationId, {
-                      nextViewMode: "chat",
-                    })
-                  }
-                  onToggleGroup={handleToggleConversationGroup}
-                  onUpdateGraphNodeLayouts={handleUpdateGraphNodeLayouts}
-                  renderDockedConversation={(conversationId, source) => {
-                    const conversation = state.conversations[conversationId];
-
-                    return conversation
-                      ? <>
-                          <GraphSourceFocus
-                            source={source}
-                            getPanelElement={() => graphPanelRefs.current[conversationId] ?? null}
-                          />
-                          {renderDocumentWithMarginNotes(conversation, "graph")}
-                        </>
-                      : null;
-                  }}
-                  renderExpandedConversation={(conversationId) => {
-                    const conversation = state.conversations[conversationId];
-
-                    return conversation
-                      ? renderDocumentWithMarginNotes(conversation, "graph")
-                      : null;
-                  }}
-                />
+                <Suspense fallback={<div className="workspace-view-loading" role="status">Opening Map View…</div>}>
+                  <KnowledgeGraphWorkspace
+                    isVisible={isGraphView}
+                    onToggleSidebar={handleToggleLeftSidebar}
+                    sidebarOpen={leftSidebarOpen}
+                    onAddChildNote={handleAddMapChildNote}
+                    onExpandTopicWithAI={(id) => { void topicExpansion.expand(id); }}
+                    onCancelTopicExpansion={topicExpansion.cancel}
+                    expandingTopicId={topicExpansion.pendingId}
+                    topicExpansionProgress={topicExpansion.progress}
+                    topicExpansionError={topicExpansion.error}
+                    onDismissTopicExpansionError={topicExpansion.dismissError}
+                    explorerContainer={graphExplorerContainer}
+                    onOpenExplorer={() => { setMapSidebarSection("explore"); setLeftSidebarOpen(true); }}
+                    onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
+                    onSaveUrlMapNode={(graph, nodeId) => setState((current) => saveUrlMapNode(current, graph, nodeId))}
+                    urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
+                    onSavePublicTopic={handleSavePublicTopic}
+                    onCreateMapNote={handleCreateMapNote}
+                    onSetMapConnection={handleSetMapConnection}
+                    onRemoveMapNote={handleRemoveMapNote}
+                    onUndoMapEdit={handleUndoMapEdit}
+                    mapEditMessage={mapEditMessage}
+                    canUndoMapEdit={Boolean(mapUndoRef.current)}
+                    key={`graph-${user.id}`}
+                    workspaceKey={storageUserId}
+                    threads={threadSummaries}
+                    activeConversationId={activeConversation.id}
+                    conversations={state.conversations}
+                    focusRequest={graphFocusRequest}
+                    onFocusRequestHandled={(requestId) => setGraphFocusRequest((current) => current?.requestId === requestId ? null : current)}
+                    graphLayouts={state.graphLayouts}
+                    groups={state.groups}
+                    relatedItems={jev.related}
+                    relatedStatus={jev.status}
+                    jev={{ userId: user.id, enabled: jevEnabled, ready: vault.ready }}
+                    onActivateConversation={handleSelectConversation}
+                    onAssignGroup={handleAssignConversationGroup}
+                    onCreateChildConversation={handleAddGraphChildChat}
+                    onOpenConversation={(conversationId) =>
+                      handleSelectConversation(conversationId, {
+                        nextViewMode: "chat",
+                      })
+                    }
+                    onToggleGroup={handleToggleConversationGroup}
+                    onUpdateGraphNodeLayouts={handleUpdateGraphNodeLayouts}
+                    renderDockedConversation={(conversationId, source) => {
+                      const conversation = state.conversations[conversationId];
+  
+                      return conversation
+                        ? <>
+                            <GraphSourceFocus
+                              source={source}
+                              getPanelElement={() => graphPanelRefs.current[conversationId] ?? null}
+                            />
+                            {renderDocumentWithMarginNotes(conversation, "graph")}
+                          </>
+                        : null;
+                    }}
+                    renderExpandedConversation={(conversationId) => {
+                      const conversation = state.conversations[conversationId];
+  
+                      return conversation
+                        ? renderDocumentWithMarginNotes(conversation, "graph")
+                        : null;
+                    }}
+                  />
+                </Suspense>
               </WorkspaceView>
               <WorkspaceView mode="chat" active={!isTileView && !isGraphView}>
                 <div className="chat-tree-workspace document-workspace">
