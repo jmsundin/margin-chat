@@ -197,6 +197,27 @@ export async function requestChatTitle(args: {
   prompt: string;
   serviceId: BackendServiceId;
 }): Promise<string> {
+  return requestTitle(args);
+}
+
+/** The server picks the model for document titles (OpenAI Luna). */
+export async function requestDocumentTitle(args: {
+  ai?: AISettings;
+  content: string;
+  expectedUserId?: string;
+}): Promise<string> {
+  const { content, ...rest } = args;
+  return requestTitle({ ...rest, kind: "document", prompt: content });
+}
+
+async function requestTitle(args: {
+  ai?: AISettings;
+  expectedUserId?: string;
+  kind?: "document";
+  modelId?: string;
+  prompt: string;
+  serviceId?: BackendServiceId;
+}): Promise<string> {
   const { expectedUserId, ...body } = args;
   const response = await apiFetch("/api/chat/title", {
     body: JSON.stringify(body),

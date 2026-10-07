@@ -85,8 +85,10 @@ import {
   requestDeleteDocument,
   requestChatReply,
   requestChatTitle,
+  requestDocumentTitle,
   requestUploadDocument,
 } from "./lib/api";
+import { DOCUMENT_TITLE_IDLE_MS, getDocumentTitleSource } from "./lib/documentTitle";
 import {
   getRecentModelSelectionsStorageKey,
   getStateSavedAtStorageKey,
@@ -836,6 +838,9 @@ function WorkspaceAppContent({
   const typingProgressByMessageIdRef = useRef<Record<string, number>>({});
   const currentStateRef = useRef(state);
   currentStateRef.current = state;
+  const documentTitleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const documentTitleRequests = useRef(new Set<string>());
+  useEffect(() => () => { for (const timer of documentTitleTimers.current.values()) clearTimeout(timer); }, []);
   const pendingMovedBlockFocus = useRef<{ conversationId: string; blockId: string } | null>(null);
   useLayoutEffect(() => {
     const request = pendingMovedBlockFocus.current;
@@ -1884,6 +1889,34 @@ function WorkspaceAppContent({
       currentStateRef.current = next;
       return next;
     });
+    scheduleDocumentTitle(conversationId);
+  }
+
+  function scheduleDocumentTitle(conversationId: string) {
+    if (documentTitleRequests.current.has(conversationId)) return;
+    clearTimeout(documentTitleTimers.current.get(conversationId));
+    documentTitleTimers.current.set(conversationId, setTimeout(() => {
+      documentTitleTimers.current.delete(conversationId);
+      const conversation = currentStateRef.current.conversations[conversationId];
+      const content = conversation && getDocumentTitleSource(conversation);
+      if (!conversation || !content) return;
+      const placeholderTitle = conversation.title;
+      // One attempt per document per session, so a failing provider is not retried on every keystroke.
+      documentTitleRequests.current.add(conversationId);
+      void requestDocumentTitle({ ai: normalizeAISettings(conversation.ai), content, expectedUserId: user.id })
+        .then((title) => {
+          setState((current) => {
+            const target = current.conversations[conversationId];
+            // Never replace a title the user typed while the request was running.
+            if (!target || target.title !== placeholderTitle) return current;
+            return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title } } };
+          });
+        })
+        .catch(() => {
+          // Keep the placeholder title when generation is unavailable.
+        })
+        .finally(() => { void onRefreshBilling(); });
+    }, DOCUMENT_TITLE_IDLE_MS));
   }
 
   function handleMoveDocumentBlock(sourceId: string, blockId: string, targetId: string, beforeBlockId: string | null) {
