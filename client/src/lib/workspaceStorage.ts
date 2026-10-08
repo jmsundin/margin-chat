@@ -10,6 +10,7 @@ import {
 } from "./workspaceMarkdown";
 import { createWorkspaceDocument } from "./workspaceModel";
 import { validVaultPath, type VaultFile } from "./vaultTypes";
+import { readFreshBytes, readFreshFile, readFreshText } from "./fileSnapshot";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
 const DIRECTORY_DATABASE_VERSION = 1;
@@ -480,7 +481,7 @@ function sameBytes(left: Uint8Array | null, right: Uint8Array | null) {
 
 async function readDirectoryBytesOrNull(handle: FileSystemDirectoryHandle, path: string): Promise<Uint8Array | null> {
   try {
-    return new Uint8Array(await (await (await getNestedFileHandle(handle, path)).getFile()).arrayBuffer());
+    return await readFreshBytes(() => getNestedFileHandle(handle, path));
   } catch (error) {
     if (isDomExceptionNamed(error, "NotFoundError")) return null;
     throw error;
@@ -505,7 +506,7 @@ async function writeDirectoryBytes(handle: FileSystemDirectoryHandle, path: stri
 
 async function readDirectoryFileOrNull(handle: FileSystemDirectoryHandle, path: string) {
   try {
-    return await (await (await getNestedFileHandle(handle, path)).getFile()).text();
+    return await readFreshText(() => getNestedFileHandle(handle, path));
   } catch (error) {
     if (isDomExceptionNamed(error, "NotFoundError")) return null;
     throw error;
@@ -525,9 +526,10 @@ async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, prefix =
       Object.assign(files, child.files);
       latestModified = Math.max(latestModified, child.latestModified);
     } else if (isSafeMarkdownPath(path)) {
-      const file = await (entry as FileSystemFileHandle).getFile();
-      files[path] = await file.text();
-      latestModified = Math.max(latestModified, file.lastModified);
+      const { text, lastModified } = await readFreshFile(async () => entry as FileSystemFileHandle,
+        async (file) => ({ text: await file.text(), lastModified: file.lastModified }));
+      files[path] = text;
+      latestModified = Math.max(latestModified, lastModified);
     }
   }
   return { files, latestModified };
