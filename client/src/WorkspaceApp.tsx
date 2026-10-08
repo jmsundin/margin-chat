@@ -77,6 +77,8 @@ import ChatHistoryImport from "./components/ChatHistoryImport";
 import CaptureInbox from "./components/CaptureInbox";
 import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
+import VaultSearchPalette, { type VaultSearchOpenMode } from "./components/VaultSearchPalette";
+import { createLocalVaultSearchProvider, type VaultSearchDocumentHit, type VaultSearchPassageHit } from "./lib/vaultSearch";
 import SearchSourceFocus from "./components/SearchSourceFocus";
 import { resolveSearchSource } from "./lib/searchSource";
 import type { SearchEvidenceRef } from "./lib/conversationSearch";
@@ -826,6 +828,8 @@ function WorkspaceAppContent({
     },
   });
   const [searchModalOpen, setSearchModalOpen] = useState(false);
+  /** The older filters-and-connections view, reached from the search box. */
+  const [searchExploreOpen, setSearchExploreOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSourceRequest, setSearchSourceRequest] = useState<{ source: SearchEvidenceRef; sequence: number } | null>(null);
   const [activeOutlineItemId, setActiveOutlineItemId] = useState<string | null>(
@@ -1049,9 +1053,12 @@ function WorkspaceAppContent({
     !isTileView &&
     !isGraphView &&
     leftSidebarOpen;
-  const searchResults = searchModalOpen
+  const searchResults = searchExploreOpen
     ? buildSearchResults(state.conversations, deferredSearchQuery, threadSummaries)
     : [];
+  const vaultSearchProvider = useMemo(() => createLocalVaultSearchProvider(() => ({
+    conversations: state.conversations, cloudDocuments: vault.cloudDocuments ?? [], groups: state.groups, categories: jev.categories,
+  })), [state.conversations, vault.cloudDocuments, state.groups, jev.categories]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(
@@ -2975,6 +2982,7 @@ function WorkspaceAppContent({
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
+    setSearchExploreOpen(false);
     setSearchQuery("");
 
     if (mainViewMode === "tiles") {
@@ -3064,6 +3072,7 @@ function WorkspaceAppContent({
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
+    setSearchExploreOpen(false);
     setSearchQuery("");
     setMainViewMode("chat");
 
@@ -3174,21 +3183,49 @@ function WorkspaceAppContent({
 
   function handleCloseSearch() {
     setSearchModalOpen(false);
+    setSearchExploreOpen(false);
   }
 
-  function handleOpenSearchSource(source: SearchEvidenceRef) {
+  /** Without a mode, focus the result as search always has; with one, follow Expand here / Open beside. */
+  function openSearchConversation(conversationId: string, mode?: VaultSearchOpenMode) {
+    if (!mode || mainViewMode !== "chat") handleSelectConversation(conversationId, { nextViewMode: "chat" });
+    else if (mode === "beside") handleOpenDocumentBeside(conversationId);
+    else handleExpandDocumentHere(conversationId);
+  }
+
+  function handleOpenSearchSource(source: SearchEvidenceRef, mode?: VaultSearchOpenMode) {
     if (source.sourceKind === "annotation" && source.noteId) {
       const migrated = Object.values(state.conversations).find((item) => item.parentId === source.conversationId && item.document?.marginNote?.legacyNoteId === source.noteId);
       if (migrated) {
         handleOpenSearchSource({ ...source, conversationId: migrated.id, sourceKind: "document",
-          sourceBlockId: migrated.document!.blocks[0]?.id, noteId: undefined, messageId: undefined });
+          sourceBlockId: migrated.document!.blocks[0]?.id, noteId: undefined, messageId: undefined }, mode);
         return;
       }
     }
     if (resolveSearchSource(state.conversations, source).status === "missing") return;
     setSearchModalOpen(false);
-    handleSelectConversation(source.conversationId, { nextViewMode: "chat" });
+    setSearchExploreOpen(false);
+    openSearchConversation(source.conversationId, mode);
     setSearchSourceRequest((current) => ({ source, sequence: (current?.sequence ?? 0) + 1 }));
+  }
+
+  function handleOpenVaultSearchDocument(hit: VaultSearchDocumentHit, mode: VaultSearchOpenMode) {
+    const target = hit.target;
+    if (target.kind === "cloud") {
+      // Still in the cloud: download it, then show it, as the cloud list does.
+      void vault.openCloudDocument(target.path).then(() => {
+        handleCloseSearch();
+        setMainViewMode("chat");
+        if (isMobileViewport) setLeftSidebarOpen(false);
+      }).catch(() => undefined);
+      return;
+    }
+    handleCloseSearch();
+    openSearchConversation(target.conversationId, mode);
+  }
+
+  function handleOpenVaultSearchPassage(hit: VaultSearchPassageHit, mode: VaultSearchOpenMode) {
+    handleOpenSearchSource(hit.evidence, mode);
   }
 
   function handleSelectSearchResult(conversationId: string) {
@@ -3711,6 +3748,7 @@ function WorkspaceAppContent({
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
+    setSearchExploreOpen(false);
     setSearchQuery("");
     setMainViewMode(nextViewMode);
 
@@ -4545,6 +4583,20 @@ function WorkspaceAppContent({
               onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)} />}
           /> : null}
 
+          <VaultSearchPalette
+            conversations={state.conversations}
+            currentConversationId={activeConversation?.id}
+            currentFamilyTitle={activeConversation ? state.conversations[getConversationRootId(state.conversations, activeConversation.id) ?? activeConversation.id]?.title : undefined}
+            isOpen={searchModalOpen}
+            onClose={handleCloseSearch}
+            onExplore={() => { setSearchModalOpen(false); setSearchExploreOpen(true); }}
+            onOpenDocument={handleOpenVaultSearchDocument}
+            onOpenPassage={handleOpenVaultSearchPassage}
+            onQueryChange={setSearchQuery}
+            openingPath={vault.openingPath ?? null}
+            provider={vaultSearchProvider}
+            query={searchQuery}
+          />
           <SearchModal
             conversations={state.conversations}
             currentConversation={activeConversation}
@@ -4552,7 +4604,7 @@ function WorkspaceAppContent({
             categories={jev.categories}
             jev={{ userId: user.id, enabled: jevEnabled, ready: vault.ready, serviceStatus: jev.status }}
             onOpenSource={handleOpenSearchSource}
-            isOpen={searchModalOpen}
+            isOpen={searchExploreOpen}
             onClose={handleCloseSearch}
             onQueryChange={setSearchQuery}
             onSelectResult={handleSelectSearchResult}
