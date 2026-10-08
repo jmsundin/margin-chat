@@ -23,7 +23,7 @@ const SCOPES: Array<{ id: VaultSearchScope; label: string }> = [
 
 function SearchIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>; }
 
-function highlight(text: string, query: string): ReactNode {
+export function highlight(text: string, query: string): ReactNode {
   const terms = [...new Set(vaultSearchTerms(query))].filter((term) => term.length > 1).sort((a, b) => b.length - a.length);
   if (!terms.length) return text;
   const escaped = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
@@ -35,7 +35,7 @@ function dateLabel(value?: string) {
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-function meta(hit: { kindLabel: string; familyTitle?: string; updatedAt?: string }) {
+export function meta(hit: { kindLabel: string; familyTitle?: string; updatedAt?: string }) {
   return [hit.kindLabel, hit.familyTitle, dateLabel(hit.updatedAt)].filter(Boolean).join(" · ");
 }
 
@@ -49,7 +49,7 @@ const entryKey = (entry: Entry) => entry.hit.key;
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Cmd+K: one box over the whole vault. Titles first, then passages; Enter opens here, Cmd+Enter beside. */
-export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore }: {
+export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen }: {
   isOpen: boolean;
   onClose: () => void;
   query: string;
@@ -63,6 +63,8 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   onOpenPassage: (hit: VaultSearchPassageHit, mode: VaultSearchOpenMode) => void;
   /** Opens the filters-and-connections view with the same query. */
   onExplore?: () => void;
+  /** Keeps these results open beside the documents. */
+  onKeepOpen?: (query: string, scope: VaultSearchScope) => void;
 }) {
   const [scope, setScope] = useState<VaultSearchScope>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -124,6 +126,11 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
       event.preventDefault();
       const next = event.key === "ArrowDown" ? Math.min(selectedIndex + 1, entries.length - 1) : Math.max(selectedIndex - 1, 0);
       setSelectedKey(entryKey(entries[next]));
+      return;
+    }
+    if (event.key === "Enter" && event.shiftKey && onKeepOpen && query.trim()) {
+      event.preventDefault();
+      onKeepOpen(query, scope);
       return;
     }
     if (event.key === "Enter" && selected && (event.target === inputRef.current || (event.target as HTMLElement).dataset.searchKey)) {
@@ -221,7 +228,8 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
       </div>
       <footer className="vault-search-footer">
         <span aria-hidden="true">{status}</span>
-        <span className="vault-search-keys"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open here · <kbd>{mod}↵</kbd> open beside</span>
+        <span className="vault-search-keys"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open here · <kbd>{mod}↵</kbd> open beside{onKeepOpen ? <> · <kbd>⇧↵</kbd> keep open</> : null}</span>
+        {onKeepOpen && searching ? <button className="vault-search-explore" onClick={() => onKeepOpen(query, scope)} title="Shift+Enter" type="button">Keep results open</button> : null}
         {onExplore ? <button className="vault-search-explore" onClick={onExplore} type="button">Filters and connections</button> : null}
       </footer>
     </section>
