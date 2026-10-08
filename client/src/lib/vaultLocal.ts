@@ -1,4 +1,5 @@
 import { zipSync, unzipSync, strToU8 } from "fflate";
+import { isStaleFileSnapshot, readFreshBytes, readFreshText } from "./fileSnapshot";
 import { emptyVault, validVaultPath, type VaultFile, type VaultSnapshot, type VaultStore } from "./vaultTypes";
 
 export function bytesToBase64(bytes: Uint8Array): string {
@@ -23,7 +24,7 @@ type StoredSnapshot = Omit<VaultSnapshot, "files" | "base" | "conflicts" | "dire
 };
 
 async function readText(directory: FileSystemDirectoryHandle, name: string): Promise<string | null> {
-  try { return await (await (await directory.getFileHandle(name)).getFile()).text(); }
+  try { return await readFreshText(() => directory.getFileHandle(name)); }
   catch (error) { if (error instanceof DOMException && error.name === "NotFoundError") return null; throw error; }
 }
 
@@ -85,67 +86,73 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       });
     },
     async read() {
-      const root = await directory();
-      const index = await readText(root, "vault-state.json");
-      if (index === null) return null;
-      const stored = JSON.parse(index) as StoredSnapshot;
-      if (stored.schemaVersion !== 1 || !stored.files || !stored.base || !Array.isArray(stored.conflicts)) {
-        throw new Error("The local vault index could not be read. Its Markdown history has been preserved.");
-      }
-      const history = await root.getDirectoryHandle("history", { create: true });
-      const cache = operationCache ?? createOperationCache();
-      async function readRef(ref: FileRef | null): Promise<VaultFile | null> {
-        if (!ref) return null;
-        if (!/^[a-f0-9]{64}\.(md|bin|json|txt)$/u.test(ref.object)) throw new Error("Invalid local vault history reference.");
-        let bytes = cache.objects.get(ref.object);
-        if (!bytes) {
-          bytes = new Uint8Array(await (await (await history.getFileHandle(ref.object)).getFile()).arrayBuffer());
-          if (await hashBytes(bytes) !== ref.object.slice(0, 64)) {
-            throw new Error("A local vault history file is incomplete or damaged. Its index and other Markdown files have been preserved.");
+      try {
+        const root = await directory();
+        const index = await readText(root, "vault-state.json");
+        if (index === null) return null;
+        const stored = JSON.parse(index) as StoredSnapshot;
+        if (stored.schemaVersion !== 1 || !stored.files || !stored.base || !Array.isArray(stored.conflicts)) {
+          throw new Error("The local vault index could not be read. Its Markdown history has been preserved.");
+        }
+        const history = await root.getDirectoryHandle("history", { create: true });
+        const cache = operationCache ?? createOperationCache();
+        async function readRef(ref: FileRef | null): Promise<VaultFile | null> {
+          if (!ref) return null;
+          if (!/^[a-f0-9]{64}\.(md|bin|json|txt)$/u.test(ref.object)) throw new Error("Invalid local vault history reference.");
+          let bytes = cache.objects.get(ref.object);
+          if (!bytes) {
+            bytes = await readFreshBytes(() => history.getFileHandle(ref.object));
+            if (await hashBytes(bytes) !== ref.object.slice(0, 64)) {
+              throw new Error("A local vault history file is incomplete or damaged. Its index and other Markdown files have been preserved.");
+            }
+            cache.objects.set(ref.object, bytes);
           }
-          cache.objects.set(ref.object, bytes);
-        }
-        // The same immutable bytes can carry different metadata in the working
-        // file, its sync base, or a conflict copy. Cache bytes, not references.
-        const file = { content: ref.encoding === "base64" ? bytesToBase64(bytes) : new TextDecoder("utf-8", { fatal: true }).decode(bytes),
-          ...(ref.encoding ? { encoding: ref.encoding } : {}), ...(ref.contentType ? { contentType: ref.contentType } : {}) };
-        // TextDecoder consumes a UTF-8 BOM. Such decoded text does not roundtrip
-        // to these bytes and must not share a content-cache entry with plain text.
-        if (ref.encoding === "base64" || !(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf)) {
-          cache.contents.set(contentKey(file), { bytes, hash: ref.object.slice(0, 64) });
-        }
-        return file;
-      }
-      const snapshot = emptyVault();
-      snapshot.remoteRevision = stored.remoteRevision;
-      if (stored.dismissedRecoveryIds) snapshot.dismissedRecoveryIds = stored.dismissedRecoveryIds;
-      if (stored.deferred && typeof stored.deferred === "object") {
-        const deferred = Object.fromEntries(Object.entries(stored.deferred)
-          .filter(([path, entry]) => validVaultPath(path) && typeof entry?.revision === "string"));
-        if (Object.keys(deferred).length) snapshot.deferred = deferred;
-      }
-      for (const [path, ref] of Object.entries(stored.files)) {
-        if (!validVaultPath(path)) throw new Error("Invalid path in local vault.");
-        snapshot.files[path] = (await readRef(ref))!;
-      }
-      for (const [path, base] of Object.entries(stored.base)) snapshot.base[path] = { revision: base.revision, file: await readRef(base.file) };
-      for (const { local, remote, base, result, ...metadata } of stored.conflicts) snapshot.conflicts.push({ ...metadata,
-        local: await readRef(local), remote: await readRef(remote),
-        ...(base !== undefined ? { base: await readRef(base) } : {}),
-        ...(result !== undefined ? { result: await readRef(result) } : {}),
-      });
-      if (stored.directoryBaselines) {
-        snapshot.directoryBaselines = {};
-        for (const [id, baseline] of Object.entries(stored.directoryBaselines)) {
-          const files: Record<string, VaultFile> = {};
-          for (const [path, ref] of Object.entries(baseline.files)) {
-            if (!validVaultPath(path)) throw new Error("Invalid path in local folder history.");
-            files[path] = (await readRef(ref))!;
+          // The same immutable bytes can carry different metadata in the working
+          // file, its sync base, or a conflict copy. Cache bytes, not references.
+          const file = { content: ref.encoding === "base64" ? bytesToBase64(bytes) : new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+            ...(ref.encoding ? { encoding: ref.encoding } : {}), ...(ref.contentType ? { contentType: ref.contentType } : {}) };
+          // TextDecoder consumes a UTF-8 BOM. Such decoded text does not roundtrip
+          // to these bytes and must not share a content-cache entry with plain text.
+          if (ref.encoding === "base64" || !(bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf)) {
+            cache.contents.set(contentKey(file), { bytes, hash: ref.object.slice(0, 64) });
           }
-          snapshot.directoryBaselines[id] = { manifest: baseline.manifest, files };
+          return file;
         }
+        const snapshot = emptyVault();
+        snapshot.remoteRevision = stored.remoteRevision;
+        if (stored.dismissedRecoveryIds) snapshot.dismissedRecoveryIds = stored.dismissedRecoveryIds;
+        if (stored.deferred && typeof stored.deferred === "object") {
+          const deferred = Object.fromEntries(Object.entries(stored.deferred)
+            .filter(([path, entry]) => validVaultPath(path) && typeof entry?.revision === "string"));
+          if (Object.keys(deferred).length) snapshot.deferred = deferred;
+        }
+        for (const [path, ref] of Object.entries(stored.files)) {
+          if (!validVaultPath(path)) throw new Error("Invalid path in local vault.");
+          snapshot.files[path] = (await readRef(ref))!;
+        }
+        for (const [path, base] of Object.entries(stored.base)) snapshot.base[path] = { revision: base.revision, file: await readRef(base.file) };
+        for (const { local, remote, base, result, ...metadata } of stored.conflicts) snapshot.conflicts.push({ ...metadata,
+          local: await readRef(local), remote: await readRef(remote),
+          ...(base !== undefined ? { base: await readRef(base) } : {}),
+          ...(result !== undefined ? { result: await readRef(result) } : {}),
+        });
+        if (stored.directoryBaselines) {
+          snapshot.directoryBaselines = {};
+          for (const [id, baseline] of Object.entries(stored.directoryBaselines)) {
+            const files: Record<string, VaultFile> = {};
+            for (const [path, ref] of Object.entries(baseline.files)) {
+              if (!validVaultPath(path)) throw new Error("Invalid path in local folder history.");
+              files[path] = (await readRef(ref))!;
+            }
+            snapshot.directoryBaselines[id] = { manifest: baseline.manifest, files };
+          }
+        }
+        return snapshot;
+      } catch (error) {
+        // readFreshFile already retried; another writer kept replacing these files.
+        if (!isStaleFileSnapshot(error)) throw error;
+        throw new Error("Your saved files kept changing while this tab was reading them. Close other Margin Chat tabs, then try again.", { cause: error });
       }
-      return snapshot;
     },
     async write(snapshot) {
       const root = await directory();
@@ -166,7 +173,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
         const object = `${hash}.${extension}`;
         if (!known.has(object)) {
           let existing: Uint8Array | null = cache.objects.get(object) ?? null;
-          try { existing ??= new Uint8Array(await (await (await history.getFileHandle(object)).getFile()).arrayBuffer()); }
+          try { existing ??= await readFreshBytes(() => history.getFileHandle(object)); }
           catch (error) {
             if (!(error instanceof DOMException && error.name === "NotFoundError")) throw error;
           }

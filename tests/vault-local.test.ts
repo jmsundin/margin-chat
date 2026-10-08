@@ -12,6 +12,7 @@ function simulatedOpfs() {
   const reads: string[] = [];
   let failure: { stage: "write" | "close"; matches: (path: string) => boolean } | null = null;
   let failRemovals = false;
+  let stale: { remaining: number; matches: (path: string) => boolean } | null = null;
   const missing = () => new DOMException("Missing file", "NotFoundError");
   const toBytes = (contents: string | ArrayBuffer) => typeof contents === "string" ? new TextEncoder().encode(contents) : new Uint8Array(contents).slice();
   function maybeFail(stage: "write" | "close", path: string) {
@@ -45,6 +46,12 @@ function simulatedOpfs() {
             reads.push(path);
             const bytes = files.get(path);
             if (!bytes) throw missing();
+            if (stale && stale.remaining > 0 && stale.matches(path)) {
+              stale.remaining -= 1;
+              // Chromium's File snapshot after the file changed on disk.
+              const changed = () => Promise.reject(new DOMException("An operation that depends on state cached in an interface object was made but the state had changed since it was read from disk.", "InvalidStateError"));
+              return { name, text: changed, arrayBuffer: changed } as unknown as File;
+            }
             return new File([bytes.slice().buffer], name);
           },
           async createWritable() {
@@ -64,6 +71,7 @@ function simulatedOpfs() {
     files, closes, reads,
     failOnce(stage: "write" | "close", matches: (path: string) => boolean) { failure = { stage, matches }; },
     preventCleanup(value: boolean) { failRemovals = value; },
+    staleReads(remaining: number, matches: (path: string) => boolean) { stale = { remaining, matches }; },
     navigator: {
       storage: { getDirectory: async () => directory() },
       locks: { request(name: string, operation: () => Promise<unknown>) {
@@ -113,6 +121,15 @@ describe("durable OPFS Markdown storage", () => {
     expect(await createBrowserVaultStore("alice").read()).toEqual(desired);
     opfs.files.set(objectPath("Original writing"), new Uint8Array());
     await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("incomplete or damaged");
+  }));
+
+  test("reopening takes a fresh file snapshot when a file changed after it was opened", async () => withOpfs(async (opfs) => {
+    const saved = snapshot("Written before the reload");
+    await createBrowserVaultStore("alice").write(saved);
+    opfs.staleReads(2, (path) => path.endsWith("/vault-state.json") || path === objectPath("Written before the reload"));
+    expect(await createBrowserVaultStore("alice").read()).toEqual(saved);
+    opfs.staleReads(Infinity, (path) => path.endsWith("/vault-state.json"));
+    await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("Close other Margin Chat tabs");
   }));
 
   test("directory observations reopen with exact companion bytes and advance atomically with the vault", async () => withOpfs(async (opfs) => {
