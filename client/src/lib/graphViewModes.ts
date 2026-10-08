@@ -6,6 +6,7 @@ export const GRAPH_VIEW_MODES = [
   { id: "focus", label: "Focus", description: "Explore the selected document and its immediate connections." },
   { id: "topics", label: "Topics", description: "Browse groups, then zoom into their documents." },
   { id: "lineage", label: "Lineage", description: "Follow branch ancestry from parent to child." },
+  { id: "clusters", label: "Clusters", description: "See documents gather around their most connected hubs, labeled by topic." },
   { id: "network", label: "Network", description: "Find hubs and bridges among explicit relationships." },
   { id: "evidence", label: "Evidence", description: "Organize claims and exact passages by their evidence roles." },
   { id: "timeline", label: "Timeline", description: "Browse document creation and editing dates." },

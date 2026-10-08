@@ -44,6 +44,9 @@ import { GraphAnalysisViews } from "./GraphAnalysisViews";
 import { GraphEvidenceView } from "./GraphEvidenceView";
 import { getGraphAnalysisEdges } from "../lib/graphAnalysis";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
+import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterLayout } from "../lib/gravityClusters";
+import { useClusterLabels } from "../lib/useClusterLabels";
+import GraphClusterLayer, { CLUSTER_DOT_SCALE } from "./GraphClusterLayer";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
 import GraphViewModeControls from "./GraphViewModeControls";
 import "./GraphViewModes.css";
@@ -104,6 +107,7 @@ const GRAPH_MINIMAP_MAX_EDGES = 320;
 const GRAPH_MINIMAP_MAX_NODES = 280;
 const GRAPH_SPARSE_GROUP_SCALE = 0.35;
 const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
+const EMPTY_CLUSTERS: GravityCluster[] = [];
 
 function getGraphSemanticLevel(scale: number): ConversationGraphSemanticLevel {
   return getMapScale(scale) === "groups" ? "territory" : "compact";
@@ -749,12 +753,13 @@ export default function ConversationGraphView({
   const viewMode = getGraphViewMode(navigation.state);
   const isCanvasMode = navigation.state.viewMode === "canvas";
   const isNetworkMode = navigation.state.viewMode === "network";
+  const isClustersMode = navigation.state.viewMode === "clusters";
   const isLineageMode = navigation.state.viewMode === "lineage";
   const panelView = isGraphPanelMode(viewMode) || navigation.state.contentLens === "concepts";
   const showBranches = isLineageMode || navigation.state.relationKinds.includes("branch");
   const showLinks = !isLineageMode && navigation.state.relationKinds.includes("link");
   const focusedNodeId = scope.kind === "focus" ? scope.conversationId : null;
-  const documentsOnly = !isCanvasMode && (navigation.state.overviewPresentation === "documents" || !!focusedNodeId || isNetworkMode || isLineageMode);
+  const documentsOnly = !isCanvasMode && (navigation.state.overviewPresentation === "documents" || !!focusedNodeId || isNetworkMode || isClustersMode || isLineageMode);
   const setSelectedConversationId = (id: string | null) => navigation.update({ selectedConversationId: id });
   const setDetailLevel = (value: ConversationGraphDetail) => navigation.update({ detailLevel: value });
   const setDockedConversationId = (id: string | null) => navigation.update({ dockedConversationId: id, source: null });
@@ -917,11 +922,29 @@ export default function ConversationGraphView({
     networkCache.current.layout = { ...networkCache.current.layout, nodes };
     return { ...networkCache.current.layout, nodes };
   }, [isNetworkMode, unfocusedScene.nodes, viewportSize, documentConnections, navigation.state.networkIteration, navigation.state.networkPins]);
-  const documentLayout = useMemo(() => networkLayout ? { ...networkLayout, arranged: true, centerNodeId: null }
+  const clusterCache = useRef<{ key: string; layout: GravityClusterLayout } | null>(null);
+  const clusterLayout = useMemo(() => {
+    if (!isClustersMode) return null;
+    const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections]);
+    if (clusterCache.current?.key !== key) clusterCache.current = { key, layout: layoutGravityClusters(unfocusedScene.nodes,
+      viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }, documentConnections) };
+    const positions = new Map(clusterCache.current.layout.nodes.map((node) => [node.conversationId, node]));
+    const nodes = unfocusedScene.nodes.map((node) => {
+      const placed = positions.get(node.conversationId)!;
+      return { ...node, x: placed.x, y: placed.y, width: placed.width, height: placed.height };
+    });
+    return { ...clusterCache.current.layout, nodes };
+  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections]);
+  const forceLayout = networkLayout ?? clusterLayout;
+  const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
+  const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
+  const clusterLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
+    active: !!jev?.ready && isVisible && isClustersMode, clusters: clusterLayout?.clusters ?? EMPTY_CLUSTERS, conversations });
+  const documentLayout = useMemo(() => forceLayout ? { ...forceLayout, arranged: true, centerNodeId: null }
     : documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 },
     { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }) : null,
-  [networkLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId]);
+  [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId]);
   const documentFootprint = useMemo(() => getDocumentNodeFootprint(viewport.scale), [viewport.scale]);
   const displayScene = useMemo(() => documentLayout
     ? replaceConversationGraphNodes(unfocusedScene, documentLayout.nodes)
@@ -1329,7 +1352,7 @@ export default function ConversationGraphView({
 
     const canvas = { width: viewportElement.clientWidth, height: viewportElement.clientHeight };
     if (isCanvasMode) { applyViewport(calculateFitViewport(scene, viewportElement)); fitAsOverviewRef.current = false; return; }
-    if (networkLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
+    if (forceLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
       applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }).viewport);
       fitAsOverviewRef.current = false;
@@ -1350,7 +1373,7 @@ export default function ConversationGraphView({
         { maxScale: Math.min(0.69, groupScaleThreshold - 0.01) }) : standardFit);
     }
     fitAsOverviewRef.current = false;
-  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, networkLayout]);
+  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout]);
 
   useEffect(() => {
     if (!isVisible || !viewportSize.width || !viewportSize.height || navigation.state.groupOverviewVersion === 1) return;
@@ -2121,7 +2144,7 @@ export default function ConversationGraphView({
       dockedConversationId: dockedConversationId ?? (detailLevel === "reader" ? selectedConversationId : null),
       overviewPresentation: nextMode === "canvas" ? "canvas" : nextMode === "topics" ? "map" : "documents",
       documentLayoutMode: nextMode === "lineage" ? documentLayoutMode === "tree-down" ? "tree-down" : "tree-right"
-        : nextMode === "focus" || nextMode === "network" ? "connections" : documentLayoutMode,
+        : nextMode === "focus" || nextMode === "network" || nextMode === "clusters" ? "connections" : documentLayoutMode,
       focusedTerritoryId: nextMode === "topics" ? restoredCamera?.focusedTerritoryId ?? null : null,
       focusedTerritoryScale: nextMode === "topics" ? restoredCamera?.focusedTerritoryScale ?? null : null,
       ...(restoredCamera ? { viewport: restoredCamera.viewport } : {}),
@@ -2158,6 +2181,13 @@ export default function ConversationGraphView({
   function openGroup(placement: ConversationGraphGroupPlacement) {
     const territory = territories.find((item) => item.id === placement.groupId);
     if (territory) fitTerritory(territory);
+  }
+
+  function openCluster(cluster: GravityCluster) {
+    const canvas = viewportRef.current;
+    if (!canvas) return;
+    interactions.cancel();
+    applyManualViewport(fitGravityCluster(cluster, { width: canvas.clientWidth, height: canvas.clientHeight }));
   }
 
   function fitTerritory(territory: MapTerritory) {
@@ -2389,6 +2419,12 @@ export default function ConversationGraphView({
         }}>{navigation.state.networkPins[selectedConversationId] ? "Unpin selected" : "Pin selected"}</button> : null}
         {Object.keys(navigation.state.networkPins).length ? <button type="button" onClick={() => navigation.update({ networkPins: {} })}>Clear pins ({Object.keys(navigation.state.networkPins).length})</button> : null}
       </div> : null}
+      {isClustersMode && !panelView ? <div className="graph-mode-context" aria-label="Cluster view status">
+        <span>Documents gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
+        {!jev?.enabled ? <span>Turn on Jev to name clusters by topic; hub titles are shown until then.</span>
+          : clusterLabels.loading ? <span aria-live="polite">Naming clusters…</span> : null}
+        <button type="button" onClick={fitGraph}>Show all clusters</button>
+      </div> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
@@ -2477,6 +2513,10 @@ export default function ConversationGraphView({
             selectedNodeId={selectedConversationId}
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
+          {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} placements={clusterPlacements}
+            connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={clusterDots}
+            selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
+            onOpenCluster={openCluster} onSelectDocument={selectConversation} /> : null}
           <div
             className="conversation-graph-stage"
             data-group-layout={focusedLayout?.arranged ? "spaced" : undefined}
@@ -2484,7 +2524,7 @@ export default function ConversationGraphView({
             data-document-layout-mode={documentsOnly ? documentLayoutMode : undefined}
             data-document-center-node-id={documentsOnly ? documentLayout?.centerNodeId ?? undefined : undefined}
             data-focused-node-id={focusedNodeId ?? undefined}
-            hidden={showTerritories}
+            hidden={showTerritories || clusterDots}
             data-rendered-edge-count={renderedEdges.length}
             data-rendered-node-count={renderedNodePlacements.length}
             data-scene-node-count={scene.nodes.length}

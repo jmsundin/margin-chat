@@ -6,8 +6,8 @@ export default function GraphViewModeControls({ mode, lens, onModeChange, onLens
   onModeChange: (mode: GraphViewMode) => void;
   onLensChange: (lens: GraphContentLens) => void;
 }) {
-  const primary = GRAPH_VIEW_MODES.slice(0, 4);
-  const advanced = GRAPH_VIEW_MODES.slice(4);
+  const primary = GRAPH_VIEW_MODES.slice(0, 5);
+  const advanced = GRAPH_VIEW_MODES.slice(5);
   return <div className="graph-view-modes" aria-label="Graph views">
     <div className="graph-view-mode-tabs" role="group" aria-label="Map mode">
       {primary.map((item) => <button key={item.id} type="button" aria-label={`${item.label} view`}
