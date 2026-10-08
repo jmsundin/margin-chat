@@ -16,6 +16,8 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
 
   useEffect(() => watchAppUpdates(setWaiting), []);
   useEffect(() => listenForAppRestart(setRestartStatus, setRestartError), []);
+  // The loaded-version toast shows once per version, so a reload before it fades does not bring it back.
+  useEffect(() => { if (previous !== commit) acknowledgeVersion(commit); }, [previous, commit]);
 
   useEffect(() => {
     const fallback = document.createElement("div");
@@ -57,10 +59,7 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
       {showLoadedVersion && <NotificationToast
         message={`${previous ? "App updated" : "App version"} · ${version}`}
         kind="success"
-        onDismiss={() => {
-          acknowledgeVersion(commit);
-          setShowLoadedVersion(false);
-        }}
+        onDismiss={() => setShowLoadedVersion(false)}
       />}
       {waiting && <NotificationToast
         message={restartError ?? restartStatus ?? `Update ready · currently loaded version ${version}`}

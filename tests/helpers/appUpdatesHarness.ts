@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 
 const browser = new Window({ url: "http://app-updates.test" });
-for (const name of ["window", "document", "navigator", "localStorage", "HTMLElement", "Element", "Node", "Text", "Event"]) {
+for (const name of ["window", "document", "navigator", "localStorage", "HTMLElement", "Element", "Node", "Text", "Event", "MutationObserver"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? browser : (browser as any)[name] });
 }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -97,33 +97,37 @@ registration.waiting = null;
 registration.installing = null;
 browser.localStorage.setItem(APP_VERSION_STORAGE_KEY, oldCommit);
 const render = async () => { await act(async () => { root.render(createElement(StrictMode, null, createElement(AppUpdateNotice, { commit }))); }); };
+const body = browser.document.body;
+const toasts = () => [...body.querySelectorAll(".notification-toast")] as any[];
+const dismissToast = async () => { await act(async () => { (body.querySelector('[aria-label="Dismiss notification"]') as any).click(); }); };
 await render();
-assert.match(container.textContent!, /App updated/);
-assert.match(container.textContent!, /Loaded version bbbbbbb/);
-assert.equal(container.querySelector("code")?.title, commit);
-await act(async () => { (container.querySelector('[aria-label="Dismiss update notification"]') as any).click(); });
-assert.equal(browser.localStorage.getItem(APP_VERSION_STORAGE_KEY), commit);
-assert.equal(container.querySelector('[role="status"]'), null);
-assert.match(container.textContent!, /Version bbbbbbb/);
+assert.match(body.textContent!, /App updated · bbbbbbb/);
+assert.ok(body.querySelector(".app-version-toast-host"), "Toasts fall back to their own host before the workspace mounts");
+assert.equal(browser.localStorage.getItem(APP_VERSION_STORAGE_KEY), commit, "Loaded version is acknowledged as soon as it shows");
+await dismissToast();
+assert.equal(toasts().length, 0);
 
 await act(async () => { root.unmount(); });
+assert.equal(body.querySelector(".app-version-toast-host"), null, "Fallback host is removed on unmount");
+const workspaceNotifications = browser.document.createElement("div");
+workspaceNotifications.className = "workspace-notifications";
+body.append(workspaceNotifications);
 root = createRoot(container as unknown as Element);
 registration.waiting = next;
 await render();
-assert.match(container.textContent!, /Update ready/);
-assert.match(container.textContent!, /Loaded version bbbbbbb/, "Waiting worker never changes loaded version");
-assert.match(container.textContent!, /Restart all open tabs/);
-assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "Restart now"), true);
-await act(async () => { (container.querySelector('[aria-label="Dismiss update notification"]') as any).click(); });
+assert.equal(toasts().length, 1, "Acknowledged version does not show again beside the update");
+assert.equal(toasts()[0].parentElement, workspaceNotifications, "Toasts join the workspace notifications");
+assert.match(body.textContent!, /Update ready · currently loaded version bbbbbbb/, "Waiting worker never changes loaded version");
+assert.equal([...body.querySelectorAll("button")].some((button) => button.textContent === "Restart now"), true);
+await dismissToast();
 await act(async () => { registration.dispatchEvent(new browser.Event("updatefound")); });
-assert.equal(container.querySelector('[role="status"]'), null, "Same waiting update stays dismissed");
+assert.equal(toasts().length, 0, "Same waiting update stays dismissed");
 await act(async () => { root.unmount(); });
+workspaceNotifications.remove();
 registration.waiting = null;
 root = createRoot(container as unknown as Element);
 await render();
-assert.equal(container.querySelector('[role="status"]'), null, "Acknowledged loaded version does not notify on every visit");
-await act(async () => { (container.querySelector("button") as any).click(); });
-assert.match(container.textContent!, /App version loaded/);
+assert.equal(toasts().length, 0, "Acknowledged loaded version does not notify on every visit");
 await act(async () => { root.unmount(); });
 assert.ok(registrations > 0);
 
