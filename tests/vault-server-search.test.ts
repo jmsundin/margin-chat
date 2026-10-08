@@ -213,6 +213,11 @@ describe("streamed index in the browser transport", () => {
     expect(index.revision).toBe(7);
     expect(index.entries.map((item) => item.id).slice(0, 2)).toEqual(["doc-0", "doc-1"]);
     expect(index.entries).toHaveLength(120);
+
+    // A stream cut cleanly between lines is not the whole vault.
+    const cut = new TextEncoder().encode(body.split("\n").slice(0, 61).join("\n") + "\n");
+    setApiTransport({ fetch: async () => new Response(cut, { headers: { "Content-Type": "application/x-ndjson" } }) });
+    await expect(createVaultTransport().index!()).rejects.toThrow("incomplete");
   });
 
   test("an older server's JSON index still works", async () => {

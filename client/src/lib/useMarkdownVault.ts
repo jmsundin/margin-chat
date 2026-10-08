@@ -425,8 +425,9 @@ export function useMarkdownVault(args: {
       now: Date.now(), idleMs: WORKING_SET_IDLE_MS,
     });
     if (!paths.length || stateRef.current !== displayedState.current) return;
-    const { snapshot: next, evicted } = await engine.evict(paths, new Map(index.entries.map((entry) => [entry.path, entry.id])));
-    if (evicted.length) publish(next);
+    const { evicted } = await engine.evict(paths, new Map(index.entries.map((entry) => [entry.path, entry.id])));
+    // Typing that arrived while the files were removed is saved on top, never replaced.
+    if (evicted.length) await persistAndPublish();
   }
 
   /** Exports and folder copies must contain the complete vault. */
@@ -592,11 +593,13 @@ export function useMarkdownVault(args: {
       : undefined,
     /** Download a document that is still only in the cloud, then show it. */
     async openCloudDocument(path: string) {
-      const entry = vaultIndexRef.current?.entries.find((candidate) => candidate.path === path);
+      // While the index is still arriving, the newest entries listed so far can be opened.
+      const listed = vaultIndexRef.current ?? vaultIndex;
+      const entry = listed?.entries.find((candidate) => candidate.path === path);
       if (!entry) return;
       // A margin note opens with the document it annotates.
       const focusId = entry.type === "note" && entry.parentPath
-        ? vaultIndexRef.current?.entries.find((candidate) => candidate.path === entry.parentPath)?.id ?? entry.id : entry.id;
+        ? listed?.entries.find((candidate) => candidate.path === entry.parentPath)?.id ?? entry.id : entry.id;
       setOpeningPath(path);
       try {
         await enqueue(async () => {

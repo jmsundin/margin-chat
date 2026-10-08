@@ -7,6 +7,7 @@ import type { HistoryImportReceipt } from "./chatHistoryImport";
 import { parseMarkdownWorkspace, preserveMarkdownFileLocation } from "./workspaceMarkdown";
 import { mergeVaultFile } from "./vaultMerge";
 import { recoverVaultAlternatives } from "./vaultRecovery";
+import { defaultVaultContentType, vaultFileBytes, vaultFileRevision } from "./vaultLocal";
 import { remapVaultMergeAnchors } from "./vaultMergeAnchors";
 
 function assignFile(snapshot: VaultSnapshot, path: string, file: VaultFile | null | undefined) {
@@ -256,6 +257,29 @@ export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, Va
   return result;
 }
 
+/**
+ * A view that still shows a document already returned to the cloud (another
+ * tab, or an edit racing the return) edits it from the copy it displayed.
+ * While that copy is still the cloud's revision, the document comes back as an
+ * ordinary local edit instead of looking deleted elsewhere.
+ */
+async function reclaimEvicted(snapshot: VaultSnapshot, next: Record<string, VaultFile>, expected: Record<string, VaultFile>) {
+  if (!snapshot.deferred) return snapshot;
+  let result = snapshot;
+  for (const [path, shown] of Object.entries(expected)) {
+    const entry = snapshot.deferred[path];
+    if (!entry || entry.deleted || snapshot.files[path] || snapshot.base[path] || sameVaultFile(shown, next[path] ?? null)) continue;
+    const revision = await vaultFileRevision(vaultFileBytes(shown), shown.encoding, shown.contentType ?? defaultVaultContentType(path));
+    if (revision !== entry.revision) continue;
+    if (result === snapshot) result = { ...snapshot, files: { ...snapshot.files }, base: { ...snapshot.base }, deferred: { ...snapshot.deferred } };
+    result.files[path] = shown;
+    result.base[path] = { revision, file: shown };
+    delete result.deferred![path];
+  }
+  if (result.deferred && !Object.keys(result.deferred).length) delete result.deferred;
+  return result;
+}
+
 /** A deferred cloud file stays remote until something on this device needs that path. */
 function isDeferred(snapshot: VaultSnapshot, path: string) {
   const entry = snapshot.deferred?.[path];
@@ -383,7 +407,7 @@ export class VaultSync {
     id: string; baseline: NonNullable<VaultSnapshot["directoryBaselines"]>[string];
   }) {
     return this.store.lock(async () => {
-      const snapshot = applyVaultEdits((await this.store.read()) ?? emptyVault(), next, expected);
+      const snapshot = applyVaultEdits(await reclaimEvicted((await this.store.read()) ?? emptyVault(), next, expected), next, expected);
       if (directory) snapshot.directoryBaselines = { ...snapshot.directoryBaselines, [directory.id]: structuredClone(directory.baseline) };
       await this.write(snapshot);
       return snapshot;

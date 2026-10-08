@@ -220,6 +220,17 @@ describe("workspace settings on a partially loaded device", () => {
     expect(view.groups.removed).toBeUndefined();
     expect(preserveDeferredWorkspaceReferences(rendered, stored, new Set())).toBe(rendered);
   });
+
+  test("documents returned to the cloud keep their place in groups and pins", () => {
+    const sidecar = (ids: string[], pins: string[]) => ({ content: JSON.stringify({ workspace: { view: {
+      pinnedItemIds: pins, groups: { work: { name: "Work", conversationIds: ids } },
+    } } }) });
+    const stored = sidecar(["old", "a", "older", "b", "c"], ["p", "old"]);
+    // The editor lists only what is on the device, and the user has since swapped b and c.
+    const view = JSON.parse(preserveDeferredWorkspaceReferences(sidecar(["a", "c", "b"], ["p"]), stored, new Set(["old", "older"])).content).workspace.view;
+    expect(view.groups.work.conversationIds).toEqual(["old", "a", "older", "c", "b"]);
+    expect(view.pinnedItemIds).toEqual(["p", "old"]);
+  });
 });
 
 function state0Root(files: Record<string, unknown>) {

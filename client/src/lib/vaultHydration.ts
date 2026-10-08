@@ -92,9 +92,10 @@ export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored:
   let changed = false;
 
   if (Array.isArray(before.pinnedItemIds)) {
-    const pinned = Array.isArray(view.pinnedItemIds) ? [...view.pinnedItemIds] : [];
-    for (const id of before.pinnedItemIds) if (deferred(id) && !pinned.includes(id)) { pinned.push(id); changed = true; }
-    view.pinnedItemIds = pinned;
+    const pinned = Array.isArray(view.pinnedItemIds) ? view.pinnedItemIds : [];
+    const restored = restoreHidden(before.pinnedItemIds, pinned, deferred);
+    if (restored) changed = true;
+    view.pinnedItemIds = restored ?? pinned;
   }
 
   const beforeGroups = isRecord(before.groups) ? before.groups : {};
@@ -109,9 +110,10 @@ export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored:
       if (group.conversationIds.every(deferred)) { groups[groupId] = group; changed = true; }
       continue;
     }
-    const ids = Array.isArray(current.conversationIds) ? [...current.conversationIds] : [];
-    for (const id of hidden) if (!ids.includes(id)) { ids.push(id); changed = true; }
-    groups[groupId] = { ...current, conversationIds: ids };
+    const ids = Array.isArray(current.conversationIds) ? current.conversationIds : [];
+    const restored = restoreHidden(group.conversationIds, ids, deferred);
+    if (restored) changed = true;
+    groups[groupId] = { ...current, conversationIds: restored ?? ids };
   }
   view.groups = groups;
 
@@ -125,6 +127,24 @@ export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored:
 
   if (!changed) return rendered;
   return { ...rendered, content: JSON.stringify(next, null, 2) };
+}
+
+/** Put each hidden id back after the id it followed before, so other devices
+ * see the same order. Null when nothing was missing. */
+function restoreHidden(before: unknown[], current: unknown[], hidden: (id: unknown) => id is string): unknown[] | null {
+  const listed = new Set(current);
+  const START = Symbol("start");
+  const after = new Map<unknown, string[]>();
+  let anchor: unknown = START;
+  for (const id of before) {
+    if (listed.has(id)) anchor = id;
+    else if (hidden(id)) {
+      listed.add(id);
+      after.set(anchor, [...after.get(anchor) ?? [], id]);
+    }
+  }
+  if (!after.size) return null;
+  return [...after.get(START) ?? [], ...current.flatMap((id) => [id, ...after.get(id) ?? []])];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

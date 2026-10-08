@@ -1,12 +1,10 @@
 import { apiFetch } from "./apiTransport";
 import { ApiError } from "./apiError";
 import { validVaultPath, type VaultCommitReceipt, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultSearchEvent, type VaultSearchPassage, type VaultTransport } from "./vaultTypes";
-import { bytesToBase64, vaultFileBytes } from "./vaultLocal";
+import { bytesToBase64, defaultVaultContentType as defaultContentType, vaultFileBytes, vaultFileRevision } from "./vaultLocal";
 
 const revisionPattern = /^[a-f0-9]{64}$/u;
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
-const defaultContentType = (path: string) => /\.md$/iu.test(path) ? "text/markdown; charset=utf-8"
-  : path.endsWith(".json") ? "application/json" : "application/octet-stream";
 
 function readManifest(value: unknown): VaultManifest {
   if (!isRecord(value) || value.schemaVersion !== 1 || !Number.isSafeInteger(value.revision)
@@ -115,16 +113,6 @@ async function* ndjsonLines(response: Response): AsyncGenerator<unknown> {
   }
 }
 
-async function fileRevision(bytes: Uint8Array, encoding: "base64" | undefined, contentType: string): Promise<string> {
-  // The server addresses immutable files by the hash of metadata plus exact bytes.
-  // Verify that receipt before accepting a download or acknowledging an upload.
-  const prefix = new TextEncoder().encode(`${encoding ?? "utf8"}\n${contentType}\n`);
-  const input = new Uint8Array(prefix.length + bytes.length);
-  input.set(prefix); input.set(bytes, prefix.length);
-  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", input.buffer))]
-    .map((value) => value.toString(16).padStart(2, "0")).join("");
-}
-
 async function request(path: string, init?: RequestInit) {
   const response = await apiFetch(path, { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(30_000), ...init });
   if (!response.ok) {
@@ -166,16 +154,20 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
         return readIndex(payload);
       }
       let revision: number | null = null;
+      let count = 0;
+      let received = 0;
       const entries: VaultIndexEntry[] = [];
       let reported = 50;
       for await (const line of ndjsonLines(response)) {
         if (revision === null) {
           if (!isRecord(line) || line.type !== "index") throw new Error("The server returned an invalid vault index.");
           if (line.configured === false) throw new Error("Cloud vault storage has not been configured. Your files are saved on this device.");
-          if (!Number.isSafeInteger(line.revision)) throw new Error("The server returned an invalid vault index.");
+          if (!Number.isSafeInteger(line.revision) || !Number.isSafeInteger(line.count)) throw new Error("The server returned an invalid vault index.");
           revision = line.revision as number;
+          count = line.count as number;
           continue;
         }
+        received += 1;
         const entry = readIndexEntry(line);
         if (entry) entries.push(entry);
         // Report at doubling sizes so the copies stay proportional to the index.
@@ -185,6 +177,8 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
         }
       }
       if (revision === null) throw new Error("The server returned an invalid vault index.");
+      // A connection cut between lines must not pass for the whole vault.
+      if (received !== count) throw new Error("The vault index arrived incomplete. Sync will retry.");
       return { revision, entries };
     },
     async search(query, { limit = 20, signal } = {}, onEvent) {
@@ -202,7 +196,7 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
     async read(path: string, entry: VaultEntry): Promise<VaultFile> {
       const response = await accountRequest(`/api/vault/file?${new URLSearchParams({ path, revision: entry.revision })}`);
       const bytes = new Uint8Array(await response.arrayBuffer());
-      if (await fileRevision(bytes, entry.encoding === "base64" ? "base64" : undefined, entry.contentType ?? defaultContentType(path)) !== entry.revision) {
+      if (await vaultFileRevision(bytes, entry.encoding === "base64" ? "base64" : undefined, entry.contentType ?? defaultContentType(path)) !== entry.revision) {
         throw new Error("A downloaded vault file does not match its saved revision. Your local files are preserved; retry cloud sync.");
       }
       return { content: entry.encoding === "base64"
@@ -238,7 +232,7 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
         if (change.content === null) continue;
         const contentType = change.contentType ?? (changes.length === 1 && change.encoding === "base64"
           ? "application/octet-stream" : defaultContentType(change.path));
-        const revision = await fileRevision(vaultFileBytes({ content: change.content, encoding: change.encoding }), change.encoding, contentType);
+        const revision = await vaultFileRevision(vaultFileBytes({ content: change.content, encoding: change.encoding }), change.encoding, contentType);
         if (entry.revision !== revision) throw new Error("The server did not acknowledge the uploaded file contents. Your edits remain saved locally; retry cloud sync.");
       }
       reportProjection(projection);

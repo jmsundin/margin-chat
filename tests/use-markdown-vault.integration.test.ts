@@ -36,7 +36,7 @@ test("documents idle for months return to the cloud and come back when opened", 
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Working set integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(7);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(8);
 }, 15000);
 
 test("last focused document survives reopening without editing or syncing", async () => {

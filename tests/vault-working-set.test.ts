@@ -124,6 +124,45 @@ describe("returning synced documents to the cloud", () => {
     expect(opened.deferred).toBeUndefined();
   });
 
+  test("a view still showing a returned document edits it without a conflict", async () => {
+    const remote = cloud();
+    const laptop = remote.device().sync;
+    await write(laptop, "old.md", "# Old\n\nFirst.\n");
+    await laptop.sync();
+    const phone = remote.device();
+    await phone.sync.sync();
+    // Another tab on the phone still shows old.md when this one returns it.
+    const shown = (await phone.sync.read()).files;
+    await phone.sync.evict(["old.md"]);
+
+    const edited = await phone.sync.edit({ ...shown, "old.md": markdown("# Old\n\nEdited in the other tab.\n") }, shown);
+    expect(edited.conflicts).toEqual([]);
+    expect(edited.deferred).toBeUndefined();
+    expect(Object.keys(edited.files).filter((path) => path.startsWith(".margin-chat/history/"))).toEqual([]);
+    await phone.sync.sync();
+    expect((await laptop.sync()).files["old.md"].content).toContain("Edited in the other tab.");
+  });
+
+  test("a stale view does not overwrite a newer cloud revision of a returned document", async () => {
+    const remote = cloud();
+    const laptop = remote.device().sync;
+    await write(laptop, "old.md", "# Old\n\nFirst.\n");
+    await laptop.sync();
+    const phone = remote.device();
+    await phone.sync.sync();
+    const shown = (await phone.sync.read()).files;
+    await phone.sync.evict(["old.md"]);
+    await write(laptop, "old.md", "# Old\n\nNewer on the laptop.\n");
+    await laptop.sync();
+    await phone.sync.sync();
+
+    const edited = await phone.sync.edit({ ...shown, "old.md": markdown("# Old\n\nStale edit.\n") }, shown);
+    expect(edited.deferred?.["old.md"]).toBeDefined();
+    expect(edited.conflicts.map((conflict) => conflict.path)).toEqual(["old.md"]);
+    await phone.sync.sync();
+    expect((await laptop.sync()).files["old.md"].content).toContain("Newer on the laptop.");
+  });
+
   test("unsaved edits, conflicts, folder copies and unsynced vaults are never evicted", async () => {
     const remote = cloud();
     const device = remote.device();
@@ -166,10 +205,14 @@ describe("working set records", () => {
     expect(loadOpenedDocuments("someone-else").size).toBe(0);
   });
 
-  test("a device looks for idle documents at most once a day", () => {
-    expect(claimWorkingSetCheck("u", now)).toBe(true);
-    expect(claimWorkingSetCheck("u", now + DAY / 2)).toBe(false);
-    expect(claimWorkingSetCheck("u", now + DAY)).toBe(true);
+  test("a device looks for idle documents at most once a day, once its records cover an idle period", () => {
+    // Documents read before records began would look idle, so the first look only starts the records.
+    expect(claimWorkingSetCheck("u", now)).toBe(false);
+    expect(claimWorkingSetCheck("u", now + 30 * DAY)).toBe(false);
+    const start = now + WORKING_SET_IDLE_MS;
+    expect(claimWorkingSetCheck("u", start)).toBe(true);
+    expect(claimWorkingSetCheck("u", start + DAY / 2)).toBe(false);
+    expect(claimWorkingSetCheck("u", start + DAY)).toBe(true);
   });
 
   test("pins, docked panes and the open document are protected; an unreadable sidecar protects everything", () => {

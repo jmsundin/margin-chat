@@ -17,6 +17,8 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "Event", "
 }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 let writeGate: ReturnType<typeof deferred> | null = null;
+// Holds the first matching local file write open, so a test can act while it is pending.
+let gatedWrite: { when: (file: string, contents: string) => boolean; gate: ReturnType<typeof deferred>; entered: ReturnType<typeof deferred> } | null = null;
 let writeEntered: ReturnType<typeof deferred> | null = null;
 let failLocalWrites = false;
 function directory(name: string): any {
@@ -47,6 +49,12 @@ function directory(name: string): any {
               abort: async () => undefined,
               async close() {
                 if (child === "vault-journal.json" && failLocalWrites) throw new DOMException("Injected local disk failure", "QuotaExceededError");
+                if (gatedWrite?.when(child, pending.toString())) {
+                  const held = gatedWrite;
+                  gatedWrite = null;
+                  held.entered.resolve();
+                  await held.gate.promise;
+                }
                 if (child === "vault-journal.json" && writeGate) {
                   const gate = writeGate;
                   writeGate = null;
@@ -719,14 +727,32 @@ async function checkWorkingSet() {
   // Months later, without opening it again, the next daily check returns it.
   const openedKey = `margin-chat:vault-opened:${user.id}`;
   const checkedKey = `margin-chat:vault-working-set-checked:${user.id}`;
+  const sinceKey = `margin-chat:vault-working-set-since:${user.id}`;
+  assert(browser.localStorage.getItem(sinceKey), "The device did not start recording what it opens.");
   const opened = JSON.parse(browser.localStorage.getItem(openedKey) ?? "{}");
   browser.localStorage.setItem(openedKey, JSON.stringify({ ...opened, idle: Date.now() - 200 * 24 * 60 * 60 * 1000 }));
+  browser.localStorage.setItem(sinceKey, String(Date.now() - 200 * 24 * 60 * 60 * 1000));
   browser.localStorage.removeItem(checkedKey);
   if (current.state.activeConversationId === "idle") {
     await act(async () => { current.setState((state: any) => ({ ...state, activeConversationId: "current" })); });
   }
-  await act(async () => { await current.vault.syncNow(); });
+  // Typing while the idle document is being removed from this device is kept.
+  const removing = deferred();
+  const removalEntered = deferred();
+  gatedWrite = { when: (file, contents) => file !== "vault-journal.json" && contents.includes('"deferred"') && contents.includes("Docs/idle.md"),
+    gate: removing, entered: removalEntered };
+  const refresh = current.vault.syncNow();
+  await removalEntered.promise;
+  await act(async () => { current.setState((state: any) => ({ ...state, conversations: { ...state.conversations,
+    current: { ...state.conversations.current, title: "Typed while returning" } } })); });
+  removing.resolve();
+  await act(async () => { await refresh; });
   await until(() => current.vault.cloudDocuments.length === 1, "A document idle for months stayed on the device.");
+  assert.equal(current.state.conversations.current?.title, "Typed while returning", "Returning a document replaced newer typing.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(current.state.conversations.current?.title, "Typed while returning", "Typing during the return was reverted by the next save.");
+  assert(Object.values((await local.read())!.files).some((file: any) => file.content.includes("Typed while returning")),
+    "Typing during the return did not reach durable Markdown.");
   assert.equal(current.vault.cloudDocuments[0].id, "idle");
   assert(!current.state.conversations.idle, "The returned document is still shown as downloaded.");
   assert(current.state.conversations.current, "A current document left the device.");
@@ -740,7 +766,7 @@ async function checkWorkingSet() {
   assert.equal(current.vault.cloudDocuments.length, 0);
   const files = (await remote.snapshot(user.id)).manifest.files;
   assert(!files["Docs/idle.md"].deleted && !files["Docs/current.md"].deleted, "Returning a document changed the cloud.");
-  console.log(JSON.stringify({ checks: ["arrivals kept", "idle document returned", "current kept", "identity kept", "opens on demand", "opened kept", "cloud unchanged"] }));
+  console.log(JSON.stringify({ checks: ["arrivals kept", "idle document returned", "typing during return kept", "current kept", "identity kept", "opens on demand", "opened kept", "cloud unchanged"] }));
 }
 try {
   if (partialScenario) await checkPartialLoad();

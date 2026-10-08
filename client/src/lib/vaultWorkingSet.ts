@@ -7,6 +7,7 @@ export const WORKING_SET_CHECK_MS = 24 * 60 * 60 * 1000;
 
 const openedKey = (userId: string) => `margin-chat:vault-opened:${userId}`;
 const checkedKey = (userId: string) => `margin-chat:vault-working-set-checked:${userId}`;
+const sinceKey = (userId: string) => `margin-chat:vault-working-set-since:${userId}`;
 
 /** When each document was last opened on this device, by id. */
 export function loadOpenedDocuments(userId: string): Map<string, number> {
@@ -32,6 +33,14 @@ export function recordOpenedDocuments(userId: string, ids: Iterable<string>, now
 /** Whether a day has passed since this device last looked, recording this look. */
 export function claimWorkingSetCheck(userId: string, now = Date.now()) {
   try {
+    // Documents read before this device kept records would look idle, so
+    // nothing returns until the records cover a whole idle period.
+    const since = Number(localStorage.getItem(sinceKey(userId)) ?? 0);
+    if (!since || !Number.isFinite(since) || since > now) {
+      localStorage.setItem(sinceKey(userId), String(now));
+      return false;
+    }
+    if (now - since < WORKING_SET_IDLE_MS) return false;
     const last = Number(localStorage.getItem(checkedKey(userId)) ?? 0);
     if (Number.isFinite(last) && now - last < WORKING_SET_CHECK_MS && last <= now) return false;
     localStorage.setItem(checkedKey(userId), String(now));
