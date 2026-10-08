@@ -84,6 +84,7 @@ import { resolveSearchSource } from "./lib/searchSource";
 import type { SearchEvidenceRef } from "./lib/conversationSearch";
 import ThreadSidebar from "./components/ThreadSidebar";
 import ResizableSidebar from "./components/ResizableSidebar";
+import MobileEdgeSwipe from "./components/MobileEdgeSwipe";
 import CloudVaultIndex, { VaultFetchIndicator } from "./components/CloudVaultIndex";
 import {
   ApiError,
@@ -4136,6 +4137,17 @@ function WorkspaceAppContent({
               type="button"
             />
           ) : null}
+
+          {isMobileViewport && mainViewMode === "chat" ? <MobileEdgeSwipe
+            disabled={searchModalOpen}
+            sidebarOpen={leftSidebarOpen}
+            onCloseSidebar={() => setLeftSidebarOpen(false)}
+            onOpenSearch={handleOpenSearch}
+            onOpenSidebar={() => {
+              setState((current) => current.railOpen ? { ...current, railOpen: false } : current);
+              setLeftSidebarOpen(true);
+            }}
+          /> : null}
 
           <main className="workspace">
             <ResizableSidebar collapsed={!leftSidebarOpen} mobile={isMobileViewport} onResizingChange={setIsResizingSidebar}>
