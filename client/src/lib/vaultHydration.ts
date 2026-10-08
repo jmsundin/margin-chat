@@ -36,6 +36,26 @@ export function vaultHydrationClosure(index: VaultIndexEntry[], paths: Iterable<
   return result;
 }
 
+/**
+ * Documents to return to the cloud: those whose families were not opened on
+ * this device or edited anywhere within `idleMs`. Everything a remaining
+ * document needs (its family and linked families) stays, so nothing left on
+ * the device loses a relationship and nothing is fetched straight back.
+ */
+export function planVaultEviction(index: VaultIndexEntry[], localPaths: Iterable<string>, { opened, protectedIds, now, idleMs }: {
+  opened: ReadonlyMap<string, number>; protectedIds: ReadonlySet<string>; now: number; idleMs: number;
+}): string[] {
+  const local = new Set(localPaths);
+  const kept = index.filter((entry) => local.has(entry.path)).filter((entry) => {
+    if (protectedIds.has(entry.id)) return true;
+    const edited = Date.parse(entry.updated ?? entry.created ?? "");
+    const used = Math.max(opened.get(entry.id) ?? 0, Number.isFinite(edited) ? edited : now);
+    return now - used < idleMs;
+  });
+  const keep = vaultHydrationClosure(index, kept.map((entry) => entry.path));
+  return index.filter((entry) => local.has(entry.path) && !keep.has(entry.path)).map((entry) => entry.path);
+}
+
 /** Documents most recently created or edited, newest first. */
 export function recentVaultEntries(index: VaultIndexEntry[], limit = Infinity): VaultIndexEntry[] {
   return index.filter((entry) => entry.type === "conversation")

@@ -339,6 +339,38 @@ export class VaultSync {
     });
   }
 
+  /**
+   * Return synced files to the cloud. Each leaves this device and stays listed
+   * as deferred at its synced revision, exactly as on a device that never
+   * downloaded it. A file with local changes or a conflict, or one this device
+   * has not synchronized, stays. Never runs while a folder is connected, since
+   * the folder mirrors every file.
+   */
+  evict(paths: Iterable<string>, ids: ReadonlyMap<string, string> = new Map()) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      const evicted: string[] = [];
+      if (!snapshot.remoteRevision || Object.keys(snapshot.directoryBaselines ?? {}).length) return { snapshot, evicted };
+      const conflicted = new Set(snapshot.conflicts.map((conflict) => conflict.path));
+      const deferred = { ...snapshot.deferred };
+      for (const path of paths) {
+        const file = snapshot.files[path];
+        const base = snapshot.base[path];
+        if (!file || !base?.file || !sameVaultFile(file, base.file) || conflicted.has(path) || path === "workspace.json") continue;
+        deferred[path] = { revision: base.revision, deleted: false,
+          ...(file.encoding ? { encoding: file.encoding } : {}), ...(file.contentType ? { contentType: file.contentType } : {}),
+          ...(ids.has(path) ? { id: ids.get(path) } : {}) };
+        delete snapshot.files[path];
+        delete snapshot.base[path];
+        evicted.push(path);
+      }
+      if (!evicted.length) return { snapshot, evicted };
+      snapshot.deferred = deferred;
+      await this.write(snapshot);
+      return { snapshot, evicted };
+    });
+  }
+
   read() { return this.store.lock(async () => (await this.store.read()) ?? emptyVault()); }
 
   private async write(snapshot: VaultSnapshot) {

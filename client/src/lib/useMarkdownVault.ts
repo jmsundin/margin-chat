@@ -8,7 +8,8 @@ import { createVaultTransport } from "./vaultApi";
 import { bytesToBase64, createBrowserVaultStore, exportVault, importVault } from "./vaultLocal";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
 import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSearchEvent, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
-import { preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
+import { planVaultEviction, preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
+import { WORKING_SET_IDLE_MS, claimWorkingSetCheck, loadOpenedDocuments, recordOpenedDocuments, workspaceReferenceIds } from "./vaultWorkingSet";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import {
   canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, requestLocalDirectoryPermission, clearLocalDirectory, getLocalDirectoryStatus,
@@ -346,6 +347,8 @@ export function useMarkdownVault(args: {
         try {
           const entries = unit.flatMap((path) => plan.manifest.files[path] ? [[path, plan.manifest.files[path]] as [string, VaultEntry]] : []);
           if (await engine.pull(entries)) {
+            // Brought here on purpose, so these stay for a while even if not opened.
+            recordOpenedDocuments(storageUserId, unit.flatMap((path) => byPath.get(path)?.id ?? []));
             // Publishing one at a time keeps a later arrival from being replaced by an earlier read.
             publishing = publishing.then(async () => {
               await persistAndPublish();
@@ -394,19 +397,36 @@ export function useMarkdownVault(args: {
     const snapshot = await engine.read();
     const sidecar = snapshot.files["workspace.json"];
     const entries = vaultIndexRef.current?.entries;
-    if (!snapshot.deferred || !sidecar || sidecar.encoding || !entries) return false;
-    const ids = new Set<string>();
-    try {
-      const view = JSON.parse(sidecar.content)?.workspace?.view;
-      for (const id of Array.isArray(view?.pinnedItemIds) ? view.pinnedItemIds : []) if (typeof id === "string") ids.add(id);
-      const panes = view?.documentDock?.tree ? [view.documentDock.tree] : [];
-      while (panes.length) {
-        const pane = panes.pop();
-        if (pane?.type === "pane" && typeof pane.documentId === "string") ids.add(pane.documentId);
-        else if (pane?.type === "split") panes.push(pane.first, pane.second);
-      }
-    } catch { return false; }
+    if (!snapshot.deferred || !sidecar || !entries) return false;
+    const ids = workspaceReferenceIds(sidecar);
+    if (!ids?.size) return false;
     return hydratePaths(entries.filter((entry) => ids.has(entry.id)).map((entry) => entry.path));
+  }
+
+  /**
+   * Keep a bounded working set: documents not opened here or edited anywhere
+   * for months go back to the cloud, listed and searchable, and open on demand.
+   * Runs at most daily, only when everything on this device is synchronized.
+   */
+  async function evictIdleDocuments(snapshot: VaultSnapshot) {
+    if (!enabledRef.current || !engine.transport.index || !snapshot.remoteRevision) return;
+    if (Object.keys(snapshot.directoryBaselines ?? {}).length || snapshot.conflicts.length || pendingVaultChanges(snapshot).length) return;
+    if (stateRef.current !== displayedState.current || localInFlight.current) return;
+    const references = workspaceReferenceIds(snapshot.files["workspace.json"]);
+    if (!references || !claimWorkingSetCheck(storageUserId)) return;
+    let index = vaultIndexRef.current;
+    if (!index || index.revision < snapshot.remoteRevision) {
+      try { index = await engine.transport.index(); } catch { return; }
+      setIndex(index);
+    }
+    const active = stateRef.current.activeConversationId;
+    const paths = planVaultEviction(index.entries, Object.keys(snapshot.files), {
+      opened: loadOpenedDocuments(storageUserId), protectedIds: new Set([...references, ...(active ? [active] : [])]),
+      now: Date.now(), idleMs: WORKING_SET_IDLE_MS,
+    });
+    if (!paths.length || stateRef.current !== displayedState.current) return;
+    const { snapshot: next, evicted } = await engine.evict(paths, new Map(index.entries.map((entry) => [entry.path, entry.id])));
+    if (evicted.length) publish(next);
   }
 
   /** Exports and folder copies must contain the complete vault. */
@@ -441,6 +461,7 @@ export function useMarkdownVault(args: {
       // Capture typing that occurred while a network request or directory read was pending.
       const snapshot = await persistAndPublish();
       await writeFolder(snapshot);
+      if (sync && enabledRef.current) await evictIdleDocuments(snapshot).catch(() => undefined);
       if (!enabledRef.current && mounted.current) setStorageMode("local");
     } catch (error) {
       // Even failed sync may have persisted remote revisions/conflicts. Keep later typing first.
@@ -496,6 +517,11 @@ export function useMarkdownVault(args: {
     });
     return () => { mounted.current = false; };
   }, [engine, storageUserId]);
+
+  // Opening a document keeps it, and what it links to, on this device.
+  useEffect(() => {
+    if (ready && args.state.activeConversationId) recordOpenedDocuments(storageUserId, [args.state.activeConversationId]);
+  }, [ready, storageUserId, args.state.activeConversationId]);
 
   useLayoutEffect(() => {
     if (!ready) return;

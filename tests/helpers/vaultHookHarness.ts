@@ -122,12 +122,13 @@ const historyScenario = process.argv.includes("--chat-history");
 const focusScenario = process.argv.includes("--document-focus");
 const projectionScenario = process.argv.includes("--projection-pending");
 const partialScenario = process.argv.includes("--partial-load");
+const workingSetScenario = process.argv.includes("--working-set");
 let projectionPending = projectionScenario;
 let commitRequests = 0;
 function vaultResponse(result: any) {
   return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest?.revision ?? result.revision } } : result);
 }
-if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -152,7 +153,7 @@ globalThis.fetch = (async (input: any, init: any) => {
     const source = await remote.readFile({ userId: user.id, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
     return new Response(source.bytes, { headers: { "Content-Type": source.contentType } });
   }
-  if (url.pathname === "/api/vault/index" && partialScenario) return Response.json(await remote.index(user.id));
+  if (url.pathname === "/api/vault/index" && (partialScenario || workingSetScenario)) return Response.json(await remote.index(user.id));
   if (url.pathname === "/api/vault/commit") {
     commitRequests++;
     return vaultResponse(await remote.commit(user.id, JSON.parse(init.body).changes));
@@ -702,8 +703,48 @@ async function checkPartialLoad() {
   console.log(JSON.stringify({ checks: ["ready before cloud", "arriving indicator", "recent documents first", "index ordered by activity",
     "older documents deferred", "open on demand", "partial edits leave cloud documents untouched", "complete download before export"] }));
 }
+async function checkWorkingSet() {
+  const doc = (id: string, updated: string) => ({ path: `Docs/${id}.md`, baseRevision: null,
+    content: `---\nmargin-chat-id: "${id}"\ntitle: "${id}"\nupdated: "${updated}"\n---\n# ${id}\n\nBody of ${id}.\n` });
+  await remote.commit(user.id, [doc("idle", "2025-01-01T00:00:00.000Z"), doc("current", new Date().toISOString())]);
+  networkReleased = true;
+  initialNetwork.resolve();
+  await act(async () => { root.render(createElement(Host)); });
+  // Documents a new device brings in stay, even old ones.
+  await until(() => current?.vault.ready && current.vault.matchesCloud && current.state.conversations.idle && current.state.conversations.current,
+    "The new device did not bring in its documents.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert(current.state.conversations.idle, "A document that just arrived went straight back to the cloud.");
+
+  // Months later, without opening it again, the next daily check returns it.
+  const openedKey = `margin-chat:vault-opened:${user.id}`;
+  const checkedKey = `margin-chat:vault-working-set-checked:${user.id}`;
+  const opened = JSON.parse(browser.localStorage.getItem(openedKey) ?? "{}");
+  browser.localStorage.setItem(openedKey, JSON.stringify({ ...opened, idle: Date.now() - 200 * 24 * 60 * 60 * 1000 }));
+  browser.localStorage.removeItem(checkedKey);
+  if (current.state.activeConversationId === "idle") {
+    await act(async () => { current.setState((state: any) => ({ ...state, activeConversationId: "current" })); });
+  }
+  await act(async () => { await current.vault.syncNow(); });
+  await until(() => current.vault.cloudDocuments.length === 1, "A document idle for months stayed on the device.");
+  assert.equal(current.vault.cloudDocuments[0].id, "idle");
+  assert(!current.state.conversations.idle, "The returned document is still shown as downloaded.");
+  assert(current.state.conversations.current, "A current document left the device.");
+  assert.equal((await local.read())!.deferred?.["Docs/idle.md"]?.id, "idle", "The returned document lost its identity.");
+
+  await act(async () => { await current.vault.openCloudDocument("Docs/idle.md"); });
+  assert.equal(current.state.activeConversationId, "idle", "The returned document did not open on demand.");
+  browser.localStorage.removeItem(checkedKey);
+  await act(async () => { await current.vault.syncNow(); });
+  assert(current.state.conversations.idle, "An opened document was returned to the cloud.");
+  assert.equal(current.vault.cloudDocuments.length, 0);
+  const files = (await remote.snapshot(user.id)).manifest.files;
+  assert(!files["Docs/idle.md"].deleted && !files["Docs/current.md"].deleted, "Returning a document changed the cloud.");
+  console.log(JSON.stringify({ checks: ["arrivals kept", "idle document returned", "current kept", "identity kept", "opens on demand", "opened kept", "cloud unchanged"] }));
+}
 try {
   if (partialScenario) await checkPartialLoad();
+  else if (workingSetScenario) await checkWorkingSet();
   else if (projectionScenario) await checkProjectionPending();
   else if (focusScenario) await checkDocumentFocus();
   else if (historyScenario) await checkChatHistory();
