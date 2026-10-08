@@ -27,6 +27,7 @@ const cloudDocuments: VaultIndexEntry[] = [{ path: "school.md", id: "school", ty
 const provider = createLocalVaultSearchProvider(() => ({ conversations, cloudDocuments }));
 const opened: string[] = [];
 let explored = 0;
+const kept: string[] = [];
 let setOpen!: (value: boolean) => void;
 
 function Host() {
@@ -38,6 +39,7 @@ function Host() {
     onOpenDocument(hit, mode) { opened.push(`${mode}:${hit.target.kind === "cloud" ? hit.target.path : hit.target.conversationId}`); updateOpen(false); },
     onOpenPassage(hit, mode) { opened.push(`${mode}:passage:${hit.conversationId}`); updateOpen(false); },
     onExplore() { explored++; },
+    onKeepOpen(query, scope) { kept.push(`${scope}:${query}`); updateOpen(false); },
   });
 }
 const container = browser.document.createElement("div"); browser.document.body.append(container);
@@ -87,11 +89,18 @@ await type("zzzz");
 assert(dialog()!.querySelector(".vault-search-empty")?.textContent?.includes("Try Anywhere"));
 checks.push("scopes narrow results and an empty result says what to try");
 
-await act(async () => { dialog()!.querySelector<HTMLButtonElement>(".vault-search-explore")!.click(); });
+await act(async () => { [...dialog()!.querySelectorAll<HTMLButtonElement>(".vault-search-explore")].find((button) => button.textContent === "Filters and connections")!.click(); });
 assert.equal(explored, 1);
 await key("Escape");
 assert.equal(dialog(), null);
 checks.push("filters and connections stay one click away, Escape closes");
+
+await act(async () => { setOpen(true); });
+await type("shade");
+await key("Enter", { shiftKey: true });
+assert.equal(kept.at(-1), "family:shade", "The scope chosen earlier carries over.");
+assert.equal(dialog(), null);
+checks.push("Shift+Enter keeps the results open");
 
 await act(async () => { root.unmount(); });
 console.log(JSON.stringify({ checks }));

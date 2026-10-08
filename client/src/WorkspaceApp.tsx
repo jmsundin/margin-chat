@@ -78,7 +78,8 @@ import CaptureInbox from "./components/CaptureInbox";
 import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
 import VaultSearchPalette, { type VaultSearchOpenMode } from "./components/VaultSearchPalette";
-import { createLocalVaultSearchProvider, type VaultSearchDocumentHit, type VaultSearchPassageHit } from "./lib/vaultSearch";
+import SearchResultsPanel from "./components/SearchResultsPanel";
+import { createLocalVaultSearchProvider, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchScope } from "./lib/vaultSearch";
 import SearchSourceFocus from "./components/SearchSourceFocus";
 import { resolveSearchSource } from "./lib/searchSource";
 import type { SearchEvidenceRef } from "./lib/conversationSearch";
@@ -830,6 +831,8 @@ function WorkspaceAppContent({
   const [searchModalOpen, setSearchModalOpen] = useState(false);
   /** The older filters-and-connections view, reached from the search box. */
   const [searchExploreOpen, setSearchExploreOpen] = useState(false);
+  /** Search results kept open beside the documents. */
+  const [searchPanel, setSearchPanel] = useState<{ query: string; scope: VaultSearchScope } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchSourceRequest, setSearchSourceRequest] = useState<{ source: SearchEvidenceRef; sequence: number } | null>(null);
   const [activeOutlineItemId, setActiveOutlineItemId] = useState<string | null>(
@@ -4350,6 +4353,11 @@ function WorkspaceAppContent({
                     </div>
                   </header>
                   {renderDocumentBreadcrumbs()}
+                  <div className="document-workspace-with-search">
+                  {searchPanel ? <SearchResultsPanel initialQuery={searchPanel.query} initialScope={searchPanel.scope} provider={vaultSearchProvider}
+                    currentConversationId={activeConversation.id} openingPath={vault.openingPath ?? null}
+                    onOpenDocument={handleOpenVaultSearchDocument} onOpenPassage={handleOpenVaultSearchPassage}
+                    onClose={() => setSearchPanel(null)} /> : null}
                   <DocumentWorkspaceLayout width={documentDock?.width ?? 0.4} position={documentDock?.position}
                     onWidthChange={(width) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree: current.documentDock?.tree ?? null, width } }))}
                     dock={documentDock?.tree && visiblePinnedDocumentIds.length ? <DocumentDock
@@ -4376,6 +4384,7 @@ function WorkspaceAppContent({
                     </div> : null}
                   </div>
                   </DocumentWorkspaceLayout>
+                  </div>
                 </div>
               </WorkspaceView>
             </section>
@@ -4590,6 +4599,7 @@ function WorkspaceAppContent({
             isOpen={searchModalOpen}
             onClose={handleCloseSearch}
             onExplore={() => { setSearchModalOpen(false); setSearchExploreOpen(true); }}
+            onKeepOpen={(query, scope) => { handleCloseSearch(); setMainViewMode("chat"); setSearchPanel({ query, scope }); }}
             onOpenDocument={handleOpenVaultSearchDocument}
             onOpenPassage={handleOpenVaultSearchPassage}
             onQueryChange={setSearchQuery}
