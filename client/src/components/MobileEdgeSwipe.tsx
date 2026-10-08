@@ -36,6 +36,21 @@ function allowedCandidates(target: EventTarget | null, candidates: EdgeSwipeKind
 }
 
 /**
+ * iOS raises the keyboard only for a focus made during the touch itself. Search focuses its box
+ * after it renders, so hold the keyboard open with a stand-in field until then.
+ */
+function holdKeyboardOpen() {
+  const field = document.createElement("input");
+  field.setAttribute("aria-hidden", "true");
+  field.tabIndex = -1;
+  field.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;pointer-events:none;";
+  document.body.append(field);
+  field.addEventListener("blur", () => field.remove(), { once: true });
+  field.focus({ preventScroll: true });
+  window.setTimeout(() => field.remove(), 1000);
+}
+
+/**
  * Phone gestures: swipe in from the left edge to pull out the sidebar (or swipe it back),
  * and pull down from the top bar to open search.
  */
@@ -116,7 +131,10 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
       if (!current.kind) return;
       if (current.kind === "pull-search") {
         setPull(0);
-        if (event.type === "touchend" && searchPullTriggers(current.dy)) latest.current.onOpenSearch();
+        if (event.type === "touchend" && searchPullTriggers(current.dy)) {
+          holdKeyboardOpen();
+          latest.current.onOpenSearch();
+        }
         return;
       }
       const first = current.samples[0];
