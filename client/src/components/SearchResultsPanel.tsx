@@ -1,6 +1,6 @@
 import { useDeferredValue, useEffect, useState, type MouseEvent } from "react";
 import type { VaultSearchDocumentHit, VaultSearchPassageHit, VaultSearchProvider, VaultSearchResults, VaultSearchScope } from "../lib/vaultSearch";
-import { highlight, meta, type VaultSearchOpenMode } from "./VaultSearchPalette";
+import { cloudPathOf, highlight, meta, type VaultSearchOpenMode } from "./VaultSearchPalette";
 import "./SearchResultsPanel.css";
 
 type Hit = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit };
@@ -87,7 +87,7 @@ export default function SearchResultsPanel({ initialQuery, initialScope, provide
         </button>)}
       </div> : null}
       <div className="search-results-summary">
-        <span role="status">{!searching ? "Type to search your vault." : `${shown.length} ${shown.length === 1 ? "result" : "results"} in ${documentCount} ${documentCount === 1 ? "document" : "documents"}${year ? ` from ${year}` : ""}`}</span>
+        <span role="status">{!searching ? "Type to search your vault." : `${shown.length} ${shown.length === 1 ? "result" : "results"} in ${documentCount} ${documentCount === 1 ? "document" : "documents"}${year ? ` from ${year}` : ""}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`}</span>
         <div aria-label="Group results" className="search-results-grouping" role="group">
           <button aria-pressed={grouping === "family"} onClick={() => setGrouping("family")} type="button">By family</button>
           <button aria-pressed={grouping === "passage"} onClick={() => setGrouping("passage")} type="button">Newest</button>
@@ -99,7 +99,7 @@ export default function SearchResultsPanel({ initialQuery, initialScope, provide
         {group.name ? <h3 className="search-results-family">{group.name}</h3> : null}
         <ul>
           {group.items.map((item) => {
-            const cloudPath = item.kind === "document" && item.hit.target.kind === "cloud" ? item.hit.target.path : null;
+            const cloudPath = cloudPathOf(item);
             return <li key={item.hit.key}>
               <button aria-current={openedKey === item.hit.key ? "true" : undefined} className={`search-results-row${openedKey === item.hit.key ? " is-open" : ""}`}
                 disabled={!!cloudPath && openingPath === cloudPath} onClick={(event) => open(item, event)} title="Open beside (⌘-click to open here)" type="button">
@@ -113,7 +113,7 @@ export default function SearchResultsPanel({ initialQuery, initialScope, provide
         </ul>
       </section>)}
       {shown.length > visible.length ? <button className="vault-search-more" onClick={() => setLimit((current) => current + PAGE)} type="button">Show {Math.min(PAGE, shown.length - visible.length)} more</button> : null}
-      {searching && results && !shown.length ? <p className="vault-search-empty">Nothing matches{year ? ` from ${year}` : ""}. {year ? "Pick another year." : scope === "all" ? "Try a shorter word." : "Try Anywhere."}</p> : null}
+      {searching && results && !shown.length && results.complete ? <p className="vault-search-empty">Nothing matches{year ? ` from ${year}` : ""}. {year ? "Pick another year." : scope === "all" ? "Try a shorter word." : "Try Anywhere."}</p> : null}
     </div>
   </aside>;
 }

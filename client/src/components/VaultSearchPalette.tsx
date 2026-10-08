@@ -46,6 +46,10 @@ function documentPreview(conversation: Conversation | undefined) {
 }
 
 const entryKey = (entry: Entry) => entry.hit.key;
+/** Where a result still in the cloud downloads from before it opens. */
+export const cloudPathOf = (entry: Entry) => entry.kind === "document"
+  ? entry.hit.target.kind === "cloud" ? entry.hit.target.path : null
+  : entry.hit.cloudPath ?? null;
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Cmd+K: one box over the whole vault. Titles first, then passages; Enter opens here, Cmd+Enter beside. */
@@ -148,7 +152,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   const row = (entry: Entry, content: ReactNode) => {
     const key = entryKey(entry);
     const isSelected = key === selectedEntryKey;
-    const cloudPath = entry.kind === "document" && entry.hit.target.kind === "cloud" ? entry.hit.target.path : null;
+    const cloudPath = cloudPathOf(entry);
     return <li key={key}>
       <button aria-selected={isSelected} className={`vault-search-row${isSelected ? " is-selected" : ""}`} data-search-key={key} id={`${id}-${key}`}
         disabled={!!cloudPath && openingPath === cloudPath} onClick={(event) => open(entry, event.metaKey || event.ctrlKey ? "beside" : "here")}
@@ -166,6 +170,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         <p className="vault-search-meta">{hit.matchLabel} · {meta(hit)}</p>
         <blockquote className="vault-search-preview-passage">{highlight(hit.passage, query)}</blockquote>
         {hit.localOnly ? <p className="vault-search-meta">Private note. Only shared with AI when you choose to.</p> : null}
+        {hit.cloudPath ? <p className="vault-search-preview-text">This document is still in your cloud vault. Opening it downloads it to this device.</p> : null}
       </>;
     }
     const hit = selected.hit;
@@ -182,7 +187,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
 
   const status = !searching ? "Recent documents. Type to search titles and passages in your whole vault."
     : stale ? "Searching…"
-    : `${documents.length} ${documents.length === 1 ? "title" : "titles"} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}`;
+    : `${documents.length} ${documents.length === 1 ? "title" : "titles"} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
 
   const modal = <div className="vault-search-backdrop" role="presentation" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
     onClick={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose(); }}>
@@ -211,12 +216,13 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
             </>))}
             {searching && passages.length ? <li className="vault-search-section" role="presentation"><span>Passages</span><span>{passages.length}{results?.complete === false ? " so far" : ""}</span></li> : null}
             {shownPassages.map((hit) => row({ kind: "passage", hit }, <>
-              <span className="vault-search-row-title">{hit.title}<span className="vault-search-meta">{meta(hit)}</span></span>
+              <span className="vault-search-row-title">{hit.title}{hit.cloudPath ? <span className="vault-search-cloud">{openingPath === hit.cloudPath ? "Opening…" : "In cloud"}</span> : null}<span className="vault-search-meta">{meta(hit)}</span></span>
               <span className="vault-search-snippet">{highlight(hit.preview, query)}</span>
             </>))}
           </ul>
           {passages.length > shownPassages.length ? <button className="vault-search-more" onClick={() => setPassageLimit((limit) => limit + PASSAGE_PAGE)} type="button">Show {Math.min(PASSAGE_PAGE, passages.length - shownPassages.length)} more passages</button> : null}
-          {searching && !stale && !entries.length ? <p className="vault-search-empty">Nothing in your vault matches “{query.trim()}”{scope === "all" ? "" : " in this scope"}. {scope === "all" ? "Try a shorter word." : "Try Anywhere."}</p> : null}
+          {searching && !stale && !entries.length && results?.complete === false ? <p className="vault-search-empty">Searching your whole vault…</p> : null}
+          {searching && !stale && !entries.length && results?.complete !== false ? <p className="vault-search-empty">Nothing in your vault matches “{query.trim()}”{scope === "all" ? "" : " in this scope"}. {scope === "all" ? "Try a shorter word." : "Try Anywhere."}</p> : null}
         </div>
         <aside aria-label="Preview" className="vault-search-preview">
           {preview}
