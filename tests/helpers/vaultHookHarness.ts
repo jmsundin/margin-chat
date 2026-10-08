@@ -66,6 +66,10 @@ function directory(name: string): any {
 }
 const opfs = directory("root");
 const connectedFolder = directory("Connected preview folder");
+// Browsers forget folder access between visits until the user allows it again.
+let folderPermission: PermissionState = "granted";
+connectedFolder.queryPermission = async () => folderPermission;
+connectedFolder.requestPermission = async () => { folderPermission = "granted"; return folderPermission; };
 const storedDirectories = new Map<string, any>();
 Object.defineProperty(globalThis, "indexedDB", { configurable: true, value: {
   open() {
@@ -524,6 +528,18 @@ async function checkPopulatedWorkspace() {
   assert.equal(JSON.parse((await local.read())!.files["workspace.json"].content).workspace.preferences.externalSetting, "Retain external companion changes",
     "A connected folder settings edit was overwritten during synchronization.");
 
+  const addedWriter = await (await connectedFolder.getFileHandle("Added in Finder.md", { create: true })).createWritable();
+  await addedWriter.write("# Added in Finder\n\nSaved into the folder while Margin Chat was open.\n");
+  await addedWriter.close();
+  folderPermission = "prompt";
+  await act(async () => { await current.vault.syncNow(); });
+  assert(current.vault.folderAccessMessage, "A folder the browser stopped reading was not reported.");
+  assert(!Object.values(current.state.conversations).some((conversation: any) => conversation.title === "Added in Finder"));
+  await act(async () => { await current.vault.allowDirectoryAccess(); });
+  assert.equal(current.vault.folderAccessMessage, null, "Allowing folder access left the notice up.");
+  assert(Object.values(current.state.conversations).some((conversation: any) => conversation.title === "Added in Finder"),
+    "A Markdown file added to the connected folder did not appear after allowing access.");
+
   const originalDirectoryId = current.vault.localDirectoryStatus.directoryId;
   assert(originalDirectoryId && (await local.read())!.directoryBaselines?.[originalDirectoryId], "Folder baseline was not durable.");
   await act(async () => { root.unmount(); });
@@ -620,7 +636,7 @@ async function checkPopulatedWorkspace() {
   await until(() => current?.vault.ready, "Offline reopen did not hydrate the durable local vault.");
   assert(Object.values(current.state.conversations).some((conversation: any) => conversation.messages.some((message: any) => message.content === "Preserve this local version as a conflict.")),
     "Offline reopen lost the previously persisted Markdown.");
-  console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
+  console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "folder access can be allowed again to show added files", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
 }
 async function checkPartialLoad() {
   const { recentVaultEntries } = await import("../../client/src/lib/vaultHydration");

@@ -4067,6 +4067,12 @@ function WorkspaceAppContent({
             onDismiss={onDismissBillingNotice}
           />
           <NotificationToast
+            message={vault.folderAccessMessage}
+            action={{ label: "Allow access", onClick: () => vault.allowDirectoryAccess().catch(() => {
+              setProfileInitialTab("storage"); setProfileModalOpen(true);
+            }) }}
+          />
+          <NotificationToast
             message={vault.message}
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />

@@ -11,7 +11,7 @@ import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type Vault
 import { preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import {
-  canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, clearLocalDirectory, getLocalDirectoryStatus,
+  canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, requestLocalDirectoryPermission, clearLocalDirectory, getLocalDirectoryStatus,
   getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectoryWorkspace,
   readLocalDirectoryCompanions, syncLocalDirectoryCompanions,
   type LocalDirectoryStatus,
@@ -547,8 +547,12 @@ export function useMarkdownVault(args: {
     : downloadProgress ? { label: "Syncing documents…" }
     : null;
 
+  const folderAccessMessage = localDirectoryStatus.directoryName && localDirectoryStatus.permission !== "granted"
+    ? `Allow access to “${localDirectoryStatus.directoryName}” again so Margin Chat can see the files you add or change there.`
+    : null;
+
   return {
-    ready, storageMode, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
+    ready, storageMode, folderAccessMessage, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
     /** Download a document that is still only in the cloud, then show it. */
     async openCloudDocument(path: string) {
       const entry = vaultIndexRef.current?.entries.find((candidate) => candidate.path === path);
@@ -580,6 +584,13 @@ export function useMarkdownVault(args: {
         folderId.current = null; folder.current = null; folderCompanions.current = {};
         if (status.permission === "granted") await saveAndRefresh(false);
       });
+    },
+    /** Allow a remembered folder again after the browser forgot its access. */
+    async allowDirectoryAccess() {
+      // The permission prompt needs the user's click, so it runs before queued folder work.
+      const status = await requestLocalDirectoryPermission(storageUserId);
+      if (mounted.current) setDirectoryStatus(status);
+      if (status.permission === "granted") await enqueue(() => saveAndRefresh(true));
     },
     async clearDirectory() {
       await enqueue(async () => { await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; setDirectoryStatus(await getLocalDirectoryStatus(storageUserId)); });

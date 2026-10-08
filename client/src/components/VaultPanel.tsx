@@ -30,12 +30,15 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
     </div>
     <div className="profile-storage-directory-card">
       <div><span>Optional folder connection</span><strong>{vault.localDirectoryStatus.directoryName ?? "No folder connected"}</strong>
-        <small>{vault.localDirectoryStatus.directoryName
+        <small>{vault.folderAccessMessage
+          ? `${vault.folderAccessMessage} Until then, edits save in this browser only.`
+          : vault.localDirectoryStatus.directoryName
           ? "This folder also holds Markdown files you can open in other apps. Folder edits are checked before saving and when Margin Chat resumes."
           : vault.localDirectoryStatus.supported
             ? "Choose a folder to also keep your Markdown files somewhere you can open in other apps. Saving in this browser works without a connected folder."
             : "Folder connections aren’t available in this browser. Files still save in its private storage. Use Download vault to get a copy you can open in other apps."}</small></div>
       <div className="profile-storage-directory-actions">
+        {vault.folderAccessMessage ? <button className="thread-dialog-button is-primary" disabled={busy} onClick={() => void run(vault.allowDirectoryAccess)}>Allow access</button> : null}
         <button className="thread-dialog-button" disabled={busy || !vault.localDirectoryStatus.supported} onClick={() => void run(vault.chooseDirectory)}>Choose folder</button>
         {vault.localDirectoryStatus.directoryName ? <button className="thread-dialog-button" disabled={busy} onClick={() => void run(vault.clearDirectory)}>Disconnect folder</button> : null}
       </div>
