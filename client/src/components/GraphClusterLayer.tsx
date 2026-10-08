@@ -22,7 +22,7 @@ function overlaps(a: Rect, b: Rect) {
 }
 
 export default function GraphClusterLayer({ clusters, placements, connections, labels, viewport, size, showDots,
-  selectedId, titles, onOpenCluster, onSelectDocument }: {
+  selectedId, titles, onOpenCluster, onSelectDocument, itemLabel = ["document", "documents"] }: {
   clusters: GravityCluster[];
   placements: Map<string, ConversationGraphNodePlacement>;
   connections: Connection[];
@@ -34,6 +34,8 @@ export default function GraphClusterLayer({ clusters, placements, connections, l
   titles: (id: string) => string;
   onOpenCluster: (cluster: GravityCluster) => void;
   onSelectDocument: (id: string) => void;
+  /** Singular and plural names for the clustered items. */
+  itemLabel?: [string, string];
 }) {
   const { x: panX, y: panY, scale } = viewport;
   const width = size.width || 1000, height = size.height || 700;
@@ -104,7 +106,7 @@ export default function GraphClusterLayer({ clusters, placements, connections, l
 
   const dotRadius = 4.5 / scale;
   return <div className={`graph-clusters${showDots ? " is-dots" : ""}`} data-cluster-display={showDots ? "dots" : "cards"}
-    aria-label="Document clusters">
+    aria-label={`${itemLabel[0][0].toUpperCase()}${itemLabel[0].slice(1)} clusters`}>
     {showDots ? <svg className="graph-cluster-dots" width={width} height={height} aria-hidden="true">
       <g transform={`translate(${panX} ${panY}) scale(${scale})`}>
         {visibleClusters.map((cluster) => {
@@ -126,7 +128,7 @@ export default function GraphClusterLayer({ clusters, placements, connections, l
     {placedLabels.map(({ cluster, rect, fontSize }) => {
       const label = labels[cluster.id];
       const clusterHue = hue(cluster.id);
-      const count = `${cluster.memberIds.length} document${cluster.memberIds.length === 1 ? "" : "s"}`;
+      const count = `${cluster.memberIds.length} ${itemLabel[cluster.memberIds.length === 1 ? 0 : 1]}`;
       return <button key={cluster.id} type="button" data-graph-ui="true" data-cluster-id={cluster.id}
         className={`graph-cluster-label${label?.generated ? " is-generated" : ""}`}
         data-unlinked={clusterHue === null || undefined}

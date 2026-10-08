@@ -982,6 +982,34 @@ try {
   await click(element('[aria-label="Forward in public map"]'));
   assert.equal(container.querySelectorAll('.public-map-node').length, 3);
   console.log("Public document layouts, focused connections, hop depth, pivots, resize, history, and persistence passed.");
+
+  const hubA = atlasTopic("Q770001", "Ecology"), hubB = atlasTopic("Q770002", "Plant ecology");
+  const leavesA = [atlasTopic("Q770011", "Field of study"), atlasTopic("Q770012", "Branch of biology")];
+  const leavesB = [atlasTopic("Q770021", "Botany"), atlasTopic("Q770022", "Plant ecologist"), atlasTopic("Q770023", "Branch of ecology")];
+  const relation = (source: typeof hubA, target: typeof hubA) => ({ id: `${source.id}:P279:${target.id}`, sourceId: source.id, targetId: target.id, propertyId: "P279", label: "subclass of", sourceUrl: source.wikidataUrl });
+  let clusterGraph = addPublicGraphRoot(emptyPublicGraph(), hubA);
+  clusterGraph = appendPublicGraphExpansion(clusterGraph, { topic: hubA, topics: [hubB, ...leavesA], hasMore: false, nextOffset: 3, relations: [hubB, ...leavesA].map((topic) => relation(hubA, topic)) });
+  clusterGraph = appendPublicGraphExpansion(clusterGraph, { topic: hubB, topics: leavesB, hasMore: false, nextOffset: 3, relations: leavesB.map((topic) => relation(hubB, topic)) });
+  account = "public-map-clusters";
+  browser.sessionStorage.setItem(`margin-public-map:${account}`, JSON.stringify({ version: 1, graph: clusterGraph, selectedId: null,
+    viewport: { x: 40, y: 60, scale: 0.9 }, query: "", filters: { relation: "all", includeMetadata: false }, presentation: "canvas", documentLayoutMode: "auto", groupOverviewVersion: 1 }));
+  await render();
+  await click(button("Public", ".knowledge-map-switcher button"));
+  assert.equal(element('.public-knowledge-map [aria-label="Canvas view"]').getAttribute("aria-pressed"), "true");
+  await click(element('.public-knowledge-map [aria-label="Clusters view"]'));
+  assert.equal(element('.public-knowledge-map [aria-label="Clusters view"]').getAttribute("aria-pressed"), "true");
+  assert.equal(element('.public-map-stage').dataset.presentation, "clusters");
+  await zoomPublicTo(0.3);
+  assert(element('.graph-clusters.is-dots'), "Zoomed-out clusters show dots");
+  assert(element('.public-map-stage').hidden, "Topic cards hide behind cluster dots");
+  const clusterLabels = [...container.querySelectorAll<HTMLElement>('.graph-cluster-label')].map((label) => label.getAttribute("aria-label")).sort();
+  assert.deepEqual(clusterLabels, ["Zoom into Ecology, 3 topics", "Zoom into Plant ecology, 4 topics"], "Hub topics name their clusters with topic counts");
+  await click(element('.graph-cluster-label[aria-label^="Zoom into Plant ecology"]'));
+  assert(!element('.public-map-stage').hidden, "Opening a cluster zooms in to its topic cards");
+  assert(element('.public-map-node[aria-label="Botany"]'));
+  await click(element('[aria-label="Back in public map"]'));
+  assert.equal(element('.public-knowledge-map [aria-label="Canvas view"]').getAttribute("aria-pressed"), "true", "Back returns to the previous view");
+  console.log("Public clusters group topics around hubs, name them, show dots when zoomed out, and zoom into a cluster.");
 } finally {
   await act(async () => { root.unmount(); });
   Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: originalResizeObserver });
