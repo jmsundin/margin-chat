@@ -46,8 +46,8 @@ function directory(name: string): any {
               write: async (value: any) => { pending = Buffer.from(value); },
               abort: async () => undefined,
               async close() {
-                if (child === "vault-state.json" && failLocalWrites) throw new DOMException("Injected local disk failure", "QuotaExceededError");
-                if (child === "vault-state.json" && writeGate) {
+                if (child === "vault-journal.json" && failLocalWrites) throw new DOMException("Injected local disk failure", "QuotaExceededError");
+                if (child === "vault-journal.json" && writeGate) {
                   const gate = writeGate;
                   writeGate = null;
                   writeEntered?.resolve();

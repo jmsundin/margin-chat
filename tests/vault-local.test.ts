@@ -98,6 +98,24 @@ function snapshot(content: string): VaultSnapshot {
   return { ...emptyVault(), files: { "Note.md": { content, contentType: "text/markdown" } } };
 }
 const objectPath = (content: string) => `margin-chat-vaults/alice/history/${createHash("sha256").update(content).digest("hex")}.md`;
+const HEAD = "margin-chat-vaults/alice/vault-journal.json";
+/** The stored references after replaying the checkpoint and every journal entry. */
+function storedIndex(opfs: ReturnType<typeof simulatedOpfs>) {
+  const read = (path: string) => JSON.parse(new TextDecoder().decode(opfs.files.get(path)));
+  const head = read(HEAD);
+  const index = read(`margin-chat-vaults/alice/${head.checkpoint}`);
+  for (let generation = head.from + 1; generation <= head.generation; generation++) {
+    const change = read(`margin-chat-vaults/alice/journal/${generation}.json`);
+    for (const key of ["files", "base"] as const) {
+      for (const [path, value] of Object.entries(change[key] ?? {})) {
+        if (value) index[key][path] = value; else delete index[key][path];
+      }
+    }
+    if (change.conflicts) index.conflicts = change.conflicts;
+    if (change.directoryBaselines !== undefined) index.directoryBaselines = change.directoryBaselines ?? undefined;
+  }
+  return index;
+}
 
 describe("durable OPFS Markdown storage", () => {
   test("automatic recovery ancestors/results use verified objects and dismissed versions stay dismissed", async () => withOpfs(async (opfs) => {
@@ -109,7 +127,7 @@ describe("durable OPFS Markdown storage", () => {
     const storage = createBrowserVaultStore("alice");
     await storage.write(desired);
     expect(await createBrowserVaultStore("alice").read()).toEqual(desired);
-    const index = JSON.parse(new TextDecoder().decode(opfs.files.get("margin-chat-vaults/alice/vault-state.json")));
+    const index = storedIndex(opfs);
     expect(index.conflicts[0].base.content).toBeUndefined();
     expect(index.conflicts[0].result.content).toBeUndefined();
     expect(index.conflicts[0].base.object).toMatch(/\.md$/);
@@ -126,9 +144,9 @@ describe("durable OPFS Markdown storage", () => {
   test("reopening takes a fresh file snapshot when a file changed after it was opened", async () => withOpfs(async (opfs) => {
     const saved = snapshot("Written before the reload");
     await createBrowserVaultStore("alice").write(saved);
-    opfs.staleReads(2, (path) => path.endsWith("/vault-state.json") || path === objectPath("Written before the reload"));
+    opfs.staleReads(2, (path) => path === HEAD || path === objectPath("Written before the reload"));
     expect(await createBrowserVaultStore("alice").read()).toEqual(saved);
-    opfs.staleReads(Infinity, (path) => path.endsWith("/vault-state.json"));
+    opfs.staleReads(Infinity, (path) => path === HEAD);
     await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("Close other Margin Chat tabs");
   }));
 
@@ -144,10 +162,10 @@ describe("durable OPFS Markdown storage", () => {
     const updated = structuredClone(original);
     updated.files["Note.md"].content = "New folder note";
     updated.directoryBaselines!["directory-identity"].files["Note.md"].content = "New folder note";
-    opfs.failOnce("close", (path) => path.endsWith("/vault-state.json"));
+    opfs.failOnce("close", (path) => path === HEAD);
     await expect(store.write(updated)).rejects.toMatchObject({ name: "QuotaExceededError" });
     expect(await createBrowserVaultStore("alice").read()).toEqual(original);
-    const index = JSON.parse(new TextDecoder().decode(opfs.files.get("margin-chat-vaults/alice/vault-state.json")));
+    const index = storedIndex(opfs);
     expect(index.directoryBaselines["directory-identity"].files["Note.md"].content).toBeUndefined();
     expect(index.directoryBaselines["directory-identity"].files["Note.md"].object).toMatch(/\.md$/);
   }));
@@ -162,25 +180,28 @@ describe("durable OPFS Markdown storage", () => {
       expect(decoded.files["plain.md"].content).toBe(decoded.files["bom.md"].content);
       await store.write(decoded);
     });
-    const index = JSON.parse(new TextDecoder().decode(opfs.files.get("margin-chat-vaults/alice/vault-state.json")));
+    const index = storedIndex(opfs);
     const expected = `${createHash("sha256").update("same text").digest("hex")}.md`;
     expect(index.files["plain.md"].object).toBe(expected);
     expect(index.files["bom.md"].object).toBe(expected);
   }));
 
-  test("one locked save verifies unchanged objects once and does not trust them in the next operation", async () => withOpfs(async (opfs) => {
+  test("saves after opening never reread unchanged documents, and reopening verifies them again", async () => withOpfs(async (opfs) => {
     const store = createBrowserVaultStore("alice");
     const original = snapshot("Unchanged large note");
     await store.write(original);
     opfs.reads.length = 0;
+    opfs.closes.length = 0;
     await store.lock(async () => {
       const current = (await store.read())!;
       current.files["Other.md"] = { content: "Changed document" };
       await store.write(current);
     });
-    expect(opfs.reads.filter((path) => path === objectPath("Unchanged large note"))).toHaveLength(1);
+    expect(opfs.reads.filter((path) => path === objectPath("Unchanged large note"))).toHaveLength(0);
+    // One new document, one journal entry and the head; the full index is not rewritten.
+    expect(opfs.closes).toEqual([objectPath("Changed document"), "margin-chat-vaults/alice/journal/2.json", HEAD]);
     opfs.files.set(objectPath("Unchanged large note"), new Uint8Array());
-    await expect(store.lock(() => store.read())).rejects.toThrow("incomplete or damaged");
+    await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("incomplete or damaged");
   }));
 
   test("an interrupted history write is repaired on retry before its reference is committed", async () => withOpfs(async (opfs) => {
@@ -210,7 +231,7 @@ describe("durable OPFS Markdown storage", () => {
   test("a failed first index write leaves the vault retryable and reuses already verified history", async () => withOpfs(async (opfs) => {
     const expected = snapshot("First saved note");
     const first = createBrowserVaultStore("alice");
-    opfs.failOnce("close", (path) => path.endsWith("/vault-state.json"));
+    opfs.failOnce("close", (path) => path === HEAD);
     await expect(first.write(expected)).rejects.toMatchObject({ name: "QuotaExceededError" });
     const reopened = createBrowserVaultStore("alice");
     expect(await reopened.read()).toBeNull();
@@ -224,7 +245,7 @@ describe("durable OPFS Markdown storage", () => {
     const first = createBrowserVaultStore("alice");
     const original = snapshot("Old committed note");
     await first.write(original);
-    opfs.failOnce("close", (path) => path.endsWith("/vault-state.json"));
+    opfs.failOnce("close", (path) => path === HEAD);
     await expect(first.write(snapshot("New draft"))).rejects.toMatchObject({ name: "QuotaExceededError" });
     expect(await createBrowserVaultStore("alice").read()).toEqual(original);
     await first.write(snapshot("New draft"));
@@ -244,6 +265,62 @@ describe("durable OPFS Markdown storage", () => {
     const restored = await createBrowserVaultStore("alice").read();
     expect(restored).toEqual(desired);
     expect(restored?.files["Attachments/a.bin"]).not.toBe(restored?.files["Attachments/b.bin"]);
+  }));
+
+  test("a vault saved by an older version opens, and its first save moves it to the journal", async () => withOpfs(async (opfs) => {
+    const hash = (content: string) => createHash("sha256").update(content).digest("hex");
+    opfs.files.set(objectPath("Saved before the journal"), new TextEncoder().encode("Saved before the journal"));
+    opfs.files.set("margin-chat-vaults/alice/vault-state.json", new TextEncoder().encode(JSON.stringify({
+      schemaVersion: 1, remoteRevision: 4, pulledRevision: 4, conflicts: [],
+      files: { "Note.md": { object: `${hash("Saved before the journal")}.md`, contentType: "text/markdown" } },
+      base: { "Note.md": { revision: "r1", file: { object: `${hash("Saved before the journal")}.md`, contentType: "text/markdown" } } },
+    })));
+    const store = createBrowserVaultStore("alice");
+    const legacy = (await store.read())!;
+    expect(legacy.files["Note.md"].content).toBe("Saved before the journal");
+    expect(legacy.pulledRevision).toBe(4);
+    legacy.files["Other.md"] = { content: "Added after the update" };
+    await store.write(legacy);
+    expect(JSON.parse(new TextDecoder().decode(opfs.files.get("margin-chat-vaults/alice/vault-state.json")))).toMatchObject({ schemaVersion: 2 });
+    expect(await createBrowserVaultStore("alice").read()).toEqual(legacy);
+  }));
+
+  test("one tab reads another tab's saves without rereading the rest of the vault", async () => withOpfs(async (opfs) => {
+    const first = createBrowserVaultStore("alice");
+    const second = createBrowserVaultStore("alice");
+    const original = snapshot("Shared note");
+    original.files["Other.md"] = { content: "Untouched note" };
+    await first.write(original);
+    expect(await second.read()).toEqual(original);
+    const edited = structuredClone(original);
+    edited.files["Note.md"] = { content: "Edited in the first tab", contentType: "text/markdown" };
+    delete edited.files["Other.md"];
+    await first.write(edited);
+    opfs.reads.length = 0;
+    expect(await second.read()).toEqual(edited);
+    expect(opfs.reads.filter((path) => path.includes("/history/"))).toEqual([objectPath("Edited in the first tab")]);
+    // A save from the second tab builds on the first tab's edit.
+    const third = (await second.read())!;
+    third.remoteRevision = 9;
+    await second.write(third);
+    expect(await createBrowserVaultStore("alice").read()).toEqual(third);
+  }));
+
+  test("the journal folds into a new checkpoint and removes the entries it replaced", async () => withOpfs(async (opfs) => {
+    const store = createBrowserVaultStore("alice");
+    let current = snapshot("Draft 0");
+    await store.write(current);
+    for (let draft = 1; draft <= 300; draft++) {
+      current = { ...current, files: { ...current.files, "Note.md": { content: `Draft ${draft}`, contentType: "text/markdown" } } };
+      await store.write(current);
+    }
+    const head = JSON.parse(new TextDecoder().decode(opfs.files.get(HEAD)));
+    expect(head.from).toBeGreaterThan(1);
+    expect(head.generation - head.from).toBeLessThan(300);
+    const journalEntries = [...opfs.files.keys()].filter((path) => path.includes("/journal/"));
+    expect(journalEntries).toHaveLength(head.generation - head.from);
+    expect([...opfs.files.keys()].filter((path) => /vault-checkpoint-/.test(path))).toEqual([`margin-chat-vaults/alice/${head.checkpoint}`]);
+    expect((await createBrowserVaultStore("alice").read())?.files["Note.md"].content).toBe("Draft 300");
   }));
 
   test("reopening detects damaged referenced bytes instead of rendering incorrect Markdown", async () => withOpfs(async (opfs) => {
