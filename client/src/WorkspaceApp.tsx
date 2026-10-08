@@ -174,6 +174,7 @@ import type {
 // Map View pulls in the graph canvases and ELK layout; load it on first visit.
 const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWorkspace"));
 
+const EMPTY_SET: ReadonlySet<string> = new Set();
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
@@ -4134,7 +4135,9 @@ function WorkspaceAppContent({
               theme={theme}
               threads={documentSummaries}
               fetchIndicator={<VaultFetchIndicator status={vault.fetchStatus ?? null} />}
+              arrivingThreadIds={vault.arrivingIds}
               cloudIndex={<CloudVaultIndex documents={vault.cloudDocuments ?? []} openingPath={vault.openingPath ?? null}
+                arrivingPaths={vault.streamingPaths ?? EMPTY_SET}
                 onOpen={(path) => {
                   void vault.openCloudDocument(path).then(() => {
                     setMainViewMode("chat");

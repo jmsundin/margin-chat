@@ -24,6 +24,8 @@ interface ThreadSidebarProps {
   cloudIndex?: ReactNode;
   /** Shown above the document list while documents download. */
   fetchIndicator?: ReactNode;
+  /** Documents that just streamed in from the cloud, briefly highlighted. */
+  arrivingThreadIds?: ReadonlySet<string>;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
   mapExplorerActive?: boolean;
   onSelectSidebarSection?: (section: "chats" | "explore") => void;
@@ -326,6 +328,7 @@ export default function ThreadSidebar({
   threads,
   cloudIndex,
   fetchIndicator,
+  arrivingThreadIds,
 }: ThreadSidebarProps) {
   const [openMenuState, setOpenMenuState] = useState<{
     left: number;
@@ -673,6 +676,7 @@ export default function ThreadSidebar({
             thread.id === activeThreadId ? "is-active" : "",
             isPinned ? "is-pinned" : "",
             isStreaming ? "is-streaming" : "",
+            arrivingThreadIds?.has(thread.id) ? "is-arriving" : "",
             draggedThreadId === thread.id ? "is-dragging" : "",
           ]
             .filter(Boolean)

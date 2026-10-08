@@ -1,6 +1,6 @@
 import {
   emptyVault, sameVaultFile, validVaultPath,
-  type VaultChange, type VaultDeferredEntry, type VaultDownloadProgress, type VaultFile, type VaultManifest, type VaultSnapshot, type VaultStore, type VaultTransport,
+  type VaultChange, type VaultDeferredEntry, type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultSnapshot, type VaultStore, type VaultTransport,
 } from "./vaultTypes";
 import { reconcileVaultImportPaths, validateVaultWorkspace, workspaceFromVault } from "./vaultWorkspace";
 import type { HistoryImportReceipt } from "./chatHistoryImport";
@@ -284,6 +284,33 @@ export class VaultSync {
       snapshot.deferred = deferred;
       await this.store.write(snapshot);
       return true;
+    });
+  }
+
+  /**
+   * Download cloud files this device has never held and apply them at once,
+   * without a full sync. A new device uses this to stream documents in one
+   * family at a time. Each entry is the revision the caller saw in the cloud;
+   * a file that changed or appeared locally meanwhile is left to the next sync.
+   */
+  async pull(entries: Array<[string, VaultEntry]>): Promise<VaultSnapshot | null> {
+    const absent = (snapshot: VaultSnapshot, path: string, entry: VaultEntry) => !entry.deleted && !snapshot.files[path] && !snapshot.base[path]
+      && (!snapshot.deferred?.[path] || snapshot.deferred[path].revision === entry.revision);
+    const started = await this.read();
+    const wanted = entries.filter(([path, entry]) => validVaultPath(path) && absent(started, path, entry));
+    if (!wanted.length) return null;
+    const downloaded = await Promise.all(wanted.map(async ([path, entry]) => [path, entry, await this.transport.read(path, entry)] as const));
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      if (!downloaded.every(([path, entry]) => absent(snapshot, path, entry))) return null;
+      for (const [path, entry, file] of downloaded) {
+        snapshot.files[path] = file;
+        snapshot.base[path] = { revision: entry.revision, file };
+        if (snapshot.deferred) delete snapshot.deferred[path];
+      }
+      if (snapshot.deferred && !Object.keys(snapshot.deferred).length) delete snapshot.deferred;
+      await this.write(snapshot);
+      return snapshot;
     });
   }
 

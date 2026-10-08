@@ -7,7 +7,7 @@ import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument,
 import { createVaultTransport } from "./vaultApi";
 import { bytesToBase64, createBrowserVaultStore, exportVault, importVault } from "./vaultLocal";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
-import { type VaultDownloadProgress, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
+import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
 import { preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import {
@@ -23,11 +23,11 @@ type StorageMode = "loading" | "fallback" | "local" | "server";
 
 /** How many recently used documents a new device downloads before anything else. */
 const RECENT_DOCUMENT_COUNT = 12;
+/** Families downloading at once while recent documents stream in. */
+const STREAM_WIDTH = 3;
 
 export interface VaultFetchStatus {
   label: string;
-  done?: number;
-  total?: number;
 }
 
 export function useMarkdownVault(args: {
@@ -61,6 +61,8 @@ export function useMarkdownVault(args: {
   const deferredIds = useRef<Set<string>>(new Set());
   const [downloadProgress, setDownloadProgress] = useState<VaultDownloadProgress | null>(null);
   const [preparing, setPreparing] = useState(false);
+  const [streamingPaths, setStreamingPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const [arrivingIds, setArrivingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [openingPath, setOpeningPath] = useState<string | null>(null);
   const engineRef = useRef<VaultSync | null>(null);
   if (!engineRef.current) engineRef.current = new VaultSync(createBrowserVaultStore(storageUserId), createVaultTransport(user.id, (status) => {
@@ -289,26 +291,76 @@ export function useMarkdownVault(args: {
   }
 
   /**
-   * A device without a local vault downloads recently used documents first and
-   * leaves the rest in the cloud until they are opened. Without an index (an
-   * older server, or offline) the whole vault downloads as before.
+   * A device without a local vault leaves its documents in the cloud and then
+   * streams the most recently used ones in, newest first, each usable the
+   * moment it lands. Without an index (an older server, or offline) the whole
+   * vault downloads as before.
    */
-  async function prepareFreshDevice() {
-    if (!engine.transport.index) return;
+  async function prepareFreshDevice(): Promise<{ manifest: VaultManifest; families: string[][]; focusId: string | null } | null> {
+    if (!engine.transport.index) return null;
     if (mounted.current) setPreparing(true);
     try {
       const [manifest, index] = await Promise.all([engine.transport.manifest(), engine.transport.index().catch(() => null)]);
-      if (!index?.entries.length) return;
-      const wanted = recentVaultEntries(index.entries, RECENT_DOCUMENT_COUNT).map((entry) => entry.path);
-      const focused = initialFocus && index.entries.find((entry) => entry.id === initialFocus);
-      if (focused) wanted.push(focused.path);
-      const keep = vaultHydrationClosure(index.entries, wanted);
-      if (await engine.deferFresh(manifest, keep, new Map(index.entries.map((entry) => [entry.path, entry.id])))) setIndex(index);
+      if (!index?.entries.length) return null;
+      const focused = initialFocus ? index.entries.find((entry) => entry.id === initialFocus) : undefined;
+      const recent = recentVaultEntries(index.entries, RECENT_DOCUMENT_COUNT);
+      // Each family (a document with its branches, notes and linked documents) arrives as one unit.
+      const families: string[][] = [];
+      const planned = new Set<string>();
+      for (const entry of focused ? [focused, ...recent] : recent) {
+        if (planned.has(entry.path)) continue;
+        const family = [...vaultHydrationClosure(index.entries, [entry.path])].filter((path) => !planned.has(path));
+        for (const path of family) planned.add(path);
+        if (family.length) families.push(family);
+      }
+      if (!await engine.deferFresh(manifest, new Set(), new Map(index.entries.map((entry) => [entry.path, entry.id])))) return null;
+      setIndex(index);
+      rememberDeferred(await engine.read());
+      return { manifest, families, focusId: (focused ?? recent[0])?.id ?? null };
     } catch {
       // Fall back to downloading everything; the regular sync reports any network failure.
+      return null;
     } finally {
       if (mounted.current) setPreparing(false);
     }
+  }
+
+  /** Publish each family as soon as it is saved on this device, most recent first. */
+  async function streamRecentDocuments(plan: { manifest: VaultManifest; families: string[][]; focusId: string | null }) {
+    const units: string[][] = [["workspace.json"], ...plan.families];
+    if (mounted.current) setStreamingPaths(new Set(plan.families.flat()));
+    // Open the most recent document as soon as it arrives, unless the user picks another first.
+    if (plan.focusId && !pendingFocus.current) pendingFocus.current = plan.focusId;
+    const byPath = new Map((vaultIndexRef.current?.entries ?? []).map((entry) => [entry.path, entry]));
+    let publishing = Promise.resolve();
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(STREAM_WIDTH, units.length) }, async () => {
+      while (next < units.length) {
+        const unit = units[next++];
+        try {
+          const entries = unit.flatMap((path) => plan.manifest.files[path] ? [[path, plan.manifest.files[path]] as [string, VaultEntry]] : []);
+          if (await engine.pull(entries)) {
+            // Publishing one at a time keeps a later arrival from being replaced by an earlier read.
+            publishing = publishing.then(async () => {
+              await persistAndPublish();
+              const arrived = unit.flatMap((path) => byPath.get(path)?.type === "conversation" ? [byPath.get(path)!.id] : []);
+              if (arrived.length && mounted.current) {
+                setArrivingIds((current) => new Set([...current, ...arrived]));
+                window.setTimeout(() => {
+                  if (mounted.current) setArrivingIds((current) => new Set([...current].filter((id) => !arrived.includes(id))));
+                }, 1600);
+              }
+            });
+            await publishing;
+          }
+        } catch {
+          // A document that cannot arrive now stays listed in the cloud index and opens on demand.
+        } finally {
+          if (mounted.current) setStreamingPaths((current) => new Set([...current].filter((path) => !unit.includes(path))));
+        }
+      }
+    }));
+    await publishing;
   }
 
   /** Download deferred documents (with their families) and return whether any were requested. */
@@ -427,7 +479,8 @@ export function useMarkdownVault(args: {
         // The old workspace snapshot is migration input only. Future content comes from Markdown.
         localStorage.removeItem(getStateStorageKey(storageUserId));
         localStorage.removeItem(getStateSavedAtStorageKey(storageUserId));
-        if (!exists && !args.legacyHasState && enabledRef.current) await prepareFreshDevice();
+        const stream = !exists && !args.legacyHasState && enabledRef.current ? await prepareFreshDevice() : null;
+        if (stream) await streamRecentDocuments(stream);
         await saveAndRefresh(true);
         if (await hydrateWorkspaceReferences()) await saveAndRefresh(true);
       } catch (error) {
@@ -489,12 +542,13 @@ export function useMarkdownVault(args: {
     : recentVaultEntries(vaultIndex.entries.filter((entry) => deferredPaths.has(entry.path))), [vaultIndex, deferredPaths]);
   const openingTitle = openingPath ? vaultIndex?.entries.find((entry) => entry.path === openingPath)?.title : null;
   const fetchStatus: VaultFetchStatus | null = preparing ? { label: "Finding your recent documents…" }
-    : openingPath ? { label: `Opening “${openingTitle ?? "document"}”…`, ...(downloadProgress ?? {}) }
-    : downloadProgress ? { label: deferredPaths.size || vaultIndex ? "Downloading documents…" : "Downloading your vault…", ...downloadProgress }
+    : streamingPaths.size ? { label: "Bringing in your recent documents…" }
+    : openingPath ? { label: `Opening “${openingTitle ?? "document"}”…` }
+    : downloadProgress ? { label: "Syncing documents…" }
     : null;
 
   return {
-    ready, storageMode, cloudDocuments, fetchStatus, openingPath,
+    ready, storageMode, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
     /** Download a document that is still only in the cloud, then show it. */
     async openCloudDocument(path: string) {
       const entry = vaultIndexRef.current?.entries.find((candidate) => candidate.path === path);

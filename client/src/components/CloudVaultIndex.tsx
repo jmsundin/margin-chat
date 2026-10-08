@@ -11,24 +11,21 @@ function formatDate(value?: string) {
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-/** Shows that documents are downloading, with progress when it is known. */
+/** A quiet note that documents are arriving; the documents themselves show the progress. */
 export function VaultFetchIndicator({ status, compact = false }: { status: VaultFetchStatus | null; compact?: boolean }) {
   if (!status) return null;
-  const counted = status.total ? ` ${Math.min(status.done ?? 0, status.total)} of ${status.total}` : "";
   return <div className={`vault-fetch-indicator${compact ? " is-compact" : ""}`} role="status" aria-live="polite">
     <span className="vault-fetch-spinner" aria-hidden="true" />
     <span className="vault-fetch-label">{status.label}</span>
-    {counted ? <span className="vault-fetch-count">{counted.trim()}</span> : null}
-    {status.total ? <span className="vault-fetch-bar" aria-hidden="true">
-      <span style={{ width: `${Math.round(Math.min(1, (status.done ?? 0) / status.total) * 100)}%` }} />
-    </span> : null}
   </div>;
 }
 
 /** Every document still in the cloud, searchable by title, downloaded only when opened. */
-export default function CloudVaultIndex({ documents, openingPath, onOpen }: {
+export default function CloudVaultIndex({ documents, openingPath, arrivingPaths, onOpen }: {
   documents: VaultIndexEntry[];
   openingPath: string | null;
+  /** Recent documents streaming in right now. */
+  arrivingPaths: ReadonlySet<string>;
   onOpen: (path: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -54,10 +51,11 @@ export default function CloudVaultIndex({ documents, openingPath, onOpen }: {
     <ul className="cloud-vault-index-list">
       {visible.map((entry) => {
         const opening = openingPath === entry.path;
+        const arriving = !opening && arrivingPaths.has(entry.path);
         return <li key={entry.path}>
           <button
             aria-busy={opening}
-            className={`cloud-vault-index-item${opening ? " is-opening" : ""}`}
+            className={`cloud-vault-index-item${opening ? " is-opening" : ""}${arriving ? " is-arriving" : ""}`}
             disabled={!!openingPath}
             onClick={() => onOpen(entry.path)}
             title={entry.title}
@@ -65,7 +63,8 @@ export default function CloudVaultIndex({ documents, openingPath, onOpen }: {
           >
             <span className="cloud-vault-index-title">{entry.title}</span>
             <span className="cloud-vault-index-meta">
-              {opening ? <><span className="vault-fetch-spinner" aria-hidden="true" />Downloading…</> : formatDate(entry.updated ?? entry.created)}
+              {opening || arriving ? <><span className="vault-fetch-spinner" aria-hidden="true" />{opening ? "Opening…" : "Arriving…"}</>
+                : formatDate(entry.updated ?? entry.created)}
             </span>
           </button>
         </li>;

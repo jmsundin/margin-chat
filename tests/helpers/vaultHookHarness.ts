@@ -642,12 +642,18 @@ async function checkPartialLoad() {
   }) as typeof fetch;
   await act(async () => { root.render(createElement(Host)); });
   await until(() => current?.vault.ready, "The workspace waited for the cloud before opening.");
-  await until(() => !!current.vault.fetchStatus?.total, "No fetching indicator appeared while recent documents downloaded.");
-  assert.match(current.vault.fetchStatus.label, /Downloading/);
+  await until(() => current.vault.streamingPaths?.size === 12, "Recent documents were not queued to stream in.");
+  assert.match(current.vault.fetchStatus.label, /recent documents/, "No indicator showed while documents were arriving.");
+  assert.deepEqual(current.vault.cloudDocuments.slice(0, 2).map((entry: any) => entry.id), ["doc-15", "doc-14"],
+    "The index did not list arriving documents before they landed.");
   gated = false;
   downloadGate.resolve();
+  await until(() => Object.keys(current.state.conversations).some((id) => id.startsWith("doc-")), "No document streamed in.");
+  assert(Object.keys(current.state.conversations).length < 12 || current.vault.streamingPaths.size === 0,
+    "Documents were published all at once instead of as each arrived.");
   await until(() => current.vault.matchesCloud && !current.vault.fetchStatus && current.vault.cloudDocuments.length === 3,
     "Recent documents did not finish loading.");
+  assert.equal(current.state.activeConversationId, "doc-15", "The most recent document did not open first.");
   const loaded = Object.keys(current.state.conversations).sort();
   assert.deepEqual(loaded, documents.slice(3).map((document) => document.path.slice(5, -3)), "The device did not load exactly the 12 most recent documents.");
   assert.deepEqual(current.vault.cloudDocuments.map((entry: any) => entry.id), ["doc-03", "doc-02", "doc-01"], "The cloud index is not ordered by recent activity.");
@@ -671,7 +677,7 @@ async function checkPartialLoad() {
   assert.equal(Object.keys(current.state.conversations).length, 15);
   assert.equal(current.vault.cloudDocuments.length, 0);
   globalThis.fetch = normalFetch;
-  console.log(JSON.stringify({ checks: ["ready before cloud", "fetch indicator", "recent documents first", "index ordered by activity",
+  console.log(JSON.stringify({ checks: ["ready before cloud", "arriving indicator", "recent documents first", "index ordered by activity",
     "older documents deferred", "open on demand", "partial edits leave cloud documents untouched", "complete download before export"] }));
 }
 try {
