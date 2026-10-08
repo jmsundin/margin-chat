@@ -369,6 +369,7 @@ export async function writeState(
     deletedVaultAttachmentIds = [],
     attachmentRevisions = {},
     expectedVaultProjectionRevision,
+    unchangedConversationIds = [],
   } = {},
 ) {
   if (
@@ -452,6 +453,14 @@ export async function writeState(
 
     const sessionId = sessionResult.rows[0]?.id ?? requestedSessionId;
     const nextRevision = currentRevision + 1;
+    // A vault projection built on the current checkpoint may name documents
+    // whose rows already hold exactly this content. Their rows are kept as is.
+    const unchanged = new Set(
+      vaultRevision !== null && !forceVaultProjection && sessionResult.rowCount &&
+        expectedVaultProjectionRevision !== undefined
+        ? unchangedConversationIds
+        : [],
+    );
     const toStorageId = (entityId) => toWorkspaceEntityId(sessionId, entityId);
 
     await client.query(
@@ -506,6 +515,7 @@ export async function writeState(
     );
 
     for (const conversation of orderedConversations) {
+      if (unchanged.has(conversation.id)) continue;
       await client.query(
         `
           insert into marginchat_conversations (
@@ -557,6 +567,7 @@ export async function writeState(
     }
 
     for (const conversation of orderedConversations) {
+      if (unchanged.has(conversation.id)) continue;
       for (const message of conversation.messages) {
         await client.query(
           `
@@ -589,6 +600,7 @@ export async function writeState(
     }
 
     for (const conversation of orderedConversations) {
+      if (unchanged.has(conversation.id)) continue;
       for (const document of conversation.documents ?? []) {
         const result = await client.query(
           `
@@ -615,6 +627,7 @@ export async function writeState(
     }
 
     for (const conversation of orderedConversations) {
+      if (unchanged.has(conversation.id)) continue;
       for (const note of conversation.notes ?? []) {
         await client.query(
           `
@@ -678,6 +691,7 @@ export async function writeState(
     );
 
     for (const conversation of orderedConversations) {
+      if (unchanged.has(conversation.id)) continue;
       if (!conversation.branchAnchor) {
         continue;
       }
@@ -744,6 +758,7 @@ export async function writeState(
     );
 
     for (const conversation of orderedConversations) {
+      if (unchanged.has(conversation.id)) continue;
       const documentIds = (conversation.documents ?? []).map(
         (document) => document.id,
       );

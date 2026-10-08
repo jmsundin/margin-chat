@@ -79,8 +79,47 @@ function prepareChanges(changes, trusted = false) {
   });
 }
 
-export function createVaultService({ database, env = process.env, storage = createVaultStorage(env), codec: codecOverride } = {}) {
+/** Keep work running after the response where the platform allows it. */
+function continueAfterResponse(work, env) {
+  const context = globalThis[Symbol.for("@vercel/request-context")]?.get?.();
+  if (typeof context?.waitUntil === "function") {
+    context.waitUntil(work);
+    return true;
+  }
+  // A long-running server keeps working after it responds; a function without
+  // waitUntil may be frozen, so it finishes the work first.
+  return !env.VERCEL;
+}
+
+export function createVaultService({ database, env = process.env, storage = createVaultStorage(env), codec: codecOverride, backgroundProjection = false } = {}) {
   const configured = Boolean(storage);
+  // File bodies are immutable per revision, so a warm server reuses what it
+  // already read instead of downloading every file again for each projection.
+  const bodies = new Map();
+  let bodyBytes = 0;
+  const BODY_CACHE_BYTES = 64 * 1024 * 1024;
+  async function readBody(key) {
+    const hit = bodies.get(key);
+    if (hit) {
+      bodies.delete(key);
+      bodies.set(key, hit);
+      return hit;
+    }
+    const record = await storage.read(key);
+    if (record && record.bytes.length <= 1024 * 1024) {
+      bodies.set(key, record);
+      bodyBytes += record.bytes.length;
+      for (const [oldest, cached] of bodies) {
+        if (bodyBytes <= BODY_CACHE_BYTES) break;
+        bodies.delete(oldest);
+        bodyBytes -= cached.bytes.length;
+      }
+    }
+    return record;
+  }
+  // One projection per account at a time in this process; later requests wait
+  // for it and then find the checkpoint current.
+  const projections = new Map();
   let codecPromise;
   const codec = () => codecOverride ?? (codecPromise ??= import("@margin-chat/workspace-contracts/markdown"));
   const prefix = (userId) => `vaults/v1/${digest(String(userId))}`;
@@ -103,7 +142,7 @@ export function createVaultService({ database, env = process.env, storage = crea
       if (!entry || entry.deleted) throw new HttpError(404, "Vault file not found.");
       revision = entry.revision;
     }
-    const record = await storage.read(bodyKey(userId, path, revision));
+    const record = await readBody(bodyKey(userId, path, revision));
     if (!record) throw new HttpError(404, "Vault file revision not found.");
     return { bytes: record.bytes, revision, contentType: entry?.contentType ?? (path.endsWith(".md") ? "text/markdown; charset=utf-8" : path.endsWith(".json") ? "application/json" : "application/octet-stream") };
   }
@@ -270,7 +309,30 @@ export function createVaultService({ database, env = process.env, storage = crea
       .map((entry) => ({ ...entry, revision: files[entry.path].revision })) };
   }
 
-  async function projectLatest(userId, manifest, { force = false } = {}) {
+  function projectLatest(userId, manifest, options) {
+    const previous = projections.get(userId) ?? Promise.resolve();
+    const work = previous.then(() => projectRevision(userId, manifest, options));
+    projections.set(userId, work);
+    void work.finally(() => { if (projections.get(userId) === work) projections.delete(userId); });
+    return work;
+  }
+
+  /** After a save, index in the background where possible so saving never waits on search. */
+  async function projectAfterSave(userId, manifest) {
+    const work = projectLatest(userId, manifest);
+    if (backgroundProjection && continueAfterResponse(work, env)) return { status: "queued", revision: manifest.revision };
+    return work;
+  }
+
+  async function readProjectionFingerprints(userId) {
+    const record = await storage.read(`${prefix(userId)}/projection.json`).catch(() => null);
+    try {
+      const value = record ? JSON.parse(record.bytes.toString("utf8")) : null;
+      return { etag: record?.etag ?? null, value: value?.schemaVersion === 1 && Number.isSafeInteger(value.revision) && value.conversations ? value : null };
+    } catch { return { etag: record?.etag ?? null, value: null }; }
+  }
+
+  async function projectRevision(userId, manifest, { force = false } = {}) {
     if (!database?.projectVaultState || !manifest.revision) return { status: "ready", revision: manifest.revision };
     try {
       const checkpoint = database.getVaultProjectionCheckpoint
@@ -305,10 +367,28 @@ export function createVaultService({ database, env = process.env, storage = crea
       for (const conversation of Object.values(state?.conversations ?? {})) {
         conversation.documents = (conversation.documents ?? []).filter((document) => !deletedIds.has(document.id));
       }
-      await database.projectVaultState(userId, state, manifest.revision, {
+      // Rewrite only the documents whose content changed since the projected
+      // revision. Fingerprints are trusted only for exactly that revision.
+      const fingerprints = Object.fromEntries(Object.values(state?.conversations ?? {})
+        .map((conversation) => [conversation.id, digest(JSON.stringify(conversation))]));
+      const stored = database.getVaultProjectionCheckpoint ? await readProjectionFingerprints(userId) : { etag: null, value: null };
+      let unchangedConversationIds;
+      if (!force && state && stored.value && stored.value.revision === checkpoint?.revision) {
+        const touched = new Set([...originals.map(({ attachment }) => attachment.id), ...deletedIds]);
+        unchangedConversationIds = Object.keys(fingerprints).filter((id) => stored.value.conversations[id] === fingerprints[id]
+          && !(state.conversations[id].documents ?? []).some((document) => touched.has(document.id)));
+      }
+      const result = await database.projectVaultState(userId, state, manifest.revision, {
         force, attachments: originals, deletedAttachmentIds, attachmentRevisions,
         ...(database.getVaultProjectionCheckpoint ? { expectedProjectionRevision: checkpoint?.revision ?? -1 } : {}),
+        ...(unchangedConversationIds ? { unchangedConversationIds } : {}),
       });
+      if (result?.projected === true && database.getVaultProjectionCheckpoint) {
+        // Only saves work: a lost race leaves an older revision, which is ignored.
+        await storage.compareAndSwap(`${prefix(userId)}/projection.json`,
+          Buffer.from(JSON.stringify({ schemaVersion: 1, revision: manifest.revision, conversations: fingerprints })), stored.etag)
+          .catch(() => false);
+      }
       return { status: "ready", revision: manifest.revision };
     } catch (error) {
       console.error("Vault projection pending", error);
@@ -342,13 +422,13 @@ export function createVaultService({ database, env = process.env, storage = crea
       // Preserve the server's legacy copy before considering a device's first edit.
       await migrateLegacy(userId);
       const { manifest, previousRevision } = await applyCommit(userId, changes);
-      return { manifest, previousRevision, projection: await projectLatest(userId, manifest) };
+      return { manifest, previousRevision, projection: await projectAfterSave(userId, manifest) };
     },
     async commitBinary(userId, { path, baseRevision, bytes, contentType }) {
       if (bytes.length > 4 * 1024 * 1024) throw new HttpError(413, "An attachment must be at most 4 MiB.");
       await migrateLegacy(userId);
       const { manifest, previousRevision } = await applyCommit(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true });
-      return { manifest, previousRevision, projection: await projectLatest(userId, manifest) };
+      return { manifest, previousRevision, projection: await projectAfterSave(userId, manifest) };
     },
     async rebuild(userId) {
       const manifest = await migrateLegacy(userId);

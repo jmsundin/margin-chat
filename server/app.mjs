@@ -35,7 +35,7 @@ export function createAppContext(env = process.env) {
     database,
     env,
   });
-  const vaultService = createVaultService({ database, env });
+  const vaultService = createVaultService({ database, env, backgroundProjection: true });
   const semanticService = createSemanticService({ env });
   const documentService = createDocumentService({
     database,

@@ -6,6 +6,43 @@ import { normalizeDocumentLayout } from "./documentLayout.mjs";
 import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
 import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
 import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
+/**
+ * Parsing a file depends only on its text (and, for whole-file parses, its
+ * identity and the default model). Remember the last result for each path so an
+ * unchanged file is never parsed twice. Bounded so one process serving many
+ * vaults cannot grow without limit.
+ */
+const PARSE_CACHE_LIMIT = 200_000;
+const metadataCache = new Map();
+const fileParseCache = new Map();
+function cached(cache, path, source, key, parse) {
+    const hit = cache.get(path);
+    if (hit && hit.key === key && hit.source === source)
+        return hit.value;
+    const value = parse();
+    if (cache.size >= PARSE_CACHE_LIMIT && !hit)
+        cache.clear();
+    cache.set(path, { source, key, value });
+    return value;
+}
+function cachedCopy(cache, path, source, key, parse) {
+    const value = cached(cache, path, source, key, parse);
+    return value && structuredClone(value);
+}
+/** The file's metadata comment, or "invalid" when the comment cannot be read. */
+function cachedFileMetadata(path, source) {
+    return cached(metadataCache, path, source, "", () => {
+        try {
+            const metadata = parseMetadata(source);
+            if (!metadata && /<!--\s*margin-chat-metadata\b/.test(source))
+                return "invalid";
+            return metadata;
+        }
+        catch {
+            return "invalid";
+        }
+    });
+}
 export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
 export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 5;
 
@@ -301,22 +338,28 @@ export function parseMarkdownWorkspaceManifest(input) {
 /** Rebuild the file registry from actual Markdown, never from absent-file assumptions. */
 export function discoverMarkdownWorkspace(files, fallbackManifest, previousFiles = {}) {
     const previousByPath = new Map(fallbackManifest?.files.map((record) => [record.path, record]));
+    const previousById = new Map();
+    for (const record of fallbackManifest?.files ?? [])
+        if (!previousById.has(record.id))
+            previousById.set(record.id, record);
+    // A file whose old path disappeared and whose exact text reappears elsewhere was renamed.
+    const renamedFrom = new Map();
+    for (const record of previousByPath.values()) {
+        const previousSource = previousFiles[record.path];
+        if (files[record.path] !== undefined || typeof previousSource !== "string")
+            continue;
+        renamedFrom.set(previousSource, [...(renamedFrom.get(previousSource) ?? []), record]);
+    }
     const records = [];
     const ids = new Set();
     for (const [path, source] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
         if (!isSafeMarkdownPath(path) || isAuxiliaryMarkdownPath(path))
             continue;
-        let metadata;
-        try {
-            metadata = parseMetadata(source);
-        }
-        catch {
+        const metadata = cachedFileMetadata(path, source);
+        if (metadata === "invalid") {
             throw new Error(`Invalid Markdown metadata in ${path}. The file was preserved.`);
         }
-        if (!metadata && /<!--\s*margin-chat-metadata\b/.test(source)) {
-            throw new Error(`Invalid Markdown metadata in ${path}. The file was preserved.`);
-        }
-        const exactRenames = [...previousByPath.values()].filter((record) => files[record.path] === undefined && previousFiles[record.path] === source);
+        const exactRenames = renamedFrom.get(source) ?? [];
         const previous = previousByPath.get(path) ?? (exactRenames.length === 1 ? exactRenames[0] : undefined);
         const id = metadata?.entityType === "conversation" ? metadata.conversation.id
             : metadata?.entityType === "note" ? metadata.note.id
@@ -325,7 +368,7 @@ export function discoverMarkdownWorkspace(files, fallbackManifest, previousFiles
             throw new Error(`Duplicate or invalid Markdown identity in ${path}. Both files were preserved.`);
         }
         ids.add(id);
-        const matchingPrevious = previous ?? fallbackManifest?.files.find((record) => record.id === id);
+        const matchingPrevious = previous ?? previousById.get(id);
         const aliases = [...new Set([
                 ...(matchingPrevious?.aliases ?? []),
                 ...(Array.isArray(metadata?.file?.aliases) ? metadata.file.aliases.filter((alias) => typeof alias === "string" && isSafeMarkdownPath(alias)) : []),
@@ -448,18 +491,22 @@ export function parseMarkdownWorkspace(manifest, fileContents) {
         }
         const parsedConversations = new Map();
         const parsedNotes = [];
+        const preferences = manifest.workspace?.preferences;
+        const defaults = `${preferences?.defaultServiceId}\0${preferences?.defaultModelId}`;
         for (const record of manifest.files) {
             const source = fileContents[record.path];
             if (typeof source !== "string")
                 return null;
+            const key = `${record.type}\0${record.id}\0${defaults}`;
+            // Callers own and may change what they receive, so each parse returns a copy.
             if (record.type === "conversation") {
-                const parsed = parseConversationFile(decodeReadableMarkdown(source).replace(/\r\n/g, "\n"), record, manifest.workspace);
+                const parsed = cachedCopy(fileParseCache, record.path, source, key, () => parseConversationFile(decodeReadableMarkdown(source).replace(/\r\n/g, "\n"), record, manifest.workspace));
                 if (!parsed || parsed.conversation.id !== record.id)
                     return null;
                 parsedConversations.set(record.id, parsed);
             }
             else {
-                const parsed = parseNoteFile(decodeReadableMarkdown(source).replace(/\r\n/g, "\n"));
+                const parsed = cachedCopy(fileParseCache, record.path, source, key, () => parseNoteFile(decodeReadableMarkdown(source).replace(/\r\n/g, "\n")));
                 if (!parsed || parsed.note.id !== record.id)
                     return null;
                 parsedNotes.push({ file: parsed, record });
