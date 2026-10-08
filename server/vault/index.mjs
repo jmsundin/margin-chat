@@ -108,13 +108,16 @@ export function createVaultService({ database, env = process.env, storage = crea
     return { bytes: record.bytes, revision, contentType: entry?.contentType ?? (path.endsWith(".md") ? "text/markdown; charset=utf-8" : path.endsWith(".json") ? "application/json" : "application/octet-stream") };
   }
 
-  async function commitFiles(userId, changes, { trusted = false, onlyInitialize = false } = {}) {
+  /** Returns the published manifest and the revision it was built on. The two
+   * are equal when every change was already in the cloud. */
+  async function applyCommit(userId, changes, { trusted = false, onlyInitialize = false } = {}) {
     if (!storage) throw missingConfiguration();
     const prepared = prepareChanges(changes, trusted);
     let uploaded = false;
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const current = await snapshot(userId);
-      if (onlyInitialize && current.manifest.revision !== 0) return current.manifest;
+      const unchanged = { manifest: current.manifest, previousRevision: current.manifest.revision };
+      if (onlyInitialize && current.manifest.revision !== 0) return unchanged;
       const conflicts = [];
       const effective = [];
       for (const change of prepared) {
@@ -125,9 +128,15 @@ export function createVaultService({ database, env = process.env, storage = crea
         else effective.push(change);
       }
       if (conflicts.length) throw new VaultConflictError(conflicts, current.manifest);
-      if (!effective.length) return current.manifest;
-      const next = { schemaVersion: 1, revision: current.manifest.revision + 1, files: { ...current.manifest.files } };
-      for (const change of effective) next.files[change.path] = change.entry;
+      if (!effective.length) return unchanged;
+      const next = { schemaVersion: 1, revision: current.manifest.revision + 1, files: {} };
+      // Each entry records the revision that last changed it, so a device can ask
+      // for only what changed since its last sync. Entries saved before this was
+      // recorded changed at or before the current revision.
+      for (const [path, entry] of Object.entries(current.manifest.files)) {
+        next.files[path] = entry.changedAt === undefined ? { ...entry, changedAt: current.manifest.revision } : entry;
+      }
+      for (const change of effective) next.files[change.path] = { ...change.entry, changedAt: next.revision };
       if (Object.keys(next.files).length > MAX_FILES) throw new HttpError(413, "This vault has reached the current 10,000-file sync limit.");
       const bytes = Buffer.from(JSON.stringify(next));
       if (bytes.length > MAX_MANIFEST_BYTES) throw new HttpError(413, "This vault's file index has reached the cloud sync size limit. Your local files remain saved and available to export.");
@@ -139,10 +148,25 @@ export function createVaultService({ database, env = process.env, storage = crea
       // History is written before publishing. Losing a CAS may leave an orphan,
       // but no manifest can ever reference an incompletely uploaded revision.
       await storage.putImmutable(`${prefix(userId)}/history/${digest(bytes)}.json`, bytes, "application/json");
-      if (await storage.compareAndSwap(manifestKey(userId), bytes, current.etag)) return next;
+      if (await storage.compareAndSwap(manifestKey(userId), bytes, current.etag)) return { manifest: next, previousRevision: current.manifest.revision };
       // Re-read and compare with ORIGINAL per-file bases. Never retag stale edits.
     }
     throw new HttpError(503, "Other devices are updating the vault. Retry this same change shortly.");
+  }
+
+  async function commitFiles(userId, changes, options) {
+    return (await applyCommit(userId, changes, options)).manifest;
+  }
+
+  /** Every entry changed after `since`. A device that has synchronized through
+   * `since` reconstructs the full manifest from what it already holds. */
+  function changesSince(manifest, since) {
+    const files = {};
+    if (since >= manifest.revision) return files;
+    for (const [path, entry] of Object.entries(manifest.files)) {
+      if ((entry.changedAt ?? manifest.revision) > since) files[path] = entry;
+    }
+    return files;
   }
 
   function attachmentChanges(attachment, bytes, current = emptyManifest()) {
@@ -307,17 +331,24 @@ export function createVaultService({ database, env = process.env, storage = crea
       const manifest = await migrateLegacy(userId);
       return { configured: true, manifest, projection: await projectLatest(userId, manifest) };
     },
+    /** What changed since a revision this device already synchronized. */
+    async changes(userId, since) {
+      if (!configured) return { configured: false, revision: 0, files: {} };
+      if (!Number.isSafeInteger(since) || since < 0) throw new HttpError(400, "Ask for changes since a saved vault revision.");
+      const manifest = await migrateLegacy(userId);
+      return { configured: true, revision: manifest.revision, files: changesSince(manifest, since), projection: await projectLatest(userId, manifest) };
+    },
     async commit(userId, changes) {
       // Preserve the server's legacy copy before considering a device's first edit.
       await migrateLegacy(userId);
-      const manifest = await commitFiles(userId, changes);
-      return { manifest, projection: await projectLatest(userId, manifest) };
+      const { manifest, previousRevision } = await applyCommit(userId, changes);
+      return { manifest, previousRevision, projection: await projectLatest(userId, manifest) };
     },
     async commitBinary(userId, { path, baseRevision, bytes, contentType }) {
       if (bytes.length > 4 * 1024 * 1024) throw new HttpError(413, "An attachment must be at most 4 MiB.");
       await migrateLegacy(userId);
-      const manifest = await commitFiles(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true });
-      return { manifest, projection: await projectLatest(userId, manifest) };
+      const { manifest, previousRevision } = await applyCommit(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true });
+      return { manifest, previousRevision, projection: await projectLatest(userId, manifest) };
     },
     async rebuild(userId) {
       const manifest = await migrateLegacy(userId);

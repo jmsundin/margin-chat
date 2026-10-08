@@ -59,11 +59,20 @@ function requireExpectedVaultAccount(request, user) {
   }
 }
 
+/** A device that syncs changes only needs the entries it just saved, not the
+ * whole vault's file list, back from a commit. */
+function acknowledgeVaultCommit(result, paths, url) {
+  if (url.searchParams.get("acknowledge") !== "changes") return result;
+  const files = {};
+  for (const path of paths) if (typeof path === "string" && Object.hasOwn(result.manifest.files, path)) files[path] = result.manifest.files[path];
+  return { ...result, manifest: { schemaVersion: result.manifest.schemaVersion, revision: result.manifest.revision, files } };
+}
+
 // The extension can operate on workspace content, but account administration
 // and billing mutations still require the website's cookie session.
 const EXTENSION_WORKSPACE_ROUTES = new Set([
   "authSession", "captureList", "captureGet", "stateRead",
-  "vaultStatus", "vaultIndex", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
+  "vaultStatus", "vaultIndex", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
   "chat", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
   "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
   "billingDashboard", "apiKeysRead",
@@ -512,6 +521,11 @@ export function createApiHandler({
           await sendStreamingJson(response, 200, await vaultService.index(userId), { "Cache-Control": "private, no-store" });
           return;
         }
+        if (route?.id === "vaultChanges") {
+          const since = url.searchParams.get("since");
+          await sendStreamingJson(response, 200, await vaultService.changes(userId, /^\d{1,15}$/u.test(since ?? "") ? Number(since) : -1), { "Cache-Control": "private, no-store" });
+          return;
+        }
         if (route?.id === "vaultFileRead") {
           const file = await vaultService.readFile({ userId, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
           response.writeHead(200, {
@@ -536,7 +550,7 @@ export function createApiHandler({
             contentType: String(request.headers["content-type"] ?? "application/octet-stream"),
             bytes: await readRawBody(request, 4 * 1024 * 1024),
           });
-          await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          await sendStreamingJson(response, 200, acknowledgeVaultCommit(result, [url.searchParams.get("path")], url), { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultCommit" || route?.id === "vaultRebuild") {
@@ -546,7 +560,7 @@ export function createApiHandler({
           }
           const body = await readJsonBody(request, 4 * 1024 * 1024);
           const result = route.id === "vaultCommit"
-            ? await vaultService.commit(userId, body?.changes)
+            ? acknowledgeVaultCommit(await vaultService.commit(userId, body?.changes), body.changes.map((change) => change.path), url)
             : await vaultService.rebuild(userId);
           await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;

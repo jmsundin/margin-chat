@@ -14,14 +14,19 @@ export interface VaultEntry {
 }
 
 /** The document identity travels with a deferred file so settings that refer
- * to it are kept while it is not on this device. */
-export type VaultDeferredEntry = VaultEntry & { id?: string };
+ * to it are kept while it is not on this device. A requested entry downloads
+ * on the next sync. */
+export type VaultDeferredEntry = VaultEntry & { id?: string; requested?: boolean };
 
 export interface VaultManifest {
   schemaVersion: 1;
   revision: number;
   files: Record<string, VaultEntry>;
 }
+
+/** A commit receipt lists the saved entries and the cloud revision the commit
+ * was built on, when the server reports it. */
+export type VaultCommitReceipt = VaultManifest & { previousRevision?: number };
 
 export interface VaultConflict {
   id: string;
@@ -44,6 +49,9 @@ export interface VaultSnapshot {
   /** Dismissing an alternative is local UI state; its portable recovery files remain. */
   dismissedRecoveryIds?: string[];
   remoteRevision: number;
+  /** Every cloud change up to this revision is reflected in `base` or
+   * `deferred`, so the next sync asks only for later changes. */
+  pulledRevision?: number;
   /** Cloud files this device has not downloaded yet. A new device opens its most
    * recent documents first; the rest arrive when opened. Absent means complete. */
   deferred?: Record<string, VaultDeferredEntry>;
@@ -93,9 +101,11 @@ export interface VaultDownloadProgress {
 
 export interface VaultTransport {
   manifest(): Promise<VaultManifest>;
+  /** The entries that changed after `since`, with the current revision. */
+  changes?(since: number): Promise<VaultManifest>;
   index?(): Promise<VaultIndex>;
   read(path: string, entry: VaultEntry): Promise<VaultFile>;
-  commit(changes: VaultChange[]): Promise<VaultManifest>;
+  commit(changes: VaultChange[]): Promise<VaultCommitReceipt>;
 }
 
 export function emptyVault(): VaultSnapshot {

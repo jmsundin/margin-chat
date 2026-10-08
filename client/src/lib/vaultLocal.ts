@@ -120,6 +120,9 @@ export function createBrowserVaultStore(userId: string): VaultStore {
         }
         const snapshot = emptyVault();
         snapshot.remoteRevision = stored.remoteRevision;
+        if (Number.isSafeInteger(stored.pulledRevision) && stored.pulledRevision! >= 0 && stored.pulledRevision! <= stored.remoteRevision) {
+          snapshot.pulledRevision = stored.pulledRevision;
+        }
         if (stored.dismissedRecoveryIds) snapshot.dismissedRecoveryIds = stored.dismissedRecoveryIds;
         if (stored.deferred && typeof stored.deferred === "object") {
           const deferred = Object.fromEntries(Object.entries(stored.deferred)
@@ -160,6 +163,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       const stored: StoredSnapshot = { schemaVersion: 1, remoteRevision: snapshot.remoteRevision, files: {}, base: {}, conflicts: [] };
       if (snapshot.dismissedRecoveryIds) stored.dismissedRecoveryIds = snapshot.dismissedRecoveryIds;
       if (snapshot.deferred) stored.deferred = snapshot.deferred;
+      if (snapshot.pulledRevision !== undefined) stored.pulledRevision = snapshot.pulledRevision;
       const cache = operationCache ?? createOperationCache();
       const known = new Set<string>();
       async function storeFile(file: VaultFile | null, path: string): Promise<FileRef | null> {

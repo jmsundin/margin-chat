@@ -47,7 +47,10 @@ function cloud() {
       const { bytes } = await server.readFile({ userId: "user", path, revision: entry.revision });
       return { content: bytes.toString(entry.encoding === "base64" ? "base64" : "utf8"), ...(entry.encoding ? { encoding: entry.encoding } : {}), contentType: entry.contentType };
     },
-    async commit(changes) { return normalize((await server.commit("user", changes)).manifest); },
+    async commit(changes) {
+      const { manifest, previousRevision } = await server.commit("user", changes);
+      return { ...normalize(manifest), previousRevision };
+    },
   };
   return { server, transport, device: () => new VaultSync(store(), transport) };
 }

@@ -125,7 +125,7 @@ const partialScenario = process.argv.includes("--partial-load");
 let projectionPending = projectionScenario;
 let commitRequests = 0;
 function vaultResponse(result: any) {
-  return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest.revision } } : result);
+  return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest?.revision ?? result.revision } } : result);
 }
 if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
@@ -136,6 +136,10 @@ globalThis.fetch = (async (input: any, init: any) => {
   if (url.pathname === "/api/vault") {
     if (!networkReleased) { networkEntered.resolve(); await initialNetwork.promise; }
     return vaultResponse(await remote.status(user.id));
+  }
+  if (url.pathname === "/api/vault/changes") {
+    if (!networkReleased) { networkEntered.resolve(); await initialNetwork.promise; }
+    return vaultResponse(await remote.changes(user.id, Number(url.searchParams.get("since"))));
   }
   if (url.pathname === "/api/vault/file") {
     if (init?.method === "PUT") {
@@ -583,7 +587,7 @@ async function checkPopulatedWorkspace() {
   const automaticEntered = deferred();
   let automaticManifestRequests = 0;
   globalThis.fetch = (async (input: any, init: any) => {
-    if (new URL(String(input), "http://fixture.test").pathname === "/api/vault") {
+    if (["/api/vault", "/api/vault/changes"].includes(new URL(String(input), "http://fixture.test").pathname)) {
       automaticManifestRequests++;
       automaticEntered.resolve();
       await automaticGate.promise;
