@@ -279,7 +279,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       async verifyProduction() {
         await assertLock();
         await waitForProductionReadiness({ baseUrl: config.productionUrl, expectedSha: plan.sha,
-          previousSha: previous.meta?.marginReleaseSha, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET, assertLock });
+          previousSha: previous.meta?.marginReleaseSha, previousUnidentified: !previous.meta?.marginReleaseSha, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET, assertLock });
         for (let index = 0; index < config.observation.checks; index += 1) {
           if (index) await delay(config.observation.intervalSeconds * 1000);
           await assertLock();
