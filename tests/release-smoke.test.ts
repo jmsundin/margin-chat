@@ -87,6 +87,15 @@ describe("production persistence readiness", () => {
     await expect(waitForProductionReadiness({ ...f.options, previousSha: undefined })).rejects.toThrow("unexpected release");
   });
 
+  test("waits out a previous deployment made outside the release runner", async () => {
+    const f = propagationFixture([undefined, "expected-release"]);
+    const options = { ...f.options, previousSha: undefined, previousUnidentified: true };
+    expect((await waitForProductionReadiness(options)).release).toBe("expected-release");
+    expect(f.counts().reads).toBe(2);
+    const unrelated = propagationFixture(["unrelated-release"]);
+    await expect(waitForProductionReadiness({ ...unrelated.options, previousSha: undefined, previousUnidentified: true })).rejects.toThrow("unexpected release");
+  });
+
   test("propagation waiting still fails immediately for unhealthy storage or a lost lock", async () => {
     const f = propagationFixture(["previous-release"]);
     await expect(waitForProductionReadiness({ ...f.options, fetchImpl: async () => Response.json(healthy, { status: 503 }) })).rejects.toThrow("Database readiness failed");

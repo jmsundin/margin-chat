@@ -19,7 +19,7 @@ export async function checkReadiness({ baseUrl, expectedSha, fetchImpl = fetch, 
 }
 
 /** Promotion can finish before the public origin stops serving the old release. */
-export async function waitForProductionReadiness({ expectedSha, previousSha, assertLock = async () => {},
+export async function waitForProductionReadiness({ expectedSha, previousSha, previousUnidentified = false, assertLock = async () => {},
   sleep = delay, now = Date.now, timeoutMs = 180_000, pollMs = 1_000, ...options }) {
   if (!expectedSha || !(timeoutMs > 0) || !(pollMs > 0)) throw new Error("Invalid production readiness polling options.");
   const deadline = now() + timeoutMs;
@@ -31,8 +31,11 @@ export async function waitForProductionReadiness({ expectedSha, previousSha, ass
     if (now() >= deadline) break;
     if (result.release === expectedSha) return result;
     // Only the known previous release is a propagation delay. Missing identity,
-    // an unrelated release, and unhealthy storage must still fail immediately.
-    if (!previousSha || result.release !== previousSha) throw new Error("The production URL is serving an unexpected release after promotion.");
+    // an unrelated release, and unhealthy storage must still fail immediately,
+    // except that a previous deployment made outside the release runner (e.g.
+    // `vercel --prod`) reports no identity, so that is its known signature.
+    const isPrevious = previousSha ? result.release === previousSha : previousUnidentified && result.release == null;
+    if (!isPrevious) throw new Error("The production URL is serving an unexpected release after promotion.");
     await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
   }
   throw new Error("Timed out waiting for the production URL to serve the promoted release.");

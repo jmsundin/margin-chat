@@ -4,8 +4,8 @@ on:
   workflow_dispatch:
     inputs:
       commit:
-        description: Full reviewed Git commit SHA to release
-        required: true
+        description: Full reviewed Git commit SHA to release (leave empty to release the head of the selected branch)
+        required: false
         type: string
 
 # All refs share one queue; never cancel a running migration or release.
@@ -24,14 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.commit }}
+          ref: ${{ inputs.commit || github.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.9
       - name: Verify immutable release selection
         env:
-          RELEASE_COMMIT: ${{ inputs.commit }}
+          RELEASE_COMMIT: ${{ inputs.commit || github.sha }}
         run: |
           bun --no-env-file -e 'if (!/^[a-f0-9]{40}$/.test(process.env.RELEASE_COMMIT)) throw new Error("Select a full commit SHA"); const actual = Bun.spawnSync(["git", "rev-parse", "HEAD"]).stdout.toString().trim(); if (actual !== process.env.RELEASE_COMMIT) throw new Error("Checkout does not match release SHA");'
       - name: Install pinned dependencies

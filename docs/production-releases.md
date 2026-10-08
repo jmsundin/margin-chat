@@ -56,7 +56,7 @@ Configuration writes persist if a later deployment or verification fails. Inspec
 
 ## Release before the code goes live
 
-Ask the agent to prepare the feature and its persistence migrations in one reviewed commit, then release that commit. Alternatively, run **Production release** in GitHub Actions with its full 40-character Git SHA. A release needs no SQL-console work or per-account rebuild requests.
+Ask the agent to prepare the feature and its persistence migrations in one reviewed commit, then release that commit. Alternatively, run **Production release** in GitHub Actions (Actions → Production release → Run workflow). Leave the commit empty to release the head of the selected branch, or paste a full 40-character Git SHA. A release needs no SQL-console work or per-account rebuild requests.
 
 From an exact clean release checkout with credentials already exported:
 
@@ -96,6 +96,20 @@ Configure these secrets once in the environment running the local command, or in
 - `REHEARSAL_BLOB_READ_WRITE_TOKEN`: a separate private rehearsal store.
 - `BACKUP_BLOB_READ_WRITE_TOKEN`: a separate private backup store.
 - `VERCEL_AUTOMATION_BYPASS_SECRET`: the Vercel automation bypass secret for protected deployment checks.
+
+Where each value comes from:
+
+| Secret | Where to get it |
+| --- | --- |
+| `NEON_API_KEY` | Neon console (open it from the Vercel Storage tab for a Vercel-managed database) → Organization or Account settings → API keys → Create. |
+| `VERCEL_TOKEN` | vercel.com/account/settings/tokens → Create, scoped to the team that owns the project. |
+| `BLOB_READ_WRITE_TOKEN` | Vercel → Storage → the production Blob store → `.env.local` tab. Its store ID must equal `blob.productionStoreId`. |
+| `BACKUP_BLOB_READ_WRITE_TOKEN`, `REHEARSAL_BLOB_READ_WRITE_TOKEN` | Same tab on the backup and rehearsal stores (create them as private stores if missing). The token names there are all `BLOB_READ_WRITE_TOKEN`; paste each value under the secret name above. |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | Vercel project → Settings → Deployment Protection → Protection Bypass for Automation → Add secret. |
+
+In GitHub: repository Settings → Environments → New environment `production` → Add environment secret for each. Optionally add yourself as a required reviewer and limit deployment branches to `main`.
+
+A previous production deployment made with `vercel --prod` carries no release identity; the first workflow release accepts that as the known previous release while the public origin switches over.
 
 Token store identities must match the configured IDs, and all three stores must differ. Rehearsal also verifies that already-migrated accounts have their vaults in the backup, so an empty wrong store cannot pass merely because synthetic writes work.
 
