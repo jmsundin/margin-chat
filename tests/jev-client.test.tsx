@@ -184,7 +184,11 @@ describe("Jev workspace assistance", () => {
   });
 
   test("fits both notes after topic organization creates negative positions", () => {
-    const notes = Object.fromEntries(["first", "second"].map((id) => [id, createStandaloneNoteConversation({ id, noteId: `body-${id}` })]));
+    // Both notes share one fixed timestamp. Ordering follows creation time, and with
+    // two real `new Date()` calls a millisecond boundary between them changes the
+    // arrangement, so the negative positions this test needs would come and go.
+    const createdAt = "2026-10-08T00:00:00.000Z";
+    const notes = Object.fromEntries(["first", "second"].map((id) => [id, createStandaloneNoteConversation({ id, noteId: `body-${id}`, createdAt })]));
     const layouts = buildCategoryOrganizedGraphLayouts({ conversations: notes, graphLayouts: {}, threads: buildThreadSummaries(notes) });
     expect(layouts.first.x).toBeLessThan(0);
     expect(layouts.first.y).toBeLessThan(0);
