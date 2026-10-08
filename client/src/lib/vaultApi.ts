@@ -1,6 +1,6 @@
 import { apiFetch } from "./apiTransport";
 import { ApiError } from "./apiError";
-import { validVaultPath, type VaultEntry, type VaultFile, type VaultManifest, type VaultTransport } from "./vaultTypes";
+import { validVaultPath, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultTransport } from "./vaultTypes";
 import { bytesToBase64, vaultFileBytes } from "./vaultLocal";
 
 const revisionPattern = /^[a-f0-9]{64}$/u;
@@ -27,6 +27,31 @@ function readManifest(value: unknown): VaultManifest {
     };
   }
   return { schemaVersion: 1, revision: value.revision as number, files };
+}
+
+const optionalString = (value: unknown) => typeof value === "string" && value.length <= 2048 ? value : undefined;
+
+function readIndex(value: unknown): VaultIndex {
+  if (!isRecord(value) || !Number.isSafeInteger(value.revision) || !Array.isArray(value.entries)) {
+    throw new Error("The server returned an invalid vault index.");
+  }
+  const entries: VaultIndexEntry[] = [];
+  for (const entry of value.entries) {
+    // A malformed row only hides that file from the index; it never blocks opening the vault.
+    if (!isRecord(entry) || typeof entry.path !== "string" || !validVaultPath(entry.path) || typeof entry.id !== "string"
+      || typeof entry.revision !== "string" || !revisionPattern.test(entry.revision)) continue;
+    const parentPath = optionalString(entry.parentPath);
+    const linkedPaths = Array.isArray(entry.linkedPaths) ? entry.linkedPaths.filter((path): path is string => typeof path === "string" && validVaultPath(path)) : [];
+    entries.push({ path: entry.path, id: entry.id, revision: entry.revision,
+      type: entry.type === "note" ? "note" : "conversation", kind: entry.kind === "chat" ? "chat" : "note",
+      title: optionalString(entry.title)?.slice(0, 300) || entry.path.split("/").pop()!.replace(/\.md$/iu, ""),
+      ...(optionalString(entry.created) ? { created: optionalString(entry.created) } : {}),
+      ...(optionalString(entry.updated) ? { updated: optionalString(entry.updated) } : {}),
+      ...(parentPath && validVaultPath(parentPath) ? { parentPath } : {}),
+      ...(linkedPaths.length ? { linkedPaths } : {}),
+    });
+  }
+  return { revision: value.revision as number, entries };
 }
 
 async function fileRevision(bytes: Uint8Array, encoding: "base64" | undefined, contentType: string): Promise<string> {
@@ -63,6 +88,11 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
       const manifest = readManifest(payload?.manifest);
       reportProjection(payload?.projection);
       return manifest;
+    },
+    async index(): Promise<VaultIndex> {
+      const payload = await (await accountRequest("/api/vault/index")).json();
+      if (payload?.configured === false) throw new Error("Cloud vault storage has not been configured. Your files are saved on this device.");
+      return readIndex(payload);
     },
     async read(path: string, entry: VaultEntry): Promise<VaultFile> {
       const response = await accountRequest(`/api/vault/file?${new URLSearchParams({ path, revision: entry.revision })}`);

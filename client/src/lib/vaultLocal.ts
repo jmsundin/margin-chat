@@ -119,6 +119,11 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       const snapshot = emptyVault();
       snapshot.remoteRevision = stored.remoteRevision;
       if (stored.dismissedRecoveryIds) snapshot.dismissedRecoveryIds = stored.dismissedRecoveryIds;
+      if (stored.deferred && typeof stored.deferred === "object") {
+        const deferred = Object.fromEntries(Object.entries(stored.deferred)
+          .filter(([path, entry]) => validVaultPath(path) && typeof entry?.revision === "string"));
+        if (Object.keys(deferred).length) snapshot.deferred = deferred;
+      }
       for (const [path, ref] of Object.entries(stored.files)) {
         if (!validVaultPath(path)) throw new Error("Invalid path in local vault.");
         snapshot.files[path] = (await readRef(ref))!;
@@ -147,6 +152,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       const history = await root.getDirectoryHandle("history", { create: true });
       const stored: StoredSnapshot = { schemaVersion: 1, remoteRevision: snapshot.remoteRevision, files: {}, base: {}, conflicts: [] };
       if (snapshot.dismissedRecoveryIds) stored.dismissedRecoveryIds = snapshot.dismissedRecoveryIds;
+      if (snapshot.deferred) stored.deferred = snapshot.deferred;
       const cache = operationCache ?? createOperationCache();
       const known = new Set<string>();
       async function storeFile(file: VaultFile | null, path: string): Promise<FileRef | null> {

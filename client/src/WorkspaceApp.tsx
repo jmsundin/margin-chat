@@ -82,6 +82,7 @@ import { resolveSearchSource } from "./lib/searchSource";
 import type { SearchEvidenceRef } from "./lib/conversationSearch";
 import ThreadSidebar from "./components/ThreadSidebar";
 import ResizableSidebar from "./components/ResizableSidebar";
+import CloudVaultIndex, { VaultFetchIndicator } from "./components/CloudVaultIndex";
 import {
   ApiError,
   requestDeleteDocument,
@@ -4053,6 +4054,7 @@ function WorkspaceAppContent({
     <div className="app-shell">
       <div className="app-chrome">
         <div className="workspace-notifications">
+          {!leftSidebarOpen || isMobileViewport ? <VaultFetchIndicator status={vault.fetchStatus ?? null} compact /> : null}
           <NotificationToast message={documentLinkNotice?.message ?? null} kind="success"
             onDismiss={() => setDocumentLinkNotice(null)}
             action={documentLinkNotice?.conversationId ? { label: "Open link", onClick: () => handleNavigateDocumentConnector({
@@ -4131,6 +4133,14 @@ function WorkspaceAppContent({
               streamingThreadIds={streamingThreadIds}
               theme={theme}
               threads={documentSummaries}
+              fetchIndicator={<VaultFetchIndicator status={vault.fetchStatus ?? null} />}
+              cloudIndex={<CloudVaultIndex documents={vault.cloudDocuments ?? []} openingPath={vault.openingPath ?? null}
+                onOpen={(path) => {
+                  void vault.openCloudDocument(path).then(() => {
+                    setMainViewMode("chat");
+                    if (isMobileViewport) setLeftSidebarOpen(false);
+                  }).catch(() => undefined);
+                }} />}
             />
             </ResizableSidebar>
 

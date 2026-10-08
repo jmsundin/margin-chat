@@ -1,0 +1,112 @@
+import type { VaultFile, VaultIndexEntry } from "./vaultTypes";
+
+/** Paths that must arrive together so a downloaded document parses with every
+ * relationship it renders: its whole family tree (branches and margin notes)
+ * and, transitively, the families of documents it links to. */
+export function vaultHydrationClosure(index: VaultIndexEntry[], paths: Iterable<string>): Set<string> {
+  const byPath = new Map(index.map((entry) => [entry.path, entry]));
+  const rootOf = (path: string) => {
+    const seen = new Set<string>();
+    let current = path;
+    while (!seen.has(current)) {
+      seen.add(current);
+      const parent = byPath.get(current)?.parentPath;
+      if (!parent || !byPath.has(parent)) break;
+      current = parent;
+    }
+    return current;
+  };
+  const members = new Map<string, string[]>();
+  for (const entry of index) {
+    const root = rootOf(entry.path);
+    members.set(root, [...members.get(root) ?? [], entry.path]);
+  }
+  const result = new Set<string>();
+  const visitedRoots = new Set<string>();
+  const queue = [...paths].map(rootOf);
+  while (queue.length) {
+    const root = queue.pop()!;
+    if (visitedRoots.has(root)) continue;
+    visitedRoots.add(root);
+    for (const path of members.get(root) ?? [root]) {
+      result.add(path);
+      for (const linked of byPath.get(path)?.linkedPaths ?? []) if (byPath.has(linked)) queue.push(rootOf(linked));
+    }
+  }
+  return result;
+}
+
+/** Documents most recently created or edited, newest first. */
+export function recentVaultEntries(index: VaultIndexEntry[], limit = Infinity): VaultIndexEntry[] {
+  return index.filter((entry) => entry.type === "conversation")
+    .sort((left, right) => (right.updated ?? right.created ?? "").localeCompare(left.updated ?? left.created ?? "")
+      || left.title.localeCompare(right.title))
+    .slice(0, limit);
+}
+
+/** Matches every whitespace-separated term against a title, ignoring case and accents. */
+export function searchVaultIndex(entries: VaultIndexEntry[], query: string): VaultIndexEntry[] {
+  const fold = (value: string) => value.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase();
+  const terms = fold(query).split(/\s+/u).filter(Boolean);
+  if (!terms.length) return entries;
+  return entries.filter((entry) => {
+    const haystack = fold(`${entry.title} ${entry.path}`);
+    return terms.every((term) => haystack.includes(term));
+  });
+}
+
+type WorkspaceSidecar = { workspace?: { view?: Record<string, unknown> } };
+
+/** The editor only knows downloaded documents, so its rendering of workspace.json
+ * leaves out pins, groups and layouts that belong to documents still in the
+ * cloud. Put those references back so a partial device never deletes them. */
+export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored: VaultFile | undefined, deferredIds: Set<string>): VaultFile {
+  if (!stored || !deferredIds.size || rendered.encoding || stored.encoding) return rendered;
+  let next: WorkspaceSidecar;
+  let previous: WorkspaceSidecar;
+  try { next = JSON.parse(rendered.content); previous = JSON.parse(stored.content); } catch { return rendered; }
+  const view = next.workspace?.view;
+  const before = previous.workspace?.view;
+  if (!view || !before) return rendered;
+  const deferred = (id: unknown): id is string => typeof id === "string" && deferredIds.has(id);
+  let changed = false;
+
+  if (Array.isArray(before.pinnedItemIds)) {
+    const pinned = Array.isArray(view.pinnedItemIds) ? [...view.pinnedItemIds] : [];
+    for (const id of before.pinnedItemIds) if (deferred(id) && !pinned.includes(id)) { pinned.push(id); changed = true; }
+    view.pinnedItemIds = pinned;
+  }
+
+  const beforeGroups = isRecord(before.groups) ? before.groups : {};
+  const groups = isRecord(view.groups) ? { ...view.groups } : {};
+  for (const [groupId, group] of Object.entries(beforeGroups)) {
+    if (!isRecord(group) || !Array.isArray(group.conversationIds)) continue;
+    const hidden = group.conversationIds.filter(deferred);
+    if (!hidden.length) continue;
+    const current = groups[groupId];
+    // A group that still lists only cloud documents cannot have been deleted here.
+    if (!isRecord(current)) {
+      if (group.conversationIds.every(deferred)) { groups[groupId] = group; changed = true; }
+      continue;
+    }
+    const ids = Array.isArray(current.conversationIds) ? [...current.conversationIds] : [];
+    for (const id of hidden) if (!ids.includes(id)) { ids.push(id); changed = true; }
+    groups[groupId] = { ...current, conversationIds: ids };
+  }
+  view.groups = groups;
+
+  if (isRecord(before.graphLayouts)) {
+    const layouts = isRecord(view.graphLayouts) ? { ...view.graphLayouts } : {};
+    for (const [id, layout] of Object.entries(before.graphLayouts)) {
+      if (deferred(id) && !(id in layouts)) { layouts[id] = layout; changed = true; }
+    }
+    view.graphLayouts = layouts;
+  }
+
+  if (!changed) return rendered;
+  return { ...rendered, content: JSON.stringify(next, null, 2) };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}

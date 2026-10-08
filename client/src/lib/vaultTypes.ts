@@ -13,6 +13,10 @@ export interface VaultEntry {
   contentType?: string;
 }
 
+/** The document identity travels with a deferred file so settings that refer
+ * to it are kept while it is not on this device. */
+export type VaultDeferredEntry = VaultEntry & { id?: string };
+
 export interface VaultManifest {
   schemaVersion: 1;
   revision: number;
@@ -40,6 +44,9 @@ export interface VaultSnapshot {
   /** Dismissing an alternative is local UI state; its portable recovery files remain. */
   dismissedRecoveryIds?: string[];
   remoteRevision: number;
+  /** Cloud files this device has not downloaded yet. A new device opens its most
+   * recent documents first; the rest arrive when opened. Absent means complete. */
+  deferred?: Record<string, VaultDeferredEntry>;
   /** Device-only observations, keyed by the identity of the selected directory handle. */
   directoryBaselines?: Record<string, {
     files: Record<string, VaultFile>;
@@ -61,8 +68,32 @@ export interface VaultStore {
   lock<T>(operation: () => Promise<T>): Promise<T>;
 }
 
+export interface VaultIndexEntry {
+  path: string;
+  id: string;
+  type: "conversation" | "note";
+  kind: "chat" | "note";
+  title: string;
+  revision: string;
+  created?: string;
+  updated?: string;
+  parentPath?: string;
+  linkedPaths?: string[];
+}
+
+export interface VaultIndex {
+  revision: number;
+  entries: VaultIndexEntry[];
+}
+
+export interface VaultDownloadProgress {
+  done: number;
+  total: number;
+}
+
 export interface VaultTransport {
   manifest(): Promise<VaultManifest>;
+  index?(): Promise<VaultIndex>;
   read(path: string, entry: VaultEntry): Promise<VaultFile>;
   commit(changes: VaultChange[]): Promise<VaultManifest>;
 }

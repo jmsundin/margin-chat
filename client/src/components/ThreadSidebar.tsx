@@ -20,6 +20,10 @@ const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
 interface ThreadSidebarProps {
   header?: ReactNode;
+  /** Documents that are still only in the cloud vault, listed after this device's documents. */
+  cloudIndex?: ReactNode;
+  /** Shown above the document list while documents download. */
+  fetchIndicator?: ReactNode;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
   mapExplorerActive?: boolean;
   onSelectSidebarSection?: (section: "chats" | "explore") => void;
@@ -320,6 +324,8 @@ export default function ThreadSidebar({
   streamingThreadIds,
   theme,
   threads,
+  cloudIndex,
+  fetchIndicator,
 }: ThreadSidebarProps) {
   const [openMenuState, setOpenMenuState] = useState<{
     left: number;
@@ -930,8 +936,9 @@ export default function ThreadSidebar({
             <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
               aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button>
           </div>
+          {fetchIndicator}
           <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline"}>
-            {sidebarContent !== "groups" ? createdThreads.map(renderThreadItem) : <>
+            {sidebarContent !== "groups" ? <>{createdThreads.map(renderThreadItem)}{cloudIndex}</> : <>
             {recentPinnedThreads.length || draggedThreadId ? (
               <section
                 aria-label="Pinned documents"

@@ -44,6 +44,32 @@ export function parseMarkdownWorkspace(
   manifest: MarkdownWorkspaceManifest,
   fileContents: Record<string, string>,
 ): AppState | null;
+export interface MarkdownVaultFileSummary {
+  path: string;
+  id: string;
+  type: "conversation" | "note";
+  kind: "chat" | "note";
+  title: string;
+  created?: string;
+  updated?: string;
+  aliases?: string[];
+  parentTarget: string | null;
+  linkedTargets: string[];
+}
+export interface MarkdownVaultIndexEntry {
+  path: string;
+  id: string;
+  type: "conversation" | "note";
+  kind: "chat" | "note";
+  title: string;
+  created?: string;
+  updated?: string;
+  /** The conversation this file belongs under: a branch's parent or a note's document. */
+  parentPath?: string;
+  linkedPaths?: string[];
+}
+export function summarizeMarkdownVaultFile(path: string, source: string): MarkdownVaultFileSummary | null;
+export function buildMarkdownVaultIndex(summaries: MarkdownVaultFileSummary[]): MarkdownVaultIndexEntry[];
 export function getAttachmentVaultPath(document: Pick<ConversationDocument, "id" | "filename">): string | null;
 export function isSafeMarkdownPath(path: string): boolean;
 
