@@ -104,8 +104,9 @@ describe("cloud changes since a revision", () => {
     const { server, storage } = cloud();
     await server.commit("user", [{ path: "old.md", content: "Old", baseRevision: null }]);
     await server.commit("user", [{ path: "other.md", content: "Other", baseRevision: null }]);
+    // Rewrite the vault as an older server stored it: one file list without change tracking.
     const key = [...storage.objects.keys()].find((name) => name.endsWith("/manifest.json"))!;
-    const legacy = JSON.parse(storage.objects.get(key)!.toString());
+    const legacy = structuredClone((await server.snapshot("user")).manifest);
     for (const entry of Object.values<any>(legacy.files)) delete entry.changedAt;
     storage.objects.set(key, Buffer.from(JSON.stringify(legacy)));
 

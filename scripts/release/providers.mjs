@@ -230,25 +230,73 @@ async function putVerified(sdk, token, pathname, bytes, contentType) {
 }
 
 const vaultManifestPath = /^(vaults\/v1\/[^/]+\/)(?:manifest\.json|history\/([a-f0-9]{64})\.json)$/;
+const vaultShardPath = /^vaults\/v1\/[^/]+\/shards\/([a-f0-9]{64})\.json$/;
 const isVaultManifest = (pathname) => vaultManifestPath.test(pathname);
+const isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
 
-function vaultReferences(manifestBodies) {
-  const references = new Map();
+/** A vault root: a schema 1 manifest listing every file, or a schema 2 root
+ * naming the content digest of each shard of the file list. */
+function parseVaultRoot(pathname, bytes) {
+  const [, root, historyDigest] = vaultManifestPath.exec(pathname) ?? [];
+  if (!root) throw new Error("Invalid stored vault manifest pathname.");
+  if (historyDigest && sha256(bytes) !== historyDigest) throw new Error("Immutable vault history manifest does not match its content-addressed pathname.");
+  let manifest;
+  try { manifest = JSON.parse(bytes.toString("utf8")); } catch { throw new Error("Stored vault manifest is invalid JSON."); }
+  if (![1, 2].includes(manifest?.schemaVersion) || !Number.isSafeInteger(manifest.revision) || manifest.revision < 0 ||
+      !isObject(manifest.schemaVersion === 1 ? manifest.files : manifest.shards)) throw new Error("Unsupported stored vault manifest format.");
+  if (manifest.schemaVersion === 2) {
+    for (const [id, shard] of Object.entries(manifest.shards)) {
+      if (!/^[a-f0-9]{2}$/.test(id) || !isObject(shard) || !/^[a-f0-9]{64}$/.test(shard.digest)) throw new Error("Unsupported stored vault manifest format.");
+    }
+  }
+  return { root, manifest };
+}
+
+/** Shard objects referenced by schema 2 roots. */
+function vaultShardReferences(manifestBodies) {
+  const shards = new Set();
   for (const [pathname, bytes] of manifestBodies) {
-    const [, root, historyDigest] = vaultManifestPath.exec(pathname) ?? [];
-    if (!root) throw new Error("Invalid stored vault manifest pathname.");
-    if (historyDigest && sha256(bytes) !== historyDigest) throw new Error("Immutable vault history manifest does not match its content-addressed pathname.");
-    let manifest;
-    try { manifest = JSON.parse(bytes.toString("utf8")); } catch { throw new Error("Stored vault manifest is invalid JSON."); }
-    if (manifest.schemaVersion !== 1 || !Number.isSafeInteger(manifest.revision) || manifest.revision < 0 || !manifest.files || typeof manifest.files !== "object" || Array.isArray(manifest.files)) throw new Error("Unsupported stored vault manifest format.");
-    for (const [path, entry] of Object.entries(manifest.files)) {
+    const { root, manifest } = parseVaultRoot(pathname, bytes);
+    if (manifest.schemaVersion === 2) for (const shard of Object.values(manifest.shards)) shards.add(`${root}shards/${shard.digest}.json`);
+  }
+  return shards;
+}
+
+function verifyShard(pathname, bytes) {
+  const match = vaultShardPath.exec(pathname);
+  if (match && sha256(bytes) !== match[1]) throw new Error("Immutable vault file list shard does not match its content-addressed pathname.");
+}
+
+function vaultReferences(manifestBodies, shardBodies = new Map()) {
+  const references = new Map();
+  const reference = (root, files) => {
+    for (const [path, entry] of Object.entries(files)) {
       if (!safeBlobPathname(path) || !entry || !/^[a-f0-9]{64}$/.test(entry.revision) || typeof entry.deleted !== "boolean") throw new Error("Stored vault manifest contains an invalid revision.");
       if (entry.deleted) continue;
       if (!["utf8", "base64"].includes(entry.encoding) || typeof entry.contentType !== "string" || !entry.contentType || !Number.isSafeInteger(entry.size) || entry.size < 0) throw new Error("Stored vault manifest contains invalid immutable body metadata.");
       const bodyPathname = `${root}files/${sha256(path)}/${entry.revision}`;
       const previous = references.get(bodyPathname);
       if (previous && ["encoding", "contentType", "size"].some((key) => previous[key] !== entry[key])) throw new Error("Stored vault manifests disagree about immutable revision metadata.");
-      references.set(bodyPathname, { ...entry });
+      references.set(bodyPathname, { revision: entry.revision, encoding: entry.encoding, contentType: entry.contentType, size: entry.size });
+    }
+  };
+  for (const [pathname, bytes] of manifestBodies) {
+    const { root, manifest } = parseVaultRoot(pathname, bytes);
+    if (manifest.schemaVersion === 1) {
+      reference(root, manifest.files);
+      continue;
+    }
+    for (const [id, shard] of Object.entries(manifest.shards)) {
+      const shardPathname = `${root}shards/${shard.digest}.json`;
+      const shardBytes = shardBodies.get(shardPathname);
+      if (!shardBytes) throw new Error("Vault backup is missing a file list shard referenced by a manifest.");
+      verifyShard(shardPathname, shardBytes);
+      let value;
+      try { value = JSON.parse(shardBytes.toString("utf8")); } catch { throw new Error("Stored vault file list shard is invalid JSON."); }
+      if (value?.schemaVersion !== 1 || value.shard !== id || !isObject(value.files) ||
+          Object.keys(value.files).some((path) => sha256(path).slice(0, 2) !== id)) throw new Error("Unsupported stored vault file list shard.");
+      references.set(shardPathname, { shard: true });
+      reference(root, value.files);
     }
   }
   return references;
@@ -267,9 +315,10 @@ function verifyImmutableRevision(pathname, stored, expected) {
   return { ...revisions, contentType: stored.contentType, size: stored.bytes.length };
 }
 
-function validateVaultReferences(manifestBodies, objects, revisionChecks) {
-  for (const [pathname, entry] of vaultReferences(manifestBodies)) {
+function validateVaultReferences(manifestBodies, shardBodies, objects, revisionChecks) {
+  for (const [pathname, entry] of vaultReferences(manifestBodies, shardBodies)) {
     if (!objects.has(pathname)) throw new Error("Vault backup is missing an immutable revision referenced by a manifest.");
+    if (entry.shard) continue;
     const check = revisionChecks.get(pathname);
     if (!check || check[entry.encoding] !== entry.revision || check.contentType !== entry.contentType || check.size !== entry.size) throw new Error("Immutable vault revision does not match its captured manifest metadata.");
   }
@@ -293,17 +342,22 @@ function validateInventory(inventory, { releaseId, sourceStoreId, backupStoreId 
 
 async function verifyInventoryObjects(sdk, token, inventory, visit) {
   const manifests = new Map();
+  const shards = new Map();
   const revisionChecks = new Map();
   const paths = new Map(inventory.objects.map((object) => [object.pathname, object]));
   for (const object of inventory.objects) {
     const stored = await readBlob(sdk, token, object.backupPathname);
     if (stored.etag !== object.backupEtag || stored.bytes.length !== object.size || sha256(stored.bytes) !== object.sha256 || stored.contentType !== object.contentType) throw new Error("Blob backup integrity verification failed.");
     if (isVaultManifest(object.pathname)) manifests.set(object.pathname, stored.bytes);
+    if (vaultShardPath.test(object.pathname)) {
+      verifyShard(object.pathname, stored.bytes);
+      shards.set(object.pathname, stored.bytes);
+    }
     const check = verifyImmutableRevision(object.pathname, stored);
     if (check) revisionChecks.set(object.pathname, check);
     if (visit) await visit(object, stored);
   }
-  validateVaultReferences(manifests, paths, revisionChecks);
+  validateVaultReferences(manifests, shards, paths, revisionChecks);
 }
 
 /** Full-object backup, with the private inventory committed only after verification.
@@ -332,23 +386,32 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
   const listed = await listBlobs(sdk, sourceToken, sourcePrefix);
   const objects = [];
   const manifests = new Map();
-  const capturedManifests = new Map();
+  const shards = new Map();
+  const captured = new Map();
   const revisionChecks = new Map();
   // Pin each mutable manifest once and capture listed immutable history before
   // copying bodies. A writer may advance live manifests without invalidating
   // either captured graph; history can reference revisions absent from listing.
   for (const pathname of [...listed.keys()].filter(isVaultManifest).sort()) {
     const record = await readBlob(sdk, sourceToken, pathname);
-    capturedManifests.set(pathname, { ...record, capturedAt: now().toISOString() });
+    captured.set(pathname, { ...record, capturedAt: now().toISOString() });
     manifests.set(pathname, record.bytes);
   }
-  const references = vaultReferences(manifests);
+  // Sharded roots name immutable file list shards, which may postdate the listing.
+  for (const pathname of [...vaultShardReferences(manifests)].sort()) {
+    const record = await readBlob(sdk, sourceToken, pathname, { allowMissing: true });
+    if (!record) throw new Error("Vault backup is missing a file list shard referenced by a manifest.");
+    captured.set(pathname, { ...record, capturedAt: now().toISOString() });
+    shards.set(pathname, record.bytes);
+  }
+  const references = vaultReferences(manifests, shards);
   // A commit may have added revisions after their listing page was read but
   // before its manifest was captured. Fetch the manifest's full closure directly.
   const pathnames = new Set([...listed.keys(), ...references.keys()]);
   for (const pathname of [...pathnames].sort()) {
-    const current = capturedManifests.get(pathname) ?? await readBlob(sdk, sourceToken, pathname, { allowMissing: references.has(pathname) });
+    const current = captured.get(pathname) ?? await readBlob(sdk, sourceToken, pathname, { allowMissing: references.has(pathname) });
     if (!current) throw new Error("Vault backup is missing an immutable revision referenced by a manifest.");
+    verifyShard(pathname, current.bytes);
     const capturedAt = current.capturedAt ?? now().toISOString();
     const check = verifyImmutableRevision(pathname, current, references.get(pathname));
     if (check) revisionChecks.set(pathname, check);
@@ -357,7 +420,7 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
     const copied = await putVerified(sdk, backupToken, backupPathname, current.bytes, current.contentType);
     objects.push({ pathname, sourceEtag: current.etag, capturedAt, backupPathname, backupEtag: copied.etag, sha256: digest, size: current.bytes.length, contentType: current.contentType });
   }
-  validateVaultReferences(manifests, new Map(objects.map((object) => [object.pathname, object])), revisionChecks);
+  validateVaultReferences(manifests, shards, new Map(objects.map((object) => [object.pathname, object])), revisionChecks);
   const inventory = { schemaVersion: 1, state: "complete", releaseId, ...identities, sourcePrefix, startedAt, completedAt: now().toISOString(),
     consistency: "Per-user captured manifests with verified immutable revisions; other objects captured individually. No global point-in-time or atomic database/Blob snapshot.", objects };
   const bytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);

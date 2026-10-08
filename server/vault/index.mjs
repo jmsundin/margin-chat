@@ -1,14 +1,18 @@
 import { HttpError } from "../lib/errors.mjs";
 import { createVaultStorage, digest } from "./storage.mjs";
 
-const MAX_FILES = 10_000;
+const MAX_FILES = 5_000_000;
 const MAX_COMMIT_BYTES = 3 * 1024 * 1024;
-// A conflict response can repeat every existing path, or contain 1,000 new
-// paths. Leave room for both cases below the cloud's buffered response limit.
-const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
+// The file list is split into 256 shards by path hash. A save rewrites the
+// shards it touches plus a small root, never the whole list.
+const MAX_SHARD_BYTES = 16 * 1024 * 1024;
+const SHARD_CACHE_BYTES = 128 * 1024 * 1024;
 const REVISION = /^[a-f0-9]{64}$/u;
+const SHARD = /^[a-f0-9]{2}$/u;
 const INDEX_SCHEMA = 1;
 const emptyManifest = () => ({ schemaVersion: 1, revision: 0, files: {} });
+const emptyRoot = () => ({ schemaVersion: 2, revision: 0, count: 0, shards: {} });
+const shardOf = (path) => digest(path).slice(0, 2);
 const missingConfiguration = () => new HttpError(503, "Cloud Markdown storage is not configured. Connect a private Vercel Blob store, or set VAULT_STORAGE_DIR for local development. Your local files remain saved.");
 
 export function validateVaultPath(path) {
@@ -40,15 +44,35 @@ async function mapConcurrent(items, operation, width = 12) {
   return results;
 }
 
-function validateManifest(value) {
-  if (!value || value.schemaVersion !== 1 || !Number.isSafeInteger(value.revision) || value.revision < 0 ||
-      !value.files || typeof value.files !== "object" || Array.isArray(value.files)) throw new Error("Invalid stored vault manifest.");
-  for (const [path, entry] of Object.entries(value.files)) {
+function validateEntries(files, shard) {
+  if (!files || typeof files !== "object" || Array.isArray(files)) throw new Error("Invalid stored vault manifest.");
+  for (const [path, entry] of Object.entries(files)) {
     validateVaultPath(path);
     if (!entry || !REVISION.test(entry.revision) || typeof entry.deleted !== "boolean") throw new Error("Invalid stored vault file revision.");
+    if (shard !== undefined && shardOf(path) !== shard) throw new Error("Invalid stored vault file list shard.");
+  }
+  return files;
+}
+
+/** The stored root: a complete schema 1 file list written before sharding, or a
+ * schema 2 root naming each shard's content digest. */
+function validateRoot(value) {
+  if (value?.schemaVersion === 1 && Number.isSafeInteger(value.revision) && value.revision >= 0) {
+    validateEntries(value.files);
+    return value;
+  }
+  if (!value || value.schemaVersion !== 2 || !Number.isSafeInteger(value.revision) || value.revision < 0 ||
+      !Number.isSafeInteger(value.count) || !value.shards || typeof value.shards !== "object" || Array.isArray(value.shards)) {
+    throw new Error("Invalid stored vault manifest.");
+  }
+  for (const [id, shard] of Object.entries(value.shards)) {
+    if (!SHARD.test(id) || !shard || !REVISION.test(shard.digest) || !Number.isSafeInteger(shard.count) || shard.count < 1 ||
+        !Number.isSafeInteger(shard.changedAt) || shard.changedAt < 0 || shard.changedAt > value.revision) throw new Error("Invalid stored vault manifest.");
   }
   return value;
 }
+
+const pick = (files, paths) => Object.fromEntries(paths.filter((path) => Object.hasOwn(files, path)).map((path) => [path, files[path]]));
 
 function prepareChanges(changes, trusted = false) {
   if (!Array.isArray(changes) || (!trusted && changes.length > 1000)) throw new HttpError(400, "A commit requires at most 1,000 file changes.");
@@ -124,12 +148,75 @@ export function createVaultService({ database, env = process.env, storage = crea
   const codec = () => codecOverride ?? (codecPromise ??= import("@margin-chat/workspace-contracts/markdown"));
   const prefix = (userId) => `vaults/v1/${digest(String(userId))}`;
   const manifestKey = (userId) => `${prefix(userId)}/manifest.json`;
+  const shardKey = (userId, hash) => `${prefix(userId)}/shards/${hash}.json`;
   const bodyKey = (userId, path, revision) => `${prefix(userId)}/files/${digest(path)}/${revision}`;
 
-  async function snapshot(userId) {
+  // Shards are immutable and addressed by content, so a parsed shard stays valid
+  // for as long as this process keeps it. Frozen so no caller can alter it.
+  const shards = new Map();
+  let shardBytes = 0;
+  function rememberShard(key, files, size) {
+    for (const entry of Object.values(files)) Object.freeze(entry);
+    Object.freeze(files);
+    if (size > SHARD_CACHE_BYTES / 4) return;
+    shards.set(key, { files, size });
+    shardBytes += size;
+    for (const [oldest, cached] of shards) {
+      if (shardBytes <= SHARD_CACHE_BYTES) break;
+      shards.delete(oldest);
+      shardBytes -= cached.size;
+    }
+  }
+  async function loadShard(userId, id, reference) {
+    const key = shardKey(userId, reference.digest);
+    const hit = shards.get(key);
+    if (hit) {
+      shards.delete(key);
+      shards.set(key, hit);
+      return hit.files;
+    }
+    const record = await storage.read(key);
+    if (!record) throw new Error("A shard of the vault's file list is missing.");
+    if (digest(record.bytes) !== reference.digest) throw new Error("A shard of the vault's file list does not match its digest.");
+    const value = JSON.parse(record.bytes.toString("utf8"));
+    if (value?.schemaVersion !== 1 || value.shard !== id) throw new Error("Invalid stored vault file list shard.");
+    rememberShard(key, validateEntries(value.files, id), record.bytes.length);
+    return value.files;
+  }
+
+  async function readRoot(userId) {
     if (!storage) throw missingConfiguration();
     const record = await storage.read(manifestKey(userId));
-    return { manifest: record ? validateManifest(JSON.parse(record.bytes.toString("utf8"))) : emptyManifest(), etag: record?.etag ?? null };
+    return { root: record ? validateRoot(JSON.parse(record.bytes.toString("utf8"))) : emptyRoot(), etag: record?.etag ?? null };
+  }
+
+  /** The current entries for these paths, reading only the shards they live in. */
+  async function entriesFor(userId, root, paths) {
+    if (root.schemaVersion === 1) return pick(root.files, paths);
+    const byShard = new Map();
+    for (const path of paths) {
+      const id = shardOf(path);
+      if (!root.shards[id]) continue;
+      if (!byShard.has(id)) byShard.set(id, []);
+      byShard.get(id).push(path);
+    }
+    const entries = {};
+    await mapConcurrent([...byShard], async ([id, list]) => Object.assign(entries, pick(await loadShard(userId, id, root.shards[id]), list)));
+    return entries;
+  }
+
+  /** The complete file list. Only whole-vault work (indexing, a full download) needs it. */
+  async function assemble(userId, root) {
+    if (root.schemaVersion === 1) return root;
+    const ids = Object.keys(root.shards).sort();
+    const files = {};
+    for (const shard of await mapConcurrent(ids, (id) => loadShard(userId, id, root.shards[id]))) Object.assign(files, shard);
+    return { schemaVersion: 1, revision: root.revision, files };
+  }
+
+  async function snapshot(userId) {
+    const { root, etag } = await readRoot(userId);
+    return { manifest: await assemble(userId, root), etag };
   }
 
   async function readFile({ userId, path, revision }) {
@@ -138,7 +225,7 @@ export function createVaultService({ database, env = process.env, storage = crea
     let entry;
     if (revision !== undefined && revision !== null && !REVISION.test(revision)) throw new HttpError(400, "Invalid file revision.");
     if (!revision) {
-      entry = (await snapshot(userId)).manifest.files[path];
+      entry = (await entriesFor(userId, (await readRoot(userId)).root, [path]))[path];
       if (!entry || entry.deleted) throw new HttpError(404, "Vault file not found.");
       revision = entry.revision;
     }
@@ -147,83 +234,124 @@ export function createVaultService({ database, env = process.env, storage = crea
     return { bytes: record.bytes, revision, contentType: entry?.contentType ?? (path.endsWith(".md") ? "text/markdown; charset=utf-8" : path.endsWith(".json") ? "application/json" : "application/octet-stream") };
   }
 
-  /** Returns the published manifest and the revision it was built on. The two
-   * are equal when every change was already in the cloud. */
+  /** Publishes a revision. Returns its root, the revision it was built on (equal
+   * to the root's when every change was already in the cloud) and the resulting
+   * entries for the changed paths. */
   async function applyCommit(userId, changes, { trusted = false, onlyInitialize = false } = {}) {
     if (!storage) throw missingConfiguration();
     const prepared = prepareChanges(changes, trusted);
+    const paths = prepared.map((change) => change.path);
     let uploaded = false;
     for (let attempt = 0; attempt < 8; attempt += 1) {
-      const current = await snapshot(userId);
-      const unchanged = { manifest: current.manifest, previousRevision: current.manifest.revision };
-      if (onlyInitialize && current.manifest.revision !== 0) return unchanged;
+      const { root: current, etag } = await readRoot(userId);
+      const existing = await entriesFor(userId, current, paths);
+      const unchanged = { root: current, previousRevision: current.revision, entries: existing };
+      if (onlyInitialize && current.revision !== 0) return unchanged;
       const conflicts = [];
       const effective = [];
       for (const change of prepared) {
-        const existing = current.manifest.files[change.path];
-        if ((existing?.revision === change.entry.revision) || (existing?.deleted && change.entry.deleted)) continue;
-        if ((existing?.revision ?? null) !== change.baseRevision) conflicts.push(change.path);
-        else if (!existing && change.entry.deleted) continue;
+        const entry = existing[change.path];
+        if ((entry?.revision === change.entry.revision) || (entry?.deleted && change.entry.deleted)) continue;
+        if ((entry?.revision ?? null) !== change.baseRevision) conflicts.push(change.path);
+        else if (!entry && change.entry.deleted) continue;
         else effective.push(change);
       }
-      if (conflicts.length) throw new VaultConflictError(conflicts, current.manifest);
+      if (conflicts.length) throw new VaultConflictError(conflicts, { schemaVersion: 1, revision: current.revision, files: pick(existing, conflicts) });
       if (!effective.length) return unchanged;
-      const next = { schemaVersion: 1, revision: current.manifest.revision + 1, files: {} };
+      const revision = current.revision + 1;
       // Each entry records the revision that last changed it, so a device can ask
       // for only what changed since its last sync. Entries saved before this was
       // recorded changed at or before the current revision.
-      for (const [path, entry] of Object.entries(current.manifest.files)) {
-        next.files[path] = entry.changedAt === undefined ? { ...entry, changedAt: current.manifest.revision } : entry;
+      const touched = new Map();
+      if (current.schemaVersion === 1) {
+        // The first save after sharding splits the old single file list.
+        for (const [path, entry] of Object.entries(current.files)) {
+          const id = shardOf(path);
+          if (!touched.has(id)) touched.set(id, {});
+          touched.get(id)[path] = entry.changedAt === undefined ? { ...entry, changedAt: current.revision } : entry;
+        }
       }
-      for (const change of effective) next.files[change.path] = { ...change.entry, changedAt: next.revision };
-      if (Object.keys(next.files).length > MAX_FILES) throw new HttpError(413, "This vault has reached the current 10,000-file sync limit.");
-      const bytes = Buffer.from(JSON.stringify(next));
-      if (bytes.length > MAX_MANIFEST_BYTES) throw new HttpError(413, "This vault's file index has reached the cloud sync size limit. Your local files remain saved and available to export.");
+      for (const change of effective) {
+        const id = shardOf(change.path);
+        if (!touched.has(id)) touched.set(id, { ...(current.shards?.[id] ? await loadShard(userId, id, current.shards[id]) : {}) });
+        touched.get(id)[change.path] = { ...change.entry, changedAt: revision };
+      }
+      const shards = { ...(current.shards ?? {}) };
+      const writes = [];
+      for (const [id, files] of touched) {
+        const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, shard: id, files }));
+        if (bytes.length > MAX_SHARD_BYTES) throw new HttpError(413, "This vault's file list has reached the cloud sync size limit. Your local files remain saved and available to export.");
+        let changedAt = 0;
+        let count = 0;
+        for (const entry of Object.values(files)) {
+          count += 1;
+          changedAt = Math.max(changedAt, entry.changedAt);
+        }
+        shards[id] = { digest: digest(bytes), changedAt, count };
+        writes.push({ key: shardKey(userId, shards[id].digest), bytes, files });
+      }
+      const next = { schemaVersion: 2, revision, count: 0, shards: Object.fromEntries(Object.keys(shards).sort().map((id) => [id, shards[id]])) };
+      for (const shard of Object.values(next.shards)) next.count += shard.count;
+      if (next.count > MAX_FILES) throw new HttpError(413, "This vault has reached the cloud sync limit of 5,000,000 files.");
       if (!uploaded) {
         await mapConcurrent(prepared.filter((change) => change.bytes), (change) =>
           storage.putImmutable(bodyKey(userId, change.path, change.entry.revision), change.bytes, change.entry.contentType));
         uploaded = true;
       }
-      // History is written before publishing. Losing a CAS may leave an orphan,
-      // but no manifest can ever reference an incompletely uploaded revision.
+      // Shards and history are written before publishing. Losing a CAS may leave
+      // orphans, but no root can ever reference an incomplete upload.
+      await mapConcurrent(writes, ({ key, bytes }) => storage.putImmutable(key, bytes, "application/json"));
+      const bytes = Buffer.from(JSON.stringify(next));
       await storage.putImmutable(`${prefix(userId)}/history/${digest(bytes)}.json`, bytes, "application/json");
-      if (await storage.compareAndSwap(manifestKey(userId), bytes, current.etag)) return { manifest: next, previousRevision: current.manifest.revision };
+      if (await storage.compareAndSwap(manifestKey(userId), bytes, etag)) {
+        for (const { key, bytes: shardBytes, files } of writes) rememberShard(key, files, shardBytes.length);
+        const entries = {};
+        for (const path of paths) {
+          const files = touched.get(shardOf(path));
+          const entry = files && Object.hasOwn(files, path) ? files[path] : existing[path];
+          if (entry) entries[path] = entry;
+        }
+        return { root: next, previousRevision: current.revision, entries };
+      }
       // Re-read and compare with ORIGINAL per-file bases. Never retag stale edits.
     }
     throw new HttpError(503, "Other devices are updating the vault. Retry this same change shortly.");
   }
 
-  async function commitFiles(userId, changes, options) {
-    return (await applyCommit(userId, changes, options)).manifest;
-  }
-
-  /** Every entry changed after `since`. A device that has synchronized through
-   * `since` reconstructs the full manifest from what it already holds. */
-  function changesSince(manifest, since) {
+  /** Every entry changed after `since`, reading only the shards that changed.
+   * A device that has synchronized through `since` reconstructs the full file
+   * list from what it already holds. */
+  async function changesSince(userId, root, since) {
     const files = {};
-    if (since >= manifest.revision) return files;
-    for (const [path, entry] of Object.entries(manifest.files)) {
-      if ((entry.changedAt ?? manifest.revision) > since) files[path] = entry;
+    if (since >= root.revision) return files;
+    const sources = root.schemaVersion === 1 ? [root.files]
+      : await mapConcurrent(Object.keys(root.shards).filter((id) => root.shards[id].changedAt > since), (id) => loadShard(userId, id, root.shards[id]));
+    for (const shard of sources) {
+      for (const [path, entry] of Object.entries(shard)) if ((entry.changedAt ?? root.revision) > since) files[path] = entry;
     }
     return files;
   }
 
-  function attachmentChanges(attachment, bytes, current = emptyManifest()) {
+  function attachmentPaths(attachment) {
     const filename = String(attachment.filename ?? "attachment").replace(/[\\/\u0000-\u001f%:#?]/gu, "_").replace(/^\.+$/u, "attachment").slice(0, 180) || "attachment";
     const id = String(attachment.id);
     if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(id)) throw new HttpError(400, "Invalid attachment identity.");
-    const path = `Attachments/${id}/${filename === "metadata.json" ? "original-metadata.json" : filename}`;
-    const metadataPath = `Attachments/${id}/metadata.json`;
+    return { path: `Attachments/${id}/${filename === "metadata.json" ? "original-metadata.json" : filename}`, metadataPath: `Attachments/${id}/metadata.json` };
+  }
+
+  function attachmentChanges(attachment, bytes, current = {}) {
+    const { path, metadataPath } = attachmentPaths(attachment);
     const descriptor = { ...attachment, bytes: undefined, path, sizeBytes: bytes.length };
     return [
-      { path, content: bytes.toString("base64"), encoding: "base64", contentType: attachment.mimeType || "application/octet-stream", baseRevision: current.files[path]?.revision ?? null },
-      { path: metadataPath, content: JSON.stringify(descriptor, null, 2), baseRevision: current.files[metadataPath]?.revision ?? null },
+      { path, content: bytes.toString("base64"), encoding: "base64", contentType: attachment.mimeType || "application/octet-stream", baseRevision: current[path]?.revision ?? null },
+      { path: metadataPath, content: JSON.stringify(descriptor, null, 2), baseRevision: current[metadataPath]?.revision ?? null },
     ];
   }
 
+  /** The current root, after copying a pre-vault workspace into a new vault. */
   async function migrateLegacy(userId) {
-    const current = await snapshot(userId);
-    if (current.manifest.revision !== 0) return current.manifest;
+    const { root } = await readRoot(userId);
+    if (root.revision !== 0) return root;
     const legacy = await database?.loadWorkspace?.(userId);
     const conversations = Object.values(legacy?.state?.conversations ?? {});
     // Authored document content is independent of messages and notes. An explicit
@@ -245,7 +373,7 @@ export function createVaultService({ database, env = process.env, storage = crea
     // them even when there is no meaningful server-side conversation to copy.
     const attachments = await database?.listVaultAttachments?.(userId) ?? [];
     for (const attachment of attachments) changes.push(...attachmentChanges(attachment, attachment.bytes));
-    return commitFiles(userId, changes, { trusted: true, onlyInitialize: true });
+    return (await applyCommit(userId, changes, { trusted: true, onlyInitialize: true })).root;
   }
 
   async function readWorkspace(userId, manifest) {
@@ -280,7 +408,7 @@ export function createVaultService({ database, env = process.env, storage = crea
    * open recent documents first and fetch the rest only when asked. Summaries are
    * cached per file revision; an unchanged file is never read twice. */
   async function index(userId) {
-    const manifest = await migrateLegacy(userId);
+    const manifest = await assemble(userId, await migrateLegacy(userId));
     const key = `${prefix(userId)}/index.json`;
     const record = await storage.read(key);
     let cached = null;
@@ -309,20 +437,27 @@ export function createVaultService({ database, env = process.env, storage = crea
       .map((entry) => ({ ...entry, revision: files[entry.path].revision })) };
   }
 
-  function projectLatest(userId, manifest, options) {
+  /** Projects `revision` once earlier projections finish. The file list is
+   * loaded only when the projection is actually behind. */
+  function projectLatest(userId, revision, load, options) {
     const previous = projections.get(userId) ?? Promise.resolve();
-    const work = previous.then(() => projectRevision(userId, manifest, options));
+    const work = previous.then(() => projectRevision(userId, revision, load, options));
     projections.set(userId, work);
     void work.finally(() => { if (projections.get(userId) === work) projections.delete(userId); });
     return work;
   }
 
   /** After a save, index in the background where possible so saving never waits on search. */
-  async function projectAfterSave(userId, manifest) {
-    const work = projectLatest(userId, manifest);
-    if (backgroundProjection && continueAfterResponse(work, env)) return { status: "queued", revision: manifest.revision };
+  async function projectAfterSave(userId, revision, load) {
+    const work = projectLatest(userId, revision, load);
+    if (backgroundProjection && continueAfterResponse(work, env)) return { status: "queued", revision };
     return work;
   }
+
+  const lazyManifest = (userId, root) => {
+    let manifest;
+    return () => (manifest ??= assemble(userId, root));
+  };
 
   async function readProjectionFingerprints(userId) {
     const record = await storage.read(`${prefix(userId)}/projection.json`).catch(() => null);
@@ -332,13 +467,14 @@ export function createVaultService({ database, env = process.env, storage = crea
     } catch { return { etag: record?.etag ?? null, value: null }; }
   }
 
-  async function projectRevision(userId, manifest, { force = false } = {}) {
-    if (!database?.projectVaultState || !manifest.revision) return { status: "ready", revision: manifest.revision };
+  async function projectRevision(userId, revision, load, { force = false } = {}) {
+    if (!database?.projectVaultState || !revision) return { status: "ready", revision };
     try {
       const checkpoint = database.getVaultProjectionCheckpoint
         ? await database.getVaultProjectionCheckpoint(userId)
         : { revision: await database.getVaultProjectionRevision?.(userId), attachments: {} };
-      if (!force && (checkpoint?.revision ?? -1) >= manifest.revision) return { status: "ready", revision: manifest.revision };
+      if (!force && (checkpoint?.revision ?? -1) >= revision) return { status: "ready", revision };
+      const manifest = await load();
       const state = await readWorkspace(userId, manifest);
       const attachments = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && /^Attachments\/[^/]+\/metadata\.json$/u.test(path));
       const attachmentRevisions = {};
@@ -389,11 +525,17 @@ export function createVaultService({ database, env = process.env, storage = crea
           Buffer.from(JSON.stringify({ schemaVersion: 1, revision: manifest.revision, conversations: fingerprints })), stored.etag)
           .catch(() => false);
       }
-      return { status: "ready", revision: manifest.revision };
+      return { status: "ready", revision };
     } catch (error) {
       console.error("Vault projection pending", error);
-      return { status: "pending", revision: manifest.revision, error: "Your Markdown is saved. Feature indexes will retry when you next sync." };
+      return { status: "pending", revision, error: "Your Markdown is saved. Feature indexes will retry when you next sync." };
     }
+  }
+
+  async function saved(userId, { root, previousRevision, entries }, acknowledge) {
+    const load = lazyManifest(userId, root);
+    const manifest = acknowledge ? { schemaVersion: 1, revision: root.revision, files: entries } : await load();
+    return { manifest, previousRevision, projection: await projectAfterSave(userId, root.revision, load) };
   }
 
   return {
@@ -408,59 +550,58 @@ export function createVaultService({ database, env = process.env, storage = crea
     },
     async status(userId) {
       if (!configured) return { configured: false, manifest: emptyManifest() };
-      const manifest = await migrateLegacy(userId);
-      return { configured: true, manifest, projection: await projectLatest(userId, manifest) };
+      const manifest = await assemble(userId, await migrateLegacy(userId));
+      return { configured: true, manifest, projection: await projectLatest(userId, manifest.revision, async () => manifest) };
     },
     /** What changed since a revision this device already synchronized. */
     async changes(userId, since) {
       if (!configured) return { configured: false, revision: 0, files: {} };
       if (!Number.isSafeInteger(since) || since < 0) throw new HttpError(400, "Ask for changes since a saved vault revision.");
-      const manifest = await migrateLegacy(userId);
-      return { configured: true, revision: manifest.revision, files: changesSince(manifest, since), projection: await projectLatest(userId, manifest) };
+      const root = await migrateLegacy(userId);
+      return { configured: true, revision: root.revision, files: await changesSince(userId, root, since), projection: await projectLatest(userId, root.revision, lazyManifest(userId, root)) };
     },
-    async commit(userId, changes) {
+    /** With `acknowledge`, the receipt lists only the changed paths instead of the whole vault. */
+    async commit(userId, changes, { acknowledge = false } = {}) {
       // Preserve the server's legacy copy before considering a device's first edit.
       await migrateLegacy(userId);
-      const { manifest, previousRevision } = await applyCommit(userId, changes);
-      return { manifest, previousRevision, projection: await projectAfterSave(userId, manifest) };
+      return saved(userId, await applyCommit(userId, changes), acknowledge);
     },
-    async commitBinary(userId, { path, baseRevision, bytes, contentType }) {
+    async commitBinary(userId, { path, baseRevision, bytes, contentType }, { acknowledge = false } = {}) {
       if (bytes.length > 4 * 1024 * 1024) throw new HttpError(413, "An attachment must be at most 4 MiB.");
       await migrateLegacy(userId);
-      const { manifest, previousRevision } = await applyCommit(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true });
-      return { manifest, previousRevision, projection: await projectAfterSave(userId, manifest) };
+      return saved(userId, await applyCommit(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true }), acknowledge);
     },
     async rebuild(userId) {
-      const manifest = await migrateLegacy(userId);
-      return { manifest, projection: await projectLatest(userId, manifest, { force: true }) };
+      const manifest = await assemble(userId, await migrateLegacy(userId));
+      return { manifest, projection: await projectLatest(userId, manifest.revision, async () => manifest, { force: true }) };
     },
     async persistAttachment({ userId, attachment, bytes }) {
-      const current = await migrateLegacy(userId);
-      const metadataPath = `Attachments/${attachment.id}/metadata.json`;
-      if (current.files[metadataPath]?.deleted) throw new VaultConflictError([metadataPath], current);
-      const changes = attachmentChanges(attachment, Buffer.from(bytes), current);
-      const manifest = await commitFiles(userId, changes, { trusted: true });
-      return { path: changes[0].path, revision: manifest.files[changes[0].path].revision };
+      const root = await migrateLegacy(userId);
+      const { path, metadataPath } = attachmentPaths(attachment);
+      const current = await entriesFor(userId, root, [path, metadataPath]);
+      if (current[metadataPath]?.deleted) throw new VaultConflictError([metadataPath], { schemaVersion: 1, revision: root.revision, files: pick(current, [metadataPath]) });
+      const { entries } = await applyCommit(userId, attachmentChanges(attachment, Buffer.from(bytes), current), { trusted: true });
+      return { path, revision: entries[path].revision };
     },
     async readAttachment({ userId, documentId }) {
       if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(documentId)) throw new HttpError(400, "Invalid attachment identity.");
-      const manifest = await migrateLegacy(userId);
+      const root = await migrateLegacy(userId);
       const path = `Attachments/${documentId}/metadata.json`;
-      const entry = manifest.files[path];
+      const entry = (await entriesFor(userId, root, [path]))[path];
       if (!entry || entry.deleted) throw new HttpError(404, "Document original not found.");
       const metadata = JSON.parse((await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8"));
-      const original = manifest.files[metadata.path];
+      const original = typeof metadata.path === "string" ? (await entriesFor(userId, root, [metadata.path]))[metadata.path] : undefined;
       if (!original || original.deleted) throw new HttpError(404, "Document original not found.");
       return { ...metadata, bytes: (await readFile({ userId, path: metadata.path, revision: original.revision })).bytes };
     },
     async deleteAttachment({ userId, documentId }) {
       if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(documentId)) throw new HttpError(400, "Invalid attachment identity.");
-      const current = await migrateLegacy(userId);
+      const current = await assemble(userId, await migrateLegacy(userId));
       const changes = Object.entries(current.files)
         .filter(([path, entry]) => path.startsWith(`Attachments/${documentId}/`) && !entry.deleted)
         .map(([path, entry]) => ({ path, baseRevision: entry.revision, content: null }));
-      const manifest = await commitFiles(userId, changes);
-      const projection = await projectLatest(userId, manifest);
+      const { root } = await applyCommit(userId, changes);
+      const projection = await projectLatest(userId, root.revision, lazyManifest(userId, root));
       if (projection.status !== "ready") {
         throw new HttpError(503, "The cloud deletion is saved, but its search index is still pending. Retry deleting this document to finish removing its derived data.");
       }

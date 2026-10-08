@@ -61,8 +61,9 @@ function requireExpectedVaultAccount(request, user) {
 
 /** A device that syncs changes only needs the entries it just saved, not the
  * whole vault's file list, back from a commit. */
+const acknowledgesChanges = (url) => url.searchParams.get("acknowledge") === "changes";
 function acknowledgeVaultCommit(result, paths, url) {
-  if (url.searchParams.get("acknowledge") !== "changes") return result;
+  if (!acknowledgesChanges(url)) return result;
   const files = {};
   for (const path of paths) if (typeof path === "string" && Object.hasOwn(result.manifest.files, path)) files[path] = result.manifest.files[path];
   return { ...result, manifest: { schemaVersion: result.manifest.schemaVersion, revision: result.manifest.revision, files } };
@@ -549,7 +550,7 @@ export function createApiHandler({
             baseRevision: url.searchParams.get("baseRevision") || null,
             contentType: String(request.headers["content-type"] ?? "application/octet-stream"),
             bytes: await readRawBody(request, 4 * 1024 * 1024),
-          });
+          }, { acknowledge: acknowledgesChanges(url) });
           await sendStreamingJson(response, 200, acknowledgeVaultCommit(result, [url.searchParams.get("path")], url), { "Cache-Control": "private, no-store" });
           return;
         }
@@ -560,7 +561,7 @@ export function createApiHandler({
           }
           const body = await readJsonBody(request, 4 * 1024 * 1024);
           const result = route.id === "vaultCommit"
-            ? acknowledgeVaultCommit(await vaultService.commit(userId, body?.changes), body.changes.map((change) => change.path), url)
+            ? acknowledgeVaultCommit(await vaultService.commit(userId, body?.changes, { acknowledge: acknowledgesChanges(url) }), body.changes.map((change) => change.path), url)
             : await vaultService.rebuild(userId);
           await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
