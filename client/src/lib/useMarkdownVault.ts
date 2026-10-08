@@ -7,7 +7,7 @@ import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument,
 import { createVaultTransport } from "./vaultApi";
 import { bytesToBase64, createBrowserVaultStore, exportVault, importVault } from "./vaultLocal";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
-import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
+import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSearchEvent, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
 import { preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import {
@@ -290,7 +290,9 @@ export function useMarkdownVault(args: {
   async function refreshIndex(snapshot: VaultSnapshot) {
     if (!snapshot.deferred || !engine.transport.index) return;
     if (vaultIndexRef.current && vaultIndexRef.current.revision >= snapshot.remoteRevision) return;
-    try { setIndex(await engine.transport.index()); }
+    // With nothing listed yet, show the newest entries while the rest arrive.
+    const showProgress = vaultIndexRef.current ? undefined : (partial: VaultIndex) => { if (mounted.current) setVaultIndex(partial); };
+    try { setIndex(await engine.transport.index(showProgress)); }
     catch { /* The documents already on this device stay usable; the index retries on the next sync. */ }
   }
 
@@ -557,6 +559,11 @@ export function useMarkdownVault(args: {
 
   return {
     ready, storageMode, folderAccessMessage, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
+    /** Search the whole cloud vault: matching titles first, then passages as the server finds them. */
+    searchCloud: engine.transport.search
+      ? (query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void) =>
+        engine.transport.search!(query, options, onEvent)
+      : undefined,
     /** Download a document that is still only in the cloud, then show it. */
     async openCloudDocument(path: string) {
       const entry = vaultIndexRef.current?.entries.find((candidate) => candidate.path === path);

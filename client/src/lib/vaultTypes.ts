@@ -94,6 +94,29 @@ export interface VaultIndex {
   entries: VaultIndexEntry[];
 }
 
+/** A matching passage inside a document, message or note, located for opening. */
+export interface VaultSearchPassage {
+  /** The document (conversation) it belongs to. */
+  id: string;
+  /** Its vault path, when the index lists it. */
+  path?: string;
+  title: string;
+  source: "document" | "message" | "note";
+  snippet: string;
+  /** The matched text's range within `snippet`. */
+  match: { start: number; end: number };
+  /** Where the match is: the block, message or note, and its range in that text. */
+  position: { blockId?: string; messageId?: string; noteId?: string; start: number; end: number };
+  updated?: string;
+}
+
+/** One step of a streamed search: titles first, then passages from each source. */
+export type VaultSearchEvent =
+  | { type: "documents"; results: VaultIndexEntry[] }
+  | { type: "passages"; source: "documents" | "messages" | "notes"; results: VaultSearchPassage[]; error?: string }
+  | { type: "done"; revision: number; indexedRevision?: number | null }
+  | { type: "error"; error: string };
+
 export interface VaultDownloadProgress {
   done: number;
   total: number;
@@ -103,7 +126,10 @@ export interface VaultTransport {
   manifest(): Promise<VaultManifest>;
   /** The entries that changed after `since`, with the current revision. */
   changes?(since: number): Promise<VaultManifest>;
-  index?(): Promise<VaultIndex>;
+  /** The index, newest first; `onProgress` sees it grow while it downloads. */
+  index?(onProgress?: (index: VaultIndex) => void): Promise<VaultIndex>;
+  /** Streams search results to `onEvent` as the server finds them. */
+  search?(query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void): Promise<void>;
   read(path: string, entry: VaultEntry): Promise<VaultFile>;
   commit(changes: VaultChange[]): Promise<VaultCommitReceipt>;
 }

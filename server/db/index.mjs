@@ -43,6 +43,7 @@ import {
 import { wrapStorageError } from "./errors.mjs";
 import { hasStatusCode } from "../lib/errors.mjs";
 import { readState, readVaultProjectionCheckpoint, readWorkspace, writeState } from "./repository.mjs";
+import { searchVaultPassages } from "./searchRepository.mjs";
 import { normalizeAppState } from "./validation.mjs";
 import * as captures from "./captureRepository.mjs";
 
@@ -244,6 +245,10 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     return withClient((client) => readVaultProjectionCheckpoint(client, userId));
   }
 
+  async function searchVaultPassagesRecord(args) {
+    return withClient((client) => searchVaultPassages(client, args));
+  }
+
   async function loadState(userId) {
     return withClient((client) => readState(client, userId));
   }
@@ -375,6 +380,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     ready,
     projectVaultState,
     restoreVaultAttachment: restoreVaultAttachmentRecord,
+    searchVaultPassages: searchVaultPassagesRecord,
     resetPasswordWithToken: resetPasswordWithTokenRecord,
     refundHostedRequest: refundHostedRequestRecord,
     saveState,

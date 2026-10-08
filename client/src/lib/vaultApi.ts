@@ -1,6 +1,6 @@
 import { apiFetch } from "./apiTransport";
 import { ApiError } from "./apiError";
-import { validVaultPath, type VaultCommitReceipt, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultTransport } from "./vaultTypes";
+import { validVaultPath, type VaultCommitReceipt, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultSearchEvent, type VaultSearchPassage, type VaultTransport } from "./vaultTypes";
 import { bytesToBase64, vaultFileBytes } from "./vaultLocal";
 
 const revisionPattern = /^[a-f0-9]{64}$/u;
@@ -31,27 +31,88 @@ function readManifest(value: unknown): VaultManifest {
 
 const optionalString = (value: unknown) => typeof value === "string" && value.length <= 2048 ? value : undefined;
 
+function readIndexEntry(entry: unknown): VaultIndexEntry | null {
+  // A malformed row only hides that file from the index; it never blocks opening the vault.
+  if (!isRecord(entry) || typeof entry.path !== "string" || !validVaultPath(entry.path) || typeof entry.id !== "string"
+    || typeof entry.revision !== "string" || !revisionPattern.test(entry.revision)) return null;
+  const parentPath = optionalString(entry.parentPath);
+  const linkedPaths = Array.isArray(entry.linkedPaths) ? entry.linkedPaths.filter((path): path is string => typeof path === "string" && validVaultPath(path)) : [];
+  return { path: entry.path, id: entry.id, revision: entry.revision,
+    type: entry.type === "note" ? "note" : "conversation", kind: entry.kind === "chat" ? "chat" : "note",
+    title: optionalString(entry.title)?.slice(0, 300) || entry.path.split("/").pop()!.replace(/\.md$/iu, ""),
+    ...(optionalString(entry.created) ? { created: optionalString(entry.created) } : {}),
+    ...(optionalString(entry.updated) ? { updated: optionalString(entry.updated) } : {}),
+    ...(parentPath && validVaultPath(parentPath) ? { parentPath } : {}),
+    ...(linkedPaths.length ? { linkedPaths } : {}),
+  };
+}
+
 function readIndex(value: unknown): VaultIndex {
   if (!isRecord(value) || !Number.isSafeInteger(value.revision) || !Array.isArray(value.entries)) {
     throw new Error("The server returned an invalid vault index.");
   }
-  const entries: VaultIndexEntry[] = [];
-  for (const entry of value.entries) {
-    // A malformed row only hides that file from the index; it never blocks opening the vault.
-    if (!isRecord(entry) || typeof entry.path !== "string" || !validVaultPath(entry.path) || typeof entry.id !== "string"
-      || typeof entry.revision !== "string" || !revisionPattern.test(entry.revision)) continue;
-    const parentPath = optionalString(entry.parentPath);
-    const linkedPaths = Array.isArray(entry.linkedPaths) ? entry.linkedPaths.filter((path): path is string => typeof path === "string" && validVaultPath(path)) : [];
-    entries.push({ path: entry.path, id: entry.id, revision: entry.revision,
-      type: entry.type === "note" ? "note" : "conversation", kind: entry.kind === "chat" ? "chat" : "note",
-      title: optionalString(entry.title)?.slice(0, 300) || entry.path.split("/").pop()!.replace(/\.md$/iu, ""),
-      ...(optionalString(entry.created) ? { created: optionalString(entry.created) } : {}),
-      ...(optionalString(entry.updated) ? { updated: optionalString(entry.updated) } : {}),
-      ...(parentPath && validVaultPath(parentPath) ? { parentPath } : {}),
-      ...(linkedPaths.length ? { linkedPaths } : {}),
-    });
+  return { revision: value.revision as number, entries: value.entries.flatMap((entry) => readIndexEntry(entry) ?? []) };
+}
+
+const offset = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0 ? value as number : null;
+const passageSources = { documents: "document", messages: "message", notes: "note" } as const;
+
+function readPassage(value: unknown): VaultSearchPassage | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string" || typeof value.snippet !== "string"
+    || !Object.values(passageSources).includes(value.source as never) || !isRecord(value.match) || !isRecord(value.position)) return null;
+  const match = { start: offset(value.match.start), end: offset(value.match.end) };
+  const position = { start: offset(value.position.start), end: offset(value.position.end) };
+  if (match.start === null || match.end === null || position.start === null || position.end === null) return null;
+  const where = value.position;
+  const located = Object.fromEntries((["blockId", "messageId", "noteId"] as const)
+    .flatMap((key) => typeof where[key] === "string" ? [[key, where[key]]] : []));
+  return { id: value.id, title: value.title.slice(0, 300), source: value.source as VaultSearchPassage["source"],
+    snippet: value.snippet.slice(0, 1000), match: match as VaultSearchPassage["match"],
+    position: { ...located, start: position.start, end: position.end },
+    ...(typeof value.path === "string" && validVaultPath(value.path) ? { path: value.path } : {}),
+    ...(optionalString(value.updated) ? { updated: optionalString(value.updated) } : {}),
+  };
+}
+
+function readSearchEvent(value: unknown): VaultSearchEvent | null {
+  if (!isRecord(value) || !Array.isArray(value.results) && value.type !== "done" && value.type !== "error") return null;
+  if (value.type === "documents") return { type: "documents", results: (value.results as unknown[]).flatMap((entry) => readIndexEntry(entry) ?? []) };
+  if (value.type === "passages" && typeof value.source === "string" && Object.hasOwn(passageSources, value.source)) {
+    return { type: "passages", source: value.source as keyof typeof passageSources,
+      results: (value.results as unknown[]).flatMap((passage) => readPassage(passage) ?? []),
+      ...(typeof value.error === "string" ? { error: value.error.slice(0, 300) } : {}) };
   }
-  return { revision: value.revision as number, entries };
+  if (value.type === "done" && Number.isSafeInteger(value.revision)) {
+    return { type: "done", revision: value.revision as number,
+      ...(Number.isSafeInteger(value.indexedRevision) || value.indexedRevision === null ? { indexedRevision: value.indexedRevision as number | null } : {}) };
+  }
+  if (value.type === "error") return { type: "error", error: typeof value.error === "string" ? value.error.slice(0, 300) : "Search stopped before it finished." };
+  return null;
+}
+
+const isNdjson = (response: Response) => (response.headers.get("content-type") ?? "").includes("application/x-ndjson") && !!response.body;
+
+/** Each JSON line of a streamed response, as it arrives. */
+async function* ndjsonLines(response: Response): AsyncGenerator<unknown> {
+  const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (line) yield JSON.parse(line);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    if (buffer.trim()) yield JSON.parse(buffer);
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 async function fileRevision(bytes: Uint8Array, encoding: "base64" | undefined, contentType: string): Promise<string> {
@@ -96,10 +157,47 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
       reportProjection(payload?.projection);
       return changes;
     },
-    async index(): Promise<VaultIndex> {
-      const payload = await (await accountRequest("/api/vault/index")).json();
-      if (payload?.configured === false) throw new Error("Cloud vault storage has not been configured. Your files are saved on this device.");
-      return readIndex(payload);
+    async index(onProgress?: (index: VaultIndex) => void): Promise<VaultIndex> {
+      // A large index streams for longer than an ordinary request may take.
+      const response = await accountRequest("/api/vault/index", { headers: { Accept: "application/x-ndjson" }, signal: AbortSignal.timeout(300_000) });
+      if (!isNdjson(response)) {
+        const payload = await response.json();
+        if (payload?.configured === false) throw new Error("Cloud vault storage has not been configured. Your files are saved on this device.");
+        return readIndex(payload);
+      }
+      let revision: number | null = null;
+      const entries: VaultIndexEntry[] = [];
+      let reported = 50;
+      for await (const line of ndjsonLines(response)) {
+        if (revision === null) {
+          if (!isRecord(line) || line.type !== "index") throw new Error("The server returned an invalid vault index.");
+          if (line.configured === false) throw new Error("Cloud vault storage has not been configured. Your files are saved on this device.");
+          if (!Number.isSafeInteger(line.revision)) throw new Error("The server returned an invalid vault index.");
+          revision = line.revision as number;
+          continue;
+        }
+        const entry = readIndexEntry(line);
+        if (entry) entries.push(entry);
+        // Report at doubling sizes so the copies stay proportional to the index.
+        if (onProgress && entries.length >= reported) {
+          reported *= 2;
+          onProgress({ revision, entries: [...entries] });
+        }
+      }
+      if (revision === null) throw new Error("The server returned an invalid vault index.");
+      return { revision, entries };
+    },
+    async search(query, { limit = 20, signal } = {}, onEvent) {
+      const response = await accountRequest(`/api/vault/search?${new URLSearchParams({ q: query, limit: String(limit) })}`, {
+        headers: { Accept: "application/x-ndjson" },
+        signal: signal && typeof AbortSignal.any === "function" ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : signal ?? AbortSignal.timeout(60_000),
+      });
+      if (!isNdjson(response)) throw new Error("This server cannot search the vault yet.");
+      for await (const line of ndjsonLines(response)) {
+        if (signal?.aborted) return;
+        const event = readSearchEvent(line);
+        if (event) onEvent(event);
+      }
     },
     async read(path: string, entry: VaultEntry): Promise<VaultFile> {
       const response = await accountRequest(`/api/vault/file?${new URLSearchParams({ path, revision: entry.revision })}`);

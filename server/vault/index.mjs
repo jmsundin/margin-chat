@@ -1,5 +1,6 @@
 import { HttpError } from "../lib/errors.mjs";
 import { createVaultStorage, digest } from "./storage.mjs";
+import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearchTerms } from "./search.mjs";
 
 const MAX_FILES = 5_000_000;
 const MAX_COMMIT_BYTES = 3 * 1024 * 1024;
@@ -9,7 +10,6 @@ const MAX_SHARD_BYTES = 16 * 1024 * 1024;
 const SHARD_CACHE_BYTES = 128 * 1024 * 1024;
 const REVISION = /^[a-f0-9]{64}$/u;
 const SHARD = /^[a-f0-9]{2}$/u;
-const INDEX_SCHEMA = 1;
 const emptyManifest = () => ({ schemaVersion: 1, revision: 0, files: {} });
 const emptyRoot = () => ({ schemaVersion: 2, revision: 0, count: 0, shards: {} });
 const shardOf = (path) => digest(path).slice(0, 2);
@@ -103,6 +103,31 @@ function prepareChanges(changes, trusted = false) {
   });
 }
 
+/** A least-recently-used cache bounded by the bytes its values stand for. */
+function byteCache(limit) {
+  const values = new Map();
+  let total = 0;
+  return {
+    get(key) {
+      const hit = values.get(key);
+      if (!hit) return undefined;
+      values.delete(key);
+      values.set(key, hit);
+      return hit.value;
+    },
+    set(key, value, size) {
+      if (size > limit / 4 || values.has(key)) return;
+      values.set(key, { value, size });
+      total += size;
+      for (const [oldest, cached] of values) {
+        if (total <= limit) break;
+        values.delete(oldest);
+        total -= cached.size;
+      }
+    },
+  };
+}
+
 /** Keep work running after the response where the platform allows it. */
 function continueAfterResponse(work, env) {
   const context = globalThis[Symbol.for("@vercel/request-context")]?.get?.();
@@ -119,26 +144,12 @@ export function createVaultService({ database, env = process.env, storage = crea
   const configured = Boolean(storage);
   // File bodies are immutable per revision, so a warm server reuses what it
   // already read instead of downloading every file again for each projection.
-  const bodies = new Map();
-  let bodyBytes = 0;
-  const BODY_CACHE_BYTES = 64 * 1024 * 1024;
+  const bodies = byteCache(64 * 1024 * 1024);
   async function readBody(key) {
     const hit = bodies.get(key);
-    if (hit) {
-      bodies.delete(key);
-      bodies.set(key, hit);
-      return hit;
-    }
+    if (hit) return hit;
     const record = await storage.read(key);
-    if (record && record.bytes.length <= 1024 * 1024) {
-      bodies.set(key, record);
-      bodyBytes += record.bytes.length;
-      for (const [oldest, cached] of bodies) {
-        if (bodyBytes <= BODY_CACHE_BYTES) break;
-        bodies.delete(oldest);
-        bodyBytes -= cached.bytes.length;
-      }
-    }
+    if (record && record.bytes.length <= 1024 * 1024) bodies.set(key, record, record.bytes.length);
     return record;
   }
   // One projection per account at a time in this process; later requests wait
@@ -153,28 +164,15 @@ export function createVaultService({ database, env = process.env, storage = crea
 
   // Shards are immutable and addressed by content, so a parsed shard stays valid
   // for as long as this process keeps it. Frozen so no caller can alter it.
-  const shards = new Map();
-  let shardBytes = 0;
+  const shards = byteCache(SHARD_CACHE_BYTES);
   function rememberShard(key, files, size) {
     for (const entry of Object.values(files)) Object.freeze(entry);
-    Object.freeze(files);
-    if (size > SHARD_CACHE_BYTES / 4) return;
-    shards.set(key, { files, size });
-    shardBytes += size;
-    for (const [oldest, cached] of shards) {
-      if (shardBytes <= SHARD_CACHE_BYTES) break;
-      shards.delete(oldest);
-      shardBytes -= cached.size;
-    }
+    shards.set(key, Object.freeze(files), size);
   }
   async function loadShard(userId, id, reference) {
     const key = shardKey(userId, reference.digest);
     const hit = shards.get(key);
-    if (hit) {
-      shards.delete(key);
-      shards.set(key, hit);
-      return hit.files;
-    }
+    if (hit) return hit;
     const record = await storage.read(key);
     if (!record) throw new Error("A shard of the vault's file list is missing.");
     if (digest(record.bytes) !== reference.digest) throw new Error("A shard of the vault's file list does not match its digest.");
@@ -404,37 +402,164 @@ export function createVaultService({ database, env = process.env, storage = crea
     return state;
   }
 
-  /** Titles, dates and relationships of every Markdown file, so a new device can
-   * open recent documents first and fetch the rest only when asked. Summaries are
-   * cached per file revision; an unchanged file is never read twice. */
-  async function index(userId) {
-    const manifest = await assemble(userId, await migrateLegacy(userId));
-    const key = `${prefix(userId)}/index.json`;
+  // Summaries are cached per shard of the file list, in immutable index shards
+  // named by digest, so a save re-summarizes only the files it changed.
+  const indexShards = byteCache(SHARD_CACHE_BYTES);
+  const indexRootKey = (userId) => `${prefix(userId)}/index.json`;
+  const indexShardKey = (userId, hash) => `${prefix(userId)}/index/${hash}.json`;
+  async function loadIndexShard(userId, hash) {
+    const key = indexShardKey(userId, hash);
+    const hit = indexShards.get(key);
+    if (hit) return hit;
     const record = await storage.read(key);
+    if (!record || digest(record.bytes) !== hash) throw new Error("A vault index shard is missing or damaged.");
+    const value = JSON.parse(record.bytes.toString("utf8"));
+    if (value?.schemaVersion !== 1 || !value.files || typeof value.files !== "object") throw new Error("Invalid vault index shard.");
+    indexShards.set(key, Object.freeze(value.files), record.bytes.length);
+    return value.files;
+  }
+
+  const isIndexed = (path, entry) => !entry.deleted && entry.encoding !== "base64"
+    && /\.md$/iu.test(path) && !/^(?:_conflicts|attachments|\.margin-chat)\//iu.test(path);
+
+  /** The `{ revision, summary }` of every Markdown file, one object per shard. */
+  async function summaries(userId, root) {
+    let groups = null;
+    if (root.schemaVersion === 1) {
+      groups = new Map();
+      for (const [path, entry] of Object.entries(root.files)) {
+        const id = shardOf(path);
+        if (!groups.has(id)) groups.set(id, {});
+        groups.get(id)[path] = entry;
+      }
+    }
+    const record = await storage.read(indexRootKey(userId)).catch(() => null);
     let cached = null;
     try { cached = record ? JSON.parse(record.bytes.toString("utf8")) : null; } catch { cached = null; }
-    const previous = cached?.schemaVersion === INDEX_SCHEMA && cached.files && typeof cached.files === "object" ? cached.files : {};
-    const markdown = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && entry.encoding !== "base64"
-      && /\.md$/iu.test(path) && !/^(?:_conflicts|attachments|\.margin-chat)\//iu.test(path));
-    const { summarizeMarkdownVaultFile, buildMarkdownVaultIndex } = await codec();
-    const files = {};
-    let changed = cached?.revision !== manifest.revision || Object.keys(previous).length !== markdown.length;
-    await mapConcurrent(markdown, async ([path, entry]) => {
-      const known = previous[path];
-      if (known?.revision === entry.revision && known.summary) { files[path] = known; return; }
-      changed = true;
-      const source = (await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8");
-      const summary = summarizeMarkdownVaultFile(path, source);
-      if (summary) files[path] = { revision: entry.revision, summary };
-    });
+    const known = cached?.schemaVersion === 2 && cached.shards && typeof cached.shards === "object" ? cached.shards : {};
+    // An index cached before sharding still saves rereading unchanged files.
+    const legacy = cached?.schemaVersion === 1 && cached.files && typeof cached.files === "object" ? cached.files : {};
+    const { summarizeMarkdownVaultFile } = await codec();
+    const next = {};
+    let changed = false;
+    const ids = groups ? [...groups.keys()].sort() : Object.keys(root.shards);
+    const files = await mapConcurrent(ids, async (id) => {
+      const source = groups ? `legacy:${root.revision}` : root.shards[id].digest;
+      const previous = known[id];
+      if (previous?.source === source && REVISION.test(previous.digest ?? "")) {
+        try {
+          const reused = await loadIndexShard(userId, previous.digest);
+          next[id] = previous;
+          return reused;
+        } catch { /* Rebuild a missing or damaged shard below. */ }
+      }
+      const prior = previous && REVISION.test(previous.digest ?? "") ? await loadIndexShard(userId, previous.digest).catch(() => legacy) : legacy;
+      const entries = groups ? groups.get(id) : await loadShard(userId, id, root.shards[id]);
+      const summarized = {};
+      const pending = [];
+      for (const [path, entry] of Object.entries(entries)) {
+        if (!isIndexed(path, entry)) continue;
+        const old = Object.hasOwn(prior, path) ? prior[path] : undefined;
+        if (old?.revision === entry.revision && old.summary) summarized[path] = old;
+        else pending.push([path, entry]);
+      }
+      await mapConcurrent(pending, async ([path, entry]) => {
+        const text = (await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8");
+        const summary = summarizeMarkdownVaultFile(path, text);
+        if (summary) summarized[path] = { revision: entry.revision, summary };
+      }, 6);
+      const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, files: summarized }));
+      const hash = digest(bytes);
+      // The cache only saves work; a failed write just recomputes next time.
+      if (await storage.putImmutable(indexShardKey(userId, hash), bytes, "application/json").then(() => true, () => false)) {
+        next[id] = { source, digest: hash };
+        changed = true;
+      }
+      indexShards.set(indexShardKey(userId, hash), Object.freeze(summarized), bytes.length);
+      return summarized;
+    }, 4);
     if (changed) {
-      // The cache only saves work. Losing a race with another request is harmless.
-      await storage.compareAndSwap(key, Buffer.from(JSON.stringify({ schemaVersion: INDEX_SCHEMA, revision: manifest.revision, files })), record?.etag ?? null)
+      // Losing a race with another request is harmless.
+      await storage.compareAndSwap(indexRootKey(userId), Buffer.from(JSON.stringify({ schemaVersion: 2, revision: root.revision, shards: next })), record?.etag ?? null)
         .catch(() => false);
     }
-    const summaries = Object.keys(files).sort().map((path) => files[path].summary);
-    return { revision: manifest.revision, entries: buildMarkdownVaultIndex(summaries)
-      .map((entry) => ({ ...entry, revision: files[entry.path].revision })) };
+    return files;
+  }
+
+  const recency = (entry) => entry.updated ?? entry.created ?? "";
+  const compare = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+  // The last few accounts' resolved indexes, for repeated index and search requests.
+  const builtIndexes = new Map();
+
+  /** Titles, dates and relationships of every Markdown file, newest first, so a
+   * new device can open recent documents first and fetch the rest only when asked. */
+  async function index(userId, root) {
+    const cached = builtIndexes.get(userId);
+    if (cached?.revision === root.revision) return cached;
+    const records = [];
+    for (const shard of await summaries(userId, root)) {
+      for (const [path, record] of Object.entries(shard)) records.push([path, record]);
+    }
+    records.sort(([left], [right]) => compare(left, right));
+    const { buildMarkdownVaultIndex } = await codec();
+    const entries = buildMarkdownVaultIndex(records.map(([, record]) => record.summary))
+      .map((entry, position) => ({ ...entry, revision: records[position][1].revision }))
+      .sort((left, right) => compare(recency(right), recency(left)) || compare(left.path, right.path));
+    const built = { revision: root.revision, entries, pathById: new Map(entries.map((entry) => [entry.id, entry.path])) };
+    builtIndexes.delete(userId);
+    builtIndexes.set(userId, built);
+    if (builtIndexes.size > 8) builtIndexes.delete(builtIndexes.keys().next().value);
+    return built;
+  }
+
+  function passageResults(source, row, terms, pathById) {
+    const base = { id: row.conversation_id, ...(pathById.has(row.conversation_id) ? { path: pathById.get(row.conversation_id) } : {}),
+      title: row.title, updated: new Date(row.updated_at).toISOString() };
+    if (source === "documents") {
+      const blocks = Array.isArray(row.document?.blocks) ? row.document.blocks.filter((block) => typeof block?.content === "string") : [];
+      // Prefer a block holding every term; otherwise the first that holds one.
+      const block = blocks.find((candidate) => terms.every((term) => candidate.content.toLocaleLowerCase().includes(term)))
+        ?? blocks.find((candidate) => passageSnippet(candidate.content, terms));
+      const found = block && passageSnippet(block.content, terms);
+      return found ? [{ ...base, source: "document", snippet: found.snippet, match: found.match,
+        position: { blockId: block.id, start: found.start, end: found.end } }] : [];
+    }
+    const found = passageSnippet(row.content, terms);
+    const key = source === "messages" ? "messageId" : "noteId";
+    return found ? [{ ...base, source: source === "messages" ? "message" : "note", snippet: found.snippet, match: found.match,
+      position: { [key]: row.id, start: found.start, end: found.end } }] : [];
+  }
+
+  /**
+   * Streams search results through `emit`: matching titles from the index at
+   * once, then passages from each projected source as its query returns.
+   */
+  async function search(userId, query, { limit = 20, signal, emit }) {
+    const terms = vaultSearchTerms(query);
+    const root = await migrateLegacy(userId);
+    const built = await index(userId, root);
+    const matches = titleMatcher(terms);
+    const documents = [];
+    for (const entry of built.entries) {
+      if (documents.length >= limit) break;
+      if (!terms.length || matches(entry.title)) documents.push(entry);
+    }
+    emit({ type: "documents", results: documents });
+    if (terms.length && database?.searchVaultPassages) {
+      const patterns = likePatterns(terms);
+      await Promise.all(PASSAGE_SOURCES.map(async (source) => {
+        try {
+          const rows = await database.searchVaultPassages({ userId, source, patterns, limit });
+          if (!signal?.aborted) emit({ type: "passages", source, results: rows.flatMap((row) => passageResults(source, row, terms, built.pathById)) });
+        } catch (error) {
+          console.error("Vault passage search failed", error);
+          if (!signal?.aborted) emit({ type: "passages", source, results: [], error: "Passages could not be searched. Titles are still listed." });
+        }
+      }));
+    }
+    const checkpoint = await database?.getVaultProjectionCheckpoint?.(userId).catch(() => null);
+    // Passages come from the search projection, which can trail the newest save.
+    emit({ type: "done", revision: root.revision, ...(checkpoint ? { indexedRevision: checkpoint.revision ?? null } : {}) });
   }
 
   /** Projects `revision` once earlier projections finish. The file list is
@@ -546,7 +671,17 @@ export function createVaultService({ database, env = process.env, storage = crea
     snapshot,
     async index(userId) {
       if (!configured) return { configured: false, revision: 0, entries: [] };
-      return { configured: true, ...(await index(userId)) };
+      const { revision, entries } = await index(userId, await migrateLegacy(userId));
+      return { configured: true, revision, entries };
+    },
+    /** See `search` above. Resolves once every result has been emitted. */
+    async search(userId, query, { limit = 20, signal, emit = () => undefined } = {}) {
+      if (!configured) {
+        emit({ type: "done", revision: 0 });
+        return;
+      }
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new HttpError(400, "Ask for between 1 and 100 search results.");
+      await search(userId, query, { limit, signal, emit });
     },
     async status(userId) {
       if (!configured) return { configured: false, manifest: emptyManifest() };
