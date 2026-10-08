@@ -6,7 +6,7 @@ import {
   validateChatTitleRequest,
 } from "../server/chat/title.mjs";
 import { createEmptyState } from "../client/src/initialState";
-import { getDocumentTitleSource } from "../client/src/lib/documentTitle";
+import { getDocumentTitleSource, getSelectionDocumentTitleSource } from "../client/src/lib/documentTitle";
 
 const originalFetch = globalThis.fetch;
 
@@ -125,5 +125,24 @@ describe("document titles", () => {
     expect(getDocumentTitleSource(withContent("My billing notes"))).toBeNull();
     expect(getDocumentTitleSource(withContent("Untitled document", "Too short"))).toBeNull();
     expect(getDocumentTitleSource(withContent("Untitled document", "x".repeat(9_000)))).toHaveLength(6_000);
+  });
+});
+
+describe("titles for documents created from a selection", () => {
+  test("prefers the generated document and keeps the selection for context", () => {
+    expect(
+      getSelectionDocumentTitleSource({
+        output: "Neon  separates\nstorage from compute.",
+        prompt: "Explain the selected text.",
+        quote: "serverless Postgres",
+      }),
+    ).toBe("Selected text: serverless Postgres\nDocument: Neon separates storage from compute.");
+  });
+
+  test("falls back to the selection and request before any output exists", () => {
+    expect(
+      getSelectionDocumentTitleSource({ prompt: "Explain the selected text.", quote: "serverless Postgres" }),
+    ).toBe("Selected text: serverless Postgres\nRequest: Explain the selected text.");
+    expect(getSelectionDocumentTitleSource({ prompt: "  ", quote: "" })).toBeNull();
   });
 });

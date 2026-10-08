@@ -37,3 +37,23 @@ export function getDocumentTitleSource(conversation: Conversation): string | nul
   if (text.length < MIN_DOCUMENT_TITLE_CONTENT_LENGTH) return null;
   return text.slice(0, MAX_DOCUMENT_TITLE_CONTENT_LENGTH);
 }
+
+/**
+ * The text to title a document that was just created from a selection
+ * ("Explain the selected text", a side document, a branch). The generated
+ * answer is the best source; the selection and request stand in until it exists.
+ */
+export function getSelectionDocumentTitleSource(args: {
+  output?: string;
+  prompt: string;
+  quote?: string;
+}): string | null {
+  const output = args.output?.replace(/\s+/gu, " ").trim();
+  const quote = args.quote?.replace(/\s+/gu, " ").trim();
+  const prompt = args.prompt.replace(/\s+/gu, " ").trim();
+  const parts = output
+    ? [quote && `Selected text: ${quote}`, `Document: ${output}`]
+    : [quote && `Selected text: ${quote}`, prompt && `Request: ${prompt}`];
+  const source = parts.filter(Boolean).join("\n");
+  return source ? source.slice(0, MAX_DOCUMENT_TITLE_CONTENT_LENGTH) : null;
+}

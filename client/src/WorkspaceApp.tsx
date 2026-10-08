@@ -90,7 +90,7 @@ import {
   requestDocumentTitle,
   requestUploadDocument,
 } from "./lib/api";
-import { DOCUMENT_TITLE_IDLE_MS, getDocumentTitleSource } from "./lib/documentTitle";
+import { DOCUMENT_TITLE_IDLE_MS, getDocumentTitleSource, getSelectionDocumentTitleSource } from "./lib/documentTitle";
 import {
   getRecentModelSelectionsStorageKey,
   getStateSavedAtStorageKey,
@@ -1923,23 +1923,30 @@ function WorkspaceAppContent({
       const conversation = currentStateRef.current.conversations[conversationId];
       const content = conversation && getDocumentTitleSource(conversation);
       if (!conversation || !content) return;
-      const placeholderTitle = conversation.title;
-      // One attempt per document per session, so a failing provider is not retried on every keystroke.
-      documentTitleRequests.current.add(conversationId);
-      void requestDocumentTitle({ ai: normalizeAISettings(conversation.ai), content, expectedUserId: user.id })
-        .then((title) => {
-          setState((current) => {
-            const target = current.conversations[conversationId];
-            // Never replace a title the user typed while the request was running.
-            if (!target || target.title !== placeholderTitle) return current;
-            return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title } } };
-          });
-        })
-        .catch(() => {
-          // Keep the placeholder title when generation is unavailable.
-        })
-        .finally(() => { void onRefreshBilling(); });
+      generateDocumentTitle(conversationId, content, conversation.title);
     }, DOCUMENT_TITLE_IDLE_MS));
+  }
+
+  /** Titles a new document with OpenAI Luna, unless its title changed from `currentTitle` meanwhile. */
+  function generateDocumentTitle(conversationId: string, content: string, currentTitle: string, created?: Conversation) {
+    // A document created this tick is not in the state ref until the next render.
+    const conversation = currentStateRef.current.conversations[conversationId] ?? created;
+    if (!conversation || conversation.title !== currentTitle || documentTitleRequests.current.has(conversationId)) return;
+    // One attempt per document per session, so a failing provider is not retried on every keystroke.
+    documentTitleRequests.current.add(conversationId);
+    void requestDocumentTitle({ ai: normalizeAISettings(conversation.ai), content, expectedUserId: user.id })
+      .then((title) => {
+        setState((current) => {
+          const target = current.conversations[conversationId];
+          // Never replace a title the user typed while the request was running.
+          if (!target || target.title !== currentTitle) return current;
+          return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title } } };
+        });
+      })
+      .catch(() => {
+        // Keep the current title when generation is unavailable.
+      })
+      .finally(() => { void onRefreshBilling(); });
   }
 
   function handleMoveDocumentBlock(sourceId: string, blockId: string, targetId: string, beforeBlockId: string | null) {
@@ -2032,6 +2039,11 @@ function WorkspaceAppContent({
         setDocumentErrors((current) => ({...current,[targetId]:getErrorText(error,"AI could not finish. Open the prompt icon to try again.")}));
       },
       onFinish(status) {
+        if (request.destination === "side" && status === "complete") {
+          const generated = currentStateRef.current.conversations[targetId]?.document?.blocks.find((block) => block.id === outputBlockId)?.content;
+          const titleSource = getSelectionDocumentTitleSource({ output: generated, prompt: userMessage.content, quote: selectedQuote });
+          if (titleSource) generateDocumentTitle(targetId, titleSource, prepared.title);
+        }
         setState((current) => {
           const conversation = current.conversations[targetId];
           if (!conversation?.document) return current;
@@ -2763,6 +2775,8 @@ function WorkspaceAppContent({
     window.getSelection()?.removeAllRanges();
 
     startAssistantStream(branchConversation, branchConversation.messages);
+    const titleSource = getSelectionDocumentTitleSource({ prompt, quote: draft.quote });
+    if (titleSource) generateDocumentTitle(branchId, titleSource, branchConversation.title, branchConversation);
   }
 
   function handleExplainSelection() {
