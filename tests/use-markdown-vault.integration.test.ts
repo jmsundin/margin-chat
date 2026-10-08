@@ -52,7 +52,7 @@ test("React vault hook hydrates offline and preserves typing across network and 
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Vault hook integration failed:\n${stdout}\n${stderr}`);
   const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
-  expect(result.checks).toHaveLength(17);
+  expect(result.checks).toHaveLength(18);
 }, 15000);
 
 test("empty workspace settings survive automatic sync and offline reopen without resurrecting deleted documents", async () => {

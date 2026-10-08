@@ -22,6 +22,9 @@ type PermissionCapableDirectoryHandle = FileSystemDirectoryHandle & {
   queryPermission(options?: {
     mode?: "read" | "readwrite";
   }): Promise<FileSystemPermissionState>;
+  requestPermission(options?: {
+    mode?: "read" | "readwrite";
+  }): Promise<FileSystemPermissionState>;
 };
 type DirectoryPickerWindow = Window & {
   showDirectoryPicker(options?: {
@@ -175,6 +178,18 @@ export async function connectLocalDirectory(userId: string, handle: FileSystemDi
   await setStoredDirectorySelection(userId, { ...selected, directories: known ? directories : [...directories, selected] });
   observedDirectoryWorkspaces.delete(userId);
   return buildDirectoryStatus(handle, getLocalWorkspaceFileName(userId), selected.id);
+}
+
+/**
+ * Browsers forget folder access between visits, so a remembered folder can be
+ * unreadable until the user allows it again. Call from a click handler.
+ */
+export async function requestLocalDirectoryPermission(userId: string): Promise<LocalDirectoryStatus> {
+  const selection = await getStoredDirectorySelection(userId);
+  if (!selection) return getLocalDirectoryStatus(userId);
+  const handle = selection.handle as Partial<PermissionCapableDirectoryHandle>;
+  if (typeof handle.requestPermission === "function") await handle.requestPermission({ mode: "readwrite" });
+  return buildDirectoryStatus(selection.handle, getLocalWorkspaceFileName(userId), selection.id);
 }
 
 export async function chooseLocalDirectory(userId: string): Promise<LocalDirectoryStatus> {
