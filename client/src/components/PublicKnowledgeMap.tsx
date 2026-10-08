@@ -10,6 +10,8 @@ import { getDocumentNodeFootprint, layoutDocumentMap, type DocumentLayoutMode } 
 import { documentConnectionGeometry } from "../lib/documentMapConnections";
 import { getGraphNeighborhoodIds } from "../lib/graphNeighborhood";
 import GraphTerritoryLayer from "./GraphTerritoryLayer";
+import GraphClusterLayer, { CLUSTER_DOT_SCALE } from "./GraphClusterLayer";
+import { fitGravityCluster, layoutGravityClusters, type GravityCluster } from "../lib/gravityClusters";
 import { expandPublicTopic, getPublicTopic, searchPublicTopics } from "../lib/publicKnowledge";
 import type { PublicTopic } from "../lib/publicKnowledge";
 import {
@@ -19,6 +21,7 @@ import {
 import type { PublicGraphState } from "../lib/publicGraphScene";
 import "./PublicKnowledgeMap.css";
 import "./GraphSemanticMap.css";
+import "./GraphViewModes.css";
 
 export interface PublicKnowledgeMapProps {
   isVisible?: boolean;
@@ -36,12 +39,23 @@ export interface PublicKnowledgeMapProps {
 }
 
 interface Viewport { x: number; y: number; scale: number }
-interface MapLocation { graph: PublicGraphState; selectedId: string | null; neighborhoodId: string | null; neighborhoodScale: number | null; viewport: Viewport; query: string; filters: PublicRelationFilters; groupOverviewVersion: number; presentation: "groups" | "canvas" | "documents"; documentLayoutMode: DocumentLayoutMode; graphFocusId: string | null; graphFocusDepth: number }
+interface MapLocation { graph: PublicGraphState; selectedId: string | null; neighborhoodId: string | null; neighborhoodScale: number | null; viewport: Viewport; query: string; filters: PublicRelationFilters; groupOverviewVersion: number; presentation: PublicPresentation; documentLayoutMode: DocumentLayoutMode; graphFocusId: string | null; graphFocusDepth: number }
+type PublicPresentation = "groups" | "canvas" | "documents" | "clusters";
 interface TopicError { id: string; message: string; action: "open" | "expand" }
 const INITIAL_VIEWPORT = { x: 80, y: 120, scale: 0.85 };
 const PUBLIC_MAP_LIMIT = 240;
 const SEEDS = [ { id: "Q11023", label: "Engineering" }, { id: "Q7150", label: "Ecology" }, { id: "Q23404", label: "Anthropology" } ];
 const isQid = (value: unknown): value is string => typeof value === "string" && /^Q[1-9]\d*$/.test(value);
+/** Presentations which lay out compact topic cards instead of the authored canvas. */
+const isDocumentPresentation = (presentation: PublicPresentation) => presentation === "documents" || presentation === "clusters";
+const PUBLIC_VIEW_MODES = [
+  { id: "canvas", label: "Canvas", description: "Read topics at full size and follow their labeled connections." },
+  { id: "focus", label: "Focus", description: "Explore the selected topic and its direct connections." },
+  { id: "topics", label: "Topics", description: "Browse groups of topics, then zoom into their members." },
+  { id: "clusters", label: "Clusters", description: "See topics gather around their most connected hubs, labeled by topic." },
+  { id: "layouts", label: "Layouts", description: "Arrange topic cards as trees or around their most connected topics." },
+] as const;
+type PublicViewMode = typeof PUBLIC_VIEW_MODES[number]["id"];
 
 function readLocation(workspaceKey: string): MapLocation {
   const fallback: MapLocation = { graph: emptyPublicGraph(), selectedId: null, neighborhoodId: null, neighborhoodScale: null, viewport: INITIAL_VIEWPORT, query: "", filters: DEFAULT_PUBLIC_RELATION_FILTERS, groupOverviewVersion: 1, presentation: "groups", documentLayoutMode: "auto", graphFocusId: null, graphFocusDepth: 1 };
@@ -66,7 +80,7 @@ function readLocation(workspaceKey: string): MapLocation {
     const filters: PublicRelationFilters = { relation: ["all", "types", "parts", "other"].includes(stored.filters?.relation) ? stored.filters.relation : "all", includeMetadata: stored.filters?.includeMetadata === true };
     const neighborhoodId = isQid(stored.neighborhoodId) && graph.topics[stored.neighborhoodId] ? stored.neighborhoodId : null;
     const neighborhoodScale = neighborhoodId ? Number.isFinite(stored.neighborhoodScale) && stored.neighborhoodScale > 0 ? stored.neighborhoodScale : viewport.scale : null;
-    const presentation = ["groups", "canvas", "documents"].includes(stored.presentation) ? stored.presentation : viewport.scale < 0.7 && !neighborhoodId ? "groups" : "canvas";
+    const presentation = ["groups", "canvas", "documents", "clusters"].includes(stored.presentation) ? stored.presentation : viewport.scale < 0.7 && !neighborhoodId ? "groups" : "canvas";
     const documentLayoutMode: DocumentLayoutMode = ["auto", "tree-right", "tree-down", "connections"].includes(stored.documentLayoutMode) ? stored.documentLayoutMode : "auto";
     const graphFocusId = presentation === "documents" && isQid(stored.graphFocusId) && visiblePublicGraph(graph).topics.some((topic) => topic.id === stored.graphFocusId) ? stored.graphFocusId : null;
     const graphFocusDepth = Number.isInteger(stored.graphFocusDepth) ? Math.max(1, Math.min(PUBLIC_MAP_LIMIT, stored.graphFocusDepth)) : 1;
@@ -75,6 +89,12 @@ function readLocation(workspaceKey: string): MapLocation {
 }
 
 function publicDocumentView(location: MapLocation, canvas: { width: number; height: number }) {
+  if (location.presentation === "clusters") {
+    // Selection never changes membership, so the islands stay put while browsing.
+    const loaded = visiblePublicGraph(location.graph, { filters: location.filters });
+    const layout = layoutGravityClusters(publicMapNodePlacements(location.graph, { filters: location.filters }), canvas, loaded.relations);
+    return { ...layout, topics: loaded.topics, relations: loaded.relations };
+  }
   const options = { filters: location.filters, selectedId: location.graphFocusId ?? location.selectedId };
   const loaded = visiblePublicGraph(location.graph, options);
   const ids = location.graphFocusId
@@ -138,12 +158,13 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   const touches = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ x: number; y: number; distance: number; viewport: Viewport } | null>(null);
   const suppressTap = useRef(false);
-  const documentsOnly = location.presentation === "documents";
+  const documentsOnly = isDocumentPresentation(location.presentation);
+  const clustersMode = location.presentation === "clusters";
   const visibilityOptions = useMemo(() => ({ filters: location.filters, selectedId: location.graphFocusId ?? location.selectedId }), [location.filters, location.selectedId, location.graphFocusId]);
   const filteredVisible = useMemo(() => visiblePublicGraph(location.graph, visibilityOptions), [location.graph, visibilityOptions]);
   const documentLayout = useMemo(() => documentsOnly ? publicDocumentView(location,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }) : null,
-    [documentsOnly, location.graph, location.filters, location.selectedId, location.graphFocusId, location.graphFocusDepth, location.documentLayoutMode, viewportSize]);
+    [documentsOnly, location.presentation, location.graph, location.filters, location.selectedId, location.graphFocusId, location.graphFocusDepth, location.documentLayoutMode, viewportSize]);
   const visible = documentLayout ?? filteredVisible;
   const unfiltered = useMemo(() => visiblePublicGraph(location.graph), [location.graph]);
   const hiddenTopicCount = unfiltered.topics.length - filteredVisible.topics.length;
@@ -187,6 +208,13 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     return [placement.conversationId, { x: placement.x + (placement.width - width) / 2,
       y: placement.y + (placement.height - height) / 2, width, height }];
   })), [placements, location.selectedId, location.viewport.scale, documentsOnly, overviewFootprints, compactNeighborhood, compactFootprint]);
+  const clusterLayout = documentLayout && "clusters" in documentLayout ? documentLayout : null;
+  const clusterDots = !!clusterLayout && location.viewport.scale < CLUSTER_DOT_SCALE;
+  const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
+  // Wikidata labels already name each hub's topic, so clusters need no AI naming.
+  const clusterLabels = useMemo(() => Object.fromEntries((clusterLayout?.clusters ?? []).map((cluster) => [cluster.id,
+    { label: cluster.hubId ? location.graph.topics[cluster.hubId]?.label ?? cluster.hubId : "Unconnected topics", generated: false }])),
+  [clusterLayout, location.graph.topics]);
   const selected = location.selectedId ? location.graph.topics[location.selectedId] : null;
   const selectedExpansion = selected ? location.graph.expansions[selected.id] : null;
   const selectedRelations = selected ? visible.relations.filter((relation) => relation.sourceId === selected.id || relation.targetId === selected.id) : [];
@@ -199,7 +227,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     setLocation(next);
   }, []);
   const refitDocumentLocation = useCallback((next: MapLocation): MapLocation => {
-    if (next.presentation !== "documents") return next;
+    if (!isDocumentPresentation(next.presentation)) return next;
     const rect = viewportRef.current?.getBoundingClientRect();
     if (!rect?.width || !rect.height) return next;
     return { ...next, viewport: publicDocumentView(next, rect).viewport };
@@ -275,7 +303,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   const centeredViewport = useCallback((graph: PublicGraphState, id: string, previous: Viewport, useFocusedLayout = true): Viewport => {
     const rect = viewportRef.current?.getBoundingClientRect();
     if (!rect || rect.width < 1) return previous;
-    if (useFocusedLayout && locationRef.current.presentation === "documents") {
+    if (useFocusedLayout && isDocumentPresentation(locationRef.current.presentation)) {
       const layout = publicDocumentView({ ...locationRef.current, graph }, rect);
       if (locationRef.current.graphFocusId) return layout.viewport;
       const point = layout.nodes.find((node) => node.conversationId === id);
@@ -300,7 +328,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   }, []);
   const revealTopicViewport = useCallback((graph: PublicGraphState, id: string, previous: Viewport): Viewport => {
     const rect = viewportRef.current?.getBoundingClientRect();
-    if (locationRef.current.presentation === "documents" && rect) {
+    if (isDocumentPresentation(locationRef.current.presentation) && rect) {
       const point = publicDocumentView({ ...locationRef.current, graph }, rect).nodes.find((node) => node.conversationId === id);
       if (!point) return previous;
       const footprint = getDocumentNodeFootprint(previous.scale);
@@ -332,7 +360,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   }, []);
   const centerAfterResize = useEffectEvent((resized: boolean, previousSize: { width: number; height: number }) => {
     const current = locationRef.current;
-    if (resized && current.presentation === "documents") {
+    if (resized && isDocumentPresentation(current.presentation)) {
       updateLocation(refitDocumentLocation);
     } else if (current.selectedId) {
       updateLocation((previous) => ({ ...previous, viewport: revealTopicViewport(previous.graph, previous.selectedId!, previous.viewport) }));
@@ -414,7 +442,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       const alreadyVisible = visiblePublicGraph(locationRef.current.graph).topics.some((item) => item.id === topic.id);
       navigate((previous) => {
         const graph = alreadyVisible ? { ...previous.graph, topics: { ...previous.graph.topics, [topic.id]: topic } } : addPublicGraphRoot(previous.graph, topic);
-        return refitDocumentLocation({ ...previous, graph, selectedId: topic.id, graphFocusId: null, graphFocusDepth: 1, neighborhoodId: null, neighborhoodScale: null, presentation: previous.presentation === "documents" ? "documents" : "canvas", viewport: centeredViewport(graph, topic.id, previous.viewport, false), query: "" });
+        return refitDocumentLocation({ ...previous, graph, selectedId: topic.id, graphFocusId: null, graphFocusDepth: 1, neighborhoodId: null, neighborhoodScale: null, presentation: isDocumentPresentation(previous.presentation) ? previous.presentation : "canvas", viewport: centeredViewport(graph, topic.id, previous.viewport, false), query: "" });
       });
       if (expand && !alreadyVisible) await expandTopic(topic.id, false, false);
     } catch (error) {
@@ -514,6 +542,33 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     if (!center && (documentsOnly || compactNeighborhood || showNeighborhoods) && locationRef.current.selectedId) showDetails();
   };
 
+  const viewMode: PublicViewMode | null = location.graphFocusId ? "focus" : clustersMode ? "clusters" : location.presentation === "documents" ? "layouts"
+    : location.presentation === "groups" ? "topics" : "canvas";
+  const chooseViewMode = (mode: PublicViewMode) => {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    openController.current?.abort();
+    setOpeningId(null); setSearchResultsOpen(false);
+    if (mode === "topics") { showAllGroups(); return; }
+    if (mode === "layouts") { chooseDocumentLayout(location.documentLayoutMode, true); return; }
+    if (mode === "focus") {
+      const id = location.selectedId ?? location.graph.roots.at(-1);
+      if (id) focusConnections(id);
+      return;
+    }
+    navigate((previous) => {
+      const reset = { ...previous, presentation: mode as PublicPresentation, graphFocusId: null, graphFocusDepth: 1, neighborhoodId: null, neighborhoodScale: null, query: "" };
+      if (mode === "clusters") return refitDocumentLocation(reset);
+      // Canvas keeps cards readable: fit when everything fits, otherwise center the selection.
+      const fitted = rect ? fitMapTerritories(publicMapNeighborhoods(previous.graph, { filters: previous.filters }).territories, rect,
+        { maxScale: 1, padding: 64, selectedNodeId: previous.selectedId }) : previous.viewport;
+      const anchor = previous.selectedId ?? previous.graph.roots.at(-1);
+      return { ...reset, viewport: fitted.scale >= 0.7 || !anchor ? fitted : centeredViewport(previous.graph, anchor, { ...fitted, scale: 0.85 }, false) };
+    });
+  };
+  const openCluster = (cluster: GravityCluster) => {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (rect) updateLocation((previous) => ({ ...previous, viewport: fitGravityCluster(cluster, rect) }));
+  };
   const savedConversation = (topic: PublicTopic) => savedTopics[topic.id] ?? topic.aliases.map((id) => savedTopics[id]).find(Boolean);
   const saveOrShow = (topic: PublicTopic) => {
     const id = savedConversation(topic);
@@ -757,6 +812,17 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         </select></label><label><input type="checkbox" checked={location.filters.includeMetadata} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, includeMetadata: event.target.checked } }))} />Include Wikimedia metadata</label><p>Category pages, portals, and templates are hidden by default. Your loaded topics stay available.</p></div>
       </DismissibleDetails>
     </header>
+    <div className="graph-view-modes public-map-modes" aria-label="Public map views">
+      <div className="graph-view-mode-tabs" role="group" aria-label="Public map mode">
+        {PUBLIC_VIEW_MODES.map((item) => <button key={item.id} type="button" aria-label={`${item.label} view`} aria-pressed={viewMode === item.id} title={item.description}
+          disabled={!visible.topics.length && !unfiltered.topics.length} onClick={() => chooseViewMode(item.id)}>{item.label}</button>)}
+      </div>
+      <p className="graph-view-purpose" aria-live="polite">{PUBLIC_VIEW_MODES.find((item) => item.id === viewMode)?.description}</p>
+    </div>
+    {clustersMode && visible.topics.length ? <div className="graph-mode-context" aria-label="Cluster view status">
+      <span>Topics gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
+      <button type="button" onClick={() => fitMap()}>Show all clusters</button>
+    </div> : null}
     {location.graphFocusId ? <div className="public-map-focusbar" aria-label="Focused public connections">
       <span><strong>Around {location.graph.topics[location.graphFocusId]?.label}</strong><small>{visible.topics.length} topics · {location.graphFocusDepth} {location.graphFocusDepth === 1 ? "hop" : "hops"}</small></span>
       <button type="button" disabled={!canShowMoreFocus} title={canShowMoreFocus ? "Include the next level of loaded connections" : "All loaded connections in this branch are shown"} onClick={() => focusConnections(location.graphFocusId!, Math.min(PUBLIC_MAP_LIMIT, location.graphFocusDepth + 1), location.documentLayoutMode)}>Show more connections</button>
@@ -777,11 +843,14 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       <div className="public-map-context"><span>{activeNeighborhood ? <strong>{activeNeighborhood.label} <span aria-hidden="true">· </span></strong> : null}{visible.topics.length ? `${visible.topics.length} topics · ${visible.relations.length} connections${hiddenTopicCount ? ` · ${hiddenTopicCount} filtered` : ""}` : "Your window into public knowledge"}</span><label><input type="checkbox" checked={showRelations} onChange={(event) => setShowRelations(event.target.checked)} />All connection labels</label></div>
       {!visible.topics.length && <div className="public-map-empty"><div aria-hidden="true">✧</div><h2>Every topic opens another door.</h2><p>Search for something you’re curious about, or choose a starting topic.</p><div>{SEEDS.map((seed) => <button type="button" key={seed.id} onClick={() => void openTopic(seed.id)}>{seed.label}</button>)}</div></div>}
       {!documentsOnly ? <GraphTerritoryLayer territories={displayTerritories} conversations={neighborhoods.connections} viewport={location.viewport} itemLabel="topics" mode={showNeighborhoods ? "overview" : "canvas"} activeTerritoryId={activeNeighborhood?.id ?? null} selectedNodeId={location.selectedId} nodeFootprint={showNeighborhoods ? OVERVIEW_NODE_FOOTPRINT : compactNeighborhood ? compactFootprint : undefined} onOpen={openNeighborhood} /> : null}
-      <div className="public-map-stage" data-group-layout={focusedLayout?.arranged ? "spaced" : undefined} data-presentation={showNeighborhoods ? "groups" : "canvas"} hidden={showNeighborhoods && !placements.length} style={{ transform: `translate(${location.viewport.x}px, ${location.viewport.y}px) scale(${location.viewport.scale})` }}>
+      {clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} placements={clusterPlacements} connections={visible.relations}
+        labels={clusterLabels} viewport={location.viewport} size={viewportSize} showDots={clusterDots} selectedId={location.selectedId}
+        titles={(id) => location.graph.topics[id]?.label ?? id} itemLabel={["topic", "topics"]} onOpenCluster={openCluster} onSelectDocument={(id) => selectTopic(id)} /> : null}
+      <div className="public-map-stage" data-group-layout={focusedLayout?.arranged ? "spaced" : undefined} data-presentation={showNeighborhoods ? "groups" : clustersMode ? "clusters" : "canvas"} hidden={(showNeighborhoods && !placements.length) || clusterDots} style={{ transform: `translate(${location.viewport.x}px, ${location.viewport.y}px) scale(${location.viewport.scale})` }}>
         <svg className="public-map-edges" aria-hidden="true"><defs><marker id="public-map-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>{visible.relations.map((relation) => {
           const source = renderedBoundsById[relation.sourceId]; const target = renderedBoundsById[relation.targetId];
           if (!source || !target || source === target) return null;
-          const geometry = documentConnectionGeometry(source, target, documentsOnly ? location.documentLayoutMode : "connections");
+          const geometry = documentConnectionGeometry(source, target, documentsOnly && !clustersMode ? location.documentLayoutMode : "connections");
           return <g key={relation.id} className={selectedRelations.includes(relation) ? "is-active" : ""}><path d={geometry.path} markerEnd="url(#public-map-arrow)" />{(showRelations || selectedRelations.includes(relation)) && location.viewport.scale >= 0.7 && <text x={geometry.labelX} y={geometry.labelY - 8}>{relation.label}</text>}</g>;
         })}</svg>
         {visible.topics.map((topic) => {

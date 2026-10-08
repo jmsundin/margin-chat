@@ -18,4 +18,5 @@ test("public and personal maps preserve saved identity and navigation across the
   expect(stdout).toContain("Public atlas regions, group zoom-to-fit, stable topic selection, all-groups return, and navigation history passed.");
   expect(stdout).toContain("Public document layouts, focused connections, hop depth, pivots, resize, history, and persistence passed.");
   expect(stdout).toContain("Public continuous grouped zoom reveals every neighborhood, preserves selection and resize cameras, and restores its presentation.");
+  expect(stdout).toContain("Public clusters group topics around hubs, name them, show dots when zoomed out, and zoom into a cluster.");
 }, 20000);
