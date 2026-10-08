@@ -443,7 +443,26 @@ async function checkEmptyWorkspaceSettings() {
   await act(async () => { await new Promise((done) => setTimeout(done, 1100)); });
   await until(() => !current.vault.saving, "Refresh after deletion did not finish.");
   await assertNoDocuments();
-  console.log(JSON.stringify({ checks: ["empty settings survive automatic debounce", "settings sync without placeholder Markdown", "offline reopen restores selected provider and model", "empty groups survive reopening", "remote deletion does not resurrect placeholder"] }));
+
+  // Writing into the starter document makes it a real document, even while it is still titled "New chat".
+  await act(async () => {
+    current.setState((state: any) => {
+      const starter = state.conversations[state.rootId];
+      const now = "2026-09-13T00:00:00.000Z";
+      return { ...state, conversations: { ...state.conversations, [state.rootId]: { ...starter, title: "New chat", document: {
+        schemaVersion: 1, prompts: [], generations: [],
+        blocks: [{ id: "starter-block", kind: "markdown", content: "First words in the starter document.", createdAt: now, updatedAt: now, authorship: "user" }],
+      } } } };
+    });
+  });
+  await act(async () => { await new Promise((done) => setTimeout(done, 1100)); });
+  await until(() => !current.vault.saving, "Automatic save of the starter document did not finish.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert(Object.values(current.state.conversations).some((conversation: any) => conversation.document?.blocks.some((block: any) => block.content === "First words in the starter document.")),
+    "Text written into the starter document disappeared after saving.");
+  assert(Object.values((await local.read())!.files).some((file: any) => file.content?.includes("First words in the starter document.")),
+    "Text written into the starter document was not saved as Markdown.");
+  console.log(JSON.stringify({ checks: ["starter document text is saved", "empty settings survive automatic debounce", "settings sync without placeholder Markdown", "offline reopen restores selected provider and model", "empty groups survive reopening", "remote deletion does not resurrect placeholder"] }));
 }
 async function checkPopulatedWorkspace() {
   await act(async () => { root.render(createElement(Host)); });
