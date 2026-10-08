@@ -148,13 +148,13 @@ try {
     await act(async () => initialEditor.view.dom.dispatchEvent(shortcut));
     await settle();
     assert(shortcut.defaultPrevented, "Global search suppresses the browser's Open File action.");
-    const searchInput = browser.document.querySelector('.search-modal input[type="search"]');
+    const searchInput = browser.document.querySelector('.vault-search input[type="search"]');
     assert(searchInput, `${modifier}+O opens global search from the document editor.`);
     assert.equal(browser.document.activeElement, searchInput, "Global search is ready to type into.");
     assert.deepEqual(latest.conversations[mainId].document, contentBeforeSidebarShortcuts, "Opening global search does not edit the document.");
     await act(async () => searchInput.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
     await settle();
-    assert.equal(browser.document.querySelector('.search-modal'), null);
+    assert.equal(browser.document.querySelector('.vault-search'), null);
     assert.equal(browser.document.activeElement, initialEditor.view.dom, "Closing search returns focus to the editor.");
   }
 
