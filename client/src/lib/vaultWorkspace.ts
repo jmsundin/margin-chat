@@ -41,8 +41,8 @@ export function workspaceFromVault(files: Record<string, VaultFile>, previous?: 
   return discoverMarkdownWorkspace(markdown, metadata, previous?.files);
 }
 
-export function workspaceVaultFiles(workspace: MarkdownWorkspace, stampIdentities = true): Record<string, VaultFile> {
-  if (stampIdentities) workspace = assignMarkdownFileIdentities(workspace);
+export function workspaceVaultFiles(workspace: MarkdownWorkspace, stampIdentities = true, createdAtByPath?: Record<string, string>): Record<string, VaultFile> {
+  if (stampIdentities) workspace = assignMarkdownFileIdentities(workspace, createdAtByPath);
   const manifest = structuredClone(workspace.manifest);
   manifest.files = [];
   manifest.savedAt = "1970-01-01T00:00:00.000Z";

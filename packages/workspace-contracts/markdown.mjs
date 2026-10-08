@@ -416,15 +416,27 @@ export function buildMarkdownVaultIndex(summaries) {
             ...(linked.length ? { linkedPaths: linked } : {}) };
     });
 }
-/** Plain imports gain a portable identity before synchronization; their body stays untouched. */
-export function assignMarkdownFileIdentities(workspace) {
+/**
+ * Plain imports gain a portable identity before synchronization; their body stays untouched.
+ * A known file date (such as its modification time on disk) becomes `created` when the file has none,
+ * so a new file sorts with recent documents instead of as the oldest one.
+ */
+export function assignMarkdownFileIdentities(workspace, createdAtByPath = {}) {
     const files = { ...workspace.files };
     for (const record of workspace.manifest.files) {
         const source = files[record.path];
-        if (source === undefined || parseMetadata(source) || parseFrontmatterString(source, "margin-chat-id") === record.id)
+        if (source === undefined || parseMetadata(source))
+            continue;
+        const fields = [];
+        if (parseFrontmatterString(source, "margin-chat-id") !== record.id)
+            fields.push(`margin-chat-id: ${JSON.stringify(record.id)}`);
+        const createdAt = validDate(createdAtByPath[record.path]);
+        if (createdAt && !validDate(parseFrontmatterString(source, "created")))
+            fields.push(`created: ${JSON.stringify(createdAt)}`);
+        if (!fields.length)
             continue;
         const newline = source.includes("\r\n") ? "\r\n" : "\n";
-        const field = `margin-chat-id: ${JSON.stringify(record.id)}`;
+        const field = fields.join(newline);
         if (/^---\r?\n/.test(source) && /^---\r?\n[\s\S]*?\r?\n---/.test(source)) {
             files[record.path] = source.replace(/^---\r?\n/, (opening) => `${opening}${field}${newline}`);
         }

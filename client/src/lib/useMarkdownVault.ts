@@ -220,8 +220,11 @@ export function useMarkdownVault(args: {
     if (!companions) return;
     // Settings are parsed/canonicalized with Markdown; preserve raw companion bytes for disk checks.
     const withoutSettings = (files: Record<string, VaultFile>) => Object.fromEntries(Object.entries(files).filter(([path]) => path !== "workspace.json"));
-    const next = { ...workspaceVaultFiles(incoming.workspace), ...withoutSettings(companions) };
-    const expected = { ...(folder.current ? workspaceVaultFiles(folder.current) : {}), ...withoutSettings(folderCompanions.current) };
+    // A new plain file without a date takes its time on disk, so it lists with recent documents
+    // instead of as the oldest one. Both sides use the same dates so unchanged files never look edited.
+    const dates = incoming.modifiedAt;
+    const next = { ...workspaceVaultFiles(incoming.workspace, true, dates), ...withoutSettings(companions) };
+    const expected = { ...(folder.current ? workspaceVaultFiles(folder.current, true, dates) : {}), ...withoutSettings(folderCompanions.current) };
     const baseline = folderBaseline(incoming.workspace, companions);
     const directory = { id: status.directoryId, baseline };
     // An empty newly chosen directory is an output destination, not deletion of the vault.

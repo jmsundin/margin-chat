@@ -539,6 +539,8 @@ async function checkPopulatedWorkspace() {
   assert.equal(current.vault.folderAccessMessage, null, "Allowing folder access left the notice up.");
   assert(Object.values(current.state.conversations).some((conversation: any) => conversation.title === "Added in Finder"),
     "A Markdown file added to the connected folder did not appear after allowing access.");
+  const added: any = Object.values(current.state.conversations).find((conversation: any) => conversation.title === "Added in Finder");
+  assert(Date.parse(added.updatedAt) > Date.now() - 60_000, "A file added on disk was dated as the oldest document instead of when it was saved.");
 
   const originalDirectoryId = current.vault.localDirectoryStatus.directoryId;
   assert(originalDirectoryId && (await local.read())!.directoryBaselines?.[originalDirectoryId], "Folder baseline was not durable.");
@@ -636,7 +638,7 @@ async function checkPopulatedWorkspace() {
   await until(() => current?.vault.ready, "Offline reopen did not hydrate the durable local vault.");
   assert(Object.values(current.state.conversations).some((conversation: any) => conversation.messages.some((message: any) => message.content === "Preserve this local version as a conflict.")),
     "Offline reopen lost the previously persisted Markdown.");
-  console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "folder access can be allowed again to show added files", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
+  console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "folder access can be allowed again to show added files", "plain files added on disk are dated by their disk time", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
 }
 async function checkPartialLoad() {
   const { recentVaultEntries } = await import("../../client/src/lib/vaultHydration");
