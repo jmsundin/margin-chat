@@ -7,6 +7,7 @@ const MAX_COMMIT_BYTES = 3 * 1024 * 1024;
 // paths. Leave room for both cases below the cloud's buffered response limit.
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const REVISION = /^[a-f0-9]{64}$/u;
+const INDEX_SCHEMA = 1;
 const emptyManifest = () => ({ schemaVersion: 1, revision: 0, files: {} });
 const missingConfiguration = () => new HttpError(503, "Cloud Markdown storage is not configured. Connect a private Vercel Blob store, or set VAULT_STORAGE_DIR for local development. Your local files remain saved.");
 
@@ -212,6 +213,39 @@ export function createVaultService({ database, env = process.env, storage = crea
     return state;
   }
 
+  /** Titles, dates and relationships of every Markdown file, so a new device can
+   * open recent documents first and fetch the rest only when asked. Summaries are
+   * cached per file revision; an unchanged file is never read twice. */
+  async function index(userId) {
+    const manifest = await migrateLegacy(userId);
+    const key = `${prefix(userId)}/index.json`;
+    const record = await storage.read(key);
+    let cached = null;
+    try { cached = record ? JSON.parse(record.bytes.toString("utf8")) : null; } catch { cached = null; }
+    const previous = cached?.schemaVersion === INDEX_SCHEMA && cached.files && typeof cached.files === "object" ? cached.files : {};
+    const markdown = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && entry.encoding !== "base64"
+      && /\.md$/iu.test(path) && !/^(?:_conflicts|attachments|\.margin-chat)\//iu.test(path));
+    const { summarizeMarkdownVaultFile, buildMarkdownVaultIndex } = await codec();
+    const files = {};
+    let changed = cached?.revision !== manifest.revision || Object.keys(previous).length !== markdown.length;
+    await mapConcurrent(markdown, async ([path, entry]) => {
+      const known = previous[path];
+      if (known?.revision === entry.revision && known.summary) { files[path] = known; return; }
+      changed = true;
+      const source = (await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8");
+      const summary = summarizeMarkdownVaultFile(path, source);
+      if (summary) files[path] = { revision: entry.revision, summary };
+    });
+    if (changed) {
+      // The cache only saves work. Losing a race with another request is harmless.
+      await storage.compareAndSwap(key, Buffer.from(JSON.stringify({ schemaVersion: INDEX_SCHEMA, revision: manifest.revision, files })), record?.etag ?? null)
+        .catch(() => false);
+    }
+    const summaries = Object.keys(files).sort().map((path) => files[path].summary);
+    return { revision: manifest.revision, entries: buildMarkdownVaultIndex(summaries)
+      .map((entry) => ({ ...entry, revision: files[entry.path].revision })) };
+  }
+
   async function projectLatest(userId, manifest, { force = false } = {}) {
     if (!database?.projectVaultState || !manifest.revision) return { status: "ready", revision: manifest.revision };
     try {
@@ -264,6 +298,10 @@ export function createVaultService({ database, env = process.env, storage = crea
     readFile,
     readWorkspace,
     snapshot,
+    async index(userId) {
+      if (!configured) return { configured: false, revision: 0, entries: [] };
+      return { configured: true, ...(await index(userId)) };
+    },
     async status(userId) {
       if (!configured) return { configured: false, manifest: emptyManifest() };
       const manifest = await migrateLegacy(userId);

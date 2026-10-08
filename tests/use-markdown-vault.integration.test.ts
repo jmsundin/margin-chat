@@ -13,6 +13,19 @@ test("pending feature projections stay visible without retrying successful cloud
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(4);
 }, 15000);
 
+test("a new device opens recent documents first and downloads the rest when opened", async () => {
+  const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--partial-load"], {
+    cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
+  });
+  const timeout = setTimeout(() => child.kill(), 10000);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  clearTimeout(timeout);
+  if (exitCode !== 0) throw new Error(`Partial vault load integration failed:\n${stdout}\n${stderr}`);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(8);
+}, 15000);
+
 test("last focused document survives reopening without editing or syncing", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--document-focus"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",

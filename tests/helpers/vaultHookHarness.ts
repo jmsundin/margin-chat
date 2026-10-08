@@ -117,12 +117,13 @@ const emptySettingsScenario = process.argv.includes("--empty-settings");
 const historyScenario = process.argv.includes("--chat-history");
 const focusScenario = process.argv.includes("--document-focus");
 const projectionScenario = process.argv.includes("--projection-pending");
+const partialScenario = process.argv.includes("--partial-load");
 let projectionPending = projectionScenario;
 let commitRequests = 0;
 function vaultResponse(result: any) {
   return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest.revision } } : result);
 }
-if (!emptySettingsScenario && !historyScenario && !focusScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -143,6 +144,7 @@ globalThis.fetch = (async (input: any, init: any) => {
     const source = await remote.readFile({ userId: user.id, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
     return new Response(source.bytes, { headers: { "Content-Type": source.contentType } });
   }
+  if (url.pathname === "/api/vault/index" && partialScenario) return Response.json(await remote.index(user.id));
   if (url.pathname === "/api/vault/commit") {
     commitRequests++;
     return vaultResponse(await remote.commit(user.id, JSON.parse(init.body).changes));
@@ -620,8 +622,61 @@ async function checkPopulatedWorkspace() {
     "Offline reopen lost the previously persisted Markdown.");
   console.log(JSON.stringify({ checks: ["local hydration before network", "local saves during pending sync", "real server UTF-8 hydration", "typing retained during hydration", "typing retained during delayed OPFS close", "offline reopen from durable Markdown", "import retains concurrent typing", "failed local write blocks download", "folder preserves original companion bytes", "external folder settings sync safely", "automatic refresh requests coalesce", "conflict resolution does not create spontaneous writes", "plain Markdown conflict resolves to local and syncs", "older archive preserves current edits without duplicate identities", "folder rename survives reopening", "folder note and companion deletions survive reopening", "directory baselines follow identity instead of name"] }));
 }
+async function checkPartialLoad() {
+  const { recentVaultEntries } = await import("../../client/src/lib/vaultHydration");
+  const documents = Array.from({ length: 15 }, (_, index) => {
+    const day = String(index + 1).padStart(2, "0");
+    return { path: `Docs/doc-${day}.md`, baseRevision: null,
+      content: `---\nmargin-chat-id: "doc-${day}"\ntitle: "Document ${day}"\nupdated: "2026-09-${day}T00:00:00.000Z"\n---\n# Document ${day}\n\nBody ${day}.\n` };
+  });
+  await remote.commit(user.id, documents);
+  networkReleased = true;
+  initialNetwork.resolve();
+  const normalFetch = globalThis.fetch;
+  const downloadGate = deferred();
+  let gated = true;
+  globalThis.fetch = (async (input: any, init: any) => {
+    const url = new URL(String(input), "http://fixture.test");
+    if (gated && url.pathname === "/api/vault/file" && init?.method !== "PUT") await downloadGate.promise;
+    return normalFetch(input, init);
+  }) as typeof fetch;
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "The workspace waited for the cloud before opening.");
+  await until(() => !!current.vault.fetchStatus?.total, "No fetching indicator appeared while recent documents downloaded.");
+  assert.match(current.vault.fetchStatus.label, /Downloading/);
+  gated = false;
+  downloadGate.resolve();
+  await until(() => current.vault.matchesCloud && !current.vault.fetchStatus && current.vault.cloudDocuments.length === 3,
+    "Recent documents did not finish loading.");
+  const loaded = Object.keys(current.state.conversations).sort();
+  assert.deepEqual(loaded, documents.slice(3).map((document) => document.path.slice(5, -3)), "The device did not load exactly the 12 most recent documents.");
+  assert.deepEqual(current.vault.cloudDocuments.map((entry: any) => entry.id), ["doc-03", "doc-02", "doc-01"], "The cloud index is not ordered by recent activity.");
+  assert.equal(Object.keys((await local.read())!.deferred ?? {}).length, 3, "Older documents were downloaded before being opened.");
+
+  await act(async () => { await current.vault.openCloudDocument("Docs/doc-01.md"); });
+  assert.equal(current.state.activeConversationId, "doc-01", "Opening a cloud document did not show it.");
+  assert(current.state.conversations["doc-01"], "The opened document did not download.");
+  assert.deepEqual(current.vault.cloudDocuments.map((entry: any) => entry.id), ["doc-03", "doc-02"]);
+  assert.equal(current.vault.openingPath, null);
+
+  const untouched = (await remote.snapshot(user.id)).manifest.files["Docs/doc-02.md"].revision;
+  await act(async () => { current.setState((state: any) => ({ ...state, conversations: { ...state.conversations,
+    "doc-01": { ...state.conversations["doc-01"], title: "Edited after opening" } } })); });
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal((await remote.snapshot(user.id)).manifest.files["Docs/doc-02.md"].revision, untouched, "Editing on a partial device changed a cloud-only document.");
+  assert(recentVaultEntries((await remote.index(user.id)).entries).length === 15, "A cloud document disappeared from the index.");
+
+  await act(async () => { await current.vault.download(); });
+  assert.equal((await local.read())!.deferred, undefined, "Downloading the vault left documents in the cloud only.");
+  assert.equal(Object.keys(current.state.conversations).length, 15);
+  assert.equal(current.vault.cloudDocuments.length, 0);
+  globalThis.fetch = normalFetch;
+  console.log(JSON.stringify({ checks: ["ready before cloud", "fetch indicator", "recent documents first", "index ordered by activity",
+    "older documents deferred", "open on demand", "partial edits leave cloud documents untouched", "complete download before export"] }));
+}
 try {
-  if (projectionScenario) await checkProjectionPending();
+  if (partialScenario) await checkPartialLoad();
+  else if (projectionScenario) await checkProjectionPending();
   else if (focusScenario) await checkDocumentFocus();
   else if (historyScenario) await checkChatHistory();
   else if (emptySettingsScenario) await checkEmptyWorkspaceSettings();

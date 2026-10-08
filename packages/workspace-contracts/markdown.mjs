@@ -354,6 +354,68 @@ export function discoverMarkdownWorkspace(files, fallbackManifest, previousFiles
         },
     };
 }
+/** A content-free description of one vault file, small enough to index a whole vault. */
+export function summarizeMarkdownVaultFile(path, source) {
+    if (!isSafeMarkdownPath(path) || isAuxiliaryMarkdownPath(path))
+        return null;
+    const basename = path.split("/").at(-1).replace(/\.md$/i, "");
+    try {
+        source = decodeReadableMarkdown(source).replace(/\r\n/g, "\n");
+        const metadata = parseMetadata(source);
+        const relationships = parseRelationships(source);
+        const frontmatterTitle = parseFrontmatterString(source, "title")?.trim();
+        const created = validDate(parseFrontmatterString(source, "created"));
+        const updated = validDate(parseFrontmatterString(source, "updated")) ?? created;
+        const aliases = [...new Set([
+            ...(Array.isArray(metadata?.file?.aliases) ? metadata.file.aliases : []),
+            ...(typeof metadata?.file?.managedPath === "string" && metadata.file.managedPath !== path ? [metadata.file.managedPath] : []),
+        ])].filter((alias) => typeof alias === "string" && isSafeMarkdownPath(alias) && alias !== path);
+        const shared = { path, ...(aliases.length ? { aliases } : {}),
+            ...(created ? { created } : {}), ...(updated ? { updated } : {}) };
+        if (metadata?.entityType === "note") {
+            return { ...shared, id: metadata.note.id, type: "note", kind: "note", title: frontmatterTitle || basename,
+                parentTarget: relationships.parentTarget, linkedTargets: [] };
+        }
+        if (metadata?.entityType === "conversation") {
+            const conversation = metadata.conversation;
+            const latestMessage = parseMessages(source)?.at(-1)?.createdAt;
+            const activity = [updated, validDate(conversation.updatedAt), validDate(latestMessage)].filter(Boolean).sort().at(-1);
+            return { ...shared, ...(activity ? { updated: activity } : {}), id: conversation.id, type: "conversation",
+                kind: conversation.kind === "note" ? "note" : "chat", title: frontmatterTitle || conversation.title || basename,
+                parentTarget: relationships.parentTarget, linkedTargets: relationships.linkedTargets };
+        }
+        const content = source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n)?/, "");
+        return { ...shared, id: parseFrontmatterString(source, "margin-chat-id") || `markdown-${safeFileId(path)}`,
+            type: "conversation", kind: "note",
+            title: frontmatterTitle || /^#\s+(.+)$/m.exec(content)?.[1]?.trim() || basename,
+            parentTarget: null, linkedTargets: [] };
+    }
+    catch {
+        // An unreadable file stays findable by name; opening it reports the real error.
+        return { path, id: `markdown-${safeFileId(path)}`, type: "conversation", kind: "note", title: basename,
+            parentTarget: null, linkedTargets: [] };
+    }
+}
+/** Resolve summaries' wiki-link targets to vault paths exactly as the workspace parser does. */
+export function buildMarkdownVaultIndex(summaries) {
+    const recordByTarget = new Map();
+    for (const summary of summaries) {
+        for (const target of [summary.path, ...(summary.aliases ?? [])].flatMap(getLinkTargetAliases))
+            recordByTarget.set(target, summary);
+    }
+    for (const summary of summaries) {
+        for (const target of getLinkTargetAliases(summary.path))
+            recordByTarget.set(target, summary);
+    }
+    return summaries.map(({ parentTarget, linkedTargets, aliases: _aliases, ...summary }) => {
+        const parent = parentTarget ? resolveLinkRecord(recordByTarget, parentTarget) : null;
+        const linked = [...new Set((linkedTargets ?? []).map((target) => resolveLinkRecord(recordByTarget, target))
+            .filter((record) => record?.type === "conversation" && record.path !== summary.path).map((record) => record.path))];
+        return { ...summary,
+            ...(parent?.type === "conversation" && parent.path !== summary.path ? { parentPath: parent.path } : {}),
+            ...(linked.length ? { linkedPaths: linked } : {}) };
+    });
+}
 /** Plain imports gain a portable identity before synchronization; their body stays untouched. */
 export function assignMarkdownFileIdentities(workspace) {
     const files = { ...workspace.files };

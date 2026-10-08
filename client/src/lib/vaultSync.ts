@@ -1,6 +1,6 @@
 import {
   emptyVault, sameVaultFile, validVaultPath,
-  type VaultChange, type VaultFile, type VaultSnapshot, type VaultStore, type VaultTransport,
+  type VaultChange, type VaultDeferredEntry, type VaultDownloadProgress, type VaultFile, type VaultManifest, type VaultSnapshot, type VaultStore, type VaultTransport,
 } from "./vaultTypes";
 import { reconcileVaultImportPaths, validateVaultWorkspace, workspaceFromVault } from "./vaultWorkspace";
 import type { HistoryImportReceipt } from "./chatHistoryImport";
@@ -254,8 +254,53 @@ export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, Va
   return result;
 }
 
+/** A deferred cloud file stays remote until something on this device needs that path. */
+function isDeferred(snapshot: VaultSnapshot, path: string) {
+  return !!snapshot.deferred?.[path] && !snapshot.files[path] && !snapshot.base[path];
+}
+
 export class VaultSync {
+  /** Reports cloud downloads while they run, so the interface can show that fetching is happening. */
+  onDownload?: (progress: VaultDownloadProgress) => void;
+
   constructor(readonly store: VaultStore, readonly transport: VaultTransport) {}
+
+  /**
+   * On a device that has never synchronized, leave every cloud file except
+   * `keep` in the cloud. The next sync then downloads only what was kept.
+   * Returns false, changing nothing, once this device has synchronized.
+   */
+  deferFresh(manifest: VaultManifest, keep: Set<string>, ids: Map<string, string> = new Map()) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      // Files written here before the first sync are local work; they upload as usual.
+      if (Object.keys(snapshot.base).length || snapshot.remoteRevision > 0) return false;
+      const deferred: Record<string, VaultDeferredEntry> = {};
+      for (const [path, entry] of Object.entries(manifest.files)) {
+        if (entry.deleted || keep.has(path) || path === "workspace.json" || !validVaultPath(path)) continue;
+        deferred[path] = { ...entry, ...(ids.has(path) ? { id: ids.get(path) } : {}) };
+      }
+      if (!Object.keys(deferred).length) return false;
+      snapshot.deferred = deferred;
+      await this.store.write(snapshot);
+      return true;
+    });
+  }
+
+  /** Ask the next sync to download these deferred cloud files. */
+  hydrate(paths: Iterable<string>) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      if (!snapshot.deferred) return snapshot;
+      const deferred = { ...snapshot.deferred };
+      let changed = false;
+      for (const path of paths) if (deferred[path]) { delete deferred[path]; changed = true; }
+      if (!changed) return snapshot;
+      if (Object.keys(deferred).length) snapshot.deferred = deferred; else delete snapshot.deferred;
+      await this.store.write(snapshot);
+      return snapshot;
+    });
+  }
 
   read() { return this.store.lock(async () => (await this.store.read()) ?? emptyVault()); }
 
@@ -406,14 +451,22 @@ export class VaultSync {
         if (!validVaultPath(path)) throw new Error("The cloud vault contains an invalid file path.");
       }
       const incoming = new Map<string, VaultFile | null>();
-      const downloads = entries.filter(([path, entry]) => started.base[path]?.revision !== entry.revision);
+      const downloads = entries.filter(([path, entry]) => started.base[path]?.revision !== entry.revision && !isDeferred(started, path));
       let downloadIndex = 0;
-      await Promise.all(Array.from({ length: Math.min(8, downloads.length) }, async () => {
-        while (downloadIndex < downloads.length) {
-          const [path, entry] = downloads[downloadIndex++];
-          incoming.set(path, entry.deleted ? null : await this.transport.read(path, entry));
-        }
-      }));
+      let downloaded = 0;
+      const fetching = downloads.filter(([, entry]) => !entry.deleted).length;
+      if (fetching) this.onDownload?.({ done: 0, total: fetching });
+      try {
+        await Promise.all(Array.from({ length: Math.min(8, downloads.length) }, async () => {
+          while (downloadIndex < downloads.length) {
+            const [path, entry] = downloads[downloadIndex++];
+            incoming.set(path, entry.deleted ? null : await this.transport.read(path, entry));
+            if (!entry.deleted) this.onDownload?.({ done: ++downloaded, total: fetching });
+          }
+        }));
+      } finally {
+        if (fetching) this.onDownload?.({ done: fetching, total: 0 });
+      }
 
       const prepared = await this.store.lock(async () => {
         const snapshot = (await this.store.read()) ?? emptyVault();
@@ -421,7 +474,20 @@ export class VaultSync {
         // that older response rather than treating it as a cloud history reset.
         if (snapshot.remoteRevision > remote.revision) return null;
         const remoteFiles: Record<string, VaultFile> = {};
+        const remoteOnly = new Set(entries.flatMap(([path]) => isDeferred(snapshot, path) ? [path] : []));
+        if (snapshot.deferred) {
+          // Keep deferred entries current so opening one later fetches its latest revision.
+          const deferred: Record<string, VaultDeferredEntry> = {};
+          for (const [path, entry] of entries) {
+            if (!remoteOnly.has(path)) continue;
+            // Deleted or renamed elsewhere: record the tombstone like any synchronized file.
+            if (entry.deleted) snapshot.base[path] = { revision: entry.revision, file: null };
+            else deferred[path] = { ...entry, ...(snapshot.deferred[path].id ? { id: snapshot.deferred[path].id } : {}) };
+          }
+          if (Object.keys(deferred).length) snapshot.deferred = deferred; else delete snapshot.deferred;
+        }
         for (const [path, entry] of entries) {
+          if (remoteOnly.has(path)) continue;
           const base = snapshot.base[path];
           if (base?.revision !== entry.revision && !incoming.has(path)) return null;
           const file = base?.revision === entry.revision ? base.file : incoming.get(path);
@@ -432,6 +498,7 @@ export class VaultSync {
           base: Object.fromEntries(Object.entries(snapshot.base).flatMap(([path, entry]) => entry.file ? [[path, entry.file]] : [])) };
         const moved = reconcileRemoteRenames(snapshot, remoteFiles, attempts);
         for (const [path, entry] of entries) {
+          if (remoteOnly.has(path)) continue;
           const base = snapshot.base[path];
           if (base?.revision === entry.revision) continue;
           if (!incoming.has(path)) return null;

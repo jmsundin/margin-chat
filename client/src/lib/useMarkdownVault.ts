@@ -1,13 +1,14 @@
 import { apiFetch } from "./apiTransport";
 import { isAppUpdateLocked, useAppUpdateGuard } from "./appUpdateSafety";
-import { useEffect, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { AppState, AuthenticatedUser } from "../types";
 import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { bytesToBase64, createBrowserVaultStore, exportVault, importVault } from "./vaultLocal";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
-import { type VaultFile, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
+import { type VaultDownloadProgress, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
+import { preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import {
   canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, clearLocalDirectory, getLocalDirectoryStatus,
@@ -19,6 +20,15 @@ import type { MarkdownWorkspace } from "./workspaceMarkdown";
 import { historyVaultFiles, type HistoryChat, type HistoryImportReceipt } from "./chatHistoryImport";
 
 type StorageMode = "loading" | "fallback" | "local" | "server";
+
+/** How many recently used documents a new device downloads before anything else. */
+const RECENT_DOCUMENT_COUNT = 12;
+
+export interface VaultFetchStatus {
+  label: string;
+  done?: number;
+  total?: number;
+}
 
 export function useMarkdownVault(args: {
   user: AuthenticatedUser;
@@ -45,11 +55,21 @@ export function useMarkdownVault(args: {
     directoryName: null, fileName: getLocalWorkspaceFileName(storageUserId), permission: "unselected", supported: false,
   });
   const projectionPending = useRef(false);
+  const [vaultIndex, setVaultIndex] = useState<VaultIndex | null>(null);
+  const vaultIndexRef = useRef<VaultIndex | null>(null);
+  const [deferredPaths, setDeferredPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const deferredIds = useRef<Set<string>>(new Set());
+  const [downloadProgress, setDownloadProgress] = useState<VaultDownloadProgress | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [openingPath, setOpeningPath] = useState<string | null>(null);
   const engineRef = useRef<VaultSync | null>(null);
   if (!engineRef.current) engineRef.current = new VaultSync(createBrowserVaultStore(storageUserId), createVaultTransport(user.id, (status) => {
     projectionPending.current = status === "pending";
   }));
   const engine = engineRef.current;
+  engine.onDownload = (progress) => {
+    if (mounted.current) setDownloadProgress(progress.total ? progress : null);
+  };
   const displayedFiles = useRef<Record<string, VaultFile>>({});
   const displayedState = useRef(args.state);
   const [initialFocus] = useState(() => loadLastFocusedDocument(storageUserId));
@@ -92,7 +112,18 @@ export function useMarkdownVault(args: {
       : detail);
   }
 
+  function rememberDeferred(snapshot: VaultSnapshot) {
+    const deferred = snapshot.deferred ?? {};
+    deferredIds.current = new Set(Object.values(deferred).flatMap((entry) => entry.id ? [entry.id] : []));
+    if (!mounted.current) return;
+    setDeferredPaths((current) => {
+      const paths = Object.keys(deferred);
+      return paths.length === current.size && paths.every((path) => current.has(path)) ? current : new Set(paths);
+    });
+  }
+
   function publish(snapshot: VaultSnapshot) {
+    rememberDeferred(snapshot);
     const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current);
     if (pendingFocus.current === next.activeConversationId) pendingFocus.current = null;
     displayedFiles.current = structuredClone(snapshot.files);
@@ -138,7 +169,11 @@ export function useMarkdownVault(args: {
       && !conversations[0].messages.length && !conversations[0].notes?.length && !conversations[0].documents?.length;
     const editingState = stateRef.current;
     const settingsOnly = !hasVaultContent.current && pristine;
-    const next = renderFiles(settingsOnly ? { ...editingState, conversations: {} } : editingState, displayedFiles.current);
+    let next = renderFiles(settingsOnly ? { ...editingState, conversations: {} } : editingState, displayedFiles.current);
+    if (deferredIds.current.size && next["workspace.json"]) {
+      const sidecar = preserveDeferredWorkspaceReferences(next["workspace.json"], displayedFiles.current["workspace.json"], deferredIds.current);
+      if (sidecar !== next["workspace.json"]) next = { ...next, "workspace.json": sidecar };
+    }
     const snapshot = await engine.edit(next, displayedFiles.current);
     displayedFiles.current = next;
     displayedState.current = editingState;
@@ -240,6 +275,92 @@ export function useMarkdownVault(args: {
     }
   }
 
+  function setIndex(index: VaultIndex | null) {
+    vaultIndexRef.current = index;
+    if (mounted.current) setVaultIndex(index);
+  }
+
+  /** Keep the cloud index current while some documents are only in the cloud. */
+  async function refreshIndex(snapshot: VaultSnapshot) {
+    if (!snapshot.deferred || !engine.transport.index) return;
+    if (vaultIndexRef.current && vaultIndexRef.current.revision >= snapshot.remoteRevision) return;
+    try { setIndex(await engine.transport.index()); }
+    catch { /* The documents already on this device stay usable; the index retries on the next sync. */ }
+  }
+
+  /**
+   * A device without a local vault downloads recently used documents first and
+   * leaves the rest in the cloud until they are opened. Without an index (an
+   * older server, or offline) the whole vault downloads as before.
+   */
+  async function prepareFreshDevice() {
+    if (!engine.transport.index) return;
+    if (mounted.current) setPreparing(true);
+    try {
+      const [manifest, index] = await Promise.all([engine.transport.manifest(), engine.transport.index().catch(() => null)]);
+      if (!index?.entries.length) return;
+      const wanted = recentVaultEntries(index.entries, RECENT_DOCUMENT_COUNT).map((entry) => entry.path);
+      const focused = initialFocus && index.entries.find((entry) => entry.id === initialFocus);
+      if (focused) wanted.push(focused.path);
+      const keep = vaultHydrationClosure(index.entries, wanted);
+      if (await engine.deferFresh(manifest, keep, new Map(index.entries.map((entry) => [entry.path, entry.id])))) setIndex(index);
+    } catch {
+      // Fall back to downloading everything; the regular sync reports any network failure.
+    } finally {
+      if (mounted.current) setPreparing(false);
+    }
+  }
+
+  /** Download deferred documents (with their families) and return whether any were requested. */
+  async function hydratePaths(paths: Iterable<string>) {
+    const snapshot = await engine.read();
+    if (!snapshot.deferred) return false;
+    const entries = vaultIndexRef.current?.entries ?? [];
+    const closure = entries.length ? vaultHydrationClosure(entries, paths) : new Set(paths);
+    const requested = [...closure].filter((path) => snapshot.deferred?.[path]);
+    if (!requested.length) return false;
+    await engine.hydrate(requested);
+    return true;
+  }
+
+  /** A document that arrived on its own (created or renamed on another device) brings its family. */
+  async function hydrateIncompleteFamilies() {
+    const snapshot = await engine.read();
+    const entries = vaultIndexRef.current?.entries;
+    if (!snapshot.deferred || !entries) return false;
+    return hydratePaths(entries.filter((entry) => snapshot.files[entry.path]).map((entry) => entry.path));
+  }
+
+  /** Documents open in panes or pinned on another device should be ready here too. */
+  async function hydrateWorkspaceReferences() {
+    const snapshot = await engine.read();
+    const sidecar = snapshot.files["workspace.json"];
+    const entries = vaultIndexRef.current?.entries;
+    if (!snapshot.deferred || !sidecar || sidecar.encoding || !entries) return false;
+    const ids = new Set<string>();
+    try {
+      const view = JSON.parse(sidecar.content)?.workspace?.view;
+      for (const id of Array.isArray(view?.pinnedItemIds) ? view.pinnedItemIds : []) if (typeof id === "string") ids.add(id);
+      const panes = view?.documentDock?.tree ? [view.documentDock.tree] : [];
+      while (panes.length) {
+        const pane = panes.pop();
+        if (pane?.type === "pane" && typeof pane.documentId === "string") ids.add(pane.documentId);
+        else if (pane?.type === "split") panes.push(pane.first, pane.second);
+      }
+    } catch { return false; }
+    return hydratePaths(entries.filter((entry) => ids.has(entry.id)).map((entry) => entry.path));
+  }
+
+  /** Exports and folder copies must contain the complete vault. */
+  async function hydrateEverything() {
+    const snapshot = await engine.read();
+    if (!snapshot.deferred) return;
+    if (!enabledRef.current) throw new Error("Connect to cloud sync to download the rest of your vault first.");
+    await engine.hydrate(Object.keys(snapshot.deferred));
+    await saveAndRefresh(true);
+    if ((await engine.read()).deferred) throw new Error("Some documents are still in the cloud. Connect and try again.");
+  }
+
   async function saveAndRefresh(sync: boolean) {
     if (!initialized.current) return;
     writing.current = true;
@@ -248,7 +369,8 @@ export function useMarkdownVault(args: {
       await saveAppState();
       await readFolder();
       if (sync && enabledRef.current) {
-        await engine.sync();
+        await refreshIndex(await engine.sync());
+        if (await hydrateIncompleteFamilies()) await engine.sync();
         if (mounted.current) {
           setStorageMode("server");
           setMessage(projectionPending.current
@@ -305,7 +427,9 @@ export function useMarkdownVault(args: {
         // The old workspace snapshot is migration input only. Future content comes from Markdown.
         localStorage.removeItem(getStateStorageKey(storageUserId));
         localStorage.removeItem(getStateSavedAtStorageKey(storageUserId));
+        if (!exists && !args.legacyHasState && enabledRef.current) await prepareFreshDevice();
         await saveAndRefresh(true);
+        if (await hydrateWorkspaceReferences()) await saveAndRefresh(true);
       } catch (error) {
         report(error);
         if (initialized.current && mounted.current) setReady(true);
@@ -361,14 +485,42 @@ export function useMarkdownVault(args: {
     };
   }, [ready, enabled]);
 
+  const cloudDocuments = useMemo(() => !vaultIndex || !deferredPaths.size ? []
+    : recentVaultEntries(vaultIndex.entries.filter((entry) => deferredPaths.has(entry.path))), [vaultIndex, deferredPaths]);
+  const openingTitle = openingPath ? vaultIndex?.entries.find((entry) => entry.path === openingPath)?.title : null;
+  const fetchStatus: VaultFetchStatus | null = preparing ? { label: "Finding your recent documents…" }
+    : openingPath ? { label: `Opening “${openingTitle ?? "document"}”…`, ...(downloadProgress ?? {}) }
+    : downloadProgress ? { label: deferredPaths.size || vaultIndex ? "Downloading documents…" : "Downloading your vault…", ...downloadProgress }
+    : null;
+
   return {
-    ready, storageMode, matchesCloud, message: localSaveError ?? message, conflicts, saving, localSaveError, localDirectoryStatus,
+    ready, storageMode, cloudDocuments, fetchStatus, openingPath,
+    /** Download a document that is still only in the cloud, then show it. */
+    async openCloudDocument(path: string) {
+      const entry = vaultIndexRef.current?.entries.find((candidate) => candidate.path === path);
+      if (!entry) return;
+      // A margin note opens with the document it annotates.
+      const focusId = entry.type === "note" && entry.parentPath
+        ? vaultIndexRef.current?.entries.find((candidate) => candidate.path === entry.parentPath)?.id ?? entry.id : entry.id;
+      setOpeningPath(path);
+      try {
+        await enqueue(async () => {
+          if (!mounted.current) return;
+          await hydratePaths([path]);
+          pendingFocus.current = focusId;
+          await saveAndRefresh(true);
+        });
+      } finally {
+        if (mounted.current) setOpeningPath((current) => current === path ? null : current);
+      }
+    }, matchesCloud, message: localSaveError ?? message, conflicts, saving, localSaveError, localDirectoryStatus,
     async flushLocal() { await saveAppState(); },
     async chooseDirectory() {
       // The chooser must run directly in the user gesture, before asynchronous queue work.
       const handle = await pickLocalDirectory();
       if (!handle) return;
       await enqueue(async () => {
+        await hydrateEverything();
         const status = await connectLocalDirectory(storageUserId, handle);
         setDirectoryStatus(status);
         folderId.current = null; folder.current = null; folderCompanions.current = {};
@@ -386,6 +538,7 @@ export function useMarkdownVault(args: {
     async download() {
       await enqueue(async () => {
         await saveAndRefresh(false);
+        await hydrateEverything();
         await cacheAttachments();
         const snapshot = await engine.read();
         const blob = new Blob([new Uint8Array(exportVault(snapshot)).buffer], { type: "application/zip" });
@@ -410,6 +563,8 @@ export function useMarkdownVault(args: {
     async importChatHistory(chats: HistoryChat[]) {
       return enqueue(async () => {
         if (!initialized.current || !mounted.current) throw new Error("Wait for your workspace to open before importing.");
+        // Imports skip chats already in the vault, so every document must be known first.
+        await hydrateEverything();
         await saveAppState();
         if (!mounted.current) throw new Error("Your account changed. Reopen the import in your current account.");
         const receipt = await engine.importChatHistory(historyVaultFiles(chats, stateRef.current));

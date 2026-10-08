@@ -1,0 +1,180 @@
+.cloud-vault-index {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 4px 4px;
+}
+
+.cloud-vault-index-header {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.72rem;
+  font-weight: 600;
+  gap: 6px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cloud-vault-index-hint {
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.cloud-vault-index-search {
+  background: var(--button-surface);
+  border: 1px solid var(--button-border);
+  border-radius: 10px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+  min-height: 32px;
+  padding: 5px 10px;
+  width: 100%;
+}
+
+.cloud-vault-index-search:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.cloud-vault-index-list {
+  display: grid;
+  gap: 2px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cloud-vault-index-item {
+  align-items: baseline;
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 34px;
+  padding: 6px 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.cloud-vault-index-item:hover:not(:disabled),
+.cloud-vault-index-item:focus-visible {
+  background: var(--button-surface);
+  color: var(--ink);
+}
+
+.cloud-vault-index-item:disabled {
+  cursor: progress;
+}
+
+.cloud-vault-index-item.is-opening {
+  color: var(--ink);
+}
+
+.cloud-vault-index-title {
+  font-size: 0.8rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cloud-vault-index-meta {
+  align-items: center;
+  display: inline-flex;
+  flex: none;
+  font-size: 0.67rem;
+  gap: 5px;
+}
+
+.cloud-vault-index-more {
+  background: none;
+  border: 0;
+  color: var(--sage);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  justify-self: start;
+  padding: 4px 10px;
+}
+
+.vault-fetch-indicator {
+  align-items: center;
+  background: var(--sage-soft);
+  border: 1px solid var(--panel-active-border);
+  border-radius: 10px;
+  color: var(--ink);
+  display: grid;
+  font-size: 0.75rem;
+  gap: 4px 8px;
+  grid-template-columns: auto 1fr auto;
+  margin: 6px 4px;
+  padding: 7px 10px;
+}
+
+.vault-fetch-indicator.is-compact {
+  border-radius: 999px;
+  box-shadow: var(--status-shadow);
+  margin: 0;
+  pointer-events: none;
+}
+
+.vault-fetch-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-fetch-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-fetch-bar {
+  background: var(--line);
+  border-radius: 999px;
+  grid-column: 1 / -1;
+  height: 3px;
+  overflow: hidden;
+}
+
+.vault-fetch-indicator.is-compact .vault-fetch-bar {
+  display: none;
+}
+
+.vault-fetch-bar > span {
+  background: var(--sage);
+  display: block;
+  height: 100%;
+  transition: width 160ms ease;
+}
+
+.vault-fetch-spinner {
+  animation: vault-fetch-spin 0.8s linear infinite;
+  border: 2px solid var(--line-strong);
+  border-radius: 50%;
+  border-top-color: var(--sage);
+  display: inline-block;
+  flex: none;
+  height: 11px;
+  width: 11px;
+}
+
+@keyframes vault-fetch-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vault-fetch-spinner { animation-duration: 2.4s; }
+  .vault-fetch-bar > span { transition: none; }
+}

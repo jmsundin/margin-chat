@@ -63,7 +63,7 @@ function requireExpectedVaultAccount(request, user) {
 // and billing mutations still require the website's cookie session.
 const EXTENSION_WORKSPACE_ROUTES = new Set([
   "authSession", "captureList", "captureGet", "stateRead",
-  "vaultStatus", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
+  "vaultStatus", "vaultIndex", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
   "chat", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
   "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
   "billingDashboard", "apiKeysRead",
@@ -506,6 +506,10 @@ export function createApiHandler({
         const userId = authContext.user.id;
         if (route?.id === "vaultStatus") {
           await sendStreamingJson(response, 200, await vaultService.status(userId), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (route?.id === "vaultIndex") {
+          await sendStreamingJson(response, 200, await vaultService.index(userId), { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultFileRead") {
