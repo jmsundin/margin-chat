@@ -4,9 +4,9 @@ Extension **0.3.0** opens the current Margin Chat workspace above a web page. Hi
 
 The extension bundles the same `App` and `WorkspaceApp` used by the website into an extension-origin `workspace.html` iframe. Its document editors, notes, model controls, AI streaming and branching, workspace search, and Markdown vault sync use the current application code. The visited page hosts the layout controls and passage highlights; private workspace editors run inside the separate extension origin.
 
-**Docked**, **Floating**, and **Expanded** layouts keep the same live workspace mounted. Drag the floating header or resize its corner. Expanded leaves a strip of the source visible; **Uncover page** or **Peek** reveals the page, and **Return to Margin** restores the workspace. Changing layouts does not create another capture or AI request.
+Choose **Docked**, **Floating**, **Expanded**, or **Peek at page** from the ⋮ menu beside the close button; the header stays one slim row. All layouts keep the same live workspace mounted. Drag the floating header or resize its corner. Expanded leaves a strip of the source visible; **Uncover page** or **Peek** reveals the page, and **Return to Margin** restores the workspace. Changing layouts does not create another capture or AI request.
 
-Community discussions are unavailable. The Community control explains the future feature; it has no live feed or publishing action. See the [third-space design and implementation notes](../docs/browser-third-space.md).
+Community discussions are not part of the extension yet, so there is no Community control. See the [third-space design and implementation notes](../docs/browser-third-space.md).
 
 ## Ask about the page
 

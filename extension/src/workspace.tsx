@@ -36,7 +36,6 @@ function BrowserWorkspace() {
   const contextRef = useRef<PageContext | null>(null);
   const [pageState, setPageState] = useState<OverlayState | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [communityOpen, setCommunityOpen] = useState(false);
   const [mode, setMode] = useState<"note" | "ask">("note");
   const [thought, setThought] = useState("");
   const [question, setQuestion] = useState("");
@@ -115,7 +114,7 @@ function BrowserWorkspace() {
       setChecking(true); setError(""); setConnection(null); connectionRef.current = null;
       setCaptureOnly(false);
       setCaptureRequest(null); setThreadRequests([]); threadOpens.current.clear(); setPageState(null); setThought(""); setQuestion("");
-      setBusy(false); setNotice(""); setDetailsOpen(false); setCommunityOpen(false); setMode("note");
+      setBusy(false); setNotice(""); setDetailsOpen(false); setMode("note");
       contextRef.current = null; setContext(null); setApiTransport(null);
       try {
         if (!Number.isInteger(tabId) || tabId < 0 || !session) throw new Error("Open Margin Chat from its toolbar button on a web page.");
@@ -267,8 +266,7 @@ function BrowserWorkspace() {
   if (!connection) return <div className="extension-connect"><p className="eyebrow">Margin Chat</p><h1>Your workspace, above the page.</h1><p>{error}</p>{connectedFrame && <button className="primary-button" onClick={settings}>Connect Workspace + AI</button>}{captureOnly && <p><button onClick={() => void message("pending").catch((failure) => setError(describe(failure)))}>Open capture-only clipper</button></p>}</div>;
   return <div className="browser-workspace">
     <section className="browser-source" aria-label="Web page context">
-      <div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button><button onClick={() => setCommunityOpen(!communityOpen)} aria-expanded={communityOpen}>Community</button></div>
-      {communityOpen && <div className="browser-community"><strong>Community is coming later.</strong><p>Page and passage discussions will appear here when connected. Your documents, annotations, and AI conversations remain private.</p></div>}
+      <div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button></div>
       {detailsOpen && <div className="browser-source-details">
         <div className="browser-context-actions" role="group" aria-label="Choose source context"><button onClick={() => void read("selection")} disabled={busy} aria-pressed={context?.kind === "selection"}>Selected passage</button><button onClick={() => void read("article")} disabled={busy} aria-pressed={context?.kind === "article"}>Readable page</button><button onClick={() => void read("bookmark")} disabled={busy} aria-pressed={context?.kind === "bookmark"}>Link only</button></div>
         {context?.kind === "bookmark" ? <p className="browser-source-hint">Only the page title and link are included. Choose Readable page or select a passage to give AI its content.</p> : <textarea className="browser-source-preview" aria-label="Source content preview" readOnly value={context?.content ?? ""} />}

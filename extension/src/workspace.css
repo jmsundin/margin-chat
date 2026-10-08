@@ -12,8 +12,7 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .browser-source textarea { display: block; box-sizing: border-box; resize: vertical; width: 100%; min-height: 64px; max-height: 160px; padding: 9px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg); color: var(--ink); font: 12px/1.5 inherit; margin: 6px 0 10px; }
 .browser-source .browser-source-preview { font-size: 11px; min-height: 90px; }
 .browser-source form label { font-size: 11px; }.browser-source .primary-button { color: #fffdf7; background: #315b45; }
-.browser-source-hint, .browser-notice, .browser-community { font-size: 11px; line-height: 1.5; margin: 8px 0 0; }.browser-notice.is-error { color: var(--danger, #a34632); }
-.browser-community { border: 1px solid var(--line-strong); border-radius: 8px; padding: 12px; }.browser-community p { margin: 5px 0 0; }
+.browser-source-hint, .browser-notice { font-size: 11px; line-height: 1.5; margin: 8px 0 0; }.browser-notice.is-error { color: var(--danger, #a34632); }
 .browser-current-app { flex: 1; min-height: 0; overflow: hidden; position: relative; }
 .browser-current-app .app-shell, .browser-current-app .app-chrome { height: 100%; min-height: 0; }
 .browser-current-app .auth-chrome { overflow: auto; }.browser-current-app .auth-loading-card { margin: 30px auto; }
