@@ -59,7 +59,7 @@ function normalizeLocation(value: any): GraphExplorationLocation | null {
       ...defaultGraphLocation(), scope, viewport: value.viewport,
       viewMode: isGraphViewMode(value.viewMode) ? value.viewMode : null,
       contentLens: value.contentLens === "concepts" ? "concepts" : "documents",
-      documentViewMode: isGraphViewMode(value.documentViewMode) && ["canvas", "focus", "topics", "lineage", "network", "documents"].includes(value.documentViewMode) ? value.documentViewMode : "topics",
+      documentViewMode: isGraphViewMode(value.documentViewMode) && ["canvas", "focus", "topics", "lineage", "clusters", "network", "documents"].includes(value.documentViewMode) ? value.documentViewMode : "topics",
       relationKinds: Array.isArray(value.relationKinds) ? [...new Set(value.relationKinds.filter((kind: unknown) => kind === "branch" || kind === "link"))] as GraphRelationKind[] : ["branch", "link"],
       modeCameras: normalizeGraphModeCameras(value.modeCameras),
       scopeBeforeFocus: value.scopeBeforeFocus && value.scopeBeforeFocus.kind !== "focus"

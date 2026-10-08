@@ -127,3 +127,28 @@ describe("document titles", () => {
     expect(getDocumentTitleSource(withContent("Untitled document", "x".repeat(9_000)))).toHaveLength(6_000);
   });
 });
+
+describe("graph cluster labels", () => {
+  test("always use OpenAI Luna with cluster instructions and short labels", async () => {
+    let requestBody: Record<string, any> | null = null;
+
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({ output_text: 'Label: "Postgres Migration Planning and Rollout Strategy for Billing Services."' });
+    }) as typeof fetch;
+
+    const result = await createService().generateTitle({
+      kind: "cluster",
+      prompt: "- Billing migration: moving to Postgres\n- Neon setup: connection pooling",
+    });
+
+    expect(requestBody?.model).toBe("gpt-6-luna");
+    expect(JSON.stringify(requestBody)).toContain("cluster of connected documents");
+    expect(result.title).toBe("Postgres Migration Planning and Rollout Strategy");
+    expect(result.title.length).toBeLessThanOrEqual(48);
+  });
+
+  test("rejects unknown title kinds", () => {
+    expect(() => validateChatTitleRequest({ kind: "poem", prompt: "x", serviceId: "gemini-api" })).toThrow("kind must be");
+  });
+});

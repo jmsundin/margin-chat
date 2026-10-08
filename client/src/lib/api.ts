@@ -210,17 +210,29 @@ export async function requestDocumentTitle(args: {
   return requestTitle({ ...rest, kind: "document", prompt: content });
 }
 
+/** Names what a graph cluster is about. The server always uses OpenAI Luna. */
+export async function requestClusterLabel(args: {
+  content: string;
+  expectedUserId?: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const { content, ...rest } = args;
+  return requestTitle({ ...rest, kind: "cluster", prompt: content });
+}
+
 async function requestTitle(args: {
   ai?: AISettings;
   expectedUserId?: string;
-  kind?: "document";
+  kind?: "document" | "cluster";
+  signal?: AbortSignal;
   modelId?: string;
   prompt: string;
   serviceId?: BackendServiceId;
 }): Promise<string> {
-  const { expectedUserId, ...body } = args;
+  const { expectedUserId, signal, ...body } = args;
   const response = await apiFetch("/api/chat/title", {
     body: JSON.stringify(body),
+    signal,
     credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",

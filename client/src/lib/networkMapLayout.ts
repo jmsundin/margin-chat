@@ -21,7 +21,7 @@ function hash(value: string) {
   return result >>> 0;
 }
 
-function fit(nodes: ConversationGraphNodePlacement[], canvas: { width: number; height: number }): GraphViewport {
+export function fitNetworkMapViewport(nodes: ConversationGraphNodePlacement[], canvas: { width: number; height: number }): GraphViewport {
   const width = Number.isFinite(canvas.width) ? Math.max(1, canvas.width) : 1;
   const height = Number.isFinite(canvas.height) ? Math.max(1, canvas.height) : 1;
   if (!nodes.length) return { x: width / 2, y: height / 2, scale: 0.9 };
@@ -49,7 +49,7 @@ export function layoutNetworkMap(
   connections: Connection[],
   options: { iteration?: number; pinned?: Record<string, Point> } = {},
 ): { nodes: ConversationGraphNodePlacement[]; viewport: GraphViewport } {
-  if (!nodes.length) return { nodes: [], viewport: fit([], canvas) };
+  if (!nodes.length) return { nodes: [], viewport: fitNetworkMapViewport([], canvas) };
   const ordered = [...nodes].sort((a, b) => a.conversationId < b.conversationId ? -1 : a.conversationId > b.conversationId ? 1 : 0);
   const indexes = new Map(ordered.map((node, index) => [node.conversationId, index]));
   const count = ordered.length;
@@ -163,5 +163,5 @@ export function layoutNetworkMap(
       y: pinned[index] ? options.pinned![node.conversationId].y : y[index] - CARD.height / 2,
       width: CARD.width, height: CARD.height };
   });
-  return { nodes: placed, viewport: fit(placed, canvas) };
+  return { nodes: placed, viewport: fitNetworkMapViewport(placed, canvas) };
 }
