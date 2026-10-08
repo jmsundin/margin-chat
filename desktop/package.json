@@ -1,0 +1,29 @@
+{
+  "name": "margin-chat-desktop",
+  "productName": "Margin Chat",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Margin Chat for macOS",
+  "type": "module",
+  "main": "main.mjs",
+  "scripts": {
+    "start": "bun run --cwd .. build && electron .",
+    "dev": "MARGIN_DESKTOP_DEV_URL=http://localhost:5173 electron .",
+    "dist:mac": "bun run --cwd .. build && electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.marginchat.desktop",
+    "productName": "Margin Chat",
+    "directories": { "output": "release" },
+    "files": ["main.mjs", "package.json", "!node_modules/**/*"],
+    "extraResources": [{ "from": "../dist", "to": "client" }],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"]
+    }
+  }
+}

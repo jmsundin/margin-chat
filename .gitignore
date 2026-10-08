@@ -12,6 +12,7 @@ client/node_modules/
 dist/
 client/dist/
 extension/releases/
+desktop/release/
 
 # Local tooling artifacts
 .codex-artifacts/
