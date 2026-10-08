@@ -109,19 +109,17 @@
 
 .vault-fetch-indicator {
   align-items: center;
-  background: var(--sage-soft);
-  border: 1px solid var(--panel-active-border);
-  border-radius: 10px;
-  color: var(--ink);
-  display: grid;
+  color: var(--muted);
+  display: flex;
   font-size: 0.75rem;
-  gap: 4px 8px;
-  grid-template-columns: auto 1fr auto;
+  gap: 8px;
   margin: 6px 4px;
-  padding: 7px 10px;
+  padding: 4px 10px;
 }
 
 .vault-fetch-indicator.is-compact {
+  background: var(--status-bg);
+  border: 1px solid var(--status-border);
   border-radius: 999px;
   box-shadow: var(--status-shadow);
   margin: 0;
@@ -135,28 +133,19 @@
   white-space: nowrap;
 }
 
-.vault-fetch-count {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
+.cloud-vault-index-item.is-arriving {
+  color: var(--ink);
 }
 
-.vault-fetch-bar {
-  background: var(--line);
-  border-radius: 999px;
-  grid-column: 1 / -1;
-  height: 3px;
-  overflow: hidden;
+/* A document that just streamed in settles into the list. */
+.thread-item.is-arriving {
+  animation: vault-document-arrive 1.4s ease-out;
 }
 
-.vault-fetch-indicator.is-compact .vault-fetch-bar {
-  display: none;
-}
-
-.vault-fetch-bar > span {
-  background: var(--sage);
-  display: block;
-  height: 100%;
-  transition: width 160ms ease;
+@keyframes vault-document-arrive {
+  from { background: var(--sage-soft); opacity: 0; transform: translateY(-4px); }
+  30% { opacity: 1; transform: none; }
+  to { background: transparent; }
 }
 
 .vault-fetch-spinner {
@@ -176,5 +165,5 @@
 
 @media (prefers-reduced-motion: reduce) {
   .vault-fetch-spinner { animation-duration: 2.4s; }
-  .vault-fetch-bar > span { transition: none; }
+  .thread-item.is-arriving { animation: none; }
 }

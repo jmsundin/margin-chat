@@ -164,6 +164,34 @@ describe("opening a cloud vault on a new device", () => {
     expect(Object.values(snapshot.deferred!).map((entry) => entry.id)).toEqual(["archive"]);
   });
 
+  test("streamed documents land one family at a time and never overwrite local work", async () => {
+    const remote = cloud();
+    const files = stateToVaultFiles(vaultState(), {});
+    const laptop = remote.device();
+    await laptop.edit(files, {});
+    await laptop.sync();
+    const phone = remote.device();
+    const manifest = await remote.transport.manifest();
+    expect(await phone.deferFresh(manifest, new Set())).toBe(true);
+    const design = pathOf(files, "design");
+    const archive = pathOf(files, "archive");
+
+    remote.downloaded.length = 0;
+    const landed = await phone.pull([[design, manifest.files[design]]]);
+    expect(remote.downloaded).toEqual([design]);
+    expect(landed!.files[design]).toEqual(files[design]);
+    expect(landed!.base[design].revision).toBe(manifest.files[design].revision);
+    expect(landed!.deferred![design]).toBeUndefined();
+    // Already here: nothing downloads again.
+    expect(await phone.pull([[design, manifest.files[design]]])).toBeNull();
+
+    // A local file at a cloud path is merged by the next sync, not replaced by a stream.
+    const local = { content: "Written on the phone before it arrived", contentType: "text/markdown; charset=utf-8" };
+    await phone.edit({ ...(await phone.read()).files, [archive]: local }, (await phone.read()).files);
+    expect(await phone.pull([[archive, manifest.files[archive]]])).toBeNull();
+    expect((await phone.read()).files[archive]).toEqual(local);
+  });
+
   test("a device that already synchronized never switches to partial loading", async () => {
     const remote = cloud();
     const device = remote.device();
