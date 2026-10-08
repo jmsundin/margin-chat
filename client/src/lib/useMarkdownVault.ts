@@ -128,7 +128,8 @@ export function useMarkdownVault(args: {
     rememberDeferred(snapshot);
     const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current);
     if (pendingFocus.current === next.activeConversationId) pendingFocus.current = null;
-    displayedFiles.current = structuredClone(snapshot.files);
+    // Saved files are never changed in place, so the displayed set can share them.
+    displayedFiles.current = { ...snapshot.files };
     displayedState.current = next;
     hasVaultContent.current = workspaceFromVault(snapshot.files).manifest.files.length > 0;
     stateRef.current = next;

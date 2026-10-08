@@ -210,7 +210,9 @@ function reconcileRemoteRenames(snapshot: VaultSnapshot, remoteFiles: Record<str
 
 /** Apply edits relative to the files the editor actually displayed, not the latest disk revision. */
 export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, VaultFile>, expected: Record<string, VaultFile>): VaultSnapshot {
-  const result = structuredClone(snapshot);
+  // Files are replaced, never changed in place, so copying the maps keeps the input intact.
+  const result: VaultSnapshot = { ...snapshot, files: { ...snapshot.files }, base: { ...snapshot.base }, conflicts: [...snapshot.conflicts],
+    ...(snapshot.deferred ? { deferred: { ...snapshot.deferred } } : {}) };
   const attempts: MergeAttempt[] = [];
   const context: MergeContext = { base: { ...snapshot.files }, local: { ...snapshot.files }, remote: snapshot.files };
   for (const path of new Set([...Object.keys(next), ...Object.keys(expected)])) {
