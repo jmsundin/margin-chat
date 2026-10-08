@@ -5,7 +5,9 @@ import type { AppState, AuthenticatedUser } from "../types";
 import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
-import { bytesToBase64, createBrowserVaultStore, exportVault, importVault } from "./vaultLocal";
+import { bytesToBase64, createBrowserVaultStore, exportVault, importVault, vaultFileBytes } from "./vaultLocal";
+import { attachmentPath, MAX_VAULT_MEDIA_BYTES, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
+import type { VaultMedia } from "./vaultMedia";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
 import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSearchEvent, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
 import { planVaultEviction, preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
@@ -585,8 +587,38 @@ export function useMarkdownVault(args: {
     ? `Allow access to “${localDirectoryStatus.directoryName}” again so Margin Chat can see the files you add or change there.`
     : null;
 
+  const media = useMemo<VaultMedia>(() => ({
+    async read(target) {
+      let snapshot = await engine.read();
+      const path = resolveVaultMediaPath(target, [...Object.keys(snapshot.files), ...Object.keys(snapshot.deferred ?? {})]);
+      if (!path) return null;
+      const deferred = snapshot.deferred?.[path];
+      if (!snapshot.files[path] && deferred) snapshot = await engine.pull([[path, deferred]]) ?? await engine.read();
+      const file = snapshot.files[path];
+      if (!file) return null;
+      const type = file.contentType && file.contentType !== "application/octet-stream" ? file.contentType : mediaContentType(path);
+      return { path, blob: new Blob([new Uint8Array(vaultFileBytes(file))], { type }) };
+    },
+    async save(file) {
+      // The cloud vault accepts one file of at most 4 MiB per upload.
+      if (file.size > MAX_VAULT_MEDIA_BYTES) {
+        throw new Error(`“${file.name}” is larger than 4 MB, the most a vault file can sync. Upload a video to YouTube or Vimeo and paste its link instead.`);
+      }
+      const content = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+      const markdown = await enqueue(async () => {
+        const snapshot = await engine.read();
+        const paths = [...Object.keys(snapshot.files), ...Object.keys(snapshot.deferred ?? {})];
+        const path = attachmentPath(file, paths);
+        await engine.edit({ [path]: { content, encoding: "base64", contentType: file.type || mediaContentType(path) } }, {});
+        return vaultEmbedMarkdown(path, [...paths, path]);
+      });
+      scheduleAutomaticRefresh();
+      return markdown;
+    },
+  }), [engine]);
+
   return {
-    ready, storageMode, folderAccessMessage, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
+    ready, storageMode, media, folderAccessMessage, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
     /** Search the whole cloud vault: matching titles first, then passages as the server finds them. */
     searchCloud: engine.transport.search
       ? (query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void) =>

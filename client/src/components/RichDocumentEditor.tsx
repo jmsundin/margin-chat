@@ -25,6 +25,9 @@ import { formatDocumentDateTime } from "../lib/documentDateTime";
 import { updateRichDocumentContent } from "../lib/updateRichDocumentContent";
 import { drawingMarkdown, EMPTY_DRAWING, isDrawingMarkdown, readDrawing } from "../lib/documentDrawing";
 import { useMobileKeyboard } from "./MobileKeyboard";
+import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
+import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
+import { useVaultMedia } from "../lib/vaultMedia";
 import "./RichDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
@@ -214,6 +217,12 @@ function RichBlock(props: BlockProps) {
   const linkButtonRef = useRef<HTMLButtonElement>(null);
   const readOnly = props.readOnlyBlockIds?.includes(block.id) ?? false;
   const isDrawing = isDrawingMarkdown(block.content);
+  const media = useMemo(() => parseMediaBlock(block.content), [block.content]);
+  const vaultMedia = useVaultMedia();
+  const vaultMediaRef = useRef(vaultMedia);
+  vaultMediaRef.current = vaultMedia;
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [mediaError, setMediaError] = useState("");
   const fallback = useMemo(() => readOnly ? null : getRichDocumentFallbackReason(block.content), [block.content, readOnly]);
   const decorationKey = JSON.stringify(props.decorations?.[block.id] ?? []);
   const editorSource = useRef(fallback ? "" : block.content);
@@ -224,7 +233,31 @@ function RichBlock(props: BlockProps) {
   const toolbarId = useId();
   const placeholder = props.showPlaceholder ? (props.onInvokeAI ? "Write here, or press Space for AI…" : "Write here…") : "";
 
-  function closeToolbar() { setToolbarOpen(false); setLinkOpen(false); }
+  function closeToolbar() { setToolbarOpen(false); setLinkOpen(false); setMediaOpen(false); }
+
+  /** Media gets its own block: an empty block becomes it, otherwise it follows this one. */
+  function insertMedia(markdowns: string[]) {
+    const current = latest.current;
+    let after = current.block.id;
+    for (const [position, markdown] of markdowns.entries()) {
+      if (!position && !content.current.trim()) { current.onUpdateBlock(current.block.id, markdown); continue; }
+      after = current.onInsertBlock?.(after, markdown) ?? after;
+    }
+  }
+
+  /** Pasted or dropped files are stored in the vault's Attachments folder, as Obsidian does. */
+  function insertMediaFiles(files: File[]) {
+    const store = vaultMediaRef.current;
+    if (!store || !files.length || latest.current.readOnlyBlockIds?.includes(latest.current.block.id)) return false;
+    setMediaError("");
+    void (async () => {
+      const saved: string[] = [];
+      try { for (const file of files) saved.push(await store.save(file)); }
+      catch (error) { setMediaError(error instanceof Error ? error.message : "This file could not be saved."); }
+      if (saved.length) insertMedia(saved);
+    })();
+    return true;
+  }
 
   useOutsideDismiss(toolbarOpen, closeToolbar, toolbarRef, gripRef);
   useOutsideDismiss(toolbarOpen && linkOpen, () => setLinkOpen(false), linkFormRef, linkButtonRef);
@@ -379,6 +412,18 @@ function RichBlock(props: BlockProps) {
           latest.current.onSelectionChange?.(null);
         }
         return false;
+      },
+      handlePaste(_view, event) {
+        const files = [...event.clipboardData?.files ?? []].filter(isMediaFile);
+        if (!files.length || !insertMediaFiles(files)) return false;
+        event.preventDefault();
+        return true;
+      },
+      handleDrop(_view, event) {
+        const files = [...event.dataTransfer?.files ?? []].filter(isMediaFile);
+        if (!files.length || !insertMediaFiles(files)) return false;
+        event.preventDefault();
+        return true;
       },
       // Software keyboards may never emit a usable keydown. beforeinput keeps
       // focus changes in the user gesture; handleTextInput covers DOM-diff input.
@@ -568,6 +613,7 @@ function RichBlock(props: BlockProps) {
           {editor.isActive("table") && <><button type="button" onClick={() => editor.chain().focus().addRowAfter().run()}>+ Row</button><button type="button" onClick={() => editor.chain().focus().addColumnAfter().run()}>+ Column</button></>}
         </>}
         <button type="button" onClick={openDrawing} disabled={!isDrawing && Boolean(block.content.trim()) && !props.onInsertBlock}>Drawing</button>
+        <button type="button" aria-expanded={mediaOpen} onClick={() => { setMediaError(""); setMediaOpen((value) => !value); }} disabled={Boolean(block.content.trim()) && !props.onInsertBlock}>Image or video</button>
         {props.onInvokeAI && <button type="button" className="rich-document-ask" onMouseDown={(event) => event.preventDefault()} onClick={() => { if (editor && !fallback && !sourceMode) invoke(editor); else { const field = sourceRef.current; props.onInvokeAI?.({ blockId: block.id, markdown: content.current, offset: field?.selectionStart ?? content.current.length, rect: shellRef.current!.getBoundingClientRect(), restoreFocus() { field?.focus(); } }); } }}>Ask AI</button>}
         <button type="button" onClick={() => { if (sourceMode) finishSource(); else { setSourceMode(true); setTimeout(() => sourceRef.current?.focus(), 0); } }}>{sourceMode ? "Done" : "Edit Markdown"}</button>
         {props.onReorderBlock && <><button type="button" disabled={!index} onClick={() => props.onReorderBlock?.(block.id, props.blocks[index - 1].id)} aria-label="Move block up">↑</button><button type="button" disabled={index === props.blocks.length - 1} onClick={() => props.onReorderBlock?.(block.id, props.blocks[index + 2]?.id ?? null)} aria-label="Move block down">↓</button></>}
@@ -582,10 +628,12 @@ function RichBlock(props: BlockProps) {
           <input aria-label="Link address" placeholder="https://…" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} autoFocus />
           <button type="submit">Apply link</button><button type="button" onClick={() => { editor.chain().focus().extendMarkRange("link").unsetLink().run(); setLinkOpen(false); }}>Remove link</button>
         </form>}
+        {mediaOpen && <MediaInsertForm onInsert={(markdown) => { closeToolbar(); insertMedia([markdown]); }} onClose={() => setMediaOpen(false)} />}
         {block.content && !props.isDraft && <span className="rich-document-authorship" contentEditable={false} role="note" aria-label={`Authorship: ${authorshipLabel}`} data-label={`Authorship: ${authorshipLabel}`}
           title={authorship === "user" ? "Your writing" : authorship === "mixed" ? "AI-origin text with your edits; attribution applies to this whole block" : "AI-origin text; attribution applies to this whole block"} />}
       </div>}
 
+      {mediaError && <p className="rich-document-media-error" role="alert">{mediaError}</p>}
       {drawingError && <p role="alert">{drawingError}</p>}
       {drawing && <Suspense fallback={<p role="status">Opening drawing editor…</p>}><DrawingDialog markdown={drawing.markdown} error={drawingError} onSave={saveDrawing} onClose={() => setDrawing(null)} /></Suspense>}
       {readOnly && <div className="rich-document-streaming-label" role="status">Writing…</div>}
@@ -609,6 +657,9 @@ function RichBlock(props: BlockProps) {
           afterFocus: { blockId: block.id, from: event.currentTarget.selectionStart, to: event.currentTarget.selectionEnd },
         }); }} onSelect={sourceSelection}
         /></div>
+        : media ? <DocumentMedia markdown={block.content} media={media} readOnly={readOnly}
+          onChange={(markdown) => { content.current = markdown; props.onUpdateBlock(block.id, markdown); }}
+          onEditSource={() => { setSourceMode(true); setTimeout(() => sourceRef.current?.focus(), 0); }} />
         : isDrawing && !readOnly ? <Suspense fallback={<p role="status">Loading drawing…</p>}><DocumentDrawing markdown={block.content} readOnly={readOnly} onEdit={openDrawing} /></Suspense>
         : fallback ? <div className="rich-document-preserved"><div className="rich-document-preserved-preview">{props.renderBlockPreview?.(block) ?? (typeof window === "undefined" ? <pre>{block.content}</pre> : <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(block.content) }} />)}</div><button type="button" className="rich-document-source-action" disabled={readOnly} onClick={() => { setSourceMode(true); setTimeout(() => sourceRef.current?.focus(), 0); }}>Edit {fallback.toLowerCase()} source</button></div>
         : <EditorContent editor={editor} />}
