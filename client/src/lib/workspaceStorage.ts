@@ -60,6 +60,8 @@ export class LocalDirectoryConflictError extends Error {
 export interface LocalDirectoryWorkspace {
   workspace: MarkdownWorkspace;
   savedAt: string;
+  /** Each Markdown file's modification time on disk. */
+  modifiedAt?: Record<string, string>;
 }
 
 export function canSyncWorkspaceToCloud(user: AuthenticatedUser) {
@@ -300,7 +302,7 @@ export async function readDirectoryWorkspace(
     throw new Error("A connected Markdown file could not be read. Its files were preserved.");
   }
   const savedAt = new Date(Math.max(scanned.latestModified, Date.parse(workspace.manifest.savedAt))).toISOString();
-  return { workspace, savedAt };
+  return { workspace, savedAt, modifiedAt: scanned.modifiedAt };
 }
 
 export async function writeConnectedDirectoryWorkspace(
@@ -530,6 +532,7 @@ async function readDirectoryFileOrNull(handle: FileSystemDirectoryHandle, path: 
 
 async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, prefix = "") {
   const files: Record<string, string> = {};
+  const modifiedAt: Record<string, string> = {};
   let latestModified = 0;
   const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
   for await (const [name, entry] of entries.entries()) {
@@ -539,15 +542,17 @@ async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, prefix =
     if (entry.kind === "directory") {
       const child = await scanMarkdownDirectory(entry as FileSystemDirectoryHandle, path);
       Object.assign(files, child.files);
+      Object.assign(modifiedAt, child.modifiedAt);
       latestModified = Math.max(latestModified, child.latestModified);
     } else if (isSafeMarkdownPath(path)) {
       const { text, lastModified } = await readFreshFile(async () => entry as FileSystemFileHandle,
         async (file) => ({ text: await file.text(), lastModified: file.lastModified }));
       files[path] = text;
+      if (lastModified > 0) modifiedAt[path] = new Date(lastModified).toISOString();
       latestModified = Math.max(latestModified, lastModified);
     }
   }
-  return { files, latestModified };
+  return { files, modifiedAt, latestModified };
 }
 
 async function removeDirectoryFile(handle: FileSystemDirectoryHandle, path: string) {

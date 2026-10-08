@@ -39,7 +39,7 @@ export function discoverMarkdownWorkspace(
   fallbackManifest?: MarkdownWorkspaceManifest,
   previousFiles?: Record<string, string>,
 ): MarkdownWorkspace;
-export function assignMarkdownFileIdentities(workspace: MarkdownWorkspace): MarkdownWorkspace;
+export function assignMarkdownFileIdentities(workspace: MarkdownWorkspace, createdAtByPath?: Record<string, string>): MarkdownWorkspace;
 export function parseMarkdownWorkspace(
   manifest: MarkdownWorkspaceManifest,
   fileContents: Record<string, string>,
