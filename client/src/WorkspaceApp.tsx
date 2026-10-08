@@ -123,6 +123,7 @@ import {
 } from "./lib/wheelGestures";
 import { canSyncWorkspaceToCloud } from "./lib/workspaceStorage";
 import { useMarkdownVault } from "./lib/useMarkdownVault";
+import { VaultMediaContext } from "./lib/vaultMedia";
 import {
   getBackendServiceLabel,
   getBackendServiceModel,
@@ -4083,6 +4084,7 @@ function WorkspaceAppContent({
   }
 
   return (
+    <VaultMediaContext.Provider value={vault.media}>
     <ConversationGroupPickerContext.Provider value={{
       getSuggestion: (conversationId) => {
         const match = jev.groupSuggestions[conversationId];
@@ -4725,6 +4727,7 @@ function WorkspaceAppContent({
       </div>
     </div>
     </ConversationGroupPickerContext.Provider>
+    </VaultMediaContext.Provider>
   );
 }
 
