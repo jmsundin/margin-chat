@@ -27,12 +27,26 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     :host{all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;color-scheme:light!important}
     *{box-sizing:border-box}button{font:inherit;cursor:pointer;border:1px solid #d9d8cf;background:#fffdf7;color:#293b35;border-radius:7px;padding:6px 8px}button:hover,button[aria-pressed=true]{background:#e6eee6;border-color:#80958a}button:focus-visible{outline:3px solid #71977a;outline-offset:2px}
     [hidden]{display:none!important}.panel{pointer-events:auto;position:fixed;right:12px;top:12px;width:min(520px,calc(100vw - 24px));height:calc(100vh - 24px);background:#faf9f4;border:1px solid #cccfc4;border-radius:14px;box-shadow:0 14px 55px #1a292b35;display:flex;flex-direction:column;overflow:hidden;font:12px system-ui,sans-serif;color:#293b35}
-    header{display:flex;align-items:center;gap:8px;padding:10px;border-bottom:1px solid #dddfd5;flex-wrap:wrap;flex-shrink:0;background:#f6f5ed;touch-action:none}strong{font-size:13px;margin-right:auto}.layouts{display:flex;gap:3px}.close{font-size:16px;padding:3px 8px}.panel[data-layout=floating]{resize:both;min-width:320px;min-height:280px;max-width:calc(100vw - 12px);max-height:calc(100vh - 12px)}.panel[data-layout=floating] header{cursor:move}
+    header{position:relative;display:flex;align-items:center;gap:4px;padding:5px 6px 5px 12px;border-bottom:1px solid #dddfd5;flex-shrink:0;background:#f6f5ed;touch-action:none}strong{font-size:13px;margin-right:auto}
+    .icon{display:grid;place-items:center;width:28px;height:28px;padding:0;border-color:transparent;background:transparent;font-size:18px;line-height:1;border-radius:8px}.icon:hover,.icon[aria-expanded=true]{background:#e6eee6;border-color:transparent}.close{font-size:20px}
+    .menu{position:absolute;z-index:1;top:calc(100% - 2px);right:36px;min-width:176px;padding:4px;display:grid;gap:1px;background:#fffdf7;border:1px solid #cccfc4;border-radius:10px;box-shadow:0 10px 30px #1a292b30}
+    .menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border-color:transparent;background:transparent;padding:7px 10px 7px 8px;border-radius:7px}.menu button:hover,.menu button:focus-visible{background:#e6eee6;border-color:transparent}
+    .menu [aria-checked]::before{content:"";width:12px;flex:none;text-align:center;font-size:12px}.menu [aria-checked=true]::before{content:"✓"}.menu .peek::before{content:"";width:12px;flex:none}
+    .menu hr{margin:3px 4px;border:0;border-top:1px solid #e1e3d9}
+    .panel[data-layout=floating]{resize:both;min-width:320px;min-height:280px;max-width:calc(100vw - 12px);max-height:calc(100vh - 12px)}.panel[data-layout=floating] header{cursor:move}
     iframe{border:0;display:block;width:100%;flex:1;min-height:0;background:#faf9f4}.status{padding:24px;font-size:14px;line-height:1.6}.status button{margin-top:12px;display:block}
     .reveal,.return{position:fixed;pointer-events:auto;box-shadow:0 3px 20px #1a292b30}.reveal{left:12px;top:50%;writing-mode:vertical-rl;padding:15px 10px}.return{right:18px;bottom:18px;padding:13px 18px}.dragging iframe{pointer-events:none}
-    @media(max-width:650px){.layouts button{padding:5px}strong{font-size:12px}header{gap:5px}}
+    @media(max-width:650px){strong{font-size:12px}}
   </style><section class="panel" data-layout="docked" role="complementary" aria-label="Margin Chat workspace" hidden>
-    <header><strong>Margin Chat</strong><div class="layouts" role="group" aria-label="Workspace layout"><button data-layout="docked" aria-pressed="true">Docked</button><button data-layout="floating" aria-pressed="false">Floating</button><button data-layout="expanded" aria-pressed="false">Expanded</button></div><button class="peek">Peek</button><button class="close" aria-label="Close Margin Chat">×</button></header>
+    <header><strong>Margin Chat</strong>
+      <button class="icon more" type="button" title="View options" aria-label="View options" aria-haspopup="menu" aria-expanded="false">⋮</button>
+      <div class="menu" role="menu" aria-label="View options" hidden>
+        <button type="button" role="menuitemradio" data-layout="docked" aria-checked="true">Docked</button>
+        <button type="button" role="menuitemradio" data-layout="floating" aria-checked="false">Floating</button>
+        <button type="button" role="menuitemradio" data-layout="expanded" aria-checked="false">Expanded</button>
+        <hr role="separator"><button type="button" role="menuitem" class="peek">Peek at page</button>
+      </div>
+      <button class="icon close" type="button" aria-label="Close Margin Chat">×</button></header>
     <div class="status" role="status">Opening your workspace…</div><iframe title="Private Margin Chat workspace" referrerpolicy="no-referrer" hidden></iframe>
   </section><button class="reveal" hidden>Uncover page</button><button class="return" hidden>Return to Margin</button>`;
   doc.documentElement.append(host);
@@ -72,7 +86,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     reveal.hidden = !active || peeking || layout !== "expanded";
     returnButton.hidden = !active || !peeking;
     panel.dataset.layout = layout;
-    root.querySelectorAll<HTMLButtonElement>("button[data-layout]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.layout === layout)));
+    root.querySelectorAll<HTMLButtonElement>("button[data-layout]").forEach((button) => button.setAttribute("aria-checked", String(button.dataset.layout === layout)));
     if (layout === "floating") {
       Object.assign(panel.style, { left: `${Math.max(6, Math.min(win.innerWidth - 326, floating.left))}px`, top: `${Math.max(6, Math.min(win.innerHeight - 100, floating.top))}px`, right: "auto", width: `${floating.width}px`, height: `${floating.height}px` });
     } else if (layout === "expanded") {
@@ -109,7 +123,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     }).finally(() => { starting = undefined; });
     await starting;
   }
-  function close() { active = false; peeking = false; render(); }
+  function close() { closeMenu(false); active = false; peeking = false; render(); }
   function paintHighlights(focus?: Range) {
     const css = (win as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS;
     const Highlight = (win as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
@@ -145,12 +159,50 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     }
     throw new Error("Unsupported page action.");
   }
-  root.querySelectorAll<HTMLButtonElement>("button[data-layout]").forEach((button) => button.onclick = () => setLayout(button.dataset.layout as Layout));
+  // The view options live in a menu so the header stays one slim row.
+  const more = root.querySelector<HTMLButtonElement>(".more")!;
+  const menu = root.querySelector<HTMLElement>(".menu")!;
+  const items = () => [...menu.querySelectorAll<HTMLButtonElement>("button")];
+  function openMenu(focus: "checked" | "first" | "last" = "checked") {
+    menu.hidden = false; more.setAttribute("aria-expanded", "true");
+    const list = items();
+    (focus === "first" ? list[0] : focus === "last" ? list[list.length - 1] : list.find((item) => item.getAttribute("aria-checked") === "true") ?? list[0])?.focus();
+  }
+  function closeMenu(restoreFocus = true) {
+    if (menu.hidden) return;
+    menu.hidden = true; more.setAttribute("aria-expanded", "false");
+    if (restoreFocus) more.focus();
+  }
+  more.onclick = () => { if (menu.hidden) openMenu(); else closeMenu(); };
+  more.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); openMenu(event.key === "ArrowDown" ? "first" : "last"); }
+  });
+  menu.addEventListener("keydown", (event) => {
+    const list = items(); const index = list.indexOf(root.activeElement as HTMLButtonElement);
+    const move = (to: number) => { event.preventDefault(); list[(to + list.length) % list.length]?.focus(); };
+    if (event.key === "ArrowDown") move(index + 1);
+    else if (event.key === "ArrowUp") move(index - 1);
+    else if (event.key === "Home") move(0);
+    else if (event.key === "End") move(list.length - 1);
+    else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(); }
+    else if (event.key === "Tab") closeMenu(false);
+  });
+  menu.querySelectorAll<HTMLButtonElement>("button[data-layout]").forEach((button) => button.onclick = () => { setLayout(button.dataset.layout as Layout); closeMenu(); });
+  const peek = () => { closeMenu(false); peeking = true; render(); returnButton.focus(); };
+  root.querySelector<HTMLButtonElement>(".peek")!.onclick = peek;
+  reveal.onclick = peek;
+  // A click anywhere else, on the page or in the panel, dismisses the menu.
+  const outsideMenu = (event: Event) => {
+    if (menu.hidden) return;
+    const path = event.composedPath();
+    if (!path.includes(menu) && !path.includes(more)) closeMenu(false);
+  };
+  root.addEventListener("pointerdown", outsideMenu);
+  doc.addEventListener("pointerdown", outsideMenu, true);
   root.querySelector<HTMLButtonElement>(".close")!.onclick = close;
-  for (const button of [root.querySelector<HTMLButtonElement>(".peek")!, reveal]) button.onclick = () => { peeking = true; render(); };
   returnButton.onclick = () => { peeking = false; render(); };
   header.addEventListener("pointerdown", (event) => {
-    if (layout !== "floating" || event.button !== 0 || (event.target as Element).closest("button")) return;
+    if (layout !== "floating" || event.button !== 0 || (event.target as Element).closest("button,.menu")) return;
     const rect = panel.getBoundingClientRect(); drag = { x: event.clientX, y: event.clientY, left: rect.left, top: rect.top };
     header.setPointerCapture?.(event.pointerId); panel.classList.add("dragging"); event.preventDefault();
   });
@@ -165,6 +217,6 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   win.addEventListener("resize", resized);
   const navigationCheck = win.setInterval(() => { void changedPage().catch(() => undefined); }, 500);
   return { open, close, register, toggle: () => active ? close() : void open(), handleMessage,
-    destroy() { win.clearInterval(navigationCheck); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },
+    destroy() { win.clearInterval(navigationCheck); doc.removeEventListener("pointerdown", outsideMenu, true); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },
   };
 }

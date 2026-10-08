@@ -28,9 +28,9 @@ The workspace sign-in currently requires a paid subscription or admin account, m
 | **Ask AI** | Explore the source with AI, then develop the result into useful work. | Choose context, ask, follow up, branch a conversation, keep an answer in a document. |
 | **Community** | Future posts and replies attached to a page or passage. | Read a discussion, reply, publish to a chosen audience, save an attributed thought privately. |
 
-Workspace is the shared home for private notes and AI. In 0.3.0, a source toolbar sits above the real workspace with **Page context**, **Ask page**, and **Community** controls. Page context contains capture/annotation and Ask AI modes; these are not separate copies of the document workspace. The current source title and URL remain visible. Shared-audience controls are part of the future Community design.
+Workspace is the shared home for private notes and AI. In 0.3.0, a source toolbar sits above the real workspace with **Page context** and **Ask page** controls. There is no Community control until Community exists. Page context contains capture/annotation and Ask AI modes; these are not separate copies of the document workspace. The current source title and URL remain visible. Shared-audience controls are part of the future Community design.
 
-Private comments and AI questions are separate drafts. Switching spaces never turns one into the other. Opening Community never publishes a note or sends its content to other people.
+Private comments and AI questions are separate drafts. Switching spaces never turns one into the other. Community, once it exists, must never publish a note or sends its content to other people.
 
 ## All three layouts are part of the product
 
@@ -42,7 +42,7 @@ Layout is a viewing preference, independent of the active space and document.
 | **Floating notebook** | The same workspace in a movable, resizable surface above the page. Drag the outer header and resize the corner. | Move, resize, dock, expand, peek. |
 | **Expanded workspace** | A larger workspace with a visible strip of the underlying page. | Switch layout, **Uncover page**, peek, close. |
 
-**Peek** temporarily hides the surface and leaves **Return to Margin** visible. Layout changes and peek retain the same mounted iframe and app session, so they do not intentionally reset the document or start another AI request. Exact focus/caret behavior and uninterrupted streaming across all Chrome interactions remain part of manual acceptance. Keyboard repositioning, adjustable reveal width, and refined Escape/focus behavior are further interaction work, not completed claims for 0.3.0.
+Layouts and **Peek at page** are in a ⋮ view-options menu beside the close button, which keeps the header a single slim row. **Peek** temporarily hides the surface and leaves **Return to Margin** visible. Layout changes and peek retain the same mounted iframe and app session, so they do not intentionally reset the document or start another AI request. Exact focus/caret behavior and uninterrupted streaming across all Chrome interactions remain part of manual acceptance. Keyboard repositioning, adjustable reveal width, and refined Escape/focus behavior are further interaction work, not completed claims for 0.3.0.
 
 On small viewports, expanded mode can become nearly full width with an explicit page-return control. The document stays usable without pretending a narrow, unreadable page sliver is useful. Unsupported browser surfaces should explain the limitation and offer the capture popup where possible.
 
@@ -123,7 +123,7 @@ Community has distinct product states:
 
 | State | What the user sees |
 | --- | --- |
-| **Not connected / not shipped** | “Community discussions aren’t available yet.” Explain the intended feature; no posts, activity counts, or enabled publishing controls. |
+| **Not connected / not shipped** | Show nothing: no Community control, posts, activity counts, or publishing controls. (An earlier version showed an “unavailable” explanation; it was removed because it advertised a feature that does not exist.) |
 | **Available, no posts** | “No discussion here yet” and an actionable compose control for the current permitted audience. This requires a successful response from the live service. |
 | **Loading or failed** | Loading status, or a retryable failure. Neither is described as an empty community. |
 | **Restricted** | Explain that this page or group is unavailable to this account, without revealing private thread metadata. |
@@ -138,7 +138,7 @@ Example content may appear in a clearly labeled design prototype. It must never 
 | **Current workspace and AI inside the overlay** | Bundled `App`/`WorkspaceApp`; existing document editing, models, AI streaming/branching, search, and Markdown vault sync; explicit source capture/import before document AI submission. | Automated tests cover transport streaming, hydration-safe import, account isolation, and reused client flows. The installed-extension read → ask → follow up → edit flow and cross-surface conflict behavior still require Chrome acceptance. |
 | **Synchronized page annotations** | Browser-local anchors keyed by account/server and exact URL. Source captures and documents can persist remotely. | Cross-browser anchor sync and shared URL identity are not implemented. |
 | **Shared margins for groups** | Future product work. | Requires server-enforced audiences, page identity, publication review, attributed saves, and moderation. |
-| **Public Community** | Future product work; the current control displays an unavailable explanation. | Requires live posts/replies, discovery, reporting/blocking, publication rules, and operational moderation. |
+| **Public Community** | Future product work; no control is shown today. | Requires live posts/replies, discovery, reporting/blocking, publication rules, and operational moderation. |
 
 No installed Chrome runtime was verified in this implementation session because the available browser tool could not exercise Chrome extension pages. Build/test success and the retained original design demo do not establish production UX acceptance. Follow the [manual Chrome checklist](../extension/README.md#validation-and-manual-chrome-smoke-test) before accepting the release, especially for three-layout continuity, real source capture, AI cancellation, conflicting edits, and account switches.
 

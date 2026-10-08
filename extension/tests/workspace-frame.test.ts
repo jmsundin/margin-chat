@@ -131,6 +131,13 @@ describe("protected extension workspace frame", () => {
     }
   });
 
+  test("the source toolbar offers page context and Ask page, and no Community control", async () => {
+    const view = await frame(); await view.ready();
+    const labels = [...view.browser.document.querySelectorAll(".browser-source-row > button")].map((button) => button.textContent);
+    expect(labels).toEqual(["Page context", "Ask page"]);
+    expect(view.browser.document.body.textContent).not.toContain("Community");
+  });
+
   test("the authorized frame renders the current shared App using the isolated API transport", async () => {
     const view = await frame(); await view.ready();
     const props = view.probe().props;
