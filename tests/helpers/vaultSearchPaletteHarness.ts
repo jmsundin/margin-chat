@@ -12,7 +12,7 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLInput
 const { act, createElement, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: VaultSearchPalette } = await import("../../client/src/components/VaultSearchPalette");
-const { createLocalVaultSearchProvider } = await import("../../client/src/lib/vaultSearch");
+const { createLocalVaultSearchProvider, createVaultSearchProvider } = await import("../../client/src/lib/vaultSearch");
 
 const at = "2026-10-06T10:00:00Z";
 const chat = (id: string, title: string, content: string, updatedAt = at, extra: Partial<Conversation> = {}) => ({
@@ -24,7 +24,7 @@ const conversations: Record<string, Conversation> = {
   trees: chat("trees", "Trees vs. shade sails", "Fabric shade only blocks light.", "2026-10-07T10:00:00Z", { parentId: "heat" }),
 };
 const cloudDocuments: VaultIndexEntry[] = [{ path: "school.md", id: "school", type: "conversation", kind: "chat", title: "Shade structures for the school yard", revision: "1", updated: "2025-03-12T10:00:00Z" }];
-const provider = createLocalVaultSearchProvider(() => ({ conversations, cloudDocuments }));
+let provider = createLocalVaultSearchProvider(() => ({ conversations, cloudDocuments }));
 const opened: string[] = [];
 let explored = 0;
 const kept: string[] = [];
@@ -101,6 +101,26 @@ await key("Enter", { shiftKey: true });
 assert.equal(kept.at(-1), "family:shade", "The scope chosen earlier carries over.");
 assert.equal(dialog(), null);
 checks.push("Shift+Enter keeps the results open");
+
+// The server streams passages from documents that are not on this device.
+let finishCloud!: () => void;
+provider = createVaultSearchProvider(() => ({ conversations, cloudDocuments }), async (_query, _options, onEvent) => {
+  onEvent({ type: "documents", results: [] });
+  await new Promise<void>((resolve) => { finishCloud = resolve; });
+  onEvent({ type: "passages", source: "documents", results: [{ id: "porch", path: "porch.md", title: "Porch ideas", source: "document",
+    snippet: "a deep shade over the steps", match: { start: 7, end: 12 }, position: { blockId: "b1", start: 7, end: 12 }, updated: "2026-10-08T10:00:00Z" }] });
+  onEvent({ type: "done", revision: 3 });
+});
+await act(async () => { root.render(createElement(Host)); setOpen(true); });
+await act(async () => { [...dialog()!.querySelectorAll<HTMLButtonElement>(".vault-search-scopes button")].find((button) => button.textContent === "Anywhere")!.click(); });
+await type("steps");
+assert(dialog()!.querySelector(".vault-search-empty")?.textContent?.includes("Searching your whole vault"), "No premature 'nothing matches' while the server is still searching.");
+await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); finishCloud(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+assert(selectedTitle()?.startsWith("Porch ideasIn cloud"), "The cloud passage is listed and marked as still in the cloud.");
+assert(dialog()!.querySelector(".vault-search-preview")?.textContent?.includes("still in your cloud vault"));
+await key("Enter");
+assert.equal(opened.at(-1), "here:passage:porch");
+checks.push("passages the server finds in cloud documents stream in and open");
 
 await act(async () => { root.unmount(); });
 console.log(JSON.stringify({ checks }));

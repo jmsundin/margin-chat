@@ -2,7 +2,7 @@ import type { Conversation, ConversationGroup, ThreadCategoryId } from "../types
 import { buildSearchExploration, type SearchEvidenceRef } from "./searchExploration";
 import { getConversationRootId } from "./tree";
 import { searchVaultIndex } from "./vaultHydration";
-import type { VaultIndexEntry } from "./vaultTypes";
+import type { VaultIndexEntry, VaultSearchEvent, VaultSearchPassage } from "./vaultTypes";
 
 /** Narrows one search; "family" means the focused document's root and everything under it. */
 export type VaultSearchScope = "all" | "family" | "documents" | "notes" | "recent";
@@ -34,6 +34,8 @@ export interface VaultSearchPassageHit {
   evidence: SearchEvidenceRef;
   /** Private notes: searchable here, never sent to a model. */
   localOnly: boolean;
+  /** Set when the document is still in the cloud; opening downloads it first. */
+  cloudPath?: string;
 }
 
 export interface VaultSearchRequest {
@@ -51,6 +53,8 @@ export interface VaultSearchResults {
   passages: VaultSearchPassageHit[];
   /** False while a provider is still sending passages for this request. */
   complete: boolean;
+  /** Why some results may be missing, when the server could not finish. */
+  notice?: string;
 }
 
 /** Where search results come from. Today it is the device plus the cloud title index;
@@ -171,5 +175,133 @@ export function createLocalVaultSearchProvider(getInput: () => LocalVaultSearchI
       emit(searchLocalVault(request, getInput()));
       return () => undefined;
     },
+  };
+}
+
+/** `useMarkdownVault().searchCloud`: streams the server's titles, then passages. */
+export type VaultCloudSearch = (query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void) => Promise<void>;
+
+const CLOUD_LIMIT = 50;
+const CLOUD_DELAY_MS = 150;
+const SOURCE_LABELS: Record<VaultSearchPassage["source"], string> = { document: "Document text", message: "Message", note: "Private note" };
+
+function cloudEvidence(passage: VaultSearchPassage): SearchEvidenceRef {
+  const quote = passage.snippet.slice(passage.match.start, passage.match.end);
+  const range = { quote, startOffset: passage.position.start, endOffset: passage.position.end };
+  if (passage.source === "message") return { conversationId: passage.id, sourceKind: "message", messageId: passage.position.messageId, ...range };
+  if (passage.source === "note") return { conversationId: passage.id, sourceKind: "annotation", noteId: passage.position.noteId, ...range };
+  return { conversationId: passage.id, sourceKind: "document", sourceBlockId: passage.position.blockId, ...range };
+}
+
+/**
+ * Searches this device at once, then adds what the server finds in the rest of
+ * the vault. Documents already on this device are answered locally, so unsynced
+ * edits are found and nothing is listed twice. Without `searchCloud`, or for
+ * the family scope (which only this device knows), it is the local search.
+ */
+export function createVaultSearchProvider(getInput: () => LocalVaultSearchInput, searchCloud?: VaultCloudSearch): VaultSearchProvider {
+  return {
+    search(request, emit) {
+      const input = getInput();
+      const local = searchLocalVault(request, input);
+      if (!searchCloud || !vaultSearchTerms(request.query).length || request.scope === "family") {
+        emit(local);
+        return () => undefined;
+      }
+      const now = input.now ?? Date.now();
+      const indexById = new Map((input.cloudDocuments ?? []).map((entry) => [entry.id, entry]));
+      const known = (id: string) => Object.hasOwn(input.conversations, id);
+      const passageInScope = (passage: VaultSearchPassage) => {
+        const entry = indexById.get(passage.id);
+        if (request.scope === "notes") return entry?.kind === "note";
+        if (request.scope === "documents") return entry?.kind !== "note";
+        if (request.scope === "recent") return now - Date.parse(passage.updated ?? entry?.updated ?? "") <= YEAR_MS;
+        return true;
+      };
+      let documents = local.documents;
+      const passages = [...local.passages];
+      const seenPassages = new Set(passages.map((hit) => hit.key));
+      let notice: string | undefined;
+      let finished = false;
+      const send = (complete: boolean) => emit({ ...local, documents, passages: [...passages], complete, ...(notice ? { notice } : {}) });
+      send(false);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        void searchCloud(request.query, { limit: CLOUD_LIMIT, signal: controller.signal }, (event) => {
+          if (controller.signal.aborted || finished) return;
+          if (event.type === "documents") {
+            const listed = new Set(documents.map((hit) => hit.target.kind === "cloud" ? hit.target.path : `id:${hit.target.conversationId}`));
+            const found = event.results.filter((entry) => !known(entry.id) && !listed.has(entry.path) && cloudInScope(entry, request.scope, now))
+              .map((entry): VaultSearchDocumentHit => ({
+                key: `cloud:${entry.path}`, title: entry.title, kindLabel: entry.kind === "note" ? "Note" : "Document",
+                updatedAt: entry.updated ?? entry.created, target: { kind: "cloud", path: entry.path },
+              }));
+            if (found.length) documents = [...documents, ...found].sort((left, right) => newestFirst(left.updatedAt, right.updatedAt));
+            send(false);
+          } else if (event.type === "passages") {
+            if (event.error) notice = event.error;
+            for (const passage of event.results) {
+              const key = `cloud-passage:${passage.id}:${passage.source}:${passage.position.blockId ?? passage.position.messageId ?? passage.position.noteId ?? ""}:${passage.position.start}`;
+              if (known(passage.id) || seenPassages.has(key) || !passageInScope(passage)) continue;
+              seenPassages.add(key);
+              const path = passage.path ?? indexById.get(passage.id)?.path;
+              passages.push({
+                key, conversationId: passage.id, title: passage.title, kindLabel: indexById.get(passage.id)?.kind === "note" ? "Note" : "Document",
+                matchLabel: SOURCE_LABELS[passage.source], preview: passage.snippet, passage: passage.snippet,
+                updatedAt: passage.updated ?? "", evidence: cloudEvidence(passage), localOnly: passage.source === "note",
+                ...(path ? { cloudPath: path } : {}),
+              });
+            }
+            passages.sort((left, right) => newestFirst(left.updatedAt, right.updatedAt));
+            send(false);
+          } else if (event.type === "done") {
+            finished = true;
+            send(true);
+          } else {
+            finished = true;
+            notice = "The cloud search stopped early. Results from this device are complete.";
+            send(true);
+          }
+        }).then(() => {
+          // A stream that ends without "done" was cut off.
+          if (controller.signal.aborted || finished) return;
+          finished = true;
+          notice ??= "The cloud search stopped early. Results from this device are complete.";
+          send(true);
+        }, () => {
+          if (controller.signal.aborted || finished) return;
+          finished = true;
+          // Older servers cannot search; this device's results stand on their own.
+          send(true);
+        });
+      }, CLOUD_DELAY_MS);
+      return () => { clearTimeout(timer); controller.abort(); };
+    },
+  };
+}
+
+/**
+ * Remembers recent finished searches, so local edits that refresh the results
+ * (which happen on every keystroke while results stay open) reuse the server's
+ * answer instead of asking again.
+ */
+export function cacheVaultCloudSearch(search: VaultCloudSearch, { maxAgeMs = 60_000, size = 20, now = Date.now } = {}): VaultCloudSearch {
+  const finished = new Map<string, { at: number; events: VaultSearchEvent[] }>();
+  return async (query, options, onEvent) => {
+    const key = JSON.stringify([query.trim(), options.limit]);
+    const cached = finished.get(key);
+    if (cached && now() - cached.at <= maxAgeMs) {
+      for (const event of cached.events) onEvent(event);
+      return;
+    }
+    finished.delete(key);
+    const events: VaultSearchEvent[] = [];
+    await search(query, options, (event) => { events.push(event); onEvent(event); });
+    const complete = events.at(-1)?.type === "done" && !events.some((event) => event.type === "passages" && event.error);
+    if (complete && !options.signal?.aborted) {
+      finished.set(key, { at: now(), events });
+      if (finished.size > size) finished.delete(finished.keys().next().value!);
+    }
   };
 }

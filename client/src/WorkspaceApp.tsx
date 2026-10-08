@@ -79,7 +79,7 @@ import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from ".
 import SearchModal from "./components/SearchModal";
 import VaultSearchPalette, { type VaultSearchOpenMode } from "./components/VaultSearchPalette";
 import SearchResultsPanel from "./components/SearchResultsPanel";
-import { createLocalVaultSearchProvider, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchScope } from "./lib/vaultSearch";
+import { cacheVaultCloudSearch, createVaultSearchProvider, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchScope } from "./lib/vaultSearch";
 import SearchSourceFocus from "./components/SearchSourceFocus";
 import { resolveSearchSource } from "./lib/searchSource";
 import type { SearchEvidenceRef } from "./lib/conversationSearch";
@@ -1060,9 +1060,15 @@ function WorkspaceAppContent({
   const searchResults = searchExploreOpen
     ? buildSearchResults(state.conversations, deferredSearchQuery, threadSummaries)
     : [];
-  const vaultSearchProvider = useMemo(() => createLocalVaultSearchProvider(() => ({
+  const searchCloudRef = useRef(vault.searchCloud);
+  searchCloudRef.current = vault.searchCloud;
+  const canSearchCloud = !!vault.searchCloud;
+  const cachedSearchCloud = useMemo(() => canSearchCloud
+    ? cacheVaultCloudSearch((query, options, onEvent) => searchCloudRef.current?.(query, options, onEvent) ?? Promise.reject(new Error("Cloud search is unavailable.")))
+    : undefined, [canSearchCloud]);
+  const vaultSearchProvider = useMemo(() => createVaultSearchProvider(() => ({
     conversations: state.conversations, cloudDocuments: vault.cloudDocuments ?? [], groups: state.groups, categories: jev.categories,
-  })), [state.conversations, vault.cloudDocuments, state.groups, jev.categories]);
+  }), cachedSearchCloud), [state.conversations, vault.cloudDocuments, state.groups, jev.categories, cachedSearchCloud]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(
@@ -3229,6 +3235,16 @@ function WorkspaceAppContent({
   }
 
   function handleOpenVaultSearchPassage(hit: VaultSearchPassageHit, mode: VaultSearchOpenMode) {
+    if (hit.cloudPath && !state.conversations[hit.conversationId]) {
+      // Still in the cloud: download it, then show the passage.
+      void vault.openCloudDocument(hit.cloudPath).then(() => {
+        handleCloseSearch();
+        setMainViewMode("chat");
+        if (isMobileViewport) setLeftSidebarOpen(false);
+        setSearchSourceRequest((current) => ({ source: hit.evidence, sequence: (current?.sequence ?? 0) + 1 }));
+      }).catch(() => undefined);
+      return;
+    }
     handleOpenSearchSource(hit.evidence, mode);
   }
 
