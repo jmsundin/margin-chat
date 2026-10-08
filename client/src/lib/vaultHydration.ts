@@ -36,6 +36,26 @@ export function vaultHydrationClosure(index: VaultIndexEntry[], paths: Iterable<
   return result;
 }
 
+/**
+ * Documents to return to the cloud: those whose families were not opened on
+ * this device or edited anywhere within `idleMs`. Everything a remaining
+ * document needs (its family and linked families) stays, so nothing left on
+ * the device loses a relationship and nothing is fetched straight back.
+ */
+export function planVaultEviction(index: VaultIndexEntry[], localPaths: Iterable<string>, { opened, protectedIds, now, idleMs }: {
+  opened: ReadonlyMap<string, number>; protectedIds: ReadonlySet<string>; now: number; idleMs: number;
+}): string[] {
+  const local = new Set(localPaths);
+  const kept = index.filter((entry) => local.has(entry.path)).filter((entry) => {
+    if (protectedIds.has(entry.id)) return true;
+    const edited = Date.parse(entry.updated ?? entry.created ?? "");
+    const used = Math.max(opened.get(entry.id) ?? 0, Number.isFinite(edited) ? edited : now);
+    return now - used < idleMs;
+  });
+  const keep = vaultHydrationClosure(index, kept.map((entry) => entry.path));
+  return index.filter((entry) => local.has(entry.path) && !keep.has(entry.path)).map((entry) => entry.path);
+}
+
 /** Documents most recently created or edited, newest first. */
 export function recentVaultEntries(index: VaultIndexEntry[], limit = Infinity): VaultIndexEntry[] {
   return index.filter((entry) => entry.type === "conversation")
@@ -72,9 +92,10 @@ export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored:
   let changed = false;
 
   if (Array.isArray(before.pinnedItemIds)) {
-    const pinned = Array.isArray(view.pinnedItemIds) ? [...view.pinnedItemIds] : [];
-    for (const id of before.pinnedItemIds) if (deferred(id) && !pinned.includes(id)) { pinned.push(id); changed = true; }
-    view.pinnedItemIds = pinned;
+    const pinned = Array.isArray(view.pinnedItemIds) ? view.pinnedItemIds : [];
+    const restored = restoreHidden(before.pinnedItemIds, pinned, deferred);
+    if (restored) changed = true;
+    view.pinnedItemIds = restored ?? pinned;
   }
 
   const beforeGroups = isRecord(before.groups) ? before.groups : {};
@@ -89,9 +110,10 @@ export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored:
       if (group.conversationIds.every(deferred)) { groups[groupId] = group; changed = true; }
       continue;
     }
-    const ids = Array.isArray(current.conversationIds) ? [...current.conversationIds] : [];
-    for (const id of hidden) if (!ids.includes(id)) { ids.push(id); changed = true; }
-    groups[groupId] = { ...current, conversationIds: ids };
+    const ids = Array.isArray(current.conversationIds) ? current.conversationIds : [];
+    const restored = restoreHidden(group.conversationIds, ids, deferred);
+    if (restored) changed = true;
+    groups[groupId] = { ...current, conversationIds: restored ?? ids };
   }
   view.groups = groups;
 
@@ -105,6 +127,24 @@ export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored:
 
   if (!changed) return rendered;
   return { ...rendered, content: JSON.stringify(next, null, 2) };
+}
+
+/** Put each hidden id back after the id it followed before, so other devices
+ * see the same order. Null when nothing was missing. */
+function restoreHidden(before: unknown[], current: unknown[], hidden: (id: unknown) => id is string): unknown[] | null {
+  const listed = new Set(current);
+  const START = Symbol("start");
+  const after = new Map<unknown, string[]>();
+  let anchor: unknown = START;
+  for (const id of before) {
+    if (listed.has(id)) anchor = id;
+    else if (hidden(id)) {
+      listed.add(id);
+      after.set(anchor, [...after.get(anchor) ?? [], id]);
+    }
+  }
+  if (!after.size) return null;
+  return [...after.get(START) ?? [], ...current.flatMap((id) => [id, ...after.get(id) ?? []])];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

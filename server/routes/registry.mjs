@@ -34,6 +34,7 @@ export const API_ROUTES = Object.freeze([
   { id: "apiKeysWrite", methods: ["PUT"], path: "/api/settings/api-keys" },
   { id: "vaultStatus", methods: ["GET"], path: "/api/vault" },
   { id: "vaultIndex", methods: ["GET"], path: "/api/vault/index" },
+  { id: "vaultSearch", methods: ["GET"], path: "/api/vault/search" },
   { id: "vaultChanges", methods: ["GET"], path: "/api/vault/changes" },
   { id: "vaultFileRead", methods: ["GET"], path: "/api/vault/file" },
   { id: "vaultFileWrite", methods: ["PUT"], path: "/api/vault/file" },

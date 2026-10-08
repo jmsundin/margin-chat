@@ -6,7 +6,7 @@ import {
   sendJson,
 } from "../http/json.mjs";
 import { createRateLimiter, getClientAddress } from "../http/rateLimit.mjs";
-import { sendStreamingJson } from "../http/streamingJson.mjs";
+import { createNdjsonResponse, sendStreamingJson } from "../http/streamingJson.mjs";
 import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
@@ -73,7 +73,7 @@ function acknowledgeVaultCommit(result, paths, url) {
 // and billing mutations still require the website's cookie session.
 const EXTENSION_WORKSPACE_ROUTES = new Set([
   "authSession", "captureList", "captureGet", "stateRead",
-  "vaultStatus", "vaultIndex", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
+  "vaultStatus", "vaultIndex", "vaultSearch", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
   "chat", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
   "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
   "billingDashboard", "apiKeysRead",
@@ -519,7 +519,44 @@ export function createApiHandler({
           return;
         }
         if (route?.id === "vaultIndex") {
-          await sendStreamingJson(response, 200, await vaultService.index(userId), { "Cache-Control": "private, no-store" });
+          const index = await vaultService.index(userId);
+          if (!String(request.headers.accept ?? "").includes("application/x-ndjson")) {
+            await sendStreamingJson(response, 200, index, { "Cache-Control": "private, no-store" });
+            return;
+          }
+          // Newest first, one entry per line, so the newest documents list while the rest arrive.
+          const stream = createNdjsonResponse(response, 200, { "Cache-Control": "private, no-store" });
+          await stream.write({ type: "index", configured: index.configured, revision: index.revision, count: index.entries.length });
+          for (const entry of index.entries) {
+            if (response.destroyed) return;
+            await stream.write(entry, { immediate: false });
+          }
+          await stream.end();
+          return;
+        }
+        if (route?.id === "vaultSearch") {
+          const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : 20;
+          const query = url.searchParams.get("q") ?? "";
+          if (query.length > 512) throw new HttpError(400, "Search for at most 512 characters.");
+          const aborted = new AbortController();
+          response.on("close", () => aborted.abort());
+          const stream = createNdjsonResponse(response, 200, { "Cache-Control": "private, no-store" });
+          let writing = Promise.resolve();
+          let emitted = false;
+          const emit = (value) => {
+            emitted = true;
+            writing = writing.then(() => stream.write(value));
+          };
+          try {
+            await vaultService.search(userId, query, { limit, signal: aborted.signal, emit });
+            await writing;
+          } catch (error) {
+            if (!emitted) throw error;
+            await writing.catch(() => undefined);
+            console.error("Vault search failed", error);
+            await stream.write({ type: "error", error: "Search stopped before it finished. Try again." }).catch(() => undefined);
+          }
+          await stream.end();
           return;
         }
         if (route?.id === "vaultChanges") {

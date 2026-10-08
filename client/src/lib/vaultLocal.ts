@@ -13,6 +13,18 @@ export function vaultFileBytes(file: VaultFile): Uint8Array {
   return Uint8Array.from(atob(file.content), (character) => character.charCodeAt(0));
 }
 
+export const defaultVaultContentType = (path: string) => /\.md$/iu.test(path) ? "text/markdown; charset=utf-8"
+  : path.endsWith(".json") ? "application/json" : "application/octet-stream";
+
+/** The server addresses immutable files by the hash of metadata plus exact bytes. */
+export async function vaultFileRevision(bytes: Uint8Array, encoding: "base64" | undefined, contentType: string): Promise<string> {
+  const prefix = new TextEncoder().encode(`${encoding ?? "utf8"}\n${contentType}\n`);
+  const input = new Uint8Array(prefix.length + bytes.length);
+  input.set(prefix); input.set(bytes, prefix.length);
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", input.buffer))]
+    .map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
 type FileRef = Omit<VaultFile, "content"> & { object: string };
 type StoredBase = { revision: string; file: FileRef | null };
 type StoredConflict = Omit<VaultSnapshot["conflicts"][number], "local" | "remote" | "base" | "result"> & {
