@@ -210,7 +210,9 @@ function reconcileRemoteRenames(snapshot: VaultSnapshot, remoteFiles: Record<str
 
 /** Apply edits relative to the files the editor actually displayed, not the latest disk revision. */
 export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, VaultFile>, expected: Record<string, VaultFile>): VaultSnapshot {
-  const result = structuredClone(snapshot);
+  // Files are replaced, never changed in place, so copying the maps keeps the input intact.
+  const result: VaultSnapshot = { ...snapshot, files: { ...snapshot.files }, base: { ...snapshot.base }, conflicts: [...snapshot.conflicts],
+    ...(snapshot.deferred ? { deferred: { ...snapshot.deferred } } : {}) };
   const attempts: MergeAttempt[] = [];
   const context: MergeContext = { base: { ...snapshot.files }, local: { ...snapshot.files }, remote: snapshot.files };
   for (const path of new Set([...Object.keys(next), ...Object.keys(expected)])) {
@@ -256,8 +258,11 @@ export function applyVaultEdits(snapshot: VaultSnapshot, next: Record<string, Va
 
 /** A deferred cloud file stays remote until something on this device needs that path. */
 function isDeferred(snapshot: VaultSnapshot, path: string) {
-  return !!snapshot.deferred?.[path] && !snapshot.files[path] && !snapshot.base[path];
+  const entry = snapshot.deferred?.[path];
+  return !!entry && !entry.requested && !snapshot.files[path] && !snapshot.base[path];
 }
+
+const notFound = (error: unknown) => !!error && typeof error === "object" && "statusCode" in error && error.statusCode === 404;
 
 export class VaultSync {
   /** Reports cloud downloads while they run, so the interface can show that fetching is happening. */
@@ -314,16 +319,21 @@ export class VaultSync {
     });
   }
 
-  /** Ask the next sync to download these deferred cloud files. */
+  /** Ask the next sync to download these deferred cloud files. Each stays
+   * listed as deferred, with its last known revision, until it arrives. */
   hydrate(paths: Iterable<string>) {
     return this.store.lock(async () => {
       const snapshot = (await this.store.read()) ?? emptyVault();
       if (!snapshot.deferred) return snapshot;
       const deferred = { ...snapshot.deferred };
       let changed = false;
-      for (const path of paths) if (deferred[path]) { delete deferred[path]; changed = true; }
+      for (const path of paths) {
+        if (!deferred[path] || deferred[path].requested) continue;
+        deferred[path] = { ...deferred[path], requested: true };
+        changed = true;
+      }
       if (!changed) return snapshot;
-      if (Object.keys(deferred).length) snapshot.deferred = deferred; else delete snapshot.deferred;
+      snapshot.deferred = deferred;
       await this.store.write(snapshot);
       return snapshot;
     });
@@ -465,11 +475,41 @@ export class VaultSync {
     return this.inFlight;
   }
 
+  /**
+   * The cloud manifest. After a complete sync this device already knows every
+   * entry up to `pulledRevision`, so it asks only for later changes and fills in
+   * the rest from its sync base and deferred entries.
+   */
+  private async remoteManifest(started: VaultSnapshot, complete: boolean): Promise<VaultManifest> {
+    const since = started.pulledRevision;
+    if (complete || since === undefined || !this.transport.changes) return this.transport.manifest();
+    let changes: VaultManifest;
+    try { changes = await this.transport.changes(since); }
+    catch (error) {
+      // A server without change tracking answers with the complete manifest.
+      if (notFound(error)) return this.transport.manifest();
+      throw error;
+    }
+    // The complete manifest reports a cloud history that moved backwards.
+    if (changes.revision < since) return this.transport.manifest();
+    const files: Record<string, VaultEntry> = {};
+    for (const [path, entry] of Object.entries(started.deferred ?? {})) files[path] = entry;
+    for (const [path, base] of Object.entries(started.base)) {
+      files[path] = { revision: base.revision, deleted: !base.file,
+        ...(base.file?.encoding ? { encoding: base.file.encoding } : {}),
+        ...(base.file?.contentType ? { contentType: base.file.contentType } : {}) };
+    }
+    Object.assign(files, changes.files);
+    return { schemaVersion: 1, revision: changes.revision, files };
+  }
+
   private async synchronize(): Promise<VaultSnapshot> {
     let races = 0;
+    // A rejected commit means this device's view of the cloud may be stale; reread all of it.
+    let complete = false;
     while (races < 4) {
       const started = await this.read();
-      const remote = await this.transport.manifest();
+      const remote = await this.remoteManifest(started, complete);
       if (remote.revision < started.remoteRevision) {
         throw new Error("Cloud vault history has changed unexpectedly. Your local files are preserved; restore the cloud vault before syncing.");
       }
@@ -542,6 +582,7 @@ export class VaultSync {
         }
         finishMerges(snapshot, attempts, context);
         snapshot.remoteRevision = remote.revision;
+        snapshot.pulledRevision = remote.revision;
         // Persist downloads/conflict copies before publishing further changes.
         await this.write(snapshot);
         const batch = nextVaultBatch(snapshot);
@@ -556,6 +597,7 @@ export class VaultSync {
       } catch (error) {
         if (!(error && typeof error === "object" && "statusCode" in error && error.statusCode === 409)) throw error;
         races += 1;
+        complete = true;
         continue;
       }
       for (const change of prepared.batch) {
@@ -566,6 +608,7 @@ export class VaultSync {
       }
       const acknowledged = await this.store.lock(async () => {
         const snapshot = (await this.store.read()) ?? emptyVault();
+        let everySaved = true;
         for (const change of prepared.batch) {
           const entry = committed.files[change.path];
           const latestBase = snapshot.base[change.path];
@@ -579,8 +622,12 @@ export class VaultSync {
                 ...(change.encoding ? { encoding: change.encoding } : {}),
                 ...(change.contentType ? { contentType: change.contentType } : {}),
               } };
-          }
+          } else everySaved = false;
         }
+        // A commit built directly on the last pulled revision contains nothing
+        // but this batch, so this device still knows the whole cloud manifest.
+        if (everySaved && committed.previousRevision !== undefined && committed.previousRevision === snapshot.pulledRevision
+          && committed.revision === committed.previousRevision + 1) snapshot.pulledRevision = committed.revision;
         snapshot.remoteRevision = Math.max(snapshot.remoteRevision, committed.revision);
         await this.write(snapshot);
         return snapshot;

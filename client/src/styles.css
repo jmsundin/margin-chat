@@ -11384,6 +11384,16 @@ body,
   opacity: 0.48;
 }
 
+/* The browser skips layout and painting for rows scrolled out of view. */
+.thread-list > .thread-item {
+  contain-intrinsic-size: auto 36px;
+  content-visibility: auto;
+}
+
+.thread-list-more {
+  height: 1px;
+}
+
 .thread-item:hover,
 .thread-item.is-active {
   background: var(--thread-button-active-bg);

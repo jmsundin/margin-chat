@@ -1,6 +1,6 @@
 import { apiFetch } from "./apiTransport";
 import { ApiError } from "./apiError";
-import { validVaultPath, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultTransport } from "./vaultTypes";
+import { validVaultPath, type VaultCommitReceipt, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultTransport } from "./vaultTypes";
 import { bytesToBase64, vaultFileBytes } from "./vaultLocal";
 
 const revisionPattern = /^[a-f0-9]{64}$/u;
@@ -89,6 +89,13 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
       reportProjection(payload?.projection);
       return manifest;
     },
+    async changes(since: number): Promise<VaultManifest> {
+      const payload = await (await accountRequest(`/api/vault/changes?${new URLSearchParams({ since: String(since) })}`)).json();
+      if (payload?.configured === false) throw new Error("Cloud vault storage has not been configured. Your files are saved on this device.");
+      const changes = readManifest({ schemaVersion: 1, revision: payload?.revision, files: payload?.files });
+      reportProjection(payload?.projection);
+      return changes;
+    },
     async index(): Promise<VaultIndex> {
       const payload = await (await accountRequest("/api/vault/index")).json();
       if (payload?.configured === false) throw new Error("Cloud vault storage has not been configured. Your files are saved on this device.");
@@ -106,23 +113,26 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
         ...(entry.contentType ? { contentType: entry.contentType } : {}),
       };
     },
-    async commit(changes) {
+    async commit(changes): Promise<VaultCommitReceipt> {
       let manifest: VaultManifest;
       let projection: unknown;
+      let previousRevision: unknown;
       if (changes.length === 1 && changes[0].encoding === "base64" && changes[0].content !== null) {
         const change = changes[0];
-        const payload = await (await accountRequest(`/api/vault/file?${new URLSearchParams({ path: change.path, baseRevision: change.baseRevision ?? "" })}`, {
+        const payload = await (await accountRequest(`/api/vault/file?${new URLSearchParams({ path: change.path, baseRevision: change.baseRevision ?? "", acknowledge: "changes" })}`, {
           method: "PUT", headers: { "Content-Type": change.contentType ?? "application/octet-stream", "X-Margin-Vault-Write": "1" },
           body: new Uint8Array(vaultFileBytes({ content: change.content!, encoding: "base64" })).buffer,
         })).json();
         manifest = readManifest(payload?.manifest);
         projection = payload?.projection;
+        previousRevision = payload?.previousRevision;
       } else {
-        const payload = await (await accountRequest("/api/vault/commit", {
+        const payload = await (await accountRequest("/api/vault/commit?acknowledge=changes", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes }),
         })).json();
         manifest = readManifest(payload?.manifest);
         projection = payload?.projection;
+        previousRevision = payload?.previousRevision;
       }
       for (const change of changes) {
         const entry = manifest.files[change.path];
@@ -134,7 +144,8 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
         if (entry.revision !== revision) throw new Error("The server did not acknowledge the uploaded file contents. Your edits remain saved locally; retry cloud sync.");
       }
       reportProjection(projection);
-      return manifest;
+      return Number.isSafeInteger(previousRevision) && (previousRevision as number) >= 0 && (previousRevision as number) <= manifest.revision
+        ? { ...manifest, previousRevision: previousRevision as number } : manifest;
     },
   };
 }

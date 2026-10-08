@@ -214,7 +214,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     userId,
     payload,
     vaultRevision,
-    { force = false, attachments = [], deletedAttachmentIds = [], attachmentRevisions = {}, expectedProjectionRevision } = {},
+    { force = false, attachments = [], deletedAttachmentIds = [], attachmentRevisions = {}, expectedProjectionRevision, unchangedConversationIds } = {},
   ) {
     const normalizedState = payload === null ? null : normalizeAppState(payload);
     return withClient((client) =>
@@ -225,6 +225,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
         deletedVaultAttachmentIds: deletedAttachmentIds,
         attachmentRevisions,
         expectedVaultProjectionRevision: expectedProjectionRevision,
+        unchangedConversationIds,
       }),
     );
   }

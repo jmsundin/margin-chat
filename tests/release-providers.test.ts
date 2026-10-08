@@ -178,6 +178,33 @@ describe("release Blob providers", () => {
     expect(fake.stores.get(backupToken)!.has("releases/corrupt-history-json/inventory.json")).toBe(false);
   });
 
+  test("backs up and restores a sharded vault file list with every shard and body it names", async () => {
+    const fake = blobFake({ pageSize: 10 });
+    const { bodyKey, manifestKey, root, body } = seedVault(fake);
+    // Rewrite the seeded vault the way the sharded server stores it.
+    const legacy = JSON.parse(fake.stores.get(sourceToken)!.get(manifestKey).bytes.toString());
+    const [path, entry] = Object.entries<any>(legacy.files)[0];
+    const id = hash(path).slice(0, 2);
+    const shard = Buffer.from(JSON.stringify({ schemaVersion: 1, shard: id, files: { [path]: { ...entry, changedAt: 1 } } }));
+    const shardKey = `${root}/shards/${hash(shard)}.json`;
+    fake.save(sourceToken, shardKey, shard, "application/json");
+    fake.stores.get(sourceToken)!.delete(manifestKey);
+    fake.save(sourceToken, manifestKey, JSON.stringify({ schemaVersion: 2, revision: 1, count: 1, shards: { [id]: { digest: hash(shard), changedAt: 1, count: 1 } } }), "application/json");
+    const result = await backupBlobStore({ releaseId: "sharded", sourceToken, backupToken, sdk: fake.sdk });
+    expect(result.inventory.objects.map((object: any) => object.pathname).sort()).toEqual([bodyKey, manifestKey, shardKey].sort());
+    await restoreBlobBackup({ inventory: result.inventory, backupToken, targetToken, targetPrefix: "rehearsal/sharded", sdk: fake.sdk });
+    expect(fake.stores.get(targetToken)!.get(`rehearsal/sharded/${bodyKey}`).bytes.toString()).toBe(body);
+    const restored = fake.events.filter((event) => event.method === "put" && event.token === targetToken).map((event) => event.pathname);
+    expect(restored.indexOf(`rehearsal/sharded/${shardKey}`)).toBeLessThan(restored.indexOf(`rehearsal/sharded/${manifestKey}`));
+
+    fake.stores.get(sourceToken)!.delete(bodyKey);
+    await expect(backupBlobStore({ releaseId: "sharded-missing-body", sourceToken, backupToken, sdk: fake.sdk })).rejects.toThrow("missing an immutable revision");
+    fake.stores.get(sourceToken)!.delete(shardKey);
+    await expect(backupBlobStore({ releaseId: "sharded-missing-shard", sourceToken, backupToken, sdk: fake.sdk })).rejects.toThrow("missing a file list shard");
+    fake.save(sourceToken, shardKey, Buffer.from(shard.toString().replace('"changedAt":1', '"changedAt":0')), "application/json");
+    await expect(backupBlobStore({ releaseId: "sharded-corrupt", sourceToken, backupToken, sdk: fake.sdk })).rejects.toThrow("shard does not match");
+  });
+
   test("rejects a referenced body's encoding or size that disagrees with its manifest", async () => {
     const fake = blobFake();
     const { manifestKey } = seedVault(fake);

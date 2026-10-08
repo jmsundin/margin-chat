@@ -87,20 +87,20 @@ describe("vault persistence regression coverage", () => {
     }
   });
 
-  test("oversized manifests are rejected before writing bodies or publishing a revision", async () => {
+  test("a file list past the old single-manifest limits saves, and conflicts stay small", async () => {
     const storage = memoryStorage();
     const key = `vaults/v1/${digest("owner")}/manifest.json`;
     const entry = { revision: "a".repeat(64), deleted: false, encoding: "utf8", contentType: "application/octet-stream", size: 1 };
     const files = Object.fromEntries(Array.from({ length: 3000 }, (_, i) => [`${"p".repeat(480)}/${i}.bin`, entry]));
-    const before = Buffer.from(JSON.stringify({ schemaVersion: 1, revision: 1, files }));
-    expect(before.length).toBeLessThan(2 * 1024 * 1024);
-    storage.objects.set(key, before);
+    storage.objects.set(key, Buffer.from(JSON.stringify({ schemaVersion: 1, revision: 1, files })));
     const vault = createVaultService({ storage });
     const changes = Array.from({ length: 1000 }, (_, i) => ({ path: `${"q".repeat(480)}/${i}.bin`, baseRevision: null, content: "x" }));
-    await expect(vault.commit("owner", changes)).rejects.toMatchObject({ statusCode: 413 });
-    expect(storage.writes).toEqual([]);
-    expect(storage.objects.get(key)).toEqual(before);
-    expect((await vault.status("owner")).manifest.revision).toBe(1);
+    const saved = await vault.commit("owner", changes, { acknowledge: true });
+    expect(saved.manifest.revision).toBe(2);
+    expect(Object.keys(saved.manifest.files)).toHaveLength(1000);
+    // The published root names shards; it no longer repeats every path.
+    expect(storage.objects.get(key)!.length).toBeLessThan(64 * 1024);
+    expect(Object.keys((await vault.status("owner")).manifest.files)).toHaveLength(4000);
     try {
       await vault.commit("owner", changes.map((change) => ({ ...change, path: change.path.replaceAll("q", "界"), baseRevision: "b".repeat(64) })));
       throw new Error("Expected conflict");
@@ -110,6 +110,25 @@ describe("vault persistence regression coverage", () => {
       const response = JSON.stringify({ error: error.message, conflicts: error.conflicts, manifest: error.manifest });
       expect(Buffer.byteLength(response)).toBeLessThan(4_500_000);
     }
+  });
+
+  test("an oversized file list shard is rejected before writing bodies or publishing a revision", async () => {
+    const storage = memoryStorage();
+    const key = `vaults/v1/${digest("owner")}/manifest.json`;
+    const inShard = (prefix: string, count: number) => {
+      const paths: string[] = [];
+      for (let i = 0; paths.length < count; i++) if (digest(`${prefix}${i}.md`).startsWith("00")) paths.push(`${prefix}${i}.md`);
+      return paths;
+    };
+    // Stored entries may carry fields this server ignores; they still count toward the shard.
+    const entry = { revision: "a".repeat(64), deleted: false, encoding: "utf8", contentType: "text/markdown", size: 1, note: "x".repeat(16_000) };
+    const before = Buffer.from(JSON.stringify({ schemaVersion: 1, revision: 1, files: Object.fromEntries(inShard("old-", 1100).map((path) => [path, entry])) }));
+    storage.objects.set(key, before);
+    const vault = createVaultService({ storage });
+    await expect(vault.commit("owner", [{ path: inShard("new-", 1)[0], baseRevision: null, content: "x" }])).rejects.toMatchObject({ statusCode: 413 });
+    expect(storage.writes).toEqual([]);
+    expect(storage.objects.get(key)).toEqual(before);
+    expect((await vault.status("owner")).manifest.revision).toBe(1);
   });
 
   test("note edits skip unchanged originals while replacements and forced rebuilds reload them", async () => {

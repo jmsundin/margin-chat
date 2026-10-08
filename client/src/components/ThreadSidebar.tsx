@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useProgressiveList } from "../lib/useProgressiveList";
 import { ConversationGroupSelect } from "./ConversationGroupControls";
 import type { ChatOutlineItem } from "../lib/chatOutline";
 import ChatOutline from "./ChatOutline";
@@ -657,6 +658,9 @@ export default function ThreadSidebar({
     unpinnedThreads.filter((thread) => thread.groupId === group.id),
   );
   const ungroupedThreads = unpinnedThreads.filter((thread) => !thread.groupId);
+  // Thousands of documents render a page at a time, always including the open one.
+  const documentPages = useProgressiveList(createdThreads.length, { include: createdThreads.findIndex((thread) => thread.id === activeThreadId) });
+  const ungroupedPages = useProgressiveList(ungroupedThreads.length, { include: ungroupedThreads.findIndex((thread) => thread.id === activeThreadId) });
   const orderedThreads = sidebarContent === "groups" ? [
     ...recentPinnedThreads,
     ...groupedThreads,
@@ -942,7 +946,11 @@ export default function ThreadSidebar({
           </div>
           {fetchIndicator}
           <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline"}>
-            {sidebarContent !== "groups" ? <>{createdThreads.map(renderThreadItem)}{cloudIndex}</> : <>
+            {sidebarContent !== "groups" ? <>
+              {createdThreads.slice(0, documentPages.shown).map(renderThreadItem)}
+              {documentPages.more ? <div aria-hidden="true" className="thread-list-more" ref={documentPages.sentinel} /> : null}
+              {cloudIndex}
+            </> : <>
             {recentPinnedThreads.length || draggedThreadId ? (
               <section
                 aria-label="Pinned documents"
@@ -1063,9 +1071,10 @@ export default function ThreadSidebar({
                     </span>
                   </div>
                 </div>
-                {ungroupedThreads.length ? (
-                  ungroupedThreads.map(renderThreadItem)
-                ) : (
+                {ungroupedThreads.length ? (<>
+                  {ungroupedThreads.slice(0, ungroupedPages.shown).map(renderThreadItem)}
+                  {ungroupedPages.more ? <div aria-hidden="true" className="thread-list-more" ref={ungroupedPages.sentinel} /> : null}
+                </>) : (
                   <p className="thread-section-drop-hint">Drop here to ungroup</p>
                 )}
               </section>
