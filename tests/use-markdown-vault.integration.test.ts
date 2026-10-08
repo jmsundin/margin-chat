@@ -55,7 +55,7 @@ test("React vault hook hydrates offline and preserves typing across network and 
   expect(result.checks).toHaveLength(19);
 }, 15000);
 
-test("empty workspace settings survive automatic sync and offline reopen without resurrecting deleted documents", async () => {
+test("starter document text is saved, and empty workspace settings survive automatic sync and offline reopen without resurrecting deleted documents", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--empty-settings"], {
     cwd: new URL("..", import.meta.url).pathname,
     stdout: "pipe", stderr: "pipe",
@@ -66,7 +66,7 @@ test("empty workspace settings survive automatic sync and offline reopen without
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Empty vault settings integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(5);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(6);
 }, 15000);
 
 

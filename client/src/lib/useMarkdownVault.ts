@@ -169,7 +169,8 @@ export function useMarkdownVault(args: {
     // including after the last authored document was deleted on another device.
     const conversations = Object.values(stateRef.current.conversations);
     const pristine = conversations.length === 1 && conversations[0].kind !== "note" && conversations[0].title === "New chat"
-      && !conversations[0].messages.length && !conversations[0].notes?.length && !conversations[0].documents?.length;
+      && !conversations[0].messages.length && !conversations[0].notes?.length && !conversations[0].documents?.length
+      && !conversations[0].document?.blocks.some((block) => block.content.trim());
     const editingState = stateRef.current;
     const settingsOnly = !hasVaultContent.current && pristine;
     let next = renderFiles(settingsOnly ? { ...editingState, conversations: {} } : editingState, displayedFiles.current);
