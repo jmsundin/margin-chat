@@ -282,3 +282,16 @@ export async function expandPublicTopic(id: string, offset = 0, signal?: AbortSi
   const nextOffset = Math.min(offset + PAGE_SIZE, statements.length);
   return { topic: topicCopy(source), topics: [...topics.values()], relations: [...relations.values()], hasMore: nextOffset < statements.length, nextOffset };
 }
+
+/** Read up to 50 topics in one request, preserving the requested order. */
+export async function getPublicTopics(ids: string[], signal?: AbortSignal): Promise<PublicTopic[]> {
+  const requested = [...new Set(ids.map((id) => id.trim().toUpperCase()).filter((id) => ITEM_ID.test(id)))].slice(0, 50);
+  if (!requested.length) return [];
+  const entities = await readEntities(requested, false, signal);
+  const topics = new Map<string, PublicTopic>();
+  for (const id of requested) {
+    const entity = entities.get(id);
+    if (entity) topics.set(entity.topic.id, topicCopy(entity));
+  }
+  return [...topics.values()];
+}

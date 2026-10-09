@@ -4288,6 +4288,9 @@ function WorkspaceAppContent({
                     onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
                     onSaveUrlMapNode={(graph, nodeId) => setState((current) => saveUrlMapNode(current, graph, nodeId))}
                     urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
+                    publicMapAccount={{ userId: user.id, canAsk: user.role === "admin" || user.billing.hasAccess, isAdmin: user.role === "admin",
+                      aiOptions: { serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai },
+                      onBillingRefresh: () => { void onRefreshBilling(); }, onAuthExpired }}
                     onSavePublicTopic={handleSavePublicTopic}
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}

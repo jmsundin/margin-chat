@@ -13,9 +13,12 @@ import GraphTerritoryLayer from "./GraphTerritoryLayer";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE } from "./GraphClusterLayer";
 import { fitGravityCluster, layoutGravityClusters, type GravityCluster } from "../lib/gravityClusters";
 import { expandPublicTopic, getPublicTopic, searchPublicTopics } from "../lib/publicKnowledge";
+import { searchWikipediaTopics } from "../lib/wikipedia";
+import { listPublicAnswers, readPublicMap, savePublicMap, type PublicAnswer } from "../lib/publicMapApi";
+import { PublicAnswerFeed, PublicTopicInsights, type PublicMapAccount } from "./PublicTopicInsights";
 import type { PublicTopic } from "../lib/publicKnowledge";
 import {
-  addPublicGraphRoot, appendPublicGraphExpansion, emptyPublicGraph,
+  addPublicGraphRoot, appendPublicAnswerTopics, appendPublicGraphExpansion, emptyPublicGraph,
   setPublicExpansionVisible, visiblePublicGraph, PUBLIC_NODE_WIDTH, PUBLIC_NODE_HEIGHT,
 } from "../lib/publicGraphScene";
 import type { PublicGraphState } from "../lib/publicGraphScene";
@@ -38,6 +41,8 @@ export interface PublicKnowledgeMapProps {
   onShowInMyMap(conversationId: string, topic?: PublicTopic): void;
   /** Controls placed at the start of the toolbar, such as the map switcher. */
   toolbarLeading?: ReactNode;
+  /** Signed-in members save their map to their account and read shared answers. */
+  account?: PublicMapAccount;
 }
 
 interface Viewport { x: number; y: number; scale: number }
@@ -59,12 +64,20 @@ const PUBLIC_VIEW_MODES = [
 ] as const;
 type PublicViewMode = typeof PUBLIC_VIEW_MODES[number]["id"];
 
+const emptyLocation = (): MapLocation => ({ graph: emptyPublicGraph(), selectedId: null, neighborhoodId: null, neighborhoodScale: null, viewport: INITIAL_VIEWPORT, query: "", filters: DEFAULT_PUBLIC_RELATION_FILTERS, groupOverviewVersion: 1, presentation: "groups", documentLayoutMode: "auto", graphFocusId: null, graphFocusDepth: 1 });
+
 function readLocation(workspaceKey: string): MapLocation {
-  const fallback: MapLocation = { graph: emptyPublicGraph(), selectedId: null, neighborhoodId: null, neighborhoodScale: null, viewport: INITIAL_VIEWPORT, query: "", filters: DEFAULT_PUBLIC_RELATION_FILTERS, groupOverviewVersion: 1, presentation: "groups", documentLayoutMode: "auto", graphFocusId: null, graphFocusDepth: 1 };
   try {
     const raw = sessionStorage.getItem(`margin-public-map:${workspaceKey}`);
-    if (!raw) return fallback;
-    const stored = JSON.parse(raw);
+    return raw ? parseLocation(JSON.parse(raw)) ?? emptyLocation() : emptyLocation();
+  } catch { return emptyLocation(); }
+}
+
+/** Validates a map saved in this browser or to the account; null when unusable. */
+function parseLocation(stored: any): MapLocation | null {
+  const fallback = null;
+  try {
+    if (!stored || typeof stored !== "object") return fallback;
     const graph = stored.graph as PublicGraphState;
     if (stored.version !== 1 || !graph || !Array.isArray(graph.roots) || !graph.topics || !graph.positions || !graph.expansions) return fallback;
     if (Object.keys(graph.topics).length > 1200 || graph.roots.some((id: unknown) => !isQid(id))) return fallback;
@@ -121,10 +134,14 @@ function messageForError(error: unknown) {
   return error instanceof Error ? error.message : "This topic could not be loaded. Please try again.";
 }
 
-export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpenExplorer, onFocusCanvas, workspaceKey, focusRequest, searchRequest, onFocusRequestHandled, onSearchRequestHandled, savedTopics, onSave, onShowInMyMap, toolbarLeading }: PublicKnowledgeMapProps) {
+export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpenExplorer, onFocusCanvas, workspaceKey, focusRequest, searchRequest, onFocusRequestHandled, onSearchRequestHandled, savedTopics, onSave, onShowInMyMap, toolbarLeading, account }: PublicKnowledgeMapProps) {
   const [location, setLocation] = useState<MapLocation>(() => readLocation(workspaceKey));
   const locationRef = useRef(location);
   locationRef.current = location;
+  const accountUserId = account?.userId;
+  const [accountMapReady, setAccountMapReady] = useState(false);
+  const lastSavedMap = useRef<string | null>(null);
+  const interacted = useRef(false);
   const [searchResults, setSearchResults] = useState<PublicTopic[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -244,6 +261,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     updateLocation((previous) => ({ ...previous, viewport: focusedLayout.viewport, neighborhoodScale: focusedLayout.viewport.scale }));
   }, [isVisible, focusedLayout, location.neighborhoodScale, updateLocation]);
   const navigate = useCallback((update: (previous: MapLocation) => MapLocation) => {
+    interacted.current = true;
     const previous = locationRef.current;
     const next = update(previous);
     const trail = { past: [...historyRef.current.past, previous].slice(-30), future: [] };
@@ -276,6 +294,40 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     return () => window.clearTimeout(timer);
   }, [location, workspaceKey]);
 
+  // The account copy follows the reader to other devices. It loads before the
+  // first save, and replaces this view only when nothing has changed here yet.
+  const savedMapKey = (value: MapLocation) => JSON.stringify({ ...value, viewport: null, query: "" });
+  useEffect(() => {
+    setAccountMapReady(false);
+    if (!accountUserId) return;
+    const controller = new AbortController();
+    readPublicMap(accountUserId, controller.signal).then((saved) => {
+      if (controller.signal.aborted) return;
+      const restored = parseLocation(saved.state);
+      if (!restored) return;
+      lastSavedMap.current = savedMapKey(restored);
+      if (!interacted.current) updateLocation(() => ({ ...restored, query: "" }));
+    }).catch(() => { /* This browser's copy stays usable; saving resumes below. */ })
+      .finally(() => { if (!controller.signal.aborted) setAccountMapReady(true); });
+    return () => controller.abort();
+  }, [accountUserId, updateLocation]);
+  useEffect(() => {
+    if (!accountUserId || !accountMapReady) return;
+    const timer = window.setTimeout(() => {
+      // Saving waits for a change made here, so a failed load never replaces the account copy.
+      if (!interacted.current) return;
+      const current = locationRef.current;
+      const key = savedMapKey(current);
+      if (key === lastSavedMap.current) return;
+      lastSavedMap.current = key;
+      savePublicMap(accountUserId, { version: 1, ...current, query: "" }).catch((error: unknown) => {
+        lastSavedMap.current = null;
+        setNotice(error instanceof Error ? error.message : "Your public map could not be saved to your account.");
+      });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [accountUserId, accountMapReady, location.graph, location.filters, location.presentation, location.selectedId, location.documentLayoutMode, location.graphFocusId, location.graphFocusDepth, location.neighborhoodId]);
+
   useEffect(() => () => {
     openController.current?.abort();
     for (const controller of expansionControllers.current.values()) controller.abort();
@@ -288,8 +340,14 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     if (query.length < 2) { setSearchResults([]); setSearchLoading(false); return; }
     setSearchLoading(true);
     const timer = window.setTimeout(() => {
-      void searchPublicTopics(query, controller.signal).then((results) => {
-        if (!controller.signal.aborted) setSearchResults(results);
+      // Wikipedia's full-text search finds articles that mention the query, not
+      // just titles. Both are free, public APIs called from this browser.
+      void Promise.all([
+        searchPublicTopics(query, controller.signal),
+        searchWikipediaTopics(query, controller.signal).catch(() => []),
+      ]).then(([topics, articles]) => {
+        const ids = new Set(topics.map((topic) => topic.id));
+        if (!controller.signal.aborted) setSearchResults([...topics, ...articles.filter((topic) => !ids.has(topic.id))]);
       }).catch((error: unknown) => {
         if (!controller.signal.aborted) { setSearchResults([]); setSearchError(messageForError(error)); }
       }).finally(() => { if (!controller.signal.aborted) setSearchLoading(false); });
@@ -423,6 +481,10 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       const result = await expandPublicTopic(id, more ? existing?.nextOffset ?? 0 : 0, controller.signal);
       if (controller.signal.aborted) return;
       accept((previous) => refitDocumentLocation({ ...previous, graph: appendPublicGraphExpansion(previous.graph, result) }));
+      // Topics from members' shared AI answers join Wikidata's connections.
+      if (accountUserId) void listPublicAnswers(accountUserId, { topicIds: [result.topic.id], limit: 10 }).then((answers) => {
+        if (answers.some((answer) => answer.related.length)) updateLocation((previous) => refitDocumentLocation({ ...previous, graph: appendPublicAnswerTopics(previous.graph, answers, PUBLIC_MAP_LIMIT) }));
+      }).catch(() => { /* Wikidata's connections remain complete without shared answers. */ });
       setNotice(result.topics.length ? `${result.topics.length} connections loaded. Filters control which topics are shown.` : "No additional direct topic connections were found.");
     } catch (error) {
       if (!controller.signal.aborted) setTopicError({ id, action: "expand", message: messageForError(error) });
@@ -430,7 +492,12 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       if (expansionControllers.current.get(id) === controller) expansionControllers.current.delete(id);
       if (!controller.signal.aborted) setLoadingTopics((previous) => previous.filter((topicId) => topicId !== id));
     }
-  }, [navigate, updateLocation, refitDocumentLocation]);
+  }, [navigate, updateLocation, refitDocumentLocation, accountUserId]);
+
+  const showAnswerOnMap = useCallback((answer: PublicAnswer) => {
+    navigate((previous) => refitDocumentLocation({ ...previous, graph: appendPublicAnswerTopics(previous.graph, [answer], PUBLIC_MAP_LIMIT) }));
+    setNotice(answer.related.length ? `${answer.related.length} topics from this answer are connected on the map.` : "This answer names no other topics.");
+  }, [navigate, refitDocumentLocation]);
 
   const openTopic = useCallback(async (id: string, expand = true) => {
     openController.current?.abort();
@@ -744,7 +811,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       <header className="public-map-heading"><span className="public-map-eyebrow">Public knowledge</span><h2>Follow your curiosity</h2><p>Explore connected topics. Keep the ones that matter in your map.</p></header>
       <div className="public-map-sidebar-scroll" ref={sidebarScrollRef} tabIndex={0} aria-label="Public topic results and details">
         {location.query.trim().length >= 2 ? <section aria-label="Public search results">
-          <div className="public-map-section-label">{searchLoading ? "Searching Wikidata…" : `${searchResults.length} public topics`}</div>
+          <div className="public-map-section-label">{searchLoading ? "Searching Wikidata and Wikipedia…" : `${searchResults.length} public topics`}</div>
           {searchError && <div className="public-map-error" role="alert"><p>{searchError}</p><button type="button" onClick={() => setSearchRevision((previous) => previous + 1)}>Try search again</button></div>}
           {!searchLoading && !searchError && !searchResults.length && <p className="public-map-muted">No topics found. Try a broader term or a different name.</p>}
           <ul className="public-map-results" aria-busy={searchLoading}>{!searchLoading && searchResults.map((topic) => <li key={topic.id}><button type="button" onClick={() => void openTopic(topic.id)}><span className="public-map-result-meta">Wikidata · {topic.id}{savedConversation(topic) && <span>In my map</span>}</span><strong>{topic.label}</strong><span>{topic.description || "Open this public topic to explore its connections."}</span></button></li>)}</ul>
@@ -753,6 +820,8 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
           <h3>{selected.label}</h3><p>{selected.description || "This topic has no English description yet."}</p>
           <div className="public-map-inspector-actions"><button type="button" className="public-map-primary" onClick={() => saveOrShow(selected)}>{savedConversation(selected) ? "Show in my map" : "Add to my map"}</button><button type="button" onClick={() => focusConnections(selected.id)}>Focus connections</button><button type="button" disabled={loadingTopics.includes(selected.id) || !!selectedExpansion?.visible && !selectedExpansion.hasMore} onClick={() => void expandTopic(selected.id, !!selectedExpansion?.visible)}>{loadingTopics.includes(selected.id) ? "Loading…" : selectedExpansion?.visible ? selectedExpansion.hasMore ? "More connections" : "All connections shown" : "Expand connections"}</button>{selectedExpansion?.visible && <button type="button" onClick={() => hideExpansion(selected.id)}>Hide expansion</button>}</div>
           <p className="public-map-small">Adding keeps this topic and its source links. Your own notes stay yours.</p>
+          {account ? <PublicTopicInsights topic={selected} account={account} onShowOnMap={showAnswerOnMap} onOpenTopic={(id) => void openTopic(id)}
+            onAnswered={(answer) => { showAnswerOnMap(answer); }} /> : null}
           <div className="public-map-sources"><h4>Read at the source</h4>{safeSourceUrl(selected.wikipediaUrl) && <a href={safeSourceUrl(selected.wikipediaUrl)} target="_blank" rel="noreferrer">Wikipedia ↗</a>}<a href={safeSourceUrl(selected.wikidataUrl) ?? `https://www.wikidata.org/wiki/${selected.id}`} target="_blank" rel="noreferrer">Wikidata ↗</a><span>Wikidata structured data · CC0{selected.retrievedAt && !Number.isNaN(Date.parse(selected.retrievedAt)) ? ` · Retrieved ${new Date(selected.retrievedAt).toLocaleDateString()}` : ""}</span></div>
           <h4>Connections in this view <span>{selectedRelations.length}</span></h4>
           <p className="public-map-small">Wikidata relationships · Dates, qualifiers, and references are available at the source.</p>
@@ -762,7 +831,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
             const neighbor = location.graph.topics[outbound ? relation.targetId : relation.sourceId];
             return neighbor ? <li key={relation.id}><button type="button" onClick={() => selectTopic(neighbor.id, true, true)}><span>{outbound ? relation.label : `${relation.label} → ${selected.label}`}</span><strong>{neighbor.label}</strong></button><a href={safeSourceUrl(relation.sourceUrl) ?? `https://www.wikidata.org/wiki/${relation.sourceId}`} target="_blank" rel="noreferrer" aria-label={`View source for ${relation.label}`}>↗</a></li> : null;
           })}</ul>
-        </section> : <section className="public-map-start"><div className="public-map-section-label">A place to begin</div><p>Choose a topic, then expand one neighborhood at a time.</p><div className="public-map-seeds">{SEEDS.map((seed) => <button type="button" key={seed.id} onClick={() => void openTopic(seed.id)}>{seed.label} <span>↗</span></button>)}</div>{visible.topics.length > 0 && <><h4>Topics in this view <span>{visible.topics.length}</span></h4><ul className="public-map-topic-list">{visible.topics.map((topic) => <li key={topic.id}><button type="button" onClick={() => selectTopic(topic.id, true)}>{topic.label}{savedConversation(topic) && <span>In my map</span>}</button></li>)}</ul></>}<p className="public-map-small">Connections come from Wikidata statements. Expand loads a small group of direct neighbors; it does not import them into your workspace.</p></section>}
+        </section> : <section className="public-map-start"><div className="public-map-section-label">A place to begin</div><p>Choose a topic, then expand one neighborhood at a time.</p><div className="public-map-seeds">{SEEDS.map((seed) => <button type="button" key={seed.id} onClick={() => void openTopic(seed.id)}>{seed.label} <span>↗</span></button>)}</div>{account ? <PublicAnswerFeed account={account} onOpenAnswer={(answer) => void openTopic(answer.topicId)} /> : null}{visible.topics.length > 0 && <><h4>Topics in this view <span>{visible.topics.length}</span></h4><ul className="public-map-topic-list">{visible.topics.map((topic) => <li key={topic.id}><button type="button" onClick={() => selectTopic(topic.id, true)}>{topic.label}{savedConversation(topic) && <span>In my map</span>}</button></li>)}</ul></>}<p className="public-map-small">Connections come from Wikidata statements. Expand loads a small group of direct neighbors; it does not import them into your workspace.</p></section>}
       </div>
     </aside>;
   return <div ref={mapRef} className="public-knowledge-map semantic-public-map" style={{ "--public-details-width": `${detailsWidth}px` } as CSSProperties}>
