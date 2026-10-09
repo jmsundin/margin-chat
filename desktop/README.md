@@ -35,6 +35,11 @@ compatible with whatever production runs.
   com.apple.quarantine "/Applications/Margin Chat.app"`). Shipping it to
   others needs an Apple Developer ID certificate and notarization credentials
   passed to electron-builder.
-- Auto-update: the web app's service worker update flow does not run under
-  `margin://`. Desktop updates would come from `electron-updater` with
-  published release builds.
+- Installing updates: the web app's service worker update flow does not run
+  under `margin://`. Instead the app compares its bundled `version.json` with
+  production's every hour and, when production is newer (by commit time),
+  shows an "Update available" dialog. "Download update" opens
+  `MARGIN_DESKTOP_DOWNLOAD_URL` (default: the GitHub releases page). Builds are
+  not published there yet, so installing still means rebuilding with
+  `desktop:dist`; `electron-updater` with published builds would make it one
+  click.
