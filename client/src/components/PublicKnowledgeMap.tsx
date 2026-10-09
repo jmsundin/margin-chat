@@ -10,7 +10,7 @@ import { getDocumentNodeFootprint, layoutDocumentMap, type DocumentLayoutMode } 
 import { documentConnectionGeometry } from "../lib/documentMapConnections";
 import { getGraphNeighborhoodIds } from "../lib/graphNeighborhood";
 import GraphTerritoryLayer from "./GraphTerritoryLayer";
-import GraphClusterLayer, { CLUSTER_DOT_SCALE } from "./GraphClusterLayer";
+import GraphClusterLayer, { CLUSTER_DOT_SCALE, labelClusterGroups } from "./GraphClusterLayer";
 import { fitGravityCluster, layoutGravityClusters, type GravityCluster } from "../lib/gravityClusters";
 import { getPublicTopic, wikidataStatement } from "../lib/publicKnowledge";
 import { expandWikipediaTopic, resolveWikipediaTitles, searchWikipediaTopics } from "../lib/wikipedia";
@@ -237,8 +237,9 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   const clusterDots = !!clusterLayout && location.viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
   // Wikidata labels already name each hub's topic, so clusters need no AI naming.
-  const clusterLabels = useMemo(() => Object.fromEntries((clusterLayout?.clusters ?? []).map((cluster) => [cluster.id,
+  const clusterLabels = useMemo(() => labelClusterGroups(Object.fromEntries((clusterLayout?.clusters ?? []).map((cluster) => [cluster.id,
     { label: cluster.hubId ? location.graph.topics[cluster.hubId]?.label ?? cluster.hubId : "Unconnected topics", generated: false }])),
+  clusterLayout?.clusters ?? [], clusterLayout?.levels ?? [], "Unconnected"),
   [clusterLayout, location.graph.topics]);
   const selected = location.selectedId ? location.graph.topics[location.selectedId] : null;
   const selectedExpansion = selected ? location.graph.expansions[selected.id] : null;
@@ -931,7 +932,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       <div className="public-map-context"><span>{activeNeighborhood ? <strong>{activeNeighborhood.label} <span aria-hidden="true">· </span></strong> : null}{visible.topics.length ? `${visible.topics.length} topics · ${visible.relations.length} connections${hiddenTopicCount ? ` · ${hiddenTopicCount} filtered` : ""}` : "Your window into public knowledge"}</span><label><input type="checkbox" checked={showRelations} onChange={(event) => setShowRelations(event.target.checked)} />All connection labels</label></div>
       {!visible.topics.length && <div className="public-map-empty"><div aria-hidden="true">✧</div><h2>Every topic opens another door.</h2><p>Search for something you’re curious about, or choose a starting topic.</p><div>{SEEDS.map((seed) => <button type="button" key={seed.id} onClick={() => void openTopic(seed.id, true, seed.label)}>{seed.label}</button>)}</div></div>}
       {!documentsOnly ? <GraphTerritoryLayer territories={displayTerritories} conversations={neighborhoods.connections} viewport={location.viewport} itemLabel="topics" mode={showNeighborhoods ? "overview" : "canvas"} activeTerritoryId={activeNeighborhood?.id ?? null} selectedNodeId={location.selectedId} nodeFootprint={showNeighborhoods ? OVERVIEW_NODE_FOOTPRINT : compactNeighborhood ? compactFootprint : undefined} onOpen={openNeighborhood} /> : null}
-      {clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} placements={clusterPlacements} connections={visible.relations}
+      {clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements} connections={visible.relations}
         labels={clusterLabels} viewport={location.viewport} size={viewportSize} showDots={clusterDots} selectedId={location.selectedId}
         titles={(id) => location.graph.topics[id]?.label ?? id} itemLabel={["topic", "topics"]} onOpenCluster={openCluster} onSelectDocument={(id) => selectTopic(id)} /> : null}
       <div className="public-map-stage" data-group-layout={focusedLayout?.arranged ? "spaced" : undefined} data-presentation={showNeighborhoods ? "groups" : clustersMode ? "clusters" : "canvas"} hidden={(showNeighborhoods && !placements.length) || clusterDots} style={{ transform: `translate(${location.viewport.x}px, ${location.viewport.y}px) scale(${location.viewport.scale})` }}>

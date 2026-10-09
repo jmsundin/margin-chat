@@ -26,6 +26,7 @@
     "vercel:plan": "bun --no-env-file scripts/release.mjs vercel-plan",
     "vercel:sync": "bun --no-env-file scripts/release.mjs vercel-sync",
     "build": "bun run --cwd client build",
+    "bench:map": "bun scripts/bench-map.ts",
     "build:extension": "bun run --cwd extension build",
     "release:extension": "bun run --cwd extension release",
     "desktop:install": "bun install --cwd desktop",

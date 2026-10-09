@@ -647,3 +647,17 @@ describe("typed relations on the map", () => {
     expect(markup).toContain('marker-end="url(#graph-relation-arrow-mention)"');
   });
 });
+
+describe("card budget", () => {
+  test("keeps the cards nearest the center and any that must stay cards", async () => {
+    const { limitGraphCards } = await import("../client/src/components/ConversationGraphView");
+    const placements: ConversationGraphNodePlacement[] = Array.from({ length: 50 }, (_, index) => ({
+      conversationId: `n${index}`, depth: 0, x: index * 100, y: 0, width: 80, height: 40,
+    }));
+    const bounds = { left: 0, top: -100, right: 1000, bottom: 100 };
+    const { cards, overflow } = limitGraphCards(placements, bounds, 5, ["n49"]);
+    expect(cards.map((card) => card.conversationId)).toEqual(["n49", "n5", "n4", "n6", "n3"]);
+    expect(overflow).toHaveLength(45);
+    expect(limitGraphCards(placements.slice(0, 3), bounds, 5).overflow).toEqual([]);
+  });
+});

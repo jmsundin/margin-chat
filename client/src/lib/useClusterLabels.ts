@@ -6,7 +6,7 @@ import type { GravityCluster } from "./gravityClusters";
 
 /** Clusters this small keep their hub's title; Luna names larger ones. */
 export const MIN_LABELED_CLUSTER_SIZE = 3;
-const MAX_CLUSTERS_PER_PASS = 40;
+const MAX_CLUSTERS_PER_PASS = 60;
 const MAX_MEMBERS_IN_PROMPT = 40;
 const MAX_PROMPT_LENGTH = 7_500;
 const MAX_CACHED_LABELS = 1_000;

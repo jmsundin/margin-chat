@@ -4,6 +4,7 @@ import { createMainConversation } from "../../client/src/initialState";
 import type { Conversation } from "../../client/src/types";
 import "../../client/src/styles.css";
 import "../../client/src/components/KnowledgeGraphWorkspace.css";
+import { buildSyntheticVault } from "./syntheticVault";
 
 /** Synthetic fixture only: linked notes around a few hubs, with a fake Luna. */
 const createdAt = "2026-10-08T12:00:00.000Z";
@@ -37,6 +38,21 @@ conversations["t1-3"].linkedConversationIds!.push("hub-3");
 conversations["hub-2"].linkedConversationIds!.push("hub-4");
 for (let index = 0; index < 7; index++) note(`loose-${index}`, `Loose idea ${index + 1}`);
 
+// `?count=10000` swaps the hand-made fixture for a synthetic vault of that size,
+// for checking how the map behaves and performs with many documents.
+const params = new URLSearchParams(location.search);
+const syntheticCount = Number(params.get("count") ?? 0);
+if (syntheticCount > 0) {
+  for (const id of Object.keys(conversations)) delete conversations[id];
+  const vault = buildSyntheticVault(syntheticCount);
+  for (const id of vault.ids) {
+    const conversation = note(id, `Note ${id.slice(4)}`);
+    conversation.createdAt = new Date(vault.createdAt.get(id)!).toISOString();
+  }
+  for (const { sourceId, targetId } of vault.connections) conversations[sourceId].linkedConversationIds!.push(targetId);
+}
+const firstId = Object.keys(conversations)[0];
+
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (String(input).endsWith("/api/chat/title")) {
     const prompt = JSON.parse(String(init?.body)).prompt as string;
@@ -47,12 +63,11 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   return new Response("Not found", { status: 404 });
 }) as typeof fetch;
 
-const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") === "light" ? "light" : "dark";
 createRoot(document.getElementById("root")!).render(<main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
-  <ConversationGraphView workspaceKey="gravity-clusters-preview" activeConversationId="hub-0" conversations={conversations} groups={{}}
+  <ConversationGraphView workspaceKey="gravity-clusters-preview" activeConversationId={firstId} conversations={conversations} groups={{}}
     jev={{ userId: "preview", enabled: params.get("jev") !== "off", ready: true }}
-    onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => "hub-0"} onOpenConversation={() => {}}
+    onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => firstId} onOpenConversation={() => {}}
     onToggleGroup={() => {}} onUpdateGraphNodeLayouts={() => {}} renderDockedConversation={(id) => <p style={{ padding: 16 }}>{conversations[id].title}</p>}
     renderExpandedConversation={(id) => <p>{conversations[id].title}</p>} />
 </main>);

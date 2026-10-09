@@ -37,6 +37,7 @@ import {
   type ConversationGraphNodePlacement,
   type ConversationGraphScene,
   type ConversationGraphSemanticLevel,
+  type ConversationGraphBounds,
 } from "../lib/conversationGraph";
 import GraphExplorationPanel, { type GraphExplorationOverviewItem } from "./GraphExplorationPanel";
 import GraphOverviewCanvas from "./GraphOverviewCanvas";
@@ -48,7 +49,7 @@ import type { DocumentRelationTypeId } from "../types";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
 import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterLayout } from "../lib/gravityClusters";
 import { useClusterLabels } from "../lib/useClusterLabels";
-import GraphClusterLayer, { CLUSTER_DOT_SCALE } from "./GraphClusterLayer";
+import GraphClusterLayer, { CLUSTER_DOT_SCALE, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
 import { GraphViewModeSelects, GraphViewModeTabs } from "./GraphViewModeControls";
 import { GRAPH_VIEW_MODES } from "../lib/graphViewModes";
@@ -108,6 +109,28 @@ const GRAPH_PINCH_ZOOM_MAX_FACTOR = 1.28;
 const GRAPH_GRID_SIZE = 22;
 const GRAPH_MINIMAP_MAX_EDGES = 320;
 const GRAPH_MINIMAP_MAX_NODES = 280;
+const EMPTY_GRAPH_LAYOUTS: Record<string, GraphNodeLayout> = {};
+/** Most document cards drawn at once; more in view are drawn as dots. */
+export const MAX_GRAPH_CARDS = 400;
+/** Below this zoom, large maps draw documents as dots rather than cards. */
+const MIN_CARD_SCALE = 0.05;
+/** Most document links drawn at once. */
+const MAX_GRAPH_CONNECTIONS = 1_200;
+
+/**
+ * Keeps the cards nearest the viewport center, plus any that must stay cards
+ * (selected, active, docked). The rest come back as `overflow`, for dots.
+ */
+export function limitGraphCards(placements: ConversationGraphNodePlacement[], bounds: ConversationGraphBounds, limit: number,
+  keepIds: Array<string | null | undefined> = []) {
+  if (placements.length <= limit) return { cards: placements, overflow: [] as ConversationGraphNodePlacement[] };
+  const keep = new Set(keepIds.filter(Boolean));
+  const centerX = (bounds.left + bounds.right) / 2, centerY = (bounds.top + bounds.bottom) / 2;
+  const distance = (placement: ConversationGraphNodePlacement) => keep.has(placement.conversationId) ? -1
+    : (placement.x + placement.width / 2 - centerX) ** 2 + (placement.y + placement.height / 2 - centerY) ** 2;
+  const ranked = placements.map((placement) => ({ placement, distance: distance(placement) })).sort((a, b) => a.distance - b.distance);
+  return { cards: ranked.slice(0, limit).map((item) => item.placement), overflow: ranked.slice(limit).map((item) => item.placement) };
+}
 const GRAPH_SPARSE_GROUP_SCALE = 0.35;
 const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
 const EMPTY_CLUSTERS: GravityCluster[] = [];
@@ -758,7 +781,7 @@ export default function ConversationGraphView({
   conversations,
   threads,
   focusRequest = null,
-  graphLayouts = {},
+  graphLayouts = EMPTY_GRAPH_LAYOUTS,
   groups,
   onActivateConversation,
   onAssignGroup,
@@ -960,7 +983,8 @@ export default function ConversationGraphView({
     if (!isClustersMode) return null;
     const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections]);
     if (clusterCache.current?.key !== key) clusterCache.current = { key, layout: layoutGravityClusters(unfocusedScene.nodes,
-      viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }, documentConnections) };
+      viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }, documentConnections,
+      { createdAt: (id) => { const time = Date.parse(conversations[id]?.createdAt ?? ""); return Number.isNaN(time) ? undefined : time; } }) };
     const positions = new Map(clusterCache.current.layout.nodes.map((node) => [node.conversationId, node]));
     const nodes = unfocusedScene.nodes.map((node) => {
       const placed = positions.get(node.conversationId)!;
@@ -971,8 +995,17 @@ export default function ConversationGraphView({
   const forceLayout = networkLayout ?? clusterLayout;
   const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
-  const clusterLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
-    active: !!jev?.ready && isVisible && isClustersMode, clusters: clusterLayout?.clusters ?? EMPTY_CLUSTERS, conversations });
+  // The widest groups are named first, since they are what a zoomed-out map shows.
+  const labelTargets = useMemo(() => {
+    if (!clusterLayout) return EMPTY_CLUSTERS;
+    const levels = clusterLayout.levels;
+    return [...(levels.at(-1)?.groups ?? []), ...clusterLayout.clusters, ...levels.slice(0, -1).reverse().flatMap((level) => level.groups)];
+  }, [clusterLayout]);
+  const generatedClusterLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
+    active: !!jev?.ready && isVisible && isClustersMode, clusters: labelTargets, conversations });
+  const clusterLabels = useMemo(() => ({ ...generatedClusterLabels, labels: clusterLayout
+    ? labelClusterGroups(generatedClusterLabels.labels, clusterLayout.clusters, clusterLayout.levels) : generatedClusterLabels.labels }),
+  [generatedClusterLabels, clusterLayout]);
   const documentLayout = useMemo(() => forceLayout ? { ...forceLayout, arranged: true, centerNodeId: null }
     : documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 },
@@ -1106,14 +1139,21 @@ export default function ConversationGraphView({
     },
     [collapsedGroupPlacements, browsingGroups, browsingFootprints, scene.nodes],
   );
-  const baseRenderedNodePlacements = useMemo(
-    () =>
-      nearbyNodePlacements.filter(
-        (placement) =>
-          !hiddenConversationIds.has(placement.conversationId),
-      ),
-    [hiddenConversationIds, nearbyNodePlacements],
-  );
+  // Zoomed out, cards keep a readable size on screen, so the screen's area
+  // decides how many fit before they pile up; far enough out, large maps show
+  // only dots. With too many in view, Clusters switches to its dot view and
+  // other views keep the cards nearest the center, drawing the rest as dots.
+  const cardBudget = viewport.scale < MIN_CARD_SCALE && scene.nodes.length > MAX_GRAPH_CARDS ? 0
+    : viewport.scale >= 0.9 || !viewportSize.width ? MAX_GRAPH_CARDS
+    : Math.min(MAX_GRAPH_CARDS, Math.max(60, Math.round(3 * viewportSize.width * viewportSize.height / (180 * 96))));
+  const cardOverflow = nearbyNodePlacements.length > cardBudget;
+  const showClusterDots = clusterDots || (isClustersMode && !panelView && cardOverflow);
+  const stageHidden = showTerritories || showClusterDots;
+  const { cards: baseRenderedNodePlacements, overflow: overflowNodePlacements } = useMemo(() => {
+    if (stageHidden) return { cards: [], overflow: [] };
+    const shown = nearbyNodePlacements.filter((placement) => !hiddenConversationIds.has(placement.conversationId));
+    return limitGraphCards(shown, viewportBounds, cardBudget, [selectedConversationId, activeConversationId, dockedConversationId]);
+  }, [hiddenConversationIds, nearbyNodePlacements, stageHidden, viewportBounds, cardBudget, selectedConversationId, activeConversationId, dockedConversationId]);
   const previewPlacementByConversationId = useMemo(
     () =>
       movingNodePosition
@@ -2418,6 +2458,12 @@ export default function ConversationGraphView({
   };
   const showMinimapViewport =
     minimapViewport.height > 0 && minimapViewport.width > 0;
+  // Only links touching a drawn card are drawn, up to a budget, so a large
+  // vault never puts thousands of paths on the canvas.
+  const renderedCardIds = new Set(renderedNodePlacements.map((placement) => placement.conversationId));
+  let connectionBudget = MAX_GRAPH_CONNECTIONS;
+  const drawsConnection = (sourceId: string, targetId: string) =>
+    (renderedCardIds.has(sourceId) || renderedCardIds.has(targetId)) && connectionBudget-- > 0;
   const scenePlacementsById = new Map(scene.nodes.map((node) => [node.conversationId, previewPlacementByConversationId.get(node.conversationId) ?? node]));
 
   function openExplorer() {
@@ -2607,8 +2653,9 @@ export default function ConversationGraphView({
             selectedNodeId={selectedConversationId}
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
-          {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} placements={clusterPlacements}
-            connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={clusterDots}
+          {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} /> : null}
+          {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
+            connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
             onOpenCluster={openCluster} onSelectDocument={selectConversation} /> : null}
           <div
@@ -2618,7 +2665,7 @@ export default function ConversationGraphView({
             data-document-layout-mode={documentsOnly ? documentLayoutMode : undefined}
             data-document-center-node-id={documentsOnly ? documentLayout?.centerNodeId ?? undefined : undefined}
             data-focused-node-id={focusedNodeId ?? undefined}
-            hidden={showTerritories || clusterDots}
+            hidden={stageHidden}
             data-rendered-edge-count={renderedEdges.length}
             data-rendered-node-count={renderedNodePlacements.length}
             data-scene-node-count={scene.nodes.length}
@@ -2669,6 +2716,7 @@ export default function ConversationGraphView({
               {(showLinks ? [...scenePlacementsById.values()] : []).flatMap((placement) => [...new Set(conversations[placement.conversationId]?.linkedConversationIds ?? [])].flatMap((targetId) => {
                 const target = scenePlacementsById.get(targetId);
                 if (!target || hiddenConversationIds.has(placement.conversationId) || hiddenConversationIds.has(targetId)) return [];
+                if (!drawsConnection(placement.conversationId, targetId)) return [];
                 const x1 = placement.x + placement.width / 2;
                 const y1 = placement.y + placement.height / 2;
                 const x2 = target.x + target.width / 2;
@@ -2688,6 +2736,7 @@ export default function ConversationGraphView({
                 const placement = scenePlacementsById.get(edge.sourceId);
                 const target = scenePlacementsById.get(edge.targetId);
                 if (!placement || !target || hiddenConversationIds.has(edge.sourceId) || hiddenConversationIds.has(edge.targetId)) return [];
+                if (!drawsConnection(edge.sourceId, edge.targetId)) return [];
                 const geometry = documentsOnly ? documentConnectionGeometry(placement, target, documentLayoutMode)
                   : curvedGraphConnection({ startX: placement.x + placement.width / 2, startY: placement.y + placement.height / 2,
                     endX: target.x + target.width / 2, endY: target.y + target.height / 2 });
