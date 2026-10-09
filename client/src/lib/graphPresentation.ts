@@ -20,14 +20,22 @@ export function mapLabelsOverlap(nodes: ConversationGraphNodePlacement[], scale:
   const labels = nodes.map((node) => ({
     x: (node.x + node.width / 2) * scale, y: (node.y + node.height / 2) * scale,
     width: (footprint?.width ?? node.width * factor) + 12, height: (footprint?.height ?? node.height * factor) + 12,
-  })).sort((a, b) => a.x - b.x);
-  const maxWidth = Math.max(0, ...labels.map((label) => label.width));
-  for (let index = 0; index < labels.length; index++) {
-    const a = labels[index];
-    for (let next = index + 1; next < labels.length && labels[next].x - a.x < maxWidth; next++) {
-      const b = labels[next];
-      if (Math.abs(a.x - b.x) < (a.width + b.width) / 2 && Math.abs(a.y - b.y) < (a.height + b.height) / 2) return true;
+  }));
+  // Any overlapping pair sits in the same or a neighboring grid cell, so each
+  // label is only compared with those nearby: linear even for huge maps.
+  let cellWidth = 1, cellHeight = 1;
+  for (const label of labels) { cellWidth = Math.max(cellWidth, label.width); cellHeight = Math.max(cellHeight, label.height); }
+  const cells = new Map<string, typeof labels>();
+  for (const a of labels) {
+    const column = Math.floor(a.x / cellWidth), row = Math.floor(a.y / cellHeight);
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+      for (const b of cells.get(`${column + dx}:${row + dy}`) ?? []) {
+        if (Math.abs(a.x - b.x) < (a.width + b.width) / 2 && Math.abs(a.y - b.y) < (a.height + b.height) / 2) return true;
+      }
     }
+    const key = `${column}:${row}`;
+    const cell = cells.get(key);
+    if (cell) cell.push(a); else cells.set(key, [a]);
   }
   return false;
 }

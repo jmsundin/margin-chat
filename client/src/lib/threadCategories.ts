@@ -207,16 +207,30 @@ function normalizeCategoryText(value: string) {
   return normalized ? ` ${normalized} ` : " ";
 }
 
-function getKeywordScore(normalizedText: string, keywords: string[]) {
-  return keywords.reduce((score, keyword) => {
+// Keywords are normalized and indexed once, so each thread is scored by
+// looking up its own words: large vaults categorize every thread on each map
+// render. A keyword listed twice still counts twice.
+const SCORED_CATEGORIES = THREAD_CATEGORY_DEFINITIONS.filter((category) => category.id !== "general");
+const CATEGORY_WORD_INDEX = new Map<string, number[]>();
+const CATEGORY_PHRASES: Array<{ phrase: string; category: number }> = [];
+SCORED_CATEGORIES.forEach((category, index) => {
+  for (const keyword of category.keywords) {
     const normalizedKeyword = normalizeCategoryText(keyword).trim();
+    if (!normalizedKeyword) continue;
+    if (normalizedKeyword.includes(" ")) CATEGORY_PHRASES.push({ phrase: ` ${normalizedKeyword} `, category: index });
+    else CATEGORY_WORD_INDEX.set(normalizedKeyword, [...(CATEGORY_WORD_INDEX.get(normalizedKeyword) ?? []), index]);
+  }
+});
 
-    if (!normalizedKeyword) {
-      return score;
-    }
-
-    return normalizedText.includes(` ${normalizedKeyword} `) ? score + 1 : score;
-  }, 0);
+/** Keyword matches per scored category, in `SCORED_CATEGORIES` order. */
+function getKeywordScores(value: string) {
+  const text = normalizeCategoryText(value);
+  const scores = new Array<number>(SCORED_CATEGORIES.length).fill(0);
+  for (const word of new Set(text.trim().split(" "))) {
+    for (const category of CATEGORY_WORD_INDEX.get(word) ?? []) scores[category]++;
+  }
+  for (const { phrase, category } of CATEGORY_PHRASES) if (text.includes(phrase)) scores[category]++;
+  return scores;
 }
 
 export function categorizeThread({
@@ -224,21 +238,14 @@ export function categorizeThread({
   preview,
   title,
 }: ThreadCategoryInput): ThreadCategoryId {
-  const normalizedTitle = normalizeCategoryText(title);
-  const normalizedPreview = normalizeCategoryText(preview);
-  const normalizedContext = normalizeCategoryText(context);
+  const titleScores = getKeywordScores(title);
+  const previewScores = getKeywordScores(preview);
+  const contextScores = getKeywordScores(context);
   let bestCategoryId: ThreadCategoryId = "general";
   let bestScore = 0;
 
-  for (const category of THREAD_CATEGORY_DEFINITIONS) {
-    if (category.id === "general") {
-      continue;
-    }
-
-    const score =
-      getKeywordScore(normalizedTitle, category.keywords) * 4 +
-      getKeywordScore(normalizedPreview, category.keywords) * 2 +
-      getKeywordScore(normalizedContext, category.keywords);
+  for (const [index, category] of SCORED_CATEGORIES.entries()) {
+    const score = titleScores[index] * 4 + previewScores[index] * 2 + contextScores[index];
 
     if (score > bestScore) {
       bestCategoryId = category.id;

@@ -212,19 +212,31 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       context.stroke();
     }
     context.globalAlpha = 1;
+    // Dots sharing a color are drawn as one path: one fill per color rather
+    // than one per dot. Hubs go on top, and the selected dot last.
     const radius = 4.5 * pixel;
+    const batches = new Map<string, { hue: number | null; hub: boolean; dots: typeof dots }>();
+    let selectedDot: (typeof dots)[number] | undefined;
     for (const dot of dots) {
-      const selected = dot.id === selectedId;
+      if (dot.id === selectedId) { selectedDot = dot; continue; }
+      const key = `${dot.hub ? 1 : 0}:${dot.hue}`;
+      const batch = batches.get(key);
+      if (batch) batch.dots.push(dot); else batches.set(key, { hue: dot.hue, hub: dot.hub, dots: [dot] });
+    }
+    const drawDots = (batch: { hue: number | null; hub: boolean; dots: typeof dots }, selected = false) => {
+      const size = batch.hub ? radius * 1.7 : radius;
       context.beginPath();
-      context.arc(dot.cx, dot.cy, dot.hub ? radius * 1.7 : radius, 0, Math.PI * 2);
-      context.fillStyle = dot.hue === null ? muted : `hsl(${dot.hue} 58% 48%)`;
-      context.globalAlpha = dot.hue === null ? 0.55 : 1;
+      for (const dot of batch.dots) { context.moveTo(dot.cx + size, dot.cy); context.arc(dot.cx, dot.cy, size, 0, Math.PI * 2); }
+      context.fillStyle = batch.hue === null ? muted : `hsl(${batch.hue} 58% 48%)`;
+      context.globalAlpha = batch.hue === null ? 0.55 : 1;
       context.fill();
       context.globalAlpha = 1;
       context.strokeStyle = selected ? ink : panel;
-      context.lineWidth = pixel * (selected ? 3 : dot.hub ? 2 : 1);
+      context.lineWidth = pixel * (selected ? 3 : batch.hub ? 2 : 1);
       context.stroke();
-    }
+    };
+    for (const batch of [...batches.values()].sort((a, b) => Number(a.hub) - Number(b.hub))) drawDots(batch);
+    if (selectedDot) drawDots({ hue: selectedDot.hue, hub: selectedDot.hub, dots: [selectedDot] }, true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDots, dots, links, visible.length, level, panX, panY, scale, width, height, selectedId, hues]);
 
@@ -336,11 +348,14 @@ export function GraphOverflowDots({ placements, viewport, size }: {
     context.clearRect(0, 0, width, height);
     context.fillStyle = cssVar(canvas, "--muted", "#8a8a8a");
     context.globalAlpha = 0.6;
+    context.beginPath();
     for (const placement of placements) {
-      context.beginPath();
-      context.arc(viewport.x + (placement.x + placement.width / 2) * viewport.scale, viewport.y + (placement.y + placement.height / 2) * viewport.scale, 3, 0, Math.PI * 2);
-      context.fill();
+      const x = viewport.x + (placement.x + placement.width / 2) * viewport.scale, y = viewport.y + (placement.y + placement.height / 2) * viewport.scale;
+      if (x < -3 || y < -3 || x > width + 3 || y > height + 3) continue;
+      context.moveTo(x + 3, y);
+      context.arc(x, y, 3, 0, Math.PI * 2);
     }
+    context.fill();
   }, [placements, viewport, width, height]);
   return <canvas ref={canvasRef} className="graph-cluster-canvas graph-overflow-dots" style={{ width, height }} aria-hidden="true"
     data-overflow-count={placements.length} />;
