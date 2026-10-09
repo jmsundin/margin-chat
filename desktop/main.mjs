@@ -94,8 +94,10 @@ function handleAppRequest(request) {
 
 function isAppUrl(rawUrl) {
   try {
-    const { origin } = new URL(rawUrl);
-    return origin === APP_ORIGIN || (DEV_URL !== null && origin === new URL(DEV_URL).origin);
+    const url = new URL(rawUrl);
+    // Node gives custom schemes an opaque "null" origin, so match margin://app by parts.
+    if (url.protocol === `${SCHEME}:`) return url.host === "app";
+    return DEV_URL !== null && url.origin === new URL(DEV_URL).origin;
   } catch {
     return false;
   }
