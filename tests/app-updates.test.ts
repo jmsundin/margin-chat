@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { resolveAppCommit } from "../client/build/app-version.mjs";
+import { resolveAppCommit, resolveAppCommitTime } from "../client/build/app-version.mjs";
 
 test("release builds use the reviewed SHA before provider metadata or local Git", () => {
   const release = "a".repeat(40);
@@ -9,6 +9,15 @@ test("release builds use the reviewed SHA before provider metadata or local Git"
   expect(resolveAppCommit({}, ".", () => `${release}\n`)).toBe(release);
   expect(resolveAppCommit({}, ".", () => { throw new Error("no git"); })).toBe("unknown");
   expect(() => resolveAppCommit({ MARGIN_RELEASE_SHA: "not-a-commit" }, ".")).toThrow("full Git commit");
+});
+
+test("release builds carry the reviewed commit time, local builds read it from Git", () => {
+  const sha = "a".repeat(40);
+  expect(resolveAppCommitTime({ MARGIN_RELEASE_COMMITTED_AT: "2026-10-09T12:00:00+02:00" }, ".", sha)).toBe("2026-10-09T10:00:00.000Z");
+  expect(() => resolveAppCommitTime({ MARGIN_RELEASE_COMMITTED_AT: "soon" }, ".", sha)).toThrow("ISO date");
+  expect(resolveAppCommitTime({}, ".", sha, (args) => { expect(args).toEqual(["show", "-s", "--format=%cI", sha]); return "2026-10-01T00:00:00Z\n"; })).toBe("2026-10-01T00:00:00.000Z");
+  expect(resolveAppCommitTime({}, ".", sha, () => { throw new Error("no git"); })).toBeNull();
+  expect(resolveAppCommitTime({}, ".", "unknown")).toBeNull();
 });
 
 test("update checks and mounted notifications handle waiting, loaded, dismissed, and offline states", async () => {
