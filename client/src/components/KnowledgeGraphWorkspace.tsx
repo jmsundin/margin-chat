@@ -117,10 +117,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   </DismissibleDetails>;
 
   return <section className="knowledge-graph-workspace" aria-label="Knowledge maps">
-    {!personalVisible ? <header className="knowledge-map-switcher">
-      {mapControls}
-      <button type="button" onClick={() => { setMode("personal"); setUrlMapOpen(false); }}>Back to my map</button>
-    </header> : null}
+    {urlMapOpen ? <header className="knowledge-map-switcher">{mapControls}</header> : null}
     {mode === "personal" && !urlMapOpen && sourceFormOpen ? <form className="map-source-form" onSubmit={(event) => {
       event.preventDefault();
       try {
@@ -150,7 +147,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
       <PublicKnowledgeMap isVisible={isVisible && mode === "public" && !urlMapOpen} explorerContainer={personalProps.explorerContainer} onOpenExplorer={personalProps.onOpenExplorer} onFocusCanvas={personalProps.onFocusCanvas} key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} focusRequest={isVisible ? publicFocus : null} searchRequest={isVisible ? publicSearch : null}
         onFocusRequestHandled={(id) => setPublicFocus((request) => request?.requestId === id ? null : request)}
         onSearchRequestHandled={(id) => setPublicSearch((request) => request?.requestId === id ? null : request)}
-        savedTopics={savedTopics} onSave={onSavePublicTopic} onShowInMyMap={showPersonal} />
+        savedTopics={savedTopics} onSave={onSavePublicTopic} onShowInMyMap={showPersonal}
+        toolbarLeading={mode === "public" && !urlMapOpen ? <div className="knowledge-map-switcher is-inline">{mapControls}</div> : null} />
     </div>
     <div className="knowledge-map-panel" hidden={!urlMapOpen}>
       <UrlMapPanel key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} conversations={personalProps.conversations}
