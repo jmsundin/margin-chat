@@ -127,3 +127,51 @@ export function publicGraphPlacements(state: PublicGraphState, selectedId: strin
   }));
   return selectedId ? resolveGraphFocusLayout({ placements, selectedConversationId: selectedId, gapX: 48, gapY: 64 }) : placements;
 }
+
+/** The topics a shared AI answer names, as connections from the topic it answers. */
+export interface PublicAnswerConnections {
+  topicId: string;
+  createdAt: string;
+  related: Array<{ id: string; label: string; description: string; relation: string }>;
+}
+
+export const AI_ANSWER_PROPERTY = "AI";
+
+/** Adds answer topics beside their topic, keeping any Wikidata paging intact. */
+export function appendPublicAnswerTopics(state: PublicGraphState, answers: PublicAnswerConnections[], limit = Infinity): PublicGraphState {
+  let next = state;
+  let count = visiblePublicGraph(state).topics.length;
+  for (const answer of answers) {
+    const anchor = next.positions[answer.topicId];
+    if (!next.topics[answer.topicId] || !anchor) continue;
+    const topics = { ...next.topics };
+    const positions = { ...next.positions };
+    const previous = next.expansions[answer.topicId];
+    const relations = new Map((previous?.relations ?? []).map((relation) => [relation.id, relation]));
+    const topicIds = new Set(previous?.topicIds ?? []);
+    for (const item of answer.related) {
+      if (item.id === answer.topicId) continue;
+      if (!topics[item.id]) {
+        if (count >= limit) continue;
+        count += 1;
+        topics[item.id] = {
+          id: item.id, aliases: [], label: item.label, description: item.description,
+          wikidataUrl: `https://www.wikidata.org/wiki/${item.id}`, retrievedAt: answer.createdAt,
+        };
+      }
+      positions[item.id] ??= placeTopic(positions, anchor);
+      topicIds.add(item.id);
+      const id = `${answer.topicId}:${AI_ANSWER_PROPERTY}:${item.id}`;
+      if (!relations.has(id)) relations.set(id, {
+        id, sourceId: answer.topicId, targetId: item.id, propertyId: AI_ANSWER_PROPERTY,
+        label: item.relation, sourceUrl: `https://www.wikidata.org/wiki/${item.id}`,
+      });
+    }
+    next = { ...next, topics, positions, expansions: { ...next.expansions, [answer.topicId]: {
+      topicIds: [...topicIds], relations: [...relations.values()], visible: true,
+      // An answer alone never marks Wikidata's statements as loaded.
+      hasMore: previous ? previous.hasMore : true, nextOffset: previous?.nextOffset ?? 0,
+    } } };
+  }
+  return next;
+}

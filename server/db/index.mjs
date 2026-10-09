@@ -46,6 +46,7 @@ import { readState, readVaultProjectionCheckpoint, readWorkspace, writeState } f
 import { searchVaultPassages } from "./searchRepository.mjs";
 import { normalizeAppState } from "./validation.mjs";
 import * as captures from "./captureRepository.mjs";
+import * as publicMap from "./publicMapRepository.mjs";
 
 const { Pool } = pg;
 
@@ -389,5 +390,10 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     updateUserProfile: updateUserProfileRecord,
     updateStripeCustomerId: updateStripeCustomerIdRecord,
     upsertUserApiKey: upsertUserApiKeyRecord,
+    readPublicMapState: (userId) => withClient((client) => publicMap.readPublicMapState(client, userId)),
+    writePublicMapState: (args) => withClient((client) => publicMap.writePublicMapState(client, args)),
+    createPublicAnswer: (args) => withClient((client) => publicMap.createPublicAnswer(client, args)),
+    listPublicAnswers: (args) => withClient((client) => publicMap.listPublicAnswers(client, args)),
+    deletePublicAnswer: (args) => withClient((client) => publicMap.deletePublicAnswer(client, args)),
   };
 }

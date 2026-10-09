@@ -5,6 +5,7 @@ import PublicKnowledgeMap from "./PublicKnowledgeMap";
 import UrlMapPanel from "./UrlMapPanel";
 import type { UrlMapAIOptions, UrlMapGraph } from "../lib/urlMap";
 import type { PublicTopic } from "../lib/publicKnowledge";
+import type { PublicMapAccount } from "./PublicTopicInsights";
 import type { Conversation } from "../types";
 import "./KnowledgeGraphWorkspace.css";
 
@@ -14,6 +15,7 @@ interface Props extends ConversationGraphViewProps {
   onSaveUrlMapNode?: (graph: UrlMapGraph, nodeId: string) => void;
   urlMapAIOptions?: UrlMapAIOptions;
   onSavePublicTopic: (topic: PublicTopic) => void;
+  publicMapAccount?: PublicMapAccount;
   onCreateMapNote: (args: { linkedTo?: string; url?: string }) => void;
   onSetMapConnection: (sourceId: string, targetId: string, connected: boolean) => void;
   onRemoveMapNote: (id: string) => void;
@@ -29,7 +31,7 @@ interface Props extends ConversationGraphViewProps {
   onDismissTopicExpansionError?: () => void;
 }
 
-export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, onSaveUrlMapNode, urlMapAIOptions, onSavePublicTopic, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, onSaveUrlMapNode, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, ...personalProps }: Props) {
   const [urlMapOpen, setUrlMapOpen] = useState(false);
   const [mode, setMode] = useState<"personal" | "public">("personal");
   const [publicFocus, setPublicFocus] = useState<{ id: string; requestId: number } | null>(null);
@@ -150,7 +152,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
       <PublicKnowledgeMap isVisible={isVisible && mode === "public" && !urlMapOpen} explorerContainer={personalProps.explorerContainer} onOpenExplorer={personalProps.onOpenExplorer} onFocusCanvas={personalProps.onFocusCanvas} key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} focusRequest={isVisible ? publicFocus : null} searchRequest={isVisible ? publicSearch : null}
         onFocusRequestHandled={(id) => setPublicFocus((request) => request?.requestId === id ? null : request)}
         onSearchRequestHandled={(id) => setPublicSearch((request) => request?.requestId === id ? null : request)}
-        savedTopics={savedTopics} onSave={onSavePublicTopic} onShowInMyMap={showPersonal} />
+        savedTopics={savedTopics} onSave={onSavePublicTopic} onShowInMyMap={showPersonal} account={publicMapAccount} />
     </div>
     <div className="knowledge-map-panel" hidden={!urlMapOpen}>
       <UrlMapPanel key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} conversations={personalProps.conversations}

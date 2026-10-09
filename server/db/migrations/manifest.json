@@ -50,6 +50,11 @@
       "id": "0010_current_model_catalog",
       "file": "0010_current_model_catalog.sql",
       "transaction": true
+    },
+    {
+      "id": "0011_public_map",
+      "file": "0011_public_map.sql",
+      "transaction": true
     }
   ]
 }
