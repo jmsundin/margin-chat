@@ -43,3 +43,13 @@
 .mobile-selection-actions button:active:not(:disabled) { background: var(--accent-soft); color: var(--ink); }
 .mobile-selection-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mobile-selection-actions button:disabled { opacity: .45; cursor: default; }
+
+/* Stands in for the system's Cut / Copy / Paste menu. */
+.mobile-selection-actions .mobile-selection-actions-clipboard {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 3px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--line);
+}
+.mobile-selection-actions .mobile-selection-actions-clipboard button { flex: 1 1 0; }

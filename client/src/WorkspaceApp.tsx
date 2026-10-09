@@ -3,6 +3,7 @@ import { useAppUpdateGuard } from "./lib/appUpdateSafety";
 import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } from "./components/MobileKeyboard";
 import MobileAIComposer from "./components/MobileAIComposer";
 import { MobileSelectionActions } from "./components/MobileSelectionActions";
+import { hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
 import { createMarginDocument, isCompactDocument } from "@margin-chat/workspace-contracts";
@@ -2618,6 +2619,9 @@ function WorkspaceAppContent({
 
   }
 
+  // On phones the app's selection bar replaces the system's Cut / Copy / Paste menu.
+  useEffect(() => mobileKeyboard.mobile ? hideNativeSelectionMenu() : undefined, [mobileKeyboard.mobile]);
+
   useEffect(() => {
     function queueSelectionSync() {
       window.cancelAnimationFrame(selectionSyncFrameRef.current);
@@ -2657,6 +2661,8 @@ function WorkspaceAppContent({
         // The compact prompt owns a saved passage after Ask. Blurring the
         // document to dismiss its keyboard must not discard that context.
         if (mobileKeyboard.mobile && selectionActionsExpanded && selectionIntent === "branch") return;
+        // The selection is briefly lifted to dismiss the iOS edit menu; it is coming back.
+        if (isReselectingSelection()) return;
         const selection = window.getSelection();
         if (selection?.isCollapsed) setSelectionDraft(null);
         else syncSelectionDraft();
@@ -4050,7 +4056,7 @@ function WorkspaceAppContent({
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
       onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionLinkError(null); setSelectionResponseDestination("side"); setSelectionReplaceText(false); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
-      onClearSelection={() => setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current)}
+      onClearSelection={() => { if (!isReselectingSelection()) setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current); }}
       onOpenBranch={(id) => handleOpenDocumentReference(conversation.id, id)}
       onRemoveLink={(id) => handleRemoveDocumentLink(conversation.id, id)}
       onOpenNote={(noteId) => {

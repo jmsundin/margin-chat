@@ -1,5 +1,6 @@
-import { useLayoutEffect, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { copySelection, cutSelection, pasteIntoSelection, selectAllAround, selectionEditingHost } from "../lib/selectionMenu";
 import { useVisualViewport } from "../lib/useVisualViewport";
 import "./MobileSelectionActions.css";
 
@@ -16,19 +17,32 @@ type MobileSelectionActionsProps = {
   disabled?: boolean;
 };
 
-/** Keep selection actions beside the native handles without opening an input. */
+/**
+ * Keep selection actions beside the native handles without opening an input. The clipboard row
+ * stands in for the system's Cut / Copy / Paste menu, which the workspace hides on phones.
+ */
 export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onMore, onClose, disabled = false }: MobileSelectionActionsProps) {
   const viewport = useVisualViewport(true);
   const [selectionRect, setSelectionRect] = useState(rect);
-  const [height, setHeight] = useState(54);
+  const [height, setHeight] = useState(102);
+  const [editable, setEditable] = useState(() => Boolean(selectionEditingHost()));
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
 
   useLayoutEffect(() => {
     setSelectionRect(rect);
+    setEditable(Boolean(selectionEditingHost()));
     let frame = 0;
     const measure = () => {
       frame = 0;
       const selection = window.getSelection();
       if (!selection?.rangeCount || selection.isCollapsed || formRef.current?.contains(selection.anchorNode)) return;
+      setEditable(Boolean(selectionEditingHost()));
       const range = selection.getRangeAt(0);
       if (typeof range.getBoundingClientRect !== "function") return;
       const next = range.getBoundingClientRect();
@@ -86,6 +100,12 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
   return createPortal(<form ref={formRef} className="mobile-selection-actions" data-testid="branch-composer" data-placement={placement}
     role="group" aria-label="Selected text actions" style={{ top, left, width }}
     onSubmit={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()}>
+    <div className="mobile-selection-actions-clipboard" role="group" aria-label="Clipboard">
+      {editable ? <button type="button" onClick={() => { void cutSelection(); }}>Cut</button> : null}
+      <button type="button" onClick={() => { void copySelection().then((done) => setCopied(done)); }}>{copied ? "Copied" : "Copy"}</button>
+      {editable ? <button type="button" onClick={() => { void pasteIntoSelection(); }}>Paste</button> : null}
+      <button type="button" onClick={() => selectAllAround()}>Select all</button>
+    </div>
     <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onExplain}>Explain</button>
     <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onRewrite}>Rewrite</button>
     <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onAsk}>Ask…</button>
