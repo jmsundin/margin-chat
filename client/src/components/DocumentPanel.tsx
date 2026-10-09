@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
 import { getDocumentBlockAuthorship, getEditableDocument } from "../lib/editableDocument";
+import { getGenerationBlocks, proposeAIChildNodes, type AIChildNodeProposal } from "../lib/aiChildNodes";
 import type { DocumentAIRequest } from "../lib/documentAI";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { DocumentEditHistory, type DocumentEditOptions } from "../lib/documentEditHistory";
@@ -61,6 +62,8 @@ export interface DocumentPanelProps {
   uploading?: boolean;
   onAcceptVersion: (generationId: string) => void;
   onUndoInsertion: (generationId: string) => void;
+  /** Offered on each AI response when set: create picked parts of it as child documents. */
+  onCreateChildNodes?: (proposals: AIChildNodeProposal[]) => void;
   registerPanelRef: (element: HTMLElement | null) => void;
   registerAnchorRef: (id: string, element: HTMLSpanElement | null) => void;
   registerBranchOriginRef: (element: HTMLElement | null) => void;
@@ -109,6 +112,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     check: () => prompt.trim() || (openPromptId && rerunText.trim()) ? "An unsent document prompt is open in a tab. Send or clear it before restarting." : null,
   });
   const [hiddenVersions, setHiddenVersions] = useState<string[]>([]);
+  const [childNodes, setChildNodes] = useState<{ promptId: string; proposals: AIChildNodeProposal[]; picked: string[]; existing: string[]; created?: number } | null>(null);
+  const childNodesRef = useRef<HTMLElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
   const promptHistoryRef = useRef<HTMLDivElement>(null);
@@ -117,6 +122,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     setPrompt("");
   }, composerRef);
   useOutsideDismiss(Boolean(openPromptId), () => setOpenPromptId(null), promptHistoryRef);
+  useOutsideDismiss(Boolean(childNodes), () => setChildNodes(null), childNodesRef);
   useEffect(() => { if (invocation && !mobileKeyboard.mobile) promptRef.current?.focus(); }, [invocation, mobileKeyboard.mobile]);
   useEffect(() => {
     if (!invocation || document.blocks.some((block) => block.id === invocation.blockId)) return;
@@ -268,9 +274,15 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const receipt = conversation.messages.find((message) => message.id === active?.messageId)?.execution;
     return <div className="document-prompt-marker" key={item.id} ref={openPromptId === item.id ? promptHistoryRef : undefined} data-chat-outline-id={`message-${item.sourceMessageId ?? `document-prompt:${item.id}`}`}>
       <button className="document-prompt-icon" aria-label={`Show AI prompt: ${item.content.slice(0,70)}`} aria-expanded={openPromptId === item.id} type="button"
-        title="AI prompt and versions" onClick={() => { setOpenPromptId(openPromptId === item.id ? null : item.id); setRerunText(activePrompt.content); }}>
+        title="AI prompt and versions" onClick={() => { setChildNodes(null); setOpenPromptId(openPromptId === item.id ? null : item.id); setRerunText(activePrompt.content); }}>
         <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><path d="m10 2 2.2 5.8L18 10l-5.8 2.2L10 18l-2.2-5.8L2 10l5.8-2.2Z"/></svg>
       </button>
+      {props.onCreateChildNodes && active && !(active.status === "streaming" && props.isSubmitting) ? <button className="document-child-nodes-icon" type="button"
+        aria-label={`Make child nodes from AI response: ${item.content.slice(0,70)}`} aria-expanded={childNodes?.promptId === item.id}
+        title="Make child nodes from this AI response" onClick={() => childNodes?.promptId === item.id ? setChildNodes(null) : openChildNodes(item.id, active)}>
+        <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="5" cy="10" r="2.2"/><circle cx="15" cy="4.5" r="2"/><circle cx="15" cy="10" r="2"/><circle cx="15" cy="15.5" r="2"/><path d="M7.2 10H13M7 9l6-4M7 11l6 4"/></svg>
+      </button> : null}
+      {childNodes?.promptId === item.id ? renderChildNodes() : null}
       {openPromptId === item.id ? <section className="document-prompt-history" aria-label="AI prompt and versions" onKeyDown={(event) => { if(event.key === "Escape") {event.stopPropagation();setOpenPromptId(null);} }}>
         <header><strong>AI prompt</strong><button aria-label="Close prompt history" type="button" onClick={() => setOpenPromptId(null)}>×</button></header>
         <textarea aria-label="Saved AI prompt" value={rerunText} onChange={(event) => setRerunText(event.target.value)} rows={3}/>
@@ -279,6 +291,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           props.onSubmit({ blockId: active?.blockIds[0] ?? document.blocks[0]?.id ?? "", from:0,to:0,prompt:rerunText,destination:"inline",rerunGenerationId:original?.id });
         }}>↻ Try another version</button>
           {active && active.blockIds.some((id) => document.blocks.some((block) => block.id === id)) ? <button disabled={props.isSubmitting} type="button" onClick={() => props.onUndoInsertion(active.id)}>Undo insertion</button> : null}
+          {props.onCreateChildNodes && active && !(active.status === "streaming" && props.isSubmitting) ? <button type="button" onClick={() => { setOpenPromptId(null); openChildNodes(item.id, active); }}>Make child nodes…</button> : null}
         </div>
         {receipt ? <AIResponseDetails execution={receipt} isStreaming={props.isSubmitting} onOpenSource={props.onOpenBranch}/> : null}
         {alternatives.map((alternative) => <section className="document-alternative" key={alternative.id}>
@@ -288,6 +301,44 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </section>)}
       </section> : null}
     </div>;
+  }
+
+  function openChildNodes(promptId: string, generation: DocumentValue["generations"][number]) {
+    const proposals = proposeAIChildNodes(getGenerationBlocks(document, generation));
+    // A passage that already anchors a child is not offered again.
+    const anchored = new Set(props.anchors.map(({ anchor }) => `${anchor.sourceBlockId}:${anchor.startOffset}:${anchor.endOffset}`));
+    const existing = proposals.filter((proposal) => anchored.has(`${proposal.blockId}:${proposal.from}:${proposal.to}`)).map((proposal) => proposal.id);
+    setOpenPromptId(null);
+    setChildNodes({ promptId, proposals, existing, picked: proposals.map((proposal) => proposal.id).filter((id) => !existing.includes(id)) });
+  }
+
+  function renderChildNodes() {
+    if (!childNodes) return null;
+    const { proposals, picked, existing, created } = childNodes;
+    const chosen = proposals.filter((proposal) => picked.includes(proposal.id) && proposal.title.trim());
+    const edit = (id: string, title: string) => setChildNodes((current) => current && { ...current, proposals: current.proposals.map((proposal) => proposal.id === id ? { ...proposal, title } : proposal) });
+    const toggle = (id: string) => setChildNodes((current) => current && { ...current, picked: current.picked.includes(id) ? current.picked.filter((candidate) => candidate !== id) : [...current.picked, id] });
+    return <section className="document-prompt-history document-child-nodes" ref={childNodesRef} aria-label="Make child nodes"
+      onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setChildNodes(null); } }}>
+      <header><strong>Make child nodes</strong><button aria-label="Close child nodes" type="button" onClick={() => setChildNodes(null)}>×</button></header>
+      {created !== undefined ? <p className="document-child-nodes-done" role="status">Created {created} child {created === 1 ? "node" : "nodes"}. {"They're linked to this document and placed beside it in the map."}</p>
+        : !proposals.length ? <p>This response has no headings, list items or paragraphs to split into child nodes.</p> : <>
+        <p className="document-child-nodes-hint">{existing.length === proposals.length ? "Every part of this response already has a child node."
+          : "Each picked part of this response becomes a child document, linked from its passage here."}</p>
+        <ul>{proposals.map((proposal) => <li key={proposal.id}>
+          <input type="checkbox" aria-label={`Create child node ${proposal.title || "Untitled"}`} checked={picked.includes(proposal.id)} disabled={existing.includes(proposal.id)} onChange={() => toggle(proposal.id)}/>
+          <div><input type="text" aria-label="Child node title" value={proposal.title} disabled={existing.includes(proposal.id)} onChange={(event) => edit(proposal.id, event.target.value)}/>
+            <small>{existing.includes(proposal.id) ? "Already a child node" : proposal.content.replace(/\s+/g, " ").slice(0, 120)}</small></div>
+        </li>)}</ul>
+        <div className="document-version-actions">
+          {existing.length < proposals.length ? <button type="button" disabled={!chosen.length} onClick={() => {
+            props.onCreateChildNodes?.(chosen);
+            setChildNodes((current) => current && { ...current, created: chosen.length });
+          }}>Create {chosen.length} child {chosen.length === 1 ? "node" : "nodes"}</button> : null}
+          <button type="button" onClick={() => setChildNodes(null)}>Cancel</button>
+        </div>
+      </>}
+    </section>;
   }
 
   function renderAIComposer() {

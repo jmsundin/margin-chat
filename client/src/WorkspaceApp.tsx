@@ -112,6 +112,7 @@ import {
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
 import { useChatStreams } from "./lib/useChatStreams";
+import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
 import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument } from "./lib/workspaceCommands";
 import { buildDocumentSummaries, buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
@@ -2093,6 +2094,14 @@ function WorkspaceAppContent({
     });
   }
 
+  function handleCreateAIChildNodes(conversationId: string, proposals: AIChildNodeProposal[]) {
+    setState((current) => {
+      const next = addAIChildNodes(current, conversationId, proposals, { createId }).state;
+      currentStateRef.current = next;
+      return next;
+    });
+  }
+
   function handleUndoDocumentInsertion(conversationId: string, generationId: string) {
     setState((current) => {
       const conversation = current.conversations[conversationId];
@@ -4052,6 +4061,7 @@ function WorkspaceAppContent({
       onUpload={(files) => {void handleUploadDocuments(conversation.id,files);}}
       onRemoveAttachment={(id) => handleRemoveDocument(conversation.id,id)} uploading={documentUploadByConversationId[conversation.id]?.uploading}
       onAcceptVersion={(id) => handleAcceptDocumentVersion(conversation.id,id)} onUndoInsertion={(id) => handleUndoDocumentInsertion(conversation.id,id)}
+      onCreateChildNodes={(proposals) => handleCreateAIChildNodes(conversation.id, proposals)}
       registerPanelRef={(element) => {(view === "graph" ? graphPanelRefs : documentPanelRefs).current[conversation.id]=element;}}
       registerAnchorRef={(id,element) => {if (view === "chat") anchorRefs.current[id]=element;}}
       registerBranchOriginRef={(element) => {if (view === "chat") branchOriginRefs.current[conversation.id]=element;}}
