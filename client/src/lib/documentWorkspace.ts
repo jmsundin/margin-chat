@@ -97,8 +97,8 @@ export function reorderDocument(state: AppState, draggedId: string, targetId: st
   return saveLayout(state, root, order, minimizedIds);
 }
 
-/** Newly created children open immediately to the right of the focused source. */
-export function placeNewSideDocument(state: AppState, childId: string): AppState {
+/** New children, and margin notes expanded into panes, open right after their source, ahead of older siblings. */
+export function placeDocumentAfterParent(state: AppState, childId: string): AppState {
   const child = state.conversations[childId];
   const { root, documents, minimizedIds } = getDocumentWorkspace(state.conversations, childId);
   if (!child?.parentId || !root) return state;
@@ -107,9 +107,37 @@ export function placeNewSideDocument(state: AppState, childId: string): AppState
   return saveLayout(state, root, order, minimizedIds.filter((id) => id !== childId));
 }
 
+function placeBeside(order: string[], id: string, anchorId: string, after: boolean) {
+  const next = order.filter((candidate) => candidate !== id);
+  const index = next.indexOf(anchorId);
+  if (index < 0) return order;
+  next.splice(index + (after ? 1 : 0), 0, id);
+  return next;
+}
+
+/**
+ * The most recently opened child sits right after its parent; children opened earlier slide right.
+ * Compact margin notes render in their host's margin, so their place in the strip does not move.
+ */
+function placeOpenedAfterParents(conversations: Record<string, Conversation>, order: string[], ids: string[]) {
+  let next = order;
+  for (const id of ids) {
+    const document = conversations[id];
+    if (!document?.parentId || isCompactDocument(document) || !next.includes(document.parentId)) continue;
+    next = placeBeside(next, id, document.parentId, true);
+  }
+  return next;
+}
+
 function restoreDocuments(state: AppState, id: string, ids: string[], order?: string[]): AppState {
   const { root, documents, minimizedIds, closedIds } = getDocumentWorkspace(state.conversations, id);
   if (!root) return state;
+  if (!order) {
+    // Only closed or never-placed documents move. Open and minimized panes keep the place the user gave them.
+    const saved = new Set(root.documentLayout?.order ?? []);
+    const opened = ids.filter((candidate) => closedIds.includes(candidate) || (root.documentLayout && !saved.has(candidate)));
+    if (opened.length) order = placeOpenedAfterParents(state.conversations, documents.map((document) => document.id), opened);
+  }
   const restored = new Set(ids);
   const nextMinimized = minimizedIds.filter((candidate) => !restored.has(candidate));
   const nextClosed = closedIds.filter((candidate) => !restored.has(candidate));
@@ -149,13 +177,6 @@ export function showDocument(state: AppState, id: string): AppState {
   return activate(restoreDocuments(state, id, getMarginHostPath(state.conversations, id)), id);
 }
 
-function placeBeside(order: string[], id: string, anchorId: string, after: boolean) {
-  const next = order.filter((candidate) => candidate !== id);
-  const index = next.indexOf(anchorId);
-  if (index < 0) return order;
-  next.splice(index + (after ? 1 : 0), 0, id);
-  return next;
-}
 
 /** Expand here: the target takes the current document's place, which closes until Back reopens it. */
 export function replaceDocument(state: AppState, currentId: string, targetId: string): AppState {
