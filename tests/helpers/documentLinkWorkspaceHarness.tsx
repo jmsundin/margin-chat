@@ -143,6 +143,12 @@ async function testMobileSelectionActions() {
   const { current, from } = await selectSourcePassage();
   const actionBar = element('[data-testid="branch-composer"]');
   for (const label of ["Explain", "Rewrite", "Ask"]) assert(button(label, actionBar));
+  const clipboard = actionBar.querySelector('[aria-label="Clipboard"]'); assert(clipboard, "Missing clipboard row");
+  for (const label of ["Copy", "Select all"]) assert(button(label, clipboard), `The app bar offers ${label} in place of the system menu.`);
+  const longPress = new browser.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  current.view.dom.dispatchEvent(longPress);
+  assert.equal(longPress.defaultPrevented, true, "A long press in the document must not open the system menu on top of the app bar.");
+  checks.push("the app selection bar carries the clipboard actions and the system menu is suppressed");
   assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Selecting text must not open the typing UI.");
   assert.equal(current.view.dom.getAttribute("inputmode"), "none", "Reading and selection keep the native keyboard suppressed.");
   const native = browser.getSelection()!;
