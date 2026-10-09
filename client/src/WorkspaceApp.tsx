@@ -38,6 +38,7 @@ import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import DocumentTabs from "./components/DocumentTabs";
 import DocumentChildTabs from "./components/DocumentChildTabs";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
+import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
 import DocumentViewsMenu from "./components/DocumentViewsMenu";
 import WorkspaceModeMenu from "./components/WorkspaceModeMenu";
@@ -3943,15 +3944,24 @@ function WorkspaceAppContent({
     </>;
   }
 
-  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat") {
+  /** Map View's menu: only actions that act on the map, with pin and close driving its split pane. */
+  function renderMapDocumentMenu(conversation: Conversation, dock?: GraphDockControls) {
+    return <DocumentMenu conversation={conversation} className="document-header-menu-trigger"
+      pinned={dock?.pinned} onTogglePin={dock ? () => dock.onTogglePin() : undefined}
+      onClose={dock ? () => dock.onClose() : undefined} onRename={handleRenameThread}
+      groups={state.groups} onAssignGroup={handleAssignConversationGroup} />;
+  }
+
+  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls) {
     const dockHeader = view === "chat" && pinnedDocumentIds.includes(conversation.id);
     return <DocumentPanel key={conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)}
       onMinimize={view === "chat" && !dockHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
-      onClose={view === "chat" && !dockHeader ? () => handleCloseDocument(conversation.id) : undefined}
+      onClose={view === "chat" && !dockHeader ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
+      headerLeading={dock?.leading}
       parentDocument={conversation.parentId ? state.conversations[conversation.parentId] : undefined}
       headerControls={dockHeader ? null : renderDocumentControls(conversation, view)}
-      documentMenu={dockHeader ? null : renderDocumentMenu(conversation)}
+      documentMenu={dockHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
@@ -4025,9 +4035,9 @@ function WorkspaceAppContent({
     </aside>;
   }
 
-  function renderDocumentWithMarginNotes(conversation: Conversation, view: "chat" | "graph" = "chat") {
+  function renderDocumentWithMarginNotes(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls) {
     return <div className="document-with-margin-notes">
-      {renderConversationChatPanel(conversation, view)}
+      {renderConversationChatPanel(conversation, view, dock)}
       {view === "chat" ? renderDocumentMarginNotes(conversation, view) : null}
     </div>;
   }
@@ -4335,7 +4345,8 @@ function WorkspaceAppContent({
                     }
                     onToggleGroup={handleToggleConversationGroup}
                     onUpdateGraphNodeLayouts={handleUpdateGraphNodeLayouts}
-                    renderDockedConversation={(conversationId, source) => {
+                    dockControlsInHeader
+                    renderDockedConversation={(conversationId, source, dock) => {
                       const conversation = state.conversations[conversationId];
   
                       return conversation
@@ -4344,7 +4355,7 @@ function WorkspaceAppContent({
                               source={source}
                               getPanelElement={() => graphPanelRefs.current[conversationId] ?? null}
                             />
-                            {renderDocumentWithMarginNotes(conversation, "graph")}
+                            {renderDocumentWithMarginNotes(conversation, "graph", dock)}
                           </>
                         : null;
                     }}

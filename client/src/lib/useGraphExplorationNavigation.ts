@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ConversationGraphDetail } from "./conversationGraph";
 import { normalizeEvidence, type GraphEvidenceRef, type GraphScope } from "./graphExploration";
 import type { GraphViewport } from "./graphInteractions";
@@ -100,30 +100,43 @@ function readHistory(key?: string): GraphHistory | null {
   } catch { return null; }
 }
 
+/** A pinned split pane keeps its document while the rest of the map navigates. */
+export function keepPinnedDock(location: GraphExplorationLocation, pinnedId: string | null): GraphExplorationLocation {
+  if (!pinnedId || location.dockedConversationId === pinnedId) return location;
+  return { ...location, dockedConversationId: pinnedId, source: location.source?.conversationId === pinnedId ? location.source : null };
+}
+
 export function useGraphExplorationNavigation(workspaceKey?: string) {
   const [initial] = useState(() => readHistory(workspaceKey));
   const [history, setHistory] = useState<GraphHistory>(() => initial ?? ({
     past: [], present: defaultGraphLocation(), future: [],
   }));
+  const [pinnedDockId, setPinnedDockIdState] = useState<string | null>(null);
+  const pinnedDockRef = useRef<string | null>(null);
   const update = useCallback((patch: Partial<GraphExplorationLocation> | ((current: GraphExplorationLocation) => Partial<GraphExplorationLocation>)) => {
-    setHistory((current) => ({ ...current, present: { ...current.present, ...(typeof patch === "function" ? patch(current.present) : patch) } }));
+    setHistory((current) => ({ ...current, present: keepPinnedDock({ ...current.present, ...(typeof patch === "function" ? patch(current.present) : patch) }, pinnedDockRef.current) }));
   }, []);
   const navigate = useCallback((patch: Partial<GraphExplorationLocation>) => {
     setHistory((current) => ({
       past: [...current.past.slice(-49), current.present],
-      present: { ...current.present, ...patch }, future: [],
+      present: keepPinnedDock({ ...current.present, ...patch }, pinnedDockRef.current), future: [],
     }));
   }, []);
   const back = useCallback(() => setHistory((current) => current.past.length ? {
-    past: current.past.slice(0, -1), present: current.past.at(-1)!, future: [current.present, ...current.future],
+    past: current.past.slice(0, -1), present: keepPinnedDock(current.past.at(-1)!, pinnedDockRef.current), future: [current.present, ...current.future],
   } : current), []);
   const forward = useCallback(() => setHistory((current) => current.future.length ? {
-    past: [...current.past, current.present], present: current.future[0], future: current.future.slice(1),
+    past: [...current.past, current.present], present: keepPinnedDock(current.future[0], pinnedDockRef.current), future: current.future.slice(1),
   } : current), []);
+  /** Pins the split pane to a document, or unpins it with null. */
+  const setPinnedDockId = useCallback((id: string | null) => {
+    pinnedDockRef.current = id;
+    setPinnedDockIdState(id);
+  }, []);
   useEffect(() => {
     if (!workspaceKey) return;
     try { sessionStorage.setItem(`margin-graph-location:${workspaceKey}`, JSON.stringify(history)); }
     catch { /* Navigation remains available when session storage is unavailable. */ }
   }, [history, workspaceKey]);
-  return { state: history.present, update, navigate, back, forward, canGoBack: history.past.length > 0, canGoForward: history.future.length > 0, restored: Boolean(initial) };
+  return { state: history.present, update, navigate, back, forward, pinnedDockId, setPinnedDockId, canGoBack: history.past.length > 0, canGoForward: history.future.length > 0, restored: Boolean(initial) };
 }

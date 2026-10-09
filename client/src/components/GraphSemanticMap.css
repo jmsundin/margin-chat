@@ -55,8 +55,20 @@
 .conversation-graph-dock-controls button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .semantic-map .conversation-graph-dock > .graph-map-evidence { padding-right: 48px; }
 .semantic-map .conversation-graph-dock-collapse { display: none; }
-/* Keep the docked document's own header buttons clear of the split view's close control. */
-.semantic-map .conversation-graph-dock-body .document-header-toolbar { padding-right: 40px; }
+/* The docked document's header holds the split pane controls: move and pin on the left, menu and close on the right. */
+.conversation-graph-dock-leading { display: flex; align-items: center; gap: 2px; flex: 0 1 auto; min-width: 0; }
+.conversation-graph-dock-leading button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.conversation-graph-dock-leading button:hover, .conversation-graph-dock-pin[aria-pressed="true"] { background: var(--button-active-surface); color: var(--ink); }
+.conversation-graph-dock-leading button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.conversation-graph-dock-leading svg { width: 15px; height: 15px; }
+.conversation-graph-dock-grip { cursor: grab; touch-action: none; }
+.conversation-graph-dock-grip:active { cursor: grabbing; }
+.conversation-graph-dock-leading .conversation-graph-dock-collapse { display: none; }
+.conversation-graph-dock-title { min-width: 0; margin-left: 4px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-left { grid-template-columns: min(60%, var(--personal-map-dock-width, 380px)) 8px minmax(0, 1fr); }
+.semantic-map .is-dock-left > .conversation-graph-dock { grid-column: 1; grid-row: 1; border-left: 0; border-right: 1px solid var(--line); }
+.semantic-map .is-dock-left > .conversation-graph-dock-resize { grid-column: 2; grid-row: 1; }
+.semantic-map .is-dock-left > .conversation-graph-viewport { grid-column: 3; grid-row: 1; }
 .semantic-map .conversation-graph-node.is-selected { display: flex; flex-direction: column; }
 .semantic-map .conversation-graph-node.is-selected .conversation-graph-node-select { flex: 0 0 auto; }
 .semantic-map .conversation-graph-node.is-selected .conversation-graph-node-head { padding: 0; min-height: 0; border: 0; }
@@ -184,7 +196,11 @@
   .semantic-map .conversation-graph-dock.is-collapsed .conversation-graph-dock-controls { left: 12px; top: 12px; }
   .semantic-map .conversation-graph-dock-resize { display: none; }
   .semantic-map .conversation-graph-dock-collapse { display: inline-flex; width: auto; padding: 0 8px; font-size: 12px; }
-  .semantic-map .conversation-graph-dock-body .document-header-toolbar { padding-right: 112px; }
+  .semantic-map .conversation-graph-dock.has-document-header.is-collapsed > .conversation-graph-dock-body { display: block; overflow: hidden; }
+  .semantic-map .conversation-graph-dock.has-document-header.is-collapsed .document-panel > :not(.document-header) { display: none; }
+  .semantic-map .conversation-graph-dock.has-document-header.is-collapsed .document-header { padding-top: 12px; }
+  .conversation-graph-dock-grip { display: none !important; }
+  .conversation-graph-dock-leading .conversation-graph-dock-collapse { display: inline-flex; flex: 0 0 auto; width: auto; padding: 0 8px; font-size: 12px; }
   .semantic-map .conversation-graph-minimap { display: none; }
 }
 @media (hover: none) {

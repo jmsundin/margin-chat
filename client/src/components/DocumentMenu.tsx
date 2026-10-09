@@ -168,9 +168,9 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         }
         if (event.key === "Tab") close(true);
       }}>
-      <button type="button" role="menuitem" disabled={!onTogglePin} onClick={() => action(onTogglePin)}>
+      {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
         {pinned ? "Unpin document" : "Pin document"}
-      </button>
+      </button> : null}
       {onRename ? <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => {
         close(true); setRenameTitle(conversation.title); setRenameOpen(true);
       }}>Rename document</button> : null}

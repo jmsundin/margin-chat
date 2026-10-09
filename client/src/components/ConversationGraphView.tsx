@@ -171,8 +171,27 @@ export interface ConversationGraphViewProps {
   onUpdateGraphNodeLayouts?: (
     nextLayouts: Record<string, Partial<GraphNodeLayout>>,
   ) => void;
-  renderDockedConversation?: (conversationId: string, source?: GraphEvidenceRef) => ReactNode;
+  renderDockedConversation?: (conversationId: string, source: GraphEvidenceRef | undefined, dock: GraphDockControls) => ReactNode;
   renderExpandedConversation?: (conversationId: string) => ReactNode;
+  /** The docked document draws the split pane controls in its own header. */
+  dockControlsInHeader?: boolean;
+}
+
+/** Split pane controls that the docked document shows in its own header. */
+export interface GraphDockControls {
+  /** Move handle, pin and (on phones) collapse, for the start of the header. */
+  leading: ReactNode;
+  pinned: boolean;
+  onTogglePin: () => void;
+  onClose: () => void;
+}
+
+type GraphDockSide = "left" | "right";
+const DOCK_SIDE_STORAGE_KEY = "margin-map-dock-side";
+
+function readDockSide(): GraphDockSide {
+  try { return localStorage.getItem(DOCK_SIDE_STORAGE_KEY) === "left" ? "left" : "right"; }
+  catch { return "right"; }
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -749,6 +768,7 @@ export default function ConversationGraphView({
   onUpdateGraphNodeLayouts,
   renderDockedConversation,
   renderExpandedConversation,
+  dockControlsInHeader = false,
 }: ConversationGraphViewProps) {
   const groupSemantics = useJevGroupCategories({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
     ready: !!jev?.ready && isVisible, conversations, groups });
@@ -790,6 +810,8 @@ export default function ConversationGraphView({
   const keyboardHintId = useId();
   const [dockWidth, setDockWidth] = useState(380);
   const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [dockSide, setDockSide] = useState<GraphDockSide>(readDockSide);
+  const dockMoveRef = useRef<{ pointerId: number; clientX: number; moved: boolean } | null>(null);
   const dockResizeRef = useRef<{ pointerId: number; clientX: number; width: number } | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const viewportStateRef = useRef<GraphViewport>(viewport);
@@ -1290,6 +1312,7 @@ export default function ConversationGraphView({
   const dockedConversation = dockedConversationId
     ? conversations[dockedConversationId] ?? null
     : null;
+  const dockPinned = Boolean(dockedConversationId) && navigation.pinnedDockId === dockedConversationId;
   const showMinimap = scene.nodes.length > 4 && !focusedLayout?.arranged && !browsingGroups && !documentsOnly;
   const stageStyle = {
     height: `${scene.height}px`,
@@ -1556,9 +1579,7 @@ export default function ConversationGraphView({
   }, [conversations, focusRequest, groups, navigation.navigate, onFocusRequestHandled, isVisible, documentsOnly, panelView]);
 
   useEffect(() => {
-    if (dockedConversationId && !dockedConversation) {
-      setDockedConversationId(null);
-    }
+    if (dockedConversationId && !dockedConversation) closeDock();
   }, [dockedConversation, dockedConversationId]);
 
   useEffect(() => {
@@ -1697,7 +1718,7 @@ export default function ConversationGraphView({
         return;
       }
 
-      if (dockedConversationId) {
+      if (dockedConversationId && !navigation.pinnedDockId) {
         setDockedConversationId(null);
         return;
       }
@@ -1984,14 +2005,69 @@ export default function ConversationGraphView({
     interactions.end(event, false);
   }
 
+  function renderDockLeading(conversation: Conversation) {
+    const title = conversation.title || "Untitled document";
+    const otherSide: GraphDockSide = dockSide === "right" ? "left" : "right";
+    return <div className="conversation-graph-dock-leading">
+      <button type="button" className="conversation-graph-dock-grip" aria-label={`Move side panel to the ${otherSide}`}
+        title={`Drag or click to move the panel to the ${otherSide}`}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          dockMoveRef.current = { pointerId: event.pointerId, clientX: event.clientX, moved: false };
+        }}
+        onPointerMove={(event) => {
+          const move = dockMoveRef.current;
+          if (move?.pointerId === event.pointerId && Math.abs(event.clientX - move.clientX) > 8) move.moved = true;
+        }}
+        onPointerUp={(event) => {
+          const move = dockMoveRef.current;
+          if (move?.pointerId !== event.pointerId || !move.moved) return;
+          const bounds = workspaceRef.current?.getBoundingClientRect();
+          if (bounds) moveDock(event.clientX < bounds.left + bounds.width / 2 ? "left" : "right");
+        }}
+        onPointerCancel={() => { dockMoveRef.current = null; }}
+        onClick={() => {
+          const dragged = dockMoveRef.current?.moved;
+          dockMoveRef.current = null;
+          if (!dragged) moveDock(otherSide);
+        }}>
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="5.5" cy="3.5" r="1.3"/><circle cx="10.5" cy="3.5" r="1.3"/><circle cx="5.5" cy="8" r="1.3"/><circle cx="10.5" cy="8" r="1.3"/><circle cx="5.5" cy="12.5" r="1.3"/><circle cx="10.5" cy="12.5" r="1.3"/></svg>
+      </button>
+      <button type="button" className="conversation-graph-dock-pin" aria-pressed={dockPinned}
+        aria-label={dockPinned ? `Unpin ${title} from the side panel` : `Pin ${title} in the side panel`}
+        title={dockPinned ? "Pinned: other documents won't replace this one. Click to unpin." : "Pin: keep this document open while you browse the map"}
+        onClick={() => navigation.setPinnedDockId(dockPinned ? null : conversation.id)}>
+        <svg viewBox="0 0 18 18" aria-hidden="true" fill={dockPinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m10 2 6 6-2 1-1 4-2 1-7-7 1-2 4-1 1-2Z"/><path d="m7 11-5 5" fill="none"/></svg>
+      </button>
+      <button className="conversation-graph-dock-collapse" type="button" aria-expanded={!dockCollapsed}
+        aria-label={dockCollapsed ? `Expand ${title}` : `Collapse ${title}`} onClick={() => setDockCollapsed((value) => !value)}>
+        {dockCollapsed ? "Expand" : "Collapse"}
+      </button>
+      {dockCollapsed ? <strong className="conversation-graph-dock-title" title={title}>{title}</strong> : null}
+    </div>;
+  }
+
   function resizeDock(width: number) {
     const available = workspaceRef.current?.clientWidth ?? 1000;
     setDockWidth(clamp(width, 280, Math.max(280, Math.min(640, available - 280))));
   }
 
+  function closeDock() {
+    navigation.setPinnedDockId(null);
+    setDockedConversationId(null);
+  }
+
+  function moveDock(side: GraphDockSide) {
+    setDockSide(side);
+    try { localStorage.setItem(DOCK_SIDE_STORAGE_KEY, side); }
+    catch { /* The panel still moves for this visit. */ }
+  }
+
   function handleDockResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.key === "ArrowLeft") resizeDock(dockWidth + 24);
-    else if (event.key === "ArrowRight") resizeDock(dockWidth - 24);
+    const grow = dockSide === "right" ? "ArrowLeft" : "ArrowRight";
+    if (event.key === grow) resizeDock(dockWidth + 24);
+    else if (event.key === (grow === "ArrowLeft" ? "ArrowRight" : "ArrowLeft")) resizeDock(dockWidth - 24);
     else if (event.key === "Home") resizeDock(280);
     else if (event.key === "End") resizeDock(640);
     else return;
@@ -2456,7 +2532,7 @@ export default function ConversationGraphView({
         </div> : null}
       <div
         className={
-          `conversation-graph-workspace${dockedConversation ? " has-docked-chat" : ""}`
+          `conversation-graph-workspace${dockedConversation ? " has-docked-chat" : ""}${dockSide === "left" ? " is-dock-left" : ""}`
         }
         ref={workspaceRef}
         style={{ "--personal-map-dock-width": `${dockWidth}px` } as CSSProperties}
@@ -2928,7 +3004,7 @@ export default function ConversationGraphView({
             }}
             onPointerMove={(event) => {
               const resize = dockResizeRef.current;
-              if (resize?.pointerId === event.pointerId) resizeDock(resize.width + resize.clientX - event.clientX);
+              if (resize?.pointerId === event.pointerId) resizeDock(resize.width + (dockSide === "right" ? resize.clientX - event.clientX : event.clientX - resize.clientX));
             }}
             onPointerUp={() => { dockResizeRef.current = null; }}
             onPointerCancel={() => { dockResizeRef.current = null; }}
@@ -2936,9 +3012,9 @@ export default function ConversationGraphView({
           />
           <aside
             aria-label={`Docked chat: ${dockedConversation.title}`}
-            className={`conversation-graph-dock${dockCollapsed ? " is-collapsed" : ""}`}
+            className={`conversation-graph-dock${dockCollapsed ? " is-collapsed" : ""}${dockControlsInHeader ? " has-document-header" : ""}`}
           >
-            <div className="conversation-graph-dock-controls">
+            {dockControlsInHeader ? null : <div className="conversation-graph-dock-controls">
               {dockCollapsed ? <strong>{dockedConversation.title}</strong> : null}
               <button className="conversation-graph-dock-collapse" type="button" aria-expanded={!dockCollapsed}
                 aria-label={dockCollapsed ? "Expand docked chat" : "Collapse docked chat"} onClick={() => setDockCollapsed((value) => !value)}>
@@ -2946,12 +3022,12 @@ export default function ConversationGraphView({
               </button>
               <button
                 aria-label={`Close ${dockedConversation.title} split view`}
-                onClick={() => setDockedConversationId(null)}
+                onClick={closeDock}
                 type="button"
               >
                 ×
               </button>
-            </div>
+            </div>}
             {source && resolvedSource ? <section className="graph-map-evidence" aria-label="Source passage">
               <div><strong>{source.sourceKind === "document" ? "Document passage" : source.sourceKind === "message" ? "Source message" : source.sourceKind === "standalone-note" ? "Source note" : "Selected discussion"}</strong><button type="button" onClick={() => navigation.update({ source: null })}>Close passage</button></div>
               {resolvedSource.status === "missing" || resolvedSource.status === "stale" ? <p role="status">{resolvedSource.status === "missing" ? "The source has been removed." : "The quoted passage has changed. Review the current text; the old quote is not highlighted."}</p> : null}
@@ -2960,7 +3036,12 @@ export default function ConversationGraphView({
               {resolvedSource.content ? <p className="graph-map-source-text">{resolvedSource.highlight ? <>{resolvedSource.content.slice(Math.max(0, resolvedSource.highlight.startOffset - 180), resolvedSource.highlight.startOffset)}<mark>{resolvedSource.content.slice(resolvedSource.highlight.startOffset, resolvedSource.highlight.endOffset)}</mark>{resolvedSource.content.slice(resolvedSource.highlight.endOffset, resolvedSource.highlight.endOffset + 220)}</> : excerpt(resolvedSource.content, 460)}</p> : null}
             </section> : null}
             <div className="conversation-graph-dock-body" ref={dockBodyRef} onScrollCapture={(event) => { if (event.target instanceof HTMLElement) navigation.update({ readerScroll: event.target.scrollTop }); }}>
-              {renderDockedConversation?.(dockedConversation.id, resolvedSource?.evidence ?? source ?? undefined) ?? (
+              {renderDockedConversation?.(dockedConversation.id, resolvedSource?.evidence ?? source ?? undefined, {
+                leading: renderDockLeading(dockedConversation),
+                pinned: dockPinned,
+                onTogglePin: () => navigation.setPinnedDockId(dockPinned ? null : dockedConversation.id),
+                onClose: closeDock,
+              }) ?? (
                 <div className="conversation-graph-dock-fallback">
                   {getPrimaryDocumentSources(dockedConversation).map((item) => (
                     <p key={item.sourceBlockId ?? item.messageId ?? item.noteId}>{item.content}</p>
