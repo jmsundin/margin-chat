@@ -28,6 +28,8 @@ export interface GravityCluster {
   fingerprint: string;
   center: Point;
   radius: number;
+  /** Set on date runs of unlinked documents. */
+  period?: { start: number; end: number };
 }
 
 export interface GravityClusterLayout {
@@ -35,6 +37,8 @@ export interface GravityClusterLayout {
   viewport: GraphViewport;
   clusters: GravityCluster[];
   clusterByDocumentId: Map<string, string>;
+  /** Groups of clusters, smallest first; empty for maps with few clusters. */
+  levels: GravityClusterLevel[];
 }
 
 function hash(value: string) {
@@ -132,32 +136,116 @@ function clusterCells(count: number) {
   return cells.slice(0, count);
 }
 
+type WeightedLink = { a: string; b: string; weight: number };
+
+/** Sums document links into links between the groups that hold them. */
+function groupLinks(connections: Connection[], groupOf: (documentId: string) => string | undefined): WeightedLink[] {
+  const weights = new Map<string, number>();
+  for (const { sourceId, targetId } of connections) {
+    const a = groupOf(sourceId), b = groupOf(targetId);
+    if (a === undefined || b === undefined || a === b) continue;
+    const key = a < b ? `${a}\n${b}` : `${b}\n${a}`;
+    weights.set(key, (weights.get(key) ?? 0) + 1);
+  }
+  return [...weights].map(([key, weight]) => {
+    const [a, b] = key.split("\n");
+    return { a, b, weight };
+  });
+}
+
+function formatMonth(time: number) {
+  return new Date(time).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+/** "Mar 2024" or "Mar 2024 – Jun 2024", for groups made by date rather than by links. */
+export function formatClusterPeriod(period: { start: number; end: number }) {
+  const start = formatMonth(period.start), end = formatMonth(period.end);
+  return start === end ? start : `${start} – ${end}`;
+}
+
+/** Splits items into date-ordered runs of about `size`, so unlinked material is grouped by when it was made. */
+function splitByTime<T extends { time?: number; id: string }>(items: T[], size: number) {
+  const ordered = [...items].sort((a, b) => (a.time ?? 0) - (b.time ?? 0) || (a.id < b.id ? -1 : 1));
+  const count = Math.max(1, Math.round(ordered.length / size));
+  return Array.from({ length: count }, (_, index) => ordered.slice(Math.floor(index * ordered.length / count), Math.floor((index + 1) * ordered.length / count)));
+}
+
+function median(values: number[]) {
+  if (!values.length) return undefined;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/** A group of clusters, or of groups; level 1 groups clusters, level 2 groups level 1, and so on. */
+export interface GravityClusterGroup extends GravityCluster {
+  level: number;
+  childIds: string[];
+  /** Groups of unlinked material are made by date; their span names them. */
+  period?: { start: number; end: number };
+}
+
+export interface GravityClusterLevel {
+  level: number;
+  groups: GravityClusterGroup[];
+  /** Link counts between this level's groups, for drawing bundled links. */
+  links: WeightedLink[];
+}
+
+/** Unlinked documents are split into date runs of about this many once they outgrow one island. */
+const UNLINKED_RUN_SIZE = 48;
+/** Above this many clusters, clusters are grouped into regions, and regions into larger regions. */
+export const CLUSTER_GROUPING_THRESHOLD = 36;
+const TOP_LEVEL_TARGET = 12;
+const MAX_GROUP_LEVELS = 4;
+
 /**
  * Lays each cluster out as an island around its hub, then settles the islands
  * so linked clusters drift together and none overlap. Deterministic for the
  * same documents and links; viewport changes never move it.
+ *
+ * Large maps are grouped further: clusters into regions by the links between
+ * them, regions into larger regions, until about a dozen remain. Each group is
+ * settled inside its parent, so a group's members always sit together.
  */
 export function layoutGravityClusters(
   nodes: ConversationGraphNodePlacement[],
   canvas: { width: number; height: number },
   connections: Connection[],
+  options: { createdAt?: (id: string) => number | undefined } = {},
 ): GravityClusterLayout {
   const ids = nodes.map((node) => node.conversationId);
-  const { clusters: groups } = findGravityClusters(ids, connections);
+  const { clusters: found } = findGravityClusters(ids, connections);
+  const groups: Array<{ hubId: string | null; memberIds: string[]; id: string; period?: { start: number; end: number } }> = [];
+  for (const group of found) {
+    if (group.hubId !== null) { groups.push({ ...group, id: `cluster:${group.hubId}` }); continue; }
+    const times = options.createdAt;
+    if (!times || group.memberIds.length <= UNLINKED_RUN_SIZE * 1.5) { groups.push({ ...group, id: UNLINKED_CLUSTER_ID }); continue; }
+    for (const run of splitByTime(group.memberIds.map((id) => ({ id, time: times(id) })), UNLINKED_RUN_SIZE)) {
+      const runTimes = run.map((item) => item.time ?? 0);
+      groups.push({ hubId: null, memberIds: run.map((item) => item.id), id: `${UNLINKED_CLUSTER_ID}:${run[0].id}`,
+        period: { start: Math.min(...runTimes), end: Math.max(...runTimes) } });
+    }
+  }
   const offsets = new Map<string, Point>();
   const clusterByDocumentId = new Map<string, string>();
   const islands = groups.map((group) => {
-    const id = group.hubId === null ? UNLINKED_CLUSTER_ID : `cluster:${group.hubId}`;
     const cells = clusterCells(group.memberIds.length);
     let radius = 0;
     group.memberIds.forEach((memberId, index) => {
       offsets.set(memberId, cells[index]);
-      clusterByDocumentId.set(memberId, id);
+      clusterByDocumentId.set(memberId, group.id);
       radius = Math.max(radius, cells[index].distance);
     });
-    return { ...group, id, fingerprint: clusterFingerprint(group.memberIds), radius: radius + Math.hypot(CARD.width, CARD.height) / 2 };
+    return { ...group, fingerprint: clusterFingerprint(group.memberIds), radius: radius + Math.hypot(CARD.width, CARD.height) / 2 };
   });
-  const centers = settleIslands(islands, connections, clusterByDocumentId);
+  const islandLinks = groupLinks(connections, (id) => clusterByDocumentId.get(id));
+  const centers = new Map<string, Point>();
+  const levels: GravityClusterLevel[] = [];
+  if (islands.length <= CLUSTER_GROUPING_THRESHOLD) {
+    for (const [id, center] of settleIslands(islands, islandLinks, CLUSTER_GAP)) centers.set(id, center);
+  } else {
+    layoutGroupedIslands(islands, islandLinks, connections, clusterByDocumentId, options.createdAt, centers, levels);
+  }
   const placed = nodes.map((node) => {
     const center = centers.get(clusterByDocumentId.get(node.conversationId)!)!;
     const offset = offsets.get(node.conversationId)!;
@@ -167,12 +255,95 @@ export function layoutGravityClusters(
     nodes: placed,
     viewport: fitNetworkMapViewport(placed, canvas),
     clusters: islands.map((island) => ({ id: island.id, hubId: island.hubId, memberIds: island.memberIds,
-      fingerprint: island.fingerprint, center: centers.get(island.id)!, radius: island.radius })),
+      fingerprint: island.fingerprint, center: centers.get(island.id)!, radius: island.radius,
+      ...(island.period ? { period: island.period } : {}) })),
     clusterByDocumentId,
+    levels,
   };
 }
 
-function settleIslands(islands: Array<{ id: string; radius: number }>, connections: Connection[], clusterOf: Map<string, string>) {
+type Item = { id: string; radius: number; memberIds: string[]; hubId: string | null; time?: number; period?: { start: number; end: number } };
+
+/**
+ * Builds the group levels bottom-up, then places them top-down: each group's
+ * children are settled around its center, so positions nest.
+ */
+function layoutGroupedIslands(islands: Item[], islandLinks: WeightedLink[], connections: Connection[],
+  clusterOf: Map<string, string>, createdAt: ((id: string) => number | undefined) | undefined,
+  centers: Map<string, Point>, levels: GravityClusterLevel[]) {
+  const timeOf = (memberIds: string[]) => createdAt ? median(memberIds.flatMap((id) => createdAt(id) ?? [])) : undefined;
+  let items: Item[] = islands.map((island) => ({ ...island, time: island.period ? island.period.start : timeOf(island.memberIds) }));
+  let links = islandLinks;
+  let gap = CLUSTER_GAP;
+  // Children's centers relative to their group's center, filled as each level is built.
+  const relative = new Map<string, Point>();
+  // The current level's item holding each document.
+  const itemOfDocument = new Map(clusterOf);
+  const parentOf = new Map<string, string>();
+  for (let level = 1; level <= MAX_GROUP_LEVELS && items.length > TOP_LEVEL_TARGET; level++) {
+    const byId = new Map(items.map((item) => [item.id, item]));
+    const { clusters } = findGravityClusters(items.map((item) => item.id), links.map(({ a, b }) => ({ sourceId: a, targetId: b })));
+    const made: Array<{ childIds: string[]; hubChild: string | null; period?: { start: number; end: number } }> = [];
+    for (const cluster of clusters) {
+      if (cluster.hubId !== null) { made.push({ childIds: cluster.memberIds, hubChild: cluster.hubId }); continue; }
+      // Items with no links to other items are grouped by date instead.
+      const size = Math.max(4, Math.ceil(Math.sqrt(items.length)));
+      for (const run of splitByTime(cluster.memberIds.map((id) => byId.get(id)!), size)) {
+        const times = run.flatMap((item) => item.time === undefined ? [] : [item.period?.start ?? item.time, item.period?.end ?? item.time]);
+        made.push({ childIds: run.map((item) => item.id), hubChild: null, period: times.length ? { start: Math.min(...times), end: Math.max(...times) } : undefined });
+      }
+    }
+    if (made.length >= items.length * 0.9) break;
+    const madeOf = new Map(made.flatMap((group, position) => group.childIds.map((id) => [id, position] as const)));
+    const innerLinks = made.map(() => [] as WeightedLink[]);
+    for (const link of links) if (madeOf.get(link.a) === madeOf.get(link.b)) innerLinks[madeOf.get(link.a)!].push(link);
+    gap *= 1.6;
+    const groups: GravityClusterGroup[] = [];
+    const nextItems: Item[] = [];
+    for (const [position, group] of made.entries()) {
+      const children = group.childIds.map((id) => byId.get(id)!).sort((a, b) => b.memberIds.length - a.memberIds.length || (a.id < b.id ? -1 : 1));
+      const largestLinked = children.find((child) => child.hubId !== null);
+      const hubId = group.hubChild ? byId.get(group.hubChild)!.hubId : largestLinked?.hubId ?? null;
+      const id = `group${level}:${group.hubChild ?? children[0].id}`;
+      const local = settleIslands(children, innerLinks[position], gap / 1.6);
+      let radius = 0;
+      for (const child of children) {
+        const center = local.get(child.id)!;
+        relative.set(child.id, center);
+        parentOf.set(child.id, id);
+        radius = Math.max(radius, Math.hypot(center.x, center.y) + child.radius);
+      }
+      // Hubs of the biggest children lead, so labeling prompts see them first.
+      const hubs = children.flatMap((child) => child.hubId ? [child.hubId] : []);
+      const hubSet = new Set(hubs);
+      const memberIds = [...hubs, ...children.flatMap((child) => child.memberIds.filter((memberId) => !hubSet.has(memberId)))];
+      const period = group.period;
+      groups.push({ id, level, hubId, childIds: children.map((child) => child.id), memberIds, fingerprint: clusterFingerprint(memberIds),
+        center: { x: 0, y: 0 }, radius: radius + gap / 4, ...(period ? { period } : {}) });
+      nextItems.push({ id, radius: radius + gap / 4, memberIds, hubId, time: period?.start ?? timeOf(hubs.length ? hubs : memberIds.slice(0, 50)), period });
+    }
+    for (const [documentId, itemId] of itemOfDocument) itemOfDocument.set(documentId, parentOf.get(itemId)!);
+    links = groupLinks(connections, (documentId) => itemOfDocument.get(documentId));
+    levels.push({ level, groups, links });
+    items = nextItems;
+  }
+  // Top level: settle the remaining items, then resolve absolute centers downward.
+  const top = settleIslands(items, links, gap * 1.6);
+  const absolute = (id: string): Point => {
+    const known = centers.get(id);
+    if (known) return known;
+    const parent = parentOf.get(id);
+    const offset = parent ? relative.get(id)! : top.get(id)!;
+    const base = parent ? absolute(parent) : { x: 0, y: 0 };
+    const point = { x: base.x + offset.x, y: base.y + offset.y };
+    centers.set(id, point);
+    return point;
+  };
+  for (const level of levels) for (const group of level.groups) group.center = absolute(group.id);
+  for (const island of islands) absolute(island.id);
+}
+
+function settleIslands(islands: Array<{ id: string; radius: number }>, links: WeightedLink[], gap: number) {
   const count = islands.length;
   const index = new Map(islands.map((island, position) => [island.id, position]));
   const x = new Float64Array(count), y = new Float64Array(count);
@@ -183,26 +354,19 @@ function settleIslands(islands: Array<{ id: string; radius: number }>, connectio
     const distance = position === 0 ? 0 : Math.sqrt(area) * 1.15 + radius[position];
     const angle = position * GOLDEN_ANGLE;
     x[position] = Math.cos(angle) * distance; y[position] = Math.sin(angle) * distance;
-    area += (radius[position] * 2 + CLUSTER_GAP) ** 2;
+    area += (radius[position] * 2 + gap) ** 2;
   }
-  const weights = new Map<string, number>();
-  for (const { sourceId, targetId } of connections) {
-    const a = index.get(clusterOf.get(sourceId) ?? ""), b = index.get(clusterOf.get(targetId) ?? "");
-    if (a === undefined || b === undefined || a === b) continue;
-    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
-    weights.set(key, (weights.get(key) ?? 0) + 1);
-  }
-  const links = [...weights].map(([key, weight]) => {
-    const [a, b] = key.split(":").map(Number);
-    return { a, b, strength: Math.log2(1 + weight) };
+  const springs = links.flatMap(({ a, b, weight }) => {
+    const first = index.get(a), second = index.get(b);
+    return first === undefined || second === undefined ? [] : [{ a: first, b: second, strength: Math.log2(1 + weight) }];
   });
   const rounds = count > 2000 ? 24 : count > 300 ? 60 : 120;
   for (let round = 0; round < rounds; round++) {
     const cooling = 1 - round / rounds;
-    for (const { a, b, strength } of links) {
+    for (const { a, b, strength } of springs) {
       const vx = x[b] - x[a], vy = y[b] - y[a];
       const distance = Math.max(1, Math.hypot(vx, vy));
-      const rest = radius[a] + radius[b] + CLUSTER_GAP;
+      const rest = radius[a] + radius[b] + gap;
       if (distance <= rest) continue;
       const pull = (distance - rest) / distance * 0.05 * strength * cooling;
       const shareA = radius[b] / (radius[a] + radius[b]), shareB = 1 - shareA;
@@ -212,23 +376,23 @@ function settleIslands(islands: Array<{ id: string; radius: number }>, connectio
     for (let position = 0; position < count; position++) {
       x[position] -= x[position] * 0.01 * cooling; y[position] -= y[position] * 0.01 * cooling;
     }
-    separate(x, y, radius);
+    separate(x, y, radius, gap);
   }
-  for (let round = 0; round < 40; round++) if (!separate(x, y, radius)) break;
+  for (let round = 0; round < 40; round++) if (!separate(x, y, radius, gap)) break;
   return new Map(islands.map((island, position) => [island.id, { x: x[position], y: y[position] }]));
 }
 
 /** Sweep-and-prune circle separation; returns whether anything moved. */
-function separate(x: Float64Array, y: Float64Array, radius: Float64Array) {
+function separate(x: Float64Array, y: Float64Array, radius: Float64Array, gap: number) {
   const order = Array.from(x, (_, position) => position).sort((a, b) => (x[a] - radius[a]) - (x[b] - radius[b]) || a - b);
   let moved = false;
   for (let i = 0; i < order.length; i++) {
     const a = order[i];
     for (let j = i + 1; j < order.length; j++) {
       const b = order[j];
-      if (x[b] - radius[b] > x[a] + radius[a] + CLUSTER_GAP) break;
+      if (x[b] - radius[b] > x[a] + radius[a] + gap) break;
       let vx = x[b] - x[a], vy = y[b] - y[a];
-      const minimum = radius[a] + radius[b] + CLUSTER_GAP;
+      const minimum = radius[a] + radius[b] + gap;
       const distanceSquared = vx * vx + vy * vy;
       if (distanceSquared >= minimum * minimum) continue;
       let distance = Math.sqrt(distanceSquared);
