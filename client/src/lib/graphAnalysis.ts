@@ -1,6 +1,8 @@
 import type { Conversation, ConversationGroup } from "../types";
+import { getDocumentGraphEdges } from "./documentRelations";
 
-export type GraphAnalysisRelationKind = "branch" | "link";
+/** `relation` covers typed relations and links written in a document's text. */
+export type GraphAnalysisRelationKind = "branch" | "link" | "relation";
 export interface GraphAnalysisEdge {
   id: string;
   sourceId: string;
@@ -8,7 +10,7 @@ export interface GraphAnalysisEdge {
   kind: GraphAnalysisRelationKind;
 }
 
-/** Parent → child and authored source → target. A pair may have both kinds. */
+/** Parent → child, authored source → target, and typed or written relations. A pair may have several kinds. */
 export function getGraphAnalysisEdges(conversations: Record<string, Conversation>): GraphAnalysisEdge[] {
   const edges = new Map<string, GraphAnalysisEdge>();
   const add = (sourceId: string, targetId: string, kind: GraphAnalysisRelationKind) => {
@@ -20,6 +22,7 @@ export function getGraphAnalysisEdges(conversations: Record<string, Conversation
     if (conversation.parentId) add(conversation.parentId, conversation.id, "branch");
     for (const targetId of conversation.linkedConversationIds ?? []) add(conversation.id, targetId, "link");
   }
+  for (const edge of getDocumentGraphEdges(conversations)) add(edge.sourceId, edge.targetId, "relation");
   return [...edges.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 

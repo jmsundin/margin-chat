@@ -60,10 +60,12 @@ describe("three-way vault merge", () => {
     expect(result.file?.content).toBe(base.replace("red", "green").replace("blue", "purple"));
   });
 
-  test("delete/edit preserves deletion and reports an alternative", () => {
-    expect(mergeVaultFile("Note.md", file("Base"), null, file("Remote edit"))).toEqual({ file: null, conflicted: true });
-    expect(mergeVaultFile("Note.md", file("Base"), file("Local edit"), null)).toEqual({ file: null, conflicted: true });
+  test("an edit beats a concurrent delete of a document and reports the conflict", () => {
+    expect(mergeVaultFile("Note.md", file("Base"), null, file("Remote edit"))).toEqual({ file: file("Remote edit"), conflicted: true });
+    expect(mergeVaultFile("Note.md", file("Base"), file("Local edit"), null)).toEqual({ file: file("Local edit"), conflicted: true });
     expect(mergeVaultFile("Note.md", file("Base"), file("Base"), null)).toEqual({ file: null, conflicted: false });
+    // Other files keep the deletion.
+    expect(mergeVaultFile("image.png", { content: "AQ==", encoding: "base64" }, { content: "Ag==", encoding: "base64" }, null)).toEqual({ file: null, conflicted: true });
   });
 
   test("unknown ancestry, binary and unsupported formats choose a recoverable cloud version", () => {

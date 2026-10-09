@@ -47,6 +47,26 @@ The body records authorship using `<ai id="block-id">…</ai>` for AI-origin blo
 
 Custom YAML fields and source bytes outside app-edited fields remain intact. Preserve generated wrappers and their IDs when editing in another app. Ordinary prose, headings, links, and formatting can be edited directly. A fingerprint detects external edits to an AI block and records mixed authorship. Parent, child, annotation, and linked-document relationships use readable wiki links, and generated attachments use relative Markdown links. Renaming an app-managed document updates its filename and incoming managed links while keeping its stable identity and previous path aliases. A filename chosen in another app is retained when its title changes in Margin Chat.
 
+### Graph properties
+
+Graph data lives in ordinary frontmatter properties that Obsidian's Properties view, graph, and backlinks can read. Margin Chat writes them as one-line JSON values and reads block-style YAML lists and maps written by other editors:
+
+```yaml
+type: "question"
+tags: [margin-chat, document, physics/quantum]
+contradicts: ["[[Bell test — k3x9q-2m7f|Bell test]]"]
+cites: ["[[Aspect 1982 — p8w2a-91cd#^r3|Aspect 1982]]", "[[Not in this vault yet]]"]
+edge-meta: {"contradicts/bell-id": {"weight": 0.9, "origin": "ai", "from": "n1", "note": "Bell violations"}}
+```
+
+- `type`: one short node type such as `question`, `claim`, `source`, or `person`.
+- `tags`: real tags. `margin-chat` and `document` are always written first and are not shown as the user's tags.
+- Relation properties hold wiki links from one document to others. Only the curated vocabulary is read as relations: `supports`, `contradicts`, `cites`, `elaborates`, `example-of`, `part-of`, `depends-on`, and `same-as`. Any other property holding a link, such as `author: "[[Ada]]"`, stays an ordinary property. A link can point at a block with `#^block-id`. Only the source document stores a relation; inverses ("cited by") are derived.
+- `edge-meta`: optional attributes per relation, keyed `<type>/<target document id>` (or the link text when the target is not in the vault): `weight` (0 to 1), `origin` (`user`, `ai`, or `import`), `from` (the source block), `note`, and `created`.
+- A link whose target is missing keeps its text and is rewritten unchanged on save, so it starts working when the document arrives.
+
+Wiki links written in a document's text also become map edges ("Mentions"). An inline field such as `[supports:: [[Claim]]]` or `depends-on:: [[Base]]` gives the link a relation type. Links inside code and `%%` comments are ignored. In the map, relations are colored by type, dashed when an AI proposed them, and directed types draw an arrow; selecting an edge shows its details and lets the user change its type, save a mention as a relation, turn a relation back into an untyped connection, or remove it.
+
 The current manifest format is version 5; version 3 and 4 manifests and earlier comment-based files remain readable. Existing files are preserved on read, and saving a changed file migrates it to the current representation. A compatibility comment makes older clients reject the new format rather than mistake it for an ordinary note. Reload older Margin Chat tabs before editing newly formatted files.
 
 Saving content updates Markdown before projection. Postgres rebuilds workspace rows from those files and restores original attachment records from the vault. Attachment embeddings are regenerated on demand when a restored attachment is used, with the user's permitted embedding credentials. A failed index operation leaves the original intact and does not publish a successful projection checkpoint.
@@ -69,7 +89,7 @@ On first use, the browser imports its previous local workspace snapshot into the
 
 Different legacy copies have no proven common base. The current cloud version remains active, and divergent device content is retained in background history. Existing Postgres data is retained as a projection; there is no destructive database migration. Migration cannot recover attachment bytes that were already deleted or never retained by an older installation. Such originals must be recovered from an independent copy or attached again.
 
-Each edit retains its actual base revision. Independent file edits synchronize separately. Competing Markdown changes use a three-way merge of the shared base, device version, and cloud/current version. Stable document blocks are matched before merging their text, so independent changes can survive in the same document. Overlapping passages use the newer recorded block edit; legacy messages and plain notes use document/header edit times. Independent changes on either side still merge. Equal, missing, invalid, or timezone-less times keep the current cloud wording. Recorded times are a deterministic preference, not proof of actual chronology: device clock skew and external editors that do not update timestamps can affect the choice. The merge does not ask the user to choose or add conflict markers to their document.
+Each edit retains its actual base revision. Independent file edits synchronize separately. Competing Markdown changes use a three-way merge of the shared base, device version, and cloud/current version. Stable document blocks are matched before merging their text, so independent changes can survive in the same document. Frontmatter merges property by property: changes to different properties both land, list properties (relations, tags, aliases) merge as sets so links added on two devices are both kept and a removed link stays removed, and `edge-meta` merges per relation and per attribute. The same scalar property changed two ways keeps the newer document's value. Overlapping passages use the newer recorded block edit; legacy messages and plain notes use document/header edit times. Independent changes on either side still merge. Equal, missing, invalid, or timezone-less times keep the current cloud wording. Recorded times are a deterministic preference, not proof of actual chronology: device clock skew and external editors that do not update timestamps can affect the choice. The merge does not ask the user to choose or add conflict markers to their document.
 
 Passage links, annotations, and branch anchors follow surviving text through a merge. If a passage was deleted or cannot be identified unambiguously, its historical quote is retained with a detached anchor. Pending generation replacements and undo restoration positions are also rebased so they cannot overwrite unrelated text; historical prompt selections remain unchanged.
 
@@ -77,7 +97,7 @@ Three-way refers to those three versions, not a device limit. Each device keeps 
 
 Automatic merges keep one current document. There is no alternative-versions chooser, count, or task to review conflicts: the storage UI reports saving, saved, waiting to sync, and up-to-date states. Real save/sync errors remain visible. Available ancestors, original inputs, and results are retained in hidden `.margin-chat/history/<id>/` records before working files are published. Recovery data travels with sync and vault downloads; older `_conflicts/` records remain valid. This is background safety history, not another document to reconcile.
 
-Unknown ancestry, binary attachments, unsupported or unsafe document structures, and changes exceeding the bounded merge budget use a conservative fallback: retain the cloud or currently active file and save the competing version for recovery. Deletions create tombstones and remain deleted when a competing offline edit arrives; that edit is saved for recovery without silently resurrecting the document. Immutable history currently has no automatic pruning policy.
+Unknown ancestry, binary attachments, unsupported or unsafe document structures, and changes exceeding the bounded merge budget use a conservative fallback: retain the cloud or currently active file and save the competing version for recovery. Deletions create tombstones. When a competing offline edit of a deleted Markdown document arrives, the edit wins: the document comes back and the deletion is recorded as a conflict in history. A deleted binary attachment stays deleted, and the competing bytes are saved for recovery. Immutable history currently has no automatic pruning policy.
 
 Markdown renames retain their stable document identity. The old-path change and new-path change are published in the same cloud commit, including connected swaps or rename chains, so another device never sees half of a rename. Competing edits and renames reconcile at the surviving cloud path, with original inputs retained in background history. A connected set of renames that exceeds a single server commit's limits remains local until it can be synchronized safely.
 

@@ -76,3 +76,4 @@ export function isSafeMarkdownPath(path: string): boolean;
 export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
 
 export function preserveMarkdownFileLocation(source: string, currentSource: string, path: string): string;
+export { markdownIdentitySuffix } from "./markdownPaths.mjs";

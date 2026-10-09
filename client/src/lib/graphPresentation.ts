@@ -433,13 +433,14 @@ export function placeMapTerritories(territories: MapTerritory[], viewport: Graph
   });
 }
 
-export type MapConnections = Record<string, Pick<Conversation, "parentId" | "linkedConversationIds">>;
+export type MapConnections = Record<string, Pick<Conversation, "parentId" | "linkedConversationIds"> & Partial<Pick<Conversation, "relations">>>;
 export function territoryConnections(territories: MapTerritory[], conversations: MapConnections) {
   const membership = new Map(territories.flatMap((territory) => territory.nodes.map((node) => [node.conversationId, territory.id] as const)));
   const connections = new Map<string, { from: string; to: string; count: number }>();
   const seen = new Set<string>();
   for (const [id, conversation] of Object.entries(conversations)) {
-    for (const target of [conversation.parentId, ...(conversation.linkedConversationIds ?? [])]) {
+    for (const target of [conversation.parentId, ...(conversation.linkedConversationIds ?? []),
+      ...(conversation.relations ?? []).map((relation) => relation.targetConversationId)]) {
       if (!target) continue;
       const from = membership.get(id);
       const to = membership.get(target);

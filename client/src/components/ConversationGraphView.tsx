@@ -43,6 +43,8 @@ import GraphOverviewCanvas from "./GraphOverviewCanvas";
 import { GraphAnalysisViews } from "./GraphAnalysisViews";
 import { GraphEvidenceView } from "./GraphEvidenceView";
 import { getGraphAnalysisEdges } from "../lib/graphAnalysis";
+import { DOCUMENT_RELATION_TYPES, documentGraphEdgeLabel, getDocumentGraphEdges, getDocumentRelationType, type DocumentGraphEdge } from "../lib/documentRelations";
+import type { DocumentRelationTypeId } from "../types";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
 import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterLayout } from "../lib/gravityClusters";
 import { useClusterLabels } from "../lib/useClusterLabels";
@@ -141,6 +143,8 @@ export interface ConversationGraphViewProps {
   connectingConversationId?: string | null;
   onConnectConversation?: (sourceId: string, targetId: string) => void;
   onRemoveConnection?: (sourceId: string, targetId: string) => void;
+  /** Give a connection a relation type, change it, or (`null`) make it untyped; `remove` deletes it. */
+  onSetRelation?: (args: { sourceId: string; targetId: string; type: DocumentRelationTypeId | null; previousType: DocumentRelationTypeId | null; remove?: boolean }) => void;
   workspaceKey?: string;
   onFocusRequestHandled?: (requestId: number) => void;
   relatedItems?: Array<{ id: string; score: number }>;
@@ -724,6 +728,7 @@ export default function ConversationGraphView({
   connectingConversationId,
   onConnectConversation,
   onRemoveConnection,
+  onSetRelation,
   workspaceKey,
   onFocusRequestHandled,
   relatedItems = EMPTY_RELATED_ITEMS,
@@ -768,6 +773,7 @@ export default function ConversationGraphView({
   const [conceptSaveError, setConceptSaveError] = useState(false);
   const [inspectedEdge, setInspectedEdge] = useState<GraphAggregatedEdge | null>(null);
   const [inspectedPersonalConnection, setInspectedPersonalConnection] = useState<[string, string] | null>(null);
+  const [inspectedRelationId, setInspectedRelationId] = useState<string | null>(null);
   const [inspectedOverviewSources, setInspectedOverviewSources] = useState<string[]>([]);
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -849,12 +855,15 @@ export default function ConversationGraphView({
     return Math.max(Number.EPSILON, Math.min(GRAPH_SCALE_MIN,
       1 / (Math.max(1, bounds.width, bounds.height) * 1024)));
   }, [completeScene]);
+  const documentGraphEdges = useMemo(() => getDocumentGraphEdges(conversations), [conversations]);
+  const inspectedRelation = inspectedRelationId ? documentGraphEdges.find((edge) => edge.id === inspectedRelationId) ?? null : null;
   const allDocumentConnections = useMemo(() => getGraphAnalysisEdges(conversations)
     .filter((edge) => edge.kind === "branch" ? showBranches : showLinks), [conversations, showBranches, showLinks]);
   const relationshipConversations = useMemo(() => showBranches && showLinks ? conversations
     : Object.fromEntries(Object.entries(conversations).map(([id, conversation]) => [id, { ...conversation,
       parentId: showBranches ? conversation.parentId : null, childIds: showBranches ? conversation.childIds : [],
       linkedConversationIds: showLinks ? conversation.linkedConversationIds : [],
+      relations: showLinks ? conversation.relations : undefined,
     }])), [conversations, showBranches, showLinks]);
   const scopedIds = useMemo(() => {
     const ids = scope.kind === "focus"
@@ -1314,7 +1323,7 @@ export default function ConversationGraphView({
       { width: canvas.clientWidth, height: canvas.clientHeight }, { maxScale: 0.65 }) : nextViewport;
     viewportStateRef.current = atlasViewport;
     setInspectedEdge(null);
-    setInspectedPersonalConnection(null);
+    setInspectedPersonalConnection(null); setInspectedRelationId(null);
     setSearchOpen(false);
     setExplorerOpen(false);
     navigation.update({ viewport: atlasViewport, ...(returningFromGrid ? { scope: { kind: "all" } as GraphScope } : {}), focusedTerritoryId: null, focusedTerritoryScale: null,
@@ -2120,7 +2129,7 @@ export default function ConversationGraphView({
   function chooseViewMode(nextMode: GraphViewMode) {
     interactions.cancel();
     setInspectedEdge(null);
-    setInspectedPersonalConnection(null);
+    setInspectedPersonalConnection(null); setInspectedRelationId(null);
     setInspectedOverviewSources([]);
     setMultiSelectedConversationIds(new Set());
     setIsMultiSelectActive(false);
@@ -2160,7 +2169,7 @@ export default function ConversationGraphView({
     if (!conversations[conversationId]) return;
     interactions.cancel();
     setInspectedEdge(null);
-    setInspectedPersonalConnection(null);
+    setInspectedPersonalConnection(null); setInspectedRelationId(null);
     setInspectedOverviewSources([]);
     setMultiSelectedConversationIds(new Set());
     setIsMultiSelectActive(false);
@@ -2193,7 +2202,7 @@ export default function ConversationGraphView({
   function fitTerritory(territory: MapTerritory) {
     interactions.cancel();
     setInspectedEdge(null);
-    setInspectedPersonalConnection(null);
+    setInspectedPersonalConnection(null); setInspectedRelationId(null);
     setInspectedOverviewSources([]);
     setMultiSelectedConversationIds(new Set());
     setIsMultiSelectActive(false);
@@ -2207,7 +2216,7 @@ export default function ConversationGraphView({
   function showAllGroups() {
     interactions.cancel();
     setInspectedEdge(null);
-    setInspectedPersonalConnection(null);
+    setInspectedPersonalConnection(null); setInspectedRelationId(null);
     setInspectedOverviewSources([]);
     setMultiSelectedConversationIds(new Set());
     setIsMultiSelectActive(false);
@@ -2221,7 +2230,7 @@ export default function ConversationGraphView({
   function showDocuments() {
     interactions.cancel();
     setInspectedEdge(null);
-    setInspectedPersonalConnection(null);
+    setInspectedPersonalConnection(null); setInspectedRelationId(null);
     setInspectedOverviewSources([]);
     setMultiSelectedConversationIds(new Set());
     setIsMultiSelectActive(false);
@@ -2237,7 +2246,7 @@ export default function ConversationGraphView({
   function chooseDocumentLayout(mode: DocumentLayoutMode) {
     interactions.cancel();
     setInspectedEdge(null);
-    setInspectedPersonalConnection(null);
+    setInspectedPersonalConnection(null); setInspectedRelationId(null);
     setAutoArrangeError(null);
     navigation.navigate({ documentLayoutMode: mode, selectedConversationId: focusedNodeId,
       dockedConversationId: null, source: null, detailLevel: "compact" });
@@ -2587,6 +2596,28 @@ export default function ConversationGraphView({
                   <text x={geometry.labelX} y={geometry.labelY - 8}>My connection</text>
                 </g>];
               }))}
+              <defs>
+                {[...DOCUMENT_RELATION_TYPES.map((type) => type.id), "mention"].map((id) => <marker key={id} id={`graph-relation-arrow-${id}`} className={`graph-relation-arrow is-${id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" /></marker>)}
+              </defs>
+              {(showLinks ? documentGraphEdges : []).flatMap((edge) => {
+                const placement = scenePlacementsById.get(edge.sourceId);
+                const target = scenePlacementsById.get(edge.targetId);
+                if (!placement || !target || hiddenConversationIds.has(edge.sourceId) || hiddenConversationIds.has(edge.targetId)) return [];
+                const geometry = documentsOnly ? documentConnectionGeometry(placement, target, documentLayoutMode)
+                  : curvedGraphConnection({ startX: placement.x + placement.width / 2, startY: placement.y + placement.height / 2,
+                    endX: target.x + target.width / 2, endY: target.y + target.height / 2 });
+                const label = documentGraphEdgeLabel(edge);
+                const typeClass = edge.type ?? "mention";
+                const open = () => { setInspectedPersonalConnection(null); setInspectedRelationId(edge.id); };
+                return [<g key={edge.id} className={`graph-relation-edge is-${typeClass} is-${edge.kind}${edge.origin === "ai" ? " is-ai" : ""}`} data-graph-ui="true" role="button" tabIndex={0}
+                  aria-label={`${label}: ${conversations[edge.sourceId].title} ${edge.directed ? "to" : "and"} ${conversations[edge.targetId].title}`}
+                  onClick={open} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } }}>
+                  <path className="graph-map-edge-hit" d={geometry.path} />
+                  <path className="graph-relation-edge-line" d={geometry.path} style={edge.weight !== undefined ? { strokeWidth: 1 + edge.weight * 3 } : undefined}
+                    markerEnd={edge.directed ? `url(#graph-relation-arrow-${typeClass})` : undefined} />
+                  <text x={geometry.labelX} y={geometry.labelY - 8}>{label}</text>
+                </g>];
+              })}
               {(showBranches ? aggregateEdges : []).map((edge) => {
                 const geometry = curvedGraphConnection(edge);
                 return <g key={edge.id} className="graph-map-aggregate-edge" data-graph-ui="true" role="button" tabIndex={0} aria-label={`Inspect ${edge.count} branch relationship${edge.count === 1 ? "" : "s"}`} onClick={() => setInspectedEdge(edge)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedEdge(edge); } }}>
@@ -2683,8 +2714,22 @@ export default function ConversationGraphView({
             <header><strong>My connection</strong><button type="button" aria-label="Close my connection" onClick={() => setInspectedPersonalConnection(null)}>×</button></header>
             <p>{conversations[inspectedPersonalConnection[0]].title} ↔ {conversations[inspectedPersonalConnection[1]].title}</p>
             <p>You added this relationship to your workspace.</p>
-            {onRemoveConnection ? <button type="button" onClick={() => { onRemoveConnection(...inspectedPersonalConnection); setInspectedPersonalConnection(null); }}>Remove connection</button> : null}
+            {onSetRelation ? <label className="graph-relation-type-picker">Relation type
+              <select value="" onChange={(event) => { const type = event.target.value as DocumentRelationTypeId; if (!type) return;
+                onSetRelation({ sourceId: inspectedPersonalConnection[0], targetId: inspectedPersonalConnection[1], type, previousType: null }); setInspectedPersonalConnection(null); setInspectedRelationId(null); }}>
+                <option value="">Untyped connection</option>
+                {DOCUMENT_RELATION_TYPES.map((type) => <option key={type.id} value={type.id}>{conversations[inspectedPersonalConnection[0]].title} {type.label.toLowerCase()} {conversations[inspectedPersonalConnection[1]].title}</option>)}
+              </select>
+            </label> : null}
+            {onRemoveConnection ? <button type="button" onClick={() => { onRemoveConnection(...inspectedPersonalConnection); setInspectedPersonalConnection(null); setInspectedRelationId(null); }}>Remove connection</button> : null}
           </section> : null}
+          {inspectedRelation ? <RelationInspector edge={inspectedRelation} conversations={conversations} onClose={() => setInspectedRelationId(null)}
+            onOpenSource={() => { const evidence = relationEvidence(inspectedRelation); setInspectedRelationId(null); openEvidence(evidence); }}
+            onSetRelation={onSetRelation ? (type, remove) => {
+              onSetRelation({ sourceId: inspectedRelation.sourceId, targetId: inspectedRelation.targetId, type,
+                previousType: inspectedRelation.kind === "relation" ? inspectedRelation.type : null, remove });
+              setInspectedRelationId(null);
+            } : undefined} /> : null}
           {inspectedEdge ? <section className="graph-map-edge-inspector" data-graph-ui="true" aria-label="Branch connection details">
             <header><strong>{inspectedEdge.count} branch relationship{inspectedEdge.count === 1 ? "" : "s"}</strong><button type="button" aria-label="Close connection details" onClick={() => setInspectedEdge(null)}>×</button></header>
             {inspectedEdge.memberEdges.map((edge) => <button type="button" key={`${edge.parentConversationId}-${edge.childConversationId}`} onClick={() => { const child = conversations[edge.childConversationId]; const evidence = child && branchEvidence(child); if (evidence) openEvidence(evidence); }}>
@@ -2920,4 +2965,43 @@ export default function ConversationGraphView({
       </div>
     </section>
   );
+}
+
+/** Where a relation's evidence lives in its source document. */
+function relationEvidence(edge: DocumentGraphEdge): GraphEvidenceRef {
+  if (edge.sourceBlockId) return { conversationId: edge.sourceId, sourceKind: "document", sourceBlockId: edge.sourceBlockId };
+  if (edge.sourceMessageId) return { conversationId: edge.sourceId, sourceKind: "message", messageId: edge.sourceMessageId };
+  return { conversationId: edge.sourceId, sourceKind: "conversation" };
+}
+
+const RELATION_ORIGIN_COPY = { user: "You added this relation.", ai: "Suggested by AI.", import: "Imported with the document." } as const;
+
+function RelationInspector({ edge, conversations, onClose, onOpenSource, onSetRelation }: {
+  edge: DocumentGraphEdge;
+  conversations: Record<string, Conversation>;
+  onClose: () => void;
+  onOpenSource: () => void;
+  onSetRelation?: (type: DocumentRelationTypeId | null, remove?: boolean) => void;
+}) {
+  const label = documentGraphEdgeLabel(edge);
+  const source = conversations[edge.sourceId];
+  const target = conversations[edge.targetId];
+  const inverse = edge.type ? getDocumentRelationType(edge.type)?.inverseLabel : null;
+  return <section className="graph-map-edge-inspector graph-relation-inspector" data-graph-ui="true" aria-label={`${label} details`}>
+    <header><strong>{label}</strong><button type="button" aria-label={`Close ${label.toLowerCase()} details`} onClick={onClose}>×</button></header>
+    <p>{source.title} {edge.directed ? "→" : "↔"} {target.title}</p>
+    {inverse && edge.directed ? <small>{target.title}: {inverse.toLowerCase()} {source.title}</small> : null}
+    {edge.kind === "mention" ? <p>Written as a link in {source.title}.{edge.type ? " The inline field gives it its type." : ""}</p>
+      : <p>{edge.origin ? RELATION_ORIGIN_COPY[edge.origin] : "Saved in the document's properties."}</p>}
+    {edge.weight !== undefined ? <p>Strength {Math.round(edge.weight * 100)}%</p> : null}
+    {edge.note ? <blockquote>{edge.note}</blockquote> : null}
+    <button type="button" onClick={onOpenSource}>{edge.sourceBlockId || edge.sourceMessageId ? "Show the passage" : `Open ${source.title}`}</button>
+    {onSetRelation ? <label className="graph-relation-type-picker">{edge.kind === "mention" ? "Save as a relation" : "Relation type"}
+      <select value={edge.kind === "relation" ? edge.type ?? "" : ""} onChange={(event) => onSetRelation((event.target.value || null) as DocumentRelationTypeId | null)}>
+        {edge.kind === "mention" ? <option value="" disabled>Choose a type</option> : <option value="">Untyped connection</option>}
+        {DOCUMENT_RELATION_TYPES.map((type) => <option key={type.id} value={type.id}>{type.label}</option>)}
+      </select>
+    </label> : null}
+    {onSetRelation && edge.kind === "relation" ? <button type="button" onClick={() => onSetRelation(null, true)}>Remove relation</button> : null}
+  </section>;
 }

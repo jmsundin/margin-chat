@@ -1,4 +1,5 @@
 import { decodeReadableMarkdown, encodeReadableMarkdown, isReadableMarkdown, isSafeMarkdownPath, discoverMarkdownWorkspace, parseMarkdownWorkspace, parseMarkdownWorkspaceManifest } from "./workspaceMarkdown";
+import { parseFrontmatterEntryValue, readFrontmatter } from "@margin-chat/workspace-contracts";
 import { sameVaultFile, type VaultFile } from "./vaultTypes";
 
 type Result<T> = { value: T; conflicted: boolean };
@@ -18,8 +19,11 @@ export function mergeVaultFile(path: string, base: VaultFile | null, local: Vaul
   if (sameVaultFile(local, remote)) return { file: remote, conflicted: false };
   if (sameVaultFile(base, local)) return { file: remote, conflicted: false };
   if (sameVaultFile(base, remote)) return { file: local, conflicted: false };
-  // A stale device must not resurrect a document deleted elsewhere.
-  if (!local || !remote) return { file: null, conflicted: true };
+  // Both sides changed: one deleted the document while the other edited it. A
+  // document keeps the edit, since deleting something just changed elsewhere is
+  // rarely intended; the deletion stays recorded as a conflict. An unchanged
+  // stale copy never reaches this point, so it cannot resurrect a deletion.
+  if (!local || !remote) return { file: /\.md$/iu.test(path) ? local ?? remote : null, conflicted: true };
   const fallback = { file: remote, conflicted: true };
   if (!base || base.encoding || local.encoding || remote.encoding
     || [base, local, remote].some((file) => file.content.length > MAX_SOURCE || file.content.includes("\0"))) return fallback;
@@ -304,18 +308,28 @@ function parseMarkdown(source: string): Parsed {
   const documentEnd = skeleton.indexOf("<!-- margin-chat-document-end -->");
   if ([...nodes].some(([key, node]) => node.kind === "document-block"
     && (skeleton.indexOf(token(key)) < documentStart || skeleton.indexOf(token(key)) > documentEnd))) throw new Error("Block outside document section");
-  // Keep the generated frontmatter observation out of the prose diff. Splitting
-  // a timestamp into word tokens could combine two dates or invent a conflict.
-  const frontmatter = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(skeleton)?.[0];
-  const updated = frontmatter && /^updated:[ \t]*(.+?)\r?$/m.exec(frontmatter);
-  if (updated) {
-    let date = updated[1];
-    try { date = JSON.parse(date); } catch { date = date.replace(/^'|'$/g, ""); }
-    if (typeof date === "string" && Number.isFinite(Date.parse(date))) {
-      const key = "frontmatter-updated";
-      nodes.set(key, { key, kind: key, metadata: { updated: date }, raw: updated[0], newline: "\n" });
-      skeleton = skeleton.slice(0, updated.index) + token(key) + skeleton.slice(updated.index + updated[0].length);
+  // Each frontmatter entry is a structured node, so two devices editing
+  // different properties never touch the same text, lists merge as sets, and
+  // a multi-line YAML value is never split by the prose diff.
+  const header = readFrontmatter(skeleton);
+  for (const entry of [...(header?.entries ?? [])].reverse()) {
+    if (/\0/.test(entry.raw)) continue;
+    const key = entry.key === "updated" ? "frontmatter-updated" : `frontmatter:${JSON.stringify(entry.key)}`;
+    if (nodes.has(key)) throw new Error("Duplicate frontmatter key");
+    let metadata: Record<string, Json>;
+    if (key === "frontmatter-updated") {
+      // Keep the generated observation out of the prose diff. Splitting a
+      // timestamp into word tokens could combine two dates or invent a conflict.
+      const date = parseFrontmatterEntryValue(entry.raw);
+      if (entry.raw.includes("\n") || typeof date !== "string" || !Number.isFinite(Date.parse(date))) continue;
+      metadata = { updated: date };
+    } else {
+      const value = parseFrontmatterEntryValue(entry.raw);
+      metadata = { name: entry.key, ...(value === undefined ? {} : { value: value as Json }) };
     }
+    const kind = key === "frontmatter-updated" ? key : "frontmatter";
+    nodes.set(key, { key, kind, metadata, raw: entry.raw.replace(/\r$/, ""), newline: entry.raw.includes("\r\n") ? "\r\n" : "\n" });
+    skeleton = skeleton.slice(0, entry.start) + token(key) + skeleton.slice(entry.end);
   }
   const metadata = nodes.get("metadata")?.metadata;
   const entity = metadata && (record(metadata.conversation) ? metadata.conversation : record(metadata.note) ? metadata.note : undefined);
@@ -330,9 +344,48 @@ function documentUpdatedAt(parsed: Parsed): unknown {
   return recordedTime(entity?.updatedAt) !== undefined ? entity!.updatedAt : parsed.nodes.get("frontmatter-updated")?.metadata.updated;
 }
 
+/** Properties holding several values merge as sets: an item survives unless a
+ * side removed it, and items either side added are kept. */
+function mergeSet(base: Json[], local: Json[], remote: Json[]): Json[] {
+  const id = (value: Json) => JSON.stringify(value);
+  const inBase = new Set(base.map(id));
+  const removed = new Set([...base.map(id)].filter((item) => !local.some((value) => id(value) === item) || !remote.some((value) => id(value) === item)));
+  const result = remote.filter((value) => !removed.has(id(value)));
+  for (const value of local) if (!inBase.has(id(value)) && !result.some((item) => id(item) === id(value))) result.push(value);
+  return result;
+}
+
+function mergeFrontmatterNode(base: Node | undefined, local: Node, remote: Node, budget: DiffBudget, preferred: PreferredSide): Result<Node> {
+  const read = (node: Node | undefined): OptionalJson => node && Object.hasOwn(node.metadata, "value") ? node.metadata.value : absent;
+  const b = read(base), l = read(local), r = read(remote);
+  const name = String(remote.metadata.name);
+  const render = (value: Json) => equal(value, l) ? local.raw : equal(value, r) ? remote.raw
+    : `${name}: ${JSON.stringify(value)}`.replace(/\n/g, remote.newline);
+  if (l === absent || r === absent) {
+    // Outside the supported YAML subset: merge the entry's text as before.
+    const text = mergeText(base?.raw ?? "", local.raw, remote.raw, budget, preferred);
+    return { value: { ...remote, raw: text.value }, conflicted: text.conflicted };
+  }
+  const list = (value: OptionalJson): Json[] | undefined => Array.isArray(value) ? value : value === null || value === absent ? [] : typeof value === "string" && /^\[\[/.test(value) ? [value] : undefined;
+  const lists = [list(b), list(l), list(r)];
+  if ((Array.isArray(l) || Array.isArray(r)) && lists.every(Boolean)) {
+    const value = mergeSet(lists[0]!, lists[1]!, lists[2]!);
+    return { value: { ...remote, metadata: { ...remote.metadata, value }, raw: render(value) }, conflicted: false };
+  }
+  if (record(l) && record(r) && (b === absent || record(b))) {
+    const merged = mergeJson(b === absent ? {} : b, l, r, "", 0, preferred);
+    const value = merged.value === absent ? {} : merged.value;
+    return { value: { ...remote, metadata: { ...remote.metadata, value }, raw: render(value) }, conflicted: merged.conflicted };
+  }
+  if (b !== absent && equal(b, r)) return { value: local, conflicted: false };
+  if (b !== absent && equal(b, l)) return { value: remote, conflicted: false };
+  return { value: preferred === "local" ? local : remote, conflicted: true };
+}
+
 function mergeNode(base: Node | undefined, local: Node | undefined, remote: Node | undefined, budget: DiffBudget, documentPreference: PreferredSide): Result<Node | undefined> {
   if (local?.raw === remote?.raw || base?.raw === local?.raw) return { value: remote, conflicted: false };
   if (base?.raw === remote?.raw) return { value: local, conflicted: false };
+  if (local?.kind === "frontmatter" && remote?.kind === "frontmatter") return mergeFrontmatterNode(base, local, remote, budget, documentPreference);
   if (!local || !remote) return { value: undefined, conflicted: true };
   if (!base) return { value: remote, conflicted: true };
   // A newer edit to a different block must not decide this block's wording.
@@ -438,8 +491,10 @@ function mergeMarkdown(base: string, local: string, remote: string, path: string
     const index = order.indexOf(key);
     const next = order.slice(index + 1).find((id) => skeleton.includes(token(id)));
     const previous = order.slice(0, index).reverse().find((id) => skeleton.includes(token(id)));
-    if (next) skeleton = skeleton.replace(token(next), () => `${token(key)}\n\n${token(next)}`);
-    else if (previous) skeleton = skeleton.replace(token(previous), () => `${token(previous)}\n\n${token(key)}`);
+    // Frontmatter entries sit on adjacent lines; blocks and messages are paragraphs.
+    const gap = kind.startsWith("frontmatter") ? "\n" : "\n\n";
+    if (next) skeleton = skeleton.replace(token(next), () => `${token(key)}${gap}${token(next)}`);
+    else if (previous) skeleton = skeleton.replace(token(previous), () => `${token(previous)}${gap}${token(key)}`);
     else if (kind === "document-block" && skeleton.includes("<!-- margin-chat-document-end -->")) {
       skeleton = skeleton.replace("<!-- margin-chat-document-end -->", () => `${token(key)}\n\n<!-- margin-chat-document-end -->`);
     } else if (kind === "message") {

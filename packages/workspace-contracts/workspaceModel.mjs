@@ -3,6 +3,7 @@ import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./ex
 import { normalizeEditableDocument } from "./editableDocument.mjs";
 import { normalizeDocumentLayout } from "./documentLayout.mjs";
 import { normalizeDocumentDock } from "./documentDock.mjs";
+import { normalizeConversationGraphFields } from "./relations.mjs";
 export const WORKSPACE_DOCUMENT_SCHEMA_VERSION = 2;
 
 // Format-level defaults for standalone Markdown imported without a manifest.
@@ -132,6 +133,7 @@ function readWorkspaceDocument(input, mode) {
       ...(item.ai ? { ai: normalizeAISettings(item.ai) } : {}),
       ...(normalizePublicTopicSource(item.publicTopic) ? { publicTopic: normalizePublicTopicSource(item.publicTopic) } : {}),
       ...(Array.isArray(item.linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(item.linkedConversationIds, item.id, input.items) } : {}),
+      ...normalizeConversationGraphFields(item, item.id, input.items),
       notes: [],
       parentId: item.parentId ?? null,
       serviceId: item.serviceId,

@@ -69,6 +69,7 @@ export function deleteThread(state: AppState, id: string, replacement: Conversat
   for (const [key, conversation] of Object.entries(conversations)) {
     const childIds = conversation.childIds.filter((childId) => !removed.has(childId));
     const linkedConversationIds = conversation.linkedConversationIds?.filter((linkedId) => !removed.has(linkedId));
+    const relations = conversation.relations?.filter((relation) => !relation.targetConversationId || !removed.has(relation.targetConversationId));
     const widthsById = Object.fromEntries(Object.entries(conversation.documentLayout?.widthsById ?? {})
       .filter(([documentId]) => !removed.has(documentId)));
     const documentLayout = conversation.documentLayout && {
@@ -84,9 +85,11 @@ export function deleteThread(state: AppState, id: string, replacement: Conversat
       Object.keys(widthsById).length !== Object.keys(conversation.documentLayout!.widthsById ?? {}).length
     );
     if (childIds.length !== conversation.childIds.length || layoutChanged ||
-      linkedConversationIds?.length !== conversation.linkedConversationIds?.length) {
+      linkedConversationIds?.length !== conversation.linkedConversationIds?.length ||
+      relations?.length !== conversation.relations?.length) {
       conversations[key] = { ...conversation, childIds,
         ...(linkedConversationIds ? { linkedConversationIds } : {}),
+        ...(relations ? { relations } : {}),
         ...(documentLayout ? { documentLayout } : {}),
       };
     }

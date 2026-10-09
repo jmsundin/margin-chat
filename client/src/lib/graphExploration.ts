@@ -114,7 +114,8 @@ export function getGraphScopeConversationIds(args: {
   // directions without changing the parent-only category or breadcrumb hierarchy.
   const personalNeighbors = new Map<string, Set<string>>();
   for (const conversation of Object.values(conversations)) {
-    for (const linkedId of conversation.linkedConversationIds ?? []) {
+    for (const linkedId of [...(conversation.linkedConversationIds ?? []),
+      ...(conversation.relations ?? []).flatMap((relation) => relation.targetConversationId ? [relation.targetConversationId] : [])]) {
       if (linkedId === conversation.id || !Object.hasOwn(conversations, linkedId)) continue;
       const outgoing = personalNeighbors.get(conversation.id) ?? new Set<string>();
       outgoing.add(linkedId);

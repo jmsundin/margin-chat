@@ -21,6 +21,10 @@ export function legacyMarkdownPath(folder, id) {
 
 /** Two independently seeded, mixed 32-bit words provide a compact deterministic
  * identity suffix. This identifies names; it is not a cryptographic checksum. */
+export function markdownIdentitySuffix(id) {
+    return identitySuffix(id);
+}
+
 function identitySuffix(id) {
     let first = 0xdeadbeef;
     let second = 0x41c6ce57;

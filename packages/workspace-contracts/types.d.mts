@@ -220,6 +220,28 @@ export interface DocumentDockLayout {
   position?: DocumentDockPosition;
 }
 
+export type DocumentRelationTypeId =
+  | "supports" | "contradicts" | "cites" | "elaborates" | "example-of" | "part-of" | "depends-on" | "same-as";
+export type DocumentRelationOrigin = "user" | "ai" | "import";
+
+/** A typed, directed edge saved in the source document's frontmatter. */
+export interface DocumentRelation {
+  type: DocumentRelationTypeId;
+  targetConversationId?: string;
+  /** The original link text when the target is not in this vault (yet), so the link survives a save. */
+  target?: string;
+  /** An Obsidian block reference (`[[Doc#^id]]`) to a passage of the target. */
+  targetBlockId?: string;
+  /** The passage of this document the relation comes from. */
+  sourceBlockId?: string;
+  /** Strength from 0 to 1. */
+  weight?: number;
+  /** Who asserted it. */
+  origin?: DocumentRelationOrigin;
+  note?: string;
+  createdAt?: string;
+}
+
 export interface Conversation {
   id: string;
   grouping?: "manual" | "automatic";
@@ -232,6 +254,12 @@ export interface Conversation {
   publicTopic?: PublicTopicSource;
   /** User-authored connections, independent of the parent/child tree. */
   linkedConversationIds?: string[];
+  /** Typed edges, written as frontmatter properties holding wiki links. */
+  relations?: DocumentRelation[];
+  /** A short node type from frontmatter `type:` (question, claim, source…). */
+  nodeType?: string;
+  /** The document's own tags from frontmatter, without Margin Chat's reserved tags. */
+  tags?: string[];
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   documents?: ConversationDocument[];

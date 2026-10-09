@@ -110,9 +110,11 @@
 .semantic-map .conversation-graph-pan-hint { display: none; }
 .semantic-map .conversation-graph-minimap { width: 120px; opacity: .7; }
 .semantic-map[data-has-selection="true"] .conversation-graph-edge:not(.is-selected-path),
-.semantic-map[data-has-selection="true"] .graph-personal-connection { opacity: .22; }
-.semantic-map .graph-personal-connection text { display: none; }
-.semantic-map .graph-personal-connection:focus text, .semantic-map .graph-personal-connection:hover text { display: block; }
+.semantic-map[data-has-selection="true"] .graph-personal-connection,
+.semantic-map[data-has-selection="true"] .graph-relation-edge { opacity: .22; }
+.semantic-map .graph-personal-connection text, .semantic-map .graph-relation-edge text { display: none; }
+.semantic-map .graph-personal-connection:focus text, .semantic-map .graph-personal-connection:hover text,
+.semantic-map .graph-relation-edge:focus text, .semantic-map .graph-relation-edge:hover text { display: block; }
 .semantic-map .conversation-graph-zoom select { font: inherit; font-size: 12px; color: var(--ink); background: var(--panel-bg); padding: 6px; border: 0; border-right: 1px solid var(--line); }
 .graph-map-layout-options, .graph-map-filters { position: relative; }
 .graph-map-layout-options > summary, .graph-map-filters > summary { list-style: none; font-size: 12px; padding: 8px; cursor: pointer; color: var(--ink); }
@@ -128,7 +130,8 @@
 .graph-map-neighborhood button { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; color: var(--ink); background: var(--button-surface); font: inherit; font-size: 12px; cursor: pointer; }
 .graph-map-neighborhood button:disabled { opacity: .45; cursor: default; }
 .semantic-map[data-focused-node-id] .conversation-graph-edge:not(.is-selected-path),
-.semantic-map[data-focused-node-id] .graph-personal-connection { opacity: .8; }
+.semantic-map[data-focused-node-id] .graph-personal-connection,
+.semantic-map[data-focused-node-id] .graph-relation-edge { opacity: .8; }
 @media (max-width: 700px) {
   .graph-map-neighborhood { flex-wrap: wrap; }
   .graph-map-neighborhood > div { flex-basis: 100%; }

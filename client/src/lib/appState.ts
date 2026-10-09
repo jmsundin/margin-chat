@@ -1,5 +1,5 @@
 import { createEmptyState } from "../initialState";
-import { migrateMarginNotes, normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock } from "@margin-chat/workspace-contracts";
+import { migrateMarginNotes, normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock, normalizeConversationGraphFields } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { normalizeConversationGroups } from "./conversationGroups";
 import { normalizeGraphLayouts } from "./graphLayout";
@@ -88,7 +88,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
               const serviceId = isBackendServiceId(conversation.serviceId)
                 ? conversation.serviceId
                 : DEFAULT_BACKEND_SERVICE_ID;
-              const { publicTopic, linkedConversationIds, document, documentLayout, ...base } = conversation;
+              const { publicTopic, linkedConversationIds, document, documentLayout, relations, nodeType, tags, ...base } = conversation;
               const source = normalizePublicTopicSource(publicTopic);
               const layout = normalizeDocumentLayout(documentLayout, conversationId, parsed.conversations);
               const editableDocument = document === undefined ? undefined : normalizeEditableDocument(document);
@@ -100,6 +100,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
                 ...(layout ? { documentLayout: layout } : {}),
                 ...(source ? { publicTopic: source } : {}),
                 ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(linkedConversationIds, conversationId, parsed.conversations) } : {}),
+                ...normalizeConversationGraphFields({ relations, nodeType, tags }, conversationId, parsed.conversations),
                 ...(conversation.ai ? { ai: normalizeAISettings(conversation.ai) } : {}),
                 messages: (conversation.messages ?? []).map((message) => ({ ...message,
                   ...(message.execution ? { execution: normalizeAIExecution(message.execution) } : {}),
