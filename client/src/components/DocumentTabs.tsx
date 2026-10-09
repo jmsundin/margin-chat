@@ -165,8 +165,6 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
     function move(pointer: PointerEvent) {
       if (pointer.pointerId !== pointerId) return;
       if (!moved && Math.hypot(pointer.clientX - startX, pointer.clientY - startY) < 6) return;
-      // On touch, pulling down from the tab bar opens search (MobileEdgeSwipe) instead of dragging the tab.
-      if (!moved && pointer.pointerType === "touch" && pointer.clientY - startY > Math.abs(pointer.clientX - startX)) { finish(); return; }
       if (!moved) {
         moved = true;
         hidePreview();
@@ -238,7 +236,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
         const minimized = minimizedDocumentIds.includes(document.id);
         const active = document.id === activeDocumentId;
         const pinned = pinnedDocumentIds.includes(document.id);
-        return <div key={document.id} role="presentation" data-edge-swipe-allow="pull-search" draggable
+        return <div key={document.id} role="presentation" draggable
           style={{ order: index * 2 }}
           data-document-tab-id={document.id}
           className={`document-tab${active ? " is-active" : ""}${pinned ? " is-pinned" : ""}${minimized ? " is-minimized" : ""}${draggingId === document.id ? " is-dragging" : ""}${dropTargetId === document.id ? " is-drop-target" : ""}${dropTargetId === document.id && documents.findIndex((item) => item.id === draggingId) < documents.indexOf(document) ? " is-drop-after" : ""}`}
