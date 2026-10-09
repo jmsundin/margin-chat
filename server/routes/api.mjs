@@ -15,6 +15,8 @@ import { createUrlMapService } from "../urlMap/index.mjs";
 import { handleUrlMapRequest } from "./urlMap.mjs";
 import { createTopicExpansionService } from "../topicExpansion/index.mjs";
 import { handleTopicExpansionRequest } from "./topicExpansion.mjs";
+import { createPublicMapService } from "../publicMap/index.mjs";
+import { handlePublicMapRequest } from "./publicMap.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
@@ -69,6 +71,8 @@ function acknowledgeVaultCommit(result, paths, url) {
   return { ...result, manifest: { schemaVersion: result.manifest.schemaVersion, revision: result.manifest.revision, files } };
 }
 
+const PUBLIC_MAP_ROUTES = ["publicMapStateRead", "publicMapStateWrite", "publicMapAnswers", "publicMapAnswerDelete", "publicMapAsk"];
+
 // The extension can operate on workspace content, but account administration
 // and billing mutations still require the website's cookie session.
 const EXTENSION_WORKSPACE_ROUTES = new Set([
@@ -76,6 +80,7 @@ const EXTENSION_WORKSPACE_ROUTES = new Set([
   "vaultStatus", "vaultIndex", "vaultSearch", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
   "chat", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
   "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
+  ...PUBLIC_MAP_ROUTES,
   "billingDashboard", "apiKeysRead",
 ]);
 
@@ -92,6 +97,7 @@ export function createApiHandler({
   semanticService,
   urlMapService,
   topicExpansionService,
+  publicMapService,
   rateLimits,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
@@ -99,6 +105,7 @@ export function createApiHandler({
   const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
+  const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
 
   const limits = { ...DEFAULT_AUTH_RATE_LIMITS, ...rateLimits };
   const loginByAddress = createRateLimiter(limits.loginFailuresByAddress);
@@ -334,7 +341,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch"].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -363,6 +370,11 @@ export function createApiHandler({
 
       if (route?.id === "topicExpansion") {
         await handleTopicExpansionRequest({ request, response, user: authContext.user, expandTopic, workspaceCredential });
+        return;
+      }
+
+      if (PUBLIC_MAP_ROUTES.includes(route?.id)) {
+        await handlePublicMapRequest({ route, request, response, url, user: authContext.user, publicMap, workspaceCredential });
         return;
       }
 

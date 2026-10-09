@@ -32,7 +32,8 @@ function Preview() {
       onSavePublicTopic={(topic) => setState((current) => savePublicTopic(current, topic).state)}
       onCreateMapNote={(args) => { const id = `fixture-note-${++counter.current}`; setState((current) => createMapNote(current, { ...args, id, noteId: `${id}-body`, createdAt: new Date().toISOString() })); setFocus({ conversationId: id, requestId: counter.current }); }}
       onSetMapConnection={(source, target, connected) => setState((current) => setPersonalMapConnection(current, source, target, connected, new Date().toISOString()))}
-      onRemoveMapNote={() => {}} onUndoMapEdit={() => {}} />
+      onRemoveMapNote={() => {}} onUndoMapEdit={() => {}}
+      publicMapAccount={{ userId: "preview", canAsk: new URLSearchParams(location.search).get("member") !== "free", isAdmin: false }} />
     <output style={{ padding: 4, fontSize: 12 }}>Preview workspace · {Object.values(state.conversations).filter((conversation) => conversation.publicTopic).length} saved public topics · AI responses are synthetic test data</output>
   </main>;
 }

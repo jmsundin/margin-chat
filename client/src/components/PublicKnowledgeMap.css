@@ -239,3 +239,23 @@
   .public-map-topbar button, .public-map-topbar input { min-height: 40px; }
   .semantic-public-map .public-map-node:not(.is-selected):not(:focus-within) .public-map-node-actions { opacity: 0; pointer-events: none; }
 }
+
+/* Wikipedia summaries and members' shared AI answers in the topic inspector. */
+.public-wikipedia-extract { font-size: 12px; line-height: 1.65; margin: 0; overflow-wrap: anywhere; white-space: pre-line; }
+.public-ask { display: flex; flex-direction: column; gap: 7px; margin: 0 0 12px; }
+.public-ask label { font-size: 11px; font-weight: 600; }
+.public-map-sidebar .public-ask textarea { background: var(--bg); border: 1px solid var(--line-strong); border-radius: 7px; color: inherit; font: inherit; font-size: 12px; line-height: 1.5; min-height: 58px; padding: 9px 10px; resize: vertical; width: 100%; }
+.public-map-sidebar .public-ask textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.public-ask > div { align-items: center; display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }
+.public-ask > div > span { color: var(--muted); flex: 1 1 140px; font-size: 10px; line-height: 1.5; }
+.public-answer-list { list-style: none; margin: 0; padding: 0; }
+.public-answer { border-top: 1px solid var(--line); padding: 12px 0; }
+.public-answer-question { display: block; font-size: 13px; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
+.public-answer-text { font-size: 12px; line-height: 1.65; margin: 7px 0 9px; overflow-wrap: anywhere; white-space: pre-line; }
+.public-answer-topics { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
+.public-map-sidebar .public-answer-topics button { align-items: flex-start; display: flex; flex-direction: column; font-size: 11px; gap: 1px; min-height: 0; padding: 5px 8px; text-align: left; }
+.public-answer-topics button > span { color: var(--muted); font-size: 9px; }
+.public-answer-meta { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-size: 10px; gap: 6px; }
+.public-answer-meta > span { flex: 1 1 140px; }
+.public-map-sidebar .public-answer-meta button { font-size: 10px; min-height: 28px; padding: 3px 8px; }
+.public-answer-feed-topic { flex-basis: 100%; }
