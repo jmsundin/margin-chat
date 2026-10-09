@@ -101,6 +101,15 @@
 .document-workspace-actions { display: flex; align-items: center; flex: 0 0 auto; gap: 4px; padding-left: 6px; border-left: 1px solid var(--line); }
 .document-workspace-actions .branch-drawer-trigger { gap: 6px; padding-inline: 8px; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .document-workspace-actions .branch-drawer-trigger svg { width: 16px; height: 16px; flex: 0 0 auto; }
+/* Shown after zooming into a document from the map. */
+.document-back-to-map { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 10px 0 6px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.document-back-to-map:hover { background: var(--button-active-surface); }
+.document-back-to-map:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.document-back-to-map svg { width: 16px; height: 16px; flex: 0 0 auto; }
+@media (prefers-reduced-motion: no-preference) {
+  .document-workspace[data-from-map] { animation: document-from-map .26s ease-out; }
+}
+@keyframes document-from-map { from { opacity: .3; } to { opacity: 1; } }
 
 @media (max-width: 900px) {
   .document-workspace-toolbar { padding-inline: 6px; }

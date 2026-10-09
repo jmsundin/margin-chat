@@ -72,3 +72,14 @@
 .graph-cluster-label.is-group strong { letter-spacing: .01em; }
 @keyframes graph-cluster-label-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .graph-clusters.is-dots .graph-cluster-label { animation: none; } }
+/* Zooming through a full-screen card into its document. */
+.conversation-graph-node.is-zooming-through { box-shadow: 0 0 0 calc(2px + var(--zoom-through-progress, 0) * 4px) color-mix(in srgb, var(--accent) calc(30% + var(--zoom-through-progress, 0) * 50%), transparent); }
+.graph-zoom-through-hint { position: absolute; left: 50%; bottom: 72px; z-index: 12; display: grid; gap: 6px; justify-items: center; max-width: min(420px, calc(100% - 32px)); padding: 8px 14px; border-radius: 10px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 6px 24px rgb(0 0 0 / .18); font-size: 13px; transform: translateX(-50%); pointer-events: none; }
+.graph-zoom-through-hint > span:first-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-zoom-through-meter { width: 160px; height: 3px; overflow: hidden; border-radius: 2px; background: var(--accent-soft); }
+.graph-zoom-through-meter > span { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform .12s ease-out; }
+@media (prefers-reduced-motion: no-preference) {
+  .conversation-graph-viewport.is-returning-from-document { animation: graph-return-from-document .32s ease-out; }
+}
+/* Opacity only: scaling the viewport left the cards blurry after the animation. */
+@keyframes graph-return-from-document { from { opacity: .35; } to { opacity: 1; } }

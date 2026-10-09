@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import ConversationGraphView from "../../client/src/components/ConversationGraphView";
 import { createMainConversation } from "../../client/src/initialState";
@@ -64,10 +65,23 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 }) as typeof fetch;
 
 document.documentElement.dataset.theme = params.get("theme") === "light" ? "light" : "dark";
-createRoot(document.getElementById("root")!).render(<main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
-  <ConversationGraphView workspaceKey="gravity-clusters-preview" activeConversationId={firstId} conversations={conversations} groups={{}}
-    jev={{ userId: "preview", enabled: params.get("jev") !== "off", ready: true }}
-    onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => firstId} onOpenConversation={() => {}}
-    onToggleGroup={() => {}} onUpdateGraphNodeLayouts={() => {}} renderDockedConversation={(id) => <p style={{ padding: 16 }}>{conversations[id].title}</p>}
-    renderExpandedConversation={(id) => <p>{conversations[id].title}</p>} />
-</main>);
+// Zooming through a card shows a stand-in for Document View, like the app does.
+function Preview() {
+  const [openId, setOpenId] = useState<string | null>(null);
+  return <main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
+    <div style={{ display: openId ? "none" : "flex", flex: 1, minWidth: 0 }}>
+      <ConversationGraphView workspaceKey="gravity-clusters-preview" activeConversationId={firstId} conversations={conversations} groups={{}}
+        isVisible={!openId} jev={{ userId: "preview", enabled: params.get("jev") !== "off", ready: true }}
+        onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => firstId} onOpenConversation={() => {}}
+        onZoomIntoConversation={setOpenId}
+        onToggleGroup={() => {}} onUpdateGraphNodeLayouts={() => {}} renderDockedConversation={(id) => <p style={{ padding: 16 }}>{conversations[id].title}</p>}
+        renderExpandedConversation={(id) => <p>{conversations[id].title}</p>} />
+    </div>
+    {openId ? <section data-preview-document={openId} style={{ flex: 1, padding: 24, color: "var(--ink)" }}>
+      <h1>{conversations[openId].title}</h1>
+      <button type="button" onClick={() => setOpenId(null)}>Back to map</button>
+    </section> : null}
+  </main>;
+}
+
+createRoot(document.getElementById("root")!).render(<Preview />);
