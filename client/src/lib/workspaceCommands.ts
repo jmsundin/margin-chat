@@ -5,7 +5,7 @@ import { assignConversationToGroup, getConversationGroupId, removeConversationsF
 import { buildThreadSummaries } from "./conversationSearch";
 import { collectConversationTreeIds, getConversationRootId } from "./tree";
 import { upsertStandaloneNoteContextMessage } from "./standaloneNotes";
-import { focusDocument, placeNewSideDocument } from "./documentWorkspace";
+import { focusDocument, placeDocumentAfterParent } from "./documentWorkspace";
 
 /** Commands receive identities/timestamps from the caller and have no UI side effects. */
 export function addRootConversation(state: AppState, conversation: Conversation): AppState {
@@ -33,7 +33,7 @@ export function addChildConversation(state: AppState, child: Conversation, optio
     ? parent.notes?.find((item) => item.id === options.sourceNoteId && item.kind === "standalone")
     : undefined;
   const groupId = getConversationGroupId(state.groups, options.groupSourceId ?? parent.id);
-  return placeNewSideDocument({
+  return placeDocumentAfterParent({
     ...state,
     ...(options.activate ? {
       activeConversationId: child.id,

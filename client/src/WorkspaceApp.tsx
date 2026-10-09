@@ -47,7 +47,7 @@ import WorkspaceView from "./components/WorkspaceView";
 import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
-import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
+import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
 import { getDocumentBackTarget, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
@@ -2926,10 +2926,12 @@ function WorkspaceAppContent({
     setState((current) => {
       const target = current.conversations[conversationId];
       if (!target?.document?.marginNote) return current;
-      return focusDocument({ ...current, conversations: { ...current.conversations, [conversationId]: {
+      const next = focusDocument({ ...current, conversations: { ...current.conversations, [conversationId]: {
         ...target, updatedAt: new Date().toISOString(), document: { ...target.document,
           marginNote: { ...target.document.marginNote, display } },
       } } }, conversationId);
+      // A note expanded into a pane opens next to its parent, like any newly opened child.
+      return display === "full" ? placeDocumentAfterParent(next, conversationId) : next;
     });
     if (conversation.parentId) setClosedMarginNotes((current) => ({ ...current, [conversation.parentId!]: false }));
     setDocumentFocusSequence((sequence) => sequence + 1);

@@ -140,3 +140,35 @@ describe("side-by-side document workspace", () => {
   expect(next.conversations[rootId].documentLayout?.closedIds).not.toContain("a");
   expect(next.conversations[rootId].documentLayout?.closedIds).not.toContain("nested");
  });
+
+describe("where opened children go", () => {
+  const ids = (state: ReturnType<typeof fixture>["state"], rootId: string) =>
+    getDocumentWorkspace(state.conversations, rootId).visibleDocuments.map((document) => document.id);
+
+  test("the most recently opened child sits next to its parent and earlier ones slide right", () => {
+    const { state, rootId } = fixture();
+    let next = closeDocument(closeDocument(state, "a"), "b");
+    expect(ids(next, rootId)).toEqual([rootId, "nested"]);
+    next = focusDocument(next, "b");
+    expect(ids(next, rootId)).toEqual([rootId, "b", "nested"]);
+    next = focusDocument(next, "a");
+    expect(ids(next, rootId)).toEqual([rootId, "a", "b", "nested"]);
+    next = focusDocument(closeDocument(next, "b"), "b");
+    expect(ids(next, rootId)).toEqual([rootId, "b", "a", "nested"]);
+  });
+
+  test("reopening a closed branch places each level after its own parent", () => {
+    const { state, rootId } = fixture();
+    const next = focusDocument(closeDocument(closeDocument(state, "nested"), "a"), "nested");
+    expect(ids(next, rootId)).toEqual([rootId, "a", "nested", "b"]);
+  });
+
+  test("open and minimized panes keep the order the user chose", () => {
+    const { state, rootId } = fixture();
+    const moved = reorderDocument(state, "b", "nested");
+    const order = ids(moved, rootId);
+    expect(ids(focusDocument(moved, "b"), rootId)).toEqual(order);
+    expect(ids(focusDocument(moved, "nested"), rootId)).toEqual(order);
+    expect(ids(focusDocument(minimizeDocument(moved, "b"), "b"), rootId)).toEqual(order);
+  });
+});

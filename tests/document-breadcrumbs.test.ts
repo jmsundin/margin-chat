@@ -111,7 +111,7 @@ describe("expand here, open beside and back", () => {
     expect(visible(beside, mainId)).toEqual([mainId, "field", "check", "roofs", "roofs-notes", "interviews", "followup"]);
     expect(openDocumentBeside(start, mainId, "roofs")).toBe(start);
     const pinned = openDocumentBeside(start, null, "field");
-    expect(visible(pinned, mainId)).toEqual([mainId, "check", "roofs", "roofs-notes", "interviews", "followup", "field"]);
+    expect(visible(pinned, mainId)).toEqual([mainId, "check", "roofs", "roofs-notes", "interviews", "field", "followup"]);
     const hiddenHost = minimizeDocument(closeDocument(start, mainId), "check");
     const note = openDocumentBeside({ ...hiddenHost, activeConversationId: "interviews" }, "interviews", "check");
     expect(note.activeConversationId).toBe("interviews");
