@@ -38,9 +38,14 @@ export function isPublicMetadataRelation(relation: Pick<PublicRelation, "propert
   return isPublicMetadataProperty(relation.propertyId);
 }
 
+/**
+ * Connections from Wikipedia articles: broader topics count as types and
+ * categories, topics from the lead and sections as parts of the article.
+ * Saved maps may still hold Wikidata statements, classified by property.
+ */
 export function publicRelationType(relation: Pick<PublicRelation, "propertyId">): Exclude<PublicRelationFilter, "all"> {
-  if (relation.propertyId === "P31" || relation.propertyId === "P279") return "types";
-  if (relation.propertyId === "P361" || relation.propertyId === "P527") return "parts";
+  if (relation.propertyId === "P31" || relation.propertyId === "P279" || relation.propertyId === "wikipedia-broader") return "types";
+  if (relation.propertyId === "P361" || relation.propertyId === "P527" || ["wikipedia-lead", "wikipedia-main", "wikipedia-section"].includes(relation.propertyId)) return "parts";
   return "other";
 }
 

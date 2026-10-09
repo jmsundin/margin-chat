@@ -16,7 +16,8 @@ import { handleUrlMapRequest } from "./urlMap.mjs";
 import { createTopicExpansionService } from "../topicExpansion/index.mjs";
 import { handleTopicExpansionRequest } from "./topicExpansion.mjs";
 import { createPublicMapService } from "../publicMap/index.mjs";
-import { handlePublicMapRequest } from "./publicMap.mjs";
+import { handlePublicMapRequest, handleWebSearchRequest } from "./publicMap.mjs";
+import { createWebSearchService } from "../webSearch/index.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
@@ -71,7 +72,7 @@ function acknowledgeVaultCommit(result, paths, url) {
   return { ...result, manifest: { schemaVersion: result.manifest.schemaVersion, revision: result.manifest.revision, files } };
 }
 
-const PUBLIC_MAP_ROUTES = ["publicMapStateRead", "publicMapStateWrite", "publicMapAnswers", "publicMapAnswerDelete", "publicMapAsk"];
+const PUBLIC_MAP_ROUTES = ["publicMapStateRead", "publicMapStateWrite", "publicMapAnswers", "publicMapAnswerDelete", "publicMapAsk", "graphAsk", "webSearch"];
 
 // The extension can operate on workspace content, but account administration
 // and billing mutations still require the website's cookie session.
@@ -98,6 +99,8 @@ export function createApiHandler({
   urlMapService,
   topicExpansionService,
   publicMapService,
+  webSearchService,
+  env = process.env,
   rateLimits,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
@@ -106,6 +109,7 @@ export function createApiHandler({
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
+  const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
 
   const limits = { ...DEFAULT_AUTH_RATE_LIMITS, ...rateLimits };
   const loginByAddress = createRateLimiter(limits.loginFailuresByAddress);
@@ -370,6 +374,11 @@ export function createApiHandler({
 
       if (route?.id === "topicExpansion") {
         await handleTopicExpansionRequest({ request, response, user: authContext.user, expandTopic, workspaceCredential });
+        return;
+      }
+
+      if (route?.id === "webSearch") {
+        await handleWebSearchRequest({ request, response, user: authContext.user, webSearch, workspaceCredential });
         return;
       }
 

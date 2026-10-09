@@ -1,7 +1,8 @@
 import { normalizePublicTopicId, normalizePublicTopicSource } from "@margin-chat/workspace-contracts";
 import { createStandaloneNoteConversation } from "../initialState";
-import type { AppState, Conversation, PublicTopicSource } from "../types";
+import type { AppState, Conversation, DocumentRelation, DocumentRelationOrigin, PublicTopicSource } from "../types";
 import { addRootConversation } from "./workspaceCommands";
+import { setPersonalMapConnection } from "./graphWorkspaceEdits";
 
 type TopicIdentity = Pick<PublicTopicSource, "id"> & Partial<Pick<PublicTopicSource, "aliases">>;
 
@@ -65,4 +66,54 @@ export function savePublicTopic(state: AppState, topic: PublicTopicSource): {
     conversationId: id,
     created: true,
   };
+}
+
+/** How a public topic joins a note in My map. */
+export interface PublicTopicConnection {
+  topic: PublicTopicSource;
+  /** Broader: the note is part of it. Narrower: it elaborates the note. Related: an untyped link. */
+  kind: "broader" | "narrower" | "related";
+  /** Where the connection came from, such as a Wikipedia section or an AI relation phrase. */
+  note?: string;
+}
+
+export function wikipediaConnectionKind(propertyId: string): PublicTopicConnection["kind"] {
+  return propertyId === "wikipedia-broader" ? "broader" : propertyId === "wikipedia-see-also" ? "related" : "narrower";
+}
+
+function connected(state: AppState, a: string, b: string) {
+  const first = state.conversations[a], second = state.conversations[b];
+  return !!first.linkedConversationIds?.includes(b) || !!second.linkedConversationIds?.includes(a)
+    || !!first.relations?.some((relation) => relation.targetConversationId === b)
+    || !!second.relations?.some((relation) => relation.targetConversationId === a)
+    || first.parentId === b || second.parentId === a;
+}
+
+function addRelation(state: AppState, ownerId: string, relation: DocumentRelation): AppState {
+  const owner = state.conversations[ownerId];
+  return { ...state, conversations: { ...state.conversations, [ownerId]: { ...owner, relations: [...owner.relations ?? [], relation], updatedAt: relation.createdAt ?? owner.updatedAt } } };
+}
+
+/**
+ * Saves each topic as a note in My map (reusing notes already saved for it)
+ * and connects it to the source note as a typed relation in Markdown
+ * frontmatter. Topics already connected to the source are left alone.
+ * Returns the new state and how many connections were added.
+ */
+export function connectPublicTopics(state: AppState, sourceId: string, connections: PublicTopicConnection[], options: { createdAt: string; origin: DocumentRelationOrigin }): { state: AppState; added: number } {
+  if (!state.conversations[sourceId]) return { state, added: 0 };
+  let next = state, added = 0;
+  for (const connection of connections) {
+    let saved: ReturnType<typeof savePublicTopic>;
+    try { saved = savePublicTopic(next, connection.topic); } catch { continue; }
+    const targetId = saved.conversationId;
+    if (targetId === sourceId || (!saved.created && connected(saved.state, sourceId, targetId))) continue;
+    next = saved.state;
+    const base = { origin: options.origin, createdAt: options.createdAt, ...(connection.note ? { note: connection.note.slice(0, 200) } : {}) };
+    if (connection.kind === "broader") next = addRelation(next, sourceId, { ...base, type: "part-of", targetConversationId: targetId });
+    else if (connection.kind === "narrower") next = addRelation(next, targetId, { ...base, type: "elaborates", targetConversationId: sourceId });
+    else next = setPersonalMapConnection(next, sourceId, targetId, true, options.createdAt);
+    added += 1;
+  }
+  return { state: next, added };
 }

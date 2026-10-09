@@ -83,24 +83,25 @@ export async function deletePublicAnswer(userId: string, id: string): Promise<vo
   if (!response.ok) throw await failure(response, "This answer could not be deleted.");
 }
 
-export async function askPublicMap(args: {
-  userId: string;
-  topic: { id: string; label: string; description: string };
+/** An answer about a note in My map; it is returned to the asker and never shared. */
+export interface PrivateAnswer {
   question: string;
-  options?: PublicMapAIOptions;
-  signal: AbortSignal;
-  onProgress?: (message: string) => void;
-}): Promise<PublicAnswer> {
-  const { userId, topic, question, options, signal, onProgress } = args;
-  const response = await apiFetch("/api/public-map/ask", {
-    method: "POST", credentials: "same-origin", signal,
-    headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", "X-Margin-Vault-User": userId },
-    body: JSON.stringify({ topic, question, serviceId: options?.serviceId, modelId: options?.modelId, ai: options?.ai ? { ...options.ai, contextScope: "conversation", selectedConversationIds: [] } : undefined }),
-  });
+  answer: string;
+  related: PublicAnswerTopic[];
+}
+
+export function isPrivateAnswer(value: unknown): value is PrivateAnswer {
+  if (!record(value) || !text(value.question, 500) || !text(value.answer, 3000) || !Array.isArray(value.related) || value.related.length > 6) return false;
+  return value.related.every((topic) => record(topic) && text(topic.id, 20) && QID.test(topic.id as string)
+    && text(topic.label, 200) && text(topic.description, 500) && text(topic.relation, 60));
+}
+
+/** Reads a progress stream that ends with one validated result. */
+async function readAnswerStream<T>(response: Response, accept: (value: unknown) => value is T, onProgress?: (message: string) => void): Promise<T> {
   if (!response.ok) throw await failure(response, "Your question could not be answered. Try again.");
   if (!response.body) throw new Error("The answer was empty. Try again.");
   const reader = response.body.getReader(), decoder = new TextDecoder();
-  let pending = "", total = 0, answer: PublicAnswer | null = null;
+  let pending = "", total = 0, answer: T | null = null;
   const invalid = "The answer could not be read. Try again.";
   function event(line: string) {
     if (!line.trim()) return;
@@ -109,7 +110,7 @@ export async function askPublicMap(args: {
     if (!record(value)) throw new Error(invalid);
     if (value.type === "error") throw new ApiError(typeof value.statusCode === "number" ? value.statusCode : 502, typeof value.error === "string" ? value.error.slice(0, 500) : "Your question could not be answered.");
     if (value.type === "progress" && text(value.message, 200)) onProgress?.(value.message as string);
-    else if (value.type === "done" && isPublicAnswer(value.answer)) answer = value.answer;
+    else if (value.type === "done" && accept(value.answer)) answer = value.answer;
     else throw new Error(invalid);
   }
   try {
@@ -128,4 +129,43 @@ export async function askPublicMap(args: {
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+}
+
+const aiBody = (options?: PublicMapAIOptions) => ({ serviceId: options?.serviceId, modelId: options?.modelId,
+  ai: options?.ai ? { ...options.ai, contextScope: "conversation", selectedConversationIds: [] } : undefined });
+
+export async function askPublicMap(args: {
+  userId: string;
+  topic: { id: string; label: string; description: string };
+  question: string;
+  options?: PublicMapAIOptions;
+  signal: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<PublicAnswer> {
+  const { userId, topic, question, options, signal, onProgress } = args;
+  const response = await apiFetch("/api/public-map/ask", {
+    method: "POST", credentials: "same-origin", signal,
+    headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", "X-Margin-Vault-User": userId },
+    body: JSON.stringify({ topic, question, ...aiBody(options) }),
+  });
+  return readAnswerStream(response, isPublicAnswer, onProgress);
+}
+
+/** Ask AI about a note in My map, using the note as context. Nothing is shared. */
+export async function askAboutNote(args: {
+  userId: string;
+  topic: { label: string; description: string };
+  noteContent: string;
+  question: string;
+  options?: PublicMapAIOptions;
+  signal: AbortSignal;
+  onProgress?: (message: string) => void;
+}): Promise<PrivateAnswer> {
+  const { userId, topic, noteContent, question, options, signal, onProgress } = args;
+  const response = await apiFetch("/api/graph/ask", {
+    method: "POST", credentials: "same-origin", signal,
+    headers: { "Content-Type": "application/json", Accept: "application/x-ndjson", "X-Margin-Vault-User": userId },
+    body: JSON.stringify({ topic, noteContent, question, ...aiBody(options) }),
+  });
+  return readAnswerStream(response, isPrivateAnswer, onProgress);
 }

@@ -65,7 +65,11 @@ import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
 import { saveUrlMapNode } from "./lib/urlMap";
-import { findSavedPublicTopic, savePublicTopic } from "./lib/publicTopicWorkspace";
+import { connectPublicTopics, findSavedPublicTopic, savePublicTopic, wikipediaConnectionKind } from "./lib/publicTopicWorkspace";
+import type { PublicExpansion } from "./lib/publicKnowledge";
+import { wikipediaArticleUrl } from "./lib/wikipedia";
+import type { WebSearchResult } from "./lib/webSearch";
+import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
@@ -3030,6 +3034,62 @@ function WorkspaceAppContent({
     setMapEditMessage(existing ? `${existing.title} is already in your map.` : `${topic.label} added to your map. Keep exploring or choose “Show in my map”.`);
   }
 
+  /** Adds a page of Wikipedia connections to a note, adopting the matched article as its topic. */
+  function handleAddTopicConnections(conversationId: string, expansion: PublicExpansion): number {
+    const createdAt = new Date().toISOString();
+    const topics = new Map(expansion.topics.map((topic) => [topic.id, topic]));
+    const connections = expansion.relations.flatMap((relation) => relation.sourceId === expansion.topic.id && topics.has(relation.targetId)
+      ? [{ topic: topics.get(relation.targetId)!, kind: wikipediaConnectionKind(relation.propertyId), note: `Wikipedia · ${relation.label}` }] : []);
+    const apply = (current: AppState) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return { state: current, added: 0 };
+      const withTopic = conversation.publicTopic ? current
+        : findSavedPublicTopic(current.conversations, expansion.topic) ? current
+        : { ...current, conversations: { ...current.conversations, [conversationId]: { ...conversation, publicTopic: { ...expansion.topic, aliases: [...expansion.topic.aliases] } } } };
+      return connectPublicTopics(withTopic, conversationId, connections, { createdAt, origin: "import" });
+    };
+    const { added } = apply(state);
+    if (added) setState((current) => apply(current).state);
+    mapUndoRef.current = null;
+    setMapEditMessage(added ? `${added} Wikipedia topics connected to ${state.conversations[conversationId]?.title}.` : "Those Wikipedia topics are already connected.");
+    return added;
+  }
+
+  function handleAddWebSource(result: WebSearchResult, linkedTo: string | null) {
+    const id = createId("note-conversation");
+    const noteId = createId("note");
+    const createdAt = new Date().toISOString();
+    setState((current) => {
+      const next = createMapNote(current, { id, noteId, createdAt, url: result.url, ...(linkedTo && current.conversations[linkedTo] ? { linkedTo } : {}) });
+      const note = next.conversations[id];
+      if (!note?.notes?.[0]) return next;
+      const summary = result.description ? `> ${result.description.replace(/\s+/g, " ")}\n\n` : "";
+      return { ...next, conversations: { ...next.conversations, [id]: { ...note, title: result.title.slice(0, 200) || note.title,
+        notes: [{ ...note.notes[0], content: `${note.notes[0].content}${summary}` }, ...note.notes.slice(1)] } } };
+    });
+    mapUndoRef.current = null;
+    setMapEditMessage(`${result.title} saved as a source note${linkedTo ? ` connected to ${state.conversations[linkedTo]?.title}` : ""}.`);
+  }
+
+  /** Saves a private AI answer as a child note, with its related topics connected to it. */
+  function handleSavePrivateAnswer(conversationId: string, answer: PrivateAnswer) {
+    if (!state.conversations[conversationId]) return;
+    const id = createId("note-conversation");
+    const noteId = createId("note");
+    const createdAt = new Date().toISOString();
+    const content = `> AI answer to “${answer.question.replace(/\s+/g, " ")}”. Review before relying on it.\n\n${answer.answer}`;
+    setState((current) => {
+      if (!current.conversations[conversationId]) return current;
+      const next = addMapChildNote(current, { parentId: conversationId, id, noteId, createdAt, title: answer.question.slice(0, 100), content, activate: false });
+      return connectPublicTopics(next, id, answer.related.map((topic) => ({
+        topic: { id: topic.id, aliases: [], label: topic.label, description: topic.description, wikidataUrl: `https://www.wikidata.org/wiki/${topic.id}`, wikipediaUrl: wikipediaArticleUrl(topic.label), retrievedAt: createdAt },
+        kind: "related" as const, note: topic.relation,
+      })), { createdAt, origin: "ai" }).state;
+    });
+    mapUndoRef.current = null;
+    setMapEditMessage(`Answer saved as a note under ${state.conversations[conversationId]?.title}${answer.related.length ? ", with its topics connected" : ""}.`);
+  }
+
   function handleCreateMapNote(args: { linkedTo?: string; url?: string }) {
     const id = createId("note-conversation");
     const createdAt = new Date().toISOString();
@@ -4306,6 +4366,9 @@ function WorkspaceAppContent({
                       aiOptions: { serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai },
                       onBillingRefresh: () => { void onRefreshBilling(); }, onAuthExpired }}
                     onSavePublicTopic={handleSavePublicTopic}
+                    onAddTopicConnections={handleAddTopicConnections}
+                    onAddWebSource={handleAddWebSource}
+                    onSavePrivateAnswer={handleSavePrivateAnswer}
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}
                     onSetRelation={handleSetMapRelation}

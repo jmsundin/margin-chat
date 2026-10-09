@@ -54,6 +54,8 @@ export const API_ROUTES = Object.freeze([
   { id: "publicMapAnswers", methods: ["GET"], path: "/api/public-map/answers" },
   { id: "publicMapAnswerDelete", methods: ["DELETE"], path: "/api/public-map/answers/:id", parameters: { id: "[0-9a-f-]{36}" } },
   { id: "publicMapAsk", methods: ["POST"], path: "/api/public-map/ask" },
+  { id: "graphAsk", methods: ["POST"], path: "/api/graph/ask" },
+  { id: "webSearch", methods: ["POST"], path: "/api/web-search" },
   { id: "jevStatus", methods: ["GET"], path: "/api/jev/status" },
   { id: "jevWorkspace", methods: ["POST"], path: "/api/jev/workspace" },
   { id: "jevSearch", methods: ["POST"], path: "/api/jev/search" },

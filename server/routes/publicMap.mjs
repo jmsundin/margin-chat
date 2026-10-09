@@ -11,6 +11,17 @@ function requireWorkspaceJson(request, workspaceCredential) {
   }
 }
 
+export async function handleWebSearchRequest({ request, response, user, webSearch, workspaceCredential = false }) {
+  requireWorkspaceJson(request, workspaceCredential);
+  const scope = createRequestAbortScope(request, response);
+  try {
+    const payload = await readJsonBody(request, 4096);
+    sendJson(response, 200, await webSearch.search({ user, payload, signal: scope.signal }), noStore);
+  } catch (error) {
+    if (!scope.signal.aborted) throw error;
+  } finally { scope.dispose(); }
+}
+
 export async function handlePublicMapRequest({ route, request, response, url, user, publicMap, workspaceCredential = false }) {
   if (route.id === "publicMapStateRead") {
     sendJson(response, 200, await publicMap.readState(user), noStore);
@@ -33,7 +44,8 @@ export async function handlePublicMapRequest({ route, request, response, url, us
     sendJson(response, 200, await publicMap.deleteAnswer(user, route.params.id), noStore);
     return;
   }
-  // Asking streams progress, then the saved answer, like topic expansion.
+  // Asking streams progress, then the answer, like topic expansion. Public
+  // answers are saved and shared; answers about a note in My map are not.
   requireWorkspaceJson(request, workspaceCredential);
   const scope = createRequestAbortScope(request, response);
   const startStream = () => {
@@ -43,7 +55,8 @@ export async function handlePublicMapRequest({ route, request, response, url, us
   };
   try {
     const payload = await readJsonBody(request, 16_384);
-    const answer = await publicMap.ask({ payload, user, signal: scope.signal, onProgress(message) {
+    const method = route.id === "graphAsk" ? publicMap.askPrivate : publicMap.ask;
+    const answer = await method({ payload, user, signal: scope.signal, onProgress(message) {
       scope.signal.throwIfAborted();
       startStream(); writeChatStreamEvent(response, { type: "progress", message });
     } });
