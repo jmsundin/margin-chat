@@ -53,6 +53,19 @@
 .document-prompt-history small { color:var(--muted); }
 .document-version-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 .document-version-actions button,.document-writing-status button { padding:7px 10px; border:1px solid var(--line-strong); border-radius:7px; color:var(--ink); background:var(--button-active-surface); font-size:12px; }
+.document-child-nodes-icon { position:absolute; right:-30px; top:38px; display:grid; place-items:center; padding:0; border:1px solid var(--line-strong); background:var(--panel-strong); color:var(--accent); border-radius:8px; width:28px; height:28px; }
+.document-child-nodes-icon svg { width:16px; height:16px; }
+.document-child-nodes-icon[aria-expanded="true"] { background:var(--accent-soft); border-color:var(--accent); }
+.document-prompt-history.document-child-nodes { top:72px; }
+@container document-pane (max-width: 440px) { .document-prompt-history.document-child-nodes { top:38px; } }
+.document-child-nodes p { margin:8px 0; color:var(--muted); line-height:1.45; }
+.document-child-nodes p.document-child-nodes-done { color:var(--ink); }
+.document-child-nodes ul { list-style:none; margin:4px 0 0; padding:0; display:grid; gap:2px; }
+.document-child-nodes li { display:grid; grid-template-columns:20px minmax(0,1fr); gap:8px; align-items:start; padding:6px 0; border-top:1px solid var(--line); }
+.document-child-nodes li > input { margin:9px 0 0; accent-color:var(--accent); }
+.document-child-nodes li input[type="text"] { width:100%; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--ink); font:inherit; font-weight:600; padding:5px 6px; }
+.document-child-nodes li input[type="text"]:hover, .document-child-nodes li input[type="text"]:focus { border-color:var(--line-strong); outline:none; }
+.document-child-nodes li small { display:block; padding:0 6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .document-alternative { border-top:1px solid var(--line); padding-top:14px; margin-top:14px; }
 .document-alternative .message-content { font-size:13px; max-height:280px; overflow:auto; }
 .document-writing-status { display:flex; align-items:center; justify-content:space-between; gap:12px; color:var(--muted); font-size:12px; position:sticky; bottom:0; border:1px solid var(--line); border-radius:10px; padding:10px 12px; background:var(--panel-strong); }
@@ -71,8 +84,11 @@
   .rich-document-editor { padding-inline: 0; }
   .rich-document-block-main { padding-inline: 2px; }
   .document-prompt-icon { right: 0; }
+  /* No side gutter here: sit beside the prompt icon so neither covers the next block's text. */
+  .document-child-nodes-icon { right: 34px; top: 4px; }
   .document-prompt-marker { left: var(--document-block-gutter); }
   .rich-document-block-main:has(+ .document-prompt-marker) { padding-right: 28px; }
+  .rich-document-block-main:has(+ .document-prompt-marker .document-child-nodes-icon) { padding-right: 62px; }
 }
 
 .document-panel .document-window-button, .document-dock-pane-header .document-window-button {
