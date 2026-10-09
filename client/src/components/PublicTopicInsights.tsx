@@ -3,6 +3,8 @@ import type { PublicTopic } from "../lib/publicKnowledge";
 import { getWikipediaSummary, type WikipediaSummary } from "../lib/wikipedia";
 import { askPublicMap, deletePublicAnswer, listPublicAnswers, type PublicAnswer, type PublicMapAIOptions } from "../lib/publicMapApi";
 import { ApiError } from "../lib/apiError";
+import type { WebSearchResult } from "../lib/webSearch";
+import { WebSearchSection } from "./TopicSources";
 
 export interface PublicMapAccount {
   userId: string;
@@ -44,9 +46,11 @@ function AnswerCard({ answer, account, onShowOnMap, onOpenTopic, onDeleted }: {
 }
 
 /** Wikipedia's summary plus the questions members asked about one topic. */
-export function PublicTopicInsights({ topic, account, onAnswered, onShowOnMap, onOpenTopic }: {
+export function PublicTopicInsights({ topic, account, onAnswered, onShowOnMap, onOpenTopic, onAddWebResult }: {
   topic: PublicTopic;
   account: PublicMapAccount;
+  /** Saves a web result as a source note in My map. */
+  onAddWebResult?(result: WebSearchResult): void;
   onAnswered(answer: PublicAnswer): void;
   onShowOnMap(answer: PublicAnswer): void;
   onOpenTopic(id: string): void;
@@ -123,6 +127,7 @@ export function PublicTopicInsights({ topic, account, onAnswered, onShowOnMap, o
         : currentSummary.value ? <><p className="public-wikipedia-extract">{currentSummary.value.extract}</p><p className="public-map-small">Wikipedia · CC BY-SA 4.0 · Free for everyone</p></>
         : <p className="public-map-muted">Wikipedia has no summary for this topic.</p>}
     </section> : null}
+    <WebSearchSection account={account} initialQuery={topic.label} onAddResult={onAddWebResult} />
     <section className="public-answers" aria-label={`Questions about ${topic.label}`}>
       <h4>Questions from members <span>{currentAnswers?.items.length ?? ""}</span></h4>
       {account.canAsk ? <form className="public-ask" onSubmit={(event) => { event.preventDefault(); void ask(); }}>

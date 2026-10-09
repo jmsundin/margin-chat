@@ -55,11 +55,42 @@ function entity(id: string) {
     } }))])),
   };
 }
+// Connections come from Wikipedia articles. Each article's opening sentence
+// links its broader topic: Systems thinking to Feedback, Feedback to Cybernetics.
+const articles: Record<string, { id: string; wikitext: string }> = {
+  "Systems thinking": { id: "Q990001", wikitext: "'''Systems thinking''' is a way of making sense of [[Feedback]] loops." },
+  Feedback: { id: "Q990002", wikitext: "'''Feedback''' is a central idea of [[Cybernetics]]." },
+  Cybernetics: { id: "Q990003", wikitext: "'''Cybernetics''' is a field." },
+  Engineering: { id: "Q11023", wikitext: "'''Engineering''' is a practice." },
+};
+const page = (title: string) => articles[title]
+  ? { title, pageprops: { wikibase_item: articles[title].id }, description: `A deterministic public description for ${title}.` }
+  : { title, missing: true };
+function wikipedia(url: URL, init?: RequestInit) {
+  if (url.searchParams.get("action") === "parse") {
+    const title = url.searchParams.get("page")!;
+    return Response.json({ parse: { title, wikitext: articles[title]?.wikitext ?? "", categories: [], properties: { wikibase_item: articles[title]?.id } } });
+  }
+  if (url.searchParams.get("generator")) {
+    assert.equal(url.searchParams.get("gpssearch") ?? url.searchParams.get("gsrsearch"), "systems");
+    return Response.json({ query: { pages: [{ index: 1, ...page("Systems thinking") }] } });
+  }
+  const titles = url.searchParams.get("titles")!.split("|");
+  if (delayNextEngineeringRead && titles.includes("Engineering")) {
+    delayNextEngineeringRead = false;
+    return new Promise<Response>((resolve) => {
+      delayedOpen = { signal: init?.signal, release() { resolve(Response.json({ query: { pages: [page("Engineering")] } })); } };
+    });
+  }
+  return Response.json({ query: { pages: titles.map(page) } });
+}
 globalThis.fetch = (async (input, init) => {
   const url = new URL(String(input));
-  assert.equal(url.origin + url.pathname, "https://www.wikidata.org/w/api.php", "The component only makes expected public API reads");
   assert.equal(init?.credentials, "omit");
   apiCalls.push(url);
+  if (url.origin + url.pathname === "https://en.wikipedia.org/w/api.php") return wikipedia(url, init);
+  // Topics saved before Wikipedia connections read their article title from Wikidata.
+  assert.equal(url.origin + url.pathname, "https://www.wikidata.org/w/api.php", "The component only makes expected public API reads");
   if (url.searchParams.get("action") === "wbsearchentities") {
     assert.equal(url.searchParams.get("search"), "systems");
     return Response.json({ search: [{ id: "Q990001" }] });
@@ -372,18 +403,15 @@ try {
   assert.equal(selectedTopic(), "Systems thinking", "Moving keyboard focus does not change the selected topic");
 
   const networkBeforeFilters = apiCalls.length;
-  assert.equal(container.querySelector('.public-map-node[aria-label="Category:Systems thinking"]'), null, "Wikimedia category pages are hidden by default");
-  assert(element(".public-map-context").textContent.includes("1 filtered"));
   await setRelationship("types");
   assert.equal(container.querySelectorAll(".public-map-node").length, 2);
-  assert.equal(container.querySelectorAll(".public-map-edges g").length, 1, "Types shows only the classification relationship");
+  assert.equal(container.querySelectorAll(".public-map-edges g").length, 1, "Broader topics count as types and categories");
   await setRelationship("parts");
-  assert.equal(container.querySelectorAll(".public-map-node").length, 2);
-  assert.equal(element(".public-map-edges g text").textContent, "part of");
+  assert.equal(container.querySelectorAll(".public-map-node").length, 1, "A filter with no matching connections keeps the root available");
   await key(viewport, "ArrowDown");
   const partsCamera = camera();
   await setRelationship("other");
-  assert.equal(container.querySelectorAll(".public-map-node").length, 1, "A filter with no matching connections keeps the root available");
+  assert.equal(container.querySelectorAll(".public-map-node").length, 1);
   await key(viewport, "ArrowLeft");
   const otherCamera = camera();
   await click(element('[aria-label="Back in public map"]'));
@@ -392,13 +420,8 @@ try {
   await click(element('[aria-label="Forward in public map"]'));
   assert.equal(element(".public-map-filters select").value, "other");
   assert.deepEqual(camera(), otherCamera, "Forward restores the filtered view and its camera");
-  await click(element('.public-map-filters input[type="checkbox"]'));
-  assert(element('.public-map-node[aria-label="Category:Systems thinking"]'), "Metadata can be explicitly revealed");
-  assert.equal(container.querySelectorAll(".public-map-node").length, 2);
   await setRelationship("all");
-  assert.equal(container.querySelectorAll(".public-map-node").length, 3, "All loaded neighbors return when filters allow them");
-  await click(element('.public-map-filters input[type="checkbox"]'));
-  assert.equal(container.querySelectorAll(".public-map-node").length, 2);
+  assert.equal(container.querySelectorAll(".public-map-node").length, 2, "All loaded neighbors return when filters allow them");
   assert.equal(apiCalls.length, networkBeforeFilters, "Relationship and metadata filters restore loaded data without new requests");
 
   await key(viewport, "Escape");
@@ -524,7 +547,7 @@ try {
   await settle();
   assert.equal(container.querySelectorAll(".public-map-node").length, 3, "The top-right Expand action adds the next direct neighborhood");
   assert.deepEqual({ left: anchor.style.left, top: anchor.style.top }, anchorPosition, "Expansion keeps the established anchor stable");
-  assert(apiCalls.some((url) => url.searchParams.get("ids") === "Q990002" && url.searchParams.get("props")?.includes("claims")), "Expansion requests the selected topic’s statements");
+  assert(apiCalls.some((url) => url.searchParams.get("action") === "parse" && url.searchParams.get("page") === "Feedback"), "Expansion reads the selected topic’s Wikipedia article");
 
   await click(element('[aria-label="Add Systems thinking to my map"]'));
   assertMode("public");

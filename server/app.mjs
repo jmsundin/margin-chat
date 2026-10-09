@@ -52,6 +52,7 @@ export function createAppContext(env = process.env) {
   });
   const apiHandler = createApiHandler({
     captureService: createCaptureService({ database }),
+    env,
     apiKeyService,
     authService,
     billingService,

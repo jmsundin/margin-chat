@@ -19,6 +19,16 @@ export interface PublicRelation {
   propertyId: string;
   label: string;
   sourceUrl: string;
+  /** A Wikidata statement that states the same connection, when one exists. */
+  wikidata?: { propertyId: string; label: string; /** The target states it about the source. */ inverse?: boolean };
+}
+
+/** One statement about a topic, for its About section. */
+export interface PublicTopicFact {
+  propertyId: string;
+  property: string;
+  targetId: string;
+  target: string;
 }
 
 export interface PublicExpansion {
@@ -294,4 +304,64 @@ export async function getPublicTopics(ids: string[], signal?: AbortSignal): Prom
     if (entity) topics.set(entity.topic.id, topicCopy(entity));
   }
   return [...topics.values()];
+}
+
+const propertyLabel = (id: string, entities: Map<string, Entity>) => {
+  const label = entities.get(id)?.topic.label;
+  return label && label !== id ? label : PROPERTY_LABELS[id] ?? id;
+};
+
+/**
+ * The topic's direct Wikidata statements, as readable facts: conceptual ones
+ * (subclass of, instance of, part of) first, Wikimedia metadata excluded.
+ * One cached read for the statements and one for up to 50 labels.
+ */
+export async function getPublicTopicFacts(id: string, signal?: AbortSignal, limit = 12): Promise<PublicTopicFact[]> {
+  const requestedId = itemId(id);
+  const source = (await readEntities([requestedId], true, signal)).get(requestedId);
+  if (!source) return [];
+  const statements = (source.statements ?? []).filter((statement) => !isPublicMetadataProperty(statement.propertyId)).slice(0, limit);
+  if (!statements.length) return [];
+  const entities = await readEntities([...new Set(statements.flatMap((statement) => [statement.targetId, statement.propertyId]))].slice(0, 50), false, signal);
+  return statements.flatMap((statement) => {
+    const target = entities.get(statement.targetId)?.topic;
+    return target ? [{ propertyId: statement.propertyId, property: propertyLabel(statement.propertyId, entities), targetId: target.id, target: target.label }] : [];
+  });
+}
+
+/**
+ * Marks connections that Wikidata also states, in either direction, so a
+ * Wikipedia link backed by a statement can say how the topics relate.
+ * Wikidata is optional: when it cannot be reached the relations are unchanged.
+ */
+/** "Ecology subclass of Biology", in the direction Wikidata states it. */
+export function wikidataStatement(relation: PublicRelation, sourceLabel: string, targetLabel: string): string {
+  if (!relation.wikidata) return "";
+  return relation.wikidata.inverse ? `${targetLabel} ${relation.wikidata.label} ${sourceLabel}` : `${sourceLabel} ${relation.wikidata.label} ${targetLabel}`;
+}
+
+export async function withWikidataSupport(sourceId: string, relations: PublicRelation[], signal?: AbortSignal): Promise<PublicRelation[]> {
+  if (!relations.length || !ITEM_ID.test(sourceId)) return relations;
+  try {
+    const targets = [...new Set(relations.map((relation) => relation.targetId))].filter((id) => ITEM_ID.test(id)).slice(0, 49);
+    const entities = await readEntities([sourceId, ...targets], true, signal);
+    const statedBy = new Map<string, string>();
+    for (const statement of entities.get(sourceId)?.statements ?? []) if (!isPublicMetadataProperty(statement.propertyId)) statedBy.set(statement.targetId, statedBy.get(statement.targetId) ?? statement.propertyId);
+    const inverse = new Map<string, string>();
+    for (const id of targets) {
+      const statement = entities.get(id)?.statements?.find((item) => item.targetId === sourceId && !isPublicMetadataProperty(item.propertyId));
+      if (statement) inverse.set(id, statement.propertyId);
+    }
+    const properties = [...new Set([...statedBy.values(), ...inverse.values()])].filter((id) => !entities.has(id)).slice(0, 50);
+    const labels = properties.length ? await readEntities(properties, false, signal) : new Map<string, Entity>();
+    return relations.map((relation) => {
+      const forward = statedBy.get(relation.targetId), backward = inverse.get(relation.targetId);
+      const propertyId = forward ?? backward;
+      if (!propertyId) return relation;
+      return { ...relation, wikidata: { propertyId, label: propertyLabel(propertyId, labels), ...(forward ? {} : { inverse: true }) } };
+    });
+  } catch (error) {
+    checkAborted(signal);
+    return relations;
+  }
 }

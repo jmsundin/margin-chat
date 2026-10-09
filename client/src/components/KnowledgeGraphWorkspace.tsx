@@ -4,8 +4,12 @@ import ConversationGraphView, { type ConversationGraphViewProps } from "./Conver
 import PublicKnowledgeMap from "./PublicKnowledgeMap";
 import UrlMapPanel from "./UrlMapPanel";
 import type { UrlMapAIOptions, UrlMapGraph } from "../lib/urlMap";
-import type { PublicTopic } from "../lib/publicKnowledge";
+import type { PublicExpansion, PublicTopic } from "../lib/publicKnowledge";
 import type { PublicMapAccount } from "./PublicTopicInsights";
+import { MapTopicSourcesPanel } from "./TopicSources";
+import type { WebSearchResult } from "../lib/webSearch";
+import type { PrivateAnswer } from "../lib/publicMapApi";
+import { getStandaloneNote } from "../lib/standaloneNotes";
 import type { Conversation } from "../types";
 import "./KnowledgeGraphWorkspace.css";
 
@@ -29,12 +33,19 @@ interface Props extends ConversationGraphViewProps {
   topicExpansionProgress?: string;
   topicExpansionError?: { conversationId: string; message: string } | null;
   onDismissTopicExpansionError?: () => void;
+  /** Adds a page of Wikipedia connections to a note; returns how many were new. */
+  onAddTopicConnections?: (conversationId: string, expansion: PublicExpansion) => number;
+  /** Saves a web result as a source note, linked to a note when one is given. */
+  onAddWebSource?: (result: WebSearchResult, linkedTo: string | null) => void;
+  onSavePrivateAnswer?: (conversationId: string, answer: PrivateAnswer) => void;
 }
 
-export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, onSaveUrlMapNode, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, onSaveUrlMapNode, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onAddWebSource, onSavePrivateAnswer, ...personalProps }: Props) {
+  const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
+  const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
   const [urlMapOpen, setUrlMapOpen] = useState(false);
   const [mode, setMode] = useState<"personal" | "public">("personal");
-  const [publicFocus, setPublicFocus] = useState<{ id: string; requestId: number } | null>(null);
+  const [publicFocus, setPublicFocus] = useState<{ id: string; requestId: number; topic?: PublicTopic } | null>(null);
   const [publicSearch, setPublicSearch] = useState<{ query: string; requestId: number } | null>(null);
   const [personalFocus, setPersonalFocus] = useState<Props["focusRequest"]>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -51,13 +62,22 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     return index;
   }, [personalProps.conversations]);
 
+  // A topic added from Wikipedia opens its own sources, ready for its connections.
+  useEffect(() => {
+    const id = addedTopicId ? savedTopics[addedTopicId] : undefined;
+    if (!id) return;
+    setAddedTopicId(null);
+    setSourcesFor(id);
+    setPersonalFocus({ conversationId: id, requestId: -(++counter.current) });
+  }, [addedTopicId, savedTopics]);
+
   useEffect(() => {
     if (isVisible && personalProps.focusRequest && !personalProps.focusRequest.preserveMapMode) { setMode("personal"); setUrlMapOpen(false); }
   }, [isVisible, personalProps.focusRequest]);
 
   function explorePublic(conversation: Conversation) {
     setConnectingId(null);
-    if (conversation.publicTopic) setPublicFocus({ id: conversation.publicTopic.id, requestId: ++counter.current });
+    if (conversation.publicTopic) setPublicFocus({ id: conversation.publicTopic.id, requestId: ++counter.current, topic: conversation.publicTopic });
     else setPublicSearch({ query: conversation.title, requestId: ++counter.current });
     setMode("public");
   }
@@ -75,6 +95,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
       {conversation.publicTopic && onExpandTopicWithAI ? <button type="button" className="conversation-graph-node-action map-topic-action" disabled={Boolean(expandingTopicId)} aria-label={`Expand ${conversation.title} with AI`} title="Create an editable subgraph of AI-generated notes" onClick={(event) => { event.stopPropagation(); onExpandTopicWithAI(conversation.id); }}>
         {expandingTopicId === conversation.id ? "Expanding…" : "✧ Expand with AI"}
       </button> : null}
+      {onAddTopicConnections && publicMapAccount ? <button type="button" className="conversation-graph-node-action" aria-label={`Wikipedia, web and AI for ${conversation.title}`} title="Wikipedia connections, web search and AI" onClick={(event) => { event.stopPropagation(); setConnectingId(null); setSourcesFor(conversation.id); }}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6" /><path d="m15 15 6 6M8 10.5h5M10.5 8v5" /></svg>
+      </button> : null}
       {onAddChildNote ? <button type="button" className="conversation-graph-node-action" aria-label={`Add child note to ${conversation.title}`} title={`Add child note to ${conversation.title}`} onClick={(event) => { event.stopPropagation(); onAddChildNote(conversation.id); }}>
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8l-5-5ZM14 3v5h5M8 14h8M12 10v8" /></svg>
       </button> : null}
@@ -87,6 +110,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
 
   function renderMenuActions(conversation: Conversation) {
     return <>
+          {onAddTopicConnections && publicMapAccount ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setConnectingId(null); setSourcesFor(conversation.id); }}>Wikipedia, web and AI…</button> : null}
           {onAddChildNote ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onAddChildNote(conversation.id); }}>Add child note</button> : null}
           <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onCreateMapNote({ linkedTo: conversation.id }); }}>New connected note</button>
           <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setConnectingId(conversation.id); }}>Connect to another node</button>
@@ -96,6 +120,12 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   }
 
   const personalVisible = mode === "personal" && !urlMapOpen;
+  const sourceConversation = sourcesFor && sourcesFor !== "add" ? personalProps.conversations[sourcesFor] : undefined;
+  const sourceNote = useMemo(() => sourceConversation ? {
+    id: sourceConversation.id, title: sourceConversation.title,
+    content: getStandaloneNote(sourceConversation)?.content ?? "",
+    topic: sourceConversation.publicTopic,
+  } : null, [sourceConversation]);
   const mapControls = <>
       {onToggleSidebar && !sidebarOpen ? <button type="button" className="knowledge-map-sidebar-toggle" onClick={onToggleSidebar}
         aria-label="Open chat sidebar" aria-pressed={false}>
@@ -114,6 +144,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     <summary aria-label="Add to map">+ Add</summary>
     <div>
       <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onCreateMapNote({}); }}>New note</button>
+      {onAddTopicConnections && publicMapAccount ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setSourcesFor("add"); }}>From Wikipedia</button> : null}
       <button type="button" aria-expanded={sourceFormOpen} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setSourceFormOpen(!sourceFormOpen); }}>Add web source</button>
     </div>
   </DismissibleDetails>;
@@ -144,12 +175,20 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         onFocusRequestHandled={(id) => { if (personalProps.focusRequest?.requestId === id) personalProps.onFocusRequestHandled?.(id); else setPersonalFocus(null); }}
         onConnectConversation={(source, target) => { if (source !== target) { onSetMapConnection(source, target, true); setConnectingId(null); } }}
         onRemoveConnection={(source, target) => onSetMapConnection(source, target, false)} />
+      {personalVisible && sourcesFor && publicMapAccount && onAddTopicConnections && (sourcesFor === "add" || sourceNote) ? <MapTopicSourcesPanel
+        note={sourcesFor === "add" ? null : sourceNote} account={publicMapAccount} onClose={() => setSourcesFor(null)}
+        onAddTopic={(topic) => { onSavePublicTopic(topic); setAddedTopicId(topic.id); }}
+        onAddConnections={onAddTopicConnections}
+        onAddWebResult={(result, linkedTo) => onAddWebSource?.(result, linkedTo)}
+        onSaveAnswer={(id, answer) => onSavePrivateAnswer?.(id, answer)}
+        onExplorePublic={(topic) => { setSourcesFor(null); setPublicFocus({ id: topic.id, requestId: ++counter.current, topic }); setMode("public"); }} /> : null}
     </div>
     <div className="knowledge-map-panel" hidden={mode !== "public" || urlMapOpen}>
       <PublicKnowledgeMap isVisible={isVisible && mode === "public" && !urlMapOpen} explorerContainer={personalProps.explorerContainer} onOpenExplorer={personalProps.onOpenExplorer} onFocusCanvas={personalProps.onFocusCanvas} key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} focusRequest={isVisible ? publicFocus : null} searchRequest={isVisible ? publicSearch : null}
         onFocusRequestHandled={(id) => setPublicFocus((request) => request?.requestId === id ? null : request)}
         onSearchRequestHandled={(id) => setPublicSearch((request) => request?.requestId === id ? null : request)}
         savedTopics={savedTopics} onSave={onSavePublicTopic} onShowInMyMap={showPersonal} account={publicMapAccount}
+        onAddWebSource={onAddWebSource ? (result, topic) => onAddWebSource(result, savedTopics[topic.id] ?? topic.aliases.map((id) => savedTopics[id]).find(Boolean) ?? null) : undefined}
         toolbarLeading={mode === "public" && !urlMapOpen ? <div className="knowledge-map-switcher is-inline">{mapControls}</div> : null} />
     </div>
     <div className="knowledge-map-panel" hidden={!urlMapOpen}>

@@ -5,7 +5,7 @@ import StandaloneNotePanel from "../../client/src/components/StandaloneNotePanel
 import { createEmptyState } from "../../client/src/initialState";
 import { addMapChildNote, createMapNote, setPersonalMapConnection } from "../../client/src/lib/graphWorkspaceEdits";
 import { useTopicExpansion } from "../../client/src/lib/useTopicExpansion";
-import { savePublicTopic } from "../../client/src/lib/publicTopicWorkspace";
+import { connectPublicTopics, savePublicTopic, wikipediaConnectionKind } from "../../client/src/lib/publicTopicWorkspace";
 import { buildThreadSummaries } from "../../client/src/lib/conversationSearch";
 import "../../client/src/styles.css";
 
@@ -33,6 +33,16 @@ function Preview() {
       onCreateMapNote={(args) => { const id = `fixture-note-${++counter.current}`; setState((current) => createMapNote(current, { ...args, id, noteId: `${id}-body`, createdAt: new Date().toISOString() })); setFocus({ conversationId: id, requestId: counter.current }); }}
       onSetMapConnection={(source, target, connected) => setState((current) => setPersonalMapConnection(current, source, target, connected, new Date().toISOString()))}
       onRemoveMapNote={() => {}} onUndoMapEdit={() => {}}
+      onAddTopicConnections={(id, result) => {
+        const topics = new Map(result.topics.map((topic) => [topic.id, topic]));
+        const connections = result.relations.flatMap((relation) => topics.has(relation.targetId) ? [{ topic: topics.get(relation.targetId)!, kind: wikipediaConnectionKind(relation.propertyId), note: `Wikipedia · ${relation.label}` }] : []);
+        const apply = (current: typeof state) => connectPublicTopics(current, id, connections, { createdAt: new Date().toISOString(), origin: "import" });
+        const { added } = apply(state);
+        if (added) setState((current) => apply(current).state);
+        return added;
+      }}
+      onAddWebSource={(result, linkedTo) => { const id = `web-note-${++counter.current}`; setState((current) => createMapNote(current, { id, noteId: `${id}-body`, createdAt: new Date().toISOString(), url: result.url, ...(linkedTo ? { linkedTo } : {}) })); }}
+      onSavePrivateAnswer={(parentId, answer) => { const id = `answer-${++counter.current}`; setState((current) => addMapChildNote(current, { parentId, id, noteId: `${id}-body`, createdAt: new Date().toISOString(), title: answer.question, content: answer.answer, activate: false })); }}
       publicMapAccount={{ userId: "preview", canAsk: new URLSearchParams(location.search).get("member") !== "free", isAdmin: false }} />
     <output style={{ padding: 4, fontSize: 12 }}>Preview workspace · {Object.values(state.conversations).filter((conversation) => conversation.publicTopic).length} saved public topics · AI responses are synthetic test data</output>
   </main>;
