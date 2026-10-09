@@ -3078,23 +3078,25 @@ function WorkspaceAppContent({
     setMapEditMessage(`${result.title} saved as a source note${linkedTo ? ` connected to ${state.conversations[linkedTo]?.title}` : ""}.`);
   }
 
-  /** Saves a private AI answer as a child note, with its related topics connected to it. */
-  function handleSavePrivateAnswer(conversationId: string, answer: PrivateAnswer) {
-    if (!state.conversations[conversationId]) return;
+  /** Saves a private AI answer as a child note (or a new note when there is no parent), with its related topics connected to it. */
+  function handleSavePrivateAnswer(conversationId: string | null, answer: PrivateAnswer) {
+    if (conversationId && !state.conversations[conversationId]) return;
     const id = createId("note-conversation");
     const noteId = createId("note");
     const createdAt = new Date().toISOString();
     const content = `> AI answer to “${answer.question.replace(/\s+/g, " ")}”. Review before relying on it.\n\n${answer.answer}`;
     setState((current) => {
-      if (!current.conversations[conversationId]) return current;
-      const next = addMapChildNote(current, { parentId: conversationId, id, noteId, createdAt, title: answer.question.slice(0, 100), content, activate: false });
+      if (conversationId && !current.conversations[conversationId]) return current;
+      const next = conversationId
+        ? addMapChildNote(current, { parentId: conversationId, id, noteId, createdAt, title: answer.question.slice(0, 100), content, activate: false })
+        : createMapNote(current, { id, noteId, createdAt, title: answer.question.slice(0, 100), content });
       return connectPublicTopics(next, id, answer.related.map((topic) => ({
         topic: { id: topic.id, aliases: [], label: topic.label, description: topic.description, wikidataUrl: `https://www.wikidata.org/wiki/${topic.id}`, wikipediaUrl: wikipediaArticleUrl(topic.label), retrievedAt: createdAt },
         kind: "related" as const, note: topic.relation,
       })), { createdAt, origin: "ai" }).state;
     });
     mapUndoRef.current = null;
-    setMapEditMessage(`Answer saved as a note under ${state.conversations[conversationId]?.title}${answer.related.length ? ", with its topics connected" : ""}.`);
+    setMapEditMessage(`Answer saved as a note${conversationId ? ` under ${state.conversations[conversationId]?.title}` : ""}${answer.related.length ? ", with its topics connected" : ""}.`);
   }
 
   function handleCreateMapNote(args: { linkedTo?: string; url?: string }) {

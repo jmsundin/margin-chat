@@ -14,9 +14,11 @@ const errorMessage = (error: unknown, fallback: string) => error instanceof Erro
  * Web search, shared by both maps. It runs on the server for members with a
  * subscription or credit, because no web search API is free at scale.
  */
-export function WebSearchSection({ account, initialQuery, onAddResult, addLabel = "Add to my map" }: {
+export function WebSearchSection({ account, initialQuery, onAddResult, addLabel = "Add to my map", autoSearch = false }: {
   account: PublicMapAccount;
   initialQuery: string;
+  /** Searches for the initial query right away, when the person already asked for a web search. */
+  autoSearch?: boolean;
   onAddResult?(result: WebSearchResult): void;
   addLabel?: string;
 }) {
@@ -25,12 +27,16 @@ export function WebSearchSection({ account, initialQuery, onAddResult, addLabel 
   const [loading, setLoading] = useState(false);
   const [added, setAdded] = useState<string[]>([]);
   const controller = useRef<AbortController | null>(null);
-  useEffect(() => { setQuery(initialQuery); setState(null); setAdded([]); controller.current?.abort(); }, [initialQuery]);
+  useEffect(() => {
+    setQuery(initialQuery); setState(null); setAdded([]); setLoading(false);
+    controller.current?.abort(); controller.current = null;
+    if (autoSearch && account.canAsk) void search(initialQuery);
+  }, [initialQuery]);
   useEffect(() => () => controller.current?.abort(), []);
 
-  async function search() {
-    const text = query.trim();
-    if (text.length < 2 || loading) return;
+  async function search(value = query) {
+    const text = value.trim();
+    if (text.length < 2 || controller.current) return;
     const current = new AbortController();
     controller.current = current;
     setLoading(true);

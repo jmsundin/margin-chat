@@ -7,6 +7,7 @@ import type { UrlMapAIOptions, UrlMapGraph } from "../lib/urlMap";
 import type { PublicExpansion, PublicTopic } from "../lib/publicKnowledge";
 import type { PublicMapAccount } from "./PublicTopicInsights";
 import { MapTopicSourcesPanel } from "./TopicSources";
+import { MapSearchFallbackPanel, SearchFallbackActions, type SearchFallbackSource } from "./MapSearchFallbacks";
 import type { WebSearchResult } from "../lib/webSearch";
 import type { PrivateAnswer } from "../lib/publicMapApi";
 import { getStandaloneNote } from "../lib/standaloneNotes";
@@ -37,11 +38,13 @@ interface Props extends ConversationGraphViewProps {
   onAddTopicConnections?: (conversationId: string, expansion: PublicExpansion) => number;
   /** Saves a web result as a source note, linked to a note when one is given. */
   onAddWebSource?: (result: WebSearchResult, linkedTo: string | null) => void;
-  onSavePrivateAnswer?: (conversationId: string, answer: PrivateAnswer) => void;
+  /** Saves a private AI answer as a note under the given note, or on its own when there is none. */
+  onSavePrivateAnswer?: (conversationId: string | null, answer: PrivateAnswer) => void;
 }
 
 export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, onSaveUrlMapNode, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onAddWebSource, onSavePrivateAnswer, ...personalProps }: Props) {
   const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
+  const [searchFallback, setSearchFallback] = useState<{ query: string; source: SearchFallbackSource; requestId: number } | null>(null);
   const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
   const [urlMapOpen, setUrlMapOpen] = useState(false);
   const [mode, setMode] = useState<"personal" | "public">("personal");
@@ -67,9 +70,13 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     const id = addedTopicId ? savedTopics[addedTopicId] : undefined;
     if (!id) return;
     setAddedTopicId(null);
+    setSearchFallback(null);
     setSourcesFor(id);
     setPersonalFocus({ conversationId: id, requestId: -(++counter.current) });
   }, [addedTopicId, savedTopics]);
+
+  // Node sources replace a search's fallback panel in the same place.
+  useEffect(() => { if (sourcesFor) setSearchFallback(null); }, [sourcesFor]);
 
   useEffect(() => {
     if (isVisible && personalProps.focusRequest && !personalProps.focusRequest.preserveMapMode) { setMode("personal"); setUrlMapOpen(false); }
@@ -168,7 +175,11 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     {expandingTopicId ? <div className="map-workspace-notice" role="status" aria-live="polite"><span>{topicExpansionProgress || "Building an AI subgraph…"} · {personalProps.conversations[expandingTopicId]?.title}</span><button type="button" onClick={onCancelTopicExpansion}>Cancel expansion</button></div> : null}
     {topicExpansionError ? <div className="map-workspace-notice is-error" role="alert"><span>{topicExpansionError.message}</span>{personalProps.conversations[topicExpansionError.conversationId] ? <button type="button" disabled={Boolean(expandingTopicId)} onClick={() => onExpandTopicWithAI?.(topicExpansionError.conversationId)}>Retry AI expansion</button> : null}<button type="button" onClick={onDismissTopicExpansionError}>Dismiss</button></div> : null}
     <div className="knowledge-map-panel" hidden={mode !== "personal" || urlMapOpen}>
-      <ConversationGraphView {...personalProps} isVisible={isVisible && mode === "personal" && !urlMapOpen} renderNodeActions={renderActions} renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
+      <ConversationGraphView {...personalProps} isVisible={isVisible && mode === "personal" && !urlMapOpen} renderNodeActions={renderActions}
+        renderSearchFallback={(query, close) => query.length >= 2 ? <SearchFallbackActions query={query} canAsk={!!publicMapAccount?.canAsk} onChoose={(source) => {
+          close(); setSourcesFor(null); setConnectingId(null);
+          setSearchFallback({ query, source, requestId: ++counter.current });
+        }} /> : null} renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
         toolbarLeading={personalVisible ? <div className="knowledge-map-switcher is-inline">{mapControls}</div> : null}
         toolbarTrailing={personalVisible ? addActions : null}
         focusRequest={personalProps.focusRequest ?? personalFocus}
@@ -182,13 +193,20 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         onAddWebResult={(result, linkedTo) => onAddWebSource?.(result, linkedTo)}
         onSaveAnswer={(id, answer) => onSavePrivateAnswer?.(id, answer)}
         onExplorePublic={(topic) => { setSourcesFor(null); setPublicFocus({ id: topic.id, requestId: ++counter.current, topic }); setMode("public"); }} /> : null}
+      {personalVisible && searchFallback && !sourcesFor ? <MapSearchFallbackPanel key={searchFallback.requestId} query={searchFallback.query} source={searchFallback.source}
+        account={publicMapAccount} onClose={() => setSearchFallback(null)}
+        onAddTopic={(topic) => { onSavePublicTopic(topic); setAddedTopicId(topic.id); }} topicActionLabel="Add to my map"
+        isTopicAdded={(topic) => Boolean(savedTopics[topic.id])}
+        onAddWebResult={onAddWebSource ? (result) => onAddWebSource(result, null) : undefined} webAddLabel="Save as a note"
+        onSaveAnswer={onSavePrivateAnswer ? (answer) => onSavePrivateAnswer(null, answer) : undefined}
+        onOpenRelated={onSavePublicTopic} relatedActionLabel="Add to my map" /> : null}
     </div>
     <div className="knowledge-map-panel" hidden={mode !== "public" || urlMapOpen}>
       <PublicKnowledgeMap isVisible={isVisible && mode === "public" && !urlMapOpen} explorerContainer={personalProps.explorerContainer} onOpenExplorer={personalProps.onOpenExplorer} onFocusCanvas={personalProps.onFocusCanvas} key={personalProps.workspaceKey} workspaceKey={personalProps.workspaceKey ?? "workspace"} focusRequest={isVisible ? publicFocus : null} searchRequest={isVisible ? publicSearch : null}
         onFocusRequestHandled={(id) => setPublicFocus((request) => request?.requestId === id ? null : request)}
         onSearchRequestHandled={(id) => setPublicSearch((request) => request?.requestId === id ? null : request)}
         savedTopics={savedTopics} onSave={onSavePublicTopic} onShowInMyMap={showPersonal} account={publicMapAccount}
-        onAddWebSource={onAddWebSource ? (result, topic) => onAddWebSource(result, savedTopics[topic.id] ?? topic.aliases.map((id) => savedTopics[id]).find(Boolean) ?? null) : undefined}
+        onAddWebSource={onAddWebSource ? (result, topic) => onAddWebSource(result, topic ? savedTopics[topic.id] ?? topic.aliases.map((id) => savedTopics[id]).find(Boolean) ?? null : null) : undefined}
         toolbarLeading={mode === "public" && !urlMapOpen ? <div className="knowledge-map-switcher is-inline">{mapControls}</div> : null} />
     </div>
     <div className="knowledge-map-panel" hidden={!urlMapOpen}>
