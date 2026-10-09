@@ -102,7 +102,7 @@ import {
   requestDocumentTitle,
   requestUploadDocument,
 } from "./lib/api";
-import { DOCUMENT_TITLE_IDLE_MS, getDocumentTitleSource } from "./lib/documentTitle";
+import { DOCUMENT_TITLE_IDLE_MS, getDocumentTitleSource, isPlaceholderDocumentTitle } from "./lib/documentTitle";
 import {
   getRecentModelSelectionsStorageKey,
   getStateSavedAtStorageKey,
@@ -876,6 +876,8 @@ function WorkspaceAppContent({
   currentStateRef.current = state;
   const documentTitleTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const documentTitleRequests = useRef(new Set<string>());
+  // Prompt excerpts the app used as a stand-in title; a generated title may replace these.
+  const provisionalDocumentTitles = useRef(new Map<string, string>());
   useEffect(() => () => { for (const timer of documentTitleTimers.current.values()) clearTimeout(timer); }, []);
   const pendingMovedBlockFocus = useRef<{ conversationId: string; blockId: string } | null>(null);
   useLayoutEffect(() => {
@@ -1948,7 +1950,7 @@ function WorkspaceAppContent({
     documentTitleTimers.current.set(conversationId, setTimeout(() => {
       documentTitleTimers.current.delete(conversationId);
       const conversation = currentStateRef.current.conversations[conversationId];
-      const content = conversation && getDocumentTitleSource(conversation);
+      const content = conversation && getDocumentTitleSource(conversation, provisionalDocumentTitles.current.get(conversationId));
       if (!conversation || !content) return;
       const placeholderTitle = conversation.title;
       // One attempt per document per session, so a failing provider is not retried on every keystroke.
@@ -1959,6 +1961,7 @@ function WorkspaceAppContent({
             const target = current.conversations[conversationId];
             // Never replace a title the user typed while the request was running.
             if (!target || target.title !== placeholderTitle) return current;
+            provisionalDocumentTitles.current.delete(conversationId);
             return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title } } };
           });
         })
@@ -2029,10 +2032,11 @@ function WorkspaceAppContent({
       ...(rerun ? {alternativeOf: rerun.id} : {acceptedAt: now}), insertion,
       ...(request.replaceSelection && sourceBlock ? {replacement: {blockId:sourceBlock.id,offset:request.from,content:sourceBlock.content.slice(request.from,request.to),authorship:getDocumentBlockAuthorship(sourceBlock,source.messages)}} : {}) };
     let prepared: Conversation = { ...target, messages: [...target.messages, userMessage], updatedAt: now,
-      title: [DEFAULT_MAIN_CHAT_TITLE, DEFAULT_SIDE_CHAT_TITLE, "Side chat", "Untitled document", "New note"].includes(target.title) ? excerpt(userMessage.content, 52) : target.title,
+      title: isPlaceholderDocumentTitle(target.title) ? excerpt(userMessage.content, 52) : target.title,
       document: { ...getEditableDocument(target), prompts: [...getEditableDocument(target).prompts, promptRecord], generations: [...getEditableDocument(target).generations, generation] } };
     if (!rerun) prepared = insertDocumentBlock(prepared, { id: outputBlockId, kind: "markdown", content: "", authorship: "ai", createdAt: now, updatedAt: now, sourceMessageId: messageId, generationId }, insertion, now);
     const targetId = prepared.id;
+    if (prepared.title !== target.title || request.destination === "side") provisionalDocumentTitles.current.set(targetId, prepared.title);
     setDocumentErrors((current) => ({...current,[conversationId]:"",[targetId]:""}));
     setState((current) => {
       const sourceSnapshot = sourceBlock && !sourceBlock.sourceMessageId && sourceBlock.content.trim() && !source.messages.some((message)=>message.id===`document:${sourceBlock.id}`)
@@ -2070,6 +2074,8 @@ function WorkspaceAppContent({
             generations:conversation.document.generations.map((item)=>item.id===generationId?{...item,status,...(completedBlocks.length ? {blockIds:completedBlocks.map((block)=>block.id)} : {})}:item),
           }}}};
         });
+        // Title the document from its prompt and the AI's answer, not just the prompt excerpt.
+        if (status === "complete") scheduleDocumentTitle(targetId);
         void onRefreshBilling();
       },
     });

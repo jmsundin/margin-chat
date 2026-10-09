@@ -1,5 +1,6 @@
 import DismissibleDetails from "./DismissibleDetails";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
+import { getDocumentDockDropEdge } from "../lib/documentDock";
 import {
   memo,
   useCallback,
@@ -212,12 +213,15 @@ export interface GraphDockControls {
   onClose: () => void;
 }
 
-type GraphDockSide = "left" | "right";
+type GraphDockSide = "left" | "right" | "top" | "bottom";
+const GRAPH_DOCK_SIDES: GraphDockSide[] = ["left", "right", "top", "bottom"];
 const DOCK_SIDE_STORAGE_KEY = "margin-map-dock-side";
 
 function readDockSide(): GraphDockSide {
-  try { return localStorage.getItem(DOCK_SIDE_STORAGE_KEY) === "left" ? "left" : "right"; }
-  catch { return "right"; }
+  try {
+    const side = localStorage.getItem(DOCK_SIDE_STORAGE_KEY);
+    return GRAPH_DOCK_SIDES.includes(side as GraphDockSide) ? side as GraphDockSide : "right";
+  } catch { return "right"; }
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -837,8 +841,14 @@ export default function ConversationGraphView({
   const [dockWidth, setDockWidth] = useState(380);
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [dockSide, setDockSide] = useState<GraphDockSide>(readDockSide);
-  const dockMoveRef = useRef<{ pointerId: number; clientX: number; moved: boolean } | null>(null);
-  const dockResizeRef = useRef<{ pointerId: number; clientX: number; width: number } | null>(null);
+  const dockMoveRef = useRef<{ pointerId: number; clientX: number; clientY: number; moved: boolean } | null>(null);
+  const [dockDropEdge, setDockDropEdge] = useState<GraphDockSide | null>(null);
+  const [dockMoveOpen, setDockMoveOpen] = useState(false);
+  const dockMoveTriggerRef = useRef<HTMLButtonElement>(null);
+  const dockMoveMenuRef = useRef<HTMLDivElement>(null);
+  useOutsideDismiss(dockMoveOpen, () => setDockMoveOpen(false), dockMoveMenuRef, dockMoveTriggerRef);
+  const dockVertical = dockSide === "top" || dockSide === "bottom";
+  const dockResizeRef = useRef<{ pointerId: number; client: number; size: number } | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const viewportStateRef = useRef<GraphViewport>(viewport);
   viewportStateRef.current = viewport;
@@ -2085,31 +2095,48 @@ export default function ConversationGraphView({
     const title = conversation.title || "Untitled document";
     const otherSide: GraphDockSide = dockSide === "right" ? "left" : "right";
     return <div className="conversation-graph-dock-leading">
-      <button type="button" className="conversation-graph-dock-grip" aria-label={`Move side panel to the ${otherSide}`}
-        title={`Drag or click to move the panel to the ${otherSide}`}
+      <button type="button" ref={dockMoveTriggerRef} className="conversation-graph-dock-grip" aria-label={`Move ${title} panel`}
+        aria-haspopup="dialog" aria-expanded={dockMoveOpen}
+        title="Drag to a side of the map, or click to choose a position"
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.currentTarget.setPointerCapture(event.pointerId);
-          dockMoveRef.current = { pointerId: event.pointerId, clientX: event.clientX, moved: false };
+          dockMoveRef.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, moved: false };
         }}
         onPointerMove={(event) => {
           const move = dockMoveRef.current;
-          if (move?.pointerId === event.pointerId && Math.abs(event.clientX - move.clientX) > 8) move.moved = true;
+          if (move?.pointerId !== event.pointerId) return;
+          if (Math.hypot(event.clientX - move.clientX, event.clientY - move.clientY) > 8) move.moved = true;
+          const bounds = workspaceRef.current?.getBoundingClientRect();
+          if (move.moved && bounds) setDockDropEdge(getDocumentDockDropEdge(bounds, event.clientX, event.clientY));
         }}
         onPointerUp={(event) => {
           const move = dockMoveRef.current;
           if (move?.pointerId !== event.pointerId || !move.moved) return;
           const bounds = workspaceRef.current?.getBoundingClientRect();
-          if (bounds) moveDock(event.clientX < bounds.left + bounds.width / 2 ? "left" : "right");
+          if (bounds) moveDock(getDocumentDockDropEdge(bounds, event.clientX, event.clientY));
+          setDockDropEdge(null);
         }}
-        onPointerCancel={() => { dockMoveRef.current = null; }}
+        onPointerCancel={() => { dockMoveRef.current = null; setDockDropEdge(null); }}
         onClick={() => {
           const dragged = dockMoveRef.current?.moved;
           dockMoveRef.current = null;
-          if (!dragged) moveDock(otherSide);
+          if (!dragged) setDockMoveOpen((open) => !open);
         }}>
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="5.5" cy="3.5" r="1.3"/><circle cx="10.5" cy="3.5" r="1.3"/><circle cx="5.5" cy="8" r="1.3"/><circle cx="10.5" cy="8" r="1.3"/><circle cx="5.5" cy="12.5" r="1.3"/><circle cx="10.5" cy="12.5" r="1.3"/></svg>
       </button>
+      {dockMoveOpen ? createPortal(<div ref={dockMoveMenuRef} className="conversation-graph-dock-move" role="dialog" aria-label={`Move ${title} panel`}
+        style={dockMovePosition()}
+        onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setDockMoveOpen(false); dockMoveTriggerRef.current?.focus(); } }}>
+        <p>Position in map</p>
+        <div className="conversation-graph-dock-move-actions">
+          {GRAPH_DOCK_SIDES.map((side) => <button type="button" key={side} aria-pressed={dockSide === side}
+            aria-label={`Move panel to the ${side}`}
+            onClick={() => { moveDock(side); setDockMoveOpen(false); dockMoveTriggerRef.current?.focus(); }}>
+            {side[0].toUpperCase() + side.slice(1)}
+          </button>)}
+        </div>
+      </div>, document.body) : null}
       <button type="button" className="conversation-graph-dock-pin" aria-pressed={dockPinned}
         aria-label={dockPinned ? `Unpin ${title} from the side panel` : `Pin ${title} in the side panel`}
         title={dockPinned ? "Pinned: other documents won't replace this one. Click to unpin." : "Pin: keep this document open while you browse the map"}
@@ -2124,12 +2151,20 @@ export default function ConversationGraphView({
     </div>;
   }
 
-  function resizeDock(width: number) {
-    const available = workspaceRef.current?.clientWidth ?? 1000;
-    setDockWidth(clamp(width, 280, Math.max(280, Math.min(640, available - 280))));
+  function dockMovePosition(): CSSProperties {
+    const anchor = dockMoveTriggerRef.current?.getBoundingClientRect();
+    if (!anchor) return {};
+    return { top: Math.min(anchor.bottom + 4, window.innerHeight - 120), left: Math.max(8, Math.min(anchor.left, window.innerWidth - 248)) };
+  }
+
+  function resizeDock(size: number) {
+    const minimum = dockVertical ? 200 : 280;
+    const available = (dockVertical ? workspaceRef.current?.clientHeight : workspaceRef.current?.clientWidth) ?? 1000;
+    setDockWidth(clamp(size, minimum, Math.max(minimum, Math.min(640, available - minimum))));
   }
 
   function closeDock() {
+    setDockMoveOpen(false);
     navigation.setPinnedDockId(null);
     setDockedConversationId(null);
   }
@@ -2141,10 +2176,12 @@ export default function ConversationGraphView({
   }
 
   function handleDockResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    const grow = dockSide === "right" ? "ArrowLeft" : "ArrowRight";
+    // The key pointing away from the panel's edge grows it.
+    const grow = { right: "ArrowLeft", left: "ArrowRight", bottom: "ArrowUp", top: "ArrowDown" }[dockSide];
+    const shrink = { right: "ArrowRight", left: "ArrowLeft", bottom: "ArrowDown", top: "ArrowUp" }[dockSide];
     if (event.key === grow) resizeDock(dockWidth + 24);
-    else if (event.key === (grow === "ArrowLeft" ? "ArrowRight" : "ArrowLeft")) resizeDock(dockWidth - 24);
-    else if (event.key === "Home") resizeDock(280);
+    else if (event.key === shrink) resizeDock(dockWidth - 24);
+    else if (event.key === "Home") resizeDock(0);
     else if (event.key === "End") resizeDock(640);
     else return;
     event.preventDefault();
@@ -2630,7 +2667,7 @@ export default function ConversationGraphView({
         </div> : null}
       <div
         className={
-          `conversation-graph-workspace${dockedConversation ? " has-docked-chat" : ""}${dockSide === "left" ? " is-dock-left" : ""}`
+          `conversation-graph-workspace${dockedConversation ? " has-docked-chat" : ""}${dockSide === "right" ? "" : ` is-dock-${dockSide}`}`
         }
         ref={workspaceRef}
         style={{ "--personal-map-dock-width": `${dockWidth}px` } as CSSProperties}
@@ -3091,22 +3128,29 @@ export default function ConversationGraphView({
           </>}
         </div>
 
+        {dockedConversation && dockDropEdge ? <div className={`conversation-graph-dock-drop is-${dockDropEdge}`} aria-hidden="true">
+          <span>Place panel {dockDropEdge}</span>
+        </div> : null}
         {dockedConversation ? (
           <>
           <div className="conversation-graph-dock-resize" role="separator" tabIndex={0}
-            aria-label="Resize docked chat" aria-orientation="vertical" aria-valuemin={280} aria-valuemax={640} aria-valuenow={dockWidth}
-            title="Drag to resize; use Left and Right arrow keys"
+            aria-label="Resize docked chat" aria-orientation={dockVertical ? "horizontal" : "vertical"} aria-valuemin={dockVertical ? 200 : 280} aria-valuemax={640} aria-valuenow={dockWidth}
+            title={dockVertical ? "Drag to resize; use Up and Down arrow keys" : "Drag to resize; use Left and Right arrow keys"}
             onKeyDown={handleDockResizeKeyDown}
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               event.preventDefault();
               event.currentTarget.focus({ preventScroll: true });
               event.currentTarget.setPointerCapture(event.pointerId);
-              dockResizeRef.current = { pointerId: event.pointerId, clientX: event.clientX, width: dockBodyRef.current?.parentElement?.getBoundingClientRect().width || dockWidth };
+              const dockBounds = dockBodyRef.current?.parentElement?.getBoundingClientRect();
+              dockResizeRef.current = { pointerId: event.pointerId, client: dockVertical ? event.clientY : event.clientX,
+                size: (dockVertical ? dockBounds?.height : dockBounds?.width) || dockWidth };
             }}
             onPointerMove={(event) => {
               const resize = dockResizeRef.current;
-              if (resize?.pointerId === event.pointerId) resizeDock(resize.width + (dockSide === "right" ? resize.clientX - event.clientX : event.clientX - resize.clientX));
+              if (resize?.pointerId !== event.pointerId) return;
+              const delta = (dockVertical ? event.clientY : event.clientX) - resize.client;
+              resizeDock(resize.size + (dockSide === "right" || dockSide === "bottom" ? -delta : delta));
             }}
             onPointerUp={() => { dockResizeRef.current = null; }}
             onPointerCancel={() => { dockResizeRef.current = null; }}

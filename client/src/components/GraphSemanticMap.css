@@ -65,10 +65,36 @@
 .conversation-graph-dock-grip:active { cursor: grabbing; }
 .conversation-graph-dock-leading .conversation-graph-dock-collapse { display: none; }
 .conversation-graph-dock-title { min-width: 0; margin-left: 4px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Panel positions match Document View's: left, right, top or bottom of the map. */
+.semantic-map .conversation-graph-workspace { position: relative; }
 .semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-left { grid-template-columns: min(60%, var(--personal-map-dock-width, 380px)) 8px minmax(0, 1fr); }
 .semantic-map .is-dock-left > .conversation-graph-dock { grid-column: 1; grid-row: 1; border-left: 0; border-right: 1px solid var(--line); }
 .semantic-map .is-dock-left > .conversation-graph-dock-resize { grid-column: 2; grid-row: 1; }
 .semantic-map .is-dock-left > .conversation-graph-viewport { grid-column: 3; grid-row: 1; }
+.semantic-map .conversation-graph-workspace.has-docked-chat:is(.is-dock-top, .is-dock-bottom) { grid-template-columns: minmax(0, 1fr); }
+.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-bottom { grid-template-rows: minmax(0, 1fr) 8px min(60%, var(--personal-map-dock-width, 380px)); }
+.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-top { grid-template-rows: min(60%, var(--personal-map-dock-width, 380px)) 8px minmax(0, 1fr); }
+.semantic-map :is(.is-dock-top, .is-dock-bottom) > * { grid-column: 1; }
+.semantic-map .is-dock-top > .conversation-graph-dock { grid-row: 1; }
+.semantic-map .is-dock-top > .conversation-graph-dock-resize { grid-row: 2; }
+.semantic-map .is-dock-top > .conversation-graph-viewport { grid-row: 3; }
+.semantic-map :is(.is-dock-top, .is-dock-bottom) > .conversation-graph-dock { border-left: 0; }
+.semantic-map .is-dock-bottom > .conversation-graph-dock { border-top: 1px solid var(--line); }
+.semantic-map .is-dock-top > .conversation-graph-dock { border-bottom: 1px solid var(--line); }
+.semantic-map :is(.is-dock-top, .is-dock-bottom) > .conversation-graph-dock-resize { cursor: row-resize; }
+.semantic-map :is(.is-dock-top, .is-dock-bottom) > .conversation-graph-dock-resize::after { left: calc(50% - 22px); top: 3px; width: 44px; height: 2px; }
+.conversation-graph-dock-drop { position: absolute; z-index: 40; display: grid; place-items: center; pointer-events: none; border: 2px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 18%, transparent); --drop-size: min(60%, var(--personal-map-dock-width, 380px)); }
+.conversation-graph-dock-drop.is-left { inset: 0 auto 0 0; width: var(--drop-size); }
+.conversation-graph-dock-drop.is-right { inset: 0 0 0 auto; width: var(--drop-size); }
+.conversation-graph-dock-drop.is-top { inset: 0 0 auto 0; height: var(--drop-size); }
+.conversation-graph-dock-drop.is-bottom { inset: auto 0 0 0; height: var(--drop-size); }
+.conversation-graph-dock-drop span { padding: 6px 10px; border-radius: 6px; color: var(--ink); background: var(--panel-strong); font-size: 12px; }
+.conversation-graph-dock-move { position: fixed; z-index: 120; width: 240px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); box-shadow: 0 12px 32px #0003; font-size: 12px; }
+.conversation-graph-dock-move p { margin: 0 0 8px; color: var(--muted); }
+.conversation-graph-dock-move-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.conversation-graph-dock-move-actions button { padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.conversation-graph-dock-move-actions button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.conversation-graph-dock-move-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .semantic-map .conversation-graph-node.is-selected { display: flex; flex-direction: column; }
 .semantic-map .conversation-graph-node.is-selected .conversation-graph-node-select { flex: 0 0 auto; }
 .semantic-map .conversation-graph-node.is-selected .conversation-graph-node-head { padding: 0; min-height: 0; border: 0; }
