@@ -125,6 +125,10 @@ describe("document titles", () => {
     expect(getDocumentTitleSource(withContent("My billing notes"))).toBeNull();
     expect(getDocumentTitleSource(withContent("Untitled document", "Too short"))).toBeNull();
     expect(getDocumentTitleSource(withContent("Untitled document", "x".repeat(9_000)))).toHaveLength(6_000);
+    expect(getDocumentTitleSource(withContent("Untitled margin note"))).toContain("billing service");
+    // A prompt excerpt the app set as a stand-in can be replaced; the same text typed by the user cannot.
+    expect(getDocumentTitleSource(withContent("Plan the billing migration"), "Plan the billing migration")).toContain("billing service");
+    expect(getDocumentTitleSource(withContent("Plan the billing migration"), "Something else")).toBeNull();
   });
 });
 

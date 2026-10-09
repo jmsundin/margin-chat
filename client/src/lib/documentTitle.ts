@@ -17,6 +17,7 @@ const PLACEHOLDER_DOCUMENT_TITLES = new Set([
   "Side chat",
   "Untitled document",
   "New note",
+  "Untitled margin note",
 ]);
 
 /** Enough text for a title to say something about the document. */
@@ -30,9 +31,13 @@ export function isPlaceholderDocumentTitle(title: string): boolean {
   return PLACEHOLDER_DOCUMENT_TITLES.has(title.trim());
 }
 
-/** The content to title a document from, or null when it should keep its title. */
-export function getDocumentTitleSource(conversation: Conversation): string | null {
-  if (!conversation.document || !isPlaceholderDocumentTitle(conversation.title)) return null;
+/**
+ * The content to title a document from, or null when it should keep its title.
+ * `provisionalTitle` is a stand-in the app set itself (such as the first prompt), which a generated title may replace.
+ */
+export function getDocumentTitleSource(conversation: Conversation, provisionalTitle?: string): string | null {
+  const replaceable = isPlaceholderDocumentTitle(conversation.title) || conversation.title === provisionalTitle;
+  if (!conversation.document || !replaceable) return null;
   const text = getEditableDocumentText(conversation).replace(/\s+/gu, " ").trim();
   if (text.length < MIN_DOCUMENT_TITLE_CONTENT_LENGTH) return null;
   return text.slice(0, MAX_DOCUMENT_TITLE_CONTENT_LENGTH);
