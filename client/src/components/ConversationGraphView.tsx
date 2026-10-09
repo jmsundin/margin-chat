@@ -83,6 +83,7 @@ import {
 import { buildGraphDragPreviewIndex, resolveGraphDragPreview } from "../lib/graphDragPreview";
 import {
   getGraphNodesInSelectionBounds,
+  getGraphPinchZoomFactor,
   revealGraphBounds,
   type GraphNodeMove,
   type GraphPointer,
@@ -90,11 +91,12 @@ import {
   type GraphViewport,
 } from "../lib/graphInteractions";
 import { useGraphInteractions } from "../lib/useGraphInteractions";
+import { getZoomThroughProgress, zoomThroughStep, ZOOM_THROUGH_IDLE_MS, ZOOM_THROUGH_TRAVEL, type ZoomThroughCard, type ZoomThroughState } from "../lib/zoomThrough";
 import { useGraphContentQueue } from "../lib/useGraphContentQueue";
 import { buildThreadSummaries } from "../lib/conversationSearch";
 import { buildCategoryOrganizedGraphLayouts } from "../lib/graphCategories";
 import { getConversationRootId } from "../lib/tree";
-export { getGraphNodesInSelectionBounds } from "../lib/graphInteractions";
+export { getGraphNodesInSelectionBounds, getGraphPinchZoomFactor } from "../lib/graphInteractions";
 import type {
   Conversation,
   ConversationGroup,
@@ -105,8 +107,6 @@ import type {
 const GRAPH_SCALE_MIN = 0.02;
 const GRAPH_SCALE_MAX = 6;
 const GRAPH_ZOOM_STEP = 1.14;
-const GRAPH_PINCH_ZOOM_SENSITIVITY = 0.008;
-const GRAPH_PINCH_ZOOM_MAX_FACTOR = 1.28;
 const GRAPH_GRID_SIZE = 22;
 const GRAPH_MINIMAP_MAX_EDGES = 320;
 const GRAPH_MINIMAP_MAX_NODES = 280;
@@ -196,6 +196,8 @@ export interface ConversationGraphViewProps {
   onAssignGroup: (conversationId: string, groupId: string | null) => void;
   onCreateChildConversation: (conversationId: string) => string | null;
   onOpenConversation: (conversationId: string) => void;
+  /** Zooming in past a full-screen card opens its document; the map keeps its place. */
+  onZoomIntoConversation?: (conversationId: string) => void;
   onToggleGroup: (groupId: string) => void;
   onUpdateGraphNodeLayouts?: (
     nextLayouts: Record<string, Partial<GraphNodeLayout>>,
@@ -230,13 +232,6 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
-export function getGraphPinchZoomFactor(deltaY: number) {
-  return clamp(
-    Math.exp(-deltaY * GRAPH_PINCH_ZOOM_SENSITIVITY),
-    1 / GRAPH_PINCH_ZOOM_MAX_FACTOR,
-    GRAPH_PINCH_ZOOM_MAX_FACTOR,
-  );
-}
 
 function normalizeWheelDelta(
   delta: number,
@@ -501,6 +496,7 @@ function GraphNode({
   contentReady,
   renderReader,
   semanticLevel,
+  zoomThroughProgress,
 }: {
   actions?: ReactNode;
   menuActions?: ReactNode;
@@ -538,6 +534,8 @@ function GraphNode({
   contentReady: boolean;
   renderReader?: (conversationId: string) => ReactNode;
   semanticLevel: ConversationGraphSemanticLevel;
+  /** How close zooming is to opening this card's document, 0 to 1. */
+  zoomThroughProgress?: number;
 }) {
   const isPreview = detailLevel === "preview";
   const isReader = detailLevel === "reader";
@@ -554,6 +552,7 @@ function GraphNode({
     transform: `scale(${screenFootprint ? 1 / zoomScale : readableNodeSize(zoomScale, isPreview || isReader)})`,
     "--map-card-title-size": screenFootprint?.titleFontSize ? `${screenFootprint.titleFontSize}px` : undefined,
     "--map-card-title-lines": screenFootprint?.titleLines,
+    "--zoom-through-progress": zoomThroughProgress,
   } as CSSProperties;
   const nodeType =
     conversation.publicTopic ? "Saved topic" : isNote
@@ -576,6 +575,7 @@ function GraphNode({
         isNote ? "is-note" : "",
         `is-semantic-${semanticLevel}`,
         conversation.id === activeConversationId ? "is-current-main" : "",
+        zoomThroughProgress !== undefined ? "is-zooming-through" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -797,6 +797,7 @@ export default function ConversationGraphView({
   onAssignGroup,
   onCreateChildConversation,
   onOpenConversation,
+  onZoomIntoConversation,
   onToggleGroup,
   onUpdateGraphNodeLayouts,
   renderDockedConversation,
@@ -1826,8 +1827,68 @@ export default function ConversationGraphView({
     focusedTerritoryId,
   ]);
 
+  // Zooming through a card into its document (see lib/zoomThrough).
+  const zoomThroughRef = useRef<ZoomThroughState>(null);
+  const [zoomThrough, setZoomThrough] = useState<{ id: string; progress: number } | null>(null);
+  const openedDocumentRef = useRef<string | null>(null);
+  const [returningFromDocument, setReturningFromDocument] = useState(false);
+  useEffect(() => {
+    if (!zoomThrough) return;
+    const timer = window.setTimeout(() => { zoomThroughRef.current = null; setZoomThrough(null); }, ZOOM_THROUGH_IDLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [zoomThrough]);
+  // Back from the document: step out a little, so the map around it shows.
+  useEffect(() => {
+    const id = openedDocumentRef.current;
+    const element = viewportRef.current;
+    if (!isVisible || !id || !element?.clientWidth) return;
+    openedDocumentRef.current = null;
+    const placement = placementByConversationId.get(id);
+    if (placement) {
+      const scale = Math.max(minimumZoomScale, viewportStateRef.current.scale / ZOOM_THROUGH_TRAVEL);
+      applyViewport({ scale, x: element.clientWidth / 2 - (placement.x + placement.width / 2) * scale,
+        y: element.clientHeight / 2 - (placement.y + placement.height / 2) * scale });
+    }
+    setReturningFromDocument(true);
+    const timer = window.setTimeout(() => setReturningFromDocument(false), 400);
+    return () => { window.clearTimeout(timer); setReturningFromDocument(false); };
+  // Runs when the map is shown again.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVisible]);
+
+  /** The card showing a document under the point, or the one already being zoomed through. */
+  function zoomThroughCardAt(localX: number, localY: number, current: GraphViewport): ZoomThroughCard | null {
+    const held = zoomThroughRef.current && performance.now() - zoomThroughRef.current.at < ZOOM_THROUGH_IDLE_MS ? zoomThroughRef.current.id : null;
+    const worldX = (localX - current.x) / current.scale, worldY = (localY - current.y) / current.scale;
+    let found: ZoomThroughCard | null = null;
+    for (const { placement, nodeDetail, visualBounds } of renderedNodeDetails) {
+      if (nodeDetail !== "reader") continue;
+      const card = { id: placement.conversationId, ...visualBounds };
+      if (card.id === held) return card;
+      if (!found && worldX >= card.x && worldX <= card.x + card.width && worldY >= card.y && worldY <= card.y + card.height) found = card;
+    }
+    return found;
+  }
+
   function setScaleAtPoint(nextScale: number, localX: number, localY: number) {
     const current = viewportStateRef.current;
+    const element = viewportRef.current;
+    const card = onZoomIntoConversation && !panelView && nextScale > current.scale && element?.clientWidth
+      ? zoomThroughCardAt(localX, localY, current) : null;
+    if (card && element) {
+      const step = zoomThroughStep({ current, requestedScale: nextScale, point: { x: localX, y: localY }, card,
+        size: { width: element.clientWidth, height: element.clientHeight }, maxScale: GRAPH_SCALE_MAX,
+        state: zoomThroughRef.current, now: performance.now() });
+      zoomThroughRef.current = step.state;
+      setZoomThrough(step.state ? { id: card.id, progress: getZoomThroughProgress(step.state.travel) } : null);
+      applyManualViewport(step.viewport);
+      if (step.open) {
+        openedDocumentRef.current = card.id;
+        onZoomIntoConversation?.(card.id);
+      }
+      return;
+    }
+    if (zoomThroughRef.current) { zoomThroughRef.current = null; setZoomThrough(null); }
     const scale = clamp(nextScale, minimumZoomScale, GRAPH_SCALE_MAX);
 
     if (scale === current.scale) {
@@ -2677,7 +2738,7 @@ export default function ConversationGraphView({
         style={{ "--personal-map-dock-width": `${dockWidth}px` } as CSSProperties}
       >
         <div
-          className={`conversation-graph-viewport${panelView ? " is-analysis-view" : ""}${isPanning ? " is-panning" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
+          className={`conversation-graph-viewport${panelView ? " is-analysis-view" : ""}${isPanning ? " is-panning" : ""}${returningFromDocument ? " is-returning-from-document" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
           aria-label="Personal map canvas"
           aria-describedby={keyboardHintId}
           tabIndex={0}
@@ -2933,11 +2994,16 @@ export default function ConversationGraphView({
                   contentReady={visibleContentSet.has(contentKey) && readyContentKeys.has(contentKey)}
                   renderReader={renderExpandedConversation}
                   semanticLevel={semanticLevel}
+                  zoomThroughProgress={zoomThrough?.id === conversation.id ? zoomThrough.progress : undefined}
                 />
               ) : null;
             })}
           </div>
 
+          {zoomThrough && conversations[zoomThrough.id] ? <div className="graph-zoom-through-hint" role="status">
+            <span>Keep zooming to open <strong>{conversations[zoomThrough.id].title}</strong></span>
+            <span className="graph-zoom-through-meter" aria-hidden="true"><span style={{ transform: `scaleX(${zoomThrough.progress})` }} /></span>
+          </div> : null}
           {inspectedPersonalConnection && conversations[inspectedPersonalConnection[0]] && conversations[inspectedPersonalConnection[1]] ? <section className="graph-map-edge-inspector" data-graph-ui="true" aria-label="My connection details">
             <header><strong>My connection</strong><button type="button" aria-label="Close my connection" onClick={() => setInspectedPersonalConnection(null)}>×</button></header>
             <p>{conversations[inspectedPersonalConnection[0]].title} ↔ {conversations[inspectedPersonalConnection[1]].title}</p>

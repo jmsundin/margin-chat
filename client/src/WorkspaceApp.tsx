@@ -1,4 +1,6 @@
 import { useVisualViewport } from "./lib/useVisualViewport";
+import { getGraphPinchZoomFactor } from "./lib/graphInteractions";
+import { pinchOutStep, ZOOM_THROUGH_IDLE_MS } from "./lib/zoomThrough";
 import { useAppUpdateGuard } from "./lib/appUpdateSafety";
 import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } from "./components/MobileKeyboard";
 import MobileAIComposer from "./components/MobileAIComposer";
@@ -992,6 +994,32 @@ function WorkspaceAppContent({
     .join("|");
   const isTileView = mainViewMode === "tiles";
   const isGraphView = mainViewMode === "graph";
+  // A document opened by zooming through its map card. Pinching out (or Back
+  // to map) returns to the map, which kept its place.
+  const [mapReturnId, setMapReturnId] = useState<string | null>(null);
+  useEffect(() => { if (mainViewMode !== "chat") setMapReturnId(null); }, [mainViewMode]);
+  const returnToMap = useEffectEvent(() => handleSetMainViewMode("graph"));
+  useEffect(() => {
+    if (!mapReturnId || mainViewMode !== "chat") return;
+    let pinch: { travel: number; at: number } | null = null;
+    // The pinch that opened the document may still be going; it must not zoom the page.
+    let quietUntil = performance.now() + ZOOM_THROUGH_IDLE_MS;
+    function handleWheel(event: WheelEvent) {
+      if (!event.ctrlKey && !event.metaKey) return;
+      const now = performance.now();
+      const deltaY = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+      if (deltaY <= 0) {
+        pinch = null;
+        if (now < quietUntil) { event.preventDefault(); quietUntil = now + 300; }
+        return;
+      }
+      event.preventDefault();
+      pinch = pinchOutStep(pinch, getGraphPinchZoomFactor(deltaY), now);
+      if (!pinch) returnToMap();
+    }
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    return () => window.removeEventListener("wheel", handleWheel);
+  }, [mapReturnId, mainViewMode]);
   const chatPanelLayout = getChatPanelLayout({
     availableWidth: canvasWidth,
     preferredWidth: chatPanelWidth,
@@ -4424,6 +4452,10 @@ function WorkspaceAppContent({
                         nextViewMode: "chat",
                       })
                     }
+                    onZoomIntoConversation={(conversationId) => {
+                      setMapReturnId(conversationId);
+                      handleSelectConversation(conversationId, { nextViewMode: "chat" });
+                    }}
                     onToggleGroup={handleToggleConversationGroup}
                     onUpdateGraphNodeLayouts={handleUpdateGraphNodeLayouts}
                     dockControlsInHeader
@@ -4451,7 +4483,7 @@ function WorkspaceAppContent({
                 </Suspense>
               </WorkspaceView>
               <WorkspaceView mode="chat" active={!isTileView && !isGraphView}>
-                <div className="chat-tree-workspace document-workspace">
+                <div className="chat-tree-workspace document-workspace" data-from-map={mapReturnId ? "true" : undefined}>
                   <header className="document-workspace-toolbar" aria-label="Document navigation">
                     {(!leftSidebarOpen || isMobileViewport) && <button
                       aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
@@ -4480,6 +4512,11 @@ function WorkspaceAppContent({
                       onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
                     />
                     <div className="document-workspace-actions">
+                      {mapReturnId ? <button type="button" className="document-back-to-map" onClick={() => handleSetMainViewMode("graph")}
+                        title="Back to the map (or pinch out)">
+                        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5 7 10l5 5" /></svg>
+                        Map
+                      </button> : null}
                       <DocumentViewsMenu currentDocumentId={activeConversation.id}
                         onMinimizeAll={() => handleHideAllDocuments("minimize")}
                         onCloseAll={() => handleHideAllDocuments("close")}

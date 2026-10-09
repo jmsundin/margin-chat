@@ -3,6 +3,14 @@ import type { ConversationGraphNodePlacement } from "./conversationGraph";
 export type GraphViewport = { scale: number; x: number; y: number };
 export type GraphPointer = { pointerId: number; clientX: number; clientY: number };
 export type GraphSelectionBounds = { height: number; width: number; x: number; y: number };
+const GRAPH_PINCH_ZOOM_SENSITIVITY = 0.008;
+const GRAPH_PINCH_ZOOM_MAX_FACTOR = 1.28;
+
+/** Zoom factor for one pinch (Ctrl/Cmd + wheel) event. */
+export function getGraphPinchZoomFactor(deltaY: number) {
+  return Math.min(Math.max(Math.exp(-deltaY * GRAPH_PINCH_ZOOM_SENSITIVITY), 1 / GRAPH_PINCH_ZOOM_MAX_FACTOR), GRAPH_PINCH_ZOOM_MAX_FACTOR);
+}
+
 export type GraphNodeMove = {
   conversationId: string;
   conversationIds: string[];
