@@ -621,3 +621,29 @@ describe("conversation graph view", () => {
     expect(markup).toContain('data-conversation-id="privacy"');
   });
 });
+
+describe("typed relations on the map", () => {
+  test("draws saved relations by type and links written in text as mentions", () => {
+    const related: Record<string, Conversation> = {
+      ...conversations,
+      privacy: { ...conversations.privacy, relations: [{ type: "contradicts", targetConversationId: "runtime", origin: "ai" }] },
+      mac: { ...conversations.mac, messages: [{ content: "Compare with [[Privacy trade-offs]].", createdAt, id: "mac-user", role: "user" }] },
+    };
+    const markup = renderToStaticMarkup(
+      <ConversationGraphView
+        activeConversationId="root"
+        conversations={related}
+        groups={{}}
+        onActivateConversation={() => {}}
+        onAssignGroup={() => {}}
+        onCreateChildConversation={() => null}
+        onOpenConversation={() => {}}
+        onToggleGroup={() => {}}
+      />,
+    );
+    expect(markup).toContain('class="graph-relation-edge is-contradicts is-relation is-ai"');
+    expect(markup).toContain(`aria-label="Contradicts: ${related.privacy.title} and ${related.runtime.title}"`);
+    expect(markup).toContain('class="graph-relation-edge is-mention is-mention"');
+    expect(markup).toContain('marker-end="url(#graph-relation-arrow-mention)"');
+  });
+});

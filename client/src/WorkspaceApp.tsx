@@ -68,6 +68,8 @@ import { saveUrlMapNode } from "./lib/urlMap";
 import { findSavedPublicTopic, savePublicTopic } from "./lib/publicTopicWorkspace";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
+import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
+import type { DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
 import { ConversationGroupPickerContext } from "./components/ConversationGroupControls";
@@ -3044,6 +3046,18 @@ function WorkspaceAppContent({
     setMapEditMessage(connected ? "Connection added to your map." : "Connection removed. Both notes are still in your workspace.");
   }
 
+  function handleSetMapRelation(args: { sourceId: string; targetId: string; type: DocumentRelationTypeId | null; previousType: DocumentRelationTypeId | null; remove?: boolean }) {
+    const now = new Date().toISOString();
+    if (setDocumentRelation(state, { ...args, updatedAt: now }) === state) return;
+    const previous = [args.sourceId, args.targetId].flatMap((id) => state.conversations[id] ? [{ id,
+      relations: state.conversations[id].relations, linkedConversationIds: state.conversations[id].linkedConversationIds }] : []);
+    setState((current) => setDocumentRelation(current, { ...args, updatedAt: now }));
+    mapUndoRef.current = (current) => restoreDocumentConnections(current, previous, new Date().toISOString());
+    const label = args.type ? getDocumentRelationType(args.type)?.label.toLowerCase() : null;
+    setMapEditMessage(args.remove ? "Relation removed. Both documents are still in your workspace."
+      : label ? `Saved: ${state.conversations[args.sourceId]?.title} ${label} ${state.conversations[args.targetId]?.title}.` : "Saved as an untyped connection.");
+  }
+
   function handleAddMapChildNote(parentId: string) {
     if (!state.conversations[parentId]) return;
     const id = createId("note-conversation");
@@ -4291,6 +4305,7 @@ function WorkspaceAppContent({
                     onSavePublicTopic={handleSavePublicTopic}
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}
+                    onSetRelation={handleSetMapRelation}
                     onRemoveMapNote={handleRemoveMapNote}
                     onUndoMapEdit={handleUndoMapEdit}
                     mapEditMessage={mapEditMessage}

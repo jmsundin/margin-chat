@@ -43,7 +43,7 @@ function RelationshipSources({ edges, ...sourceProps }: SourceProps & { edges: G
     <ol>
       {edges.slice(0, limit).map((edge) => <li key={edge.id}>
         <DocumentButton id={edge.sourceId} {...sourceProps} />
-        <span className={`graph-analysis-relation is-${edge.kind}`}>{edge.kind === "branch" ? "parent → child" : "links to →"}</span>
+        <span className={`graph-analysis-relation is-${edge.kind}`}>{edge.kind === "branch" ? "parent → child" : edge.kind === "relation" ? "relates to →" : "links to →"}</span>
         <DocumentButton id={edge.targetId} {...sourceProps} />
       </li>)}
     </ol>
@@ -131,11 +131,11 @@ function Matrix({ conversations, edges, ...sourceProps }: SourceProps & { edges:
           {columns.map((target) => {
             const cellEdges = cells.get(JSON.stringify([source.id, target.id])) ?? [];
             const active = selectedCell?.[0] === source.id && selectedCell[1] === target.id;
-            const kinds = cellEdges.map((edge) => edge.kind === "branch" ? "parent to child" : "authored link").join(" and ");
+            const kinds = cellEdges.map((edge) => edge.kind === "branch" ? "parent to child" : edge.kind === "relation" ? "relation" : "authored link").join(" and ");
             return <td key={target.id} className={active ? "is-active" : undefined}>
               {cellEdges.length ? <button type="button" aria-pressed={active} aria-label={`${source.title} to ${target.title}: ${kinds}`}
                 onClick={() => setSelectedCell([source.id, target.id])}>
-                {cellEdges.map((edge) => <span key={edge.kind} className={`is-${edge.kind}`}>{edge.kind === "branch" ? "B" : "L"}</span>)}
+                {cellEdges.map((edge) => <span key={edge.kind} className={`is-${edge.kind}`}>{edge.kind === "branch" ? "B" : edge.kind === "relation" ? "R" : "L"}</span>)}
               </button> : <span className="graph-analysis-matrix-blank" aria-label="No relationship">·</span>}
             </td>;
           })}
@@ -238,7 +238,7 @@ const MODE_COPY = {
 
 export function GraphAnalysisViews({ mode, conversations, groups, selectedConversationId, onOpenConversation, relationKinds }: GraphAnalysisViewsProps) {
   const allEdges = useMemo(() => getGraphAnalysisEdges(conversations), [conversations]);
-  const edges = useMemo(() => relationKinds ? allEdges.filter((edge) => relationKinds.includes(edge.kind)) : allEdges, [allEdges, relationKinds]);
+  const edges = useMemo(() => relationKinds ? allEdges.filter((edge) => relationKinds.includes(edge.kind === "relation" ? "link" : edge.kind)) : allEdges, [allEdges, relationKinds]);
   const sourceProps = { conversations, selectedConversationId, onOpenConversation };
   return <section className={`graph-analysis-view graph-analysis-${mode}`} aria-label={`${mode[0].toUpperCase()}${mode.slice(1)} view`}>
     <header className="graph-analysis-heading"><span>{mode}</span><h2>{MODE_COPY[mode].title}</h2><p>{MODE_COPY[mode].description}</p></header>

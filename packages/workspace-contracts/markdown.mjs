@@ -6,6 +6,8 @@ import { normalizeDocumentLayout } from "./documentLayout.mjs";
 import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
 import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
 import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
+import { readFrontmatter, readFrontmatterValues, setFrontmatterEntries } from "./frontmatter.mjs";
+import { DOCUMENT_RELATION_TYPES, EDGE_META_KEY, RESERVED_DOCUMENT_TAGS, documentRelationKey, documentRelationMetadata, normalizeDocumentNodeType, normalizeDocumentRelations, normalizeDocumentTags, readDocumentGraphProperties, readDocumentRelationMetadata } from "./relations.mjs";
 /**
  * Parsing a file depends only on its text (and, for whole-file parses, its
  * identity and the default model). Remember the last result for each path so an
@@ -44,6 +46,7 @@ function cachedFileMetadata(path, source) {
     });
 }
 export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
+export { markdownIdentitySuffix } from "./markdownPaths.mjs";
 export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 5;
 
 function decodeWorkspace(workspace) {
@@ -213,7 +216,9 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
         const primaryNoteIndex = primaryNote
             ? (conversation.notes ?? []).indexOf(primaryNote)
             : -1;
-        const { childIds: _childIds, messages: _messages, notes: _notes, parentId: _parentId, ...conversationMetadata } = conversation;
+        // Graph properties are frontmatter, the one place Obsidian and people read them.
+        const { childIds: _childIds, messages: _messages, notes: _notes, parentId: _parentId,
+            relations: _relations, nodeType: _nodeType, tags: _tags, ...conversationMetadata } = conversation;
         const metadata = {
             file: portableFileRecord(plannedRecords.get(conversation.id)),
             conversation: {
@@ -241,9 +246,14 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
         const contextMessages = renderMessages(conversation.messages);
         const attachments = renderAttachments(conversation.documents ?? [], path);
         const documentBody = conversation.document ? renderEditableDocument(conversation.document) : "";
+        const linkTo = (targetId) => {
+            const target = state.conversations[targetId];
+            const targetPath = target && conversationPathById.get(targetId);
+            return targetPath ? { path: targetPath, title: target.title } : null;
+        };
         const body = conversation.kind === "note"
             ? [
-                renderFrontmatter(conversation, "note"),
+                renderFrontmatter(conversation, "note", linkTo),
                 serializeMetadata(metadata),
                 `# ${title}`,
                 relationships,
@@ -256,7 +266,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
                 .filter((section) => section !== "")
                 .join("\n\n")
             : [
-                renderFrontmatter(conversation, "chat"),
+                renderFrontmatter(conversation, "chat", linkTo),
                 serializeMetadata(metadata),
                 `# ${title}`,
                 relationships,
@@ -406,6 +416,8 @@ export function summarizeMarkdownVaultFile(path, source) {
         source = decodeReadableMarkdown(source).replace(/\r\n/g, "\n");
         const metadata = parseMetadata(source);
         const relationships = parseRelationships(source);
+        // Typed relation targets load with the document on a new device, like linked documents.
+        const relationTargets = readDocumentGraphProperties(readFrontmatterValues(source)).relationTargets.map(({ target }) => target);
         const frontmatterTitle = parseFrontmatterString(source, "title")?.trim();
         const created = validDate(parseFrontmatterString(source, "created"));
         const updated = validDate(parseFrontmatterString(source, "updated")) ?? created;
@@ -425,13 +437,13 @@ export function summarizeMarkdownVaultFile(path, source) {
             const activity = [updated, validDate(conversation.updatedAt), validDate(latestMessage)].filter(Boolean).sort().at(-1);
             return { ...shared, ...(activity ? { updated: activity } : {}), id: conversation.id, type: "conversation",
                 kind: conversation.kind === "note" ? "note" : "chat", title: frontmatterTitle || conversation.title || basename,
-                parentTarget: relationships.parentTarget, linkedTargets: relationships.linkedTargets };
+                parentTarget: relationships.parentTarget, linkedTargets: [...relationships.linkedTargets, ...relationTargets] };
         }
         const content = source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n)?/, "");
         return { ...shared, id: parseFrontmatterString(source, "margin-chat-id") || `markdown-${safeFileId(path)}`,
             type: "conversation", kind: "note",
             title: frontmatterTitle || /^#\s+(.+)$/m.exec(content)?.[1]?.trim() || basename,
-            parentTarget: null, linkedTargets: [] };
+            parentTarget: null, linkedTargets: relationTargets };
     }
     catch {
         // An unreadable file stays findable by name; opening it reports the real error.
@@ -537,6 +549,12 @@ export function parseMarkdownWorkspace(manifest, fileContents) {
                 conversations[conversationId].linkedConversationIds = normalizeLinkedConversationIds(linkedIds, conversationId, conversations);
             }
         }
+        const recordByTitle = uniqueTitleRecords(manifest.files, conversations);
+        for (const [conversationId, parsed] of parsedConversations) {
+            const relations = resolveRelationTargets(parsed, recordByTarget, recordByTitle);
+            const normalized = normalizeDocumentRelations(relations, conversationId, conversations);
+            if (normalized?.length) conversations[conversationId].relations = normalized;
+        }
         const notesByConversation = new Map();
         for (const conversation of Object.values(conversations)) {
             const documentLayout = normalizeDocumentLayout(conversation.documentLayout, conversation.id, conversations);
@@ -636,7 +654,9 @@ function parseConversationFile(source, record, workspace) {
             content: isNote ? parseNoteBody(source) : "",
         }
         : null;
-    const { publicTopic: rawPublicTopic, linkedConversationIds, document: rawDocument, ...conversationMetadata } = metadata.conversation;
+    const { publicTopic: rawPublicTopic, linkedConversationIds, document: rawDocument,
+        relations: _relations, nodeType: _nodeType, tags: _tags, ...conversationMetadata } = metadata.conversation;
+    const graph = readDocumentGraphProperties(readFrontmatterValues(source));
     const documentSection = editableDocumentSection(source);
     const document = rawDocument === undefined ? undefined : documentSection && normalizeEditableDocument({
         ...rawDocument, blocks: parseEditableDocumentContent(documentSection.text, metadata.conversation),
@@ -646,8 +666,11 @@ function parseConversationFile(source, record, workspace) {
     return {
         childTargets: relationships.childTargets,
         linkedTargets: relationships.linkedTargets,
+        relationTargets: graph.relationTargets,
+        edgeMeta: graph.edgeMeta,
         conversation: {
             ...conversationMetadata,
+            ...graphConversationFields(graph),
             ...(document ? { document } : {}),
             ...(publicTopic ? { publicTopic } : {}),
             ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds } : {}),
@@ -807,10 +830,13 @@ function parsePlainMarkdownNote(source, record, workspace) {
     const content = source.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n)?/, "");
     const title = parseFrontmatterString(source, "title") || /^#\s+(.+)$/m.exec(content)?.[1]?.trim()
         || record.path.split("/").at(-1).replace(/\.md$/i, "");
+    const graph = readDocumentGraphProperties(readFrontmatterValues(source));
     return {
         childTargets: [], noteTargets: [], parentTarget: null, primaryNoteIndex: 0,
+        relationTargets: graph.relationTargets, edgeMeta: graph.edgeMeta,
         conversation: {
             id: record.id, kind: "note", title, parentId: null, childIds: [], branchAnchor: null,
+            ...graphConversationFields(graph),
             serviceId: workspace.preferences.defaultServiceId,
             modelId: workspace.preferences.defaultModelId,
             createdAt, updatedAt, messages: [], documents: [],
@@ -964,27 +990,31 @@ function messageBlocks(source) {
     }
     return blocks;
 }
+/** Apply the app's frontmatter changes (entries that differ between the previous
+ * and next canonical render) to the user's own frontmatter, entry by entry. Every
+ * other entry, comment and formatting choice stays byte for byte. */
 function mergeFrontmatter(raw, result, before, after = result) {
-    const pattern = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n)?/;
-    const original = pattern.exec(raw);
-    const next = pattern.exec(after);
+    const next = readFrontmatter(after);
     if (!next)
         return result;
-    const lines = original ? original[1].split(/\r?\n/) : [];
-    for (const line of next[1].split(/\r?\n/)) {
-        const key = /^([^:#\s][^:]*):/.exec(line)?.[1];
-        if (!key)
-            continue;
-        const index = lines.findIndex((entry) => entry.startsWith(`${key}:`));
-        const changed = parseFrontmatterString(before, key) !== parseFrontmatterString(after, key);
-        if (index === -1)
-            lines.push(line);
-        else if (changed)
-            lines[index] = line;
+    const original = readFrontmatter(raw);
+    const previous = new Map((readFrontmatter(before)?.entries ?? []).map((entry) => [entry.key, entry.raw]));
+    const existing = new Set((original?.entries ?? []).map((entry) => entry.key));
+    const updates = {};
+    for (const entry of next.entries) {
+        if (!existing.has(entry.key) || previous.get(entry.key) !== entry.raw)
+            updates[entry.key] = entry.raw;
     }
-    const newline = /^---(\r?\n)/.exec(raw)?.[1] ?? "\n";
-    const frontmatter = `---${newline}${lines.join(newline)}${newline}---${newline}`;
-    return pattern.test(result) ? result.replace(pattern, () => frontmatter) : frontmatter + result;
+    const nextKeys = new Set(next.entries.map((entry) => entry.key));
+    for (const key of previous.keys()) {
+        if (!nextKeys.has(key) && existing.has(key))
+            updates[key] = undefined;
+    }
+    const newline = original?.newline ?? "\n";
+    const header = setFrontmatterEntries(original ? raw.slice(0, original.after) : `---${newline}---${newline}`, updates);
+    const target = readFrontmatter(result);
+    const separator = header.endsWith("\n") ? "" : newline;
+    return target ? header + separator + result.slice(target.after) : header + separator + result;
 }
 function renderConversationRelationships(args) {
     const parent = args.conversation.parentId
@@ -1036,16 +1066,19 @@ function renderMessages(messages) {
     })
         .join("\n\n");
 }
-function renderFrontmatter(conversation, kind) {
+function renderFrontmatter(conversation, kind, linkTo = () => null) {
     const publicTopic = normalizePublicTopicSource(conversation.publicTopic);
+    const nodeType = normalizeDocumentNodeType(conversation.nodeType);
     return [
         "---",
         `margin-chat-id: ${JSON.stringify(conversation.id)}`,
         "margin-chat-kind: document",
         `title: ${JSON.stringify(conversation.title)}`,
+        ...(nodeType ? [`type: ${JSON.stringify(nodeType)}`] : []),
         `created: ${JSON.stringify(conversation.createdAt)}`,
         `updated: ${JSON.stringify(conversation.updatedAt)}`,
-        "tags: [margin-chat, document]",
+        `tags: [${[...RESERVED_DOCUMENT_TAGS, ...normalizeDocumentTags(conversation.tags)].map(renderTag).join(", ")}]`,
+        ...renderRelationFrontmatter(conversation, linkTo),
         ...(publicTopic ? [
             `public-topic-id: ${JSON.stringify(publicTopic.id)}`,
             `public-topic-label: ${JSON.stringify(publicTopic.label)}`,
@@ -1056,6 +1089,64 @@ function renderFrontmatter(conversation, kind) {
         ] : []),
         "---",
     ].join("\n");
+}
+function renderTag(tag) {
+    return /^[\p{L}\p{N}_][\p{L}\p{N}_/.-]*$/u.test(tag) ? tag : JSON.stringify(tag);
+}
+/** One property per relation type, holding wiki links Obsidian draws as edges,
+ * then one `edge-meta` map of attributes keyed by type and target id. */
+function renderRelationFrontmatter(conversation, linkTo) {
+    const relations = normalizeDocumentRelations(conversation.relations, conversation.id) ?? [];
+    if (!relations.length)
+        return [];
+    const lines = [];
+    const metadata = {};
+    for (const type of DOCUMENT_RELATION_TYPES) {
+        const links = [];
+        for (const relation of relations.filter((item) => item.type === type.id)) {
+            const resolved = relation.targetConversationId ? linkTo(relation.targetConversationId) : null;
+            if (relation.targetConversationId && !resolved)
+                continue;
+            const block = relation.targetBlockId ? `#^${relation.targetBlockId}` : "";
+            links.push(resolved ? renderWikiLink(resolved.path, resolved.title, block) : `[[${relation.target}${block}]]`);
+            const attributes = documentRelationMetadata(relation);
+            if (Object.keys(attributes).length)
+                metadata[documentRelationKey(type.id, relation.targetConversationId ?? relation.target)] = attributes;
+        }
+        if (links.length)
+            lines.push(`${type.id}: ${JSON.stringify(links)}`);
+    }
+    if (Object.keys(metadata).length)
+        lines.push(`${EDGE_META_KEY}: ${JSON.stringify(metadata)}`);
+    return lines;
+}
+function graphConversationFields(graph) {
+    return { ...(graph.nodeType ? { nodeType: graph.nodeType } : {}), ...(graph.tags.length ? { tags: graph.tags } : {}) };
+}
+/** Relation links resolve like relationship links: by path, alias or basename,
+ * then by a unique document title (how a hand-written `[[Title]]` reads). */
+function resolveRelationTargets(parsed, recordByTarget, recordByTitle) {
+    return (parsed.relationTargets ?? []).map((relation) => {
+        const record = resolveLinkRecord(recordByTarget, relation.target)
+            ?? recordByTitle.get(relation.target.replace(/\.md$/i, "").trim().toLowerCase());
+        const id = record?.type === "conversation" ? record.id : undefined;
+        const metadata = readDocumentRelationMetadata((id && parsed.edgeMeta?.[documentRelationKey(relation.type, id)])
+            ?? parsed.edgeMeta?.[documentRelationKey(relation.type, relation.target)]);
+        return { ...metadata, type: relation.type, ...(id ? { targetConversationId: id } : { target: relation.target }),
+            ...(relation.targetBlockId ? { targetBlockId: relation.targetBlockId } : {}) };
+    });
+}
+function uniqueTitleRecords(records, conversations) {
+    const byTitle = new Map();
+    const duplicate = new Set();
+    for (const record of records) {
+        const title = record.type === "conversation" ? conversations[record.id]?.title?.trim().toLowerCase() : undefined;
+        if (!title) continue;
+        if (byTitle.has(title)) duplicate.add(title);
+        byTitle.set(title, record);
+    }
+    for (const title of duplicate) byTitle.delete(title);
+    return byTitle;
 }
 function renderNoteFrontmatter(note, title) {
     return [
@@ -1075,8 +1166,8 @@ function serializeMetadata(metadata) {
 function safeJson(value) {
     return JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 }
-function renderWikiLink(path, label) {
-    const target = path.replace(/\.md$/i, "");
+function renderWikiLink(path, label, anchor = "") {
+    const target = path.replace(/\.md$/i, "") + anchor;
     const safeLabel = label
         .replaceAll("]", ")")
         .replaceAll("|", "¦")

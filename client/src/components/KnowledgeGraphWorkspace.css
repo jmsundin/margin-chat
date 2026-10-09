@@ -38,6 +38,36 @@
 .graph-personal-connection { cursor: pointer; pointer-events: auto; }
 .graph-personal-connection-line { fill: none; stroke: var(--accent); stroke-width: 2px; stroke-dasharray: 4 4; pointer-events: none; }
 .graph-personal-connection text { fill: var(--ink); stroke: var(--panel-bg); stroke-width: 4px; paint-order: stroke; text-anchor: middle; font-size: 12px; }
+/* Typed relations: one color per relation type, dashed when an AI proposed it, dotted for links written in text. */
+.graph-relation-edge, .graph-relation-arrow { --relation-color: var(--accent); }
+.graph-relation-edge.is-supports, .graph-relation-arrow.is-supports { --relation-color: #7acaa4; }
+.graph-relation-edge.is-contradicts, .graph-relation-arrow.is-contradicts { --relation-color: #ff7b7b; }
+.graph-relation-edge.is-cites, .graph-relation-arrow.is-cites { --relation-color: #9ad1ff; }
+.graph-relation-edge.is-elaborates, .graph-relation-arrow.is-elaborates { --relation-color: #c7a6ff; }
+.graph-relation-edge.is-example-of, .graph-relation-arrow.is-example-of { --relation-color: #ffd479; }
+.graph-relation-edge.is-part-of, .graph-relation-arrow.is-part-of { --relation-color: #8fd3d0; }
+.graph-relation-edge.is-depends-on, .graph-relation-arrow.is-depends-on { --relation-color: #ffb195; }
+.graph-relation-edge.is-same-as, .graph-relation-arrow.is-same-as { --relation-color: #e2e8f0; }
+:root[data-theme="light"] .graph-relation-edge.is-supports, :root[data-theme="light"] .graph-relation-arrow.is-supports { --relation-color: #2f8a5f; }
+:root[data-theme="light"] .graph-relation-edge.is-contradicts, :root[data-theme="light"] .graph-relation-arrow.is-contradicts { --relation-color: #c23b3b; }
+:root[data-theme="light"] .graph-relation-edge.is-cites, :root[data-theme="light"] .graph-relation-arrow.is-cites { --relation-color: #2b6cb0; }
+:root[data-theme="light"] .graph-relation-edge.is-elaborates, :root[data-theme="light"] .graph-relation-arrow.is-elaborates { --relation-color: #6b46c1; }
+:root[data-theme="light"] .graph-relation-edge.is-example-of, :root[data-theme="light"] .graph-relation-arrow.is-example-of { --relation-color: #a86b00; }
+:root[data-theme="light"] .graph-relation-edge.is-part-of, :root[data-theme="light"] .graph-relation-arrow.is-part-of { --relation-color: #2c7a7b; }
+:root[data-theme="light"] .graph-relation-edge.is-depends-on, :root[data-theme="light"] .graph-relation-arrow.is-depends-on { --relation-color: #c05621; }
+:root[data-theme="light"] .graph-relation-edge.is-same-as, :root[data-theme="light"] .graph-relation-arrow.is-same-as { --relation-color: #4a5568; }
+.graph-relation-edge.is-mention, .graph-relation-arrow.is-mention { --relation-color: var(--muted); }
+.graph-relation-edge { cursor: pointer; pointer-events: auto; }
+.graph-relation-edge-line { fill: none; stroke: var(--relation-color); stroke-width: 2px; pointer-events: none; }
+.graph-relation-edge.is-ai .graph-relation-edge-line { stroke-dasharray: 6 4; }
+.graph-relation-edge.is-mention .graph-relation-edge-line { stroke-width: 1.25px; stroke-dasharray: 1 4; stroke-linecap: round; opacity: .8; }
+.graph-relation-edge text { fill: var(--relation-color); stroke: var(--panel-bg); stroke-width: 4px; paint-order: stroke; text-anchor: middle; font-size: 12px; }
+.graph-relation-edge.is-mention text { fill: var(--muted); font-size: 11px; }
+.graph-relation-edge:focus-visible .graph-relation-edge-line, .graph-relation-edge:hover .graph-relation-edge-line { stroke-width: 3px; }
+.graph-relation-arrow path { fill: var(--relation-color); }
+.graph-relation-type-picker { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: .76rem; color: var(--muted); }
+.graph-relation-type-picker select { font: inherit; font-size: .8rem; color: var(--ink); background: var(--button-bg, var(--panel-bg)); border: 1px solid var(--line); border-radius: 7px; min-height: 32px; padding: 4px 6px; }
+.graph-relation-inspector blockquote { margin: 8px 0; padding-left: 10px; border-left: 3px solid var(--line-strong); color: var(--ink); font-size: .8rem; }
 .public-topic-provenance { background: var(--accent-soft); border: 1px solid var(--line); border-radius: 9px; margin-bottom: 18px; padding: 12px; font-size: .8rem; }
 .public-topic-provenance p { margin: 6px 0; }
 .public-topic-provenance a { color: var(--accent); margin-right: 12px; }

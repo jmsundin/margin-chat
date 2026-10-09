@@ -495,6 +495,7 @@ export class VaultSync {
       // A link or branch can be added from another file without changing this chat's bytes.
       const referenced = new Set(Object.values(state?.conversations ?? {}).flatMap((chat) => [
         chat.parentId, chat.branchAnchor?.sourceConversationId, ...(chat.linkedConversationIds ?? []),
+        ...(chat.relations ?? []).map((relation) => relation.targetConversationId),
       ]).filter(Boolean));
       for (const id of state?.pinnedThreadIds ?? []) referenced.add(id);
       const pinnedPanes = state?.documentDock?.tree ? [state.documentDock.tree] : [];

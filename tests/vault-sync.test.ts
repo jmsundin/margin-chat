@@ -539,16 +539,18 @@ describe("multi-device Markdown sync", () => {
     expect((await a.read()).files["note.md"].content).toBe("newer intentional edit");
   });
 
-  test("deletions propagate while an offline edit of a deleted note is preserved as a conflict", async () => {
+  test("deletions propagate, and an offline edit of a deleted note brings it back with the deletion recorded as a conflict", async () => {
     const remote = cloud(); const a = remote.device(); const b = remote.device(); const idle = remote.device();
     await replace(a, "note.md", "base"); await a.sync(); await b.sync(); await idle.sync();
     await replace(a, "note.md", null); await replace(b, "note.md", "offline text"); await a.sync();
+    // An unchanged copy never resurrects a deletion.
     await idle.sync(); expect((await idle.read()).files["note.md"]).toBeUndefined();
     const conflict = await b.sync();
-    expect(conflict.files["note.md"]).toBeUndefined();
+    expect(conflict.files["note.md"].content).toBe("offline text");
     expect(conflict.conflicts[0].local?.content).toBe("offline text");
     expect(conflict.conflicts[0].remote).toBeNull();
-    expect((await remote.transport.manifest()).files["note.md"].deleted).toBe(true);
+    expect((await remote.transport.manifest()).files["note.md"].deleted).toBeFalsy();
+    await idle.sync(); expect((await idle.read()).files["note.md"].content).toBe("offline text");
   });
 
   test("typing saves immediately while a manifest request is pending", async () => {
