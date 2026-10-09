@@ -20,7 +20,6 @@
   padding: 8px 14px;
   pointer-events: none;
   position: fixed;
-  top: env(safe-area-inset-top, 0px);
   z-index: 60;
 }
 

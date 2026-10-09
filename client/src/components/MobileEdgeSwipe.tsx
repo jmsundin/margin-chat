@@ -6,6 +6,7 @@ import {
 import "./MobileEdgeSwipe.css";
 
 const SIDEBAR_SELECTOR = ".thread-sidebar";
+const DOCUMENT_BODY_SELECTOR = ".panel-body";
 const SETTLE_MS = 220;
 
 type Gesture = {
@@ -17,22 +18,28 @@ type Gesture = {
   width: number;
   offset: number;
   dy: number;
+  /** Top of the document the search pull started on, where its hint appears. */
+  pullTop: number;
   samples: { x: number; t: number }[];
 };
 
 /**
  * The candidates left once the touched elements have their say: drag grips, sliders,
- * canvases and dialogs own their touches, unless they hand a gesture back with data-edge-swipe-allow.
+ * canvases and dialogs own their touches.
  */
-function allowedCandidates(target: EventTarget | null, candidates: EdgeSwipeKind[]): EdgeSwipeKind[] {
-  if (!(target instanceof Element)) return candidates;
-  if (target.closest("input, textarea, select, [role='dialog'], [aria-modal='true']")) return [];
+function ownsTouch(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) return false;
+  if (target.closest("input, textarea, select, [role='dialog'], [aria-modal='true']")) return true;
   for (let element: Element | null = target; element && element !== document.body; element = element.parentElement) {
-    const allow = element.getAttribute("data-edge-swipe-allow");
-    if (allow !== null) return candidates.filter((kind) => allow.split(" ").includes(kind));
-    if (getComputedStyle(element).touchAction === "none") return [];
+    if (getComputedStyle(element).touchAction === "none") return true;
   }
-  return candidates;
+  return false;
+}
+
+/** The document body under the touch when it is scrolled to its top, so a pull down has nothing to scroll. */
+function documentAtTop(target: EventTarget | null): HTMLElement | null {
+  const body = target instanceof Element ? target.closest<HTMLElement>(DOCUMENT_BODY_SELECTOR) : null;
+  return body && body.scrollTop <= 0 ? body : null;
 }
 
 /**
@@ -52,7 +59,7 @@ function holdKeyboardOpen() {
 
 /**
  * Phone gestures: swipe in from the left edge to pull out the sidebar (or swipe it back),
- * and pull down from the top bar to open search.
+ * and pull down on a document scrolled to its top to open search.
  */
 export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar, onOpenSearch, onOpenSidebar }: {
   disabled: boolean;
@@ -61,8 +68,8 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
   onOpenSearch: () => void;
   onOpenSidebar: () => void;
 }) {
-  /** How far the finger has pulled down from the top bar. */
-  const [pull, setPull] = useState(0);
+  /** How far the finger has pulled down, and the top of the document it is pulling. */
+  const [pull, setPull] = useState({ distance: 0, top: 0 });
   const latest = useRef({ disabled, sidebarOpen, onCloseSidebar, onOpenSearch, onOpenSidebar });
   latest.current = { disabled, sidebarOpen, onCloseSidebar, onOpenSearch, onOpenSidebar };
 
@@ -86,11 +93,14 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
       const { disabled, sidebarOpen } = latest.current;
       if (disabled || event.touches.length !== 1 || settleTimer) return;
       const touch = event.touches[0];
-      const candidates = allowedCandidates(event.target, edgeSwipeCandidates({ x: touch.clientX, y: touch.clientY, sidebarOpen }));
+      if (ownsTouch(event.target)) return;
+      const body = sidebarOpen ? null : documentAtTop(event.target);
+      const candidates = edgeSwipeCandidates({ x: touch.clientX, sidebarOpen, atDocumentTop: Boolean(body) });
       if (!candidates.length) return;
       // Leave selection handles alone while text is selected.
       if (!sidebarOpen && !(window.getSelection()?.isCollapsed ?? true)) return;
       gesture = { id: touch.identifier, x: touch.clientX, y: touch.clientY, candidates, kind: null, width: 0, offset: 0, dy: 0,
+        pullTop: body?.getBoundingClientRect().top ?? 0,
         samples: [{ x: touch.clientX, t: event.timeStamp }] };
     };
 
@@ -117,7 +127,7 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
       current.samples = [...current.samples.filter((sample) => event.timeStamp - sample.t < 100), { x: touch.clientX, t: event.timeStamp }];
       if (current.kind === "pull-search") {
         current.dy = dy;
-        setPull(Math.max(0, dy));
+        setPull({ distance: Math.max(0, dy), top: current.pullTop });
       } else {
         current.offset = sidebarDragOffset(current.kind, dx, current.width);
         setOffset(current.offset, current.width);
@@ -130,7 +140,7 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
       gesture = null;
       if (!current.kind) return;
       if (current.kind === "pull-search") {
-        setPull(0);
+        setPull({ distance: 0, top: 0 });
         if (event.type === "touchend" && searchPullTriggers(current.dy)) {
           holdKeyboardOpen();
           latest.current.onOpenSearch();
@@ -168,9 +178,10 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
     };
   }, []);
 
-  if (!pull) return null;
-  const ready = searchPullTriggers(pull);
-  return <div aria-hidden="true" className={`mobile-search-pull${ready ? " is-ready" : ""}`} style={{ transform: `translate(-50%, ${searchPullDistance(pull) - 52}px)` }}>
+  if (!pull.distance) return null;
+  const ready = searchPullTriggers(pull.distance);
+  return <div aria-hidden="true" className={`mobile-search-pull${ready ? " is-ready" : ""}`}
+    style={{ top: pull.top, opacity: Math.min(1, pull.distance / 40), transform: `translate(-50%, ${searchPullDistance(pull.distance) - 40}px)` }}>
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
     <span>{ready ? "Release to search" : "Pull to search"}</span>
   </div>;

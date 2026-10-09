@@ -1,24 +1,26 @@
-/** Touch gestures that open phone navigation from the screen edges. */
+/** Touch gestures that open phone navigation: the sidebar from the left edge, search from the document's top. */
 export type EdgeSwipeKind = "open-sidebar" | "close-sidebar" | "pull-search";
 
 /** Wide enough to start inside the iOS and Android system back-gesture zones' margin. */
 export const SIDEBAR_EDGE_PX = 32;
-/** The tab bar and breadcrumb row; a pull starting here never fights document scrolling. */
-export const SEARCH_PULL_ZONE_PX = 72;
 export const SEARCH_PULL_TRIGGER_PX = 72;
 export const SEARCH_PULL_MAX_PX = 112;
 /** Movement before a gesture claims the touch, as native scrolling does. */
 export const LOCK_SLOP_PX = 10;
 const FLING_PX_PER_MS = 0.45;
 
-export type EdgeSwipeStart = { x: number; y: number; sidebarOpen: boolean };
+/**
+ * `atDocumentTop`: the touch is on a document already scrolled to its top. Pulling down there
+ * reveals search, as in Mail and Settings; it never starts in the OS's own top-edge swipe zone.
+ */
+export type EdgeSwipeStart = { x: number; sidebarOpen: boolean; atDocumentTop: boolean };
 
 /** The gestures a touch could become, from where it started. */
-export function edgeSwipeCandidates({ x, y, sidebarOpen }: EdgeSwipeStart): EdgeSwipeKind[] {
+export function edgeSwipeCandidates({ x, sidebarOpen, atDocumentTop }: EdgeSwipeStart): EdgeSwipeKind[] {
   if (sidebarOpen) return ["close-sidebar"];
   const kinds: EdgeSwipeKind[] = [];
   if (x <= SIDEBAR_EDGE_PX) kinds.push("open-sidebar");
-  if (y <= SEARCH_PULL_ZONE_PX) kinds.push("pull-search");
+  if (atDocumentTop) kinds.push("pull-search");
   return kinds;
 }
 
