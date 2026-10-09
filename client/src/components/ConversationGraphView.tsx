@@ -114,6 +114,7 @@ const EMPTY_GRAPH_LAYOUTS: Record<string, GraphNodeLayout> = {};
 export const MAX_GRAPH_CARDS = 400;
 /** Below this zoom, large maps draw documents as dots rather than cards. */
 const MIN_CARD_SCALE = 0.05;
+const PRE_FIT_GRAPH_CARDS = 40;
 /** Most document links drawn at once. */
 const MAX_GRAPH_CONNECTIONS = 1_200;
 
@@ -134,6 +135,8 @@ export function limitGraphCards(placements: ConversationGraphNodePlacement[], bo
 const GRAPH_SPARSE_GROUP_SCALE = 0.35;
 const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
 const EMPTY_CLUSTERS: GravityCluster[] = [];
+const EMPTY_PLACEMENTS: ConversationGraphNodePlacement[] = [];
+const EMPTY_TERRITORY_LAYOUT: ReturnType<typeof layoutMapTerritoryOverview> = [];
 
 function getGraphSemanticLevel(scale: number): ConversationGraphSemanticLevel {
   return getMapScale(scale) === "groups" ? "territory" : "compact";
@@ -840,6 +843,7 @@ export default function ConversationGraphView({
   const viewportStateRef = useRef<GraphViewport>(viewport);
   viewportStateRef.current = viewport;
   const positionedInitialSceneRef = useRef(navigation.restored);
+  const [initialSceneFitted, setInitialSceneFitted] = useState(navigation.restored);
   const revealedSelectionKeyRef = useRef<string | null>(navigation.restored && selectedConversationId ? `${selectedConversationId}:${detailLevel}` : null);
   const preserveSelectionViewRef = useRef<string | null>(null);
   const handledFocusRequestIdRef = useRef<number | null>(null);
@@ -903,6 +907,28 @@ export default function ConversationGraphView({
       1 / (Math.max(1, bounds.width, bounds.height) * 1024)));
   }, [completeScene]);
   const documentGraphEdges = useMemo(() => getDocumentGraphEdges(conversations), [conversations]);
+  const relationEdgesByDocument = useMemo(() => {
+    const index = new Map<string, typeof documentGraphEdges>();
+    for (const edge of documentGraphEdges) for (const id of [edge.sourceId, edge.targetId]) {
+      const list = index.get(id);
+      if (list) list.push(edge); else index.set(id, [edge]);
+    }
+    return index;
+  }, [documentGraphEdges]);
+  // Each document's own links, from either end.
+  const personalLinksByDocument = useMemo(() => {
+    const index = new Map<string, Array<[string, string]>>();
+    for (const conversation of Object.values(conversations)) {
+      for (const targetId of new Set(conversation.linkedConversationIds ?? [])) {
+        const pair: [string, string] = [conversation.id, targetId];
+        for (const id of [conversation.id, targetId]) {
+          const list = index.get(id);
+          if (list) list.push(pair); else index.set(id, [pair]);
+        }
+      }
+    }
+    return index;
+  }, [conversations]);
   const inspectedRelation = inspectedRelationId ? documentGraphEdges.find((edge) => edge.id === inspectedRelationId) ?? null : null;
   const allDocumentConnections = useMemo(() => getGraphAnalysisEdges(conversations)
     .filter((edge) => edge.kind === "branch" ? showBranches : showLinks), [conversations, showBranches, showLinks]);
@@ -938,10 +964,12 @@ export default function ConversationGraphView({
   }, [completeScene, scope.kind, scopedIds, showBranches]);
   const territories = useMemo(() => buildMapTerritories(unfocusedScene, territoryGroups), [unfocusedScene, territoryGroups]);
   const focusedTerritory = territories.find((territory) => territory.id === focusedTerritoryId) ?? null;
-  const browsingGroups = !isCanvasMode && viewportSize.width > 0 && navigation.state.overviewPresentation === "map" && scope.kind === "all" && !focusedTerritory
+  // Views with their own document layout (Clusters, Network, Lineage) never
+  // browse groups, so zooming them doesn't re-lay out every group.
+  const browsingGroups = !isCanvasMode && !documentsOnly && viewportSize.width > 0 && navigation.state.overviewPresentation === "map" && scope.kind === "all" && !focusedTerritory
     && (territories.some((territory) => territory.id !== "__ungrouped__") || unfocusedScene.nodes.length > 4);
   const browsingLayout = useMemo(() => browsingGroups
-    ? layoutMapTerritoryOverview(territories, { x: 0, y: 0, scale: viewport.scale }, viewportSize.width || 1000) : [],
+    ? layoutMapTerritoryOverview(territories, { x: 0, y: 0, scale: viewport.scale }, viewportSize.width || 1000) : EMPTY_TERRITORY_LAYOUT,
   [browsingGroups, territories, viewport.scale, viewportSize.width]);
   const browsingFootprints = useMemo(() => new Map(browsingLayout.flatMap((territory) => territory.contentsVisible
     ? territory.nodes.map((node) => [node.conversationId, territory.nodeFootprint] as const) : [])), [browsingLayout]);
@@ -1078,7 +1106,9 @@ export default function ConversationGraphView({
   })), [overviewItems, conversations, groups, concepts, categorizedThreads]);
   const showThemeOverview = !panelView && scope.kind === "all" && !selectedConversation && navigation.state.overviewPresentation === "themes";
   const canvasTerritories = useMemo(() => buildMapTerritories(scene, territoryGroups), [scene, territoryGroups]);
-  const crowdedLabels = useMemo(() => mapLabelsOverlap(unfocusedScene.nodes, viewport.scale), [unfocusedScene.nodes, viewport.scale]);
+  const territoriesPossible = !isCanvasMode && !documentsOnly && !browsingGroups;
+  const crowdedLabels = useMemo(() => territoriesPossible && mapLabelsOverlap(unfocusedScene.nodes, viewport.scale),
+    [territoriesPossible, unfocusedScene.nodes, viewport.scale]);
   // A few distant notes should remain discoverable after Fit instead of
   // disappearing into one uninformative Ungrouped card. Their titles already
   // retain a readable screen size; aggregate only when they collide or the
@@ -1107,13 +1137,14 @@ export default function ConversationGraphView({
       }),
     [viewport, viewportSize],
   );
+  // Clusters' dot view draws no cards, so it skips the lookup.
   const nearbyNodePlacements = useMemo(
-    () =>
-      queryConversationGraphNodeSpatialIndex(
+    () => clusterDots ? EMPTY_PLACEMENTS
+      : queryConversationGraphNodeSpatialIndex(
         nodeSpatialIndex,
         viewportBounds,
       ),
-    [nodeSpatialIndex, viewportBounds],
+    [clusterDots, nodeSpatialIndex, viewportBounds],
   );
   const collapsedGroupPlacements = useMemo(
     () =>
@@ -1143,7 +1174,11 @@ export default function ConversationGraphView({
   // decides how many fit before they pile up; far enough out, large maps show
   // only dots. With too many in view, Clusters switches to its dot view and
   // other views keep the cards nearest the center, drawing the rest as dots.
-  const cardBudget = viewport.scale < MIN_CARD_SCALE && scene.nodes.length > MAX_GRAPH_CARDS ? 0
+  // Until the viewport is measured and fitted, large maps draw only a few
+  // cards, since that first frame is thrown away right after.
+  const largeMap = scene.nodes.length > MAX_GRAPH_CARDS;
+  const cardBudget = largeMap && viewport.scale < MIN_CARD_SCALE ? 0
+    : largeMap && (!viewportSize.width || !initialSceneFitted) ? PRE_FIT_GRAPH_CARDS
     : viewport.scale >= 0.9 || !viewportSize.width ? MAX_GRAPH_CARDS
     : Math.min(MAX_GRAPH_CARDS, Math.max(60, Math.round(3 * viewportSize.width * viewportSize.height / (180 * 96))));
   const cardOverflow = nearbyNodePlacements.length > cardBudget;
@@ -1631,6 +1666,7 @@ export default function ConversationGraphView({
       positionedInitialSceneRef.current = true;
       revealedSelectionKeyRef.current = null;
       fitGraph();
+      setInitialSceneFitted(true);
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -2464,7 +2500,23 @@ export default function ConversationGraphView({
   let connectionBudget = MAX_GRAPH_CONNECTIONS;
   const drawsConnection = (sourceId: string, targetId: string) =>
     (renderedCardIds.has(sourceId) || renderedCardIds.has(targetId)) && connectionBudget-- > 0;
-  const scenePlacementsById = new Map(scene.nodes.map((node) => [node.conversationId, previewPlacementByConversationId.get(node.conversationId) ?? node]));
+  // Links are looked up from the drawn cards, so a render never walks every
+  // link in the vault.
+  const drawnPersonalLinks: Array<[string, string]> = [];
+  const drawnRelationEdges: typeof documentGraphEdges = [];
+  if (showLinks) {
+    const seenLinks = new Set<string>(), seenEdges = new Set<string>();
+    for (const id of renderedCardIds) {
+      for (const pair of personalLinksByDocument.get(id) ?? []) {
+        const key = `${pair[0]}\n${pair[1]}`;
+        if (!seenLinks.has(key)) { seenLinks.add(key); drawnPersonalLinks.push(pair); }
+      }
+      for (const edge of relationEdgesByDocument.get(id) ?? []) {
+        if (!seenEdges.has(edge.id)) { seenEdges.add(edge.id); drawnRelationEdges.push(edge); }
+      }
+    }
+  }
+  const scenePlacement = (id: string) => previewPlacementByConversationId.get(id) ?? placementByConversationId.get(id);
 
   function openExplorer() {
     setSearchOpen(false);
@@ -2713,9 +2765,10 @@ export default function ConversationGraphView({
               width={scene.width}
             >
               <title>Chat branch relationships</title>
-              {(showLinks ? [...scenePlacementsById.values()] : []).flatMap((placement) => [...new Set(conversations[placement.conversationId]?.linkedConversationIds ?? [])].flatMap((targetId) => {
-                const target = scenePlacementsById.get(targetId);
-                if (!target || hiddenConversationIds.has(placement.conversationId) || hiddenConversationIds.has(targetId)) return [];
+              {drawnPersonalLinks.flatMap(([sourceId, targetId]) => {
+                const placement = scenePlacement(sourceId);
+                const target = scenePlacement(targetId);
+                if (!placement || !target || hiddenConversationIds.has(sourceId) || hiddenConversationIds.has(targetId)) return [];
                 if (!drawsConnection(placement.conversationId, targetId)) return [];
                 const x1 = placement.x + placement.width / 2;
                 const y1 = placement.y + placement.height / 2;
@@ -2728,13 +2781,13 @@ export default function ConversationGraphView({
                   <path className="graph-personal-connection-line" d={geometry.path} />
                   <text x={geometry.labelX} y={geometry.labelY - 8}>My connection</text>
                 </g>];
-              }))}
+              })}
               <defs>
                 {[...DOCUMENT_RELATION_TYPES.map((type) => type.id), "mention"].map((id) => <marker key={id} id={`graph-relation-arrow-${id}`} className={`graph-relation-arrow is-${id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" /></marker>)}
               </defs>
-              {(showLinks ? documentGraphEdges : []).flatMap((edge) => {
-                const placement = scenePlacementsById.get(edge.sourceId);
-                const target = scenePlacementsById.get(edge.targetId);
+              {drawnRelationEdges.flatMap((edge) => {
+                const placement = scenePlacement(edge.sourceId);
+                const target = scenePlacement(edge.targetId);
                 if (!placement || !target || hiddenConversationIds.has(edge.sourceId) || hiddenConversationIds.has(edge.targetId)) return [];
                 if (!drawsConnection(edge.sourceId, edge.targetId)) return [];
                 const geometry = documentsOnly ? documentConnectionGeometry(placement, target, documentLayoutMode)

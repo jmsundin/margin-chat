@@ -123,8 +123,20 @@ function orderMembers(hubId: string, memberIds: string[], neighbors: Map<string,
     : rank(a) - rank(b) || neighbors.get(b)!.size - neighbors.get(a)!.size || (a < b ? -1 : 1));
 }
 
+const cellCache = new Map<number, ReturnType<typeof computeClusterCells>>();
+
 /** Grid cells nearest the center first, so a cluster forms a compact round island. */
 function clusterCells(count: number) {
+  let cells = cellCache.get(count);
+  if (!cells) {
+    if (cellCache.size > 512) cellCache.clear();
+    cells = computeClusterCells(count);
+    cellCache.set(count, cells);
+  }
+  return cells;
+}
+
+function computeClusterCells(count: number) {
   const radius = Math.ceil(Math.sqrt(count)) + 1;
   const rows = Math.ceil(radius * CELL_WIDTH / CELL_HEIGHT);
   const cells: Array<Point & { distance: number; angle: number }> = [];
@@ -153,8 +165,10 @@ function groupLinks(connections: Connection[], groupOf: (documentId: string) => 
   });
 }
 
+const MONTH_FORMAT = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+
 function formatMonth(time: number) {
-  return new Date(time).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+  return MONTH_FORMAT.format(time);
 }
 
 /** "Mar 2024" or "Mar 2024 – Jun 2024", for groups made by date rather than by links. */
