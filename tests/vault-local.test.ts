@@ -41,7 +41,7 @@ function simulatedOpfs() {
           files.set(path, new Uint8Array());
         }
         return {
-          kind: "file", name,
+          kind: "file", name, path,
           async getFile() {
             reads.push(path);
             const bytes = files.get(path);
@@ -147,7 +147,23 @@ describe("durable OPFS Markdown storage", () => {
     opfs.staleReads(2, (path) => path === HEAD || path === objectPath("Written before the reload"));
     expect(await createBrowserVaultStore("alice").read()).toEqual(saved);
     opfs.staleReads(Infinity, (path) => path === HEAD);
-    await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("Close other Margin Chat tabs");
+    await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("could not read “vault-journal.json” from the vault saved on this device (InvalidStateError");
+  }));
+
+  test("a file whose snapshots never become readable is read directly in a worker", async () => withOpfs(async (opfs) => {
+    const saved = snapshot("Unreadable through snapshots");
+    await createBrowserVaultStore("alice").write(saved);
+    const original = globalThis.Worker;
+    // Stands in for the sync access handle worker, which reads bytes without a File snapshot.
+    globalThis.Worker = class {
+      onmessage: ((event: { data: unknown }) => void) | null = null;
+      postMessage(handle: { path: string }) { queueMicrotask(() => this.onmessage?.({ data: { bytes: opfs.files.get(handle.path)!.slice() } })); }
+      terminate() {}
+    } as unknown as typeof Worker;
+    try {
+      opfs.staleReads(Infinity, (path) => path === HEAD || path === objectPath("Unreadable through snapshots"));
+      expect(await createBrowserVaultStore("alice").read()).toEqual(saved);
+    } finally { globalThis.Worker = original; }
   }));
 
   test("directory observations reopen with exact companion bytes and advance atomically with the vault", async () => withOpfs(async (opfs) => {

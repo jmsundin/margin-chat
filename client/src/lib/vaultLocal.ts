@@ -1,5 +1,5 @@
 import { zipSync, unzipSync, strToU8 } from "fflate";
-import { isStaleFileSnapshot, readFreshBytes, readFreshText } from "./fileSnapshot";
+import { UnreadableFileError, readFreshBytes, readFreshText } from "./fileSnapshot";
 import { emptyVault, validVaultPath, type VaultDeferredEntry, type VaultFile, type VaultSnapshot, type VaultStore } from "./vaultTypes";
 
 export function bytesToBase64(bytes: Uint8Array): string {
@@ -312,9 +312,9 @@ export function createBrowserVaultStore(userId: string): VaultStore {
         return current ? view(current.snapshot) : null;
       } catch (error) {
         memo = null;
-        // readFreshFile already retried; another writer kept replacing these files.
-        if (!isStaleFileSnapshot(error)) throw error;
-        throw new Error("Your saved files kept changing while this tab was reading them. Close other Margin Chat tabs, then try again.", { cause: error });
+        // readFreshFile already retried and read the file directly; it is unreadable here.
+        if (!(error instanceof UnreadableFileError)) throw error;
+        throw new Error(`This browser could not read “${error.fileName}” from the vault saved on this device (${error.detail}).`, { cause: error });
       }
     },
     async write(snapshot) {
