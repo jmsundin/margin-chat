@@ -30,6 +30,8 @@ export interface DocumentPanelProps {
   aiControls: ReactNode;
   documentMenu?: ReactNode;
   headerControls?: ReactNode;
+  /** Controls shown at the start of the header, before the parent link. */
+  headerLeading?: ReactNode;
   onMinimize?: () => void;
   onClose?: () => void;
   marginNotesToggle?: ReactNode;
@@ -330,8 +332,9 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </svg>
       </button>)}
     </nav> : null}
-      {(props.onMinimize || props.onClose || conversation.parentId || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu) ? <header className="document-header">
+      {(props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu) ? <header className="document-header">
         <div className="document-header-toolbar">
+          {props.headerLeading}
           {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${conversation.title || "Untitled document"}`} title="Minimize document" onClick={props.onMinimize}>−</button> : null}
           {conversation.parentId ? <div className="document-origin" ref={props.registerBranchOriginRef}>
             <button type="button" title={`Open parent: ${props.parentDocument?.title || "Source document"}`} onClick={() => props.onOpenBranch(conversation.parentId!)}>← {props.parentDocument?.title || "Source document"}</button>
