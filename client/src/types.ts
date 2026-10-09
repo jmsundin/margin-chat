@@ -41,7 +41,7 @@ export type BillingAccessKind =
   | "subscription"
   | "trial"
   | "none";
-export type ApiKeyProvider = "openai" | "gemini" | "huggingface" | "xai";
+export type ApiKeyProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai";
 export type ApiKeySettings = {
   byProvider: Record<
     ApiKeyProvider,

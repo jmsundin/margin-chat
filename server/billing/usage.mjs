@@ -26,7 +26,18 @@ export function normalizeProviderUsage(provider, payload, kind = "generation") {
   let cachedInputTokens;
   let cacheWriteInputTokens = 0;
   let reasoningTokens;
-  if (provider === "gemini") {
+  if (provider === "anthropic") {
+    // Claude reports cache reads and writes outside input_tokens. A server-side
+    // fallback reports each attempt in iterations; top-level usage covers only
+    // the attempt that produced the reply.
+    const attempts = Array.isArray(raw.iterations) && raw.iterations.length ? raw.iterations : [raw];
+    const sum = (key) => attempts.reduce((total, attempt) => total + (attempt?.[key] ?? 0), 0);
+    cachedInputTokens = sum("cache_read_input_tokens");
+    cacheWriteInputTokens = sum("cache_creation_input_tokens");
+    inputTokens = sum("input_tokens") + cachedInputTokens + cacheWriteInputTokens;
+    outputTokens = kind === "embedding" ? 0 : sum("output_tokens");
+    reasoningTokens = 0;
+  } else if (provider === "gemini") {
     inputTokens = raw.promptTokenCount;
     reasoningTokens = raw.thoughtsTokenCount ?? 0;
     outputTokens = isCount(raw.candidatesTokenCount) && isCount(reasoningTokens) ? raw.candidatesTokenCount + reasoningTokens : null;

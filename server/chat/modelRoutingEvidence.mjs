@@ -1,8 +1,13 @@
 import { isBackendModelIdForService } from "../lib/backendModels.mjs";
 
-// Summaries already reviewed for docs/model-catalog.md on 2026-09-19. These
+// Summaries reviewed for docs/model-catalog.md, most recently on 2026-10-09. These
 // descriptions are not comparative benchmark results, measured latency, or prices.
 const reviewed = {
+  "claude-opus-5-5": ["Long-running agentic coding and complex knowledge work.", "demanding", "https://platform.claude.com/docs/en/about-claude/models/overview"],
+  "claude-sonnet-5-5": ["Fast, capable everyday coding, agent, and professional work.", "general", "https://platform.claude.com/docs/en/about-claude/models/overview"],
+  "claude-haiku-5-5": ["Fast, low-cost model for high-volume, latency-sensitive work.", "economical", "https://platform.claude.com/docs/en/about-claude/models/overview"],
+  "claude-fable-5-1": ["Anthropic's most capable model for the most demanding reasoning and long tasks.", "demanding", "https://platform.claude.com/docs/en/about-claude/models/overview"],
+  "gpt-6.1-sol": ["Near-Astra performance for complex work at a lower cost.", "general", "https://developers.openai.com/api/docs/models/gpt-6.1-sol"],
   "gpt-6-sol": ["Strong reasoning, coding, and professional work at lower per-token cost than Astra.", "general", "https://developers.openai.com/api/docs/models/gpt-6-sol"],
   "gpt-6-luna": ["Efficient focused tasks and high-volume workloads.", "economical", "https://developers.openai.com/api/docs/models/gpt-6-luna"],
   "grok-4.7": ["Frontier coding, agentic tasks, and knowledge work.", "demanding", "https://docs.x.ai/developers/models/grok-4.7"],
@@ -16,6 +21,7 @@ const reviewed = {
   "deepseek-ai/DeepSeek-V4.1-Flash": ["Efficient general chat and reasoning; MIT-licensed weights.", "general", "https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash"],
   "deepseek-ai/DeepSeek-V4-Pro-0813": ["Flagship reasoning and coding release; MIT-licensed weights.", "demanding", "https://huggingface.co/deepseek-ai/DeepSeek-V4-Pro-0813"],
   "Qwen/Qwen3.8-27B": ["Compact model for responsive everyday tasks; Apache 2.0 weights.", "economical", "https://huggingface.co/Qwen/Qwen3.8-27B"],
+  "zai-org/GLM-5.3-Flash": ["Fast, economical GLM model; MIT-licensed weights.", "economical", "https://huggingface.co/zai-org/GLM-5.3-Flash"],
   "zai-org/GLM-5.3": ["Coding and agentic model; custom GLM license.", "coding", "https://huggingface.co/zai-org/GLM-5.3"],
   "moonshotai/Kimi-K3": ["Long-context reasoning, coding, and knowledge work; custom Kimi K3 license.", "general", "https://huggingface.co/moonshotai/Kimi-K3"],
   "Qwen/Qwen3.8-2.4T-A95B": ["Large model for research, reasoning, and professional text work; custom Qwen3.8-Max license.", "general", "https://huggingface.co/Qwen/Qwen3.8-2.4T-A95B"],
@@ -28,7 +34,7 @@ export function getModelRoutingEvidence(serviceId, model) {
   const entry = isBackendModelIdForService(serviceId, model) ? reviewed[model] : null;
   return entry ? {
     basis: "reviewed-catalog",
-    reviewedAt: "2026-09-26",
+    reviewedAt: "2026-10-09",
     summary: entry[0],
     // This is an explicit application preference, never a measured quality rank.
     preference: entry[1],

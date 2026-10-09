@@ -124,15 +124,15 @@ async function selectPassage() {
   const search = element('[aria-label="Search AI models"]');
   await act(async () => {
     search.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true }));
-    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(search, "GPT-6 Sol");
+    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(search, "GPT-6.1 Sol");
     search.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
   assert(element(".selection-tooltip-quote").textContent.includes("selected passage"));
   await click(element('[aria-label="Search results"] .picker-model-row'));
-  assert.equal(latest.conversations.source.modelId, "gpt-6-sol");
+  assert.equal(latest.conversations.source.modelId, "gpt-6.1-sol");
   assert.equal(latest.conversations.source.serviceId, "openai-api");
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
-  assert(element('[aria-label="Choose AI model and provider"]').textContent.includes("GPT-6 Sol"));
+  assert(element('[aria-label="Choose AI model and provider"]').textContent.includes("GPT-6.1 Sol"));
   await click(element('[aria-label="Choose AI model and provider"]'));
   await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   assert(element(".selection-tooltip-quote"), "Escape closes only the model picker.");
@@ -233,12 +233,12 @@ async function testMobileSelectionActions() {
   const search = element('[aria-label="Search AI models"]');
   await act(async () => {
     search.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true }));
-    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(search, "GPT-6 Sol");
+    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(search, "GPT-6.1 Sol");
     search.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
   assert.equal(element(".mobile-ai-composer"), composer, "The model picker does not dismiss or remount the custom prompt.");
   await click(element('[aria-label="Search results"] .picker-model-row'));
-  assert.equal(latest.conversations.source.modelId, "gpt-6-sol");
+  assert.equal(latest.conversations.source.modelId, "gpt-6.1-sol");
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
   await click(element('[aria-label="Choose AI model and provider"]'));
   await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
@@ -257,7 +257,7 @@ async function testMobileSelectionActions() {
   const customRequest = chatRequests.at(-1)!;
   assert(customRequest.messages.at(-1)!.content.endsWith("Compare this with the rest of my notes."));
   assert(customRequest.messages.at(-1)!.content.includes('"selectedPassage":"selected passage"'));
-  assert.equal(customRequest.modelId, "gpt-6-sol");
+  assert.equal(customRequest.modelId, "gpt-6.1-sol");
   await act(async () => finishRequests[beforeAsk]("Custom generated result."));
   await settle();
   assert.deepEqual(latest.conversations.source.document!.blocks, sourceBlocks);

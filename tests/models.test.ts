@@ -12,6 +12,7 @@ import {
 } from "../server/lib/backendModels.mjs";
 
 const EXPECTED_MODELS = {
+  "anthropic-api": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1"],
   "gemini-api": [
     "gemini-3.8-flash",
     "gemini-3.1-pro-preview",
@@ -22,12 +23,13 @@ const EXPECTED_MODELS = {
     "deepseek-ai/DeepSeek-V4-Pro-0813",
     "Qwen/Qwen3.8-27B",
     "zai-org/GLM-5.3",
+    "zai-org/GLM-5.3-Flash",
     "moonshotai/Kimi-K3",
     "Qwen/Qwen3.8-2.4T-A95B",
     "MiniMaxAI/MiniMax-M3",
   ],
-  "openai-api": ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"],
-  "openai-agent": ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna"],
+  "openai-api": ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"],
+  "openai-agent": ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"],
   "xai-api": ["grok-4.7", "grok-4.3"],
 } as const;
 

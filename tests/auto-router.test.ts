@@ -13,7 +13,7 @@ function service(extra = {}) {
   return createChatService({ database: {}, runtimeConfig: {}, env: { OPENAI_API_KEY: "hosted", GEMINI_API_KEY: "hosted-gemini" },
     semanticService: { analyzeChat() { throw new Error("Auto must never call Jev"); } }, ...extra });
 }
-function replies(calls: any[], decision: any = { task: "summary", routeKey: "openai-api:gpt-6-sol", contextOrder: [] }) {
+function replies(calls: any[], decision: any = { task: "summary", routeKey: "openai-api:gpt-6.1-sol", contextOrder: [] }) {
   globalThis.fetch = (async (url, init) => {
     const body = JSON.parse(String(init?.body)); calls.push({ url: String(url), body, headers: init?.headers });
     if (body.text?.format?.name === "auto_route") return Response.json({ output_text: JSON.stringify(decision), usage: { input_tokens: 20, output_tokens: 10 } });
@@ -28,8 +28,8 @@ test("Auto uses Astra low reasoning without Jev consent and preserves exact manu
   const result = await chat.requestReply(payload({ jevEnabled: false }), { apiKeys: { openai: "personal" } });
   expect(calls[0].body).toMatchObject({ model: "gpt-6-astra", reasoning: { effort: "low" }, store: false });
   expect(calls[0].headers.Authorization).toBe("Bearer personal");
-  expect(calls[1].body.model).toBe("gpt-6-sol");
-  expect(result.metadata.execution.routing).toEqual({ method: "astra", selectedModel: "gpt-6-sol" });
+  expect(calls[1].body.model).toBe("gpt-6.1-sol");
+  expect(result.metadata.execution.routing).toEqual({ method: "astra", selectedModel: "gpt-6.1-sol" });
   const state = JSON.parse(calls[0].body.input);
   expect(state.routes.every((route: any) => route.serviceId === "openai-api")).toBe(true);
   await chat.requestReply({ ...payload(), serviceId: "openai-api", modelId: "gpt-6-luna" });
@@ -70,7 +70,7 @@ test("hosted routing and generation both reserve and settle through the existing
   const calls: any[] = []; replies(calls);
   const events: any[] = [];
   const price = { inputMicrosPerMillionTokens: 1000000, outputMicrosPerMillionTokens: 2000000 };
-  const env = { OPENAI_API_KEY: "hosted", HOSTED_MODEL_PRICES_JSON: JSON.stringify({ "openai:gpt-6-astra": price, "openai:gpt-6-sol": price }) };
+  const env = { OPENAI_API_KEY: "hosted", HOSTED_MODEL_PRICES_JSON: JSON.stringify({ "openai:gpt-6-astra": price, "openai:gpt-6.1-sol": price }) };
   const usageMeter = createHostedUsageMeter({ env, userId: "u", requestId: "r", billingService: {
     async reserveHostedRequest(value: any) { events.push({ kind: "reserve", value }); },
     async settleHostedRequest(value: any) { events.push({ kind: "settle", value }); },

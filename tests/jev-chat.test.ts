@@ -145,8 +145,8 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     expect(urls).toHaveLength(2);
     expect(urls[0]).toContain("googleapis");
     expect(urls[1]).toContain("openai");
-    expect(result.metadata.execution).toMatchObject({ provider: "openai-api", model: "gpt-6-sol",
-      routing: { method: "astra-task", selectedModel: "gpt-6-sol" } });
+    expect(result.metadata.execution).toMatchObject({ provider: "openai-api", model: "gpt-6.1-sol",
+      routing: { method: "astra-task", selectedModel: "gpt-6.1-sol" } });
     expect(result.metadata.execution.reason).toContain("Gemini (gemini-3.8-flash) request failed");
     expect(result.metadata.execution.reason).toContain("Routing rules selected OpenAI");
     expect(result.metadata.execution.reason).not.toContain("GPT-6 Astra (low reasoning) selected");
@@ -178,10 +178,10 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
   test("a selected candidate is never described as a task profile it does not have", async () => {
     const calls: any[] = []; mockReplies(calls);
     const chat = service({ async analyzeChat() {
-      return { task: "coding", routeKey: "openai-api:gpt-6-sol", reason: "PRIVATE GENERATED RATIONALE" };
+      return { task: "coding", routeKey: "openai-api:gpt-6.1-sol", reason: "PRIVATE GENERATED RATIONALE" };
     } });
     const result = await chat.requestReply(payload());
-    expect(result.metadata.execution).toMatchObject({ task: "coding", routing: { method: "astra", selectedModel: "gpt-6-sol" } });
+    expect(result.metadata.execution).toMatchObject({ task: "coding", routing: { method: "astra", selectedModel: "gpt-6.1-sol" } });
     expect(result.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning) classified the request as coding");
     expect(result.metadata.execution.reason).toContain("configured candidate in balanced mode");
     expect(result.metadata.execution.reason).not.toContain("assigns this model to coding");
@@ -194,13 +194,13 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
       { type: "response.output_text.delta", delta: "OK" },
       { type: "response.completed", response: { model: "gpt-5.6-terra-2026-09-19", output: [] } },
     ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } })) as typeof fetch;
-    const chat = service({ async analyzeChat() { analyses++; return { task: "summary", routeKey: "openai-api:gpt-6-sol" }; } });
+    const chat = service({ async analyzeChat() { analyses++; return { task: "summary", routeKey: "openai-api:gpt-6.1-sol" }; } });
     const result = await chat.requestReplyStream(payload(), {}, { onReady: (metadata: any) => ready.push(metadata), onDelta: (delta: string) => deltas.push(delta) });
     expect(ready).toHaveLength(1);
-    expect(ready[0].execution).toMatchObject({ status: "streaming", provider: "openai-api", model: "gpt-6-sol",
-      routing: { method: "astra", selectedModel: "gpt-6-sol" } });
+    expect(ready[0].execution).toMatchObject({ status: "streaming", provider: "openai-api", model: "gpt-6.1-sol",
+      routing: { method: "astra", selectedModel: "gpt-6.1-sol" } });
     expect(result.metadata.execution).toMatchObject({ status: "complete", provider: "openai-api", model: "gpt-5.6-terra-2026-09-19",
-      routing: { method: "astra", selectedModel: "gpt-6-sol" } });
+      routing: { method: "astra", selectedModel: "gpt-6.1-sol" } });
     expect(result.metadata.execution.reason).toBe(ready[0].execution.reason);
     expect(deltas).toEqual(["OK"]);
     expect(analyses).toBe(1);

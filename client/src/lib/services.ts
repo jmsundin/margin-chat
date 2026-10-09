@@ -38,10 +38,10 @@ const OPENAI_MODELS: BackendServiceModel[] = [
   },
   {
     badgeLabel: "BALANCED",
-    description: "Strong GPT-6 reasoning and coding with lower per-token cost than Astra.",
+    description: "Near-Astra performance for complex reasoning and coding at a lower cost.",
     featured: true,
-    id: "gpt-6-sol",
-    label: "GPT-6 Sol",
+    id: "gpt-6.1-sol",
+    label: "GPT-6.1 Sol",
   },
   {
     badgeLabel: "FAST",
@@ -99,6 +99,43 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
       featured: false,
     })),
     provider: "OpenAI Agent",
+  },
+  {
+    id: "anthropic-api",
+    label: "Anthropic Claude",
+    description: "Route the conversation through Anthropic's latest Claude models.",
+    iconLabel: "AC",
+    keywords: ["anthropic", "claude", "opus", "sonnet", "haiku", "fable", "reasoning", "writing"],
+    modeLabel: "Direct",
+    models: [
+      {
+        badgeLabel: "FLAGSHIP",
+        description: "Anthropic's current Opus for complex reasoning, coding, and long knowledge work.",
+        featured: true,
+        id: "claude-opus-5-5",
+        label: "Claude Opus 5.5",
+      },
+      {
+        badgeLabel: "BALANCED",
+        description: "Fast, capable Claude for everyday writing, coding, and analysis at a lower cost than Opus.",
+        featured: true,
+        id: "claude-sonnet-5-5",
+        label: "Claude Sonnet 5.5",
+      },
+      {
+        badgeLabel: "FAST",
+        description: "Fast, low-cost Claude for quick answers and high-volume work.",
+        id: "claude-haiku-5-5",
+        label: "Claude Haiku 5.5",
+      },
+      {
+        badgeLabel: "MOST CAPABLE",
+        description: "Anthropic's most capable model for the hardest reasoning and longest tasks. Highest cost; answers can take longer.",
+        id: "claude-fable-5-1",
+        label: "Claude Fable 5.1",
+      },
+    ],
+    provider: "Anthropic",
   },
   {
     id: "gemini-api",
@@ -181,6 +218,12 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
         label: "GLM 5.3",
       },
       {
+        badgeLabel: "MIT",
+        description: "Fast, economical GLM model for quick everyday tasks. MIT-licensed weights.",
+        id: "zai-org/GLM-5.3-Flash",
+        label: "GLM 5.3 Flash",
+      },
+      {
         badgeLabel: "OPEN-WEIGHT",
         description:
           "Moonshot AI's flagship for long-context reasoning, coding, and knowledge work. Custom Kimi K3 license.",
@@ -233,6 +276,7 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
 // Keep saved chats and recent selections intact without promoting older models
 // in the fresh model catalog. Provider availability may still change over time.
 const LEGACY_OPENAI_MODELS: BackendServiceModel[] = [
+  { id: "gpt-6-sol", label: "GPT-6 Sol", description: "Previous Sol release, retained for saved chats." },
   { id: "gpt-5.6", label: "GPT-5.6 Sol", description: "Previous Sol release, retained for saved chats." },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", description: "Previous balanced model, retained for saved chats." },
   { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", description: "Previous Luna release, retained for saved chats." },

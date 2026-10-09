@@ -1,7 +1,7 @@
 import { HttpError } from "../lib/errors.mjs";
 import { decryptSecret, encryptSecret } from "./crypto.mjs";
 
-export const API_KEY_PROVIDERS = ["openai", "gemini", "huggingface", "xai"];
+export const API_KEY_PROVIDERS = ["openai", "anthropic", "gemini", "huggingface", "xai"];
 const API_KEY_PROVIDER_SET = new Set(API_KEY_PROVIDERS);
 
 function normalizeMutations(payload) {

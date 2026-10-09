@@ -1,4 +1,5 @@
 const DEFAULT_MODEL_IDS = {
+  "anthropic-api": "claude-opus-5-5",
   "backend-services": "smart-routing",
   "gemini-api": "gemini-3.8-flash",
   "huggingface-api": "deepseek-ai/DeepSeek-V4.1-Flash",
@@ -10,6 +11,12 @@ const DEFAULT_MODEL_IDS = {
 // Include earlier picker IDs so persisted chats remain valid. The client offers
 // only the reviewed catalog for new selections; this is a compatibility superset.
 const MODEL_IDS_BY_SERVICE = {
+  "anthropic-api": new Set([
+    "claude-opus-5-5",
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-fable-5-1",
+  ]),
   "backend-services": new Set(["smart-routing"]),
   "gemini-api": new Set([
     "gemini-3.8-flash",
@@ -23,6 +30,7 @@ const MODEL_IDS_BY_SERVICE = {
     "deepseek-ai/DeepSeek-V4-Pro-0813",
     "Qwen/Qwen3.8-27B",
     "zai-org/GLM-5.3",
+    "zai-org/GLM-5.3-Flash",
     "Qwen/Qwen3.8-2.4T-A95B",
     "MiniMaxAI/MiniMax-M3",
     "moonshotai/Kimi-K3",
@@ -32,6 +40,7 @@ const MODEL_IDS_BY_SERVICE = {
   ]),
   "openai-api": new Set([
     "gpt-6-astra",
+    "gpt-6.1-sol",
     "gpt-6-sol",
     "gpt-6-luna",
     "gpt-5.6",
@@ -40,6 +49,7 @@ const MODEL_IDS_BY_SERVICE = {
   ]),
   "openai-agent": new Set([
     "gpt-6-astra",
+    "gpt-6.1-sol",
     "gpt-6-sol",
     "gpt-6-luna",
     "gpt-5.6",
@@ -74,6 +84,10 @@ export function normalizeBackendModelId(serviceId, modelId) {
 export function getRuntimeDefaultModelForService(runtimeConfig, serviceId) {
   if (serviceId === "openai-api" || serviceId === "openai-agent") {
     return runtimeConfig.openaiModel || getDefaultModelIdForService(serviceId);
+  }
+
+  if (serviceId === "anthropic-api") {
+    return runtimeConfig.anthropicModel || getDefaultModelIdForService(serviceId);
   }
 
   if (serviceId === "gemini-api") {

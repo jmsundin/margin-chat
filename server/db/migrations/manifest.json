@@ -55,6 +55,11 @@
       "id": "0011_public_map",
       "file": "0011_public_map.sql",
       "transaction": true
+    },
+    {
+      "id": "0012_claude_and_model_refresh",
+      "file": "0012_claude_and_model_refresh.sql",
+      "transaction": true
     }
   ]
 }

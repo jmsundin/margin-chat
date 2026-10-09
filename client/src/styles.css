@@ -5618,6 +5618,10 @@ button {
   background: linear-gradient(135deg, #d9f7ea, #eef2f1);
 }
 
+.service-picker-card-icon.is-anthropic-api {
+  background: linear-gradient(135deg, #f0dccb, #d97757);
+}
+
 .service-picker-card-icon.is-gemini-api {
   background: linear-gradient(135deg, #ffd36a, #89d5ff);
 }

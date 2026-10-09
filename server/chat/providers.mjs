@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { HttpError } from "../lib/errors.mjs";
 import { extractConversationMessages } from "./systemPrompt.mjs";
 import { parseProviderErrorResponse, parseServerSentEvents, parseStreamJson } from "./streaming.mjs";
@@ -167,6 +168,100 @@ export const requestGeminiResponse = (args) => otherProviderReply(args, "gemini"
 export const requestGeminiResponseStream = (args) => otherProviderReply(args, "gemini", true);
 export const requestHuggingFaceResponse = (args) => otherProviderReply(args, "huggingface", false);
 export const requestHuggingFaceResponseStream = (args) => otherProviderReply(args, "huggingface", true);
+
+// Claude's Opus, Sonnet and Fable models can decline a request through safety
+// classifiers; the default server-side fallback retries on Anthropic's
+// recommended model for that refusal category instead of failing the turn.
+const ANTHROPIC_FALLBACK_MODELS = new Set(["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5"]);
+const ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01";
+// Personal-key requests have no hosted output cap; Claude requires max_tokens.
+const ANTHROPIC_DEFAULT_MAX_TOKENS = 32_000;
+
+function anthropicEffort(args) {
+  // Thinking is always on for these models; effort is the depth control.
+  // Short operations such as titles keep thinking from using the whole limit.
+  if (args.maxOutputTokens !== undefined && args.maxOutputTokens <= 1024) return "low";
+  const mode = args.chatRequest.ai?.mode;
+  return mode === "fast" ? "low" : mode === "thorough" ? "high" : "medium";
+}
+
+function anthropicBody(args) {
+  return {
+    model: args.model,
+    max_tokens: args.maxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
+    system: args.systemInstruction,
+    messages: extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content })),
+    output_config: { effort: anthropicEffort(args) },
+    ...(ANTHROPIC_FALLBACK_MODELS.has(args.model) ? { fallbacks: "default" } : {}),
+  };
+}
+
+function anthropicError(error, fallbackError) {
+  if (error instanceof Anthropic.APIUserAbortError) return error;
+  if (error instanceof Anthropic.APIError) {
+    return new HttpError(error.status ?? 502, extractApiErrorMessage(error.error) ?? fallbackError);
+  }
+  return error;
+}
+
+async function anthropicReply(args, stream) {
+  assertKey(args.apiKey, "anthropic");
+  const body = anthropicBody(args);
+  const fallbackError = "anthropic request failed.";
+  const description = { provider: "anthropic", model: args.model, body, maxOutputTokens: body.max_tokens, signal: args.signal };
+  return runMeteredProviderOperation(args.usageMeter, description, async (tracker) => {
+    args.signal?.throwIfAborted();
+    // Retries are left to the app's own provider fallback so one turn is one
+    // metered provider operation.
+    const client = new Anthropic({ apiKey: args.apiKey, maxRetries: 0 });
+    tracker.markDispatched();
+    let events;
+    try {
+      events = body.fallbacks
+        ? await client.beta.messages.create({ ...body, stream: true, betas: [ANTHROPIC_FALLBACK_BETA] }, { signal: args.signal })
+        : await client.messages.create({ ...body, stream: true }, { signal: args.signal });
+    } catch (error) {
+      if (error instanceof Anthropic.APIError && error.status) tracker.markRejected();
+      throw anthropicError(error, fallbackError);
+    }
+    if (stream) await args.onReady?.();
+    let reply = "";
+    let resolvedModel = args.model;
+    let usage = null;
+    let stopReason = null;
+    let stopDetails = null;
+    try {
+      for await (const event of events) {
+        if (event.type === "message_start") {
+          if (typeof event.message?.model === "string" && event.message.model.trim()) resolvedModel = event.message.model;
+          usage = { ...event.message?.usage };
+        } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+          reply += event.delta.text;
+          if (stream) await args.onDelta?.(event.delta.text);
+        } else if (event.type === "message_delta") {
+          // Delta usage is cumulative; fields it omits keep their start values.
+          for (const [key, value] of Object.entries(event.usage ?? {})) if (value !== null && value !== undefined) usage = { ...usage, [key]: value };
+          stopReason = event.delta?.stop_reason ?? stopReason;
+          stopDetails = event.delta?.stop_details ?? stopDetails;
+        } else if (event.type === "message_stop") {
+          tracker.recordUsage({ usage });
+        }
+      }
+    } catch (error) {
+      if (usage) tracker.recordUsage({ usage }, false);
+      throw anthropicError(error, fallbackError);
+    }
+    if (stopReason === "refusal") {
+      const category = typeof stopDetails?.category === "string" ? ` (${stopDetails.category})` : "";
+      throw new HttpError(422, `Claude declined to answer this request${category}. Try rephrasing it or choose another model.`);
+    }
+    if (!reply.trim()) throw new HttpError(502, "anthropic returned a response without assistant text.");
+    return { model: resolvedModel, reply: stream ? reply : reply.trim(), usage: normalizeProviderUsage("anthropic", { usage }) };
+  });
+}
+
+export const requestAnthropicResponse = (args) => anthropicReply(args, false);
+export const requestAnthropicResponseStream = (args) => anthropicReply(args, true);
 
 export function extractOpenAIReply(payload) {
   if (
