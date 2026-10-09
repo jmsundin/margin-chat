@@ -1,0 +1,82 @@
+{
+  "openai:gpt-6-astra": {
+    "inputMicrosPerMillionTokens": 10000000,
+    "cachedInputMicrosPerMillionTokens": 1000000,
+    "cacheWriteInputMicrosPerMillionTokens": 12500000,
+    "outputMicrosPerMillionTokens": 50000000
+  },
+  "openai:gpt-6.1-sol": {
+    "inputMicrosPerMillionTokens": 2000000,
+    "cachedInputMicrosPerMillionTokens": 100000,
+    "cacheWriteInputMicrosPerMillionTokens": 2500000,
+    "outputMicrosPerMillionTokens": 10000000
+  },
+  "openai:gpt-6-sol": {
+    "inputMicrosPerMillionTokens": 2000000,
+    "cachedInputMicrosPerMillionTokens": 200000,
+    "cacheWriteInputMicrosPerMillionTokens": 2500000,
+    "outputMicrosPerMillionTokens": 10000000
+  },
+  "openai:gpt-6-luna": {
+    "inputMicrosPerMillionTokens": 100000,
+    "cachedInputMicrosPerMillionTokens": 10000,
+    "cacheWriteInputMicrosPerMillionTokens": 125000,
+    "outputMicrosPerMillionTokens": 500000
+  },
+  "openai:gpt-5.6": {
+    "inputMicrosPerMillionTokens": 4000000,
+    "cachedInputMicrosPerMillionTokens": 400000,
+    "cacheWriteInputMicrosPerMillionTokens": 5000000,
+    "outputMicrosPerMillionTokens": 20000000
+  },
+  "openai:gpt-5.6-terra": {
+    "inputMicrosPerMillionTokens": 2000000,
+    "cachedInputMicrosPerMillionTokens": 200000,
+    "cacheWriteInputMicrosPerMillionTokens": 2500000,
+    "outputMicrosPerMillionTokens": 12000000
+  },
+  "openai:gpt-5.6-luna": {
+    "inputMicrosPerMillionTokens": 200000,
+    "cachedInputMicrosPerMillionTokens": 20000,
+    "cacheWriteInputMicrosPerMillionTokens": 250000,
+    "outputMicrosPerMillionTokens": 1200000
+  },
+  "openai:text-embedding-3-small": {
+    "inputMicrosPerMillionTokens": 20000,
+    "outputMicrosPerMillionTokens": 0
+  },
+  "anthropic:claude-opus-5-5": {
+    "inputMicrosPerMillionTokens": 4000000,
+    "cachedInputMicrosPerMillionTokens": 200000,
+    "cacheWriteInputMicrosPerMillionTokens": 5000000,
+    "outputMicrosPerMillionTokens": 20000000
+  },
+  "anthropic:claude-sonnet-5-5": {
+    "inputMicrosPerMillionTokens": 2000000,
+    "cachedInputMicrosPerMillionTokens": 100000,
+    "cacheWriteInputMicrosPerMillionTokens": 2500000,
+    "outputMicrosPerMillionTokens": 10000000
+  },
+  "anthropic:claude-haiku-5-5": {
+    "inputMicrosPerMillionTokens": 100000,
+    "cachedInputMicrosPerMillionTokens": 10000,
+    "cacheWriteInputMicrosPerMillionTokens": 125000,
+    "outputMicrosPerMillionTokens": 500000
+  },
+  "anthropic:claude-fable-5-1": {
+    "inputMicrosPerMillionTokens": 10000000,
+    "cachedInputMicrosPerMillionTokens": 250000,
+    "cacheWriteInputMicrosPerMillionTokens": 12500000,
+    "outputMicrosPerMillionTokens": 50000000
+  },
+  "xai:grok-4.7": {
+    "inputMicrosPerMillionTokens": 2000000,
+    "cachedInputMicrosPerMillionTokens": 500000,
+    "outputMicrosPerMillionTokens": 6000000
+  },
+  "xai:grok-4.3": {
+    "inputMicrosPerMillionTokens": 1250000,
+    "cachedInputMicrosPerMillionTokens": 200000,
+    "outputMicrosPerMillionTokens": 2500000
+  }
+}

@@ -4,7 +4,7 @@ Hosted model work uses prepaid credits for every member, including subscribers. 
 
 ## Configure prices before enabling hosted models
 
-Set `HOSTED_MODEL_PRICES_JSON` to an object keyed by the exact requested `provider:model` identifier. Providers are `openai`, `gemini`, `huggingface`, and `xai`; OpenAI Agent uses the same `openai:model` entry as ordinary OpenAI chat. Every hosted model that automatic routing might select needs an entry. Document upload and retrieval also need `openai:text-embedding-3-small`.
+Set `HOSTED_MODEL_PRICES_JSON` to an object keyed by the exact requested `provider:model` identifier. Providers are `openai`, `anthropic`, `gemini`, `huggingface`, and `xai`; OpenAI Agent uses the same `openai:model` entry as ordinary OpenAI chat. Every hosted model that automatic routing might select needs an entry. Document upload and retrieval also need `openai:text-embedding-3-small`.
 
 Each entry requires `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens`, as nonnegative safe integers with at least one positive rate. One dollar is 1,000,000 microdollars. Thus a verified price of $0.50 per million tokens would be configured as `500000`, not `0.50`. This example explains the unit; it is not a current provider price quote.
 
@@ -22,7 +22,7 @@ Each actual provider operation gets its own reservation immediately before dispa
 
 The input reservation uses the UTF-8 byte length of the complete serialized request plus 1,024 tokens for framing. It includes instructions, history, tool definitions, and tool results. Output uses the explicit provider cap, plus the Gemini reasoning allowance described above. This deliberately conservative text bound can require more available credit than the eventual charge. Provider adapters enforce output limits; titles have a limit of at most 256 output tokens.
 
-Final provider counts determine the charge when available. OpenAI/xAI Responses use input and output tokens, including reasoning already counted in output. Gemini adds candidate and thought tokens. Hugging Face uses prompt/completion usage and requests the final usage chunk while streaming. Cached input is separated from ordinary input. Embeddings use input tokens only. The combined operation cost is rounded up once to the nearest microdollar, using integer arithmetic.
+Final provider counts determine the charge when available. OpenAI/xAI Responses use input and output tokens, including reasoning already counted in output. Anthropic adds cache reads and cache writes to `input_tokens` (Claude reports them separately), counts thinking inside `output_tokens`, and sums every attempt in `usage.iterations` when a refusal fallback ran. Gemini adds candidate and thought tokens. Hugging Face uses prompt/completion usage and requests the final usage chunk while streaming. Cached input is separated from ordinary input. Embeddings use input tokens only. The combined operation cost is rounded up once to the nearest microdollar, using integer arithmetic.
 
 The database atomically holds credit before dispatch. Settlement writes the actual usage charge and returns the unused hold. Concurrent operations cannot reuse already reserved money. If a provider reports usage above the reserved bounds, the charge is capped at the reservation, a billing error stops execution, and the ledger metadata records the discrepancy for investigation. An incorrect operator configuration or changed provider behavior must be corrected before further use of that model; this safeguard never creates a negative customer balance.
 
@@ -39,6 +39,7 @@ Settlement uses the same request identifier, amount, and metadata for three atte
 - [OpenAI Responses usage fields](https://developers.openai.com/api/reference/cli/resources/responses/methods/retrieve)
 - [Gemini generateContent usage metadata and generation configuration](https://ai.google.dev/api/generate-content)
 - [Hugging Face chat completion usage and streaming options](https://huggingface.co/docs/inference-providers/en/tasks/chat-completion)
+- [Anthropic Messages usage and prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
 - [xAI Responses cache and reasoning usage](https://docs.x.ai/developers/advanced-api-usage/prompt-caching/usage-and-pricing)
 
 The regression suite uses fictional prices and mocked provider responses; it makes no live billable provider calls. Run `bun test tests/hosted-usage.test.ts tests/chat-execution.test.ts` for metering, cancellation, settlement-retry, and integration coverage.

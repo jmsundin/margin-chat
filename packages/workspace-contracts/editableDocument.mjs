@@ -4,7 +4,7 @@ const record = (value) => value !== null && typeof value === "object" && !Array.
 const id = (value) => typeof value === "string" && value.length > 0 && value.length <= 1024;
 const string = (value) => typeof value === "string";
 const offset = (value) => Number.isSafeInteger(value) && value >= 0;
-const services = new Set(["backend-services", "openai-api", "openai-agent", "gemini-api", "huggingface-api", "xai-api"]);
+const services = new Set(["backend-services", "openai-api", "openai-agent", "anthropic-api", "gemini-api", "huggingface-api", "xai-api"]);
 const statuses = new Set(["streaming", "complete", "stopped", "failed"]);
 const authorships = new Set(["ai", "user", "mixed"]);
 const optionalId = (value) => value === undefined || id(value);

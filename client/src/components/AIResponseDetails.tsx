@@ -2,7 +2,7 @@ import { getBackendServiceModel, isBackendServiceId } from "../lib/services";
 import type { AIExecutionRecord } from "../types";
 import "./AIResponseDetails.css";
 
-const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
+const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "anthropic-api": "Anthropic Claude", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
 const routingLabels = {
   astra: "Auto · selected by GPT-6 Astra (low reasoning)",
   "astra-task": "Auto · GPT-6 Astra task matching",

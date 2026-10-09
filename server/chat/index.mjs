@@ -2,6 +2,7 @@ import { analyzeAutoRoute, AUTO_ROUTER_LABEL } from "./autoRouter.mjs";
 import { HttpError } from "../lib/errors.mjs";
 import { requestOpenAIAgentResponse, requestOpenAIAgentResponseStream } from "./openaiAgent.mjs";
 import {
+  requestAnthropicResponse, requestAnthropicResponseStream,
   requestGeminiResponse, requestGeminiResponseStream,
   requestHuggingFaceResponse, requestHuggingFaceResponseStream,
   requestOpenAIResponse, requestOpenAIResponseStream,
@@ -18,6 +19,7 @@ import { createHostedUsageMeter } from "../billing/usage.mjs";
 const PROVIDERS = Object.freeze({
   "openai-agent": { reply: requestOpenAIAgentResponse, stream: requestOpenAIAgentResponseStream },
   "openai-api": { reply: requestOpenAIResponse, stream: requestOpenAIResponseStream },
+  "anthropic-api": { reply: requestAnthropicResponse, stream: requestAnthropicResponseStream },
   "gemini-api": { reply: requestGeminiResponse, stream: requestGeminiResponseStream },
   "huggingface-api": { reply: requestHuggingFaceResponse, stream: requestHuggingFaceResponseStream },
   "xai-api": { reply: requestXAIResponse, stream: requestXAIResponseStream },
@@ -50,12 +52,13 @@ function semanticWorkspaceExcerpt(item) {
 
 export function createChatService({ database, documentService, env, runtimeConfig, semanticService, autoRouter = analyzeAutoRoute }) {
   const automaticServicePriority = [...new Set([
-    runtimeConfig.defaultBackendProvider, "openai-api", "gemini-api", "huggingface-api", "xai-api",
+    runtimeConfig.defaultBackendProvider, "openai-api", "anthropic-api", "gemini-api", "huggingface-api", "xai-api",
   ])].filter((id) => PROVIDERS[id] && id !== "openai-agent");
 
   function getHostedApiKey(serviceId) {
     const provider = providerName(serviceId);
     if (provider === "openai") return env.OPENAI_API_KEY;
+    if (provider === "anthropic") return env.ANTHROPIC_API_KEY;
     if (provider === "gemini") return env.GEMINI_API_KEY;
     if (provider === "huggingface") return env.HUGGINGFACE_API_KEY ?? env.HF_TOKEN;
     if (provider === "xai") return env.XAI_API_KEY;
@@ -300,6 +303,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
     const services = Object.fromEntries(Object.keys(PROVIDERS).map((serviceId) => [serviceId, {
       configured: Boolean(getHostedApiKey(serviceId)),
       model: serviceId.startsWith("openai") ? runtimeConfig.openaiModel
+        : serviceId === "anthropic-api" ? runtimeConfig.anthropicModel
         : serviceId === "gemini-api" ? runtimeConfig.geminiModel
         : serviceId === "huggingface-api" ? runtimeConfig.huggingFaceModel : runtimeConfig.xaiModel,
     }]));

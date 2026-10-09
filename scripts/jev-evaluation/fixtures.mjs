@@ -3,10 +3,10 @@ import { createSemanticService } from "../../server/semantic/index.mjs";
 import { createSemanticRouteCandidates, planRoutes } from "../../server/chat/routing.mjs";
 
 export const PINNED_MODEL = "jev-1.13.0";
-export const EVALUATION_VERSION = "margin-jev-synthetic-2026-09-26.1";
+export const EVALUATION_VERSION = "margin-jev-synthetic-2026-10-09.1";
 // Review changed builders/fixtures and bump the evaluation version before updating this pin.
-// Catalog refresh: GPT-6 Sol/Luna and Grok 4.7 update the captured route candidates.
-export const PINNED_SUITE_FINGERPRINT = "c57759af81c002faaf197c4ebd3c11cc71ed83923957c0d5418e6677555b77d4";
+// Catalog refresh: Anthropic Claude, GPT-6.1 Sol, and GLM 5.3 Flash update the captured route candidates.
+export const PINNED_SUITE_FINGERPRINT = "f06902bd2737eb979ab7de95685dddb551f034952961cbc1143a1b4b11d7d006";
 export const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 export function assertPinnedSuiteFingerprint(actual) {
@@ -66,7 +66,7 @@ export async function buildScenarios() {
         { id: "relevant", title: "Prior work on this request", content: example.context },
       ],
     };
-    const routes = planRoutes(request, ["openai-api", "gemini-api", "huggingface-api", "xai-api"], {});
+    const routes = planRoutes(request, ["openai-api", "anthropic-api", "gemini-api", "huggingface-api", "xai-api"], {});
     const candidates = createSemanticRouteCandidates(request, routes, {});
     const requests = await captureRequests((semantic) => semantic.analyzeChat({ chatRequest: request, routes: candidates, userId: "synthetic-evaluation" }));
     const expectations = {};

@@ -53,7 +53,7 @@ try {
   assert.equal(dialog.querySelectorAll('[aria-label="Recent models"] .picker-model-row').length, 1);
   assert(dialog.textContent?.includes("AutoDefault"));
   assert.equal(dialog.querySelector('.picker-providers'), null);
-  assert.equal(dialog.querySelectorAll('[aria-label="Featured models"] .picker-model-row').length, 3);
+  assert.equal(dialog.querySelectorAll('[aria-label="Featured models"] .picker-model-row').length, 4);
   const first = dialog.querySelector("button")!;
   const last = [...dialog.querySelectorAll("button")].at(-1)!;
   last.focus();
@@ -93,7 +93,7 @@ try {
   assert(legacyDialog.querySelector('.picker-header')?.textContent?.includes("Current: gpt-oss-120b"));
   await act(async () => { type(legacyDialog.querySelector('input[type="search"]'), "hugging face"); });
   const hfRows = [...legacyDialog.querySelectorAll('.picker-model-row')];
-  assert.equal(hfRows.length, 7);
+  assert.equal(hfRows.length, 8);
   assert(hfRows.some((row) => row.textContent?.includes("DeepSeek V4.1 Flash") && row.textContent.includes("MIT")));
   assert(hfRows.some((row) => row.textContent?.includes("Qwen3.8 27B") && row.textContent.includes("APACHE 2.0")));
   assert(hfRows.some((row) => row.textContent?.includes("GLM 5.3") && row.textContent.includes("Custom license")));

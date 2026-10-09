@@ -3,7 +3,7 @@ import { useState } from "react";
 import { AI_PROVIDERS, normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { AISettings, Conversation } from "../types";
 
-const labels = { openai: "OpenAI", gemini: "Google Gemini", huggingface: "Hugging Face", xai: "xAI" };
+const labels = { openai: "OpenAI", anthropic: "Anthropic Claude", gemini: "Google Gemini", huggingface: "Hugging Face", xai: "xAI" };
 const scopes = { conversation: "This chat + branch", selected: "Selected material", workspace: "Search my workspace" };
 
 export default function AIControls({ conversation, conversations, disabled, onChange }: {

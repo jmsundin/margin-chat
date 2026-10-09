@@ -5,7 +5,7 @@ import {
 import { HttpError } from "../lib/errors.mjs";
 
 const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
-const AI_PROVIDERS = new Set(["openai", "gemini", "huggingface", "xai"]);
+const AI_PROVIDERS = new Set(["openai", "anthropic", "gemini", "huggingface", "xai"]);
 
 export function validateAIOptions(input) {
   if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) {
@@ -66,6 +66,7 @@ function validateWorkspaceContext(input) {
   });
 }
 const VALID_SERVICE_IDS = new Set([
+  "anthropic-api",
   "backend-services",
   "gemini-api",
   "huggingface-api",

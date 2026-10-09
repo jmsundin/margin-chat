@@ -1,7 +1,7 @@
 import { MODEL_PROFILE_VERSION, selectProfileModel, TASK_PROVIDER_PREFERENCES } from "./modelProfiles.mjs";
 import { getModelRoutingEvidence } from "./modelRoutingEvidence.mjs";
 
-const PROVIDER_LABELS = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "gemini-api": "Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
+const PROVIDER_LABELS = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "anthropic-api": "Anthropic", "gemini-api": "Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
 const MODE_TRADEOFFS = {
   fast: "Fast mode favors the configured fast variant and a smaller context allowance.",
   balanced: "Balanced mode uses the configured default or task profile.",

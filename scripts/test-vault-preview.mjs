@@ -31,7 +31,7 @@ let lastChatRequest = null;
 let syntheticReplyCount = 0;
 const projection = new Map();
 const attachments = new Map();
-const noKeys = { byProvider: Object.fromEntries(["openai", "gemini", "huggingface", "xai"].map((provider) => [provider, { configured: false, hint: null }])), hasAny: false };
+const noKeys = { byProvider: Object.fromEntries(["openai", "anthropic", "gemini", "huggingface", "xai"].map((provider) => [provider, { configured: false, hint: null }])), hasAny: false };
 function user() {
   return {
     id: controls.userId, displayName: "Vault Preview", email: `${controls.userId}@example.test`,

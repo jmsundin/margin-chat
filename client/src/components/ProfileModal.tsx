@@ -58,6 +58,7 @@ const API_KEY_FIELDS: Array<{
   placeholder: string;
 }> = [
   { label: "OpenAI", provider: "openai", placeholder: "sk-..." },
+  { label: "Anthropic Claude", provider: "anthropic", placeholder: "sk-ant-..." },
   { label: "Google Gemini", provider: "gemini", placeholder: "AIza..." },
   {
     label: "Hugging Face",
@@ -68,6 +69,7 @@ const API_KEY_FIELDS: Array<{
 ];
 
 const EMPTY_API_KEY_DRAFTS: Record<ApiKeyProvider, string> = {
+  anthropic: "",
   gemini: "",
   huggingface: "",
   openai: "",

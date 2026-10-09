@@ -11,6 +11,7 @@ export function createRuntimeConfig(env) {
   );
 
   return {
+    anthropicModel: normalizeBackendModelId("anthropic-api", env.ANTHROPIC_MODEL),
     authSessionTtlMs: authSessionDays * 24 * 60 * 60 * 1000,
     authSessionTtlSeconds: authSessionDays * 24 * 60 * 60,
     defaultBackendProvider: normalizeBackendProvider(
@@ -38,6 +39,7 @@ export function createRuntimeConfig(env) {
 
 function normalizeBackendProvider(value) {
   if (
+    value === "anthropic-api" ||
     value === "gemini-api" ||
     value === "huggingface-api" ||
     value === "openai-api" ||

@@ -1,7 +1,7 @@
 export type Role = "system" | "user" | "assistant";
 
 export type AutoMode = "balanced" | "fast" | "thorough";
-export type AIProvider = "openai" | "gemini" | "huggingface" | "xai";
+export type AIProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai";
 export interface AISettings {
   mode: AutoMode;
   contextScope: "conversation" | "selected" | "workspace";
@@ -43,6 +43,7 @@ export type BackendServiceId =
   | "backend-services"
   | "openai-api"
   | "openai-agent"
+  | "anthropic-api"
   | "gemini-api"
   | "huggingface-api"
   | "xai-api";
