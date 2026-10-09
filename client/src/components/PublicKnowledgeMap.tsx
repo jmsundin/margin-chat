@@ -1,7 +1,7 @@
 import DismissibleDetails from "./DismissibleDetails";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, ReactNode, PointerEvent as ReactPointerEvent } from "react";
 import { createPortal } from "react-dom";
 import { fitFocusedMapTerritory, fitMapTerritories, fitMapTerritoryOverview, layoutMapTerritoryOverview, layoutFocusedMapTerritory, OVERVIEW_NODE_FOOTPRINT, readableNodeSize, type MapTerritory } from "../lib/graphPresentation";
 import { DEFAULT_PUBLIC_RELATION_FILTERS, type PublicRelationFilters, type PublicRelationFilter } from "../lib/publicRelationFilters";
@@ -39,6 +39,8 @@ export interface PublicKnowledgeMapProps {
   savedTopics: Record<string, string>;
   onSave(topic: PublicTopic): void;
   onShowInMyMap(conversationId: string, topic?: PublicTopic): void;
+  /** Controls placed at the start of the toolbar, such as the map switcher. */
+  toolbarLeading?: ReactNode;
   /** Signed-in members save their map to their account and read shared answers. */
   account?: PublicMapAccount;
 }
@@ -132,7 +134,7 @@ function messageForError(error: unknown) {
   return error instanceof Error ? error.message : "This topic could not be loaded. Please try again.";
 }
 
-export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpenExplorer, onFocusCanvas, workspaceKey, focusRequest, searchRequest, onFocusRequestHandled, onSearchRequestHandled, savedTopics, onSave, onShowInMyMap, account }: PublicKnowledgeMapProps) {
+export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpenExplorer, onFocusCanvas, workspaceKey, focusRequest, searchRequest, onFocusRequestHandled, onSearchRequestHandled, savedTopics, onSave, onShowInMyMap, toolbarLeading, account }: PublicKnowledgeMapProps) {
   const [location, setLocation] = useState<MapLocation>(() => readLocation(workspaceKey));
   const locationRef = useRef(location);
   locationRef.current = location;
@@ -834,6 +836,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     </aside>;
   return <div ref={mapRef} className="public-knowledge-map semantic-public-map" style={{ "--public-details-width": `${detailsWidth}px` } as CSSProperties}>
     <header className="public-map-topbar">
+      {toolbarLeading}
       <nav className="public-map-history" aria-label="Public map history">
         <button type="button" aria-label="Back in public map" title="Back in public map" disabled={!history.past.length} onClick={() => restoreHistory("back")}>←</button>
         <button type="button" aria-label="Forward in public map" title="Forward in public map" disabled={!history.future.length} onClick={() => restoreHistory("forward")}>→</button>
@@ -855,7 +858,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
           buttons[next].focus({ preventScroll: true });
         }}
         onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchResultsOpen(false); }}>
-        <label htmlFor="public-topic-search">Search public topics</label>
+        <label htmlFor="public-topic-search" className="public-map-visually-hidden">Search public topics</label>
         <div><input ref={searchInputRef} id="public-topic-search" type="search" value={location.query} maxLength={200} placeholder="Search a topic or Wikidata ID"
           aria-controls={searchResultsOpen && location.query.trim().length >= 2 ? "public-topic-results" : undefined}
           onFocus={() => setSearchResultsOpen(true)} onChange={(event) => { updateLocation((previous) => ({ ...previous, query: event.target.value })); setSearchResultsOpen(true); }}
@@ -868,6 +871,11 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
           <button type="button" onClick={openExplorer}>View all results</button>
         </div> : null}
       </form>
+      <div className="graph-view-mode-tabs public-map-modes" role="group" aria-label="Public map mode">
+        {PUBLIC_VIEW_MODES.map((item) => <button key={item.id} type="button" aria-label={`${item.label} view`} aria-pressed={viewMode === item.id} title={item.description}
+          disabled={!visible.topics.length && !unfiltered.topics.length} onClick={() => chooseViewMode(item.id)}>{item.label}</button>)}
+        <span className="graph-view-purpose" aria-live="polite">{PUBLIC_VIEW_MODES.find((item) => item.id === viewMode)?.description}</span>
+      </div>
       <button type="button" ref={explorerTriggerRef} aria-expanded={explorerContainer ? undefined : explorerOpen} onClick={openExplorer}>Explore</button>
       <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
         <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg></summary>
@@ -881,13 +889,6 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         </select></label><label><input type="checkbox" checked={location.filters.includeMetadata} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, includeMetadata: event.target.checked } }))} />Include Wikimedia metadata</label><p>Category pages, portals, and templates are hidden by default. Your loaded topics stay available.</p></div>
       </DismissibleDetails>
     </header>
-    <div className="graph-view-modes public-map-modes" aria-label="Public map views">
-      <div className="graph-view-mode-tabs" role="group" aria-label="Public map mode">
-        {PUBLIC_VIEW_MODES.map((item) => <button key={item.id} type="button" aria-label={`${item.label} view`} aria-pressed={viewMode === item.id} title={item.description}
-          disabled={!visible.topics.length && !unfiltered.topics.length} onClick={() => chooseViewMode(item.id)}>{item.label}</button>)}
-      </div>
-      <p className="graph-view-purpose" aria-live="polite">{PUBLIC_VIEW_MODES.find((item) => item.id === viewMode)?.description}</p>
-    </div>
     {clustersMode && visible.topics.length ? <div className="graph-mode-context" aria-label="Cluster view status">
       <span>Topics gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
       <button type="button" onClick={() => fitMap()}>Show all clusters</button>

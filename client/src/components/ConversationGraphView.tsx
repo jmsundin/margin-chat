@@ -50,7 +50,8 @@ import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type Gra
 import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE } from "./GraphClusterLayer";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
-import GraphViewModeControls from "./GraphViewModeControls";
+import { GraphViewModeSelects, GraphViewModeTabs } from "./GraphViewModeControls";
+import { GRAPH_VIEW_MODES } from "../lib/graphViewModes";
 import "./GraphViewModes.css";
 import {
   aggregateGraphEdges, getGraphScopeConversationIds, getGraphWorldBounds,
@@ -778,6 +779,7 @@ export default function ConversationGraphView({
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const sectionRef = useRef<HTMLElement>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
   const explorerTriggerRef = useRef<HTMLButtonElement>(null);
   useOutsideDismiss(searchOpen, () => setSearchOpen(false), searchRef);
@@ -2373,8 +2375,13 @@ export default function ConversationGraphView({
           {conceptSaveError ? <p className="graph-map-storage-error" role="status">Concept changes could not be saved on this device. Keep this view open to retain them.</p> : null}
   </div>;
 
+  // Views outside the toolbar tabs are named on the options button so the active view stays visible.
+  const secondaryViewLabel = navigation.state.contentLens === "concepts" ? "Concepts"
+    : GRAPH_VIEW_MODES.slice(5).find((item) => item.id === viewMode)?.label;
+  function closeViewOptions() { sectionRef.current?.querySelector(".graph-map-view-options")?.removeAttribute("open"); }
+
   return (
-    <section className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
+    <section ref={sectionRef} className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
       <div className={`graph-map-navigation${toolbarLeading ? " has-workspace-controls" : ""}`} role="toolbar" aria-label="Map exploration">
         {toolbarLeading}
         <div className="graph-map-history">
@@ -2395,10 +2402,17 @@ export default function ConversationGraphView({
             <button type="button" onClick={openExplorer}>View all results · {sourceItems.length}</button>
           </div> : null}
         </div>
+        <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={chooseViewMode} />
         <button type="button" ref={explorerTriggerRef} aria-label="Explore map collections and sources" onClick={openExplorer}>Explore</button>
         <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
-          <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg></summary>
+          <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}</summary>
           <div>
+            <GraphViewModeSelects mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }}
+              onLensChange={(lens) => {
+                closeViewOptions();
+                if (lens === "documents" && viewMode === "evidence") chooseViewMode(navigation.state.documentViewMode);
+                else { navigation.navigate({ contentLens: lens }); setFitAfterArrange(false); }
+              }} />
             <button type="button" aria-pressed={navigation.state.overviewPresentation === "map"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showAllGroups(); }}>Groups and documents</button>
             <button type="button" aria-pressed={documentsOnly} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showDocuments(); }}>Documents and connections</button>
             {scope.kind === "all" && !selectedConversation && !focusedTerritory ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setInspectedOverviewSources([]); navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), overviewPresentation: showThemeOverview ? "map" : "themes", focusedTerritoryId: null, focusedTerritoryScale: null }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
@@ -2413,11 +2427,6 @@ export default function ConversationGraphView({
           </div></DismissibleDetails> : null}
         {toolbarTrailing}
       </div>
-      <GraphViewModeControls mode={viewMode} lens={navigation.state.contentLens} onModeChange={chooseViewMode}
-        onLensChange={(lens) => {
-          if (lens === "documents" && viewMode === "evidence") chooseViewMode(navigation.state.documentViewMode);
-          else { navigation.navigate({ contentLens: lens }); setFitAfterArrange(false); }
-        }} />
       {isNetworkMode && !panelView ? <div className="graph-mode-context" aria-label="Network layout controls">
         <span>Layout stays still until you relax it. Drag a document to pin its position.</span>
         <button type="button" onClick={() => { navigation.update({ networkIteration: navigation.state.networkIteration + 1 }); setFitAfterArrange(true); }}>Relax network</button>

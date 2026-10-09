@@ -1,4 +1,3 @@
-.graph-view-modes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; flex: 0 0 auto; padding: 8px 12px; background: var(--panel-bg); border-bottom: 1px solid var(--line); }
 .graph-view-mode-tabs { display: flex; align-items: center; gap: 3px; border: 1px solid var(--line); padding: 3px; border-radius: 9px; }
 .graph-view-mode-tabs button { background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--muted); font: inherit; font-size: .78rem; padding: 6px 11px; cursor: pointer; min-height: 32px; }
 .graph-view-mode-tabs button[aria-pressed="true"] { color: var(--ink); background: var(--accent-soft); border-color: var(--accent); }
@@ -22,11 +21,39 @@
   .graph-evidence-view .graph-evidence-main { flex: 1 0 auto; overflow: visible; }
   .graph-evidence-section-title { flex-wrap: wrap; gap: 6px; }
 }
+
+/* One compact map toolbar: view tabs sit inline, secondary view choices live in the view options menu. */
+:is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) { row-gap: 6px; }
+:is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .graph-view-mode-tabs { flex: 0 0 auto; gap: 2px; padding: 2px; border-radius: 9px; }
+:is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .graph-view-mode-tabs button { min-height: 30px; padding: 4px 9px; border-radius: 7px; background: transparent; border-color: transparent; color: var(--muted); white-space: nowrap; }
+:is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .graph-view-mode-tabs button[aria-pressed="true"] { color: var(--ink); background: var(--accent-soft); border-color: var(--accent); }
+.graph-view-purpose { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.graph-view-mode-selects { display: grid; gap: 6px; padding: 4px 4px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.graph-view-mode-selects .graph-view-mode-select { justify-content: space-between; }
+.graph-view-mode-selects .graph-view-mode-select select { flex: 0 1 150px; min-width: 0; }
+.semantic-map .graph-map-view-options > div { width: min(270px, calc(100vw - 24px)); }
+.semantic-map .graph-map-view-options > summary:has(.graph-map-view-options-active) { display: flex; gap: 6px; width: auto; padding: 0 9px; color: var(--ink); border-color: var(--accent); background: var(--accent-soft); }
+.graph-map-view-options-active { font-size: .76rem; white-space: nowrap; }
+.public-map-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 760px) {
-  .graph-view-modes { gap: 8px; padding: 7px 8px; }
-  .graph-view-mode-tabs { flex: 1 0 100%; }
-  .graph-view-mode-tabs button { flex: 1; min-height: 38px; }
-  .graph-view-purpose { flex-basis: 100%; }
+  /* Phones get three short rows: map switcher and history, search and menus, then views. */
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) { gap: 4px 6px; padding: 6px 8px; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::before,
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::after { content: ""; flex: 0 0 100%; height: 0; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::before { order: 5; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::after { order: 15; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .knowledge-map-switcher { order: 0; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(.graph-map-history, .public-map-history) { order: 1; margin-right: auto; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .knowledge-map-add { order: 2; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(.graph-map-search, .public-map-search) { order: 10; flex: 1 1 120px; min-width: 0; width: auto; margin: 0; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(button:not(.graph-map-all-groups):not(.public-map-all-groups), .graph-map-view-options, .graph-map-filters, .public-map-filters) { order: 11; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(.graph-map-all-groups, .public-map-all-groups) { order: 20; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .graph-view-mode-tabs { order: 21; flex: 1 1 0%; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .graph-map-scope { order: 30; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .graph-view-mode-tabs button { flex: 1 0 auto; min-height: 36px; padding: 4px 8px; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) :is(button, input, summary) { min-height: 36px; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .knowledge-map-switcher > div button { padding: 5px 8px; }
+  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .knowledge-map-switcher > div { margin-right: 0; }
   .graph-view-mode-select { flex: 1; }
   .graph-view-mode-select select { flex: 1; min-width: 0; }
 }

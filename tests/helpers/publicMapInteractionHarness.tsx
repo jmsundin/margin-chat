@@ -555,7 +555,7 @@ try {
   assert.equal(personalHistory().detailLevel, "reader", "Escape in Public cannot collapse the hidden personal reader");
   assert.equal(personalHistory().selectedConversationId, beforePublic.selectedConversationId, "Hidden personal selection stays intact");
   assert.deepEqual(personalHistory().viewport, beforePublic.viewport, "Public keyboard actions cannot alter the hidden personal camera");
-  await click(button("Back to my map", ".knowledge-map-switcher button"));
+  await click(button("My map", ".knowledge-map-switcher button"));
   assertMode("personal");
   assert.equal(personalHistory().detailLevel, "reader", "Back restores the same personal reader mode");
   assert(personalNode().classList.contains("is-selected"));
