@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import NotificationToast from "./NotificationToast";
-import { acknowledgeVersion, readAcknowledgedVersion, watchAppUpdates } from "../lib/appUpdates";
+import { acknowledgeVersion, onQuietMoment, readAcknowledgedVersion, trackFreshStart, watchAppUpdates } from "../lib/appUpdates";
 import { listenForAppRestart, requestAppRestart } from "../lib/appUpdateRestart";
 
 export default function AppUpdateNotice({ commit }: { commit: string }) {
@@ -12,10 +12,18 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
   const [restartStatus, setRestartStatus] = useState<string | null>(null);
   const [restartError, setRestartError] = useState<string | null>(null);
   const [notificationHost, setNotificationHost] = useState<HTMLElement | null>(null);
+  const [startedAt] = useState(Date.now);
+  const freshStart = useRef<{ isFresh(): boolean } | null>(null);
+  const busy = useRef(false);
   const version = commit === "unknown" ? "unavailable" : commit.slice(0, 7);
 
   useEffect(() => watchAppUpdates(setWaiting), []);
   useEffect(() => listenForAppRestart(setRestartStatus, setRestartError), []);
+  useEffect(() => {
+    const tracker = trackFreshStart(Date.now, startedAt);
+    freshStart.current = tracker;
+    return tracker.stop;
+  }, [startedAt]);
   // The loaded-version toast shows once per version, so a reload before it fades does not bring it back.
   useEffect(() => { if (previous !== commit) acknowledgeVersion(commit); }, [previous, commit]);
 
@@ -44,14 +52,26 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
     };
   }, []);
 
-  const restart = async () => {
-    if (!waiting || restarting) return;
-    setRestarting(true);
-    setRestartError(null);
-    try { await requestAppRestart(waiting); }
-    catch (error) { setRestartError(error instanceof Error ? error.message : "Please try again."); }
-    finally { setRestarting(false); }
+  const restart = async (auto = false) => {
+    if (!waiting || busy.current) return;
+    busy.current = true;
+    if (!auto) {
+      setRestarting(true);
+      setRestartError(null);
+    }
+    try { await requestAppRestart(waiting, { auto }); }
+    catch (error) {
+      // A declined automatic update stays quiet; the toast and the next quiet moment remain.
+      if (!auto) setRestartError(error instanceof Error ? error.message : "Please try again.");
+    }
+    finally {
+      busy.current = false;
+      if (!auto) setRestarting(false);
+    }
   };
+  const latestRestart = useRef(restart);
+  latestRestart.current = restart;
+  useEffect(() => waiting ? onQuietMoment(() => freshStart.current?.isFresh() ?? false, () => void latestRestart.current(true)) : undefined, [waiting]);
 
   if (!notificationHost) return null;
   return createPortal(
@@ -66,7 +86,7 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
         kind={restartError ? "error" : "info"}
         action={!restartError && !restartStatus ? {
           label: restarting ? "Preparing restart…" : "Restart now",
-          onClick: restart,
+          onClick: () => void restart(),
         } : undefined}
       />}
     </>,

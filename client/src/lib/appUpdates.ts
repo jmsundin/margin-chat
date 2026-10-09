@@ -1,5 +1,25 @@
 export const APP_VERSION_STORAGE_KEY = "marginchat-acknowledged-app-version";
 export const UPDATE_CHECK_INTERVAL = 5 * 60 * 1000;
+// A tab opened this recently, with no input yet, can reload without interrupting anyone.
+export const FRESH_START_WINDOW = 20 * 1000;
+const INPUT_EVENTS = ["pointerdown", "keydown", "wheel", "touchstart"];
+
+export function trackFreshStart(now: () => number = Date.now, startedAt = now()) {
+  let touched = false;
+  const touch = () => { touched = true; stop(); };
+  const stop = () => { for (const name of INPUT_EVENTS) window.removeEventListener(name, touch, true); };
+  for (const name of INPUT_EVENTS) window.addEventListener(name, touch, { capture: true, passive: true });
+  return { isFresh: () => !touched && now() - startedAt < FRESH_START_WINDOW, stop };
+}
+
+// Updates apply on their own at quiet moments: when the tab is hidden, or
+// right after it opened. The worker also refuses while another tab is visible.
+export function onQuietMoment(isFresh: () => boolean, apply: () => void): () => void {
+  const changed = () => { if (document.visibilityState === "hidden") apply(); };
+  document.addEventListener("visibilitychange", changed);
+  if (document.visibilityState === "hidden" || isFresh()) apply();
+  return () => document.removeEventListener("visibilitychange", changed);
+}
 
 export function readAcknowledgedVersion(): string | null {
   try { return window.localStorage.getItem(APP_VERSION_STORAGE_KEY); }

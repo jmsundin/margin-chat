@@ -2,16 +2,18 @@ import { expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 import { installUpdateProtocol } from "../client/build/worker-update-protocol.mjs";
 
-function setup(replies: Array<"ready" | "busy" | "silent" | "commit-error">) {
+function setup(replies: Array<"ready" | "busy" | "silent" | "commit-error">, visibility: string[] = []) {
   let handler: (event: any) => void;
   let activated = 0;
   let enumerations = 0;
   const events: string[] = [];
+  const autoFlags: unknown[] = [];
   let extraClient = false;
   const clients = replies.map((reply, index) => ({
-    id: String(index), url: "https://margin.test/",
-    postMessage(message: { type: string }, ports: MessagePort[] = []) {
+    id: String(index), url: "https://margin.test/", visibilityState: visibility[index] ?? "visible",
+    postMessage(message: { type: string; auto?: boolean }, ports: MessagePort[] = []) {
       events.push(`${index}:${message.type}`);
+      if (message.type === "MARGIN_PREPARE_UPDATE") autoFlags.push(message.auto);
       if (!ports[0] || reply === "silent") return;
       ports[0].postMessage(reply === "busy" || reply === "commit-error" && message.type === "MARGIN_COMMIT_UPDATE"
         ? { error: "Unsaved work" } : { ready: true });
@@ -28,17 +30,17 @@ function setup(replies: Array<"ready" | "busy" | "silent" | "commit-error">) {
     scope, MessageChannel, crypto,
     setTimeout: (fn: () => void) => setTimeout(fn, 30), clearTimeout,
   });
-  const restart = async () => {
+  const restart = async (auto = false) => {
     const channel = new MessageChannel();
     const response = new Promise<any>((resolve) => {
       channel.port1.onmessage = (event) => { channel.port1.close(); resolve(event.data); };
     });
     let pending: Promise<void> | undefined;
-    handler!({ data: { type: "MARGIN_RESTART" }, source: clients[0], ports: [channel.port2], waitUntil: (value: Promise<void>) => { pending = value; } });
+    handler!({ data: { type: "MARGIN_RESTART", auto }, source: clients[0], ports: [channel.port2], waitUntil: (value: Promise<void>) => { pending = value; } });
     await pending;
     return response;
   };
-  return { restart, events, addTab: () => { extraClient = true; }, get activated() { return activated; } };
+  return { restart, events, autoFlags, clients, addTab: () => { extraClient = true; }, get activated() { return activated; } };
 }
 
 test("restart prepares and confirms every tab before activating once", async () => {
@@ -68,4 +70,36 @@ test("concurrent restart requests cannot independently activate the same worker"
   expect(replies.filter((reply) => reply.ready)).toHaveLength(1);
   expect(replies.filter((reply) => reply.error)).toHaveLength(1);
   expect(app.activated).toBe(1);
+});
+
+test("automatic updates wait while any other tab is visible", async () => {
+  const app = setup(["ready", "ready"], ["hidden", "visible"]);
+  expect((await app.restart(true)).error).toContain("Another tab is in use");
+  expect(app.activated).toBe(0);
+  expect(app.events.some((event) => event.endsWith("PREPARE_UPDATE"))).toBe(false);
+});
+
+test("automatic updates proceed when every other tab is hidden and tell tabs it is automatic", async () => {
+  const app = setup(["ready", "ready"], ["visible", "hidden"]);
+  expect(await app.restart(true)).toEqual({ ready: true });
+  expect(app.activated).toBe(1);
+  expect(app.autoFlags).toEqual([true, true]);
+});
+
+test("a tab shown during an automatic update cancels it", async () => {
+  const app = setup(["ready", "ready"], ["hidden", "hidden"]);
+  const original = app.clients[1].postMessage;
+  app.clients[1].postMessage = (message, ports) => {
+    if (message.type === "MARGIN_PREPARE_UPDATE") app.clients[1].visibilityState = "visible";
+    original(message, ports);
+  };
+  expect((await app.restart(true)).error).toContain("Another tab is in use");
+  expect(app.activated).toBe(0);
+  expect(app.events.slice(-2)).toEqual(["0:MARGIN_CANCEL_UPDATE", "1:MARGIN_CANCEL_UPDATE"]);
+});
+
+test("a manual restart still proceeds while other tabs are visible", async () => {
+  const app = setup(["ready", "ready"], ["visible", "visible"]);
+  expect(await app.restart()).toEqual({ ready: true });
+  expect(app.autoFlags).toEqual([false, false]);
 });

@@ -11,8 +11,14 @@ Object.defineProperty(browser.document, "visibilityState", { configurable: true,
 let online = true;
 Object.defineProperty(browser.navigator, "onLine", { configurable: true, get: () => online });
 
+const restartRequests: any[] = [];
 class Worker extends browser.EventTarget {
   state = "installing";
+  postMessage(message: any, ports: MessagePort[]) {
+    restartRequests.push(message);
+    ports[0].postMessage({ error: "Another tab is in use, so the update waits." });
+    ports[0].close();
+  }
   setState(state: string) { this.state = state; this.dispatchEvent(new browser.Event("statechange")); }
 }
 let checks = 0;
@@ -119,9 +125,28 @@ assert.equal(toasts().length, 1, "Acknowledged version does not show again besid
 assert.equal(toasts()[0].parentElement, workspaceNotifications, "Toasts join the workspace notifications");
 assert.match(body.textContent!, /Update ready · currently loaded version bbbbbbb/, "Waiting worker never changes loaded version");
 assert.equal([...body.querySelectorAll("button")].some((button) => button.textContent === "Restart now"), true);
+await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+assert.deepEqual(restartRequests, [{ type: "MARGIN_RESTART", auto: true }], "A just-opened, untouched tab applies a waiting update on its own");
+assert.equal(toasts().length, 1, "A declined automatic update shows no error");
+assert.match(body.textContent!, /Update ready/);
 await dismissToast();
 await act(async () => { registration.dispatchEvent(new browser.Event("updatefound")); });
 assert.equal(toasts().length, 0, "Same waiting update stays dismissed");
+await act(async () => { root.unmount(); });
+
+// After the person starts using the tab, updates wait until it is hidden.
+restartRequests.length = 0;
+registration.waiting = null;
+root = createRoot(container as unknown as Element);
+await act(async () => { root.render(createElement(AppUpdateNotice, { commit })); });
+browser.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "a" }));
+registration.waiting = next;
+await act(async () => { registration.dispatchEvent(new browser.Event("updatefound")); await new Promise((resolve) => setTimeout(resolve, 0)); });
+assert.equal(restartRequests.length, 0, "A tab in use is never reloaded while visible");
+Object.defineProperty(browser.document, "visibilityState", { configurable: true, value: "hidden" });
+await act(async () => { browser.document.dispatchEvent(new browser.Event("visibilitychange")); await new Promise((resolve) => setTimeout(resolve, 0)); });
+assert.deepEqual(restartRequests, [{ type: "MARGIN_RESTART", auto: true }], "Hiding the tab applies the update");
+Object.defineProperty(browser.document, "visibilityState", { configurable: true, value: "visible" });
 await act(async () => { root.unmount(); });
 workspaceNotifications.remove();
 registration.waiting = null;

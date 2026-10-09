@@ -1,6 +1,7 @@
 import { canReloadAfterAppUpdate, flushForAppUpdate, lockForAppUpdate } from "./appUpdateSafety";
 
-export function requestAppRestart(worker: ServiceWorker): Promise<void> {
+// auto: only proceeds while every other tab is hidden, and is retried silently.
+export function requestAppRestart(worker: ServiceWorker, { auto = false } = {}): Promise<void> {
   return new Promise((resolve, reject) => {
     const channel = new MessageChannel();
     const finish = (error?: string) => {
@@ -10,14 +11,14 @@ export function requestAppRestart(worker: ServiceWorker): Promise<void> {
     };
     const timer = setTimeout(() => finish("The update did not respond. Please try again."), 25000);
     channel.port1.onmessage = (event) => finish(event.data?.ready === true ? undefined : event.data?.error || "The update could not be prepared.");
-    try { worker.postMessage({ type: "MARGIN_RESTART" }, [channel.port2]); }
+    try { worker.postMessage({ type: "MARGIN_RESTART", auto }, [channel.port2]); }
     catch { finish("This update is no longer available. Wait for the next update check."); }
   });
 }
 
 export function listenForAppRestart(onStatus: (message: string | null) => void, onError: (message: string) => void = () => {}): () => void {
   if (!("serviceWorker" in navigator)) return () => {};
-  let pending: { id: string; worker: ServiceWorker; unlock: () => void; committed: boolean } | null = null;
+  let pending: { id: string; worker: ServiceWorker; unlock: () => void; committed: boolean; auto: boolean } | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let reloading = false;
   const release = () => {
@@ -27,7 +28,7 @@ export function listenForAppRestart(onStatus: (message: string | null) => void, 
     onStatus(null);
   };
   const message = (event: MessageEvent) => {
-    const { type, id } = event.data ?? {};
+    const { type, id, auto } = event.data ?? {};
     const worker = event.source as ServiceWorker | null;
     if (!worker || worker.scriptURL !== new URL("/sw.js", window.location.href).href || typeof id !== "string") return;
     if (type === "MARGIN_CANCEL_UPDATE") {
@@ -44,11 +45,12 @@ export function listenForAppRestart(onStatus: (message: string | null) => void, 
       try {
         if (type === "MARGIN_PREPARE_UPDATE") {
           if (pending) throw new Error("Another restart is already being prepared.");
-          pending = { id, worker, unlock: lockForAppUpdate(), committed: false };
-          onStatus("Waiting for active work, saving edits, and checking all open tabs…");
+          pending = { id, worker, unlock: lockForAppUpdate(), committed: false, auto: auto === true };
+          onStatus(auto === true ? "Updating to the latest version…" : "Waiting for active work, saving edits, and checking all open tabs…");
           timer = setTimeout(() => {
+            const silent = pending?.auto;
             release();
-            onError("The restart timed out. Your current version is still open; try again.");
+            if (!silent) onError("The restart timed out. Your current version is still open; try again.");
           }, 35000);
           // Let blur handlers and the existing note debounce publish their edits.
           await new Promise((resolve) => setTimeout(resolve, 400));
@@ -71,8 +73,9 @@ export function listenForAppRestart(onStatus: (message: string | null) => void, 
     // First install, unsolicited activation, and an expired preparation never reload a page.
     if (!reloading && pending?.committed && navigator.serviceWorker.controller === pending.worker) {
       if (!canReloadAfterAppUpdate()) {
+        const silent = pending.auto;
         release();
-        onError("New work arrived while restarting. Finish it, then try Restart now again.");
+        if (!silent) onError("New work arrived while restarting. Finish it, then try Restart now again.");
         return;
       }
       reloading = true;
