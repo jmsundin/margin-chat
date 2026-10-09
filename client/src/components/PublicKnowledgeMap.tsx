@@ -12,10 +12,11 @@ import { getGraphNeighborhoodIds } from "../lib/graphNeighborhood";
 import GraphTerritoryLayer from "./GraphTerritoryLayer";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE } from "./GraphClusterLayer";
 import { fitGravityCluster, layoutGravityClusters, type GravityCluster } from "../lib/gravityClusters";
-import { getPublicTopic } from "../lib/publicKnowledge";
+import { getPublicTopic, wikidataStatement } from "../lib/publicKnowledge";
 import { expandWikipediaTopic, resolveWikipediaTitles, searchWikipediaTopics } from "../lib/wikipedia";
 import { listPublicAnswers, readPublicMap, savePublicMap, type PublicAnswer } from "../lib/publicMapApi";
 import { PublicAnswerFeed, PublicTopicInsights, type PublicMapAccount } from "./PublicTopicInsights";
+import { WikidataAboutSection } from "./TopicSources";
 import type { PublicRelation, PublicTopic } from "../lib/publicKnowledge";
 import type { WebSearchResult } from "../lib/webSearch";
 import { groupRelations } from "../lib/publicRelationGroups";
@@ -834,8 +835,9 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
               setNotice(`${result.title} saved to your map${savedConversation(selected) ? `, connected to ${selected.label}` : ""}.`);
             } : undefined} /> : null}
           <div className="public-map-sources"><h4>Read at the source</h4>{safeSourceUrl(selected.wikipediaUrl) && <a href={safeSourceUrl(selected.wikipediaUrl)} target="_blank" rel="noreferrer">Wikipedia ↗</a>}<a href={safeSourceUrl(selected.wikidataUrl) ?? `https://www.wikidata.org/wiki/${selected.id}`} target="_blank" rel="noreferrer">Wikidata ↗</a><span>Wikipedia text · CC BY-SA 4.0{selected.retrievedAt && !Number.isNaN(Date.parse(selected.retrievedAt)) ? ` · Retrieved ${new Date(selected.retrievedAt).toLocaleDateString()}` : ""}</span></div>
+          <WikidataAboutSection topicId={selected.id} onOpenTopic={(id) => void openTopic(id)} />
           <h4>Connections in this view <span>{selectedRelations.length}</span></h4>
-          <p className="public-map-small">From the Wikipedia article · Broader topics first, then linked articles grouped by section.</p>
+          <p className="public-map-small">From the Wikipedia article · Broader topics first, then linked articles grouped by section. Links Wikidata also states say how.</p>
           {!selectedRelations.length && <p className="public-map-muted">{selectedExpansion?.visible ? "No connections match these filters. Choose All relationships or include Wikimedia metadata to see more." : "Expand this topic to discover its direct connections."}</p>}
           {groupRelations(selected.id, selectedRelations).map((group) => <div key={group.label} className="public-map-relation-group">
             {group.label ? <h5>{group.label}</h5> : null}
@@ -844,7 +846,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
               const neighbor = location.graph.topics[outbound ? relation.targetId : relation.sourceId];
               // Named groups already say how their topics relate.
               const detail = !outbound ? `${relation.label} → ${selected.label}` : group.label && group.label !== relation.label && !relation.propertyId.startsWith("wikipedia-") ? relation.label : !group.label ? relation.label : "";
-              return neighbor ? <li key={relation.id}><button type="button" onClick={() => selectTopic(neighbor.id, true, true)}>{detail ? <span>{detail}</span> : null}<strong>{neighbor.label}</strong></button><a href={safeSourceUrl(relation.sourceUrl) ?? `https://www.wikidata.org/wiki/${relation.sourceId}`} target="_blank" rel="noreferrer" aria-label={`View source for ${relation.label}`}>↗</a></li> : null;
+              return neighbor ? <li key={relation.id}><button type="button" onClick={() => selectTopic(neighbor.id, true, true)}>{detail ? <span>{detail}</span> : null}<strong>{neighbor.label}</strong>{relation.wikidata && outbound ? <em className="public-map-wikidata">Wikidata: {wikidataStatement(relation, selected.label, neighbor.label)}</em> : null}</button><a href={safeSourceUrl(relation.sourceUrl) ?? `https://www.wikidata.org/wiki/${relation.sourceId}`} target="_blank" rel="noreferrer" aria-label={`View source for ${relation.label}`}>↗</a></li> : null;
             })}</ul>
           </div>)}
         </section> : <section className="public-map-start"><div className="public-map-section-label">A place to begin</div><p>Choose a topic, then expand one neighborhood at a time.</p><div className="public-map-seeds">{SEEDS.map((seed) => <button type="button" key={seed.id} onClick={() => void openTopic(seed.id, true, seed.label)}>{seed.label} <span>↗</span></button>)}</div>{account ? <PublicAnswerFeed account={account} onOpenAnswer={(answer) => void openTopic(answer.topicId)} /> : null}{visible.topics.length > 0 && <><h4>Topics in this view <span>{visible.topics.length}</span></h4><ul className="public-map-topic-list">{visible.topics.map((topic) => <li key={topic.id}><button type="button" onClick={() => selectTopic(topic.id, true)}>{topic.label}{savedConversation(topic) && <span>In my map</span>}</button></li>)}</ul></>}<p className="public-map-small">Connections come from each topic’s Wikipedia article: broader topics first, then the articles it links to, grouped by section. Expand loads a small group at a time; it does not import them into your workspace.</p></section>}

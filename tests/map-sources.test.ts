@@ -71,6 +71,8 @@ describe("Wikipedia connections", () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
       calls.push(url);
+      // Wikidata only backs up edges; when it is rate limited the article's links still load.
+      if (url.hostname === "www.wikidata.org") return new Response("", { status: 429 });
       expect(url.origin + url.pathname).toBe("https://en.wikipedia.org/w/api.php");
       expect(url.searchParams.get("origin")).toBe("*");
       expect(init?.credentials).toBe("omit");
@@ -99,6 +101,8 @@ describe("Wikipedia connections", () => {
     expect(result.topics.find((topic) => topic.label === "Human being")).toMatchObject({ id: "Q5", wikipediaUrl: "https://en.wikipedia.org/wiki/Human_being" });
     expect(result.topics.some((topic) => topic.label === "Population" || topic.label === "Biophysical environment")).toBe(false);
     expect(result.relations.every((relation) => relation.sourceUrl.startsWith("https://en.wikipedia.org/wiki/Ecology"))).toBe(true);
+    expect(result.relations.some((relation) => relation.wikidata)).toBe(false);
+    expect(calls.some((url) => url.hostname === "www.wikidata.org")).toBe(true);
     expect(result.hasMore).toBe(true);
     expect(result.nextOffset).toBe(12);
     const second = await expandWikipediaTopic(ecology, result.nextOffset);

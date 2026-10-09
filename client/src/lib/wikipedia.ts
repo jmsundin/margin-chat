@@ -1,4 +1,4 @@
-import { getPublicTopic, type PublicExpansion, type PublicRelation, type PublicTopic } from "./publicKnowledge";
+import { getPublicTopic, withWikidataSupport, type PublicExpansion, type PublicRelation, type PublicTopic } from "./publicKnowledge";
 
 // Wikipedia's public APIs are free and allow browser requests, so these calls
 // run on the reader's device and never cost the Margin Chat service anything.
@@ -325,7 +325,9 @@ export async function expandWikipediaTopic(topic: PublicTopic, offset = 0, signa
       label: wikipediaRelationLabel(candidate), sourceUrl: `${source.wikipediaUrl}${sectionAnchor(candidate.section)}` });
   }
   const nextOffset = Math.min(offset + PAGE_SIZE, article.candidates.length);
-  return { topic: source, topics: [...topics.values()], relations: [...relations.values()], hasMore: nextOffset < article.candidates.length, nextOffset };
+  // Wikidata backs up the links it also states; the article stays the source of connections.
+  const supported = await withWikidataSupport(source.id, [...relations.values()], signal);
+  return { topic: source, topics: [...topics.values()], relations: supported, hasMore: nextOffset < article.candidates.length, nextOffset };
 }
 
 /** Find the article for a topic name, such as a note title in My map. */

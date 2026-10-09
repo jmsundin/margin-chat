@@ -15,6 +15,16 @@
 .topic-sources-article span { color: var(--muted); font-size: 11px; }
 .topic-sources-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .topic-sources-topics { color: var(--ink); font-size: 11px; line-height: 1.6; margin: 0 0 6px; overflow-wrap: anywhere; }
+.topic-sources-about { border-bottom: 1px solid var(--line); margin: 0 0 14px; padding: 0 0 6px; }
+.topic-sources-about summary { cursor: pointer; font-size: 12px; font-weight: 650; padding: 8px 0; }
+.topic-sources-about summary span { color: var(--muted); font-size: 10px; font-weight: 500; margin-left: 4px; }
+.topic-sources-about dl { display: grid; gap: 6px; margin: 2px 0 6px; }
+.topic-sources-about dl > div { display: grid; grid-template-columns: minmax(80px, 34%) 1fr; gap: 8px; font-size: 11px; line-height: 1.5; }
+.topic-sources-about dt { color: var(--muted); overflow-wrap: anywhere; }
+.topic-sources-about dd { color: var(--ink); margin: 0; overflow-wrap: anywhere; }
+.topic-sources-about .topic-sources-link { background: none; border: 0; border-radius: 0; box-shadow: none; display: inline; height: auto; width: auto; color: var(--accent); cursor: pointer; font: inherit; min-height: 0; padding: 0; text-align: left; }
+.topic-sources-about .topic-sources-link:hover { text-decoration: underline; }
+.public-map-relations .public-map-wikidata { color: var(--muted); font-size: 9px; font-style: normal; }
 .public-map-relation-group h5 { color: var(--muted); font-size: 10px; font-weight: 650; letter-spacing: .04em; margin: 12px 0 2px; text-transform: uppercase; }
 
 /* My map's sources panel floats over the right side of the map. */

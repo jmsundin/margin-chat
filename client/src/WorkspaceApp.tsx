@@ -66,7 +66,7 @@ import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
 import { saveUrlMapNode } from "./lib/urlMap";
 import { connectPublicTopics, findSavedPublicTopic, savePublicTopic, wikipediaConnectionKind } from "./lib/publicTopicWorkspace";
-import type { PublicExpansion } from "./lib/publicKnowledge";
+import { wikidataStatement, type PublicExpansion } from "./lib/publicKnowledge";
 import { wikipediaArticleUrl } from "./lib/wikipedia";
 import type { WebSearchResult } from "./lib/webSearch";
 import type { PrivateAnswer } from "./lib/publicMapApi";
@@ -3039,7 +3039,7 @@ function WorkspaceAppContent({
     const createdAt = new Date().toISOString();
     const topics = new Map(expansion.topics.map((topic) => [topic.id, topic]));
     const connections = expansion.relations.flatMap((relation) => relation.sourceId === expansion.topic.id && topics.has(relation.targetId)
-      ? [{ topic: topics.get(relation.targetId)!, kind: wikipediaConnectionKind(relation.propertyId), note: `Wikipedia · ${relation.label}` }] : []);
+      ? [{ topic: topics.get(relation.targetId)!, kind: wikipediaConnectionKind(relation.propertyId), note: `Wikipedia · ${relation.label}${relation.wikidata ? ` · Wikidata: ${wikidataStatement(relation, expansion.topic.label, topics.get(relation.targetId)!.label)}` : ""}` }] : []);
     const apply = (current: AppState) => {
       const conversation = current.conversations[conversationId];
       if (!conversation) return { state: current, added: 0 };

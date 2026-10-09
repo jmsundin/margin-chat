@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { PublicExpansion, PublicTopic } from "../lib/publicKnowledge";
+import { getPublicTopicFacts, wikidataStatement, type PublicExpansion, type PublicTopic, type PublicTopicFact } from "../lib/publicKnowledge";
 import { expandWikipediaTopic, findWikipediaTopic, getWikipediaSummary, searchWikipediaTopics, type WikipediaSummary } from "../lib/wikipedia";
 import { searchWeb, type WebSearchResult } from "../lib/webSearch";
 import { askAboutNote, type PrivateAnswer } from "../lib/publicMapApi";
@@ -62,6 +62,44 @@ export function WebSearchSection({ account, initialQuery, onAddResult, addLabel 
     </li>)}</ul> : null}
     {account.canAsk ? <p className="public-map-small">Each search uses a little of your credit. Results come from Brave Search.</p> : null}
   </section>;
+}
+
+/**
+ * A topic's Wikidata statements as a short About list. Wikidata is metadata
+ * here: connections come from Wikipedia, so a missing About section is quiet.
+ */
+export function WikidataAboutSection({ topicId, onOpenTopic }: { topicId: string; onOpenTopic?: (id: string, label: string) => void }) {
+  // Collapsed until asked for, so clicking through topics never reads Wikidata;
+  // once opened it stays open for the next topic.
+  const [open, setOpen] = useState(false);
+  const [state, setState] = useState<{ id: string; facts?: PublicTopicFact[]; error?: boolean } | null>(null);
+  const valid = /^Q[1-9]\d*$/.test(topicId);
+  useEffect(() => {
+    if (!valid || !open) return;
+    const controller = new AbortController();
+    getPublicTopicFacts(topicId, controller.signal).then((facts) => setState({ id: topicId, facts }), () => {
+      if (!controller.signal.aborted) setState({ id: topicId, error: true });
+    });
+    return () => controller.abort();
+  }, [topicId, open, valid]);
+  if (!valid) return null;
+  const current = state?.id === topicId ? state : null;
+  // Facts sharing a property read as one row: "instance of: A, B".
+  const rows = new Map<string, { property: string; facts: PublicTopicFact[] }>();
+  for (const fact of current?.facts ?? []) {
+    const row = rows.get(fact.propertyId) ?? { property: fact.property, facts: [] };
+    row.facts.push(fact);
+    rows.set(fact.propertyId, row);
+  }
+  return <details className="topic-sources-about" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>About <span>from Wikidata</span></summary>
+    {!open ? null : !current ? <p className="public-map-muted" aria-busy="true">Reading Wikidata…</p>
+      : current.error ? <p className="public-map-muted">Wikidata could not be reached. Connections still come from Wikipedia.</p>
+      : !rows.size ? <p className="public-map-muted">Wikidata has no statements about this topic yet.</p>
+      : <dl>{[...rows].map(([propertyId, row]) => <div key={propertyId}><dt>{row.property}</dt><dd>{row.facts.map((fact, index) => <span key={fact.targetId}>{index ? ", " : ""}{onOpenTopic
+        ? <button type="button" className="topic-sources-link" onClick={() => onOpenTopic(fact.targetId, fact.target)}>{fact.target}</button>
+        : fact.target}</span>)}</dd></div>)}</dl>}
+  </details>;
 }
 
 function useWikipediaSummary(url: string | undefined) {
@@ -197,11 +235,15 @@ export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAdd
                 <p className="public-map-muted" role="status">{expansion.added ? `${expansion.added} topics added and connected to ${note.title}.` : "These topics are already connected in your map."}</p>
                 {groupRelations(expansion.result.topic.id, expansion.result.relations).map((group) => <div key={group.label} className="public-map-relation-group">
                   {group.label ? <h5>{group.label}</h5> : null}
-                  <p className="topic-sources-topics">{group.relations.map((relation) => expansion.result.topics.find((topic) => topic.id === relation.targetId)?.label).filter(Boolean).join(" · ")}</p>
+                  <p className="topic-sources-topics">{group.relations.map((relation) => {
+                    const label = expansion.result.topics.find((topic) => topic.id === relation.targetId)?.label;
+                    return label && relation.wikidata ? `${label} (Wikidata: ${wikidataStatement(relation, expansion.result.topic.label, label)})` : label;
+                  }).filter(Boolean).join(" · ")}</p>
                 </div>)}
               </> : <p className="public-map-small">Broader topics become “part of” links, and the articles this one links to become notes that elaborate it, grouped by section. Wikipedia is free for everyone.</p>}
             </>}
         </section>
+        {matched?.topic ? <WikidataAboutSection topicId={matched.topic.id} /> : null}
         <WebSearchSection account={account} initialQuery={note.title} onAddResult={(result) => onAddWebResult(result, note.id)} addLabel="Save as connected note" />
         <PrivateAskSection account={account} note={note} onSaveAnswer={(answer) => onSaveAnswer(note.id, answer)} />
       </>}

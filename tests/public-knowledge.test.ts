@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { expandPublicTopic, getPublicTopic, searchPublicTopics } from "../client/src/lib/publicKnowledge";
+import { expandPublicTopic, getPublicTopic, getPublicTopicFacts, searchPublicTopics, withWikidataSupport, wikidataStatement, type PublicRelation } from "../client/src/lib/publicKnowledge";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -227,5 +227,54 @@ describe("public API failures and cancellation", () => {
     await expect(pending).rejects.toMatchObject({ name: "AbortError" });
     mockApi(() => ({ entities: { Q884002: entity("Q884002") } }));
     expect((await getPublicTopic("Q884002")).id).toBe("Q884002");
+  });
+});
+
+describe("Wikidata as backup for Wikipedia connections", () => {
+  const relation = (targetId: string): PublicRelation => ({ id: `Q870000-wikipedia-lead-${targetId}`, sourceId: "Q870000", targetId,
+    propertyId: "wikipedia-lead", label: "key topic", sourceUrl: "https://en.wikipedia.org/wiki/Root" });
+
+  test("marks links Wikidata also states, in either direction, and skips metadata", async () => {
+    mockApi((url) => {
+      const ids = url.searchParams.get("ids")!.split("|");
+      if (url.searchParams.get("props")!.includes("claims")) {
+        expect(ids).toEqual(["Q870000", "Q870001", "Q870002", "Q870003", "Q870004"]);
+        return { entities: {
+          Q870000: entity("Q870000", "Root", { claims: { P279: [statement("Q870001")], P910: [statement("Q870004")] } }),
+          Q870001: entity("Q870001", "Parent"),
+          Q870002: entity("Q870002", "Part", { claims: { P361: [statement("Q870000")] } }),
+          Q870003: entity("Q870003", "Unrelated"),
+          Q870004: entity("Q870004", "Category:Root"),
+        } };
+      }
+      // Labels already cached by earlier reads are not requested again; metadata properties never are.
+      expect(ids.every((id) => id === "P279" || id === "P361")).toBe(true);
+      return { entities: { P279: entity("P279", "subclass of"), P361: entity("P361", "part of") } };
+    });
+    const marked = await withWikidataSupport("Q870000", ["Q870001", "Q870002", "Q870003", "Q870004"].map(relation));
+    expect(marked.map((item) => item.wikidata?.label)).toEqual(["subclass of", "part of", undefined, undefined]);
+    expect(wikidataStatement(marked[1], "Root", "Part")).toBe("Part part of Root");
+    expect(wikidataStatement(marked[0], "Root", "Parent")).toBe("Root subclass of Parent");
+    expect(marked[0]).toMatchObject({ propertyId: "wikipedia-lead", wikidata: { propertyId: "P279" } });
+  });
+
+  test("leaves connections unchanged when Wikidata cannot be reached", async () => {
+    mockApi(() => new Response("", { status: 429 }));
+    const relations = [relation("Q870101")];
+    expect(await withWikidataSupport("Q870000", relations)).toEqual(relations);
+  });
+
+  test("reads a topic's statements as labeled facts for its About section", async () => {
+    mockApi((url) => {
+      const ids = url.searchParams.get("ids")!.split("|");
+      if (url.searchParams.get("props")!.includes("claims")) return { entities: { Q871000: entity("Q871000", "Ecology", { claims: {
+        P31: [statement("Q871001")], P279: [statement("Q871002"), statement("Q871003")], P910: [statement("Q871004")],
+      } }) } };
+      expect(ids).not.toContain("Q871004");
+      return { entities: Object.fromEntries(ids.map((id) => [id, entity(id, ({ P31: "instance of", P279: "subclass of", Q871001: "academic discipline", Q871002: "biology", Q871003: "earth science" } as Record<string, string>)[id])])) };
+    });
+    const facts = await getPublicTopicFacts("Q871000");
+    expect(facts.map((fact) => `${fact.property}: ${fact.target}`)).toEqual(["subclass of: biology", "subclass of: earth science", "instance of: academic discipline"]);
+    expect(facts[0]).toMatchObject({ propertyId: "P279", targetId: "Q871002" });
   });
 });
