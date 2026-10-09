@@ -42,7 +42,7 @@ function Preview() {
         return added;
       }}
       onAddWebSource={(result, linkedTo) => { const id = `web-note-${++counter.current}`; setState((current) => createMapNote(current, { id, noteId: `${id}-body`, createdAt: new Date().toISOString(), url: result.url, ...(linkedTo ? { linkedTo } : {}) })); }}
-      onSavePrivateAnswer={(parentId, answer) => { const id = `answer-${++counter.current}`; setState((current) => addMapChildNote(current, { parentId, id, noteId: `${id}-body`, createdAt: new Date().toISOString(), title: answer.question, content: answer.answer, activate: false })); }}
+      onSavePrivateAnswer={(parentId, answer) => { const id = `answer-${++counter.current}`; const args = { id, noteId: `${id}-body`, createdAt: new Date().toISOString(), title: answer.question, content: answer.answer }; setState((current) => parentId ? addMapChildNote(current, { ...args, parentId, activate: false }) : createMapNote(current, args)); }}
       publicMapAccount={{ userId: "preview", canAsk: new URLSearchParams(location.search).get("member") !== "free", isAdmin: false }} />
     <output style={{ padding: 4, fontSize: 12 }}>Preview workspace · {Object.values(state.conversations).filter((conversation) => conversation.publicTopic).length} saved public topics · AI responses are synthetic test data</output>
   </main>;

@@ -39,3 +39,22 @@
 @media (max-width: 760px) {
   .map-topic-sources.public-map-sidebar { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 70%; }
 }
+
+/* A map search with no matches offers AI, Wikipedia and the web. */
+.map-search-fallbacks { display: flex; flex-direction: column; gap: 2px; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.map-search-fallbacks > button, .map-search-fallbacks > a { text-decoration: none; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; text-align: left; border: 0 !important; background: transparent !important; padding: 9px 10px !important; color: var(--ink); cursor: pointer; font: inherit; }
+.map-search-fallbacks > :is(button, a):hover, .map-search-fallbacks > :is(button, a):focus-visible { background: var(--button-surface) !important; }
+.map-search-fallbacks > :is(button, a) strong { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.map-search-fallback-tag { flex: 0 0 auto; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--muted); font-size: 10px; font-style: normal; padding: 1px 7px; }
+.map-search-fallback-tag.is-free { color: var(--accent); border-color: currentColor; }
+.map-search-fallback-results > section { border-bottom: 1px solid var(--line); padding: 10px 0 12px; }
+.map-search-fallback-results > section:last-child { border-bottom: 0; }
+.map-search-fallback-results h4 { margin: 0 0 8px; }
+.map-search-fallback-related { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; padding: 0; }
+.map-search-fallback-related button { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; text-align: left; font-size: 11px; padding: 6px 9px; height: auto; }
+.map-search-fallback-related button span { color: var(--muted); font-size: 10px; }
+.public-map-search-fallback { margin-top: 10px; }
+/* On phones the map search box starts at the left edge, so its results open rightward to stay on screen. */
+@media (max-width: 760px) {
+  .graph-map-search > .graph-map-search-results { left: 0; right: auto; width: min(360px, calc(100vw - 24px)); }
+}

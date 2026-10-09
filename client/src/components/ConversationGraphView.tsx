@@ -158,6 +158,8 @@ function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement, scale
 export interface ConversationGraphViewProps {
   toolbarLeading?: ReactNode;
   toolbarTrailing?: ReactNode;
+  /** Offers other places to look when a map search finds nothing. */
+  renderSearchFallback?: (query: string, close: () => void) => ReactNode;
   explorerContainer?: HTMLElement | null;
   onOpenExplorer?: () => void;
   onFocusCanvas?: () => void;
@@ -762,6 +764,7 @@ function GraphGroupRegion({
 export default function ConversationGraphView({
   toolbarLeading,
   toolbarTrailing,
+  renderSearchFallback,
   explorerContainer,
   onOpenExplorer,
   onFocusCanvas,
@@ -2521,6 +2524,7 @@ export default function ConversationGraphView({
               <strong>{item.title}</strong><span>{item.preview}</span>
             </button>)}
             {!sourceItems.length ? <p>No matching chats or notes in this view.</p> : null}
+            {!sourceItems.length && renderSearchFallback && deferredQuery === query ? renderSearchFallback(query.trim(), () => setSearchOpen(false)) : null}
             <button type="button" onClick={openExplorer}>View all results · {sourceItems.length}</button>
           </div> : null}
         </div>

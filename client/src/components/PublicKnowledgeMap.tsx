@@ -17,6 +17,7 @@ import { expandWikipediaTopic, resolveWikipediaTitles, searchWikipediaTopics } f
 import { listPublicAnswers, readPublicMap, savePublicMap, type PublicAnswer } from "../lib/publicMapApi";
 import { PublicAnswerFeed, PublicTopicInsights, type PublicMapAccount } from "./PublicTopicInsights";
 import { WikidataAboutSection } from "./TopicSources";
+import { SearchFallbackActions, SearchFallbackResults, type SearchFallbackSource } from "./MapSearchFallbacks";
 import type { PublicRelation, PublicTopic } from "../lib/publicKnowledge";
 import type { WebSearchResult } from "../lib/webSearch";
 import { groupRelations } from "../lib/publicRelationGroups";
@@ -43,7 +44,7 @@ export interface PublicKnowledgeMapProps {
   onSave(topic: PublicTopic): void;
   onShowInMyMap(conversationId: string, topic?: PublicTopic): void;
   /** Saves a web search result as a source note, connected to the topic when it is in My map. */
-  onAddWebSource?(result: WebSearchResult, topic: PublicTopic): void;
+  onAddWebSource?(result: WebSearchResult, topic: PublicTopic | null): void;
   /** Controls placed at the start of the toolbar, such as the map switcher. */
   toolbarLeading?: ReactNode;
   /** Signed-in members save their map to their account and read shared answers. */
@@ -167,6 +168,8 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const [searchResultsOpen, setSearchResultsOpen] = useState(false);
+  // AI or web search for a query Wikipedia had no topics for, shown in the explorer.
+  const [searchFallback, setSearchFallback] = useState<{ query: string; source: SearchFallbackSource; requestId: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -772,6 +775,13 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
+  function chooseSearchFallback(source: SearchFallbackSource) {
+    setSearchFallback({ query: location.query.trim(), source, requestId: Date.now() });
+    setSearchResultsOpen(false);
+    setDetailsCollapsed(false);
+    if (explorerContainer && onOpenExplorer) { setExplorerOpen(false); onOpenExplorer(); }
+    else setExplorerOpen(true);
+  }
   function openExplorer() {
     setSearchResultsOpen(false);
     setDetailsCollapsed(false);
@@ -817,6 +827,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
     }).filter((item) => item.forward > 0).sort((a, b) => a.forward + a.cross * 2 - b.forward - b.cross * 2)[0];
     if (next) viewportRef.current?.querySelector<HTMLButtonElement>(`[data-topic-id="${next.node.conversationId}"]`)?.focus({ preventScroll: true });
   }
+  const fallbackForQuery = searchFallback?.query === location.query.trim() ? searchFallback : null;
   const explorer = <aside hidden={!isVisible} className="public-map-sidebar" aria-label="Public topic explorer">
       <header className="public-map-heading"><span className="public-map-eyebrow">Public knowledge</span><h2>Follow your curiosity</h2><p>Explore connected topics. Keep the ones that matter in your map.</p></header>
       <div className="public-map-sidebar-scroll" ref={sidebarScrollRef} tabIndex={0} aria-label="Public topic results and details">
@@ -824,6 +835,12 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
           <div className="public-map-section-label">{searchLoading ? "Searching Wikipedia…" : `${searchResults.length} public topics`}</div>
           {searchError && <div className="public-map-error" role="alert"><p>{searchError}</p><button type="button" onClick={() => setSearchRevision((previous) => previous + 1)}>Try search again</button></div>}
           {!searchLoading && !searchError && !searchResults.length && <p className="public-map-muted">No topics found. Try a broader term or a different name.</p>}
+          {!searchLoading && !searchError && !searchResults.length ? fallbackForQuery ? <div className="public-map-search-fallback">
+            <SearchFallbackResults key={`${fallbackForQuery.requestId}`} query={fallbackForQuery.query} source={fallbackForQuery.source} account={account}
+              onAddTopic={(topic) => void openTopic(topic.id, true, topic)} topicActionLabel="Open on the map"
+              onAddWebResult={onAddWebSource ? (result) => { onAddWebSource(result, null); setNotice(`${result.title} saved to your map.`); } : undefined} webAddLabel="Save to my map"
+              onOpenRelated={(topic) => void openTopic(topic.id, true, topic)} relatedActionLabel="Open on the map" />
+          </div> : <SearchFallbackActions query={location.query} canAsk={!!account?.canAsk} openWikipedia onChoose={chooseSearchFallback} /> : null}
           <ul className="public-map-results" aria-busy={searchLoading}>{!searchLoading && searchResults.map((topic) => <li key={topic.id}><button type="button" onClick={() => void openTopic(topic.id, true, topic)}><span className="public-map-result-meta">{topic.wikipediaUrl ? "Wikipedia" : `Wikidata · ${topic.id}`}{savedConversation(topic) && <span>In my map</span>}</span><strong>{topic.label}</strong><span>{topic.description || "Open this public topic to explore its connections."}</span></button></li>)}</ul>
         </section> : selected ? <section className="public-map-inspector" aria-label={`Details for ${selected.label}`}>
           <div className="public-map-section-label">Public topic{savedConversation(selected) && <span className="public-map-saved">In my map</span>}</div>
@@ -886,6 +903,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
           {searchLoading ? <p role="status">Searching public topics…</p> : searchError ? <p role="alert">{searchError}</p> : <>
             {searchResults.slice(0, 5).map((topic) => <button type="button" key={topic.id} onClick={() => { setSearchResultsOpen(false); void openTopic(topic.id, true, topic); }}><strong>{topic.label}</strong><span>{topic.description}</span></button>)}
             {!searchResults.length ? <p>No matching topics. Try a different name.</p> : null}
+            {!searchResults.length ? <SearchFallbackActions query={location.query} canAsk={!!account?.canAsk} openWikipedia onChoose={chooseSearchFallback} /> : null}
           </>}
           <button type="button" onClick={openExplorer}>View all results</button>
         </div> : null}

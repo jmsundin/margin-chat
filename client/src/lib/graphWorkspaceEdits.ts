@@ -25,8 +25,10 @@ export function setPersonalMapConnection(state: AppState, sourceId: string, targ
   } };
 }
 
-export function createMapNote(state: AppState, args: { id: string; noteId: string; createdAt: string; linkedTo?: string; url?: string }): AppState {
+export function createMapNote(state: AppState, args: { id: string; noteId: string; createdAt: string; linkedTo?: string; url?: string; title?: string; content?: string }): AppState {
   const note = createStandaloneNoteConversation({ ...args, serviceId: state.defaultServiceId, modelId: state.defaultModelId });
+  if (args.title?.trim()) note.title = args.title.trim();
+  if (args.content !== undefined) note.notes![0].content = args.content;
   if (args.url) {
     const url = new URL(args.url);
     if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Use an http or https web address.");
