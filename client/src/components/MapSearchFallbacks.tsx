@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import type { PublicTopic } from "../lib/publicKnowledge";
 import { searchWikipediaTopics, wikipediaArticleUrl } from "../lib/wikipedia";
-import type { WebSearchResult } from "../lib/webSearch";
 import { askAboutNote, type PrivateAnswer } from "../lib/publicMapApi";
 import { ApiError } from "../lib/apiError";
 import type { PublicMapAccount } from "./PublicTopicInsights";
-import { WebSearchSection } from "./TopicSources";
 import "./TopicSources.css";
 
 /** Where a search with no matches can look next. */
-export type SearchFallbackSource = "ai" | "wikipedia" | "web";
+export type SearchFallbackSource = "ai" | "wikipedia";
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 
@@ -30,8 +28,8 @@ export function fallbackQuestion(query: string) {
 }
 
 /**
- * The three ways to keep looking when a map search finds nothing. Wikipedia
- * is free for everyone; AI and the web come with a subscription or credit.
+ * The two ways to keep looking when a map search finds nothing. Wikipedia is
+ * free for everyone; AI comes with a subscription or credit.
  */
 export function SearchFallbackActions({ query, canAsk, onChoose, openWikipedia = false }: {
   query: string;
@@ -47,23 +45,20 @@ export function SearchFallbackActions({ query, canAsk, onChoose, openWikipedia =
     <button type="button" onClick={() => onChoose("ai")}><strong>Ask AI about “{text}”</strong>{memberTag}</button>
     {openWikipedia ? <a href={wikipediaSearchUrl(text)} target="_blank" rel="noreferrer noopener"><strong>Open Wikipedia search for “{text}” ↗</strong>{freeTag}</a>
       : <button type="button" onClick={() => onChoose("wikipedia")}><strong>Search Wikipedia for “{text}”</strong>{freeTag}</button>}
-    <button type="button" onClick={() => onChoose("web")}><strong>Search the web for “{text}”</strong>{memberTag}</button>
   </div>;
 }
 
 /**
- * Results for a search the map could not answer: Wikipedia articles, web
- * pages and an AI answer. What it finds can be added to the map.
+ * Results for a search the map could not answer: Wikipedia articles and an
+ * AI answer. What it finds can be added to the map.
  */
-export function SearchFallbackResults({ query, source, account, onAddTopic, topicActionLabel, isTopicAdded, onAddWebResult, webAddLabel, onSaveAnswer, onOpenRelated, relatedActionLabel = "Add to map" }: {
+export function SearchFallbackResults({ query, source, account, onAddTopic, topicActionLabel, isTopicAdded, onSaveAnswer, onOpenRelated, relatedActionLabel = "Add to map" }: {
   query: string;
   source: SearchFallbackSource;
   account?: PublicMapAccount;
   onAddTopic(topic: PublicTopic): void;
   topicActionLabel: string;
   isTopicAdded?(topic: PublicTopic): boolean;
-  onAddWebResult?(result: WebSearchResult): void;
-  webAddLabel?: string;
   /** Saves an AI answer as a note with its topics connected. */
   onSaveAnswer?(answer: PrivateAnswer): void;
   /** Adds one topic an AI answer names. */
@@ -71,10 +66,8 @@ export function SearchFallbackResults({ query, source, account, onAddTopic, topi
   relatedActionLabel?: string;
 }) {
   const wikipedia = <WikipediaFallback key="wikipedia" query={query} onAddTopic={onAddTopic} actionLabel={topicActionLabel} isAdded={isTopicAdded} />;
-  const web = account ? <WebSearchSection key="web" account={account} initialQuery={query} autoSearch={source === "web"} onAddResult={onAddWebResult} addLabel={webAddLabel} />
-    : <section key="web" className="topic-sources-web"><h4>Search the web</h4><p className="public-map-muted">Sign in as a member to search the web. Wikipedia search is free for everyone.</p></section>;
   const ai = <AskFallback key="ai" query={query} account={account} autoAsk={source === "ai"} onSaveAnswer={onSaveAnswer} onOpenRelated={onOpenRelated} relatedActionLabel={relatedActionLabel} />;
-  const order = source === "ai" ? [ai, wikipedia, web] : source === "web" ? [web, wikipedia, ai] : [wikipedia, web, ai];
+  const order = source === "ai" ? [ai, wikipedia] : [wikipedia, ai];
   return <div className="map-search-fallback-results">{order}</div>;
 }
 

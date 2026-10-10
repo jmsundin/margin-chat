@@ -44,14 +44,6 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 5182, async fetch(reques
       related: [{ id: "Q48255", label: "Ernst Haeckel", description: "German zoologist", relation: "named the field" }] };
     return new Response(`${JSON.stringify({ type: "progress", message: "Thinking about your question…" })}\n${JSON.stringify({ type: "done", answer })}\n`, { headers: { "Content-Type": "application/x-ndjson" } });
   }
-  if (path === "/api/web-search" && request.method === "POST") {
-    // Synthetic results; the app uses Brave Search and charges the member's credit.
-    const { query } = await request.json();
-    return Response.json({ query, chargedMicros: 10_000, results: [
-      { title: `${query} — an introduction`, url: "https://example.org/intro", description: `A synthetic web result about ${query}.`, siteName: "example.org", age: "3 days ago" },
-      { title: `Recent research on ${query}`, url: "https://example.com/research", description: "Another synthetic result standing in for Brave Search.", siteName: "example.com" },
-    ] });
-  }
   if (path === "/") return new Response(html, { headers: { "Content-Type": "text/html", "Cache-Control": "no-store" } });
   const asset = assets.get(path); return asset ? new Response(asset) : new Response("Not found", { status: 404 });
 } });

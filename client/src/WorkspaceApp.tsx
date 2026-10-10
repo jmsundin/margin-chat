@@ -73,7 +73,6 @@ import { saveUrlMapNode } from "./lib/urlMap";
 import { connectPublicTopics, findSavedPublicTopic, savePublicTopic, wikipediaConnectionKind } from "./lib/publicTopicWorkspace";
 import { wikidataStatement, type PublicExpansion } from "./lib/publicKnowledge";
 import { wikipediaArticleUrl } from "./lib/wikipedia";
-import type { WebSearchResult } from "./lib/webSearch";
 import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
@@ -3131,22 +3130,6 @@ function WorkspaceAppContent({
     return added;
   }
 
-  function handleAddWebSource(result: WebSearchResult, linkedTo: string | null) {
-    const id = createId("note-conversation");
-    const noteId = createId("note");
-    const createdAt = new Date().toISOString();
-    setState((current) => {
-      const next = createMapNote(current, { id, noteId, createdAt, url: result.url, ...(linkedTo && current.conversations[linkedTo] ? { linkedTo } : {}) });
-      const note = next.conversations[id];
-      if (!note?.notes?.[0]) return next;
-      const summary = result.description ? `> ${result.description.replace(/\s+/g, " ")}\n\n` : "";
-      return { ...next, conversations: { ...next.conversations, [id]: { ...note, title: result.title.slice(0, 200) || note.title,
-        notes: [{ ...note.notes[0], content: `${note.notes[0].content}${summary}` }, ...note.notes.slice(1)] } } };
-    });
-    mapUndoRef.current = null;
-    setMapEditMessage(`${result.title} saved as a source note${linkedTo ? ` connected to ${state.conversations[linkedTo]?.title}` : ""}.`);
-  }
-
   /** Saves a private AI answer as a child note (or a new note when there is no parent), with its related topics connected to it. */
   function handleSavePrivateAnswer(conversationId: string | null, answer: PrivateAnswer) {
     if (conversationId && !state.conversations[conversationId]) return;
@@ -4455,7 +4438,6 @@ function WorkspaceAppContent({
                       onBillingRefresh: () => { void onRefreshBilling(); }, onAuthExpired }}
                     onSavePublicTopic={handleSavePublicTopic}
                     onAddTopicConnections={handleAddTopicConnections}
-                    onAddWebSource={handleAddWebSource}
                     onSavePrivateAnswer={handleSavePrivateAnswer}
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}

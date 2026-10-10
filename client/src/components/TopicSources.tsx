@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getPublicTopicFacts, wikidataStatement, type PublicExpansion, type PublicTopic, type PublicTopicFact } from "../lib/publicKnowledge";
 import { expandWikipediaTopic, findWikipediaTopic, getWikipediaSummary, searchWikipediaTopics, type WikipediaSummary } from "../lib/wikipedia";
-import { searchWeb, type WebSearchResult } from "../lib/webSearch";
 import { askAboutNote, type PrivateAnswer } from "../lib/publicMapApi";
 import { ApiError } from "../lib/apiError";
 import type { PublicMapAccount } from "./PublicTopicInsights";
@@ -9,66 +8,6 @@ import { groupRelations } from "../lib/publicRelationGroups";
 import "./TopicSources.css";
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
-
-/**
- * Web search, shared by both maps. It runs on the server for members with a
- * subscription or credit, because no web search API is free at scale.
- */
-export function WebSearchSection({ account, initialQuery, onAddResult, addLabel = "Add to my map", autoSearch = false }: {
-  account: PublicMapAccount;
-  initialQuery: string;
-  /** Searches for the initial query right away, when the person already asked for a web search. */
-  autoSearch?: boolean;
-  onAddResult?(result: WebSearchResult): void;
-  addLabel?: string;
-}) {
-  const [query, setQuery] = useState(initialQuery);
-  const [state, setState] = useState<{ query: string; results: WebSearchResult[]; error?: string } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [added, setAdded] = useState<string[]>([]);
-  const controller = useRef<AbortController | null>(null);
-  useEffect(() => {
-    setQuery(initialQuery); setState(null); setAdded([]); setLoading(false);
-    controller.current?.abort(); controller.current = null;
-    if (autoSearch && account.canAsk) void search(initialQuery);
-  }, [initialQuery]);
-  useEffect(() => () => controller.current?.abort(), []);
-
-  async function search(value = query) {
-    const text = value.trim();
-    if (text.length < 2 || controller.current) return;
-    const current = new AbortController();
-    controller.current = current;
-    setLoading(true);
-    try {
-      const { results } = await searchWeb(account.userId, text, current.signal);
-      if (!current.signal.aborted) setState({ query: text, results });
-    } catch (error) {
-      if (current.signal.aborted) return;
-      if (error instanceof ApiError && error.statusCode === 401) account.onAuthExpired?.();
-      setState({ query: text, results: [], error: errorMessage(error, "The web search did not work. Try again.") });
-    } finally {
-      if (controller.current === current) { controller.current = null; setLoading(false); account.onBillingRefresh?.(); }
-    }
-  }
-
-  return <section className="topic-sources-web" aria-label="Search the web">
-    <h4>Search the web</h4>
-    {account.canAsk ? <form className="topic-sources-search" onSubmit={(event) => { event.preventDefault(); void search(); }}>
-      <label className="topic-sources-visually-hidden" htmlFor={`web-search-${initialQuery}`}>Search the web</label>
-      <input id={`web-search-${initialQuery}`} type="search" value={query} maxLength={300} onChange={(event) => setQuery(event.target.value)} placeholder="Search the web" />
-      <button type="submit" disabled={loading || query.trim().length < 2}>{loading ? "Searching…" : "Search"}</button>
-    </form> : <p className="public-map-muted">Web search comes with a subscription or credit. Wikipedia search is free for everyone.</p>}
-    {state?.error ? <p className="public-map-error" role="alert">{state.error}</p> : null}
-    {state && !state.error && !state.results.length ? <p className="public-map-muted">No web pages found for “{state.query}”.</p> : null}
-    {state?.results.length ? <ul className="topic-sources-results">{state.results.map((result) => <li key={result.url}>
-      <a href={result.url} target="_blank" rel="noreferrer noopener"><span>{result.siteName}{result.age ? ` · ${result.age}` : ""}</span><strong>{result.title}</strong></a>
-      {result.description ? <p>{result.description}</p> : null}
-      {onAddResult ? <button type="button" disabled={added.includes(result.url)} onClick={() => { onAddResult(result); setAdded((list) => [...list, result.url]); }}>{added.includes(result.url) ? "Added" : addLabel}</button> : null}
-    </li>)}</ul> : null}
-    {account.canAsk ? <p className="public-map-small">Each search uses a little of your credit. Results come from Brave Search.</p> : null}
-  </section>;
-}
 
 /**
  * A topic's Wikidata statements as a short About list. Wikidata is metadata
@@ -131,18 +70,17 @@ export interface MapSourceNote {
 }
 
 /**
- * The same three ways to bring information in as the public map: Wikipedia
- * (free), the web and AI (subscription or credit). Wikipedia connections and
- * AI related topics become notes in My map, linked as typed relations.
+ * The same two ways to bring information in as the public map: Wikipedia
+ * (free) and AI (subscription or credit). Wikipedia connections and AI
+ * related topics become notes in My map, linked as typed relations.
  */
-export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAddConnections, onAddWebResult, onSaveAnswer, onExplorePublic }: {
+export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAddConnections, onSaveAnswer, onExplorePublic }: {
   /** Null searches Wikipedia to add a new topic to My map. */
   note: MapSourceNote | null;
   account: PublicMapAccount;
   onClose(): void;
   onAddTopic(topic: PublicTopic): void;
   onAddConnections(noteId: string, expansion: PublicExpansion): number;
-  onAddWebResult(result: WebSearchResult, noteId: string | null): void;
   onSaveAnswer(noteId: string, answer: PrivateAnswer): void;
   onExplorePublic(topic: PublicTopic): void;
 }) {
@@ -208,7 +146,7 @@ export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAdd
   return <aside ref={panelRef} tabIndex={-1} className="public-map-sidebar map-topic-sources" aria-label={note ? `Sources for ${note.title}` : "Add from Wikipedia"}
     onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onClose(); } }}>
     <header className="map-topic-sources-header">
-      <div><span className="public-map-eyebrow">{note ? "Wikipedia, web and AI" : "Add from Wikipedia"}</span><h3>{note?.title ?? "Find a topic"}</h3></div>
+      <div><span className="public-map-eyebrow">{note ? "Wikipedia and AI" : "Add from Wikipedia"}</span><h3>{note?.title ?? "Find a topic"}</h3></div>
       <button type="button" aria-label="Close sources" title="Close" onClick={onClose}>×</button>
     </header>
     <div className="map-topic-sources-scroll">
@@ -250,7 +188,6 @@ export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAdd
             </>}
         </section>
         {matched?.topic ? <WikidataAboutSection topicId={matched.topic.id} /> : null}
-        <WebSearchSection account={account} initialQuery={note.title} onAddResult={(result) => onAddWebResult(result, note.id)} addLabel="Save as connected note" />
         <PrivateAskSection account={account} note={note} onSaveAnswer={(answer) => onSaveAnswer(note.id, answer)} />
       </>}
     </div>

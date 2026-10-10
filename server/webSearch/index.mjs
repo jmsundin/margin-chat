@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { HttpError } from "../lib/errors.mjs";
 
 // General web search is not free anywhere at scale, so it runs on the server
-// with one Brave Search key and is charged to the member's prepaid credit,
-// like AI requests. Wikipedia search stays free in every reader's browser.
-const BRAVE_URL = "https://api.search.brave.com/res/v1/web/search";
+// with one Tavily key and is charged to the member's prepaid credit, like AI
+// requests. It is meant for agent research; people explore with Wikipedia
+// (free, in the browser) and Ask AI.
+const TAVILY_URL = "https://api.tavily.com/search";
 export const DEFAULT_WEB_SEARCH_PRICE_MICROS = 10_000;
 const RESULT_LIMIT = 8;
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -24,8 +25,8 @@ export function validateWebSearchRequest(body) {
 }
 
 /** Only plain http(s) links with their text; everything else from the provider is dropped. */
-export function normalizeBraveResults(payload) {
-  const results = record(payload) && record(payload.web) && Array.isArray(payload.web.results) ? payload.web.results : [];
+export function normalizeTavilyResults(payload) {
+  const results = record(payload) && Array.isArray(payload.results) ? payload.results : [];
   const seen = new Set();
   const normalized = [];
   for (const item of results) {
@@ -34,12 +35,13 @@ export function normalizeBraveResults(payload) {
     try { url = new URL(item.url); } catch { continue; }
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.href.length > 2000 || seen.has(url.href)) continue;
     seen.add(url.href);
+    const age = plain(item.published_date, 40);
     normalized.push({
       title: plain(item.title, 200) || url.hostname,
       url: url.href,
-      description: plain(item.description, 500),
-      siteName: plain(record(item.profile) ? item.profile.name : "", 100) || url.hostname.replace(/^www\./u, ""),
-      ...(typeof item.age === "string" ? { age: plain(item.age, 40) } : {}),
+      description: plain(item.content, 500),
+      siteName: url.hostname.replace(/^www\./u, "").slice(0, 100),
+      ...(age ? { age } : {}),
     });
     if (normalized.length >= RESULT_LIMIT) break;
   }
@@ -51,34 +53,42 @@ export function createWebSearchService({ env = {}, billingService, fetchImpl = g
     ? Number(env.WEB_SEARCH_PRICE_MICROS) : DEFAULT_WEB_SEARCH_PRICE_MICROS;
   const active = new Set();
 
-  async function request(query, signal) {
-    const url = new URL(BRAVE_URL);
-    url.search = new URLSearchParams({ q: query, count: String(RESULT_LIMIT), safesearch: "moderate", text_decorations: "false" }).toString();
+  const configured = typeof env.TAVILY_API_KEY === "string" && env.TAVILY_API_KEY.trim() !== "";
+
+  /**
+   * One unbilled provider call. The agent calls this directly and meters its
+   * own run; the HTTP route goes through `search`, which bills the member.
+   */
+  async function request(rawQuery, signal) {
+    const { query } = validateWebSearchRequest({ query: rawQuery });
+    if (!configured) throw new HttpError(503, "Web search is not set up yet. Wikipedia search still works.");
     const combined = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]);
+    // "basic" costs one Tavily credit; safe_search needs basic or advanced.
+    const body = JSON.stringify({ query, max_results: RESULT_LIMIT, search_depth: "basic", safe_search: true, include_answer: false, include_raw_content: false });
     let response;
     try {
-      response = await fetchImpl(url, { signal: combined, headers: { Accept: "application/json", "X-Subscription-Token": env.BRAVE_SEARCH_API_KEY } });
+      response = await fetchImpl(TAVILY_URL, { method: "POST", signal: combined, body, headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${env.TAVILY_API_KEY.trim()}` } });
     } catch {
       signal?.throwIfAborted();
       throw new HttpError(502, "Web search could not be reached. Try again.");
     }
     if (response.status === 429) throw new HttpError(429, "Web search is busy right now. Try again shortly.");
     if (!response.ok) throw new HttpError(502, `Web search is temporarily unavailable (${response.status}).`);
-    return normalizeBraveResults(await response.json().catch(() => null));
+    return normalizeTavilyResults(await response.json().catch(() => null));
   }
 
   async function search({ user, payload, signal }) {
     if (!user?.id) throw new HttpError(401, "Sign in to search the web.");
     if (!canSearchWeb(user)) throw new HttpError(402, "Web search needs a subscription or credit. Wikipedia search is free for everyone.");
     const { query } = validateWebSearchRequest(payload);
-    if (!env.BRAVE_SEARCH_API_KEY) throw new HttpError(503, "Web search is not set up yet. Wikipedia search still works.");
+    if (!configured) throw new HttpError(503, "Web search is not set up yet. Wikipedia search still works.");
     if (active.has(user.id)) throw new HttpError(429, "A web search is already running. Wait for it to finish.");
     active.add(user.id);
     // Admins are not billed, as for AI requests. Members hold the price first
     // and keep it only when the provider returns results.
     const metered = user.role !== "admin";
     const requestId = `web-search:${randomUUID()}`;
-    const metadata = { operation: "web-search", kind: "search", provider: "brave", priceMicros };
+    const metadata = { operation: "web-search", kind: "search", provider: "tavily", priceMicros };
     try {
       if (metered) await billingService.reserveHostedRequest({ requestId, userId: user.id, amountMicros: priceMicros, metadata });
       let results;
@@ -94,5 +104,5 @@ export function createWebSearchService({ env = {}, billingService, fetchImpl = g
     }
   }
 
-  return { search, priceMicros };
+  return { search, request, configured, priceMicros };
 }

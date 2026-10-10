@@ -8,12 +8,12 @@ const member = { userId: "user-1", canAsk: true, isAdmin: false };
 const free = { userId: "user-2", canAsk: false, isAdmin: false };
 
 describe("map search fallbacks", () => {
-  test("offer AI, Wikipedia and the web for the search text, marking member features for free accounts", () => {
+  test("offer AI and Wikipedia for the search text, with no web search, marking member features for free accounts", () => {
     const freeMarkup = renderToStaticMarkup(<SearchFallbackActions query="  Mycorrhiza  " canAsk={false} onChoose={() => {}} />);
     expect(freeMarkup).toContain("Ask AI about “Mycorrhiza”");
     expect(freeMarkup).toContain("Search Wikipedia for “Mycorrhiza”");
-    expect(freeMarkup).toContain("Search the web for “Mycorrhiza”");
-    expect(freeMarkup.match(/>Members</g)?.length).toBe(2);
+    expect(freeMarkup).not.toContain("Search the web");
+    expect(freeMarkup.match(/>Members</g)?.length).toBe(1);
     expect(freeMarkup).toContain(">Free<");
 
     const memberMarkup = renderToStaticMarkup(<SearchFallbackActions query="Mycorrhiza" canAsk onChoose={() => {}} openWikipedia />);
@@ -25,17 +25,17 @@ describe("map search fallbacks", () => {
 
   test("put the chosen source first and explain member features to free accounts", () => {
     const props = { query: "Mycorrhiza", onAddTopic() {}, topicActionLabel: "Add to my map" };
-    const web = renderToStaticMarkup(<SearchFallbackResults {...props} source="web" account={free} />);
-    expect(web.indexOf("Search the web")).toBeLessThan(web.indexOf("Wikipedia"));
-    expect(web).toContain("Web search comes with a subscription or credit");
-    expect(web).toContain("Members with a subscription or credit can ask AI");
+    const wikipedia = renderToStaticMarkup(<SearchFallbackResults {...props} source="wikipedia" account={free} />);
+    expect(wikipedia.indexOf("Wikipedia")).toBeLessThan(wikipedia.indexOf("Ask AI"));
+    expect(wikipedia).toContain("Members with a subscription or credit can ask AI");
+    expect(wikipedia).not.toContain("Search the web");
 
     const ai = renderToStaticMarkup(<SearchFallbackResults {...props} source="ai" account={member} />);
     expect(ai.indexOf("Ask AI")).toBeLessThan(ai.indexOf("Wikipedia"));
     expect(ai).toContain("What is Mycorrhiza?");
 
     const signedOut = renderToStaticMarkup(<SearchFallbackResults {...props} source="wikipedia" />);
-    expect(signedOut.indexOf("Wikipedia")).toBeLessThan(signedOut.indexOf("Search the web"));
+    expect(signedOut.indexOf("Wikipedia")).toBeLessThan(signedOut.indexOf("Ask AI"));
     expect(signedOut).toContain("Open “Mycorrhiza” on Wikipedia");
   });
 
