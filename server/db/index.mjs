@@ -43,7 +43,7 @@ import {
 import { wrapStorageError } from "./errors.mjs";
 import { hasStatusCode } from "../lib/errors.mjs";
 import { readState, readVaultProjectionCheckpoint, readWorkspace, writeState } from "./repository.mjs";
-import { searchVaultPassages } from "./searchRepository.mjs";
+import { readAgentConversation, searchAgentPassages, searchVaultPassages } from "./searchRepository.mjs";
 import { normalizeAppState } from "./validation.mjs";
 import * as captures from "./captureRepository.mjs";
 import * as publicMap from "./publicMapRepository.mjs";
@@ -250,6 +250,14 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     return withClient((client) => searchVaultPassages(client, args));
   }
 
+  async function searchAgentPassagesRecord(args) {
+    return withClient((client) => searchAgentPassages(client, args));
+  }
+
+  async function readAgentConversationRecord(args) {
+    return withClient((client) => readAgentConversation(client, args));
+  }
+
   async function loadState(userId) {
     return withClient((client) => readState(client, userId));
   }
@@ -382,6 +390,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     projectVaultState,
     restoreVaultAttachment: restoreVaultAttachmentRecord,
     searchVaultPassages: searchVaultPassagesRecord,
+    searchAgentPassages: searchAgentPassagesRecord,
+    readAgentConversation: readAgentConversationRecord,
     resetPasswordWithToken: resetPasswordWithTokenRecord,
     refundHostedRequest: refundHostedRequestRecord,
     saveState,

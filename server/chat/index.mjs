@@ -2,6 +2,7 @@ import { analyzeAutoRoute, AUTO_ROUTER_LABEL } from "./autoRouter.mjs";
 import { HttpError } from "../lib/errors.mjs";
 import { AGENT_PROVIDERS } from "./agent/adapters.mjs";
 import { runAgent } from "./agent/runner.mjs";
+import { vaultToolAccess } from "./agent/vaultTools.mjs";
 import {
   requestAnthropicResponse, requestAnthropicResponseStream,
   requestGeminiResponse, requestGeminiResponseStream,
@@ -52,7 +53,7 @@ function semanticWorkspaceExcerpt(item) {
   return source;
 }
 
-export function createChatService({ database, documentService, env, runtimeConfig, semanticService, autoRouter = analyzeAutoRoute }) {
+export function createChatService({ database, documentService, env, runtimeConfig, semanticService, vaultService = null, autoRouter = analyzeAutoRoute }) {
   const automaticServicePriority = [...new Set([
     runtimeConfig.defaultBackendProvider, "openai-api", "anthropic-api", "gemini-api", "huggingface-api", "xai-api",
   ])].filter((id) => PROVIDERS[id] && id !== "openai-agent");
@@ -184,6 +185,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
     const fallbacks = [];
     const failures = [];
     const agentRequested = !instructionOverride && (chatRequest.ai.agent === true || chatRequest.serviceId === "openai-agent");
+    const workspace = agentRequested && vaultService?.configured && context.userId ? { userId: context.userId, vault: vaultService, database } : null;
+    const vaultTools = Boolean(vaultToolAccess(prepared.chatRequest, workspace));
     for (const route of routes) {
       context.signal?.throwIfAborted();
       const credential = getProviderCredential(route.serviceId, context);
@@ -228,7 +231,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         model: route.model,
         signal: context.signal,
         systemInstruction: instructionOverride ?? (agentProvider
-          ? buildAgentInstruction(prepared.chatRequest)
+          ? buildAgentInstruction(prepared.chatRequest, { vaultTools, canWidenScope: Boolean(workspace) && !vaultTools })
           : buildSystemInstruction(prepared.chatRequest)),
         userId: context.userId,
         usageMeter: credential.source === "hosted" ? context.usageMeter : null,
@@ -246,7 +249,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         // stream. Once any delta or agent step is exposed, retries would corrupt a reply.
         const onDelta = async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); };
         const result = agentProvider ? await runAgent({
-          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros,
+          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros, workspace,
           ...(handlers ? { onDelta, onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); } } : {}),
         }) : handlers ? await provider.stream({ ...args, onDelta }) : await provider.reply(args);
         context.signal?.throwIfAborted();
