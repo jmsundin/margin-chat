@@ -19,7 +19,6 @@ import { PublicAnswerFeed, PublicTopicInsights, type PublicMapAccount } from "./
 import { WikidataAboutSection } from "./TopicSources";
 import { SearchFallbackActions, SearchFallbackResults, type SearchFallbackSource } from "./MapSearchFallbacks";
 import type { PublicRelation, PublicTopic } from "../lib/publicKnowledge";
-import type { WebSearchResult } from "../lib/webSearch";
 import { groupRelations } from "../lib/publicRelationGroups";
 import {
   addPublicGraphRoot, appendPublicAnswerTopics, appendPublicGraphExpansion, emptyPublicGraph,
@@ -43,8 +42,6 @@ export interface PublicKnowledgeMapProps {
   savedTopics: Record<string, string>;
   onSave(topic: PublicTopic): void;
   onShowInMyMap(conversationId: string, topic?: PublicTopic): void;
-  /** Saves a web search result as a source note, connected to the topic when it is in My map. */
-  onAddWebSource?(result: WebSearchResult, topic: PublicTopic | null): void;
   /** Controls placed at the start of the toolbar, such as the map switcher. */
   toolbarLeading?: ReactNode;
   /** Signed-in members save their map to their account and read shared answers. */
@@ -141,7 +138,7 @@ function messageForError(error: unknown) {
   return error instanceof Error ? error.message : "This topic could not be loaded. Please try again.";
 }
 
-export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpenExplorer, onFocusCanvas, workspaceKey, focusRequest, searchRequest, onFocusRequestHandled, onSearchRequestHandled, savedTopics, onSave, onShowInMyMap, onAddWebSource, toolbarLeading, account }: PublicKnowledgeMapProps) {
+export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpenExplorer, onFocusCanvas, workspaceKey, focusRequest, searchRequest, onFocusRequestHandled, onSearchRequestHandled, savedTopics, onSave, onShowInMyMap, toolbarLeading, account }: PublicKnowledgeMapProps) {
   const [location, setLocation] = useState<MapLocation>(() => readLocation(workspaceKey));
   const locationRef = useRef(location);
   locationRef.current = location;
@@ -168,7 +165,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
   const mapRef = useRef<HTMLDivElement>(null);
   const [searchResultsOpen, setSearchResultsOpen] = useState(false);
-  // AI or web search for a query Wikipedia had no topics for, shown in the explorer.
+  // Ask AI for a query Wikipedia had no topics for, shown in the explorer.
   const [searchFallback, setSearchFallback] = useState<{ query: string; source: SearchFallbackSource; requestId: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -838,7 +835,6 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
           {!searchLoading && !searchError && !searchResults.length ? fallbackForQuery ? <div className="public-map-search-fallback">
             <SearchFallbackResults key={`${fallbackForQuery.requestId}`} query={fallbackForQuery.query} source={fallbackForQuery.source} account={account}
               onAddTopic={(topic) => void openTopic(topic.id, true, topic)} topicActionLabel="Open on the map"
-              onAddWebResult={onAddWebSource ? (result) => { onAddWebSource(result, null); setNotice(`${result.title} saved to your map.`); } : undefined} webAddLabel="Save to my map"
               onOpenRelated={(topic) => void openTopic(topic.id, true, topic)} relatedActionLabel="Open on the map" />
           </div> : <SearchFallbackActions query={location.query} canAsk={!!account?.canAsk} openWikipedia onChoose={chooseSearchFallback} /> : null}
           <ul className="public-map-results" aria-busy={searchLoading}>{!searchLoading && searchResults.map((topic) => <li key={topic.id}><button type="button" onClick={() => void openTopic(topic.id, true, topic)}><span className="public-map-result-meta">{topic.wikipediaUrl ? "Wikipedia" : `Wikidata · ${topic.id}`}{savedConversation(topic) && <span>In my map</span>}</span><strong>{topic.label}</strong><span>{topic.description || "Open this public topic to explore its connections."}</span></button></li>)}</ul>
@@ -848,10 +844,7 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
           <div className="public-map-inspector-actions"><button type="button" className="public-map-primary" onClick={() => saveOrShow(selected)}>{savedConversation(selected) ? "Show in my map" : "Add to my map"}</button><button type="button" onClick={() => focusConnections(selected.id)}>Focus connections</button><button type="button" disabled={loadingTopics.includes(selected.id) || !!selectedExpansion?.visible && !selectedExpansion.hasMore} onClick={() => void expandTopic(selected.id, !!selectedExpansion?.visible)}>{loadingTopics.includes(selected.id) ? "Loading…" : selectedExpansion?.visible ? selectedExpansion.hasMore ? "More connections" : "All connections shown" : "Expand connections"}</button>{selectedExpansion?.visible && <button type="button" onClick={() => hideExpansion(selected.id)}>Hide expansion</button>}</div>
           <p className="public-map-small">Adding keeps this topic and its source links. Your own notes stay yours.</p>
           {account ? <PublicTopicInsights topic={selected} account={account} onShowOnMap={showAnswerOnMap} onOpenTopic={(id) => void openTopic(id)}
-            onAnswered={(answer) => { showAnswerOnMap(answer); }} onAddWebResult={onAddWebSource ? (result) => {
-              onAddWebSource(result, selected);
-              setNotice(`${result.title} saved to your map${savedConversation(selected) ? `, connected to ${selected.label}` : ""}.`);
-            } : undefined} /> : null}
+            onAnswered={(answer) => { showAnswerOnMap(answer); }} /> : null}
           <div className="public-map-sources"><h4>Read at the source</h4>{safeSourceUrl(selected.wikipediaUrl) && <a href={safeSourceUrl(selected.wikipediaUrl)} target="_blank" rel="noreferrer">Wikipedia ↗</a>}<a href={safeSourceUrl(selected.wikidataUrl) ?? `https://www.wikidata.org/wiki/${selected.id}`} target="_blank" rel="noreferrer">Wikidata ↗</a><span>Wikipedia text · CC BY-SA 4.0{selected.retrievedAt && !Number.isNaN(Date.parse(selected.retrievedAt)) ? ` · Retrieved ${new Date(selected.retrievedAt).toLocaleDateString()}` : ""}</span></div>
           <WikidataAboutSection topicId={selected.id} onOpenTopic={(id) => void openTopic(id)} />
           <h4>Connections in this view <span>{selectedRelations.length}</span></h4>

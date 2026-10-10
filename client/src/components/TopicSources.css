@@ -2,14 +2,6 @@
 .topic-sources-search { display: flex; gap: 6px; margin: 0 0 10px; }
 .topic-sources-search input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 7px; color: var(--ink); font: inherit; font-size: 12px; padding: 8px 10px; }
 .topic-sources-search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.topic-sources-results { list-style: none; margin: 0; padding: 0; }
-.topic-sources-results li { border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; padding: 10px 0; }
-.topic-sources-results a { color: var(--ink); display: flex; flex-direction: column; gap: 2px; text-decoration: none; }
-.topic-sources-results a span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
-.topic-sources-results a strong { color: var(--accent); font-size: 12px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-.topic-sources-results a:hover strong { text-decoration: underline; }
-.topic-sources-results p { color: var(--muted); font-size: 11px; line-height: 1.55; margin: 0; overflow-wrap: anywhere; }
-.topic-sources-results button { align-self: flex-start; }
 .topic-sources-article { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; font-size: 12px; }
 .topic-sources-article a { color: var(--accent); font-weight: 600; }
 .topic-sources-article span { color: var(--muted); font-size: 11px; }

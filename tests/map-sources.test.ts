@@ -5,9 +5,8 @@ import type { PublicTopic } from "../client/src/lib/publicKnowledge";
 import { matchesPublicRelationFilter } from "../client/src/lib/publicRelationFilters";
 import { groupRelations } from "../client/src/lib/publicRelationGroups";
 import { isPrivateAnswer } from "../client/src/lib/publicMapApi";
-import { isWebSearchResult } from "../client/src/lib/webSearch";
 import { createPublicMapService, createWikipediaResolver } from "../server/publicMap/index.mjs";
-import { createWebSearchService, normalizeBraveResults } from "../server/webSearch/index.mjs";
+import { createWebSearchService, normalizeTavilyResults } from "../server/webSearch/index.mjs";
 import { createApiHandler } from "../server/routes/api.mjs";
 import { createEmptyState } from "../client/src/initialState";
 import { connectPublicTopics, findSavedPublicTopic, savePublicTopic, wikipediaConnectionKind } from "../client/src/lib/publicTopicWorkspace";
@@ -184,29 +183,30 @@ describe("web search", () => {
     return { events, reserveHostedRequest: async (args: any) => { events.push(["reserve", args.amountMicros]); },
       settleHostedRequest: async (args: any) => { events.push(["settle", args.amountMicros, args.metadata.outcome]); } };
   }
-  const brave = (results: unknown[]) => (async (url: URL, init: RequestInit) => {
-    expect(url.origin).toBe("https://api.search.brave.com");
-    expect((init.headers as Record<string, string>)["X-Subscription-Token"]).toBe("key");
-    return Response.json({ web: { results } });
+  const tavily = (results: unknown[]) => (async (url: string, init: RequestInit) => {
+    expect(url).toBe("https://api.tavily.com/search");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer key");
+    expect(JSON.parse(String(init.body))).toMatchObject({ query: "ecology", search_depth: "basic", max_results: 8, include_raw_content: false });
+    return Response.json({ query: "ecology", results });
   }) as any;
 
   test("keeps only plain http(s) results with plain text", () => {
-    const results = normalizeBraveResults({ web: { results: [
-      { title: "<strong>Ecology</strong> &amp; more", url: "https://example.com/eco", description: "About <b>ecology</b>", profile: { name: "Example" }, age: "2 days ago" },
+    const results = normalizeTavilyResults({ results: [
+      { title: "<strong>Ecology</strong> &amp; more", url: "https://example.com/eco", content: "About <b>ecology</b>", score: 0.9, published_date: "Tue, 11 Mar 2025 17:00:00 GMT" },
       { title: "Bad", url: "javascript:alert(1)" },
       { title: "Dup", url: "https://example.com/eco" },
-      { title: "", url: "http://www.site.org/page" },
-    ] } });
+      { title: "", url: "http://www.site.org/page", published_date: null },
+    ] });
     expect(results).toEqual([
-      { title: "Ecology & more", url: "https://example.com/eco", description: "About ecology", siteName: "Example", age: "2 days ago" },
+      { title: "Ecology & more", url: "https://example.com/eco", description: "About ecology", siteName: "example.com", age: "Tue, 11 Mar 2025 17:00:00 GMT" },
       { title: "www.site.org", url: "http://www.site.org/page", description: "", siteName: "site.org" },
     ]);
-    expect(results.every(isWebSearchResult)).toBe(true);
   });
 
   test("charges members for each search, lets admins search free, and gates free members", async () => {
     const meter = billing();
-    const search = createWebSearchService({ env: { BRAVE_SEARCH_API_KEY: "key" }, billingService: meter, fetchImpl: brave([{ title: "A", url: "https://a.example/" }]) });
+    const search = createWebSearchService({ env: { TAVILY_API_KEY: "key" }, billingService: meter, fetchImpl: tavily([{ title: "A", url: "https://a.example/", content: "" }]) });
     expect(await search.search({ user: member, payload: { query: "  ecology  " } })).toMatchObject({ query: "ecology", chargedMicros: 10_000, results: [{ url: "https://a.example/" }] });
     expect(meter.events).toEqual([["reserve", 10_000], ["settle", 10_000, "completed"]]);
     expect((await search.search({ user: admin, payload: { query: "ecology" } })).chargedMicros).toBe(0);
@@ -216,9 +216,20 @@ describe("web search", () => {
     await expect(createWebSearchService({ env: {}, billingService: meter }).search({ user: member, payload: { query: "ecology" } })).rejects.toMatchObject({ statusCode: 503 });
   });
 
+  test("gives the agent an unbilled search that needs the key", async () => {
+    const meter = billing();
+    const search = createWebSearchService({ env: { TAVILY_API_KEY: "key" }, billingService: meter, fetchImpl: tavily([{ title: "A", url: "https://a.example/", content: "About A" }]) });
+    expect(search.configured).toBe(true);
+    expect(await search.request("ecology")).toEqual([{ title: "A", url: "https://a.example/", description: "About A", siteName: "a.example" }]);
+    expect(meter.events).toEqual([]);
+    const unset = createWebSearchService({ env: { TAVILY_API_KEY: " " }, billingService: meter });
+    expect(unset.configured).toBe(false);
+    await expect(unset.request("ecology")).rejects.toMatchObject({ statusCode: 503 });
+  });
+
   test("releases the held credit when the provider fails", async () => {
     const meter = billing();
-    const search = createWebSearchService({ env: { BRAVE_SEARCH_API_KEY: "key", WEB_SEARCH_PRICE_MICROS: "5000" }, billingService: meter, fetchImpl: (async () => new Response("no", { status: 500 })) as any });
+    const search = createWebSearchService({ env: { TAVILY_API_KEY: "key", WEB_SEARCH_PRICE_MICROS: "5000" }, billingService: meter, fetchImpl: (async () => new Response("no", { status: 500 })) as any });
     await expect(search.search({ user: member, payload: { query: "ecology" } })).rejects.toMatchObject({ statusCode: 502 });
     expect(meter.events).toEqual([["reserve", 5000], ["settle", 0, "failed"]]);
   });
