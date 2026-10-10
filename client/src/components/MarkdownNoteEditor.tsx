@@ -47,6 +47,7 @@ import {
 } from "../lib/markdownEditing";
 import { parseMarkdownBlocks } from "../lib/markdownBlocks";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
+import { renderMermaidBlocksIn } from "../lib/mermaidDiagrams";
 import {
   findObsidianCalloutBlocks,
   findObsidianInlineTokens,
@@ -117,6 +118,9 @@ class RenderedMarkdownBlockWidget extends WidgetType {
     block.dataset.sourceFrom = String(this.from);
     block.dataset.sourceValue = this.source;
     block.innerHTML = renderObsidianMarkdownToHtml(this.source);
+    // Draw diagrams in place of their fenced source, then let CodeMirror
+    // re-measure the taller block.
+    void renderMermaidBlocksIn(block).then((changed) => { if (changed) view.requestMeasure(); });
     block.addEventListener("click", (event) => {
       const nativeSelection = window.getSelection();
 
@@ -501,6 +505,33 @@ export default function MarkdownNoteEditor({
     const frame = requestAnimationFrame(() => viewRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [autoFocus]);
+
+  // Reading mode is plain rendered HTML, so its diagrams are drawn here.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (mode !== "reading" || !value || !root) return undefined;
+    const reading = root.querySelector<HTMLElement>(".live-markdown-reading");
+    if (!reading) return undefined;
+    let cancelled = false;
+    void renderMermaidBlocksIn(reading, { isCancelled: () => cancelled });
+    return () => { cancelled = true; };
+  }, [mode, value]);
+
+  // Diagrams take their colors from the app theme, so redraw them when it flips.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    let cancelled = false;
+    const observer = new MutationObserver(() => {
+      void renderMermaidBlocksIn(root, { isCancelled: () => cancelled })
+        .then((changed) => { if (changed) viewRef.current?.requestMeasure(); });
+    });
+    observer.observe(document.documentElement, { attributeFilter: ["data-theme"], attributes: true });
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, []);
 
   function handleBlur(event: FocusEvent<HTMLDivElement>) {
     if (event.relatedTarget instanceof Node && rootRef.current?.contains(event.relatedTarget)) return;
