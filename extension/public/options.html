@@ -49,6 +49,14 @@
         <button id="connect" class="primary" type="submit">Sign in</button>
       </form>
       <p id="status" role="status" aria-live="polite"></p>
+      <section class="appearance" aria-labelledby="appearance-label">
+        <span id="appearance-label" class="label">Appearance</span>
+        <div class="modes" role="group" aria-labelledby="appearance-label">
+          <button type="button" data-theme-choice="light" aria-pressed="false">Light</button
+          ><button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+        </div>
+        <p class="subtle">Matches the Margin Chat app. Changing it here or in the workspace updates every open page.</p>
+      </section>
       <p class="fine-print">
         The extension remembers your session, never your password. Captures are
         sent only when you save. Cloud Inbox requires a paid plan or an admin account.

@@ -27,6 +27,8 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
   let listener: (...args: any[]) => any;
   let actionListener: (...args: any[]) => any;
   let menuListener: (...args: any[]) => any;
+  let storageListener: (changes: Record<string, { newValue?: unknown }>, area: string) => void = () => {};
+  const tabMessages: Array<{ tabId: number; message: any; options: unknown }> = [];
   const injections: any[] = [];
   const openedTabs: string[] = [];
   let optionsOpened = 0;
@@ -49,7 +51,11 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
       onClicked: { addListener(callback: typeof actionListener) { actionListener = callback; } },
       async openPopup() { throw new Error("No action popup"); },
     },
-    tabs: { async create(tab: { url: string }) { openedTabs.push(tab.url); } },
+    tabs: {
+      async create(tab: { url: string }) { openedTabs.push(tab.url); },
+      async query() { return [{ id: 12 }, { id: 13 }, {}]; },
+      async sendMessage(tabId: number, message: unknown, options: unknown) { tabMessages.push({ tabId, message, options }); return { ok: true }; },
+    },
     scripting: { async executeScript(options: unknown) { injections.push(options); return []; } },
     storage: {
       local: {
@@ -69,6 +75,7 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
       session: {
         async set(value: Record<string, unknown>) { Object.assign(storage, structuredClone(value)); },
       },
+      onChanged: { addListener(callback: typeof storageListener) { storageListener = callback; } },
     },
   };
   runInNewContext(background, {
@@ -83,6 +90,8 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
     injections,
     openedTabs,
     optionsOpened: () => optionsOpened,
+    tabMessages,
+    changeStorage: (changes: Record<string, { newValue?: unknown }>, area = "local") => storageListener(changes, area),
     async clickAction(tab: { id: number; url: string; windowId?: number }) {
       actionListener(tab);
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -253,6 +262,25 @@ const overlayDraft = () => ({
 });
 
 describe("on-page Margin broker", () => {
+  test("page shells read the theme and remember the docked width without account data", async () => {
+    const storage: Record<string, any> = { connection: connection() };
+    const worker = createWorker(storage, fetch);
+    expect(await worker.dispatch({ type: "overlay:preferences" }, pageSender())).toEqual({ theme: null, dockWidth: null });
+    expect(await worker.dispatch({ type: "overlay:dock-width", width: 701.6 }, pageSender())).toEqual({ ok: true });
+    expect((await worker.dispatch({ type: "overlay:dock-width", width: "wide" }, pageSender())).error).toBeString();
+    storage.theme = "light";
+    const prefs = await worker.dispatch({ type: "overlay:preferences" }, pageSender());
+    expect(prefs).toEqual({ theme: "light", dockWidth: 702 });
+    expect(JSON.stringify(prefs)).not.toContain("connection-a");
+  });
+  test("a theme change repaints the shells in every tab", async () => {
+    const worker = createWorker({}, fetch);
+    worker.changeStorage({ theme: { newValue: "dark" } });
+    worker.changeStorage({ theme: { newValue: "neon" } });
+    worker.changeStorage({ theme: { newValue: "light" } }, "session");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(worker.tabMessages).toEqual([12, 13].map((tabId) => ({ tabId, message: { type: "margin:page-theme", theme: "dark" }, options: { frameId: 0 } })));
+  });
   test("only an own main-frame HTTP content script can read page state", async () => {
     const storage = { connection: connection() };
     const worker = createWorker(storage, fetch);

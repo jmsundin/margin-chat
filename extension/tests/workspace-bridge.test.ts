@@ -20,7 +20,7 @@ function worker(local: Record<string, any> = { connection: structuredClone(conne
     runtime: { id: "extension-test", getURL: (path: string) => origin + path, onInstalled: { addListener() {} }, onMessage: { addListener(fn: typeof listener) { listener = fn; } }, async openOptionsPage() {} },
     contextMenus: { onClicked: { addListener() {} } }, action: { onClicked: { addListener() {} } },
     tabs: { async get(tabId: number) { if (tabId !== 12) throw new Error("Tab missing"); return { id: 12, url: tabUrl }; }, async sendMessage(tabId: number, message: unknown, options: unknown) { pageMessages.push({ tabId, message, options }); return structuredClone(pageResponse); }, async create() {} },
-    storage: { local: area(local), session: area(session) },
+    storage: { local: area(local), session: area(session), onChanged: { addListener() {} } },
   };
   runInNewContext(background, { chrome, crypto, URL, AbortSignal, fetch: async () => Response.json({ capture: { id: "saved-capture", createdAt: new Date().toISOString() } }) });
   return {

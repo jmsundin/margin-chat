@@ -1,6 +1,9 @@
 import { createAssistantCard } from "./assistant-card";
 import { getSettings, trustedStorage } from "./storage";
 import { createWorkspaceFetch } from "./workspace-transport";
+import { syncExtensionPageTheme } from "./theme";
+
+syncExtensionPageTheme(document);
 
 const params = new URLSearchParams(location.search);
 const card = createAssistantCard(document, {

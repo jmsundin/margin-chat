@@ -1,6 +1,7 @@
 import { captureTextAnchor, resolveTextAnchor, type TextAnchor } from "./anchors";
 import { extractArticle } from "./extraction";
 import { PAGE_AI_LIMITS, type PageNote, type PageThreadIntent } from "./page-ai";
+import { followPageTheme, hostThemeCss } from "./theme";
 import { CARD_PLACEMENT, placeCard as computeCardPlacement, type Box } from "./placement";
 
 type Send = (message: Record<string, unknown>) => Promise<any>;
@@ -26,22 +27,23 @@ export function createSelectionAssistant(doc: Document, send: Send, options: {
   host.dataset.marginOverlay = "assistant";
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
-    :host{all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;color-scheme:light!important}
+    :host{all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important}${hostThemeCss()}
     *{box-sizing:border-box}[hidden]{display:none!important}
-    button{font:600 12px/1 system-ui,-apple-system,'Segoe UI',sans-serif;cursor:pointer;color:#243a2f;background:transparent;border:0;border-radius:7px;padding:8px 10px}
-    button:hover{background:#e6eee6}button:focus-visible{outline:2px solid #3d6b57;outline-offset:1px}
-    .popover{position:fixed;pointer-events:auto;display:flex;align-items:center;gap:2px;padding:3px;background:#faf8f1;border:1px solid #c5cfc0;border-radius:10px;box-shadow:0 6px 24px #152b3533}
-    .popover .note{font:12px system-ui,sans-serif;color:#7a3b2a;padding:0 8px;max-width:240px}
-    .card{position:fixed;pointer-events:auto;background:#faf8f1;border:1px solid #c5cfc0;border-left:3px solid #3d6b57;border-radius:12px;box-shadow:0 14px 50px #152b3544;overflow:hidden}
-    iframe{display:block;width:100%;height:100%;border:0;background:#faf8f1}
-    .marker{position:fixed;right:6px;pointer-events:auto;width:26px;height:26px;padding:0;display:grid;place-items:center;border-radius:50%;background:#315b45;color:#faf8f1;font:italic 600 15px/1 Georgia,serif;box-shadow:0 2px 10px #152b3544;border:2px solid #faf8f1}
-    .marker:hover{background:#264a37}
+    button{font:600 12px/1 system-ui,-apple-system,'Segoe UI',sans-serif;cursor:pointer;color:var(--mc-ink);background:transparent;border:0;border-radius:7px;padding:8px 10px}
+    button:hover{background:var(--mc-hover)}button:focus-visible{outline:2px solid var(--mc-sage);outline-offset:1px}
+    .popover{position:fixed;pointer-events:auto;display:flex;align-items:center;gap:2px;padding:3px;background:var(--mc-raised);border:1px solid var(--mc-line-strong);border-radius:10px;box-shadow:0 6px 24px var(--mc-shadow)}
+    .popover .note{font:12px system-ui,sans-serif;color:var(--mc-accent);padding:0 8px;max-width:240px}
+    .card{position:fixed;pointer-events:auto;background:var(--mc-bg);border:1px solid var(--mc-line-strong);border-left:3px solid var(--mc-sage);border-radius:12px;box-shadow:0 14px 50px var(--mc-shadow);overflow:hidden}
+    iframe{display:block;width:100%;height:100%;border:0;background:var(--mc-bg)}
+    .marker{position:fixed;right:6px;pointer-events:auto;width:26px;height:26px;padding:0;display:grid;place-items:center;border-radius:50%;background:var(--mc-sage);color:var(--mc-sage-ink);font:italic 600 15px/1 Georgia,serif;box-shadow:0 2px 10px var(--mc-shadow);border:2px solid var(--mc-bg)}
+    .marker:hover{background:var(--mc-sage);filter:brightness(1.1)}
     @media (forced-colors:active){.popover,.card,.marker{border:1px solid CanvasText}}
   </style>
   <div class="popover" role="toolbar" aria-label="Margin Chat selection actions" hidden><button type="button" data-intent="explain">Explain</button><button type="button" data-intent="ask">Ask…</button><span class="note" role="status" hidden></span></div>
   <section class="card" role="dialog" aria-label="Margin Chat answer" hidden><iframe title="Margin Chat answer" referrerpolicy="no-referrer"></iframe></section>
   <div class="markers"></div>`;
   doc.documentElement.append(host);
+  const theme = followPageTheme(win, [host]);
 
   const popover = root.querySelector<HTMLElement>(".popover")!;
   const note = popover.querySelector<HTMLElement>(".note")!;
@@ -254,7 +256,7 @@ export function createSelectionAssistant(doc: Document, send: Send, options: {
   }, 700);
 
   return {
-    owns, handleMessage,
+    owns, handleMessage, setTheme: theme.set,
     /** Start listening; pinned notes for this page are restored and painted. */
     arm() { void refreshNotes(); win.setTimeout(() => void refreshNotes(), 2000); },
     destroy() {
@@ -263,7 +265,7 @@ export function createSelectionAssistant(doc: Document, send: Send, options: {
       doc.removeEventListener("selectionchange", onSelectionChange); doc.removeEventListener("keydown", onKeyDown, true);
       win.removeEventListener("scroll", schedule, true); win.removeEventListener("resize", schedule);
       paint("margin-ai-notes", []); paint("margin-ai-focus", []);
-      host.remove();
+      theme.destroy(); host.remove();
     },
   };
 }

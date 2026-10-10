@@ -5,9 +5,45 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #233e33;
-  background: #f6f2e9;
+  /* The Margin Chat app's palette (client/src/styles.css). */
+  color-scheme: dark;
+  --bg: #091015;
+  --card: #121b21;
+  --field: #18232a;
+  --field-quiet: #0f171c;
+  --line: rgba(224, 236, 230, 0.12);
+  --line-strong: rgba(224, 236, 230, 0.22);
+  --ink: #ecf4ef;
+  --muted: #97a9a2;
+  --eyebrow: #ffb195;
+  --sage: #7acaa4;
+  --sage-strong: #95d8b8;
+  --sage-ink: #08100d;
+  --hover: rgba(122, 202, 164, 0.16);
+  --danger: #ff6f61;
+  --glow: rgba(122, 202, 164, 0.12);
+  --card-shadow: rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+  background: var(--bg);
+}
+:root[data-theme="light"] {
   color-scheme: light;
+  --bg: #ece4d6;
+  --card: #faf5ec;
+  --field: #fffdf8;
+  --field-quiet: #f1eadd;
+  --line: rgba(31, 42, 36, 0.12);
+  --line-strong: rgba(31, 42, 36, 0.22);
+  --ink: #1f2a24;
+  --muted: #59655e;
+  --eyebrow: #a94b32;
+  --sage: #2e5947;
+  --sage-strong: #234637;
+  --sage-ink: #f7f3ea;
+  --hover: rgba(46, 89, 71, 0.12);
+  --danger: #a13725;
+  --glow: rgba(46, 89, 71, 0.14);
+  --card-shadow: rgba(46, 41, 31, 0.1);
 }
 * {
   box-sizing: border-box;
@@ -27,7 +63,7 @@ header {
   align-items: center;
   justify-content: space-between;
   padding: 16px 22px;
-  border-bottom: 1px solid #dedfd3;
+  border-bottom: 1px solid var(--line);
 }
 .brand {
   display: flex;
@@ -59,7 +95,7 @@ p {
 .subtle,
 .source,
 .fine-print {
-  color: #637468;
+  color: var(--muted);
   font-size: 12px;
 }
 .source {
@@ -71,7 +107,7 @@ p {
 .eyebrow {
   text-transform: uppercase;
   letter-spacing: 0.1em;
-  color: #977042;
+  color: var(--eyebrow);
   font-size: 11px;
 }
 label {
@@ -94,10 +130,10 @@ input,
 select,
 textarea {
   width: 100%;
-  border: 1px solid #cbd2c6;
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
-  background: #fffdf8;
-  color: #233e33;
+  background: var(--field);
+  color: var(--ink);
   padding: 9px 11px;
 }
 textarea {
@@ -106,32 +142,32 @@ textarea {
   line-height: 1.55;
 }
 textarea[readonly] {
-  background: #efeee5;
+  background: var(--field-quiet);
 }
 button {
-  border: 1px solid #cbd2c6;
+  border: 1px solid var(--line-strong);
   background: transparent;
-  color: #233e33;
+  color: var(--ink);
   border-radius: 8px;
   padding: 9px 13px;
   cursor: pointer;
 }
 button:hover {
-  background: #e5e9df;
+  background: var(--hover);
 }
 button:disabled {
   opacity: 0.55;
   cursor: wait;
 }
 button.primary {
-  color: #fffdf8;
-  background: #315d46;
-  border-color: #315d46;
+  color: var(--sage-ink);
+  background: var(--sage);
+  border-color: var(--sage);
   width: 100%;
   margin-top: 14px;
 }
 button.primary:hover {
-  background: #234a35;
+  background: var(--sage-strong);
 }
 .text-button {
   border: 0;
@@ -141,7 +177,7 @@ button.primary:hover {
 .modes {
   display: flex;
   gap: 4px;
-  background: #e9eade;
+  background: var(--field-quiet);
   padding: 4px;
   border-radius: 10px;
 }
@@ -152,8 +188,8 @@ button.primary:hover {
   padding: 7px;
 }
 .modes button[aria-pressed="true"] {
-  background: #fffdf8;
-  box-shadow: 0 1px 4px #28433218;
+  background: var(--field);
+  box-shadow: 0 1px 4px var(--card-shadow);
 }
 .actions {
   display: flex;
@@ -169,29 +205,29 @@ button.primary:hover {
   white-space: pre-line;
 }
 #status.error {
-  color: #a13725;
+  color: var(--danger);
 }
 [hidden] {
   display: none !important;
 }
 :focus-visible {
-  outline: 2px solid #6a8f59;
+  outline: 2px solid var(--sage);
   outline-offset: 3px;
 }
 .options {
   min-height: 100vh;
   padding: 60px 20px;
-  background: radial-gradient(at 5% 10%, #dce5d9, transparent 60%), #f6f2e9;
+  background: radial-gradient(at 5% 10%, var(--glow), transparent 60%), var(--bg);
 }
 .connection-card {
   width: 100%;
   max-width: 520px;
   margin: 0 auto;
-  background: #fffdf8;
-  border: 1px solid #dce1d2;
+  background: var(--card);
+  border: 1px solid var(--line);
   border-radius: 18px;
   padding: 32px;
-  box-shadow: 0 20px 70px #2843320b;
+  box-shadow: 0 20px 70px var(--card-shadow);
 }
 .connection-card h1 {
   margin-top: 26px;
@@ -199,7 +235,7 @@ button.primary:hover {
 }
 ol {
   padding-left: 20px;
-  color: #637468;
+  color: var(--muted);
   font-size: 13px;
 }
 li {
@@ -208,5 +244,18 @@ li {
 .fine-print {
   margin-top: 24px;
   padding-top: 18px;
-  border-top: 1px solid #e2e5db;
+  border-top: 1px solid var(--line);
+}
+.appearance {
+  margin-top: 24px;
+}
+.appearance .label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.appearance .subtle {
+  font-size: 12px;
+  color: var(--muted);
 }

@@ -22,6 +22,7 @@ import type { OverlayAnnotation, OverlayDraft, OverlayState, TextQuoteAnchor } f
 import { captureRequest, errorText } from "./network";
 import { assertThreadCapacity, pageNotes, normalizeThread, upsertThread } from "./page-ai";
 import { normalizeAnchor, record, textValue } from "./validate";
+import { isTheme, THEME_MIRROR_KEY } from "./theme";
 
 void trustedStorage();
 chrome.runtime.onInstalled.addListener(() => {
@@ -216,6 +217,17 @@ async function overlayMessage(message: Record<string, unknown>, sourceUrl: strin
   await trustedStorage();
   if (message.type === "overlay:settings") {
     await chrome.runtime.openOptionsPage();
+    return { ok: true };
+  }
+  if (message.type === "overlay:preferences") {
+    const theme = (await chrome.storage.local.get(THEME_MIRROR_KEY))[THEME_MIRROR_KEY];
+    const dockWidth = (await chrome.storage.local.get("dockWidth")).dockWidth;
+    return { theme: isTheme(theme) ? theme : null, dockWidth: typeof dockWidth === "number" ? dockWidth : null };
+  }
+  if (message.type === "overlay:dock-width") {
+    const width = Number(message.width);
+    if (!Number.isFinite(width) || width < 200 || width > 10000) throw new Error("Invalid panel width.");
+    await chrome.storage.local.set({ dockWidth: Math.round(width) });
     return { ok: true };
   }
   if (message.type === "overlay:pending") {
@@ -452,6 +464,15 @@ async function assistantMessage(message: Record<string, unknown>, sender: chrome
   }
   throw new Error("Unsupported assistant action.");
 }
+
+// A theme chosen in the workspace or settings repaints every open page shell.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !isTheme(changes[THEME_MIRROR_KEY]?.newValue)) return;
+  const theme = changes[THEME_MIRROR_KEY].newValue;
+  void chrome.tabs.query({}).then((tabs) => {
+    for (const tab of tabs) if (typeof tab.id === "number") chrome.tabs.sendMessage(tab.id, { type: "margin:page-theme", theme }, { frameId: 0 }).catch(() => undefined);
+  });
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id) return;

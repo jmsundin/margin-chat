@@ -106,6 +106,16 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     }
   }, [theme]);
 
+  // Follow a theme chosen in another window of the same origin, such as the
+  // extension's settings page or a second app tab.
+  useEffect(() => {
+    const followStoredTheme = (event: StorageEvent) => {
+      if (event.key === THEME_STORAGE_KEY && (event.newValue === "light" || event.newValue === "dark")) setTheme(event.newValue);
+    };
+    window.addEventListener("storage", followStoredTheme);
+    return () => window.removeEventListener("storage", followStoredTheme);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 

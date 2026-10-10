@@ -13,6 +13,8 @@ import {
   type SelectionDraft,
 } from "./storage";
 import { errorText } from "./network";
+import { syncExtensionPageTheme } from "./theme";
+syncExtensionPageTheme(document);
 const el = <T extends HTMLElement>(id: string) =>
   document.getElementById(id) as T;
 const title = el<HTMLInputElement>("title");
