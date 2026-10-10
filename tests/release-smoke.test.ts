@@ -113,7 +113,7 @@ describe("release smoke against the real authenticated HTTP API", () => {
     await fixture.pg.exec("truncate marginchat_users, marginchat_user_sessions, marginchat_password_reset_tokens, marginchat_app_sessions cascade");
   });
 
-  async function actualApi(options: { pending?: boolean; wrongLoginId?: boolean; unsafeCleanup?: boolean; repeatedCleanupCursor?: boolean } = {}) {
+  async function actualApi(options: { background?: boolean; pending?: boolean; wrongLoginId?: boolean; unsafeCleanup?: boolean; repeatedCleanupCursor?: boolean } = {}) {
     const directory = await mkdtemp(join(tmpdir(), "margin-release-smoke-"));
     const client = fixture.client;
     const database = {
@@ -130,7 +130,7 @@ describe("release smoke against the real authenticated HTTP API", () => {
         }),
     };
     await database.createUser({ id: "retained-user", email: "retained@example.test", displayName: "Retained", role: "admin", passwordHash: "unused" });
-    const source = createVaultService({ database, storage: createFileVaultStorage(directory), env: {} });
+    const source = createVaultService({ database, storage: createFileVaultStorage(directory), env: {}, backgroundProjection: options.background });
     await source.commit("retained-user", [{ path: "Notes/retained.md", content: "# Retained\n\nExisting private content.", baseRevision: null }]);
     const config = createRuntimeConfig({});
     const auth = createAuthService({ database, runtimeConfig: config, env: {} });
@@ -201,6 +201,22 @@ describe("release smoke against the real authenticated HTTP API", () => {
       for (const path of remaining.filter((name) => name.startsWith(api.requestedPrefixes[0]))) {
         expect((await stat(join(api.directory, path))).isFile()).toBe(false);
       }
+    } finally { await api.close(); }
+  });
+
+  test("passes against the app's background indexing, where saves report a queued projection", async () => {
+    const api = await actualApi({ background: true });
+    try {
+      const statuses: string[] = [];
+      const fetchImpl = async (input: any, init: any) => {
+        const response = await fetch(input, init);
+        if (init?.method === "POST" || init?.method === "PUT") statuses.push((await response.clone().json()).projection?.status);
+        return response;
+      };
+      const result = await runPersistenceSmoke({ ...api, blobToken: "test-only", fetchImpl });
+      expect(statuses).toContain("queued");
+      expect(result.checks).toContain("SQL projection");
+      await retainedAccountOnly(api);
     } finally { await api.close(); }
   });
 
