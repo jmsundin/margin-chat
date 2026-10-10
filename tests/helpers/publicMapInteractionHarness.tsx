@@ -875,9 +875,9 @@ try {
   await render();
   await click(button("Public", ".knowledge-map-switcher button"));
   const documentViewport = element(".public-map-viewport");
-  const viewOptions = element('.public-knowledge-map [aria-label="Map view options"]');
-  await click(viewOptions);
-  await click(button("Topics and connections", ".public-knowledge-map .graph-map-view-options button"));
+  // All topics lives under Focus.
+  await click(element('.public-knowledge-map [aria-label="Focus view"]'));
+  await click(button("All topics", ".public-map-focusbar button"));
   assert.equal(container.querySelector('.public-knowledge-map .graph-territories'), null, "Topics-and-connections mode removes group boxes");
   assert.equal(container.querySelectorAll('.public-map-node.is-document').length, 9, "Every loaded matching topic remains available in document mode");
   const beforeArrangementRequests = apiCalls.length;
@@ -967,13 +967,13 @@ try {
   assert.deepEqual(camera(), persistedFocusCamera, "Remount preserves the focus camera including manual panning");
   assert.equal(container.querySelectorAll('.public-map-node').length, 8);
   assert(element('.public-map-focusbar strong').textContent.includes("Tall public topic 5"));
-  await click(button("All nodes", '.public-map-focusbar button'));
+  await click(button("All topics", '.public-map-focusbar button'));
   assert.equal(container.querySelector('.public-map-focusbar'), null);
   assert.equal(container.querySelectorAll('.public-map-node').length, 9);
   assert.equal(container.querySelector('.public-knowledge-map .graph-territories'), null, "Leaving focus retains topics-and-connections presentation");
-  await click(element('.public-knowledge-map [aria-label="Map view options"]'));
-  await click(button("Groups and topics", '.public-knowledge-map .graph-map-view-options button'));
-  assert(container.querySelector('.public-knowledge-map .graph-territories'), "The same view-options menu restores grouped browsing");
+  await click(element('.public-knowledge-map [aria-label="Clusters view"]'));
+  await click(button("Starting topic", '.public-knowledge-map [aria-label="Group topics by"] button'));
+  assert(container.querySelector('.public-knowledge-map .graph-territories'), "Clusters grouped by starting topic restores grouped browsing");
   assert.equal(apiCalls.length, beforeArrangementRequests, "Arranging and focusing never fetch or invent connections");
 
   const knownRoot = atlasTopic("Q990001", "Systems thinking"), knownNeighbor = atlasTopic("Q990002", "Feedback");

@@ -65,11 +65,15 @@ const isDocumentPresentation = (presentation: PublicPresentation) => presentatio
 const PUBLIC_VIEW_MODES = [
   { id: "canvas", label: "Canvas", description: "Read topics at full size and follow their labeled connections." },
   { id: "focus", label: "Focus", description: "Explore the selected topic and its direct connections." },
-  { id: "topics", label: "Topics", description: "Browse groups of topics, then zoom into their members." },
   { id: "clusters", label: "Clusters", description: "See topics gather around their most connected hubs, labeled by topic." },
-  { id: "layouts", label: "Layouts", description: "Arrange topic cards as trees or around their most connected topics." },
 ] as const;
-type PublicViewMode = typeof PUBLIC_VIEW_MODES[number]["id"];
+/** Topics (groups) lives under Clusters, and Layouts (all topics) under Focus, so each has a tab without one of its own. */
+const PUBLIC_SUB_VIEW_MODES = [
+  { id: "topics", label: "Topics", description: "Browse groups of topics, then zoom into their members." },
+  { id: "layouts", label: "All topics", description: "Lay out every loaded topic using its connections." },
+] as const;
+type PublicViewMode = typeof PUBLIC_VIEW_MODES[number]["id"] | typeof PUBLIC_SUB_VIEW_MODES[number]["id"];
+const publicViewTab = (mode: PublicViewMode | null) => mode === "topics" ? "clusters" : mode === "layouts" ? "focus" : mode;
 
 const emptyLocation = (): MapLocation => ({ graph: emptyPublicGraph(), selectedId: null, neighborhoodId: null, neighborhoodScale: null, viewport: INITIAL_VIEWPORT, query: "", filters: DEFAULT_PUBLIC_RELATION_FILTERS, groupOverviewVersion: 1, presentation: "groups", documentLayoutMode: "auto", graphFocusId: null, graphFocusDepth: 1 });
 
@@ -909,16 +913,11 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         </div> : null}
       </form>
       <div className="graph-view-mode-tabs public-map-modes" role="group" aria-label="Public map mode">
-        {PUBLIC_VIEW_MODES.map((item) => <button key={item.id} type="button" aria-label={`${item.label} view`} aria-pressed={viewMode === item.id} title={item.description}
-          disabled={!visible.topics.length && !unfiltered.topics.length} onClick={() => chooseViewMode(item.id)}>{item.label}</button>)}
-        <span className="graph-view-purpose" aria-live="polite">{PUBLIC_VIEW_MODES.find((item) => item.id === viewMode)?.description}</span>
+        {PUBLIC_VIEW_MODES.map((item) => <button key={item.id} type="button" aria-label={`${item.label} view`} aria-pressed={publicViewTab(viewMode) === item.id} title={item.description}
+          disabled={!visible.topics.length && !unfiltered.topics.length} onClick={() => chooseViewMode(item.id === "clusters" && viewMode === "topics" ? "topics" : item.id)}>{item.label}</button>)}
+        <span className="graph-view-purpose" aria-live="polite">{[...PUBLIC_VIEW_MODES, ...PUBLIC_SUB_VIEW_MODES].find((item) => item.id === viewMode)?.description}</span>
       </div>
       <button type="button" ref={explorerTriggerRef} aria-expanded={explorerContainer ? undefined : explorerOpen} onClick={openExplorer}>Explore</button>
-      <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
-        <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg></summary>
-        <div><button type="button" aria-pressed={location.presentation === "groups"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showAllGroups(); }}>Groups and topics</button>
-          <button type="button" aria-pressed={documentsOnly} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(location.documentLayoutMode, true); }}>Topics and connections</button></div>
-      </DismissibleDetails>
       <DismissibleDetails className="public-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
         <summary>Filters{location.filters.relation !== "all" || location.filters.includeMetadata ? " •" : ""}</summary>
         <div><label>Relationships<select value={location.filters.relation} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, relation: event.target.value as PublicRelationFilter } }))}>
@@ -926,14 +925,25 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         </select></label><label><input type="checkbox" checked={location.filters.includeMetadata} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, includeMetadata: event.target.checked } }))} />Include Wikimedia metadata</label><p>Category pages, portals, and templates are hidden by default. Your loaded topics stay available.</p></div>
       </DismissibleDetails>
     </header>
-    {clustersMode && visible.topics.length ? <div className="graph-mode-context" aria-label="Cluster view status">
-      <span>Topics gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
-      <button type="button" onClick={() => fitMap()}>Show all clusters</button>
+    {(clustersMode || viewMode === "topics") && visible.topics.length ? <div className="graph-mode-context" aria-label="Cluster view status">
+      <div className="graph-mode-segmented" role="group" aria-label="Group topics by">
+        <span>Group by</span>
+        <button type="button" aria-pressed={clustersMode} onClick={() => { if (!clustersMode) chooseViewMode("clusters"); }}>Links</button>
+        <button type="button" aria-pressed={!clustersMode} onClick={() => { if (clustersMode) chooseViewMode("topics"); }}>Starting topic</button>
+      </div>
+      {clustersMode ? <><span>Topics gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
+        <button type="button" onClick={() => fitMap()}>Show all clusters</button></>
+        : <><span>Topics sit with the starting topic they were reached from. Select a group to zoom in.</span>
+        <button type="button" onClick={showAllGroups}>Show all groups</button></>}
+    </div> : null}
+    {viewMode === "layouts" && visible.topics.length ? <div className="graph-mode-context" aria-label="All topics status">
+      <span>Every loaded topic, laid out by its connections. Choose Layout below to change the shape.</span>
+      {selected ? <button type="button" onClick={() => focusConnections(selected.id)}>Focus on {selected.label}</button> : null}
     </div> : null}
     {location.graphFocusId ? <div className="public-map-focusbar" aria-label="Focused public connections">
       <span><strong>Around {location.graph.topics[location.graphFocusId]?.label}</strong><small>{visible.topics.length} topics · {location.graphFocusDepth} {location.graphFocusDepth === 1 ? "hop" : "hops"}</small></span>
       <button type="button" disabled={!canShowMoreFocus} title={canShowMoreFocus ? "Include the next level of loaded connections" : "All loaded connections in this branch are shown"} onClick={() => focusConnections(location.graphFocusId!, Math.min(PUBLIC_MAP_LIMIT, location.graphFocusDepth + 1), location.documentLayoutMode)}>Show more connections</button>
-      <button type="button" onClick={() => chooseDocumentLayout(location.documentLayoutMode, true)}>All nodes</button>
+      <button type="button" onClick={() => chooseDocumentLayout(location.documentLayoutMode === "connections" ? "auto" : location.documentLayoutMode, true)}>All topics</button>
     </div> : null}
     {explorerContainer && !explorerOpen ? createPortal(explorer, explorerContainer) : null}
     <div className="public-map-main">
@@ -982,9 +992,9 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
       {(openingId || topicError) && <div className="public-map-feedback" role={topicError ? "alert" : "status"}>{openingId && !topicError ? "Opening public topic…" : topicError && <><p>{topicError.message}</p><button type="button" onClick={() => { const error = topicError; void (error.action === "open" ? openTopic(error.id) : expandTopic(error.id, !!location.graph.expansions[error.id])); }}>Try again</button><button type="button" onClick={() => setTopicError(null)}>Dismiss</button></>}</div>}
       <div className="public-map-bottom"><p role="status" aria-live="polite">{notice || (showNeighborhoods ? "Zoom to reveal topics · Select a group to focus" : "Drag to pan · Pinch to zoom")}<span id="public-map-keyboard-help">Arrow keys pan · +/− zoom · Home / 0 shows all groups</span></p>
         <div className="public-map-zoom" aria-label="Public map controls" data-graph-ui="true">
-          <DismissibleDetails className="public-map-arrange" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Arrange</summary><div>
+          {location.presentation === "documents" ? <DismissibleDetails className="public-map-arrange" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Layout</summary><div>
             {([["auto", "Auto layout"], ["tree-right", "Tree: left to right"], ["tree-down", "Tree: top down"], ["connections", location.graphFocusId ? "Around focused node" : "Most connections"]] as const).map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentsOnly && location.documentLayoutMode === mode} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(mode); }}>{label}</button>)}
-          </div></DismissibleDetails>
+          </div></DismissibleDetails> : null}
           <button type="button" onClick={() => zoomAt(1 / 1.2)} aria-label="Zoom out" disabled={location.viewport.scale <= minimumZoomScale}>−</button><span>{Math.round(location.viewport.scale * 100)}%</span><button type="button" onClick={() => zoomAt(1.2)} aria-label="Zoom in" disabled={location.viewport.scale >= 1.6}>+</button>
           <button type="button" onClick={() => fitMap()} disabled={!visible.topics.length}>{location.graphFocusId ? "Fit connections" : activeNeighborhood ? "Fit group" : "Fit map"}</button>
           {selected ? <><button type="button" onClick={() => selectTopic(selected.id, true)}>Center topic</button><button type="button" onClick={() => focusConnections(selected.id)}>Focus connections</button></> : null}

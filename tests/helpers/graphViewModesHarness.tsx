@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
+import type { GraphNodeLayout } from "../../client/src/types";
 
 const browser = new Window({ url: "http://graph-view-modes.test/" });
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect", "HTMLInputElement", "HTMLSelectElement"]) {
@@ -63,6 +64,7 @@ browser.document.body.append(container);
 const reactRoot = createRoot(container as unknown as Element);
 let workspaceKey = "";
 let layoutWrites = 0;
+const layoutWriteLog: Record<string, Partial<GraphNodeLayout>>[] = [];
 let focusRequest: { conversationId: string; requestId: number; openReader?: boolean } | null = null;
 const checks: string[] = [];
 
@@ -75,7 +77,7 @@ function Host() {
     key: workspaceKey, workspaceKey, activeConversationId: "root", conversations, graphLayouts: layouts, groups, focusRequest,
     onFocusRequestHandled(requestId) { if (focusRequest?.requestId === requestId) focusRequest = null; },
     onActivateConversation() {}, onAssignGroup() {}, onCreateChildConversation: () => null,
-    onOpenConversation() {}, onToggleGroup() {}, onUpdateGraphNodeLayouts() { layoutWrites++; },
+    onOpenConversation() {}, onToggleGroup() {}, onUpdateGraphNodeLayouts(next) { layoutWrites++; layoutWriteLog.push(next); },
     renderExpandedConversation: (id) => createElement(Reader, { id }),
     renderDockedConversation: (id) => createElement(Reader, { id }),
   });
@@ -124,8 +126,12 @@ async function choose(label: string, value: string) {
   await settle();
 }
 async function show(mode: string) {
-  if (["canvas", "focus", "topics", "lineage"].includes(mode)) await click(element(`[aria-label="${mode[0].toUpperCase()}${mode.slice(1)} view"]`));
-  else await choose("More graph views", mode);
+  if (["canvas", "focus", "clusters"].includes(mode)) await click(element(`[aria-label="${mode[0].toUpperCase()}${mode.slice(1)} view"]`));
+  else if (mode === "topics") {
+    // Topics is Clusters grouped by your groups.
+    await click(element('[aria-label="Clusters view"]'));
+    await click([...container.querySelectorAll('[aria-label="Group documents by"] button')].find((item: any) => item.textContent === "My groups"));
+  } else await choose("More graph views", mode);
   assert.equal(element("section[data-view-mode]").dataset.viewMode, mode);
 }
 async function fresh(name: string, patch: Record<string, unknown> = {}) {
@@ -316,6 +322,53 @@ try {
 
   assert.equal(layoutWrites, 0);
   assert.deepEqual(layouts, originalLayouts);
+
+  // Arrange is split by what each view can change: Tidy up rewrites saved
+  // positions on Canvas, Layout reshapes computed views, and the rest have none.
+  const bottomMenus = () => [...container.querySelectorAll(".graph-map-layout-options > summary")].map((summary: any) => summary.textContent.trim());
+  await fresh("arrange-menus");
+  assert.deepEqual(bottomMenus(), ["Tidy up"], "Canvas offers Tidy up");
+  await show("focus");
+  assert.deepEqual(bottomMenus(), ["Layout"], "Focus offers a Layout choice");
+  assert(element('[aria-label="Focus view"]').getAttribute("aria-pressed") === "true");
+  await click(button("All documents"));
+  assert.equal(mode(), "documents");
+  assert.equal(element('[aria-label="Focus view"]').getAttribute("aria-pressed"), "true", "All documents stays under the Focus tab");
+  assert.deepEqual(bottomMenus(), ["Layout"]);
+  for (const next of ["clusters", "topics", "network"]) {
+    await show(next);
+    assert.deepEqual(bottomMenus(), [], `${next} has no Arrange menu, because nothing in it would change the view`);
+  }
+  assert.equal(element('[aria-label="Clusters view"]').getAttribute("aria-pressed"), "false");
+  await show("topics");
+  assert.equal(element('[aria-label="Clusters view"]').getAttribute("aria-pressed"), "true", "Topics stays under the Clusters tab");
+  await click(button("Links"));
+  assert.equal(mode(), "clusters", "Group by Links switches to gravity clusters");
+  await click(element('[aria-label="Clusters view"]'));
+  assert.equal(mode(), "clusters");
+  await show("lineage");
+  assert.deepEqual(bottomMenus(), ["Layout"], "Lineage keeps its tree choices");
+  checks.push("Arrange shows Tidy up on Canvas, Layout on Focus and Lineage, and nothing on Clusters, Topics or Network");
+
+  await fresh("tidy-undo");
+  assert.equal(container.querySelector(".graph-map-tidy-undo"), null);
+  await click(element(".graph-map-layout-options > summary"));
+  await click(element('[aria-label="Auto-arrange graph with ELK"]'));
+  for (let attempt = 0; attempt < 40 && !layoutWriteLog.length; attempt++) await settle();
+  assert.equal(layoutWriteLog.length, 1, "Auto-arrange writes one set of positions");
+  const arranged = layoutWriteLog[0];
+  assert(Object.keys(arranged).length > 0);
+  await click(element(".graph-map-tidy-undo"));
+  assert.equal(layoutWriteLog.length, 2, "Undo writes the replaced positions back");
+  assert.deepEqual(Object.keys(layoutWriteLog[1]).sort(), Object.keys(arranged).sort());
+  for (const [id, restored] of Object.entries(layoutWriteLog[1])) {
+    const before = originalLayouts[id as keyof typeof originalLayouts];
+    if (before) assert.deepEqual({ x: restored.x, y: restored.y }, { x: before.x, y: before.y }, `Undo restores ${id} to where it was placed`);
+    else assert.equal(restored.positioned, false, `Undo returns never-placed ${id} to automatic placement`);
+  }
+  assert.equal(container.querySelector(".graph-map-tidy-undo"), null, "Undo is offered once per tidy up");
+  layoutWrites = 0;
+  checks.push("Tidy up on Canvas can be undone, restoring hand-placed positions");
   process.stdout.write(`${JSON.stringify({ checks })}\n`);
 } finally {
   await act(async () => reactRoot.unmount());
