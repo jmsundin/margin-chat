@@ -21,7 +21,7 @@ const chat = (id: string, title: string, content: string, updatedAt = at, extra:
 }) as Conversation;
 const conversations: Record<string, Conversation> = {
   heat: chat("heat", "Urban heat draft", "Shade changes the picture at street level."),
-  trees: chat("trees", "Trees vs. shade sails", "Fabric shade only blocks light.", "2026-10-07T10:00:00Z", { parentId: "heat" }),
+  trees: chat("trees", "Trees vs. shade sails", "## Why sails fall short\n\n**Fabric** shade only blocks light.\n\n- canopy\n- sails", "2026-10-07T10:00:00Z", { parentId: "heat" }),
 };
 const cloudDocuments: VaultIndexEntry[] = [{ path: "school.md", id: "school", type: "conversation", kind: "chat", title: "Shade structures for the school yard", revision: "1", updated: "2025-03-12T10:00:00Z" }];
 let provider = createLocalVaultSearchProvider(() => ({ conversations, cloudDocuments }));
@@ -64,6 +64,16 @@ assert.deepEqual(titles.slice(0, 2), ["Trees vs. shade sails", "Shade structures
 assert.equal(dialog()!.querySelectorAll(".vault-search-snippet").length, 2, "Passages from both documents follow the titles.");
 assert(dialog()!.querySelector(".vault-search-preview h3")?.textContent?.includes("Trees vs. shade sails"), "The first result is previewed.");
 checks.push("titles from the device and the cloud come first, then passages");
+
+const preview = dialog()!.querySelector<HTMLElement>(".vault-search-preview-document")!;
+assert(preview, "A loaded document is previewed as rendered Markdown.");
+assert.equal(preview.querySelector("h2")?.textContent, "Why sails fall short");
+assert.equal(preview.querySelector("strong")?.textContent, "Fabric");
+assert.deepEqual([...preview.querySelectorAll("li")].map((item) => item.textContent), ["canopy", "sails"]);
+assert(!preview.textContent?.includes("**") && !preview.textContent?.includes("## "), "No raw Markdown syntax in the preview.");
+assert.equal(preview.querySelectorAll(".cm-live-rendered-block").length, 3, "Each block renders like a Live Preview line.");
+assert.equal(preview.querySelector("mark")?.textContent, "shade", "Search terms stay highlighted.");
+checks.push("the preview shows the document in Live Preview, not raw Markdown");
 
 await key("ArrowDown");
 assert.equal(selectedTitle(), "Shade structures for the school yardIn cloud");

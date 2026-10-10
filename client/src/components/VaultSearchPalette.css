@@ -30,10 +30,12 @@
 .vault-search-preview { display: flex; flex: 1; flex-direction: column; gap: 8px; min-width: 0; overflow: auto; padding: 18px 22px; }
 .vault-search-preview h3 { font-size: 1.05rem; font-weight: 620; margin: 0; overflow-wrap: anywhere; }
 .vault-search-preview-crumb { color: var(--muted); font-size: .72rem; margin: 0; overflow-wrap: anywhere; }
-.vault-search-preview-passage, .vault-search-preview-text { border-radius: 10px; font-size: .86rem; line-height: 1.6; margin: 4px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
-.vault-search-preview-passage { background: var(--button-surface); border: 1px solid var(--line); padding: 10px 12px; }
+.vault-search-preview-text { border-radius: 10px; font-size: .86rem; line-height: 1.6; margin: 4px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.vault-search-preview-passage, .vault-search-preview-document { font-size: .86rem; margin: 4px 0 0; }
+.vault-search-preview-passage { border-radius: 10px; background: var(--button-surface); border: 1px solid var(--line); padding: 10px 12px; }
 .vault-search-preview-text { color: var(--muted); }
-.vault-search-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+/* Long previews scroll; the open buttons stay in reach at the bottom. */
+.vault-search-actions { background: var(--panel-strong); bottom: -18px; display: flex; flex-wrap: wrap; gap: 8px; margin: auto -22px -18px; padding: 10px 22px 18px; position: sticky; }
 .vault-search-actions button { align-items: center; background: var(--button-surface); border: 1px solid var(--button-border); border-radius: 9px; color: var(--ink); display: inline-flex; font-size: .8rem; gap: 8px; min-height: 40px; padding: 6px 12px; }
 .vault-search-actions .vault-search-primary { background: var(--sage); border-color: var(--sage); color: var(--primary-ink); font-weight: 600; }
 .vault-search-actions .vault-search-primary kbd { border-color: currentColor; color: inherit; }

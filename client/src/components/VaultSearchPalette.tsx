@@ -1,12 +1,12 @@
 import { useDeferredValue, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentDocumentText } from "../lib/documentSources";
-import { excerpt } from "../lib/tree";
 import {
   vaultSearchTerms, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchProvider,
   type VaultSearchResults, type VaultSearchScope,
 } from "../lib/vaultSearch";
 import type { Conversation } from "../types";
+import MarkdownLivePreview from "./MarkdownLivePreview";
 import "./VaultSearchPalette.css";
 
 export type VaultSearchOpenMode = "here" | "beside";
@@ -42,7 +42,7 @@ export function meta(hit: { kindLabel: string; familyTitle?: string; updatedAt?:
 function documentPreview(conversation: Conversation | undefined) {
   if (!conversation) return "";
   const text = conversation.document ? getCurrentDocumentText(conversation) : conversation.messages.at(-1)?.content ?? "";
-  return text.trim() ? excerpt(text, 600) : "";
+  return text.trim() ? text : "";
 }
 
 const entryKey = (entry: Entry) => entry.hit.key;
@@ -168,7 +168,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         <p className="vault-search-preview-crumb">{hit.familyTitle ? `${hit.familyTitle} › ` : ""}{hit.title}</p>
         <h3>{hit.title}</h3>
         <p className="vault-search-meta">{hit.matchLabel} · {meta(hit)}</p>
-        <blockquote className="vault-search-preview-passage">{highlight(hit.passage, query)}</blockquote>
+        <MarkdownLivePreview className="vault-search-preview-passage" highlightTerms={vaultSearchTerms(query)} source={hit.passage}/>
         {hit.localOnly ? <p className="vault-search-meta">Private note. Only shared with AI when you choose to.</p> : null}
         {hit.cloudPath ? <p className="vault-search-preview-text">This document is still in your cloud vault. Opening it downloads it to this device.</p> : null}
       </>;
@@ -181,7 +181,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
       <h3>{highlight(hit.title, query)}</h3>
       <p className="vault-search-meta">{meta(hit)}</p>
       {cloud ? <p className="vault-search-preview-text">This document is still in your cloud vault. Opening it downloads it to this device.</p>
-        : text ? <p className="vault-search-preview-text">{text}</p> : null}
+        : text ? <MarkdownLivePreview className="vault-search-preview-document" highlightTerms={vaultSearchTerms(query)} source={text}/> : null}
     </>;
   })();
 
