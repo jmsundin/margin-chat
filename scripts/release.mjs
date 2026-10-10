@@ -18,6 +18,7 @@ import { readVercelUpdates, describeVercelUpdates, assertDeployedCommit, assertP
 import { checkReadiness, waitForProductionReadiness, runPersistenceSmoke } from "./release/smoke.mjs";
 import { promoteVerifiedDeployment } from "./release/promote.mjs";
 import { createNeonReleaseProvider, validateBlobStoreTokens, backupBlobStore, restoreBlobBackup } from "./release/providers.mjs";
+import { keepLockSessionActive } from "./release/lock-session.mjs";
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -40,7 +41,7 @@ async function localPlan(config, env) {
 async function connect(connectionString) {
   const url = new URL(connectionString);
   if (!/^postgres(?:ql)?:$/u.test(url.protocol) || url.hostname.includes("-pooler.")) throw new Error("Release jobs require a direct Postgres connection.");
-  const client = new pg.Client({ connectionString, connectionTimeoutMillis: 30_000, keepAlive: true });
+  const client = new pg.Client({ connectionString, connectionTimeoutMillis: 30_000, keepAlive: true, keepAliveInitialDelayMillis: 10_000 });
   client.on("error", () => {}); // Queries fail closed; avoid an unhandled idle socket event.
   await client.connect();
   return client;
@@ -113,7 +114,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
   } });
   const migrations = await loadMigrations();
   let productionClient, productionUrl, pooledUrl, previous, candidate, branches, backup, productionContext;
-  let clientFailure;
+  let clientFailure, stopLockHeartbeat;
   const prefix = `release-rehearsal/${id}/`;
   const vercelEnv = { ...env, VERCEL_ORG_ID: config.vercel.orgId, VERCEL_PROJECT_ID: config.vercel.projectId };
   const vercelApi = createVercelApi({ config: config.vercel, token: env.VERCEL_TOKEN });
@@ -174,6 +175,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         productionClient.on("error", (error) => { clientFailure = error; });
         const lock = await productionClient.query("select pg_try_advisory_lock($1) as locked", [RELEASE_LOCK_KEY]);
         if (!lock.rows[0]?.locked) throw new Error("Another production release is running. Retry when it finishes.");
+        stopLockHeartbeat = keepLockSessionActive(productionClient);
         // Recheck routing after taking the global lock; another release may have
         // completed during this run's local validation.
         if ((await project()).targets?.production?.id !== previous.id) throw new Error("Production changed during validation. Start a new release.");
@@ -305,6 +307,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
     } });
     return { id, ...report, resources, reportPath };
   } finally {
+    stopLockHeartbeat?.();
     await productionContext?.database.close();
     await productionClient?.end();
   }
