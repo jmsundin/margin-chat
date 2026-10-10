@@ -54,7 +54,8 @@ import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
 import { GraphViewModeSelects, GraphViewModeTabs } from "./GraphViewModeControls";
-import { GRAPH_VIEW_MODES } from "../lib/graphViewModes";
+import { MORE_GRAPH_VIEW_MODES } from "../lib/graphViewModes";
+import { createDefaultGraphNodeLayout } from "../lib/graphLayout";
 import "./GraphViewModes.css";
 import {
   aggregateGraphEdges, getGraphScopeConversationIds, getGraphWorldBounds,
@@ -863,6 +864,11 @@ export default function ConversationGraphView({
   const showLinks = !isLineageMode && navigation.state.relationKinds.includes("link");
   const focusedNodeId = scope.kind === "focus" ? scope.conversationId : null;
   const documentsOnly = !isCanvasMode && (navigation.state.overviewPresentation === "documents" || !!focusedNodeId || isNetworkMode || isClustersMode || isLineageMode);
+  // Tidy up rewrites saved positions, so it only appears where they are shown.
+  // Views that compute their own positions offer a Layout choice instead,
+  // except Clusters and Network, whose layouts can't be reshaped.
+  const showTidyUp = isCanvasMode && !panelView;
+  const showLayoutPicker = documentsOnly && !panelView && !isClustersMode && !isNetworkMode;
   const setSelectedConversationId = (id: string | null) => navigation.update({ selectedConversationId: id });
   const setDetailLevel = (value: ConversationGraphDetail) => navigation.update({ detailLevel: value });
   const setDockedConversationId = (id: string | null) => navigation.update({ dockedConversationId: id, source: null });
@@ -919,6 +925,8 @@ export default function ConversationGraphView({
   const [isAutoArranging, setIsAutoArranging] = useState(false);
   const [autoArrangeError, setAutoArrangeError] = useState<string | null>(null);
   const [fitAfterArrange, setFitAfterArrange] = useState(false);
+  // Positions Tidy up replaced, so one Undo puts hand-placed cards back.
+  const [tidyUndo, setTidyUndo] = useState<Record<string, GraphNodeLayout> | null>(null);
   const fitAsOverviewRef = useRef(false);
   const [movingNodePosition, setMovingNodePosition] = useState<GraphNodeMove | null>(null);
   const movingConversationIds = useMemo(
@@ -1566,6 +1574,22 @@ export default function ConversationGraphView({
     fitGraph();
   }, [isVisible, documentsOnly, viewportSize, navigation.state.documentLayoutVersion, navigation.update, fitGraph]);
 
+  function applyTidyUp(nextLayouts: Record<string, Partial<GraphNodeLayout>>) {
+    if (!onUpdateGraphNodeLayouts) return;
+    const previous = Object.fromEntries(Object.keys(nextLayouts).map((id) => [id, graphLayouts[id] ?? createDefaultGraphNodeLayout()]));
+    onUpdateGraphNodeLayouts(nextLayouts);
+    sectionRef.current?.querySelector(".graph-map-layout-options")?.removeAttribute("open");
+    setTidyUndo(Object.keys(previous).length ? previous : null);
+    setFitAfterArrange(true);
+  }
+
+  function undoTidyUp() {
+    if (!tidyUndo) return;
+    onUpdateGraphNodeLayouts?.(tidyUndo);
+    setTidyUndo(null);
+    setFitAfterArrange(true);
+  }
+
   async function autoArrangeGraph() {
     if (isAutoArranging || !scene.nodes.length) {
       return;
@@ -1580,8 +1604,7 @@ export default function ConversationGraphView({
         placements: scene.nodes,
       });
 
-      onUpdateGraphNodeLayouts?.(nextLayouts);
-      setFitAfterArrange(true);
+      applyTidyUp(nextLayouts);
     } catch (error) {
       console.error("Unable to auto-arrange the conversation graph.", error);
       setAutoArrangeError("Auto-arrange could not complete.");
@@ -2156,6 +2179,7 @@ export default function ConversationGraphView({
             y: anchorPlacement.y + move.deltaY,
           })
         : commitPlacements;
+    setTidyUndo(null);
     const nextLayouts = Object.fromEntries(
       reflowedNodes.filter((placement) => {
         const current = originalPlacements.get(placement.conversationId);
@@ -2550,7 +2574,9 @@ export default function ConversationGraphView({
     fitAsOverviewRef.current = false;
     navigation.navigate({ viewMode: null, contentLens: "documents", modeCameras: rememberModeCamera(), scope: { kind: "all" }, focusedTerritoryId: null, focusedTerritoryScale: null,
       selectedConversationId: null, dockedConversationId: null, source: null, detailLevel: "compact",
-      expandedGroups: [], overviewPresentation: "documents", documentLayoutVersion: 1, query: "" });
+      expandedGroups: [], overviewPresentation: "documents", documentLayoutVersion: 1, query: "",
+      // "Around focused node" has no center once every document shows; trees carry over.
+      ...(focusedNodeId && documentLayoutMode === "connections" ? { documentLayoutMode: "auto" as const } : {}) });
     setFitAfterArrange(true);
   }
 
@@ -2708,7 +2734,7 @@ export default function ConversationGraphView({
 
   // Views outside the toolbar tabs are named on the options button so the active view stays visible.
   const secondaryViewLabel = navigation.state.contentLens === "concepts" ? "Concepts"
-    : GRAPH_VIEW_MODES.slice(5).find((item) => item.id === viewMode)?.label;
+    : MORE_GRAPH_VIEW_MODES.find((item) => item.id === viewMode)?.label;
   function closeViewOptions() { sectionRef.current?.querySelector(".graph-map-view-options")?.removeAttribute("open"); }
 
   return (
@@ -2745,8 +2771,6 @@ export default function ConversationGraphView({
                 if (lens === "documents" && viewMode === "evidence") chooseViewMode(navigation.state.documentViewMode);
                 else { navigation.navigate({ contentLens: lens }); setFitAfterArrange(false); }
               }} />
-            <button type="button" aria-pressed={navigation.state.overviewPresentation === "map"} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showAllGroups(); }}>Groups and documents</button>
-            <button type="button" aria-pressed={documentsOnly} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showDocuments(); }}>Documents and connections</button>
             {scope.kind === "all" && !selectedConversation && !focusedTerritory ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setInspectedOverviewSources([]); navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), overviewPresentation: showThemeOverview ? "map" : "themes", focusedTerritoryId: null, focusedTerritoryScale: null }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
           </div>
         </DismissibleDetails>
@@ -2769,17 +2793,31 @@ export default function ConversationGraphView({
         }}>{navigation.state.networkPins[selectedConversationId] ? "Unpin selected" : "Pin selected"}</button> : null}
         {Object.keys(navigation.state.networkPins).length ? <button type="button" onClick={() => navigation.update({ networkPins: {} })}>Clear pins ({Object.keys(navigation.state.networkPins).length})</button> : null}
       </div> : null}
-      {isClustersMode && !panelView ? <div className="graph-mode-context" aria-label="Cluster view status">
-        <span>Documents gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
-        {!jev?.enabled ? <span>Turn on Jev to name clusters by topic; hub titles are shown until then.</span>
-          : clusterLabels.loading ? <span aria-live="polite">Naming clusters…</span> : null}
-        <button type="button" onClick={fitGraph}>Show all clusters</button>
+      {(isClustersMode || viewMode === "topics") && !panelView ? <div className="graph-mode-context" aria-label="Cluster view status">
+        <div className="graph-mode-segmented" role="group" aria-label="Group documents by">
+          <span>Group by</span>
+          <button type="button" aria-pressed={isClustersMode} onClick={() => { if (!isClustersMode) chooseViewMode("clusters"); }}>Links</button>
+          <button type="button" aria-pressed={!isClustersMode} onClick={() => { if (isClustersMode) chooseViewMode("topics"); }}>My groups</button>
+        </div>
+        {isClustersMode ? <>
+          <span>Documents gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
+          {!jev?.enabled ? <span>Turn on Jev to name clusters by topic; hub titles are shown until then.</span>
+            : clusterLabels.loading ? <span aria-live="polite">Naming clusters…</span> : null}
+          <button type="button" onClick={fitGraph}>Show all clusters</button>
+        </> : <>
+          <span>Documents sit in the groups you made. Zoom into a group to see its documents.</span>
+          <button type="button" onClick={showAllGroups}>Show all groups</button>
+        </>}
+      </div> : null}
+      {viewMode === "documents" && !panelView ? <div className="graph-mode-context" aria-label="All documents status">
+        <span>Every document, laid out by its connections. Choose Layout below to change the shape.</span>
+        {selectedConversation ? <button type="button" onClick={() => focusConnections(selectedConversation.id, 1, documentLayoutMode)}>Focus on {selectedConversation.title}</button> : null}
       </div> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
         <button type="button" disabled={!canExpandNeighborhood} onClick={() => focusConnections(scope.conversationId, scope.depth + 1, documentLayoutMode)}>Show more connections</button>
-        <button type="button" onClick={showDocuments}>All nodes</button>
+        <button type="button" onClick={showDocuments}>All documents</button>
       </div> : null}
       {explorerContainer ? createPortal(explorationContent, explorerContainer) : explorerOpen ?
         <div ref={explorerRef} className="graph-map-explorer-popover" data-graph-ui="true" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setExplorerOpen(false); } }}>
@@ -3110,17 +3148,7 @@ export default function ConversationGraphView({
             role="group"
             aria-label="Graph navigation"
           >
-            <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Arrange</summary><div>
-            {isNetworkMode ? <small className="graph-map-layout-context">Use Relax network to rearrange unpinned documents.</small> : documentsOnly ? <>
-              {([
-                ["auto", "Auto layout"],
-                ["tree-right", "Tree: left to right"],
-                ["tree-down", "Tree: top down"],
-                ["connections", focusedNodeId ? "Around focused node" : "Most connections"],
-              ] as const).filter(([mode]) => !isLineageMode || mode === "tree-right" || mode === "tree-down").map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentLayoutMode === mode}
-                onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(mode); }}>{label}</button>)}
-              {documentLayout?.centerNodeId ? <small className="graph-map-layout-context">Centered on {conversations[documentLayout.centerNodeId]?.title}</small> : null}
-            </> : <>
+            {showTidyUp ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Tidy up</summary><div>
             <button
               aria-label={
                 isMultiSelectActive
@@ -3167,17 +3195,25 @@ export default function ConversationGraphView({
             <button
               aria-label="Organize graph by topic"
               disabled={isAutoArranging || !scene.nodes.length || !onUpdateGraphNodeLayouts}
-              onClick={() => {
-                onUpdateGraphNodeLayouts?.(buildCategoryOrganizedGraphLayouts({ conversations, graphLayouts, threads: categorizedThreads }));
-                setFitAfterArrange(true);
-              }}
-              title="Arrange threads using their topic categories"
+              onClick={() => applyTidyUp(buildCategoryOrganizedGraphLayouts({ conversations, graphLayouts, threads: categorizedThreads }))}
+              title="Move documents into columns by topic category"
               type="button"
             >
-              Topics
+              Sort by topic
             </button>
-            </>}
-            </div></DismissibleDetails>
+            <small className="graph-map-layout-context">Auto-arrange and Sort by topic move your cards. Undo puts them back.</small>
+            </div></DismissibleDetails> : null}
+            {showTidyUp && tidyUndo ? <button type="button" className="graph-map-tidy-undo" onClick={undoTidyUp}>Undo tidy up</button> : null}
+            {showLayoutPicker ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Layout</summary><div>
+              {([
+                ["auto", "Auto layout"],
+                ["tree-right", "Tree: left to right"],
+                ["tree-down", "Tree: top down"],
+                ["connections", focusedNodeId ? "Around focused node" : "Most connections"],
+              ] as const).filter(([mode]) => !isLineageMode || mode === "tree-right" || mode === "tree-down").map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentLayoutMode === mode}
+                onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(mode); }}>{label}</button>)}
+              {documentLayout?.centerNodeId ? <small className="graph-map-layout-context">Centered on {conversations[documentLayout.centerNodeId]?.title}</small> : null}
+            </div></DismissibleDetails> : null}
             {selectedConversation && !focusedNodeId ? <button type="button" onClick={() => focusConnections(selectedConversation.id)}>Focus connections</button> : null}
             {selectedConversation ? <button type="button" onClick={revealSelectedConversation}>Center</button> : null}
             <button

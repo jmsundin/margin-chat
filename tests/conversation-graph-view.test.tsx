@@ -282,7 +282,8 @@ describe("conversation graph view", () => {
     expect(markup).toContain('data-conversation-id="root"');
     expect(markup).toContain('data-conversation-id="secondRoot"');
     expect(markup).toContain("Move Choosing a runtime");
-    expect(markup).toContain("Auto-arrange graph with ELK");
+    // Tidy up rewrites saved positions, so the default grouped view doesn't offer it.
+    expect(markup).not.toContain("Auto-arrange graph with ELK");
   });
 
   test("queries only nodes inside the viewport overscan area", () => {
@@ -469,7 +470,8 @@ describe("conversation graph view", () => {
     );
 
     expect(markup).toContain("Click a chat for a preview");
-    expect(markup).toContain('aria-label="Select multiple chats"');
+    expect(markup).not.toContain('aria-label="Select multiple chats"');
+    expect(markup).toContain('aria-label="Group documents by"');
     expect(markup).toContain('aria-pressed="false"');
     expect(markup).not.toContain("conversation-graph-header");
     expect(markup).not.toContain("conversation-graph-toolbar");

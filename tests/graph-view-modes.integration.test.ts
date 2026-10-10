@@ -10,5 +10,5 @@ test("graph views preserve reading and Canvas state while exposing distinct rela
   ]);
   clearTimeout(timeout);
   if (code !== 0) throw new Error(`Graph view modes integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(7);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(9);
 }, 25000);

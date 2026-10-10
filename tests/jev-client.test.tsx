@@ -180,7 +180,8 @@ describe("Jev workspace assistance", () => {
       onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => null} onOpenConversation={() => {}} onToggleGroup={() => {}} onUpdateGraphNodeLayouts={() => {}} />);
     expect(html).toContain("conversation-graph-node-category");
     expect(html).toContain("Coding");
-    expect(html).toContain("Organize graph by topic");
+    // Sorting by topic moves saved cards, so it is a Canvas-only Tidy up action.
+    expect(html).not.toContain("Organize graph by topic");
   });
 
   test("fits both notes after topic organization creates negative positions", () => {

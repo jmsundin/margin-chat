@@ -1,4 +1,4 @@
-import { GRAPH_VIEW_MODES, type GraphContentLens, type GraphViewMode } from "../lib/graphViewModes";
+import { GRAPH_VIEW_MODES, GRAPH_VIEW_TABS, MORE_GRAPH_VIEW_MODES, getGraphViewTab, type GraphContentLens, type GraphViewMode } from "../lib/graphViewModes";
 
 interface Props {
   mode: GraphViewMode;
@@ -10,9 +10,14 @@ interface Props {
 /** Primary view tabs, rendered inline in the map toolbar. */
 export function GraphViewModeTabs({ mode, lens, onModeChange }: Pick<Props, "mode" | "lens" | "onModeChange">) {
   return <div className="graph-view-mode-tabs" role="group" aria-label="Map mode">
-    {GRAPH_VIEW_MODES.slice(0, 5).map((item) => <button key={item.id} type="button" aria-label={`${item.label} view`}
-      aria-pressed={mode === item.id && lens === "documents"} title={item.description}
-      onClick={() => onModeChange(item.id)}>{item.label}</button>)}
+    {GRAPH_VIEW_TABS.map((tab) => {
+      const item = GRAPH_VIEW_MODES.find((candidate) => candidate.id === tab)!;
+      // Clusters keeps its group-by choice when you click it again.
+      const target = tab === "clusters" && mode === "topics" ? "topics" : tab;
+      return <button key={tab} type="button" aria-label={`${item.label} view`}
+        aria-pressed={getGraphViewTab(mode) === tab && lens === "documents"} title={item.description}
+        onClick={() => onModeChange(target)}>{item.label}</button>;
+    })}
     <span className="graph-view-purpose" aria-live="polite">{lens === "concepts" ? "Collect concepts across documents and open their exact sources."
       : GRAPH_VIEW_MODES.find((item) => item.id === mode)?.description}</span>
   </div>;
@@ -20,7 +25,7 @@ export function GraphViewModeTabs({ mode, lens, onModeChange }: Pick<Props, "mod
 
 /** Secondary view choices, rendered inside the map view options menu. */
 export function GraphViewModeSelects({ mode, lens, onModeChange, onLensChange }: Props) {
-  const advanced = GRAPH_VIEW_MODES.slice(5);
+  const advanced = MORE_GRAPH_VIEW_MODES;
   return <div className="graph-view-mode-selects" aria-label="Graph views">
     <label className="graph-view-mode-select"><span>More views</span>
       <select aria-label="More graph views" value={advanced.some((item) => item.id === mode) && lens === "documents" ? mode : ""}

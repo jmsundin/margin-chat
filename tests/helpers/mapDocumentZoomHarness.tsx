@@ -153,7 +153,9 @@ async function freshMap(workspaceKey: string, withGroup = false) {
 try {
   await act(async () => root.render(createElement(Host)));
   await settle();
-  await click([...container.querySelectorAll("button")].find((button) => button.textContent.trim() === "Documents and connections"));
+  // Every document lives under Focus: focus, then All documents.
+  await click(element('[aria-label="Focus view"]'));
+  await click([...container.querySelectorAll(".graph-map-neighborhood button")].find((button) => button.textContent.trim() === "All documents"));
   assert.equal(element(".conversation-graph").dataset.mapPresentation, "documents");
   assert(camera().scale <= 1, "Fit starts with compact document cards");
   assert.equal(card().querySelector(".conversation-graph-node-preview, .conversation-graph-node-reader"), null);

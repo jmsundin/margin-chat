@@ -83,3 +83,13 @@
 }
 /* Opacity only: scaling the viewport left the cards blurry after the animation. */
 @keyframes graph-return-from-document { from { opacity: .35; } to { opacity: 1; } }
+
+/* Clusters' group-by choice: one segmented control in the mode context bar. */
+.graph-mode-segmented { display: inline-flex; align-items: center; gap: 2px; }
+.graph-mode-segmented > span { margin-right: 4px; }
+.graph-mode-context .graph-mode-segmented button { border-radius: 0; }
+.graph-mode-context .graph-mode-segmented button:first-of-type { border-radius: 6px 0 0 6px; }
+.graph-mode-context .graph-mode-segmented button:last-of-type { border-radius: 0 6px 6px 0; }
+.graph-mode-context .graph-mode-segmented button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.graph-map-layout-options > div small { color: var(--muted); font-size: 11px; line-height: 1.4; padding: 4px 6px 0; }
+.semantic-map .conversation-graph-zoom .graph-map-tidy-undo { font-size: 12px; padding: 8px; color: var(--accent); }

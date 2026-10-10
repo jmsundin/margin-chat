@@ -115,6 +115,11 @@ function element(selector: string) {
   assert(value, `Missing ${selector}`);
   return value as any;
 }
+/** Every document, laid out by its connections: Focus, then All documents. */
+async function showAllDocuments() {
+  await click(element('[aria-label="Focus view"]'));
+  await click(button("All documents", ".graph-map-neighborhood button"));
+}
 function button(text: string, selector = "button") {
   const value = [...container.querySelectorAll(selector)].find((item) => item.textContent.trim() === text);
   assert(value, `Missing button: ${text}`);
@@ -359,7 +364,7 @@ async function checkAtlasCanvasNavigation() {
       assert(element('[aria-label="Zoom out to all groups"]'), "The way back to the whole map is always available");
       let atlasViewport = element('.conversation-graph-viewport');
       atlasViewport.setPointerCapture = () => {};
-      for (const selector of ['[aria-label="Zoom out"]', '.graph-map-layout-options > summary']) {
+      for (const selector of ['[aria-label="Zoom out"]', '[aria-label="Zoom in"]']) {
         const cameraBeforeControl = mapCamera();
         const press = new browser.PointerEvent("pointerdown", { pointerId: 80, pointerType: "mouse", button: 0, clientX: 100, clientY: 200, bubbles: true, cancelable: true });
         await act(async () => {
@@ -427,7 +432,7 @@ async function checkAtlasCanvasNavigation() {
       await click(element('[aria-label="Zoom out to all groups"]'));
       assert.deepEqual(mapCamera(), overviewCamera);
       assertAllGroupContents();
-      await click(button("Documents and connections", '.graph-map-view-options button'));
+      await showAllDocuments();
       assert.equal(element('.semantic-map').dataset.mapPresentation, "documents");
       assert.equal(element('.conversation-graph-stage').hidden, false, "Documents view reveals the complete scene at its fitted scale");
       assert.equal(stageCount(), fixtures.length, "Documents view includes members of collapsed groups");
@@ -736,7 +741,7 @@ async function checkDocumentLayoutChoices() {
   }
   try {
     await renderDocuments();
-    await click(button("Documents and connections", '.graph-map-view-options button'));
+    await showAllDocuments();
     assertDocumentScene("auto");
     await assertEdgeWheelPans(['.conversation-graph-edges .graph-map-edge-hit[data-graph-ui]', '.graph-personal-connection .graph-map-edge-hit', '.graph-personal-connection text']);
     const automaticCenters = centers();
@@ -817,7 +822,7 @@ async function checkDocumentLayoutChoices() {
     await act(async () => { element('.conversation-graph-viewport').dispatchEvent(focusWheel); });
     await flushFrames();
     const manuallyPannedFocus = mapCamera();
-    await click(button("All nodes"));
+    await click(button("All documents", ".graph-map-neighborhood button"));
     assert.deepEqual(location().scope, { kind: "all" }, "All nodes exits only the neighborhood scope");
     assert.equal(location().overviewPresentation, "documents", "All nodes returns to document exploration");
     assert.equal(stageCount(), ids.length);
@@ -833,7 +838,7 @@ async function checkDocumentLayoutChoices() {
     assert.deepEqual(location().scope, { kind: "focus", conversationId: "link-b", depth: 2 });
     assert.equal(element('.conversation-graph-stage').dataset.documentCenterNodeId, "link-b");
     assert.deepEqual(mapCamera(), manuallyPannedFocus, "Remount preserves subgraph center, depth and manual camera");
-    await click(button("All nodes"));
+    await click(button("All documents", ".graph-map-neighborhood button"));
 
     await selectDocument("tree-leaf");
     await click(button("Focus connections", '.conversation-graph-zoom button'));
@@ -845,7 +850,7 @@ async function checkDocumentLayoutChoices() {
     assertFocusedDocuments("tree-leaf", 3, ["tree-leaf", "tree-child", "tree-root", "tree-sibling"]);
     await selectDocument("tree-root");
     assertFocusedDocuments("tree-root", 3, ["tree-leaf", "tree-child", "tree-root", "tree-sibling"]);
-    await click(button("All nodes"));
+    await click(button("All documents", ".graph-map-neighborhood button"));
     assert.equal(writes.length, 0);
     assert.deepEqual(authored, unchanged);
     assert.deepEqual(documents, unchangedDocuments);
@@ -1051,7 +1056,7 @@ async function checkTallDenseGroupZoom() {
     assertPackedOverview(2, true);
     assert.equal(stageCount(), 33, "All groups restores every source to the map");
     assert.equal(element('.conversation-graph-stage').dataset.groupLayout, undefined);
-    await click(button("Documents and connections", '.graph-map-view-options button'));
+    await showAllDocuments();
     assert.equal(element('.conversation-graph-stage').dataset.documentLayout, "spaced");
     assert(mapCamera().scale >= 0.5, "An outlying saved document cannot force an unreadable initial document fit");
     const allIds = Object.keys(tallConversations);
@@ -1067,7 +1072,7 @@ async function checkTallDenseGroupZoom() {
     await click(element('[aria-label="Close Coding source 3 split view"]'));
     await resizeGroup(753);
     await resizeGroup(390);
-    await click(button("Documents and connections", '.graph-map-view-options button'));
+    await showAllDocuments();
     const phoneDocumentsFit = mapCamera();
     assert(phoneDocumentsFit.scale >= 0.5, "A phone opens documents with readable title cards and a pannable extent");
     await act(async () => { element('.conversation-graph-viewport').dispatchEvent(new browser.WheelEvent('wheel', {
