@@ -104,5 +104,6 @@
 .agent-mode-toggle button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); font-weight:600; }
 .agent-mode-toggle button:disabled { opacity:.5; cursor:not-allowed; }
 .agent-mode-toggle select { padding:6px 4px; border:1px solid var(--line); border-radius:7px; background:transparent; color:var(--ink); font-size:12px; }
-.document-writing-status.is-agent { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:start; }
-.document-writing-status.is-agent > strong { grid-column:1 / -1; color:var(--ink); }
+.document-writing-status.is-agent { display:grid; grid-template-columns:minmax(0,1fr); justify-content:stretch; gap:8px; align-items:start; }
+.document-agent-status-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.document-agent-status-head strong { color:var(--ink); }

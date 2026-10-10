@@ -5,7 +5,8 @@
 .agent-run-log li.is-failed .agent-run-mark { color: var(--muted); }
 .agent-run-label { color: var(--ink); overflow-wrap: anywhere; }
 .agent-run-log li.is-note .agent-run-label { color: var(--muted); font-style: italic; }
-.agent-run-log li small { margin-left: auto; padding-left: 8px; color: var(--muted); white-space: nowrap; }
+.agent-run-log li small { color: var(--muted); white-space: nowrap; }
+.agent-run-log li small::before { content: "· "; }
 .agent-run-log li.is-working .agent-run-mark { animation: agent-run-pulse 1.2s ease-in-out infinite; }
 .agent-run-meta { margin: 0; color: var(--muted); }
 @keyframes agent-run-pulse { 50% { opacity: 0.35; } }

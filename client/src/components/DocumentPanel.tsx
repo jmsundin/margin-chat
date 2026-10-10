@@ -447,10 +447,11 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
         </>}/> : <RichDocumentPlaceholder blocks={document.blocks} />}
       {props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))
-        ? <div className="document-writing-status is-agent" role="status"><strong>Agent is working</strong>
+        ? <div className="document-writing-status is-agent" role="status">
+          <div className="document-agent-status-head"><strong>Agent is working</strong><button type="button" onClick={props.onStop}>Stop</button></div>
           <AgentRunLog live steps={props.agentProgress?.steps ?? []} spentMicros={props.agentProgress?.spentMicros}
             budgetMicros={props.agentMode?.showBudget ? props.agentMode.budgetMicros : undefined}/>
-          <button type="button" onClick={props.onStop}>Stop</button></div>
+        </div>
         : props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}
       {props.error ? <p className="document-error" role="alert">{props.error}</p> : null}
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
