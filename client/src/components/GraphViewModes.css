@@ -93,3 +93,10 @@
 .graph-mode-context .graph-mode-segmented button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
 .graph-map-layout-options > div small { color: var(--muted); font-size: 11px; line-height: 1.4; padding: 4px 6px 0; }
 .semantic-map .conversation-graph-zoom .graph-map-tidy-undo { font-size: 12px; padding: 8px; color: var(--accent); }
+.semantic-map .conversation-graph-zoom .conversation-graph-multi-select-toggle { font-size: 12px; }
+.semantic-map .conversation-graph-zoom .conversation-graph-multi-select-toggle:not([aria-pressed="true"]) { color: var(--ink); }
+/* Canvas cards move by dragging the card itself, so hint at it with the cursor. */
+@media (hover: hover) and (pointer: fine) {
+  .semantic-map[data-view-mode="canvas"] .conversation-graph-node-select { cursor: grab; }
+  .semantic-map[data-view-mode="canvas"] .is-moving-nodes .conversation-graph-node-select { cursor: grabbing; }
+}
