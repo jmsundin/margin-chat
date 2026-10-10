@@ -12416,7 +12416,7 @@ body .live-markdown-editor {
 .thread-sidebar > .workspace-session-brand { flex-shrink: 0; }
 
 @container workspace-sidebar (max-width: 255px) {
-  .workspace-session-brand .workspace-mode-label { display: none; }
+  .workspace-session-brand .workspace-mode-option { width: 24px; }
 }
 
 .workspace-sidebar-pane > .thread-sidebar {

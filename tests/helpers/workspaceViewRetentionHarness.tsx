@@ -103,8 +103,7 @@ async function settle() {
 }
 async function click(target: any) { assert(target, "Expected a click target"); await act(async () => target.click()); await settle(); }
 async function switchMode(label: "Document View" | "Tile View" | "Map View") {
-  await click([...container.querySelectorAll(".workspace-mode-trigger")].find(isVisible));
-  await click([...browser.document.querySelectorAll('[role="menuitemradio"]')].find((item) => item.textContent?.trim() === label));
+  await click([...container.querySelectorAll('.workspace-mode-control [role="radio"]')].find((item) => isVisible(item) && item.getAttribute("aria-label") === label));
 }
 try {
   await act(async () => root.render(createElement(WorkspaceApp, props)));
@@ -173,6 +172,22 @@ try {
   assert.equal(visibleDocument.querySelector('[role="tab"][aria-selected="true"] .document-tab-title')?.textContent, "Unrelated project");
   assert.equal(visibleDocument.querySelector('[aria-label="Document title"]'), null, "The document title appears in its tab without a duplicate body input.");
   checks.push("opening another document from Tiles refreshes the retained document view with its current content");
+
+  async function shortcut(key: string, shiftKey = false) {
+    const target = [...container.querySelectorAll(".document-workspace .tiptap")].find(isVisible) ?? browser.document.body;
+    const event = new browser.KeyboardEvent("keydown", { key, ctrlKey: true, shiftKey, bubbles: true, cancelable: true });
+    await act(async () => { target.dispatchEvent(event); });
+    await settle();
+    return event;
+  }
+  const mapShortcut = await shortcut("g");
+  assert(mapShortcut.defaultPrevented, "Ctrl+G is taken from the browser's Find next.");
+  assert(isVisible(initialMap), "Ctrl+G opens Map from inside a document.");
+  await shortcut("L", true);
+  assert(isVisible(element(".thread-tile-card")), "Ctrl+Shift+L opens Tiles.");
+  await shortcut("D", true);
+  assert([...container.querySelectorAll(".document-workspace")].some(isVisible), "Ctrl+Shift+D opens Document.");
+  checks.push("keyboard shortcuts switch between Map, Tiles and Document");
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

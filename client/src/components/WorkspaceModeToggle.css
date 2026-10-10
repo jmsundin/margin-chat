@@ -1,0 +1,28 @@
+.workspace-mode-control {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.workspace-mode-option {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.workspace-mode-icon { width: 16px; height: 16px; flex: 0 0 auto; }
+.workspace-mode-option:hover { background: var(--button-surface); color: var(--ink); }
+.workspace-mode-option[aria-checked="true"] { background: var(--button-active-surface); color: var(--accent); }
+.workspace-mode-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+@media (pointer: coarse) {
+  .workspace-mode-option { width: 34px; height: 32px; }
+}
