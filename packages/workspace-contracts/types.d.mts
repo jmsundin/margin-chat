@@ -23,7 +23,7 @@ export interface AgentRunStep {
 }
 export interface AgentRunRecord {
   steps: AgentRunStep[];
-  stopReason: "answered" | "budget" | "round-limit";
+  stopReason: "answered" | "budget" | "round-limit" | "time-limit";
   modelCalls?: number;
   spentMicros?: number;
   budgetMicros?: number;

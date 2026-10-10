@@ -4,7 +4,7 @@ const scopes = new Set(["conversation", "selected", "workspace"]);
 /** Agent run budgets offered in the composer, in micro-dollars. */
 export const AGENT_BUDGET_CHOICES_MICROS = Object.freeze([250_000, 500_000, 1_000_000, 2_000_000]);
 export const DEFAULT_AGENT_BUDGET_MICROS = 500_000;
-const agentStopReasons = new Set(["answered", "budget", "round-limit"]);
+const agentStopReasons = new Set(["answered", "budget", "round-limit", "time-limit"]);
 const routingMethods = new Set(["astra", "astra-task", "jev", "jev-task", "rules", "manual"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value, limit) => typeof value === "string" ? value.slice(0, limit) : "";

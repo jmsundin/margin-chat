@@ -37,6 +37,24 @@ function claudeSse(blocks: any[], stopReason: string) {
 }
 
 describe("agent loop across providers", () => {
+  test("stops calling tools once its time limit has passed", async () => {
+    const bodies: any[] = [];
+    let clock = 0;
+    globalThis.fetch = (async (_url: any, init: any) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      clock += 100_000;
+      return Response.json(body.tool_choice === "none"
+        ? { output_text: "Out of time, here is what I found.", output: [] }
+        : { output: [{ type: "function_call", name: "list_recent_conversations", call_id: `call_${bodies.length}`, arguments: "{\"limit\":1}" }] });
+    }) as typeof fetch;
+    const result = await runAgent({ provider: "openai", apiKey: "sk", chatRequest, model: "gpt", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null,
+      timeLimitMs: 240_000, now: () => clock });
+    expect(bodies.map((body) => body.tool_choice)).toEqual(["auto", "auto", "auto", "none"]);
+    expect(bodies.at(-1).instructions).toContain("time limit");
+    expect(result.agent).toMatchObject({ stopReason: "time-limit", modelCalls: 4 });
+  });
+
   test("Claude: runs tool_use calls and replays thinking with the tool results", async () => {
     const bodies: any[] = [];
     globalThis.fetch = (async (_url: any, init: any) => {

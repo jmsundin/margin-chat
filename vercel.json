@@ -7,7 +7,7 @@
   "functions": {
     "api/*.mjs": {
       "includeFiles": "server/db/**",
-      "maxDuration": 60
+      "maxDuration": 300
     }
   },
   "git": { "deploymentEnabled": false },

@@ -10,6 +10,7 @@ export function formatAgentMicros(micros: number) {
 const stopNotes = {
   budget: "Stopped early at its budget and answered from what it had.",
   "round-limit": "Reached its step limit and answered from what it had.",
+  "time-limit": "Reached its time limit and answered from what it had.",
 };
 
 /** The agent's steps, live while it works and saved with the answer afterwards. */
@@ -17,7 +18,7 @@ export default function AgentRunLog({ steps, spentMicros, budgetMicros, stopReas
   steps: AgentRunStep[];
   spentMicros?: number;
   budgetMicros?: number;
-  stopReason?: "answered" | "budget" | "round-limit";
+  stopReason?: "answered" | "budget" | "round-limit" | "time-limit";
   live?: boolean;
 }) {
   const cost = spentMicros === undefined ? null
