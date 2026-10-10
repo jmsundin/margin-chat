@@ -1,3 +1,5 @@
+import { VAULT_TOOL_DEFINITIONS, createVaultTools, vaultToolAccess } from "./vaultTools.mjs";
+
 function clipText(value, maximum = 220) {
   const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
   return text.length <= maximum ? text : `${text.slice(0, maximum - 1)}…`;
@@ -64,9 +66,16 @@ export const AGENT_TOOL_DEFINITIONS = [
   },
 ];
 
-export function createAgentToolExecutor({ chatRequest }) {
+/** The tools offered to this request: the snapshot tools, plus the vault tools when the user's AI context allows them. */
+export function agentToolDefinitions(chatRequest, workspace = null) {
+  return vaultToolAccess(chatRequest, workspace) ? [...AGENT_TOOL_DEFINITIONS, ...VAULT_TOOL_DEFINITIONS] : AGENT_TOOL_DEFINITIONS;
+}
+
+/** `workspace` is `{ userId, vault, database }` for a signed-in request, or null. */
+export function createAgentToolExecutor({ chatRequest, workspace = null }) {
   const snapshots = permittedSnapshots(chatRequest);
   let remainingCharacters = chatRequest.ai?.mode === "fast" ? 6_000 : chatRequest.ai?.mode === "thorough" ? 24_000 : 12_000;
+  const vaultTools = createVaultTools({ chatRequest, workspace, snapshots, readCharacters: Math.floor(remainingCharacters / 3) });
 
   return async function executeTool(name, args = {}) {
     let result;
@@ -97,6 +106,8 @@ export function createAgentToolExecutor({ chatRequest }) {
           truncated_message_count: item.messages.length - messages.length, truncated,
         } };
       }
+    } else if (vaultTools?.has(name)) {
+      result = await vaultTools.run(name, args);
     } else result = { ok: false, error: "Unknown workspace tool." };
     const size = JSON.stringify(result).length;
     if (size > remainingCharacters) return { ok: false, truncated: true, error: "The context budget for workspace tools is exhausted. Answer from the supplied context and disclose any missing information." };
@@ -108,15 +119,30 @@ export function createAgentToolExecutor({ chatRequest }) {
 const quoted = (value, maximum = 80) => `\u201c${clipText(value, maximum) || "Untitled"}\u201d`;
 const plural = (count, word) => `${count} ${word}${count === 1 ? "" : word.endsWith("h") ? "es" : "s"}`;
 
+function describeVaultStep(name, args, output, exhausted) {
+  if (output?.ok === false && !exhausted) return { label: "Couldn't reach your saved vault", detail: null };
+  if (name === "search_vault") {
+    const total = output.total_matches ?? 0;
+    return { label: `Searched your vault for ${quoted(args.query)}`, detail: exhausted ? null : `${plural(total, "result")}${output.truncated && total >= 8 ? "+" : ""}` };
+  }
+  if (exhausted) return { label: name === "read_document" ? "Tried to read a document" : "Tried to check a document's connections", detail: null };
+  if (!output?.found) return { label: output?.error ? "Tried to open a document outside the allowed context" : "Couldn't find a document", detail: null };
+  return name === "read_document"
+    ? { label: `Read ${quoted(output.document?.title)}`, detail: output.document?.truncated ? "Shortened to fit" : null }
+    : { label: `Checked what's connected to ${quoted(output.document?.title)}`, detail: plural(output.total_related ?? 0, "connection") };
+}
+
 /** A short, human-readable line for the run log. Never includes tool output text. */
 export function describeAgentStep(name, args = {}, output = {}) {
   const exhausted = output?.ok === false && output?.truncated;
-  const base = name === "search_conversations" ? { label: `Searched for ${quoted(args.query)}`, detail: exhausted ? null : plural(output.total_matches ?? 0, "match") }
+  const base = VAULT_TOOL_DEFINITIONS.some((tool) => tool.name === name) ? describeVaultStep(name, args, output, exhausted)
+    : name === "search_conversations" ? { label: `Searched for ${quoted(args.query)}`, detail: exhausted ? null : plural(output.total_matches ?? 0, "match") }
     : name === "list_recent_conversations" ? { label: "Listed recent chats and notes", detail: exhausted ? null : plural(output.total_returned ?? 0, "item") }
     : name === "get_conversation" ? (output?.found
       ? { label: `Read ${quoted(output.conversation?.title)}`, detail: output.conversation?.truncated ? "Shortened to fit" : null }
       : { label: "Tried to open an item outside the permitted context", detail: null })
     : { label: "Tried a tool that isn't available", detail: null };
+  const failed = output?.ok === false || ((name === "get_conversation" || name === "read_document" || name === "list_related") && !output?.found);
   return { kind: "tool", tool: name, label: base.label, ...(exhausted ? { detail: "Context budget for tools used up" } : base.detail ? { detail: base.detail } : {}),
-    ok: !(output?.ok === false || (name === "get_conversation" && !output?.found)) };
+    ok: !failed };
 }

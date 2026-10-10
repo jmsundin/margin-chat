@@ -1,7 +1,7 @@
 import { DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
 import { HttpError } from "../../lib/errors.mjs";
 import { createAgentAdapter } from "./adapters.mjs";
-import { AGENT_TOOL_DEFINITIONS, createAgentToolExecutor, describeAgentStep } from "./tools.mjs";
+import { agentToolDefinitions, createAgentToolExecutor, describeAgentStep } from "./tools.mjs";
 
 /** Model calls per run, the last of which must answer without tools. */
 export const AGENT_MAX_MODEL_CALLS = 12;
@@ -23,13 +23,15 @@ const clip = (text, maximum) => text.length <= maximum ? text : `${text.slice(0,
  * results back, and stop when it answers. Every model call is metered on its own
  * through `usageMeter`. The budget is checked against settled spend before each
  * call, so a run can go over by at most the call that crosses it plus the
- * tool-free answer that follows.
+ * tool-free answer that follows. `workspace` (`{ userId, vault, database }`) adds
+ * the saved-vault tools when the request's AI context allows them.
  */
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, onDelta, onStep }) {
+  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, onDelta, onStep }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
-  const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter }, AGENT_TOOL_DEFINITIONS);
-  const executeTool = createAgentToolExecutor({ chatRequest });
+  const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter },
+    agentToolDefinitions(chatRequest, workspace));
+  const executeTool = createAgentToolExecutor({ chatRequest, workspace });
   const startedAt = now();
   // The meter may already carry this request's routing call; count only the run.
   const startingSpend = usageMeter?.summary().amountMicros ?? 0;

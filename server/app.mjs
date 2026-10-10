@@ -49,6 +49,7 @@ export function createAppContext(env = process.env) {
     env,
     runtimeConfig,
     semanticService,
+    vaultService,
   });
   const apiHandler = createApiHandler({
     captureService: createCaptureService({ database }),

@@ -58,12 +58,24 @@ export function buildSystemInstruction(chatRequest) {
   return parts.join("\n\n");
 }
 
-export function buildAgentInstruction(chatRequest) {
+/**
+ * `vaultTools`: the saved-vault tools are offered. `canWidenScope`: they could be,
+ * if the user let AI search their workspace.
+ */
+export function buildAgentInstruction(chatRequest, { vaultTools = false, canWidenScope = false } = {}) {
+  const reach = vaultTools ? [
+    "search_conversations, list_recent_conversations and get_conversation read the local snapshot sent with this request: the current conversation, its ancestors and any supplied context, including edits that may not be saved yet.",
+    "search_vault, read_document and list_related reach the user's saved vault in the cloud, within the context the user allowed. Use them to find documents beyond the snapshot and to follow connections on the user's map. The newest edits may not be saved there yet.",
+    "Private margin annotations are never available.",
+  ] : [
+    "Workspace tools inspect only the permitted local snapshot supplied for this request, including the current conversation and its ancestors.",
+    "Other workspace content and private margin annotations are unavailable. Do not infer that the supplied snapshot is the whole workspace.",
+    ...(canWidenScope ? ["If the user asks about documents you cannot see, tell them they can open the model picker and set AI context to \"Search relevant notes and conversations in my workspace\" so you can search their saved documents."] : []),
+  ];
   return [
     buildSystemInstruction(chatRequest),
     "You are operating in Agent mode for Margin Chat: you can call tools over several steps before answering.",
-    "Workspace tools inspect only the permitted local snapshot supplied for this request, including the current conversation and its ancestors.",
-    "Other workspace content and private margin annotations are unavailable. Do not infer that the supplied snapshot is the whole workspace.",
+    ...reach,
     "Use the tools when the user asks about prior threads, branch history, saved context, or anything that depends on workspace memory.",
     "Do not claim you inspected saved conversations unless you actually used a workspace tool in this turn.",
     "After using tools, answer directly and synthesize the findings instead of dumping raw tool output.",
