@@ -2754,15 +2754,15 @@ function WorkspaceAppContent({
           conversation.parentId === null &&
           nextLayout.positioned &&
           !currentLayout.positioned;
+        // A tree's origin is set once: where the map showed it (sent with the
+        // move), or else where its root was saved.
         const mergedLayout = createDefaultGraphNodeLayout({
           ...currentLayout,
           ...nextLayout,
-          treeOriginX: preservesTreeOrigin
-            ? currentLayout.treeOriginX ?? currentLayout.x
-            : currentLayout.treeOriginX,
-          treeOriginY: preservesTreeOrigin
-            ? currentLayout.treeOriginY ?? currentLayout.y
-            : currentLayout.treeOriginY,
+          treeOriginX: currentLayout.treeOriginX ?? nextLayout.treeOriginX
+            ?? (preservesTreeOrigin ? currentLayout.x : undefined),
+          treeOriginY: currentLayout.treeOriginY ?? nextLayout.treeOriginY
+            ?? (preservesTreeOrigin ? currentLayout.y : undefined),
         });
 
         if (

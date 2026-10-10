@@ -28,6 +28,7 @@ import { curvedGraphConnection } from "../lib/graphConnectionCurve";
 import { buildMapTerritories, centerNodeInCanvas, fitMapTerritories, fitMapTerritory, fitMapTerritoryOverview, getMapScale, layoutMapTerritoryOverview, layoutFocusedMapTerritory, mapLabelsOverlap, OVERVIEW_NODE_FOOTPRINT as GROUP_NODE_FOOTPRINT, readableNodeSize, type MapTerritory } from "../lib/graphPresentation";
 import {
   buildConversationForestGraphScene,
+  getUnplacedForestRootIds,
   getConversationGraphNodeDimensions,
   replaceConversationGraphNodes,
   getConversationGraphViewportBounds,
@@ -122,16 +123,46 @@ const MAX_GRAPH_CONNECTIONS = 1_200;
 /**
  * Keeps the cards nearest the viewport center, plus any that must stay cards
  * (selected, active, docked). The rest come back as `overflow`, for dots.
+ * With `scale`, a card is also left as a dot where, drawn at its readable
+ * size, it would cover a card already kept. Cards are then kept top to bottom,
+ * left to right, so panning doesn't swap which ones are cards.
  */
 export function limitGraphCards(placements: ConversationGraphNodePlacement[], bounds: ConversationGraphBounds, limit: number,
-  keepIds: Array<string | null | undefined> = []) {
-  if (placements.length <= limit) return { cards: placements, overflow: [] as ConversationGraphNodePlacement[] };
+  keepIds: Array<string | null | undefined> = [], scale?: number) {
+  const spread = scale ? readableNodeSize(scale) : 1;
+  if (placements.length <= limit && spread <= 1) return { cards: placements, overflow: [] as ConversationGraphNodePlacement[] };
   const keep = new Set(keepIds.filter(Boolean));
   const centerX = (bounds.left + bounds.right) / 2, centerY = (bounds.top + bounds.bottom) / 2;
   const distance = (placement: ConversationGraphNodePlacement) => keep.has(placement.conversationId) ? -1
     : (placement.x + placement.width / 2 - centerX) ** 2 + (placement.y + placement.height / 2 - centerY) ** 2;
-  const ranked = placements.map((placement) => ({ placement, distance: distance(placement) })).sort((a, b) => a.distance - b.distance);
-  return { cards: ranked.slice(0, limit).map((item) => item.placement), overflow: ranked.slice(limit).map((item) => item.placement) };
+  const ranked = placements.map((placement) => ({ placement, distance: distance(placement) }));
+  if (spread <= 1) ranked.sort((a, b) => a.distance - b.distance);
+  else ranked.sort((a, b) => Math.min(0, a.distance) - Math.min(0, b.distance) || a.placement.y - b.placement.y || a.placement.x - b.placement.x);
+  if (spread <= 1) return { cards: ranked.slice(0, limit).map((item) => item.placement), overflow: ranked.slice(limit).map((item) => item.placement) };
+
+  const cellSize = placements.reduce((size, placement) => Math.max(size, placement.width, placement.height), 1) * spread;
+  const taken = new Map<string, Array<{ left: number; top: number; right: number; bottom: number }>>();
+  const cards: ConversationGraphNodePlacement[] = [];
+  const overflow: ConversationGraphNodePlacement[] = [];
+  for (const { placement, distance: rank } of ranked) {
+    const halfWidth = placement.width * spread / 2, halfHeight = placement.height * spread / 2;
+    const middleX = placement.x + placement.width / 2, middleY = placement.y + placement.height / 2;
+    const rect = { left: middleX - halfWidth, top: middleY - halfHeight, right: middleX + halfWidth, bottom: middleY + halfHeight };
+    const column = Math.floor(middleX / cellSize), row = Math.floor(middleY / cellSize);
+    let covers = false;
+    if (rank >= 0) {
+      if (cards.length >= limit) covers = true;
+      for (let x = column - 1; x <= column + 1 && !covers; x++) for (let y = row - 1; y <= row + 1 && !covers; y++) {
+        covers = (taken.get(`${x}:${y}`) ?? []).some((other) => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top);
+      }
+    }
+    if (covers) { overflow.push(placement); continue; }
+    cards.push(placement);
+    const key = `${column}:${row}`;
+    const cell = taken.get(key);
+    if (cell) cell.push(rect); else taken.set(key, [rect]);
+  }
+  return { cards, overflow };
 }
 const GRAPH_SPARSE_GROUP_SCALE = 0.35;
 const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
@@ -338,11 +369,23 @@ export function calculateFitViewport(
   };
   const width = Math.max(1, bounds.right - bounds.left);
   const height = Math.max(1, bounds.bottom - bounds.top);
-  const scale = clamp(
+  let scale = clamp(
     Math.min(availableWidth / width, availableHeight / height),
     Number.EPSILON,
     0.96,
   );
+  // Zoomed out, cards are drawn larger than their spot on the map. Leave room
+  // for the ones on the edges to show whole.
+  const widest = scene.nodes.reduce((maximum, node) => Math.max(maximum, node.width), 0);
+  const tallest = scene.nodes.reduce((maximum, node) => Math.max(maximum, node.height), 0);
+  for (let pass = 0; pass < 2; pass++) {
+    const growth = readableNodeSize(scale) * scale - scale;
+    if (growth <= 0) break;
+    scale = clamp(Math.min(
+      Math.max(availableWidth / 2, availableWidth - widest * growth) / width,
+      Math.max(availableHeight / 2, availableHeight - tallest * growth) / height,
+    ), Number.EPSILON, 0.96);
+  }
 
   return {
     scale,
@@ -1201,8 +1244,11 @@ export default function ConversationGraphView({
   const { cards: baseRenderedNodePlacements, overflow: overflowNodePlacements } = useMemo(() => {
     if (stageHidden) return { cards: [], overflow: [] };
     const shown = nearbyNodePlacements.filter((placement) => !hiddenConversationIds.has(placement.conversationId));
-    return limitGraphCards(shown, viewportBounds, cardBudget, [selectedConversationId, activeConversationId, dockedConversationId]);
-  }, [hiddenConversationIds, nearbyNodePlacements, stageHidden, viewportBounds, cardBudget, selectedConversationId, activeConversationId, dockedConversationId]);
+    // Canvas grows zoomed-out cards to a readable size; one that would cover
+    // another is drawn as a dot until zooming in makes room for it.
+    return limitGraphCards(shown, viewportBounds, cardBudget, [selectedConversationId, activeConversationId, dockedConversationId],
+      isCanvasMode && !panelView ? viewport.scale : undefined);
+  }, [hiddenConversationIds, nearbyNodePlacements, stageHidden, viewportBounds, cardBudget, selectedConversationId, activeConversationId, dockedConversationId, isCanvasMode, panelView, viewport.scale]);
   const previewPlacementByConversationId = useMemo(
     () =>
       movingNodePosition
@@ -2119,7 +2165,17 @@ export default function ConversationGraphView({
         x: Math.round(placement.x),
         y: Math.round(placement.y),
       }]),
-    );
+    ) as Record<string, Partial<GraphNodeLayout>>;
+    // Trees no one placed sit in Canvas's grid. Once a card is moved by hand,
+    // pin each of them where it is shown, so nothing else shifts around it.
+    const unplacedRootIds = getUnplacedForestRootIds(conversations, graphLayouts);
+    if (unplacedRootIds.length) {
+      const shownPlacements = new Map(completeScene.nodes.map((node) => [node.conversationId, node]));
+      for (const rootId of unplacedRootIds) {
+        const shown = shownPlacements.get(rootId);
+        if (shown) nextLayouts[rootId] = { ...nextLayouts[rootId], treeOriginX: Math.round(shown.x), treeOriginY: Math.round(shown.y) };
+      }
+    }
     onUpdateGraphNodeLayouts?.(nextLayouts);
   }
 

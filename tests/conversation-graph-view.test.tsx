@@ -660,4 +660,19 @@ describe("card budget", () => {
     expect(overflow).toHaveLength(45);
     expect(limitGraphCards(placements.slice(0, 3), bounds, 5).overflow).toEqual([]);
   });
+
+  test("zoomed out, leaves a card as a dot where it would cover one already kept", async () => {
+    const { limitGraphCards } = await import("../client/src/components/ConversationGraphView");
+    // A row of 200 px cards 340 px apart. At scale 0.3 each is drawn 180 px
+    // wide on screen (600 map px), so only every other one fits.
+    const placements: ConversationGraphNodePlacement[] = Array.from({ length: 6 }, (_, index) => ({
+      conversationId: `n${index}`, depth: 0, x: index * 340, y: 0, width: 200, height: 96,
+    }));
+    const bounds = { left: -400, top: -400, right: 2400, bottom: 400 };
+    const zoomedOut = limitGraphCards(placements, bounds, 400, ["n3"], 0.3);
+    expect(zoomedOut.cards.map((card) => card.conversationId)).toEqual(["n3", "n0", "n5"]);
+    expect(zoomedOut.overflow.map((card) => card.conversationId)).toEqual(["n1", "n2", "n4"]);
+    // Close enough that cards keep their own size, every one is a card.
+    expect(limitGraphCards(placements, bounds, 400, [], 1).overflow).toEqual([]);
+  });
 });
