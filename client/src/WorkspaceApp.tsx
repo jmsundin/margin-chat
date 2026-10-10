@@ -44,7 +44,8 @@ import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
 import DocumentViewsMenu from "./components/DocumentViewsMenu";
-import WorkspaceModeMenu from "./components/WorkspaceModeMenu";
+import WorkspaceModeToggle from "./components/WorkspaceModeToggle";
+import { viewForShortcut } from "./lib/workspaceViewShortcuts";
 import WorkspaceView from "./components/WorkspaceView";
 import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
@@ -1354,6 +1355,29 @@ function WorkspaceAppContent({
     }
     document.addEventListener("keydown", handleSearchShortcut, true);
     return () => document.removeEventListener("keydown", handleSearchShortcut, true);
+  }, []);
+
+  const setViewFromShortcut = useEffectEvent((mode: MainViewMode) => { if (mode !== mainViewMode) handleSetMainViewMode(mode); });
+  useEffect(() => {
+    function handleViewShortcut(event: KeyboardEvent) {
+      const mode = viewForShortcut(event);
+      if (!mode) return;
+      // Capture before editor keymaps; Cmd+G also stops the browser's Find next.
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) setViewFromShortcut(mode);
+    }
+    // The desktop app's View menu sends its picks here.
+    function handleViewRequest(event: Event) {
+      const mode = (event as CustomEvent).detail;
+      if (mode === "chat" || mode === "tiles" || mode === "graph") setViewFromShortcut(mode);
+    }
+    document.addEventListener("keydown", handleViewShortcut, true);
+    window.addEventListener("margin:set-view", handleViewRequest);
+    return () => {
+      document.removeEventListener("keydown", handleViewShortcut, true);
+      window.removeEventListener("margin:set-view", handleViewRequest);
+    };
   }, []);
 
   const toggleSidebarFromShortcut = useEffectEvent(() => handleToggleLeftSidebar());
@@ -4219,7 +4243,7 @@ function WorkspaceAppContent({
           <SidebarPanelIcon />
         </button>
         <h1>Margin Chat</h1>
-        <WorkspaceModeMenu key={`${leftSidebarOpen}-${isMobileViewport}`} mainViewMode={mainViewMode} onSetMainViewMode={handleSetMainViewMode} />
+        <WorkspaceModeToggle mainViewMode={mainViewMode} onSetMainViewMode={handleSetMainViewMode} />
       </div>
     );
   }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, Menu, net, protocol, session, shell } from "electron";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -143,6 +143,50 @@ function createWindow() {
   return window;
 }
 
+// Mirrors client/src/lib/workspaceViewShortcuts.ts; the page handles the switch.
+const WORKSPACE_VIEWS = [
+  { mode: "chat", label: "Document View", accelerator: "CmdOrCtrl+Shift+D" },
+  { mode: "tiles", label: "Tile View", accelerator: "CmdOrCtrl+Shift+L" },
+  { mode: "graph", label: "Map View", accelerator: "CmdOrCtrl+G" },
+];
+
+function showWorkspaceView(window, mode) {
+  void window?.webContents.executeJavaScript(
+    `window.dispatchEvent(new CustomEvent("margin:set-view", { detail: ${JSON.stringify(mode)} }))`,
+  );
+}
+
+function buildAppMenu() {
+  const isMac = process.platform === "darwin";
+  const template = [
+    ...(isMac ? [{ role: "appMenu" }] : []),
+    { role: "fileMenu" },
+    { role: "editMenu" },
+    {
+      label: "View",
+      submenu: [
+        ...WORKSPACE_VIEWS.map(({ mode, label, accelerator }) => ({
+          label,
+          accelerator,
+          click: (_item, window) => showWorkspaceView(window, mode),
+        })),
+        { type: "separator" },
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function startUpdateChecks() {
   return watchForUpdates({
     readLocal: async () => JSON.parse(await readFile(path.join(CLIENT_DIR, "version.json"), "utf8")),
@@ -187,6 +231,7 @@ if (!app.requestSingleInstanceLock()) {
       callback(allowed.has(permission) && isAppUrl(webContents.getURL()));
     });
 
+    buildAppMenu();
     createWindow();
     // The dev server is always current, so only bundled builds check.
     if (!DEV_URL) startUpdateChecks();
