@@ -9,8 +9,8 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import type { MermaidConfig } from "mermaid";
 import { renderMarkdownToHtml } from "../lib/markdown";
+import { MERMAID_BLOCK_SELECTOR, getMermaidConfig, setMermaidStatus } from "../lib/mermaidDiagrams";
 import { getHeadingOutlineId } from "../lib/chatOutline";
 import {
   buildMessageDecorations,
@@ -41,7 +41,6 @@ interface MarkdownMessageProps {
   theme: "light" | "dark";
 }
 
-const MERMAID_BLOCK_SELECTOR = ".message-mermaid-block";
 const INTERACTIVE_MERMAID_SELECTOR =
   '.message-mermaid-diagram[data-mermaid-interactive="true"]';
 const MERMAID_VIEWER_PADDING_PX = 24;
@@ -170,37 +169,6 @@ function findInteractiveBranchAnchor(target: EventTarget | null) {
   }
 
   return target.closest<HTMLElement>("[data-branch-conversation-id]");
-}
-
-function getMermaidConfig(theme: "light" | "dark"): MermaidConfig {
-  return {
-    darkMode: theme === "dark",
-    deterministicIds: true,
-    deterministicIDSeed: `margin-chat-${theme}`,
-    fontFamily:
-      'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    htmlLabels: false,
-    securityLevel: "strict",
-    startOnLoad: false,
-    theme: theme === "dark" ? "dark" : "neutral",
-  };
-}
-
-function setMermaidStatus(block: HTMLElement, message: string | null) {
-  const existingStatus = block.querySelector<HTMLElement>(".message-mermaid-status");
-
-  if (!message) {
-    existingStatus?.remove();
-    return;
-  }
-
-  const status = existingStatus ?? document.createElement("p");
-  status.className = "message-mermaid-status";
-  status.textContent = message;
-
-  if (!existingStatus) {
-    block.append(status);
-  }
 }
 
 function applyDecorations(
