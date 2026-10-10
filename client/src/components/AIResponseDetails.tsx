@@ -1,8 +1,9 @@
 import { getBackendServiceModel, isBackendServiceId } from "../lib/services";
 import type { AIExecutionRecord } from "../types";
+import AgentRunLog from "./AgentRunLog";
 import "./AIResponseDetails.css";
 
-const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI Agent", "anthropic-api": "Anthropic Claude", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
+const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI", "anthropic-api": "Anthropic Claude", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
 const routingLabels = {
   astra: "Auto · selected by GPT-6 Astra (low reasoning)",
   "astra-task": "Auto · GPT-6 Astra task matching",
@@ -29,6 +30,7 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
     <details className="ai-response-more">
     <summary>
       <span className="ai-routing-model">{statusLabel} <strong>{modelLabel(execution.provider, execution.model)}</strong><span> · {providers[execution.provider] ?? execution.provider}</span></span>
+      {execution.agent ? <span className="ai-routing-agent-label">Agent · {execution.agent.steps.filter((step) => step.kind === "tool").length} {execution.agent.steps.filter((step) => step.kind === "tool").length === 1 ? "step" : "steps"}</span> : null}
       {execution.fallbacks.length ? <span className="ai-routing-fallback-label">Fallback used</span> : null}
       <span className="ai-routing-trigger">Why this model?<svg aria-hidden="true" viewBox="0 0 16 16" fill="none"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
     </summary>
@@ -44,6 +46,10 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
         {execution.durationMs !== undefined ? <div><dt>Time</dt><dd>{(execution.durationMs / 1000).toFixed(1)} seconds</dd></div> : null}
         {execution.status && execution.status !== "complete" ? <div><dt>Status</dt><dd>{execution.status === "stopped" ? "Stopped; partial answer saved" : execution.status === "failed" ? "Interrupted; partial answer saved" : isStreaming ? "Responding" : "Partial answer saved; completion not recorded"}</dd></div> : null}
       </dl>
+      {execution.agent ? <div className="ai-agent-run"><strong>Agent steps</strong>
+        <AgentRunLog steps={execution.agent.steps} spentMicros={execution.agent.spentMicros} budgetMicros={execution.agent.budgetMicros} stopReason={execution.agent.stopReason}/>
+        {!execution.agent.steps.length ? <p className="ai-detail-note">The agent answered without needing any tools.</p> : null}
+      </div> : null}
       {execution.sources.length ? <div className="ai-used-sources"><strong>Context used</strong><ul>{execution.sources.map((source, index) => <li key={`${source.kind}:${source.id}:${index}`}>
         {source.kind !== "document" && onOpenSource ? <button type="button" onClick={() => onOpenSource(source.id)}>{source.title || source.id}</button> : <span>{source.title || source.id}</span>}
         <small>{source.kind}{source.updatedAt ? ` · version from ${source.updatedAt}` : ""}</small>

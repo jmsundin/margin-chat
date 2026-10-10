@@ -1,6 +1,10 @@
 export const AI_MODES = Object.freeze(["balanced", "fast", "thorough"]);
 export const AI_PROVIDERS = Object.freeze(["openai", "anthropic", "gemini", "huggingface", "xai"]);
 const scopes = new Set(["conversation", "selected", "workspace"]);
+/** Agent run budgets offered in the composer, in micro-dollars. */
+export const AGENT_BUDGET_CHOICES_MICROS = Object.freeze([250_000, 500_000, 1_000_000, 2_000_000]);
+export const DEFAULT_AGENT_BUDGET_MICROS = 500_000;
+const agentStopReasons = new Set(["answered", "budget", "round-limit", "time-limit"]);
 const routingMethods = new Set(["astra", "astra-task", "jev", "jev-task", "rules", "manual"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value, limit) => typeof value === "string" ? value.slice(0, limit) : "";
@@ -14,6 +18,8 @@ export function normalizeAISettings(input) {
     selectedConversationIds: [...new Set(Array.isArray(value.selectedConversationIds)
       ? value.selectedConversationIds.filter((id) => typeof id === "string" && id.length > 0 && id.length <= 256) : [])].slice(0, 100),
     ...(value.jevEnabled === true ? { jevEnabled: true } : {}),
+    ...(value.agent === true ? { agent: true } : {}),
+    ...(AGENT_BUDGET_CHOICES_MICROS.includes(value.agentBudgetMicros) ? { agentBudgetMicros: value.agentBudgetMicros } : {}),
     ...(Array.isArray(value.allowedProviders) ? {
       allowedProviders: [...new Set(value.allowedProviders.filter((provider) => AI_PROVIDERS.includes(provider)))],
     } : {}),
@@ -51,5 +57,35 @@ export function normalizeAIExecution(input) {
   }
   if (typeof input.completedAt === "string" && Number.isFinite(Date.parse(input.completedAt))) result.completedAt = input.completedAt;
   if (["streaming", "complete", "stopped", "failed"].includes(input.status)) result.status = input.status;
+  const agent = normalizeAgentRun(input.agent);
+  if (agent) result.agent = agent;
   return result;
+}
+
+const micros = (value) => Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+
+/** One line of an agent's run log. Labels are written by the server, never tool output. */
+export function normalizeAgentStep(input) {
+  if (!record(input) || !["tool", "note"].includes(input.kind) || !text(input.label, 300).trim()) return undefined;
+  return {
+    kind: input.kind,
+    label: text(input.label, 300),
+    ...(input.kind === "tool" && text(input.tool, 80) ? { tool: text(input.tool, 80) } : {}),
+    ...(text(input.detail, 200) ? { detail: text(input.detail, 200) } : {}),
+    ok: input.ok !== false,
+  };
+}
+
+function normalizeAgentRun(input) {
+  if (!record(input)) return undefined;
+  const spentMicros = micros(input.spentMicros);
+  const budgetMicros = micros(input.budgetMicros);
+  const modelCalls = micros(input.modelCalls);
+  return {
+    steps: (Array.isArray(input.steps) ? input.steps : []).map(normalizeAgentStep).filter(Boolean).slice(0, 40),
+    stopReason: agentStopReasons.has(input.stopReason) ? input.stopReason : "answered",
+    ...(modelCalls !== undefined ? { modelCalls } : {}),
+    ...(spentMicros !== undefined ? { spentMicros } : {}),
+    ...(budgetMicros !== undefined ? { budgetMicros } : {}),
+  };
 }

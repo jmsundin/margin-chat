@@ -9,6 +9,24 @@ export interface AISettings {
   allowedProviders?: AIProvider[];
   /** Explicit permission to send bounded context to TypeSafe for assistance. */
   jevEnabled?: boolean;
+  /** Agent mode: the model may call workspace tools over several steps. */
+  agent?: boolean;
+  /** Spending cap for one agent run, in micro-dollars (one of the offered choices). */
+  agentBudgetMicros?: number;
+}
+export interface AgentRunStep {
+  kind: "tool" | "note";
+  label: string;
+  tool?: string;
+  detail?: string;
+  ok: boolean;
+}
+export interface AgentRunRecord {
+  steps: AgentRunStep[];
+  stopReason: "answered" | "budget" | "round-limit" | "time-limit";
+  modelCalls?: number;
+  spentMicros?: number;
+  budgetMicros?: number;
 }
 export interface AIContextSource {
   kind: "conversation" | "note" | "document";
@@ -37,6 +55,7 @@ export interface AIExecutionRecord {
   durationMs?: number;
   completedAt?: string;
   status?: "streaming" | "complete" | "stopped" | "failed";
+  agent?: AgentRunRecord;
 }
 
 export type BackendServiceId =

@@ -21,7 +21,8 @@ describe("shared API deployment", () => {
     const apiFiles = readdirSync(new URL("../api", import.meta.url), { recursive: true }).filter((name) => String(name).endsWith(".mjs"));
     expect(apiFiles).toEqual(["handler.mjs"]);
     const config = JSON.parse(readFileSync(new URL("../vercel.json", import.meta.url), "utf8"));
-    expect(config.functions["api/*.mjs"].maxDuration).toBe(60);
+    // Agent runs make many model calls; the runner wraps up before this cutoff.
+    expect(config.functions["api/*.mjs"].maxDuration).toBe(300);
     expect(new Bun.Glob(config.functions["api/*.mjs"].includeFiles).match("server/db/schema.sql")).toBe(true);
     expect(new Bun.Glob(config.functions["api/*.mjs"].includeFiles).match("server/db/migrations/manifest.json")).toBe(true);
     expect(new Bun.Glob(config.functions["api/*.mjs"].includeFiles).match("server/db/migrations/0001_baseline.sql")).toBe(true);

@@ -185,7 +185,7 @@ function anthropicEffort(args) {
   return mode === "fast" ? "low" : mode === "thorough" ? "high" : "medium";
 }
 
-function anthropicBody(args) {
+export function anthropicBody(args) {
   return {
     model: args.model,
     max_tokens: args.maxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
@@ -257,6 +257,35 @@ async function anthropicReply(args, stream) {
     }
     if (!reply.trim()) throw new HttpError(502, "anthropic returned a response without assistant text.");
     return { model: resolvedModel, reply: stream ? reply : reply.trim(), usage: normalizeProviderUsage("anthropic", { usage }) };
+  });
+}
+
+/** One non-streamed Messages call that may return tool_use blocks. The final
+ * message comes from the SDK's stream helper so long outputs never time out. */
+export async function requestAnthropicMessage({ apiKey, body, signal, usageMeter }) {
+  assertKey(apiKey, "anthropic");
+  const fallbackError = "anthropic request failed.";
+  const description = { provider: "anthropic", model: body.model, body, maxOutputTokens: body.max_tokens, signal };
+  return runMeteredProviderOperation(usageMeter, description, async (tracker) => {
+    signal?.throwIfAborted();
+    const client = new Anthropic({ apiKey, maxRetries: 0 });
+    tracker.markDispatched();
+    let message;
+    try {
+      const stream = body.fallbacks
+        ? client.beta.messages.stream({ ...body, betas: [ANTHROPIC_FALLBACK_BETA] }, { signal })
+        : client.messages.stream(body, { signal });
+      message = await stream.finalMessage();
+    } catch (error) {
+      if (error instanceof Anthropic.APIError && error.status) tracker.markRejected();
+      throw anthropicError(error, fallbackError);
+    }
+    tracker.recordUsage({ usage: message.usage });
+    if (message.stop_reason === "refusal") {
+      const category = typeof message.stop_details?.category === "string" ? ` (${message.stop_details.category})` : "";
+      throw new HttpError(422, `Claude declined to answer this request${category}. Try rephrasing it or choose another model.`);
+    }
+    return message;
   });
 }
 

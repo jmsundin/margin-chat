@@ -73,7 +73,7 @@ try {
   await act(async () => { type(browser.document.querySelector('input[type="search"]'), "gpt-6"); });
   const results = browser.document.querySelector('[aria-label="Search results"]')!;
   assert(results);
-  assert.equal(results.querySelectorAll('.picker-model-row').length, 6);
+  assert.equal(results.querySelectorAll('.picker-model-row').length, 3); // OpenAI only: the retired OpenAI Agent choice is no longer offered.
   await act(async () => { results.querySelector<HTMLButtonElement>('.picker-model-row')!.click(); });
   assert.deepEqual(selections, [["openai-api", "gpt-6-astra"]]);
   assert.equal(browser.document.activeElement, trigger);

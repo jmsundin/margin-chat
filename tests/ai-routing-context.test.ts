@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createChatService } from "../server/chat/index.mjs";
-import { createOpenAIAgentToolExecutor } from "../server/chat/agentTools.mjs";
+import { createAgentToolExecutor } from "../server/chat/agent/tools.mjs";
 import { prepareChatContext, CONTEXT_CHARACTER_BUDGETS } from "../server/chat/context.mjs";
 import { validateChatRequest } from "../server/chat/validation.mjs";
 import { buildSystemInstruction } from "../server/chat/systemPrompt.mjs";
@@ -199,9 +199,9 @@ describe("shared permitted context", () => {
   test("Agent tools never query saved workspace or search private annotations", async () => {
     let reads = 0;
     const raw = payload({ workspaceContext: [{ id: "other", title: "Other", messages: [{ role: "user", content: "Not permitted" }] }] });
-    const execute = createOpenAIAgentToolExecutor({ chatRequest: raw, database: { async loadState() { reads++; return { conversations: {} }; } }, userId: "owner" });
+    const execute = createAgentToolExecutor({ chatRequest: raw, database: { async loadState() { reads++; return { conversations: {} }; } }, userId: "owner" });
     expect(await execute("get_conversation", { conversation_id: "other" })).toMatchObject({ found: false });
-    const selected = createOpenAIAgentToolExecutor({ chatRequest: { ...raw,
+    const selected = createAgentToolExecutor({ chatRequest: { ...raw,
       ai: { contextScope: "selected", selectedConversationIds: ["other"] },
       workspaceContext: [{ id: "other", title: "Other", content: "Local primary note", messages: [], notes: [{ kind: "comment", content: "annotationsecret" }] }],
     } });

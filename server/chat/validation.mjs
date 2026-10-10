@@ -3,6 +3,7 @@ import {
   isBackendModelIdForService,
 } from "../lib/backendModels.mjs";
 import { HttpError } from "../lib/errors.mjs";
+import { AGENT_BUDGET_CHOICES_MICROS, DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
 
 const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
 const AI_PROVIDERS = new Set(["openai", "anthropic", "gemini", "huggingface", "xai"]);
@@ -24,6 +25,10 @@ export function validateAIOptions(input) {
       selectedConversationIds.some((id) => typeof id !== "string" || !id.trim())) {
     throw new HttpError(400, "selectedConversationIds must contain at most 500 conversation IDs.");
   }
+  if (ai.agent !== undefined && typeof ai.agent !== "boolean") throw new HttpError(400, "agent must be a boolean.");
+  if (ai.agentBudgetMicros !== undefined && !AGENT_BUDGET_CHOICES_MICROS.includes(ai.agentBudgetMicros)) {
+    throw new HttpError(400, "agentBudgetMicros must be one of the offered agent budgets.");
+  }
   if (ai.allowedProviders !== undefined && (!Array.isArray(ai.allowedProviders) ||
       ai.allowedProviders.some((provider) => !AI_PROVIDERS.has(provider)))) {
     throw new HttpError(400, "allowedProviders must contain supported provider names.");
@@ -33,6 +38,7 @@ export function validateAIOptions(input) {
     contextScope,
     selectedConversationIds: [...new Set(selectedConversationIds)],
     ...(ai.jevEnabled === true ? { jevEnabled: true } : {}),
+    ...(ai.agent === true ? { agent: true, agentBudgetMicros: ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS } : {}),
     ...(ai.allowedProviders === undefined ? {} : { allowedProviders: [...new Set(ai.allowedProviders)] }),
   };
 }

@@ -5,6 +5,7 @@ import {
   type BackendServiceModel,
   type BackendServiceOption,
   getBackendServiceModel,
+  RETIRED_SERVICE_IDS,
   type RecentBackendServiceSelection,
 } from "../lib/services";
 import type { BackendServiceId } from "../types";
@@ -121,7 +122,8 @@ export default function ServicePickerModal({
 
   if (!isOpen) return null;
 
-  const allChoices = BACKEND_SERVICE_OPTIONS.flatMap((service) => service.models.map((model) => ({ service, model })));
+  const allChoices = BACKEND_SERVICE_OPTIONS.filter((service) => !RETIRED_SERVICE_IDS.has(service.id))
+    .flatMap((service) => service.models.map((model) => ({ service, model })));
   const currentService = BACKEND_SERVICE_OPTIONS.find((service) => service.id === currentServiceId);
   const currentModel = getBackendServiceModel(currentServiceId, currentModelId);
   const currentChoice = currentService && currentModel ? { service: currentService, model: currentModel } : undefined;
@@ -131,7 +133,7 @@ export default function ServicePickerModal({
     const key = `${selection.serviceId}:${selection.modelId}`;
     const service = BACKEND_SERVICE_OPTIONS.find((option) => option.id === selection.serviceId);
     const model = getBackendServiceModel(selection.serviceId, selection.modelId);
-    if (!service || !model || seenRecent.has(key)) return [];
+    if (!service || !model || seenRecent.has(key) || RETIRED_SERVICE_IDS.has(service.id)) return [];
     seenRecent.add(key);
     return [{ service, model }];
   });
@@ -160,7 +162,7 @@ export default function ServicePickerModal({
         <span className="picker-model-icon" aria-hidden="true">{isAuto ? "✦" : service.iconLabel}</span>
         <span className="picker-model-copy">
           <span className="picker-model-name">{choiceLabel(choice)}{isAuto ? <span className="picker-default-label">Default</span> : null}</span>
-          <span className="picker-model-detail">{isAuto ? "GPT-6 Astra chooses a model for each reply" : service.id === "openai-agent" ? "OpenAI · can explore your workspace" : service.provider}{licenseLabel ? ` · ${licenseLabel}` : ""}</span>
+          <span className="picker-model-detail">{isAuto ? "GPT-6 Astra chooses a model for each reply" : service.provider}{licenseLabel ? ` · ${licenseLabel}` : ""}</span>
         </span>
         {isCurrent ? <span className="picker-selected"><span aria-hidden="true">✓</span><span className="picker-sr-only">Selected</span></span> : null}
       </button>
@@ -196,7 +198,7 @@ export default function ServicePickerModal({
                   Browse by provider<Chevron expanded={browseProviders} />
                 </button>
                 {browseProviders ? <div id={providersId} className="picker-providers">
-                  {BACKEND_SERVICE_OPTIONS.filter((service) => service.id !== "backend-services").map((service) => {
+                  {BACKEND_SERVICE_OPTIONS.filter((service) => service.id !== "backend-services" && !RETIRED_SERVICE_IDS.has(service.id)).map((service) => {
                     const expanded = expandedProviderId === service.id;
                     const sectionId = `${providersId}-${service.id}`;
                     return <div className="picker-provider" key={service.id}>

@@ -1,0 +1,13 @@
+.agent-run-log { display: grid; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.agent-run-log ol { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.agent-run-log li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.agent-run-mark { flex: 0 0 12px; text-align: center; color: var(--accent); }
+.agent-run-log li.is-failed .agent-run-mark { color: var(--muted); }
+.agent-run-label { color: var(--ink); overflow-wrap: anywhere; }
+.agent-run-log li.is-note .agent-run-label { color: var(--muted); font-style: italic; }
+.agent-run-log li small { color: var(--muted); white-space: nowrap; }
+.agent-run-log li small::before { content: "· "; }
+.agent-run-log li.is-working .agent-run-mark { animation: agent-run-pulse 1.2s ease-in-out infinite; }
+.agent-run-meta { margin: 0; color: var(--muted); }
+@keyframes agent-run-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .agent-run-log li.is-working .agent-run-mark { animation: none; } }

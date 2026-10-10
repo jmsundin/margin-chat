@@ -305,6 +305,17 @@ const BACKEND_SERVICE_OPTIONS_BY_ID = new Map(
   BACKEND_SERVICE_OPTIONS.map((service) => [service.id, service]),
 );
 
+/** Services whose models can call tools, so Agent mode can run on them. Auto
+ * picks a model per reply; if it picks one without tools, the reply says so. */
+const AGENT_SERVICE_IDS = new Set<BackendServiceId>(["backend-services", "openai-api", "openai-agent", "anthropic-api", "xai-api"]);
+
+export function supportsAgentMode(serviceId: BackendServiceId) {
+  return AGENT_SERVICE_IDS.has(serviceId);
+}
+
+/** The old "OpenAI Agent" choice: still runs for saved chats, no longer offered. */
+export const RETIRED_SERVICE_IDS: ReadonlySet<BackendServiceId> = new Set(["openai-agent"]);
+
 export function isBackendServiceId(
   value: unknown,
 ): value is BackendServiceId {

@@ -1,6 +1,7 @@
 import { analyzeAutoRoute, AUTO_ROUTER_LABEL } from "./autoRouter.mjs";
 import { HttpError } from "../lib/errors.mjs";
-import { requestOpenAIAgentResponse, requestOpenAIAgentResponseStream } from "./openaiAgent.mjs";
+import { AGENT_PROVIDERS } from "./agent/adapters.mjs";
+import { runAgent } from "./agent/runner.mjs";
 import {
   requestAnthropicResponse, requestAnthropicResponseStream,
   requestGeminiResponse, requestGeminiResponseStream,
@@ -8,7 +9,7 @@ import {
   requestOpenAIResponse, requestOpenAIResponseStream,
   requestXAIResponse, requestXAIResponseStream,
 } from "./providers.mjs";
-import { buildOpenAIAgentInstruction, buildSystemInstruction } from "./systemPrompt.mjs";
+import { buildAgentInstruction, buildSystemInstruction } from "./systemPrompt.mjs";
 import { buildChatTitleInstruction, sanitizeGeneratedChatTitle, sanitizeGeneratedClusterLabel, validateChatTitleRequest } from "./title.mjs";
 import { validateAIOptions, validateChatRequest } from "./validation.mjs";
 import { prepareChatContext } from "./context.mjs";
@@ -17,7 +18,8 @@ import { PROFILE_EVIDENCE } from "./modelProfiles.mjs";
 import { createHostedUsageMeter } from "../billing/usage.mjs";
 
 const PROVIDERS = Object.freeze({
-  "openai-agent": { reply: requestOpenAIAgentResponse, stream: requestOpenAIAgentResponseStream },
+  // Legacy service ID: OpenAI with agent mode always on.
+  "openai-agent": { reply: requestOpenAIResponse, stream: requestOpenAIResponseStream },
   "openai-api": { reply: requestOpenAIResponse, stream: requestOpenAIResponseStream },
   "anthropic-api": { reply: requestAnthropicResponse, stream: requestAnthropicResponseStream },
   "gemini-api": { reply: requestGeminiResponse, stream: requestGeminiResponseStream },
@@ -181,9 +183,11 @@ export function createChatService({ database, documentService, env, runtimeConfi
       ? prepareChatContext(orderedRequest, documentContext, budgetOptions) : initialContext;
     const fallbacks = [];
     const failures = [];
+    const agentRequested = !instructionOverride && (chatRequest.ai.agent === true || chatRequest.serviceId === "openai-agent");
     for (const route of routes) {
       context.signal?.throwIfAborted();
       const credential = getProviderCredential(route.serviceId, context);
+      const agentProvider = agentRequested && AGENT_PROVIDERS.includes(providerName(route.serviceId)) ? providerName(route.serviceId) : null;
       const receipt = {
         schemaVersion: 1,
         status: "streaming",
@@ -197,7 +201,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
         sources: prepared.sources,
         truncated: prepared.truncated,
         fallbacks: [...fallbacks],
-        warnings: [...prepared.warnings, ...semanticWarnings, ...(chatRequest.serviceId === "backend-services" ? [PROFILE_EVIDENCE.limitation] : [])],
+        warnings: [...prepared.warnings, ...semanticWarnings, ...(chatRequest.serviceId === "backend-services" ? [PROFILE_EVIDENCE.limitation] : []),
+          ...(agentRequested && !agentProvider ? [`Agent mode isn't available for ${providerName(route.serviceId)} models, so this reply was written without workspace tools.`] : [])],
       };
       const metadata = {
         credentialSource: credential.source,
@@ -222,8 +227,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
         maxInputCharacters: prepared.chatRequest.contextCharacterBudget,
         model: route.model,
         signal: context.signal,
-        systemInstruction: instructionOverride ?? (route.serviceId === "openai-agent"
-          ? buildOpenAIAgentInstruction(prepared.chatRequest)
+        systemInstruction: instructionOverride ?? (agentProvider
+          ? buildAgentInstruction(prepared.chatRequest)
           : buildSystemInstruction(prepared.chatRequest)),
         userId: context.userId,
         usageMeter: credential.source === "hosted" ? context.usageMeter : null,
@@ -237,15 +242,16 @@ export function createChatService({ database, documentService, env, runtimeConfi
       }
       try {
         const provider = PROVIDERS[route.serviceId];
-        const result = handlers ? await provider.stream({
-          ...args,
-          // A provider connection opening alone does not expose a client
-          // stream. Once any delta is exposed, retries would corrupt a reply.
-          onDelta: async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); },
-        }) : await provider.reply(args);
+        // A provider connection opening alone does not expose a client
+        // stream. Once any delta or agent step is exposed, retries would corrupt a reply.
+        const onDelta = async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); };
+        const result = agentProvider ? await runAgent({
+          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros,
+          ...(handlers ? { onDelta, onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); } } : {}),
+        }) : handlers ? await provider.stream({ ...args, onDelta }) : await provider.reply(args);
         context.signal?.throwIfAborted();
         if (handlers) await ensureReady();
-        const toolTruncated = result.steps?.some((step) => step.output?.truncated || step.output?.conversation?.truncated);
+        const toolTruncated = result.toolTruncated === true;
         return {
           metadata: {
             ...metadata,
@@ -255,6 +261,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
               ...receipt,
               model: result.model,
               status: "complete",
+              ...(result.agent ? { agent: result.agent } : {}),
               truncated: receipt.truncated || Boolean(toolTruncated),
               warnings: toolTruncated ? [...receipt.warnings, "Workspace tool results were shortened to fit the context budget."] : receipt.warnings,
               completedAt: new Date().toISOString(),

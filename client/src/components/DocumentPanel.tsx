@@ -15,6 +15,9 @@ import AnnotationPreview from "./AnnotationPreview";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
 import MobileAIComposer from "./MobileAIComposer";
+import AgentModeToggle, { type AgentModeControls } from "./AgentModeToggle";
+import AgentRunLog from "./AgentRunLog";
+import type { AgentProgress } from "../lib/useChatStreams";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
 import "./DocumentPanel.css";
 
@@ -29,6 +32,10 @@ export interface DocumentPanelProps {
   isActive: boolean;
   isSubmitting: boolean;
   aiControls: ReactNode;
+  /** The Agent switch in the Ask AI composer; omitted where agent mode isn't offered. */
+  agentMode?: AgentModeControls;
+  /** Live steps of a running agent request. */
+  agentProgress?: AgentProgress;
   documentMenu?: ReactNode;
   headerControls?: ReactNode;
   /** Controls shown at the start of the header, before the parent link. */
@@ -356,6 +363,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         <div className="mobile-ai-options-actions">
           <button type="button" aria-label="Attach documents" onClick={() => fileRef.current?.click()}>＋ Attach</button>
           <button type="button" aria-label="Choose AI model" onClick={() => setModelOpen(true)}>{modelLabel} ⌄</button>
+          {props.agentMode ? <AgentModeToggle controls={props.agentMode} disabled={props.isSubmitting}/> : null}
         </div>
       </>}/>;
     return <form ref={composerRef} className="document-ai-composer" onSubmit={(event) => {event.preventDefault();submit();}} onKeyDown={(event)=>{if(event.key==="Escape"){event.preventDefault();event.stopPropagation();dismissAI();}}}>
@@ -366,7 +374,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
             <div className="document-ai-options"><div role="group" aria-label="Response destination"><button aria-pressed={destination==="inline"} onClick={()=>setDestination("inline")} type="button">In this document</button><button aria-pressed={destination==="side"} onClick={()=>setDestination("side")} type="button">Side document ↗</button></div>
               {invocation.selection && destination==="inline" ? <label><input type="checkbox" checked={replaceSelection} onChange={(event)=>setReplaceSelection(event.target.checked)}/>Replace selection</label> : null}</div>
             </div>
-            <div className="document-ai-toolbar"><button type="button" aria-label="Attach documents" onClick={()=>fileRef.current?.click()}>＋ Attach</button><button type="button" aria-label="Choose AI model" onClick={()=>setModelOpen(true)}>{modelLabel}⌄</button><button className="document-ai-send" type="submit" disabled={!prompt.trim()||props.isSubmitting}>Generate ↑</button></div>
+            <div className="document-ai-toolbar"><button type="button" aria-label="Attach documents" onClick={()=>fileRef.current?.click()}>＋ Attach</button><button type="button" aria-label="Choose AI model" onClick={()=>setModelOpen(true)}>{modelLabel}⌄</button>{props.agentMode ? <AgentModeToggle controls={props.agentMode} disabled={props.isSubmitting}/> : null}<button className="document-ai-send" type="submit" disabled={!prompt.trim()||props.isSubmitting}>Generate ↑</button></div>
             <small className="document-ai-hint">Uses this document{invocation.selection?.quote ? " and the selected passage" : ""} · Enter to send</small>
           </form>;
   }
@@ -438,7 +446,13 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPrompt)}
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
         </>}/> : <RichDocumentPlaceholder blocks={document.blocks} />}
-      {props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}
+      {props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))
+        ? <div className="document-writing-status is-agent" role="status">
+          <div className="document-agent-status-head"><strong>Agent is working</strong><button type="button" onClick={props.onStop}>Stop</button></div>
+          <AgentRunLog live steps={props.agentProgress?.steps ?? []} spentMicros={props.agentProgress?.spentMicros}
+            budgetMicros={props.agentMode?.showBudget ? props.agentMode.budgetMicros : undefined}/>
+        </div>
+        : props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}
       {props.error ? <p className="document-error" role="alert">{props.error}</p> : null}
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>

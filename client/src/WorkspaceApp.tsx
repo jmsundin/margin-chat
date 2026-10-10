@@ -139,9 +139,11 @@ import {
   getBackendServiceLabel,
   getBackendServiceModel,
   resolveBackendServiceModelId,
+  supportsAgentMode,
   type RecentBackendServiceSelection,
   upsertRecentBackendServiceSelection,
 } from "./lib/services";
+import type { AgentModeControls } from "./components/AgentModeToggle";
 import {
   createDefaultGraphNodeLayout,
   normalizeGraphLayouts,
@@ -752,7 +754,7 @@ function WorkspaceAppContent({
   const [selectionResponseDestination, setSelectionResponseDestination] = useState<"inline" | "side">("side");
   const [selectionReplaceText, setSelectionReplaceText] = useState(false);
   const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
-  const { executions: chatExecutions, pendingConversationIds } = useChatStreams(appendAssistantDelta, saveExecutionDetails);
+  const { executions: chatExecutions, pendingConversationIds, agentProgress } = useChatStreams(appendAssistantDelta, saveExecutionDetails);
   const [documentUploadByConversationId, setDocumentUploadByConversationId] =
     useState<Record<string, { error: string | null; uploading: boolean }>>({});
   const [typingMessageIds, setTypingMessageIds] = useState<Record<string, boolean>>(
@@ -2104,11 +2106,11 @@ function WorkspaceAppContent({
     window.getSelection()?.removeAllRanges();
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
-      request: (onDelta, signal, onMetadata) => requestChatReply({
+      request: (onDelta, signal, onMetadata, onStep) => requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
         ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
         conversation: getConversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
-        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, signal,
+        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, onStep, signal,
       }),
       onError(error) {
         if (isApiErrorStatus(error,401)) onAuthExpired();
@@ -2184,6 +2186,26 @@ function WorkspaceAppContent({
     });
   }
 
+  function handleAgentModeChange(conversationId: string, next: { enabled: boolean; budgetMicros: number }) {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) return;
+    const { agent: _agent, agentBudgetMicros: _budget, ...ai } = normalizeAISettings(conversation.ai);
+    handleAISettingsChange(conversationId, next.enabled ? { ...ai, agent: true, agentBudgetMicros: next.budgetMicros } : ai);
+    // The retired OpenAI Agent choice always runs as an agent; switching off moves it to plain OpenAI.
+    if (!next.enabled && conversation.serviceId === "openai-agent") handleModelChange(conversationId, "openai-api", conversation.modelId);
+  }
+
+  function agentModeControls(conversation: Conversation): AgentModeControls {
+    const ai = normalizeAISettings(conversation.ai);
+    return {
+      enabled: ai.agent === true || conversation.serviceId === "openai-agent",
+      available: supportsAgentMode(conversation.serviceId),
+      budgetMicros: ai.agentBudgetMicros,
+      showBudget: user.role !== "admin",
+      onChange: (next) => handleAgentModeChange(conversation.id, next),
+    };
+  }
+
   function stopChatStream(conversationId: string) {
     chatExecutions.stop(conversationId);
   }
@@ -2254,7 +2276,7 @@ function WorkspaceAppContent({
       conversationId: conversation.id,
       messageId: createId("message"),
       createdAt: new Date().toISOString(),
-      request: (onDelta, signal, onMetadata) => requestChatReply({
+      request: (onDelta, signal, onMetadata, onStep) => requestChatReply({
         ...prepareAIContext(state.conversations, conversation, messages),
         ai: withJevConsent(conversation.ai, jevEnabled),
         expectedUserId: user.id,
@@ -2263,6 +2285,7 @@ function WorkspaceAppContent({
         modelId: conversation.modelId,
         onDelta,
         onMetadata,
+        onStep,
         serviceId: conversation.serviceId,
         signal,
       }),
@@ -4086,6 +4109,7 @@ function WorkspaceAppContent({
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
+      agentMode={agentModeControls(conversation)} agentProgress={agentProgress[conversation.id]}
       recentModelSelections={recentModelSelections} theme={theme} anchors={documentAnchorLinks(conversation.id)}
       error={documentErrors[conversation.id] ?? documentUploadByConversationId[conversation.id]?.error ?? undefined}
       onChange={(document) => handleDocumentChange(conversation.id, document)}
