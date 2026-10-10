@@ -74,6 +74,13 @@ const PREVIEW_NODE_WIDTH = 330;
 const READER_NODE_BASE_HEIGHT = 430;
 const READER_NODE_WIDTH = 430;
 const GRAPH_SPATIAL_INDEX_CELL_SIZE = 640;
+// Space between the document trees Canvas lays out in a grid.
+const FOREST_GRID_GAP_X = 140;
+const FOREST_GRID_GAP_Y = 120;
+// One single-card slot, the unit for a grid row's width.
+const FOREST_GRID_CELL = OVERVIEW_NODE_WIDTH + FOREST_GRID_GAP_X;
+// Width to height of the grid, close to a landscape screen.
+const FOREST_GRID_ASPECT = 1.6;
 const GRAPH_VIEWPORT_FALLBACK_HEIGHT = 720;
 const GRAPH_VIEWPORT_FALLBACK_WIDTH = 1280;
 
@@ -526,6 +533,141 @@ export function buildConversationGraphScene(args: {
   };
 }
 
+type ForestGridTree = {
+  height: number;
+  minX: number;
+  minY: number;
+  placements: ConversationGraphNodePlacement[];
+  width: number;
+};
+
+type ForestTreeLayout = { positioned?: boolean; treeOriginX?: number; treeOriginY?: number; x: number };
+
+/**
+ * True when no one has placed this tree: no card in it was moved and its root
+ * still sits where new documents land. Those roots all start at x 0, one under
+ * another; arranging by topic or dragging gives a root its own spot.
+ */
+function isUnplacedForestTree(
+  rootLayout: ForestTreeLayout | undefined,
+  treeIds: Iterable<string>,
+  treeLayouts: Record<string, { positioned?: boolean }> | undefined,
+) {
+  if (rootLayout && (rootLayout.positioned || rootLayout.treeOriginX !== undefined
+    || rootLayout.treeOriginY !== undefined || rootLayout.x !== 0)) return false;
+  for (const id of treeIds) if (treeLayouts?.[id]?.positioned) return false;
+  return true;
+}
+
+/** Roots of the trees Canvas lays out in its grid, because no one placed them. */
+export function getUnplacedForestRootIds(
+  conversations: Record<string, Conversation>,
+  treeLayouts: Record<string, ForestTreeLayout> | undefined,
+) {
+  return getRootConversations(conversations).filter((root) => {
+    const treeIds: string[] = [];
+    const pending = [...root.childIds];
+    while (pending.length) {
+      const id = pending.pop()!;
+      treeIds.push(id);
+      pending.push(...(conversations[id]?.childIds ?? []));
+    }
+    return isUnplacedForestTree(treeLayouts?.[root.id], treeIds, treeLayouts);
+  }).map((root) => root.id);
+}
+
+/** Grid columns, stepped by about 1.4x so adding a document rarely reflows the grid. */
+function getForestGridColumns(rawColumns: number) {
+  if (rawColumns <= 1) return 1;
+  return Math.round(Math.SQRT2 ** Math.round(Math.log2(rawColumns) * 2));
+}
+
+/**
+ * Lay out trees no one has placed in rows, oldest first, flowing around cards
+ * that were placed. The grid is about as wide as a screen is to its height.
+ */
+function placeForestGrid(
+  trees: ForestGridTree[],
+  obstacles: ConversationGraphNodePlacement[],
+): ConversationGraphNodePlacement[] {
+  if (!trees.length) return [];
+  const area = trees.reduce((total, tree) =>
+    total + (tree.width + FOREST_GRID_GAP_X) * (tree.height + FOREST_GRID_GAP_Y), 0);
+  const widest = trees.reduce((maximum, tree) => Math.max(maximum, tree.width), 0);
+  const columns = getForestGridColumns(Math.sqrt(area * FOREST_GRID_ASPECT) / FOREST_GRID_CELL);
+  const rowLimit = Math.max(widest, columns * FOREST_GRID_CELL - FOREST_GRID_GAP_X);
+  const obstacleCells = new Map<string, ConversationGraphNodePlacement[]>();
+  const cellSize = GRAPH_SPATIAL_INDEX_CELL_SIZE * 2;
+  const forEachCell = (rect: { x: number; y: number; width: number; height: number }, visit: (key: string) => void) => {
+    for (let column = Math.floor(rect.x / cellSize); column <= Math.floor((rect.x + rect.width) / cellSize); column++) {
+      for (let row = Math.floor(rect.y / cellSize); row <= Math.floor((rect.y + rect.height) / cellSize); row++) {
+        visit(getSpatialCellKey(column, row));
+      }
+    }
+  };
+
+  for (const obstacle of obstacles) {
+    forEachCell(obstacle, (key) => {
+      const cell = obstacleCells.get(key);
+      if (cell) cell.push(obstacle); else obstacleCells.set(key, [obstacle]);
+    });
+  }
+
+  const placed: ConversationGraphNodePlacement[] = [];
+  let x = 0;
+  let rowTop = 0;
+  let rowHeight = 0;
+  // Where the cards blocking an empty row end, so the next row starts below them.
+  let rowClearsAt = Number.POSITIVE_INFINITY;
+
+  for (const tree of trees) {
+    for (;;) {
+      if (x > 0 && x + tree.width > rowLimit) {
+        rowTop = rowHeight > 0
+          ? rowTop + rowHeight + FOREST_GRID_GAP_Y
+          : Math.max(rowTop + FOREST_GRID_GAP_Y, rowClearsAt);
+        x = 0;
+        rowHeight = 0;
+        rowClearsAt = Number.POSITIVE_INFINITY;
+      }
+
+      const slot = {
+        height: tree.height + FOREST_GRID_GAP_Y * 2,
+        width: tree.width + FOREST_GRID_GAP_X * 2,
+        x: x - FOREST_GRID_GAP_X,
+        y: rowTop - FOREST_GRID_GAP_Y,
+      };
+      let blockedUntil = Number.NEGATIVE_INFINITY;
+
+      forEachCell(slot, (key) => {
+        for (const obstacle of obstacleCells.get(key) ?? []) {
+          if (obstacle.x < slot.x + slot.width && obstacle.x + obstacle.width > slot.x
+            && obstacle.y < slot.y + slot.height && obstacle.y + obstacle.height > slot.y) {
+            blockedUntil = Math.max(blockedUntil, obstacle.x + obstacle.width);
+            rowClearsAt = Math.min(rowClearsAt, obstacle.y + obstacle.height + FOREST_GRID_GAP_Y);
+          }
+        }
+      });
+
+      if (blockedUntil === Number.NEGATIVE_INFINITY) break;
+      // Skip past the placed cards; the next pass moves to a new row if the tree no longer fits.
+      x = Math.max(x + 1, blockedUntil + FOREST_GRID_GAP_X);
+    }
+
+    const offsetX = x - tree.minX;
+    const offsetY = rowTop - tree.minY;
+
+    for (const placement of tree.placements) {
+      placed.push({ ...placement, x: placement.x + offsetX, y: placement.y + offsetY });
+    }
+
+    x += tree.width + FOREST_GRID_GAP_X;
+    rowHeight = Math.max(rowHeight, tree.height);
+  }
+
+  return placed;
+}
+
 export function buildConversationForestGraphScene(args: {
   conversations: Record<string, Conversation>;
   detailLevel?: ConversationGraphDetail;
@@ -549,7 +691,7 @@ export function buildConversationForestGraphScene(args: {
     args.selectedConversationId,
   );
   const nodes: ConversationGraphNodePlacement[] = [];
-  let nextFallbackTop = 0;
+  const gridTrees: ForestGridTree[] = [];
 
   for (const root of roots) {
     const isSelectedTree = root.id === selectedRootId;
@@ -572,12 +714,26 @@ export function buildConversationForestGraphScene(args: {
     }
 
     const savedRootLayout = args.treeLayouts?.[root.id];
-    const offsetX = savedRootLayout
-      ? (savedRootLayout.treeOriginX ?? savedRootLayout.x) - rootPlacement.x
-      : 0;
-    const offsetY = savedRootLayout
-      ? (savedRootLayout.treeOriginY ?? savedRootLayout.y) - rootPlacement.y
-      : nextFallbackTop;
+
+    if (!savedRootLayout || isUnplacedForestTree(savedRootLayout, treeScene.nodes.map((node) => node.conversationId), args.treeLayouts)) {
+      let minX = Number.POSITIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+
+      for (const placement of treeScene.nodes) {
+        minX = Math.min(minX, placement.x);
+        minY = Math.min(minY, placement.y);
+        maxX = Math.max(maxX, placement.x + placement.width);
+        maxY = Math.max(maxY, placement.y + placement.height);
+      }
+
+      gridTrees.push({ height: maxY - minY, minX, minY, placements: treeScene.nodes, width: maxX - minX });
+      continue;
+    }
+
+    const offsetX = (savedRootLayout.treeOriginX ?? savedRootLayout.x) - rootPlacement.x;
+    const offsetY = (savedRootLayout.treeOriginY ?? savedRootLayout.y) - rootPlacement.y;
 
     for (const placement of treeScene.nodes) {
       const savedNodeLayout = args.treeLayouts?.[placement.conversationId];
@@ -593,12 +749,9 @@ export function buildConversationForestGraphScene(args: {
           : placement.y + offsetY,
       });
     }
-
-    nextFallbackTop = Math.max(
-      nextFallbackTop,
-      offsetY + treeScene.height + 220,
-    );
   }
+
+  nodes.push(...placeForestGrid(gridTrees, nodes));
 
   const edges = buildConversationGraphEdges(
     args.conversations,
