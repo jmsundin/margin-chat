@@ -67,6 +67,13 @@ export async function runPersistenceSmoke({ baseUrl, database, client, blobToken
     assert.equal(result.projection.revision, result.manifest.revision, "Projection revision mismatch.");
     return result;
   }
+  // The app indexes a save in the background (status "queued"), so a save only
+  // has to name its own revision; the reload below waits for the index.
+  function saved(result) {
+    if (result.projection?.status !== "queued") return projection(result);
+    assert.equal(result.projection.revision, result.manifest.revision, "Projection revision mismatch.");
+    return result;
+  }
   try {
     await database.createUser({ id, email, displayName: "Automated release check", role: "admin", passwordHash: await hashPassword(password) });
     created = true;
@@ -77,20 +84,20 @@ export async function runPersistenceSmoke({ baseUrl, database, client, blobToken
     const path = "Notes/release-check.md";
     const content = "# Release check\n\nPersistence round trip — café.\n";
     const commit = async (changes, expected = 200) => request("/api/vault/commit", { method: "POST", body: { changes }, expected });
-    const saved = projection(await (await commit([{ path, content, baseRevision: null }])).json());
-    const revision = saved.manifest.files[path].revision;
+    const first = saved(await (await commit([{ path, content, baseRevision: null }])).json());
+    const revision = first.manifest.files[path].revision;
     assert.equal(await (await request(`/api/vault/file?${new URLSearchParams({ path, revision })}`)).text(), content);
-    const updated = projection(await (await commit([{ path, content: `${content}Updated.\n`, baseRevision: revision }])).json());
+    const updated = saved(await (await commit([{ path, content: `${content}Updated.\n`, baseRevision: revision }])).json());
     await commit([{ path, content: "Stale update", baseRevision: revision }], 409);
     assert.equal(await (await request(`/api/vault/file?${new URLSearchParams({ path, revision })}`)).text(), content, "Immutable history changed.");
     const binaryPath = "Attachments/release-check/original.bin";
     const bytes = Buffer.from([0, 255, 17, 128, 13, 10]);
-    const binary = projection(await (await request(`/api/vault/file?${new URLSearchParams({ path: binaryPath })}`, {
+    const binary = saved(await (await request(`/api/vault/file?${new URLSearchParams({ path: binaryPath })}`, {
       method: "PUT", raw: true, body: bytes,
       headers: { "Content-Type": "application/octet-stream", "X-Margin-Vault-Write": "1" },
     })).json());
     assert.deepEqual(Buffer.from(await (await request(`/api/vault/file?${new URLSearchParams({ path: binaryPath })}`)).arrayBuffer()), bytes);
-    const deleted = projection(await (await commit([{ path, content: null, baseRevision: updated.manifest.files[path].revision },
+    const deleted = saved(await (await commit([{ path, content: null, baseRevision: updated.manifest.files[path].revision },
       { path: binaryPath, content: null, baseRevision: binary.manifest.files[binaryPath].revision }])).json());
     assert.equal(deleted.manifest.files[path].deleted, true, "Missing deletion tombstone.");
     const reloaded = projection(await (await request("/api/vault")).json());
