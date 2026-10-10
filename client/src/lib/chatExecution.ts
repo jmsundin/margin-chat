@@ -1,12 +1,13 @@
 import { normalizeAIExecution } from "@margin-chat/workspace-contracts";
 import type { AIExecutionRecord } from "../types";
-import type { ChatReplyResponse } from "./chatStream";
+import type { AgentStepEvent, ChatReplyResponse } from "./chatStream";
 
 export interface ChatExecution {
   conversationId: string;
   messageId: string;
   createdAt: string;
-  request: (onDelta: (delta: string) => void, signal: AbortSignal, onMetadata: (metadata: ChatReplyResponse["metadata"]) => void) => Promise<unknown>;
+  request: (onDelta: (delta: string) => void, signal: AbortSignal, onMetadata: (metadata: ChatReplyResponse["metadata"]) => void,
+    onStep: (event: AgentStepEvent) => void) => Promise<unknown>;
   onError: (error: unknown) => void;
   /** Runs once after final buffered output/receipt delivery; silent teardown suppresses it. */
   onFinish?: (status: "complete" | "stopped" | "failed") => void;
@@ -28,6 +29,7 @@ export class ChatExecutions {
     onDelta: (conversationId: string, messageId: string, delta: string, createdAt: string) => void;
     onPending: (conversationId: string, pending: boolean) => void;
     onExecution?: (conversationId: string, messageId: string, execution: AIExecutionRecord) => void;
+    onAgentStep?: (conversationId: string, event: AgentStepEvent) => void;
   }, private readonly scheduler = {
     schedule: (callback: () => void) => setTimeout(callback, 32),
     cancel: (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
@@ -96,9 +98,12 @@ export class ChatExecutions {
       receiptChanged = true;
       if (hasOutput) execution.flush();
     };
+    const onStep = (event: AgentStepEvent) => {
+      if (isCurrent()) this.events.onAgentStep?.(args.conversationId, event);
+    };
     // A synchronous transport failure follows the same cleanup path as a rejection.
     void Promise.resolve().then(() => {
-      if (isCurrent()) return args.request(onDelta, execution.controller.signal, onMetadata);
+      if (isCurrent()) return args.request(onDelta, execution.controller.signal, onMetadata, onStep);
     }).then((result) => {
       if (isCurrent()) {
         if (result && typeof result === "object" && "metadata" in result) onMetadata(result.metadata as ChatReplyResponse["metadata"]);

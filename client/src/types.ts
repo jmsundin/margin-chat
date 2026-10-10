@@ -4,6 +4,8 @@ export type {
   AIProvider,
   AutoMode,
   AIExecutionRecord,
+  AgentRunRecord,
+  AgentRunStep,
   AIContextSource,
   Role,
   BackendServiceId,

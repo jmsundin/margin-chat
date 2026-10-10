@@ -1,6 +1,6 @@
 import { apiFetch, hasApiTransport } from "./apiTransport";
 import { ApiError } from "./apiError";
-import { readChatReplyStream, type ChatReplyResponse } from "./chatStream";
+import { readChatReplyStream, type AgentStepEvent, type ChatReplyResponse } from "./chatStream";
 import type { ConversationContext } from "./chatContext";
 import type { WorkspaceContextItem } from "./aiContext";
 import type { AISettings } from "../types";
@@ -138,10 +138,11 @@ export async function requestChatReply(args: {
   modelId: string;
   onDelta?: (delta: string) => void;
   onMetadata?: (metadata: ChatReplyResponse["metadata"]) => void;
+  onStep?: (event: AgentStepEvent) => void;
   serviceId: BackendServiceId;
   signal?: AbortSignal;
 }): Promise<ChatReplyResponse> {
-  const { onDelta, onMetadata, signal, expectedUserId, ...requestBody } = args;
+  const { onDelta, onMetadata, onStep, signal, expectedUserId, ...requestBody } = args;
   const promptMessage = ({ id, role, content, createdAt }: Message) => ({ id, role, content, createdAt });
   const response = await apiFetch("/api/chat", {
     // Receipts belong in persistence, not a new prompt's transport payload.
@@ -187,7 +188,7 @@ export async function requestChatReply(args: {
     throw new Error("Backend returned an empty assistant stream.");
   }
 
-  return readChatReplyStream(response.body, onDelta, onMetadata);
+  return readChatReplyStream(response.body, onDelta, onMetadata, onStep);
 }
 
 export async function requestChatTitle(args: {

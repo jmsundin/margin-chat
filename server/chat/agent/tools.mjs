@@ -45,28 +45,26 @@ function summarize(item) {
   };
 }
 
-export const OPENAI_AGENT_TOOL_DEFINITIONS = [
+/** Provider-neutral definitions; each adapter wraps them in its own tool format. */
+export const AGENT_TOOL_DEFINITIONS = [
   {
-    type: "function", name: "search_conversations",
+    name: "search_conversations",
     description: "Search only the permitted local conversation and note snapshot supplied for this request. Private margin annotations are excluded.",
-    strict: true,
     parameters: { type: "object", properties: { query: { type: "string", description: "Text to find in permitted titles and content." } }, required: ["query"], additionalProperties: false },
   },
   {
-    type: "function", name: "list_recent_conversations",
+    name: "list_recent_conversations",
     description: "List recent conversations and notes within this request's permitted local snapshot.",
-    strict: true,
     parameters: { type: "object", properties: { limit: { type: "integer", description: "Number of items, from 1 to 10." } }, required: ["limit"], additionalProperties: false },
   },
   {
-    type: "function", name: "get_conversation",
+    name: "get_conversation",
     description: "Read a conversation or note from this request's permitted local snapshot. Other content is unavailable.",
-    strict: true,
     parameters: { type: "object", properties: { conversation_id: { type: "string", description: "Exact permitted conversation or note ID." } }, required: ["conversation_id"], additionalProperties: false },
   },
 ];
 
-export function createOpenAIAgentToolExecutor({ chatRequest }) {
+export function createAgentToolExecutor({ chatRequest }) {
   const snapshots = permittedSnapshots(chatRequest);
   let remainingCharacters = chatRequest.ai?.mode === "fast" ? 6_000 : chatRequest.ai?.mode === "thorough" ? 24_000 : 12_000;
 
@@ -105,4 +103,20 @@ export function createOpenAIAgentToolExecutor({ chatRequest }) {
     remainingCharacters -= size;
     return result;
   };
+}
+
+const quoted = (value, maximum = 80) => `\u201c${clipText(value, maximum) || "Untitled"}\u201d`;
+const plural = (count, word) => `${count} ${word}${count === 1 ? "" : word.endsWith("h") ? "es" : "s"}`;
+
+/** A short, human-readable line for the run log. Never includes tool output text. */
+export function describeAgentStep(name, args = {}, output = {}) {
+  const exhausted = output?.ok === false && output?.truncated;
+  const base = name === "search_conversations" ? { label: `Searched for ${quoted(args.query)}`, detail: exhausted ? null : plural(output.total_matches ?? 0, "match") }
+    : name === "list_recent_conversations" ? { label: "Listed recent chats and notes", detail: exhausted ? null : plural(output.total_returned ?? 0, "item") }
+    : name === "get_conversation" ? (output?.found
+      ? { label: `Read ${quoted(output.conversation?.title)}`, detail: output.conversation?.truncated ? "Shortened to fit" : null }
+      : { label: "Tried to open an item outside the permitted context", detail: null })
+    : { label: "Tried a tool that isn't available", detail: null };
+  return { kind: "tool", tool: name, label: base.label, ...(exhausted ? { detail: "Context budget for tools used up" } : base.detail ? { detail: base.detail } : {}),
+    ok: !(output?.ok === false || (name === "get_conversation" && !output?.found)) };
 }

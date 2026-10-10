@@ -327,3 +327,22 @@ describe("client chat stream", () => {
     expect(confirmation).toEqual({ confirmed: true, status: "active", purchaseKind: "subscription" });
   });
 });
+
+describe("agent step events", () => {
+  test("passes well-formed steps with spend to onStep and ignores malformed ones", async () => {
+    const lines = [
+      { type: "metadata", metadata: { model: "gpt-5.6", requestedServiceId: "openai-api", resolvedServiceId: "openai-api" } },
+      { type: "step", step: { kind: "tool", tool: "search_conversations", label: "Searched for “pricing”", detail: "2 matches", ok: true }, spentMicros: 1200 },
+      { type: "step", step: { kind: "bogus", label: "ignored" } },
+      { type: "delta", delta: "Answer" },
+      { type: "done", metadata: { model: "gpt-5.6", requestedServiceId: "openai-api", resolvedServiceId: "openai-api" } },
+    ];
+    globalThis.fetch = (async () => new Response(lines.map((line) => JSON.stringify(line)).join("\n"), {
+      headers: { "Content-Type": "application/x-ndjson" },
+    })) as typeof fetch;
+    const steps: unknown[] = [];
+    const result = await requestChatReply({ ...createRequestArgs(() => {}), onStep: (event) => steps.push(event) });
+    expect(result.reply).toBe("Answer");
+    expect(steps).toEqual([{ step: { kind: "tool", tool: "search_conversations", label: "Searched for “pricing”", detail: "2 matches", ok: true }, spentMicros: 1200 }]);
+  });
+});

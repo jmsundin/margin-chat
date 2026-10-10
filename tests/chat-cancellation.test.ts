@@ -39,7 +39,7 @@ describe("provider cancellation", () => {
     expect(body.locked).toBe(false);
   });
 
-  for (const serviceId of ["openai-api", "openai-agent", "xai-api", "gemini-api", "huggingface-api"]) {
+  for (const serviceId of ["openai-api", "xai-api", "gemini-api", "huggingface-api"]) {
     test(`${serviceId} aborts a pending stream and cancels its reader after the first delta`, async () => {
       const controller = new AbortController();
       let cancelled = false;

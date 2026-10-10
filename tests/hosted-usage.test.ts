@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { calculateUsageMicros, createHostedUsageMeter, getHostedModelPrice, normalizeProviderUsage } from "../server/billing/usage.mjs";
 import * as providers from "../server/chat/providers.mjs";
-import { requestOpenAIAgentResponse, requestOpenAIAgentResponseStream } from "../server/chat/openaiAgent.mjs";
+import { runAgent } from "../server/chat/agent/runner.mjs";
 import { createChatService } from "../server/chat/index.mjs";
 import { createChatExecutionService } from "../server/chat/execution.mjs";
 import { createEmbeddings } from "../server/documents/embeddings.mjs";
@@ -255,21 +255,40 @@ describe("all model work uses the same prepaid meter", () => {
     }
   });
 
-  for (const stream of [false, true]) test(`agent ${stream ? "stream" : "JSON"} charges each tool round separately`, async () => {
+  test("an agent run charges each model call separately", async () => {
     const f = fixture();
     let calls = 0;
     globalThis.fetch = (async () => {
       calls += 1;
-      const payload = calls === 1
+      return Response.json(calls === 1
         ? { output: [{ type: "function_call", name: "list_recent_conversations", call_id: "tool-1", arguments: "{}" }], usage }
-        : { output_text: "Hello", output: [], usage };
-      return stream ? sse([...(calls === 2 ? [{ type: "response.output_text.delta", delta: "Hello" }] : []), { type: "response.completed", response: payload }]) : Response.json(payload);
+        : { output_text: "Hello", output: [], usage });
     }) as typeof fetch;
-    expect((await (stream ? requestOpenAIAgentResponseStream : requestOpenAIAgentResponse)(args(f.meter))).reply).toBe("Hello");
+    const result = await runAgent({ ...args(f.meter), provider: "openai" });
+    expect(result.reply).toBe("Hello");
+    expect(result.agent).toMatchObject({ stopReason: "answered", modelCalls: 2, spentMicros: 250, budgetMicros: 500_000 });
     expect(calls).toBe(2);
     expect(f.settlements.map((item) => item.amountMicros)).toEqual([125, 125]);
     expect(f.reservations.map((item) => item.requestId)).toEqual(["execution:1", "execution:2"]);
     expect(f.reservations[1].metadata.inputTokenLimit).toBeGreaterThan(f.reservations[0].metadata.inputTokenLimit);
+  });
+
+  test("an agent run that reaches its budget answers once more without tools, then stops", async () => {
+    const f = fixture();
+    const bodies: any[] = [];
+    globalThis.fetch = (async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json(bodies.length === 1
+        ? { output: [{ type: "function_call", name: "list_recent_conversations", call_id: "tool-1", arguments: "{}" }], usage }
+        : { output_text: "Partial answer", output: [], usage });
+    }) as typeof fetch;
+    const steps: any[] = [];
+    const result = await runAgent({ ...args(f.meter), provider: "openai", budgetMicros: 100, onStep: async (event: any) => { steps.push(event); } });
+    expect(result.reply).toBe("Partial answer");
+    expect(result.agent).toMatchObject({ stopReason: "budget", modelCalls: 2, spentMicros: 250, budgetMicros: 100 });
+    expect(bodies.map((body) => body.tool_choice)).toEqual(["auto", "none"]);
+    expect(bodies[1].instructions).toContain("spending budget");
+    expect(steps).toEqual([{ step: expect.objectContaining({ kind: "tool", tool: "list_recent_conversations" }), spentMicros: 125 }]);
   });
 
   test("embedding batches settle separately using input usage only", async () => {
