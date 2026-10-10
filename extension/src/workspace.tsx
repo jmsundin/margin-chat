@@ -8,6 +8,7 @@ import { getSettings, isThreadsKey, trustedStorage, type ConnectionSettings } fr
 import { threadMarkdown, threadTitle, type PageThread } from "./page-ai";
 import { createWorkspaceFetch } from "./workspace-transport";
 import { signOut } from "./network";
+import { mirrorAppTheme, syncExtensionPageTheme } from "./theme";
 import type { OverlayDraft, OverlayState, TextQuoteAnchor } from "./overlay-types";
 import "../../client/src/styles.css";
 import "katex/dist/katex.min.css";
@@ -282,4 +283,7 @@ function BrowserWorkspace() {
   </div>;
 }
 
+// Paint the app's theme before sign-in too, and tell page shells when it changes.
+syncExtensionPageTheme(document);
+mirrorAppTheme(document);
 createRoot(document.getElementById("root")!).render(<BrowserWorkspace />);

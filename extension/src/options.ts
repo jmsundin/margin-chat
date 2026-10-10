@@ -2,6 +2,7 @@ import { CONNECTION_API_PATH, normalizeServerUrl, parseCaptureConnection } from 
 import { connectionIdentity, getPending, getSettings, trustedStorage } from "./storage";
 import { captureRequest, errorText, signIn, signInWorkspace, signOut } from "./network";
 import { serverPermissionPattern } from "./permissions";
+import { chooseTheme, isTheme, syncExtensionPageTheme } from "./theme";
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const serverInput = el<HTMLInputElement>("server-url");
@@ -9,6 +10,15 @@ const emailInput = el<HTMLInputElement>("email");
 const passwordInput = el<HTMLInputElement>("password");
 const status = el("status");
 let busy = false;
+
+const themeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]")];
+syncExtensionPageTheme(document, (theme) => themeButtons.forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.themeChoice === theme))));
+for (const button of themeButtons) button.addEventListener("click", () => {
+  const theme = button.dataset.themeChoice;
+  if (!isTheme(theme)) return;
+  chooseTheme(theme);
+  themeButtons.forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+});
 
 function setBusy(value: boolean) {
   busy = value;

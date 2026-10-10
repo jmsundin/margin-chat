@@ -2,6 +2,7 @@ import { CAPTURE_LIMITS, type CaptureKind } from "@margin-chat/capture-contracts
 import { captureTextAnchor, resolveTextAnchor, type TextAnchor } from "./anchors";
 import { extractArticle, extractSelection } from "./extraction";
 import type { SelectionDraft } from "./storage";
+import { followPageTheme, hostThemeCss } from "./theme";
 
 export interface PageContext {
   title: string;
@@ -15,8 +16,14 @@ export interface PageContext {
 type Layout = "docked" | "floating" | "expanded";
 type Send = (message: Record<string, unknown>) => Promise<any>;
 
+export const DOCK_WIDTH = { default: 520, min: 320, step: 24 };
+export interface WorkspaceHostOptions {
+  /** Called once a drag or key press settles on a new docked width. */
+  onDockResize?(width: number): void;
+}
+
 /** Only this non-private shell and page-derived text enter the host document. */
-export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: string) {
+export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: string, options: WorkspaceHostOptions = {}) {
   const win = doc.defaultView!;
   const host = doc.createElement("div");
   host.dataset.marginOverlay = "workspace";
@@ -24,20 +31,23 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   // extension origin protects private workspace data and user input.
   const root = host.attachShadow({ mode: "closed" });
   root.innerHTML = `<style>
-    :host{all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important;color-scheme:light!important}
-    *{box-sizing:border-box}button{font:inherit;cursor:pointer;border:1px solid #d9d8cf;background:#fffdf7;color:#293b35;border-radius:7px;padding:6px 8px}button:hover,button[aria-pressed=true]{background:#e6eee6;border-color:#80958a}button:focus-visible{outline:3px solid #71977a;outline-offset:2px}
-    [hidden]{display:none!important}.panel{pointer-events:auto;position:fixed;right:12px;top:12px;width:min(520px,calc(100vw - 24px));height:calc(100vh - 24px);background:#faf9f4;border:1px solid #cccfc4;border-radius:14px;box-shadow:0 14px 55px #1a292b35;display:flex;flex-direction:column;overflow:hidden;font:12px system-ui,sans-serif;color:#293b35}
-    header{position:relative;display:flex;align-items:center;gap:4px;padding:5px 6px 5px 12px;border-bottom:1px solid #dddfd5;flex-shrink:0;background:#f6f5ed;touch-action:none}strong{font-size:13px;margin-right:auto}
-    .icon{display:grid;place-items:center;width:28px;height:28px;padding:0;border-color:transparent;background:transparent;font-size:18px;line-height:1;border-radius:8px}.icon:hover,.icon[aria-expanded=true]{background:#e6eee6;border-color:transparent}.close{font-size:20px}
-    .menu{position:absolute;z-index:1;top:calc(100% - 2px);right:36px;min-width:176px;padding:4px;display:grid;gap:1px;background:#fffdf7;border:1px solid #cccfc4;border-radius:10px;box-shadow:0 10px 30px #1a292b30}
-    .menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border-color:transparent;background:transparent;padding:7px 10px 7px 8px;border-radius:7px}.menu button:hover,.menu button:focus-visible{background:#e6eee6;border-color:transparent}
+    :host{all:initial!important;position:fixed!important;inset:0!important;z-index:2147483647!important;pointer-events:none!important}${hostThemeCss()}
+    *{box-sizing:border-box}button{font:inherit;cursor:pointer;border:1px solid var(--mc-line-strong);background:var(--mc-raised);color:var(--mc-ink);border-radius:7px;padding:6px 8px}button:hover,button[aria-pressed=true]{background:var(--mc-hover);border-color:var(--mc-hover-line)}button:focus-visible{outline:3px solid var(--mc-sage);outline-offset:2px}
+    [hidden]{display:none!important}.panel{pointer-events:auto;position:fixed;right:12px;top:12px;width:min(520px,calc(100vw - 24px));height:calc(100vh - 24px);background:var(--mc-bg);border:1px solid var(--mc-line-strong);border-radius:14px;box-shadow:0 14px 55px var(--mc-shadow);display:flex;flex-direction:column;overflow:hidden;font:12px system-ui,sans-serif;color:var(--mc-ink)}
+    header{position:relative;display:flex;align-items:center;gap:4px;padding:5px 6px 5px 12px;border-bottom:1px solid var(--mc-line);flex-shrink:0;background:var(--mc-head);touch-action:none}strong{font-size:13px;margin-right:auto}
+    .icon{display:grid;place-items:center;width:28px;height:28px;padding:0;border-color:transparent;background:transparent;font-size:18px;line-height:1;border-radius:8px}.icon:hover,.icon[aria-expanded=true]{background:var(--mc-hover);border-color:transparent}.close{font-size:20px}
+    .menu{position:absolute;z-index:1;top:calc(100% - 2px);right:36px;min-width:176px;padding:4px;display:grid;gap:1px;background:var(--mc-raised);border:1px solid var(--mc-line-strong);border-radius:10px;box-shadow:0 10px 30px var(--mc-shadow)}
+    .menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border-color:transparent;background:transparent;padding:7px 10px 7px 8px;border-radius:7px}.menu button:hover,.menu button:focus-visible{background:var(--mc-hover);border-color:transparent}
     .menu [aria-checked]::before{content:"";width:12px;flex:none;text-align:center;font-size:12px}.menu [aria-checked=true]::before{content:"✓"}.menu .peek::before{content:"";width:12px;flex:none}
-    .menu hr{margin:3px 4px;border:0;border-top:1px solid #e1e3d9}
+    .menu hr{margin:3px 4px;border:0;border-top:1px solid var(--mc-line)}
     .panel[data-layout=floating]{resize:both;min-width:320px;min-height:280px;max-width:calc(100vw - 12px);max-height:calc(100vh - 12px)}.panel[data-layout=floating] header{cursor:move}
-    iframe{border:0;display:block;width:100%;flex:1;min-height:0;background:#faf9f4}.status{padding:24px;font-size:14px;line-height:1.6}.status button{margin-top:12px;display:block}
-    .reveal,.return{position:fixed;pointer-events:auto;box-shadow:0 3px 20px #1a292b30}.reveal{left:12px;top:50%;writing-mode:vertical-rl;padding:15px 10px}.return{right:18px;bottom:18px;padding:13px 18px}.dragging iframe{pointer-events:none}
+    iframe{border:0;display:block;width:100%;flex:1;min-height:0;background:var(--mc-bg)}.status{padding:24px;font-size:14px;line-height:1.6}.status button{margin-top:12px;display:block}
+    .grip{position:absolute;z-index:2;left:0;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;display:grid;place-items:center;outline:none}.panel:not([data-layout=docked]) .grip{display:none}
+    .grip::after{content:"";width:4px;height:44px;border-radius:4px;background:var(--mc-line-strong);transition:background .15s,height .15s}.grip:hover::after,.grip:focus-visible::after,.resizing .grip::after{background:var(--mc-sage);height:64px}.grip:focus-visible{box-shadow:inset 3px 0 0 var(--mc-sage)}
+    .reveal,.return{position:fixed;pointer-events:auto;box-shadow:0 3px 20px var(--mc-shadow)}.reveal{left:12px;top:50%;writing-mode:vertical-rl;padding:15px 10px}.return{right:18px;bottom:18px;padding:13px 18px}.dragging iframe,.resizing iframe{pointer-events:none}.resizing{user-select:none}
     @media(max-width:650px){strong{font-size:12px}}
   </style><section class="panel" data-layout="docked" role="complementary" aria-label="Margin Chat workspace" hidden>
+    <div class="grip" role="separator" aria-orientation="vertical" aria-label="Resize Margin Chat" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <header><strong>Margin Chat</strong>
       <button class="icon more" type="button" title="View options" aria-label="View options" aria-haspopup="menu" aria-expanded="false">⋮</button>
       <div class="menu" role="menu" aria-label="View options" hidden>
@@ -56,6 +66,8 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   const reveal = root.querySelector<HTMLButtonElement>(".reveal")!;
   const returnButton = root.querySelector<HTMLButtonElement>(".return")!;
   const header = root.querySelector<HTMLElement>("header")!;
+  const grip = root.querySelector<HTMLElement>(".grip")!;
+  const theme = followPageTheme(win, [host]);
   let layout: Layout = "docked";
   let active = false;
   let peeking = false;
@@ -64,6 +76,8 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   let context = bookmark();
   let floating = { left: Math.max(6, win.innerWidth - 640), top: 55, width: 590, height: Math.min(680, win.innerHeight - 70) };
   let drag: { x: number; y: number; left: number; top: number } | undefined;
+  let dockWidth = DOCK_WIDTH.default;
+  let resize: { x: number; width: number } | undefined;
   let starting: Promise<void> | undefined;
   let anchors: TextAnchor[] = [];
   function bookmark(): PageContext { return { title: doc.title.slice(0, CAPTURE_LIMITS.title), sourceUrl: win.location.href, kind: "bookmark", content: "", revision: ++revision }; }
@@ -92,8 +106,18 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     } else if (layout === "expanded") {
       Object.assign(panel.style, { left: `${Math.min(88, Math.max(46, win.innerWidth * 0.075))}px`, right: "12px", top: "12px", width: "auto", height: "calc(100vh - 24px)" });
     } else {
-      Object.assign(panel.style, { left: "auto", right: "12px", top: "12px", width: "min(520px, calc(100vw - 24px))", height: "calc(100vh - 24px)" });
+      Object.assign(panel.style, { left: "auto", right: "12px", top: "12px", width: `${shownDockWidth()}px`, height: "calc(100vh - 24px)" });
+      grip.setAttribute("aria-valuemin", String(DOCK_WIDTH.min)); grip.setAttribute("aria-valuemax", String(maxDockWidth())); grip.setAttribute("aria-valuenow", String(shownDockWidth()));
     }
+  }
+  const maxDockWidth = () => Math.max(DOCK_WIDTH.min, win.innerWidth - 24);
+  const clampDock = (width: number) => Math.round(Math.max(DOCK_WIDTH.min, Math.min(maxDockWidth(), width)));
+  /** The remembered width survives a narrow window; it is only clamped for display. */
+  const shownDockWidth = () => Math.min(clampDock(dockWidth), win.innerWidth - 24);
+  function setDockWidth(width: number, persist = false) {
+    if (!Number.isFinite(width)) return;
+    dockWidth = clampDock(width); render();
+    if (persist) options.onDockResize?.(dockWidth);
   }
   function setLayout(next: Layout) {
     if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width || floating.width, height: rect.height || floating.height }; }
@@ -211,12 +235,29 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     panel.style.top = `${Math.max(6, Math.min(win.innerHeight - 70, drag.top + event.clientY - drag.y))}px`;
   });
   for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) header.addEventListener(event, () => { drag = undefined; panel.classList.remove("dragging"); });
+  // The docked panel's left edge is a resize handle; the chosen width is remembered.
+  grip.addEventListener("pointerdown", (event) => {
+    if (layout !== "docked" || event.button !== 0) return;
+    resize = { x: event.clientX, width: panel.getBoundingClientRect().width || shownDockWidth() };
+    grip.setPointerCapture?.(event.pointerId); panel.classList.add("resizing"); event.preventDefault();
+  });
+  grip.addEventListener("pointermove", (event) => { if (resize) setDockWidth(resize.width + resize.x - event.clientX); });
+  const endResize = () => { if (!resize) return; resize = undefined; panel.classList.remove("resizing"); options.onDockResize?.(dockWidth); };
+  for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) grip.addEventListener(event, endResize);
+  grip.addEventListener("dblclick", () => setDockWidth(DOCK_WIDTH.default, true));
+  grip.addEventListener("keydown", (event) => {
+    const step = event.shiftKey ? DOCK_WIDTH.step * 4 : DOCK_WIDTH.step;
+    const next = event.key === "ArrowLeft" ? shownDockWidth() + step : event.key === "ArrowRight" ? shownDockWidth() - step
+      : event.key === "Home" ? maxDockWidth() : event.key === "End" ? DOCK_WIDTH.min : event.key === "Enter" ? DOCK_WIDTH.default : undefined;
+    if (next === undefined) return;
+    event.preventDefault(); setDockWidth(next, true);
+  });
   const selectionChanged = (event: Event) => { if (!event.composedPath().includes(host)) captureSelection(); };
   doc.addEventListener("mouseup", selectionChanged); doc.addEventListener("keyup", selectionChanged);
   const resized = () => { if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; } render(); };
   win.addEventListener("resize", resized);
   const navigationCheck = win.setInterval(() => { void changedPage().catch(() => undefined); }, 500);
-  return { open, close, register, toggle: () => active ? close() : void open(), handleMessage,
-    destroy() { win.clearInterval(navigationCheck); doc.removeEventListener("pointerdown", outsideMenu, true); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },
+  return { open, close, register, toggle: () => active ? close() : void open(), handleMessage, setDockWidth: (width: number) => setDockWidth(width), setTheme: theme.set,
+    destroy() { theme.destroy(); win.clearInterval(navigationCheck); doc.removeEventListener("pointerdown", outsideMenu, true); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },
   };
 }

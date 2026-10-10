@@ -22,7 +22,7 @@ function worker(local: Record<string, any> = { connection: structuredClone(conne
     runtime: { id: "extension-test", getURL: (path: string) => origin + path, onInstalled: { addListener() {} }, onMessage: { addListener(fn: typeof listener) { listener = fn; } }, async openOptionsPage() {} },
     contextMenus: { onClicked: { addListener() {} } }, action: { onClicked: { addListener() {} } },
     tabs: { async get() { return { id: 12, url: sourceUrl }; }, async sendMessage(tabId: number, message: any, options: unknown) { pageMessages.push(structuredClone({ tabId, message, options })); return structuredClone(pageReplies[message.type] ?? { ok: true }); } },
-    storage: { local: area(local), session: area(session) },
+    storage: { local: area(local), session: area(session), onChanged: { addListener() {} } },
   };
   runInNewContext(background, { chrome, crypto, URL, AbortSignal, fetch: async () => { throw new Error("The worker must not call the network for assistant messages."); } });
   return { local, pageMessages, pageReplies, dispatch(message: Record<string, unknown>, sender: Record<string, unknown>): Promise<any> { return new Promise((resolve) => { if (!listener(message, sender, resolve)) resolve(undefined); }); } };

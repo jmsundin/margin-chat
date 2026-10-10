@@ -13,9 +13,10 @@ function harness() {
   const prototype = win.HTMLElement.prototype; const attach = prototype.attachShadow;
   prototype.attachShadow = function(options) { const shadow = attach.call(this, options); if (this.hasAttribute("data-margin-overlay")) root = shadow as unknown as ShadowRoot; return shadow; };
   const messages: Record<string, any>[] = [];
+  const dockResizes: number[] = [];
   let overlay!: ReturnType<typeof createWorkspaceFrameHost>;
   try {
-    overlay = createWorkspaceFrameHost(doc, async (message) => { messages.push(structuredClone(message)); return message.type === "overlay:frame" ? { tabId: 12, session: "source-session" } : { ok: true }; }, "chrome-extension://test/workspace.html");
+    overlay = createWorkspaceFrameHost(doc, async (message) => { messages.push(structuredClone(message)); return message.type === "overlay:frame" ? { tabId: 12, session: "source-session" } : { ok: true }; }, "chrome-extension://test/workspace.html", { onDockResize: (width) => dockResizes.push(width) });
   } finally { prototype.attachShadow = attach; }
   cleanup.push(() => { overlay.destroy(); win.happyDOM.abort(); });
   const element = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
@@ -23,10 +24,36 @@ function harness() {
   const chooseLayout = (layout: string) => { click(".more"); click(`.menu button[data-layout=${layout}]`); };
   const press = (selector: string, key: string) => { const event = new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }); element(selector).dispatchEvent(event as unknown as Event); return event; };
   const select = (node: Node, from = 0, to = node.textContent!.length) => { const range = doc.createRange(); range.setStart(node, from); range.setEnd(node, to); const selection = doc.getSelection()!; selection.removeAllRanges(); selection.addRange(range); doc.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true }) as unknown as Event); };
-  return { win, doc, root, overlay, element, click, chooseLayout, press, select, messages, context: (kind = "current") => overlay.handleMessage({ type: "margin:page-context", session: "source-session", kind }) };
+  return { win, doc, root, overlay, dockResizes, element, click, chooseLayout, press, select, messages, context: (kind = "current") => overlay.handleMessage({ type: "margin:page-context", session: "source-session", kind }) };
 }
 
 describe("protected workspace frame host", () => {
+  test("the docked panel resizes from its left edge and reports the width to remember", async () => {
+    const h = harness(); await h.overlay.open();
+    const grip = h.element(".grip"); const panel = h.element(".panel");
+    expect(grip.getAttribute("role")).toBe("separator"); expect(panel.style.width).toBe("520px");
+    const pointer = (type: string, clientX: number) => grip.dispatchEvent(new h.win.PointerEvent(type, { clientX, button: 0, pointerId: 1, bubbles: true }) as unknown as Event);
+    pointer("pointerdown", 500); pointer("pointermove", 400);
+    expect(panel.style.width).toBe("620px"); expect(panel.classList.contains("resizing")).toBe(true); expect(h.dockResizes).toEqual([]);
+    pointer("pointerup", 400);
+    expect(panel.classList.contains("resizing")).toBe(false); expect(h.dockResizes).toEqual([620]);
+    h.press(".grip", "ArrowRight"); expect(panel.style.width).toBe("596px"); expect(h.dockResizes.at(-1)).toBe(596);
+    h.overlay.setDockWidth(100); expect(panel.style.width).toBe("320px");
+    h.overlay.setDockWidth(99999); expect(panel.style.width).toBe(`${h.win.innerWidth - 24}px`);
+    h.chooseLayout("floating"); pointer("pointerdown", 500); pointer("pointermove", 100); pointer("pointerup", 100);
+    expect(panel.style.width).not.toBe(`${h.win.innerWidth - 24 + 400}px`); expect(h.dockResizes).toHaveLength(2);
+    h.chooseLayout("docked"); grip.dispatchEvent(new h.win.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
+    expect(panel.style.width).toBe("520px"); expect(h.dockResizes.at(-1)).toBe(520);
+  });
+  test("the shell follows the app's theme, falling back to the system setting", async () => {
+    const h = harness(); await h.overlay.open();
+    const host = h.root.host as HTMLElement;
+    expect(["light", "dark"]).toContain(host.dataset.theme!);
+    h.overlay.setTheme("light"); expect(host.dataset.theme).toBe("light");
+    h.overlay.setTheme("dark"); expect(host.dataset.theme).toBe("dark");
+    h.overlay.setTheme("neon"); expect(["light", "dark"]).toContain(host.dataset.theme!);
+    expect(h.root.querySelector("style")!.textContent).toContain(":host([data-theme=light])");
+  });
   test("mounts one private extension frame and preserves it across layout, peek, and close changes", async () => {
     const h = harness(); await h.overlay.open();
     const frame = h.element<HTMLIFrameElement>("iframe");
