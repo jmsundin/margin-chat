@@ -353,9 +353,9 @@ try {
   await fresh("tidy-undo");
   assert.equal(container.querySelector(".graph-map-tidy-undo"), null);
   await click(element(".graph-map-layout-options > summary"));
-  await click(element('[aria-label="Auto-arrange graph with ELK"]'));
-  for (let attempt = 0; attempt < 40 && !layoutWriteLog.length; attempt++) await settle();
-  assert.equal(layoutWriteLog.length, 1, "Auto-arrange writes one set of positions");
+  // Sort by topic is synchronous; ELK's bundle doesn't load under every test runtime.
+  await click(element('[aria-label="Organize graph by topic"]'));
+  assert.equal(layoutWriteLog.length, 1, "Sort by topic writes one set of positions");
   const arranged = layoutWriteLog[0];
   assert(Object.keys(arranged).length > 0);
   await click(element(".graph-map-tidy-undo"));
