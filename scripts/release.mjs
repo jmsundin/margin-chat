@@ -162,8 +162,11 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         const validationEnv = Object.fromEntries(["PATH", "HOME", "TMPDIR", "CI"].filter((key) => env[key]).map((key) => [key, env[key]]));
         await command("bun", ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts"], validationEnv);
         await command("bun", ["--no-env-file", "test"], validationEnv);
-        await command("bun", ["--no-env-file", "run", "build"], validationEnv);
-        await command("bun", ["--no-env-file", "run", "build:extension"], validationEnv);
+        // The client and extension builds are independent, so they run side by side.
+        await Promise.all([
+          command("bun", ["--no-env-file", "run", "build"], validationEnv),
+          command("bun", ["--no-env-file", "run", "build:extension"], validationEnv),
+        ]);
         assert.equal((await localPlan(config, env)).dirty, false, "Validation changed tracked release inputs.");
         return { sha: plan.sha, previousDeployment: previous.id, checks: ["tests", "client build", "extension build"] };
       },
@@ -184,7 +187,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       async checkpoint() {
         await assertLock();
         branches = await neon.ensureReleaseBranches(id);
-        backup = await backupBlobStore({ releaseId: id, sourceToken: env.BLOB_READ_WRITE_TOKEN, backupToken: env.BACKUP_BLOB_READ_WRITE_TOKEN });
+        backup = await backupBlobStore({ releaseId: id, sourceToken: env.BLOB_READ_WRITE_TOKEN, backupToken: env.BACKUP_BLOB_READ_WRITE_TOKEN, onProgress });
         return { recoveryBranch: branches.recovery.id, rehearsalBranch: branches.rehearsal.id,
           blobInventory: backup.inventoryPathname, blobInventorySha256: backup.inventorySha256, objectCount: backup.objectCount,
           recoveryBoundary: "Database branch and Blob inventory are separate checkpoints; reconcile projections when recovering." };
@@ -192,7 +195,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       async rehearse() {
         await assertLock();
         await restoreBlobBackup({ inventory: backup.inventory, backupToken: env.BACKUP_BLOB_READ_WRITE_TOKEN,
-          targetToken: env.REHEARSAL_BLOB_READ_WRITE_TOKEN, targetPrefix: prefix.replace(/\/$/u, "") });
+          targetToken: env.REHEARSAL_BLOB_READ_WRITE_TOKEN, targetPrefix: prefix.replace(/\/$/u, ""), onProgress });
         const rehearsalUrl = await neon.connectionUri(branches.rehearsal.id);
         privateSecrets.push(rehearsalUrl);
         const client = await connect(rehearsalUrl);

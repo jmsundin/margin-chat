@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { backupBlobStore, createNeonReleaseProvider, restoreBlobBackup, validateBlobStoreTokens } from "../scripts/release/providers.mjs";
+import { backupBlobStore, createNeonReleaseProvider, mapLimit, restoreBlobBackup, validateBlobStoreTokens } from "../scripts/release/providers.mjs";
 
 const hash = (value: string | Buffer) => createHash("sha256").update(value).digest("hex");
 const sourceToken = "vercel_blob_rw_sourceStore_fake";
@@ -293,6 +293,70 @@ describe("release Blob providers", () => {
     await expect(restoreBlobBackup({ ...args, targetPrefix: "" })).rejects.toThrow("isolated target prefix");
     fake.save(targetToken, `rehearsals/restore/${bodyKey}`, "different");
     await expect(restoreBlobBackup(args)).rejects.toThrow("verification failed");
+  });
+
+  test("copies files in parallel up to the limit and reads each backup file once on restore", async () => {
+    const fake = blobFake({ pageSize: 1000 });
+    for (let index = 0; index < 40; index += 1) fake.save(sourceToken, `media/${String(index).padStart(2, "0")}.bin`, `file ${index}`);
+    seedVault(fake);
+    let inFlight = 0;
+    let peak = 0;
+    const originalGet = fake.sdk.get;
+    fake.sdk.get = async (pathname: string, options: any) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      try { return await originalGet(pathname, options); } finally { inFlight -= 1; }
+    };
+    const progress: string[] = [];
+    const result = await backupBlobStore({ releaseId: "parallel", sourceToken, backupToken, sdk: fake.sdk, concurrency: 6, onProgress: (line: string) => progress.push(line) });
+    expect(result.objectCount).toBe(42);
+    expect(result.inventory.objects.map((object: any) => object.pathname)).toEqual(result.inventory.objects.map((object: any) => object.pathname).sort());
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(6);
+    expect(progress.at(-1)).toBe("Blob backup: 42/42 files");
+    fake.events.length = 0;
+    await restoreBlobBackup({ inventory: result.inventory, backupToken, targetToken, targetPrefix: "rehearsal/parallel", sdk: fake.sdk, concurrency: 6 });
+    const backupReads = fake.events.filter((event) => event.method === "get" && event.token === backupToken);
+    expect(backupReads).toHaveLength(42);
+    const puts = fake.events.filter((event) => event.method === "put").map((event) => event.pathname);
+    expect(puts).toHaveLength(42);
+    expect(puts.at(-1)).toEndWith("manifest.json");
+  });
+
+  test("waits and retries rate-limited Blob requests instead of failing the release", async () => {
+    const fake = blobFake();
+    seedVault(fake);
+    class BlobServiceRateLimited extends Error { retryAfter = 2; }
+    let limited = 2;
+    const originalPut = fake.sdk.put;
+    fake.sdk.put = async (pathname: string, bytes: Buffer, options: any) => {
+      if (limited-- > 0) throw new BlobServiceRateLimited("Too many requests");
+      return originalPut(pathname, bytes, options);
+    };
+    const originalGet = fake.sdk.get;
+    let failedRead = false;
+    fake.sdk.get = async (pathname: string, options: any) => {
+      if (!failedRead && options.token === sourceToken) { failedRead = true; throw new Error("Vercel Blob: Failed to fetch blob: 429 Too Many Requests"); }
+      return originalGet(pathname, options);
+    };
+    const waits: number[] = [];
+    const result = await backupBlobStore({ releaseId: "rate-limited", sourceToken, backupToken, sdk: fake.sdk, sleep: async (ms: number) => { waits.push(ms); } });
+    expect(result.objectCount).toBe(2);
+    expect(waits.filter((ms) => ms === 2000)).toHaveLength(2);
+    expect(waits).toHaveLength(3);
+  });
+
+  test("stops starting new parallel work after the first failure", async () => {
+    const started: number[] = [];
+    await expect(mapLimit([0, 1, 2, 3, 4, 5, 6, 7], 2, async (item: number) => {
+      started.push(item);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      if (item === 1) throw new Error("boom");
+      return item;
+    })).rejects.toThrow("boom");
+    expect(started.length).toBeLessThanOrEqual(3);
+    expect(await mapLimit([3, 1, 2], 2, async (item: number) => item * 2)).toEqual([6, 2, 4]);
   });
 });
 

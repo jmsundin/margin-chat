@@ -179,10 +179,61 @@ function safeBlobPathname(value) {
     !/[\\\u0000-\u001f\u007f]/.test(value) && !value.split("/").some((part) => !part || part === "." || part === "..");
 }
 
+/** Parallel Blob requests. Vercel's Hobby limits are 20 reads and 15 writes per
+ * second; each copy is about three requests, so this stays near those limits
+ * and rate-limited requests wait and retry. Pro allows five times more. */
+export const BLOB_CONCURRENCY = 8;
+const BLOB_REQUEST_TIMEOUT_MS = 60_000;
+const BLOB_RATE_LIMIT_ATTEMPTS = 8;
+
+/** Runs `task` over `items` with at most `limit` in flight, keeping input order.
+ * After the first failure no new item starts; the first error is thrown. */
+export async function mapLimit(items, limit, task) {
+  const results = new Array(items.length);
+  let next = 0;
+  let failed = false;
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try { results[index] = await task(items[index], index); }
+      catch (error) { failed = true; throw error; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return results;
+}
+
+const isRateLimited = (error) => error?.constructor?.name === "BlobServiceRateLimited" || /\b429\b|too many requests/iu.test(error?.message ?? "");
+
+/** Wraps the SDK so each attempt gets a fresh timeout and rate-limited requests
+ * back off (honoring Retry-After) instead of failing the release. */
+function retryingBlobSdk(sdk, sleep) {
+  const call = (method) => async (...args) => {
+    for (let attempt = 1; ; attempt += 1) {
+      const options = { ...args.at(-1), abortSignal: AbortSignal.timeout(BLOB_REQUEST_TIMEOUT_MS) };
+      try { return await sdk[method](...args.slice(0, -1), options); }
+      catch (error) {
+        if (attempt >= BLOB_RATE_LIMIT_ATTEMPTS || !isRateLimited(error)) throw error;
+        await sleep(error.retryAfter > 0 ? error.retryAfter * 1000 : Math.min(30_000, 250 * 2 ** attempt + Math.floor(Math.random() * 250)));
+      }
+    }
+  };
+  return { get: call("get"), put: call("put"), list: call("list") };
+}
+
+function progressReporter(onProgress, label, total) {
+  let done = 0;
+  const step = Math.max(1, Math.ceil(total / 10));
+  return () => {
+    done += 1;
+    if (done === total || done % step === 0) onProgress?.(`${label}: ${done}/${total} files`);
+  };
+}
+
 async function readBlob(sdk, token, pathname, { allowMissing = false } = {}) {
   let result;
   try {
-    result = await sdk.get(pathname, { token, access: "private", useCache: false, headers: { "accept-encoding": "identity" }, abortSignal: AbortSignal.timeout(60_000) });
+    result = await sdk.get(pathname, { token, access: "private", useCache: false, headers: { "accept-encoding": "identity" } });
   } catch (error) {
     if (allowMissing && error.name === "BlobNotFoundError") return null;
     throw new Error("Private Blob read failed; inspect store access and retry.");
@@ -203,7 +254,7 @@ async function listBlobs(sdk, token, prefix) {
   let cursor;
   do {
     let result;
-    try { result = await sdk.list({ token, prefix, cursor, limit: 1000, mode: "expanded", abortSignal: AbortSignal.timeout(60_000) }); }
+    try { result = await sdk.list({ token, prefix, cursor, limit: 1000, mode: "expanded" }); }
     catch { throw new Error("Blob listing failed; inspect store access and retry."); }
     if (!Array.isArray(result.blobs)) throw new Error("Blob returned an invalid listing.");
     for (const blob of result.blobs) {
@@ -219,7 +270,7 @@ async function listBlobs(sdk, token, prefix) {
 
 async function putVerified(sdk, token, pathname, bytes, contentType) {
   try {
-    await sdk.put(pathname, bytes, { token, access: "private", addRandomSuffix: false, allowOverwrite: false, contentType, abortSignal: AbortSignal.timeout(60_000), ...(bytes.length > 4 * 1024 * 1024 ? { multipart: true } : {}) });
+    await sdk.put(pathname, bytes, { token, access: "private", addRandomSuffix: false, allowOverwrite: false, contentType, ...(bytes.length > 4 * 1024 * 1024 ? { multipart: true } : {}) });
   } catch {
     // A prior attempt may have completed the immutable upload. Only accept
     // replay when reading it back proves its body and content type are exact.
@@ -340,12 +391,13 @@ function validateInventory(inventory, { releaseId, sourceStoreId, backupStoreId 
   return inventory;
 }
 
-async function verifyInventoryObjects(sdk, token, inventory, visit) {
+async function verifyInventoryObjects(sdk, token, inventory, { visit, concurrency = BLOB_CONCURRENCY, onProgress, label = "Blob backup check" } = {}) {
   const manifests = new Map();
   const shards = new Map();
   const revisionChecks = new Map();
   const paths = new Map(inventory.objects.map((object) => [object.pathname, object]));
-  for (const object of inventory.objects) {
+  const progress = progressReporter(onProgress, label, inventory.objects.length);
+  await mapLimit(inventory.objects, concurrency, async (object) => {
     const stored = await readBlob(sdk, token, object.backupPathname);
     if (stored.etag !== object.backupEtag || stored.bytes.length !== object.size || sha256(stored.bytes) !== object.sha256 || stored.contentType !== object.contentType) throw new Error("Blob backup integrity verification failed.");
     if (isVaultManifest(object.pathname)) manifests.set(object.pathname, stored.bytes);
@@ -356,7 +408,8 @@ async function verifyInventoryObjects(sdk, token, inventory, visit) {
     const check = verifyImmutableRevision(object.pathname, stored);
     if (check) revisionChecks.set(object.pathname, check);
     if (visit) await visit(object, stored);
-  }
+    progress();
+  });
   validateVaultReferences(manifests, shards, paths, revisionChecks);
 }
 
@@ -365,26 +418,25 @@ async function verifyInventoryObjects(sdk, token, inventory, visit) {
  * continue. Other objects are captured at their individual uncached reads.
  * Neither the complete store nor DB/Blob share one atomic point in time.
  */
-export async function backupBlobStore({ releaseId, sourceToken, backupToken, sourcePrefix = "", sdk, now = () => new Date() }) {
+export async function backupBlobStore({ releaseId, sourceToken, backupToken, sourcePrefix = "", sdk, now = () => new Date(), concurrency = BLOB_CONCURRENCY, sleep = delay, onProgress }) {
   releaseIdentifier(releaseId);
   if (typeof sourcePrefix !== "string" || (sourcePrefix && !safeBlobPathname(sourcePrefix.replace(/\/$/, "")))) throw new Error("Invalid Blob backup source prefix.");
   const identities = validateBlobStoreTokens({ sourceToken, backupToken });
-  sdk ??= await import("@vercel/blob");
+  const blob = retryingBlobSdk(sdk ?? await import("@vercel/blob"), sleep);
   const prefix = `releases/${releaseId}`;
   const inventoryPathname = `${prefix}/inventory.json`;
   const summarize = (inventory, bytes) => ({ inventory, inventoryPathname, inventorySha256: sha256(bytes), prefix, objectCount: inventory.objects.length, totalBytes: inventory.objects.reduce((sum, object) => sum + object.size, 0), ...identities });
-  const existing = await readBlob(sdk, backupToken, inventoryPathname, { allowMissing: true });
+  const existing = await readBlob(blob, backupToken, inventoryPathname, { allowMissing: true });
   if (existing) {
     let inventory;
     try { inventory = JSON.parse(existing.bytes.toString("utf8")); } catch { throw new Error("Invalid existing Blob backup inventory."); }
     validateInventory(inventory, { releaseId, ...identities });
     if (inventory.sourcePrefix !== sourcePrefix) throw new Error("Blob backup source prefix mismatch.");
-    await verifyInventoryObjects(sdk, backupToken, inventory);
+    await verifyInventoryObjects(blob, backupToken, inventory, { concurrency, onProgress });
     return summarize(inventory, existing.bytes);
   }
   const startedAt = now().toISOString();
-  const listed = await listBlobs(sdk, sourceToken, sourcePrefix);
-  const objects = [];
+  const listed = await listBlobs(blob, sourceToken, sourcePrefix);
   const manifests = new Map();
   const shards = new Map();
   const captured = new Map();
@@ -392,24 +444,30 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
   // Pin each mutable manifest once and capture listed immutable history before
   // copying bodies. A writer may advance live manifests without invalidating
   // either captured graph; history can reference revisions absent from listing.
-  for (const pathname of [...listed.keys()].filter(isVaultManifest).sort()) {
-    const record = await readBlob(sdk, sourceToken, pathname);
-    captured.set(pathname, { ...record, capturedAt: now().toISOString() });
-    manifests.set(pathname, record.bytes);
-  }
+  const manifestPathnames = [...listed.keys()].filter(isVaultManifest).sort();
+  const manifestRecords = await mapLimit(manifestPathnames, concurrency, async (pathname) => ({ ...await readBlob(blob, sourceToken, pathname), capturedAt: now().toISOString() }));
+  manifestPathnames.forEach((pathname, index) => {
+    captured.set(pathname, manifestRecords[index]);
+    manifests.set(pathname, manifestRecords[index].bytes);
+  });
   // Sharded roots name immutable file list shards, which may postdate the listing.
-  for (const pathname of [...vaultShardReferences(manifests)].sort()) {
-    const record = await readBlob(sdk, sourceToken, pathname, { allowMissing: true });
+  const shardPathnames = [...vaultShardReferences(manifests)].sort();
+  const shardRecords = await mapLimit(shardPathnames, concurrency, async (pathname) => {
+    const record = await readBlob(blob, sourceToken, pathname, { allowMissing: true });
     if (!record) throw new Error("Vault backup is missing a file list shard referenced by a manifest.");
-    captured.set(pathname, { ...record, capturedAt: now().toISOString() });
-    shards.set(pathname, record.bytes);
-  }
+    return { ...record, capturedAt: now().toISOString() };
+  });
+  shardPathnames.forEach((pathname, index) => {
+    captured.set(pathname, shardRecords[index]);
+    shards.set(pathname, shardRecords[index].bytes);
+  });
   const references = vaultReferences(manifests, shards);
   // A commit may have added revisions after their listing page was read but
   // before its manifest was captured. Fetch the manifest's full closure directly.
-  const pathnames = new Set([...listed.keys(), ...references.keys()]);
-  for (const pathname of [...pathnames].sort()) {
-    const current = captured.get(pathname) ?? await readBlob(sdk, sourceToken, pathname, { allowMissing: references.has(pathname) });
+  const pathnames = [...new Set([...listed.keys(), ...references.keys()])].sort();
+  const progress = progressReporter(onProgress, "Blob backup", pathnames.length);
+  const objects = await mapLimit(pathnames, concurrency, async (pathname) => {
+    const current = captured.get(pathname) ?? await readBlob(blob, sourceToken, pathname, { allowMissing: references.has(pathname) });
     if (!current) throw new Error("Vault backup is missing an immutable revision referenced by a manifest.");
     verifyShard(pathname, current.bytes);
     const capturedAt = current.capturedAt ?? now().toISOString();
@@ -417,32 +475,38 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
     if (check) revisionChecks.set(pathname, check);
     const digest = sha256(current.bytes);
     const backupPathname = `${prefix}/objects/${sha256(pathname)}/${digest}`;
-    const copied = await putVerified(sdk, backupToken, backupPathname, current.bytes, current.contentType);
-    objects.push({ pathname, sourceEtag: current.etag, capturedAt, backupPathname, backupEtag: copied.etag, sha256: digest, size: current.bytes.length, contentType: current.contentType });
-  }
+    const copied = await putVerified(blob, backupToken, backupPathname, current.bytes, current.contentType);
+    // Captured bodies are only needed until their copy is verified.
+    captured.delete(pathname);
+    progress();
+    return { pathname, sourceEtag: current.etag, capturedAt, backupPathname, backupEtag: copied.etag, sha256: digest, size: current.bytes.length, contentType: current.contentType };
+  });
   validateVaultReferences(manifests, shards, new Map(objects.map((object) => [object.pathname, object])), revisionChecks);
   const inventory = { schemaVersion: 1, state: "complete", releaseId, ...identities, sourcePrefix, startedAt, completedAt: now().toISOString(),
     consistency: "Per-user captured manifests with verified immutable revisions; other objects captured individually. No global point-in-time or atomic database/Blob snapshot.", objects };
   const bytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
-  await putVerified(sdk, backupToken, inventoryPathname, bytes, "application/json");
+  await putVerified(blob, backupToken, inventoryPathname, bytes, "application/json");
   return summarize(inventory, bytes);
 }
 
 /** Restore a backup into a mandatory isolated prefix of a third private store.
  * Existing target objects must match exactly; this never overwrites live data.
  */
-export async function restoreBlobBackup({ inventory, backupToken, targetToken, targetPrefix, sdk }) {
+export async function restoreBlobBackup({ inventory, backupToken, targetToken, targetPrefix, sdk, concurrency = BLOB_CONCURRENCY, sleep = delay, onProgress }) {
   validateInventory(inventory);
   const { sourceStoreId: targetStoreId, backupStoreId } = validateBlobStoreTokens({ sourceToken: targetToken, backupToken });
   if (backupStoreId !== inventory.backupStoreId || targetStoreId === inventory.sourceStoreId) throw new Error("Blob restore must target an isolated store distinct from production and backup.");
   if (!safeBlobPathname(targetPrefix)) throw new Error("Blob restore requires a safe, nonempty isolated target prefix.");
-  sdk ??= await import("@vercel/blob");
-  // Validate the whole snapshot first. Copy manifests last so no manifest can
-  // refer to an object that has not yet been written in the rehearsal store.
-  await verifyInventoryObjects(sdk, backupToken, inventory);
-  const ordered = { ...inventory, objects: [...inventory.objects].sort((a, b) => Number(isVaultManifest(a.pathname)) - Number(isVaultManifest(b.pathname))) };
-  await verifyInventoryObjects(sdk, backupToken, ordered, async (object, stored) => {
-    await putVerified(sdk, targetToken, `${targetPrefix}/${object.pathname}`, stored.bytes, object.contentType);
-  });
+  const blob = retryingBlobSdk(sdk ?? await import("@vercel/blob"), sleep);
+  // One read of each backup object both verifies it and copies it. Manifests
+  // are written only after the whole snapshot verified, so no restored manifest
+  // can refer to an object that is missing or corrupt in the rehearsal store.
+  const manifests = [];
+  await verifyInventoryObjects(blob, backupToken, inventory, { concurrency, onProgress, label: "Blob restore", visit: async (object, stored) => {
+    if (isVaultManifest(object.pathname)) manifests.push([object, stored.bytes]);
+    else await putVerified(blob, targetToken, `${targetPrefix}/${object.pathname}`, stored.bytes, object.contentType);
+  } });
+  manifests.sort(([a], [b]) => a.pathname.localeCompare(b.pathname));
+  await mapLimit(manifests, concurrency, ([object, bytes]) => putVerified(blob, targetToken, `${targetPrefix}/${object.pathname}`, bytes, object.contentType));
   return { objectCount: inventory.objects.length, targetStoreId, targetPrefix };
 }
