@@ -1,0 +1,6 @@
+.markdown-live-preview { font-size: .9rem; line-height: 1.65; min-width: 0; overflow-wrap: anywhere; }
+.markdown-live-preview .cm-live-rendered-block { cursor: auto; margin: 0.14em 0; max-width: 100%; width: 100%; }
+.markdown-live-preview .cm-live-rendered-block.obsidian-note-markdown mark.markdown-live-preview-match { background: var(--accent-soft); border-radius: 2px; color: inherit; padding: 0 .04em; }
+.markdown-live-preview img, .markdown-live-preview video, .markdown-live-preview svg { max-width: 100%; height: auto; }
+.markdown-live-preview pre { overflow-x: auto; white-space: pre; }
+.markdown-live-preview-more { color: var(--muted); font-size: .76rem; margin: 10px 0 0; }
