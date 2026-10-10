@@ -126,7 +126,7 @@ Protected Neon recovery branches require a plan supporting that feature and are 
 | Validate | Verify project/branch/store identities and current production alias; install from the frozen Bun lockfile; run all tests and client/extension builds; require a clean checkout. |
 | Lock | Hold a direct Postgres session advisory lock across the release. GitHub additionally serializes all production refs without canceling a running release. |
 | Checkpoint | Create a protected recovery branch and an isolated rehearsal branch at the same production LSN. Copy private Blob objects and verify a backup inventory. Record resource identities as they are created. |
-| Rehearse | Restore Blob into a unique prefix in the separate rehearsal store. Migrate the isolated database; check account identity, money, captures, and encrypted-key invariants; run jobs; recheck invariants; exercise the real API. |
+| Rehearse | Restore Blob into a unique prefix in the separate rehearsal store, verifying each backup object as it is copied and writing manifests only after the whole backup verified. Migrate the isolated database; check account identity, money, captures, and encrypted-key invariants; run jobs; recheck invariants; exercise the real API. |
 | Migrate | Apply pending checksummed SQL migrations once. Production startup verifies the migration ledger rather than executing DDL. |
 | Stage | Upload source as a compressed archive with `--archive=tgz`, excluding local build output and the knowledge graph. Create a Vercel production candidate with `--prod --skip-domain`; verify its project, readiness, and commit metadata. |
 | Jobs | Run declared jobs with durable progress. Every declared job must finish before promotion; no jobs run implicitly. |
@@ -200,7 +200,7 @@ Automatic app rollback may be enabled after the first transition. It requires th
 
 For corrupted authoritative data, orchestrate recovery separately: stop affected writes, reconcile writes since the checkpoints, recover the selected database/vault state, and rebuild projections. Retain encryption material too. Do not rewind manifest counters or restore an old database over newer writes without reconciliation.
 
-The first implementation runs within a 120-minute CI job, buffers one Blob object at a time, and uses the existing per-account rebuild service. Very large accounts/stores may need streaming backups and a longer-lived worker. Retention cleanup is not automated. The observation window checks availability/persistence, not production error-rate/tracing systems. Existing offline/contract tests run, but the workflow does not open every previously released browser client.
+The first implementation runs within a 120-minute CI job, copies up to 8 Blob objects at a time (`BLOB_CONCURRENCY` in `scripts/release/providers.mjs`, sized for the Hobby Blob limits of 20 reads and 15 writes per second; rate-limited requests wait and retry), and uses the existing per-account rebuild service. Very large accounts/stores may need streaming backups and a longer-lived worker. Retention cleanup is not automated. The observation window checks availability/persistence, not production error-rate/tracing systems. Existing offline/contract tests run, but the workflow does not open every previously released browser client.
 
 ## References
 
