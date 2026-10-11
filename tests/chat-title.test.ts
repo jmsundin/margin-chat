@@ -152,6 +152,29 @@ describe("graph cluster labels", () => {
     expect(result.title.length).toBeLessThanOrEqual(48);
   });
 
+  test("name every cluster in one request, giving same-subject clusters one name", async () => {
+    let requestBody: Record<string, any> | null = null;
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({ output_text: "C1: Angular\n- C2: **Angular**\nC3) React hooks\nnot a category line\nC3: Duplicate" });
+    }) as typeof fetch;
+
+    const result = await createService().generateTitle({
+      kind: "categories",
+      prompt: "C1 (4 docs): Angular components; Inputs\nC2 (3 docs): ViewChild; ElementRef\nC3 (3 docs): React; useEffect",
+    });
+
+    expect(requestBody?.model).toBe("gpt-6-luna");
+    expect(JSON.stringify(requestBody)).toContain("exactly the same name");
+    expect(result.categories).toEqual([{ cluster: 1, name: "Angular" }, { cluster: 2, name: "Angular" }, { cluster: 3, name: "React hooks" }]);
+  });
+
+  test("allow a longer prompt for categories than for titles", () => {
+    const prompt = "x".repeat(20_000);
+    expect(() => validateChatTitleRequest({ kind: "cluster", prompt })).toThrow("characters or fewer");
+    expect(validateChatTitleRequest({ kind: "categories", prompt }).prompt).toHaveLength(20_000);
+  });
+
   test("rejects unknown title kinds", () => {
     expect(() => validateChatTitleRequest({ kind: "poem", prompt: "x", serviceId: "gemini-api" })).toThrow("kind must be");
   });

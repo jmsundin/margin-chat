@@ -25,7 +25,9 @@ export function createChatExecutionService({ apiKeyService, billingService, chat
       : chatService.getPlannedCredentialSource(payload, context);
     if (credentialSource === "hosted") {
       const limits = billingService.getHostedUsageLimits(payload, { validateInput: false });
-      context.hostedMaxOutputTokens = operation === "title" ? Math.min(limits.maxOutputTokens, 256) : limits.maxOutputTokens;
+      // Naming every cluster at once needs a line per cluster; other titles need one line.
+      const titleTokens = payload?.kind === "categories" ? 2_048 : 256;
+      context.hostedMaxOutputTokens = operation === "title" ? Math.min(limits.maxOutputTokens, titleTokens) : limits.maxOutputTokens;
       context.hostedMaxInputCharacters = limits.maxInputCharacters;
     }
     const result = operation === "title"

@@ -11,7 +11,7 @@ import {
   requestXAIResponse, requestXAIResponseStream,
 } from "./providers.mjs";
 import { buildAgentInstruction, buildSystemInstruction } from "./systemPrompt.mjs";
-import { buildChatTitleInstruction, sanitizeGeneratedChatTitle, sanitizeGeneratedClusterLabel, validateChatTitleRequest } from "./title.mjs";
+import { buildChatTitleInstruction, parseGeneratedCategories, sanitizeGeneratedChatTitle, sanitizeGeneratedClusterLabel, validateChatTitleRequest } from "./title.mjs";
 import { validateAIOptions, validateChatRequest } from "./validation.mjs";
 import { prepareChatContext } from "./context.mjs";
 import { cannotSeeImageInstruction, modelSeesImages, vaultFileInstruction } from "./fileContext.mjs";
@@ -477,6 +477,11 @@ export function createChatService({ database, documentService, env, runtimeConfi
   async function generateTitle(payload, context = {}) {
     const { kind } = validateChatTitleRequest(payload);
     const result = await execute(titleChatRequest(payload), context, null, buildChatTitleInstruction(kind));
+    if (kind === "categories") {
+      const categories = parseGeneratedCategories(result.reply);
+      if (!categories.length) throw new HttpError(502, "The model returned no category names.");
+      return { categories, ...(context.usageMeter ? { billing: context.usageMeter.summary() } : {}) };
+    }
     const generated = kind === "cluster" ? sanitizeGeneratedClusterLabel(result.reply) : sanitizeGeneratedChatTitle(result.reply);
     if (!generated) throw new HttpError(502, "The model returned an empty chat title.");
     return { title: generated, ...(context.usageMeter ? { billing: context.usageMeter.summary() } : {}) };
