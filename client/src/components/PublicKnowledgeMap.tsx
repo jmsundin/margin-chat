@@ -1,4 +1,5 @@
 import DismissibleDetails from "./DismissibleDetails";
+import MapHelp from "./MapHelp";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode, PointerEvent as ReactPointerEvent } from "react";
@@ -867,6 +868,22 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         </section> : <section className="public-map-start"><div className="public-map-section-label">A place to begin</div><p>Choose a topic, then expand one neighborhood at a time.</p><div className="public-map-seeds">{SEEDS.map((seed) => <button type="button" key={seed.id} onClick={() => void openTopic(seed.id, true, seed.label)}>{seed.label} <span>↗</span></button>)}</div>{account ? <PublicAnswerFeed account={account} onOpenAnswer={(answer) => void openTopic(answer.topicId)} /> : null}{visible.topics.length > 0 && <><h4>Topics in this view <span>{visible.topics.length}</span></h4><ul className="public-map-topic-list">{visible.topics.map((topic) => <li key={topic.id}><button type="button" onClick={() => selectTopic(topic.id, true)}>{topic.label}{savedConversation(topic) && <span>In my map</span>}</button></li>)}</ul></>}<p className="public-map-small">Connections come from each topic’s Wikipedia article: broader topics first, then the articles it links to, grouped by section. Expand loads a small group at a time; it does not import them into your workspace.</p></section>}
       </div>
     </aside>;
+  function closeViewOptions() { mapRef.current?.querySelector(".public-map-view-options")?.removeAttribute("open"); }
+  // How the current view is arranged lives in the header's view options menu, not a row under the toolbar.
+  const modeSettings = !visible.topics.length ? null : clustersMode || viewMode === "topics" ? <div className="graph-mode-context" aria-label="Cluster view status">
+      <div className="graph-mode-segmented" role="group" aria-label="Group topics by">
+        <span>Group by</span>
+        <button type="button" aria-pressed={clustersMode} onClick={() => { if (!clustersMode) chooseViewMode("clusters"); }}>Links</button>
+        <button type="button" aria-pressed={!clustersMode} onClick={() => { if (clustersMode) chooseViewMode("topics"); }}>Starting topic</button>
+      </div>
+      {clustersMode ? <><span>Topics gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
+        <button type="button" onClick={() => { closeViewOptions(); fitMap(); }}>Show all clusters</button></>
+        : <><span>Topics sit with the starting topic they were reached from. Select a group to zoom in.</span>
+        <button type="button" onClick={() => { closeViewOptions(); showAllGroups(); }}>Show all groups</button></>}
+    </div> : viewMode === "layouts" ? <div className="graph-mode-context" aria-label="All topics status">
+      <span>Every loaded topic, laid out by its connections. Use Layout at the bottom of the map to change the shape.</span>
+      {selected ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selected.id); }}>Focus on {selected.label}</button> : null}
+    </div> : null;
   return <div ref={mapRef} className="public-knowledge-map semantic-public-map" style={{ "--public-details-width": `${detailsWidth}px` } as CSSProperties}>
     <header className="public-map-topbar">
       {toolbarLeading}
@@ -911,6 +928,10 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         <span className="graph-view-purpose" aria-live="polite">{[...PUBLIC_VIEW_MODES, ...PUBLIC_SUB_VIEW_MODES].find((item) => item.id === viewMode)?.description}</span>
       </div>
       <button type="button" ref={explorerTriggerRef} aria-expanded={explorerContainer ? undefined : explorerOpen} onClick={openExplorer}>Explore</button>
+      {modeSettings ? <DismissibleDetails className="graph-map-view-options public-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
+        <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg></summary>
+        <div>{modeSettings}</div>
+      </DismissibleDetails> : null}
       <DismissibleDetails className="public-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}>
         <summary>Filters{location.filters.relation !== "all" || location.filters.includeMetadata ? " •" : ""}</summary>
         <div><label>Relationships<select value={location.filters.relation} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, relation: event.target.value as PublicRelationFilter } }))}>
@@ -918,21 +939,6 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         </select></label><label><input type="checkbox" checked={location.filters.includeMetadata} onChange={(event) => navigate((previous) => refitDocumentLocation({ ...previous, filters: { ...previous.filters, includeMetadata: event.target.checked } }))} />Include Wikimedia metadata</label><p>Category pages, portals, and templates are hidden by default. Your loaded topics stay available.</p></div>
       </DismissibleDetails>
     </header>
-    {(clustersMode || viewMode === "topics") && visible.topics.length ? <div className="graph-mode-context" aria-label="Cluster view status">
-      <div className="graph-mode-segmented" role="group" aria-label="Group topics by">
-        <span>Group by</span>
-        <button type="button" aria-pressed={clustersMode} onClick={() => { if (!clustersMode) chooseViewMode("clusters"); }}>Links</button>
-        <button type="button" aria-pressed={!clustersMode} onClick={() => { if (clustersMode) chooseViewMode("topics"); }}>Starting topic</button>
-      </div>
-      {clustersMode ? <><span>Topics gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
-        <button type="button" onClick={() => fitMap()}>Show all clusters</button></>
-        : <><span>Topics sit with the starting topic they were reached from. Select a group to zoom in.</span>
-        <button type="button" onClick={showAllGroups}>Show all groups</button></>}
-    </div> : null}
-    {viewMode === "layouts" && visible.topics.length ? <div className="graph-mode-context" aria-label="All topics status">
-      <span>Every loaded topic, laid out by its connections. Choose Layout below to change the shape.</span>
-      {selected ? <button type="button" onClick={() => focusConnections(selected.id)}>Focus on {selected.label}</button> : null}
-    </div> : null}
     {location.graphFocusId ? <div className="public-map-focusbar" aria-label="Focused public connections">
       <span><strong>Around {location.graph.topics[location.graphFocusId]?.label}</strong><small>{visible.topics.length} topics · {location.graphFocusDepth} {location.graphFocusDepth === 1 ? "hop" : "hops"}</small></span>
       <button type="button" disabled={!canShowMoreFocus} title={canShowMoreFocus ? "Include the next level of loaded connections" : "All loaded connections in this branch are shown"} onClick={() => focusConnections(location.graphFocusId!, Math.min(PUBLIC_MAP_LIMIT, location.graphFocusDepth + 1), location.documentLayoutMode)}>Show more connections</button>
@@ -983,7 +989,8 @@ export function PublicKnowledgeMap({ isVisible = true, explorerContainer, onOpen
         })}
       </div>
       {(openingId || topicError) && <div className="public-map-feedback" role={topicError ? "alert" : "status"}>{openingId && !topicError ? "Opening public topic…" : topicError && <><p>{topicError.message}</p><button type="button" onClick={() => { const error = topicError; void (error.action === "open" ? openTopic(error.id) : expandTopic(error.id, !!location.graph.expansions[error.id])); }}>Try again</button><button type="button" onClick={() => setTopicError(null)}>Dismiss</button></>}</div>}
-      <div className="public-map-bottom"><p role="status" aria-live="polite">{notice || (showNeighborhoods ? "Zoom to reveal topics · Select a group to focus" : "Drag to pan · Pinch to zoom")}<span id="public-map-keyboard-help">Arrow keys pan · +/− zoom · Home / 0 shows all groups</span></p>
+      <div className="public-map-bottom"><MapHelp id="public-map-keyboard-help"><span>{showNeighborhoods ? "Zoom to reveal topics · Select a group to focus" : "Drag to pan · Pinch to zoom"}</span><span>Arrow keys pan · +/− zoom · Home / 0 shows all groups</span></MapHelp>
+        <p role="status" aria-live="polite">{notice}</p>
         <div className="public-map-zoom" aria-label="Public map controls" data-graph-ui="true">
           {location.presentation === "documents" ? <DismissibleDetails className="public-map-arrange" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Layout</summary><div>
             {([["auto", "Auto layout"], ["tree-right", "Tree: left to right"], ["tree-down", "Tree: top down"], ["connections", location.graphFocusId ? "Around focused node" : "Most connections"]] as const).map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentsOnly && location.documentLayoutMode === mode} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(mode); }}>{label}</button>)}

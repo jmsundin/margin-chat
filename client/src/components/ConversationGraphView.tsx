@@ -1,4 +1,5 @@
 import DismissibleDetails from "./DismissibleDetails";
+import MapHelp from "./MapHelp";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { getDocumentDockDropEdge } from "../lib/documentDock";
 import {
@@ -2778,6 +2779,40 @@ export default function ConversationGraphView({
   const secondaryViewLabel = navigation.state.contentLens === "concepts" ? "Concepts"
     : MORE_GRAPH_VIEW_MODES.find((item) => item.id === viewMode)?.label;
   function closeViewOptions() { sectionRef.current?.querySelector(".graph-map-view-options")?.removeAttribute("open"); }
+  // How the current view is arranged and what it is doing lives in the view options menu, not a row under the toolbar.
+  const clusterStatus = !isClustersMode || !jev?.enabled ? null
+    : topicEmbeddings.loading ? "Grouping by subject…"
+    : topicEmbeddings.warning ? topicEmbeddings.warning
+    : clusterLabels.loading ? "Naming clusters…" : null;
+  const modeSettings = panelView ? null : isNetworkMode ? <div className="graph-mode-context" aria-label="Network layout controls">
+      <span>Layout stays still until you relax it. Drag a document to pin its position.</span>
+      <button type="button" onClick={() => { navigation.update({ networkIteration: navigation.state.networkIteration + 1 }); setFitAfterArrange(true); }}>Relax network</button>
+      {selectedConversationId ? <button type="button" aria-pressed={Boolean(navigation.state.networkPins[selectedConversationId])} onClick={() => {
+        const pins = { ...navigation.state.networkPins }; const node = placementByConversationId.get(selectedConversationId);
+        if (pins[selectedConversationId]) delete pins[selectedConversationId]; else if (node) pins[selectedConversationId] = { x: node.x, y: node.y };
+        navigation.update({ networkPins: pins });
+      }}>{navigation.state.networkPins[selectedConversationId] ? "Unpin selected" : "Pin selected"}</button> : null}
+      {Object.keys(navigation.state.networkPins).length ? <button type="button" onClick={() => navigation.update({ networkPins: {} })}>Clear pins ({Object.keys(navigation.state.networkPins).length})</button> : null}
+    </div> : isClustersMode || viewMode === "topics" ? <div className="graph-mode-context" aria-label="Cluster view status">
+      <div className="graph-mode-segmented" role="group" aria-label="Group documents by">
+        <span>Group by</span>
+        <button type="button" aria-pressed={isClustersMode} onClick={() => { if (!isClustersMode) chooseViewMode("clusters"); }}>Links</button>
+        <button type="button" aria-pressed={!isClustersMode} onClick={() => { if (isClustersMode) chooseViewMode("topics"); }}>My groups</button>
+      </div>
+      {isClustersMode ? <>
+        <span>{groupBySubject ? "Documents gather around their most connected hub, and clusters on the same subject join."
+          : "Documents gather around their most connected hub."} Zoom out for topics and dots, zoom in to read.</span>
+        {!jev?.enabled ? <span>Turn on Jev to group clusters by subject and name them; hub titles are shown until then.</span>
+          : clusterStatus ? <span>{clusterStatus}</span> : null}
+        <button type="button" onClick={() => { closeViewOptions(); fitGraph(); }}>Show all clusters</button>
+      </> : <>
+        <span>Documents sit in the groups you made. Zoom into a group to see its documents.</span>
+        <button type="button" onClick={() => { closeViewOptions(); showAllGroups(); }}>Show all groups</button>
+      </>}
+    </div> : viewMode === "documents" ? <div className="graph-mode-context" aria-label="All documents status">
+      <span>Every document, laid out by its connections. Use Layout at the bottom of the map to change the shape.</span>
+      {selectedConversation ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selectedConversation.id, 1, documentLayoutMode); }}>Focus on {selectedConversation.title}</button> : null}
+    </div> : null;
 
   return (
     <section ref={sectionRef} className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
@@ -2805,8 +2840,10 @@ export default function ConversationGraphView({
         <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={chooseViewMode} />
         <button type="button" ref={explorerTriggerRef} aria-label="Explore map collections and sources" onClick={openExplorer}>Explore</button>
         <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
-          <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}</summary>
+          <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}
+            {clusterStatus ? <span className="graph-map-view-options-status" role="status" title={clusterStatus}><span className="public-map-visually-hidden">{clusterStatus}</span></span> : null}</summary>
           <div>
+            {modeSettings}
             <GraphViewModeSelects mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }}
               onLensChange={(lens) => {
                 closeViewOptions();
@@ -2825,39 +2862,6 @@ export default function ConversationGraphView({
           </div></DismissibleDetails> : null}
         {toolbarTrailing}
       </div>
-      {isNetworkMode && !panelView ? <div className="graph-mode-context" aria-label="Network layout controls">
-        <span>Layout stays still until you relax it. Drag a document to pin its position.</span>
-        <button type="button" onClick={() => { navigation.update({ networkIteration: navigation.state.networkIteration + 1 }); setFitAfterArrange(true); }}>Relax network</button>
-        {selectedConversationId ? <button type="button" aria-pressed={Boolean(navigation.state.networkPins[selectedConversationId])} onClick={() => {
-          const pins = { ...navigation.state.networkPins }; const node = placementByConversationId.get(selectedConversationId);
-          if (pins[selectedConversationId]) delete pins[selectedConversationId]; else if (node) pins[selectedConversationId] = { x: node.x, y: node.y };
-          navigation.update({ networkPins: pins });
-        }}>{navigation.state.networkPins[selectedConversationId] ? "Unpin selected" : "Pin selected"}</button> : null}
-        {Object.keys(navigation.state.networkPins).length ? <button type="button" onClick={() => navigation.update({ networkPins: {} })}>Clear pins ({Object.keys(navigation.state.networkPins).length})</button> : null}
-      </div> : null}
-      {(isClustersMode || viewMode === "topics") && !panelView ? <div className="graph-mode-context" aria-label="Cluster view status">
-        <div className="graph-mode-segmented" role="group" aria-label="Group documents by">
-          <span>Group by</span>
-          <button type="button" aria-pressed={isClustersMode} onClick={() => { if (!isClustersMode) chooseViewMode("clusters"); }}>Links</button>
-          <button type="button" aria-pressed={!isClustersMode} onClick={() => { if (isClustersMode) chooseViewMode("topics"); }}>My groups</button>
-        </div>
-        {isClustersMode ? <>
-          <span>{groupBySubject ? "Documents gather around their most connected hub, and clusters on the same subject join."
-            : "Documents gather around their most connected hub."} Zoom out for topics and dots, zoom in to read.</span>
-          {!jev?.enabled ? <span>Turn on Jev to group clusters by subject and name them; hub titles are shown until then.</span>
-            : topicEmbeddings.loading ? <span aria-live="polite">Grouping by subject…</span>
-            : topicEmbeddings.warning ? <span>{topicEmbeddings.warning}</span>
-            : clusterLabels.loading ? <span aria-live="polite">Naming clusters…</span> : null}
-          <button type="button" onClick={fitGraph}>Show all clusters</button>
-        </> : <>
-          <span>Documents sit in the groups you made. Zoom into a group to see its documents.</span>
-          <button type="button" onClick={showAllGroups}>Show all groups</button>
-        </>}
-      </div> : null}
-      {viewMode === "documents" && !panelView ? <div className="graph-mode-context" aria-label="All documents status">
-        <span>Every document, laid out by its connections. Choose Layout below to change the shape.</span>
-        {selectedConversation ? <button type="button" onClick={() => focusConnections(selectedConversation.id, 1, documentLayoutMode)}>Focus on {selectedConversation.title}</button> : null}
-      </div> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
@@ -3179,8 +3183,8 @@ export default function ConversationGraphView({
             {inspectedOverviewSources.map((id) => conversations[id] ? <button type="button" key={id} onClick={() => openEvidence({ conversationId: id, sourceKind: "conversation" })}>{conversations[id].title}<small>Open original source</small></button> : null)}
           </section> : null}
           {scene.nodes.length === 0 ? <p className="graph-map-empty">{scope.kind === "concept" ? "Add a source to this concept from the overview or search results." : "No discussions in this view. Return to All groups to explore."}</p> : null}
-          <p className="conversation-graph-pan-hint" id={keyboardHintId}>
-            {isMultiSelectActive
+          <MapHelp id={keyboardHintId}>
+            <span>{isMultiSelectActive
               ? multiSelectedConversationIds.size
                 ? isCanvasMode ? "Drag a selected card to move them together · Shift-drag to add more" : "Drag a selected chat's move handle to move the group · Shift-drag to add more"
                 : "Drag across chats to select them · Shift-drag adds to the selection"
@@ -3188,9 +3192,9 @@ export default function ConversationGraphView({
               ? isCanvasMode ? "Drag a card to move it · Click a card for a preview · Drag empty space to pan · Pinch or Ctrl-scroll to zoom" : "Click a chat for a preview · Drag to pan · Pinch to zoom"
               : detailLevel === "preview"
                 ? "Expand to read here · Dock to keep the graph interactive"
-                : "Scroll inside the chat · Minimize or dock when ready"}
+                : "Scroll inside the chat · Minimize or dock when ready"}</span>
             <span>Arrow keys pan · + / − zoom · Home shows all groups · Tab explores chats</span>
-          </p>
+          </MapHelp>
 
           <div
             className="conversation-graph-zoom is-floating"
