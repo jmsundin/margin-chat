@@ -1,4 +1,4 @@
-import { decodeReadableMarkdown, encodeReadableMarkdown, isReadableMarkdown, isSafeMarkdownPath, discoverMarkdownWorkspace, parseMarkdownWorkspace, parseMarkdownWorkspaceManifest } from "./workspaceMarkdown";
+import { decodeReadableMarkdown, encodeReadableMarkdown, isReadableMarkdown, isSafeMarkdownPath, markedBlockIds, discoverMarkdownWorkspace, parseMarkdownWorkspace, parseMarkdownWorkspaceManifest } from "./workspaceMarkdown";
 import { parseFrontmatterEntryValue, readFrontmatter } from "@margin-chat/workspace-contracts";
 import { sameVaultFile, type VaultFile } from "./vaultTypes";
 
@@ -39,7 +39,8 @@ export function mergeVaultFile(path: string, base: VaultFile | null, local: Vaul
     const inputs = [base.content, local.content, remote.content];
     const [before, edited, current] = inputs.map(decodeReadableMarkdown);
     const merged = mergeMarkdown(before, edited, current, path);
-    if (inputs.some(isReadableMarkdown)) merged.value = encodeReadableMarkdown(merged.value);
+    // Lines any side marked with an Obsidian block ID keep it.
+    if (inputs.some(isReadableMarkdown)) merged.value = encodeReadableMarkdown(merged.value, { referencedBlockIds: new Set(inputs.flatMap((input) => [...markedBlockIds(input)])) });
     // Validate with the actual reader, so a combination of valid edits cannot
     // publish invalid references or metadata that prevents reopening a document.
     const workspace = discoverMarkdownWorkspace({ [path]: merged.value });

@@ -4,7 +4,7 @@ import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./ex
 import { normalizeEditableDocument } from "./editableDocument.mjs";
 import { normalizeDocumentLayout } from "./documentLayout.mjs";
 import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
-import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
+import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown, markedBlockIds } from "./markdownReadable.mjs";
 import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
 import { readFrontmatter, readFrontmatterValues, setFrontmatterEntries } from "./frontmatter.mjs";
 import { DOCUMENT_RELATION_TYPES, EDGE_META_KEY, RESERVED_DOCUMENT_TAGS, documentRelationKey, documentRelationMetadata, normalizeDocumentNodeType, normalizeDocumentRelations, normalizeDocumentTags, readDocumentGraphProperties, readDocumentRelationMetadata } from "./relations.mjs";
@@ -45,7 +45,7 @@ function cachedFileMetadata(path, source) {
         }
     });
 }
-export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
+export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown, markedBlockIds } from "./markdownReadable.mjs";
 export { markdownIdentitySuffix } from "./markdownPaths.mjs";
 export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 5;
 
@@ -54,18 +54,44 @@ function decodeWorkspace(workspace) {
     return { ...workspace, files: Object.fromEntries(Object.entries(workspace.files).map(([path, source]) =>
         [path, isAuxiliaryMarkdownPath(path) ? source : decodeReadableMarkdown(source)])) };
 }
-function encodeWorkspace(workspace, previous, decodedPrevious) {
+/** Lines a note, highlight, branch, link or relation points at. Their files mark them with Obsidian block IDs. */
+function referencedBlockIds(state) {
+    const ids = new Set();
+    const visit = (value) => {
+        if (Array.isArray(value)) { for (const item of value) if (item && typeof item === "object") visit(item); return; }
+        for (const [key, item] of Object.entries(value)) {
+            if ((key === "sourceBlockId" || key === "targetBlockId") && typeof item === "string") ids.add(item);
+            else if (item && typeof item === "object") visit(item);
+        }
+    };
+    if (state && typeof state === "object") visit(state);
+    return ids;
+}
+/** An unchanged file is kept as it is, unless a line in it gained a reference since it was written. */
+function lacksBlockReferences(encoded, source, referenced) {
+    if (!referenced.size) return false;
+    for (const match of source.matchAll(/^<!-- margin-chat-document-block-end ("[^"\r\n]*") -->\r?$/gm)) {
+        let id;
+        try { id = JSON.parse(match[1]); } catch { continue; }
+        if (referenced.has(id) && /^[A-Za-z0-9-]+$/.test(id) && !encoded.includes(`^${id}`)) return true;
+    }
+    return false;
+}
+function encodeWorkspace(workspace, previous, decodedPrevious, referenced = new Set()) {
     const files = { ...workspace.files };
     for (const record of workspace.manifest.files) {
         const source = files[record.path];
-        files[record.path] = decodedPrevious?.files[record.path] === source
-            ? previous.files[record.path] : encodeReadableMarkdown(source);
+        const kept = decodedPrevious?.files[record.path] === source ? previous.files[record.path] : null;
+        if (kept !== null && !lacksBlockReferences(kept, source, referenced)) { files[record.path] = kept; continue; }
+        // A line keeps an ID it was given, so links to it from other Obsidian notes keep working.
+        const marked = markedBlockIds(previous?.files[record.path]);
+        files[record.path] = encodeReadableMarkdown(source, { referencedBlockIds: marked.size ? new Set([...referenced, ...marked]) : referenced });
     }
     return { ...workspace, files };
 }
 export function createMarkdownWorkspace(state, savedAt = new Date().toISOString(), previousWorkspace, options = {}) {
     const decoded = decodeWorkspace(previousWorkspace);
-    return encodeWorkspace(createLegacyMarkdownWorkspace(state, savedAt, decoded, options), previousWorkspace, decoded);
+    return encodeWorkspace(createLegacyMarkdownWorkspace(state, savedAt, decoded, options), previousWorkspace, decoded, referencedBlockIds(state));
 }
 
 function createLegacyMarkdownWorkspace(state, savedAt = new Date().toISOString(), previousWorkspace, options = {}) {
@@ -749,7 +775,7 @@ export function preserveMarkdownFileLocation(source, currentSource, path) {
     if (JSON.stringify(file) === JSON.stringify(selected.file)) return source;
     const updated = decoded.replace(/^<!-- margin-chat-metadata .+ -->\r?$/m,
         (line) => serializeMetadata({ ...selected, file }) + (line.endsWith("\r") ? "\r" : ""));
-    return isReadableMarkdown(source) ? encodeReadableMarkdown(updated) : updated;
+    return isReadableMarkdown(source) ? encodeReadableMarkdown(updated, { referencedBlockIds: markedBlockIds(source) }) : updated;
 }
 function parseMetadata(source) {
     source = decodeReadableMarkdown(source);
