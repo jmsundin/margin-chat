@@ -64,6 +64,7 @@ import NotificationToast from "./components/NotificationToast";
 import AIControls from "./components/AIControls";
 import JevRelatedItems from "./components/JevRelatedItems";
 import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
+import { useVaultPassageIndex } from "./lib/useVaultPassageIndex";
 import { applyJevCategories, withJevConsent } from "./lib/jevAssistance";
 import { applyJevGroupSuggestions } from "./lib/jevGrouping";
 import { getThreadCategoryLabel } from "./lib/threadCategories";
@@ -1059,6 +1060,7 @@ function WorkspaceAppContent({
     groups: state.groups,
     pending: Object.values(pendingConversationIds).some(Boolean),
   });
+  const vaultIndex = useVaultPassageIndex({ userId: user.id, active: vault.ready && vault.storageMode === "server" });
   const jevCategoryKey = JSON.stringify(jev.categories);
   const jevGroupSuggestionKey = JSON.stringify(jev.groupSuggestions);
   useEffect(() => {
@@ -4988,6 +4990,7 @@ function WorkspaceAppContent({
           />
 
           <AppSettingsModal
+            vaultIndex={vault.storageMode === "server" ? vaultIndex : undefined}
             jevEnabled={jevEnabled}
             jevStatus={jev.status}
             onSetJevEnabled={setJevEnabled}

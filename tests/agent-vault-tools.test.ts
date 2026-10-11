@@ -149,6 +149,31 @@ describe("agent vault tools", () => {
     expect((await run("list_related", { document_id: "note" }) as any).related).toEqual([]);
   });
 
+  test("with the vault index, search adds passages found by meaning and uploaded files, and can read a file", async () => {
+    const passages = {
+      search: async () => ({ results: [
+        { id: "note", sourceKind: "conversation", kind: "note", title: "Pricing ideas", heading: null, snippet: "Try usage pricing for teams.", matched: "both" },
+        { id: "plan", sourceKind: "conversation", kind: "document", title: "Launch plan", heading: "Goals", snippet: "Goals for the quarter.", matched: "meaning" },
+        { id: "plan", sourceKind: "conversation", kind: "document", title: "Launch plan", heading: null, snippet: "A weaker passage.", matched: "meaning" },
+        { id: "file-1", sourceKind: "attachment", kind: "file", title: "Supplier contract.pdf", heading: "Page 2", pageNumber: 2,
+          snippet: "Prices are fixed until March.", matched: "meaning", updatedAt: at(12) },
+      ] }),
+      readFile: async (id: string) => id !== "file-1" ? null : { id, title: "Supplier contract.pdf", updatedAt: at(12), error: null,
+        passages: [{ content: "Terms.", pageNumber: 1 }, { content: "Prices are fixed until March.", pageNumber: 2 }] },
+    };
+    const run = (ai: Record<string, unknown>) => createAgentToolExecutor({ chatRequest: request(ai), workspace: { userId, vault, database, passages } });
+    const found: any = await run({})("search_vault", { query: "how long are prices held" });
+    expect(found.results.map((hit: any) => [hit.document_id, hit.matched])).toEqual([["note", "text"], ["plan", "meaning"], ["file-1", "meaning"]]);
+    expect(found.results[1]).toMatchObject({ title: "Launch plan", section: "Goals", snippet: "Goals for the quarter." });
+    expect(found.results[2]).toMatchObject({ title: "Supplier contract.pdf", kind: "file", page: 2, snippet: "Prices are fixed until March." });
+    expect((await run({})("read_document", { document_id: "file-1" }) as any).document).toMatchObject({
+      kind: "file", text: "[Page 1]\nTerms.\n\n[Page 2]\nPrices are fixed until March.", truncated: false });
+    // A limited agent only sees what the user chose, files included.
+    const limited = run({ agentScope: "selected", selectedConversationIds: ["note"] });
+    expect((await limited("search_vault", { query: "how long are prices held" }) as any).results.map((hit: any) => hit.document_id)).toEqual(["note"]);
+    expect(await limited("read_document", { document_id: "file-1" })).toMatchObject({ found: false, error: expect.stringContaining("outside") });
+  });
+
   test("the run log describes vault steps without their contents", () => {
     expect(describeAgentStep("search_vault", { query: "pricing" }, { total_matches: 3, results: [] }))
       .toEqual({ kind: "tool", tool: "search_vault", label: "Searched your vault for “pricing”", detail: "3 results", ok: true });

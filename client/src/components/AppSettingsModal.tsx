@@ -1,6 +1,20 @@
 import { useEffect } from "react";
 import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
+import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
+
+function vaultIndexSummary(index: VaultPassageIndex) {
+  const { status } = index;
+  if (index.error) return `Indexing stopped: ${index.error}`;
+  if (!status) return index.indexing ? "Indexing your vault…" : null;
+  if (!status.available) return "Vault search isn't set up on this server.";
+  const passages = `${status.passages.toLocaleString("en-US")} passage${status.passages === 1 ? "" : "s"} indexed`;
+  if (!status.cloudEmbeddings) return `${passages}, searchable by exact words.`;
+  const pending = status.passages - status.embedded;
+  if (index.warning && pending > 0) return `${passages}. ${index.warning}`;
+  if (index.indexing || pending > 0) return `${passages}; ${status.embedded.toLocaleString("en-US")} searchable by meaning so far.`;
+  return `${passages}, all searchable by meaning.`;
+}
 
 type ThemeMode = "light" | "dark";
 
@@ -14,6 +28,8 @@ interface AppSettingsModalProps {
   jevEnabled?: boolean;
   jevStatus?: JevStatus;
   onSetJevEnabled?: (enabled: boolean) => void;
+  /** The cloud vault's search index; absent when the workspace isn't stored in the cloud. */
+  vaultIndex?: VaultPassageIndex;
 }
 
 export default function AppSettingsModal({
@@ -26,6 +42,7 @@ export default function AppSettingsModal({
   jevEnabled = false,
   jevStatus = "off",
   onSetJevEnabled,
+  vaultIndex,
 }: AppSettingsModalProps) {
   useEffect(() => {
     if (!isOpen) {
@@ -167,6 +184,17 @@ export default function AppSettingsModal({
             {jevEnabled && (jevStatus === "unconfigured" || jevStatus === "unavailable") ? <p className="app-settings-description" role="status">{jevStatus === "unconfigured" ? "Jev is not configured on this server." : "Jev is temporarily unavailable."} The usual chat and categories remain available.</p> : null}
           </div>
           <input id="jev-assistance" type="checkbox" role="switch" aria-describedby="jev-assistance-disclosure" checked={jevEnabled} onChange={(event) => onSetJevEnabled(event.target.checked)} />
+        </div> : null}
+
+        {vaultIndex ? <div className="app-settings-section app-settings-switch-section">
+          <div className="app-settings-copy">
+            <label className="app-settings-label" htmlFor="vault-search-meaning">Search by meaning</label>
+            <p className="app-settings-description" id="vault-search-meaning-disclosure">{VAULT_SEARCH_DISCLOSURE}</p>
+            {vaultIndexSummary(vaultIndex) ? <p className="app-settings-description" role="status">{vaultIndexSummary(vaultIndex)}</p> : null}
+          </div>
+          <input id="vault-search-meaning" type="checkbox" role="switch" aria-describedby="vault-search-meaning-disclosure"
+            checked={vaultIndex.status?.cloudEmbeddings ?? true} disabled={vaultIndex.saving || vaultIndex.status?.available === false}
+            onChange={(event) => void vaultIndex.setCloudEmbeddings(event.target.checked)} />
         </div> : null}
 
         <div className="thread-dialog-actions">

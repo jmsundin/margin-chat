@@ -300,6 +300,59 @@ export async function requestTopicEmbeddings(args: { since: string | null; expec
   return payload;
 }
 
+export interface VaultPassageIndexStatus {
+  /** The server can index this vault. */
+  available: boolean;
+  /** The user lets their vault text be sent for embeddings (search by meaning). */
+  cloudEmbeddings: boolean;
+  passages: number;
+  embedded: number;
+}
+
+export interface VaultPassageSyncResult extends VaultPassageIndexStatus {
+  /** Documents, notes, chats and files still waiting to be split into passages. */
+  pendingSources: number;
+  /** Another request would index or embed more. */
+  more: boolean;
+  /** Why new passages could not be embedded. */
+  unavailable?: string;
+}
+
+function vaultUserHeaders(expectedUserId?: string): Record<string, string> {
+  return expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {};
+}
+
+function readPassageStatus<T extends VaultPassageIndexStatus>(response: Response, payload: unknown, failure: string): T {
+  ensureOk(response, payload, failure);
+  if (!payload || typeof payload !== "object" || typeof (payload as VaultPassageIndexStatus).passages !== "number") {
+    throw new Error("Backend returned an invalid vault index status.");
+  }
+  return payload as T;
+}
+
+/** Splits new or changed vault documents into passages and embeds a batch of them. */
+export async function requestVaultPassageSync(args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<VaultPassageSyncResult> {
+  const response = await apiFetch("/api/vault/passages", {
+    body: "{}",
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...vaultUserHeaders(args.expectedUserId) },
+    method: "POST",
+  });
+  return readPassageStatus<VaultPassageSyncResult>(response, await readJson(response), "Indexing your vault failed.");
+}
+
+/** Turns search by meaning on or off; off also deletes the stored embeddings. */
+export async function saveVaultPassageSettings(args: { cloudEmbeddings: boolean; expectedUserId?: string }): Promise<VaultPassageIndexStatus> {
+  const response = await apiFetch("/api/vault/passages/settings", {
+    body: JSON.stringify({ cloudEmbeddings: args.cloudEmbeddings }),
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...vaultUserHeaders(args.expectedUserId) },
+    method: "PUT",
+  });
+  return readPassageStatus(response, await readJson(response), "Saving the search setting failed.");
+}
+
 export async function requestUploadDocument(
   file: File,
   expectedUserId?: string,

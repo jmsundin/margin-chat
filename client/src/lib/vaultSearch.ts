@@ -2,7 +2,7 @@ import type { Conversation, ConversationGroup, ThreadCategoryId } from "../types
 import { buildSearchExploration, type SearchEvidenceRef } from "./searchExploration";
 import { getConversationRootId } from "./tree";
 import { searchVaultIndex } from "./vaultHydration";
-import type { VaultIndexEntry, VaultSearchEvent, VaultSearchPassage } from "./vaultTypes";
+import type { VaultIndexEntry, VaultRelatedPassage, VaultSearchEvent, VaultSearchPassage } from "./vaultTypes";
 
 /** Narrows one search; "family" means the focused document's root and everything under it. */
 export type VaultSearchScope = "all" | "family" | "documents" | "notes" | "recent";
@@ -51,6 +51,8 @@ export interface VaultSearchResults {
   /** Title matches; empty query lists recent documents instead. */
   documents: VaultSearchDocumentHit[];
   passages: VaultSearchPassageHit[];
+  /** The cloud search index's best matches by keyword and meaning, best first. */
+  related?: VaultSearchPassageHit[];
   /** False while a provider is still sending passages for this request. */
   complete: boolean;
   /** Why some results may be missing, when the server could not finish. */
@@ -193,6 +195,26 @@ function cloudEvidence(passage: VaultSearchPassage): SearchEvidenceRef {
   return { conversationId: passage.id, sourceKind: "document", sourceBlockId: passage.position.blockId, ...range };
 }
 
+const RELATED_KINDS: Record<VaultRelatedPassage["kind"], string> = { document: "Document", note: "Note", chat: "Chat", file: "File" };
+const RELATED_MATCHES: Record<VaultRelatedPassage["matched"], string> = { both: "Same words and meaning", keyword: "Same words", meaning: "Related by meaning" };
+
+/** A search index match as a passage to open; a file opens the chat or document it is attached to. */
+export function relatedPassageHit(passage: VaultRelatedPassage, attachedTitle?: string): VaultSearchPassageHit | null {
+  const conversationId = passage.sourceKind === "conversation" ? passage.id : passage.attachedTo;
+  if (!conversationId) return null;
+  const evidence: SearchEvidenceRef = passage.sourceKind === "conversation" && passage.kind === "document" && passage.blockId
+    ? { conversationId, sourceKind: "document", sourceBlockId: passage.blockId }
+    : { conversationId, sourceKind: "conversation" };
+  return {
+    key: `related:${passage.sourceKind}:${passage.id}:${passage.passageIndex}`,
+    conversationId, title: passage.title, kindLabel: RELATED_KINDS[passage.kind] ?? "Document",
+    ...(passage.sourceKind === "attachment" && attachedTitle ? { familyTitle: `In ${attachedTitle}` } : {}),
+    matchLabel: [passage.heading, RELATED_MATCHES[passage.matched]].filter(Boolean).join(" · "),
+    preview: passage.snippet, passage: passage.snippet, updatedAt: passage.updatedAt ?? "", evidence, localOnly: false,
+    ...(passage.path ? { cloudPath: passage.path } : {}),
+  };
+}
+
 /**
  * Searches this device at once, then adds what the server finds in the rest of
  * the vault. Documents already on this device are answered locally, so unsynced
@@ -221,9 +243,16 @@ export function createVaultSearchProvider(getInput: () => LocalVaultSearchInput,
       let documents = local.documents;
       const passages = [...local.passages];
       const seenPassages = new Set(passages.map((hit) => hit.key));
+      let related: VaultSearchPassageHit[] = [];
       let notice: string | undefined;
       let finished = false;
-      const send = (complete: boolean) => emit({ ...local, documents, passages: [...passages], complete, ...(notice ? { notice } : {}) });
+      const send = (complete: boolean) => emit({ ...local, documents, passages: [...passages], ...(related.length ? { related } : {}), complete, ...(notice ? { notice } : {}) });
+      const relatedInScope = (passage: VaultRelatedPassage) => {
+        if (request.scope === "notes") return passage.kind === "note";
+        if (request.scope === "documents") return passage.kind !== "note";
+        if (request.scope === "recent") return now - Date.parse(passage.updatedAt ?? "") <= YEAR_MS;
+        return true;
+      };
       send(false);
 
       const controller = new AbortController();
@@ -254,6 +283,20 @@ export function createVaultSearchProvider(getInput: () => LocalVaultSearchInput,
               });
             }
             passages.sort((left, right) => newestFirst(left.updatedAt, right.updatedAt));
+            send(false);
+          } else if (event.type === "related") {
+            if (event.warning) notice ??= event.warning;
+            related = event.results.filter(relatedInScope).flatMap((passage) => {
+              const attachedTitle = passage.attachedTo ? input.conversations[passage.attachedTo]?.title ?? indexById.get(passage.attachedTo)?.title : undefined;
+              const hit = relatedPassageHit(passage, attachedTitle);
+              if (!hit) return [];
+              if (known(hit.conversationId)) {
+                const { cloudPath: _cloudPath, ...loaded } = hit;
+                return [loaded];
+              }
+              // Otherwise only what can be downloaded from the cloud can open.
+              return hit.cloudPath ? [hit] : [];
+            });
             send(false);
           } else if (event.type === "done") {
             finished = true;

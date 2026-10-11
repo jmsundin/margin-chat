@@ -56,6 +56,39 @@ Unknown or malformed model IDs and judgments are discarded. Unreviewed and priva
 results retain their positions. Jev reranks what retrieval found; this does not
 provide embedding-based semantic retrieval or infer an unspoken user intent.
 
+## Cloud vault index
+
+With a cloud vault, every saved document, note, chat and uploaded file is also
+split into passages on the server (`server/vault/passages.mjs`,
+`server/vault/passageIndex.mjs`, migration `0015_vault_passages`). Passages start
+at headings where they can, carry the heading path and the block they start in,
+and overlap a little where a long section is cut. Private margin comments are
+never indexed. The open app keeps the index current: it asks the server to index
+what changed on load and every few minutes (`useVaultPassageIndex`), and each
+request handles a batch, so only edited sources cost anything.
+
+Search ranks passages two ways and fuses the lists (reciprocal rank fusion):
+Postgres full-text search for the words, and OpenAI embeddings
+(`text-embedding-3-small` at 512 dimensions, pgvector HNSW) for the meaning. It
+feeds three places:
+
+- **Cmd+K** lists the index's results as **Best matches** under the titles, ahead
+  of the exact-word passages. A file opens the chat or document it is attached to.
+- **Ask AI** with "Search relevant … in my workspace" gets the best passages as
+  `[Vault N]` excerpts, skipping documents the request already includes.
+- **Agent mode**'s `search_vault` adds the index's best passage per document
+  (with its section and a snippet), and `read_document` reads uploaded files.
+
+A source's first passage is exactly the title and opening that the map's topic
+grouping embeds (`server/documents/topics.mjs`), so the two share one embedding:
+whichever runs first stores it for the other.
+
+**Search by meaning** in App settings is on by default. Turning it off deletes
+the stored passage embeddings and stops sending vault text to OpenAI; exact-word
+search through the index keeps working. Embeddings are metered like other hosted
+AI use, or use the member's own OpenAI key. A chat that excludes OpenAI searches
+the vault by words only.
+
 ## Opening a source
 
 Clicking a result opens its document directly, opens an annotation editor when appropriate,

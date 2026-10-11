@@ -539,9 +539,10 @@ export function createVaultService({ database, env = process.env, storage = crea
 
   /**
    * Streams search results through `emit`: matching titles from the index at
-   * once, then passages from each projected source as its query returns.
+   * once, then passages from each projected source as its query returns, and
+   * with `related`, the passage index's best matches by keyword and meaning.
    */
-  async function search(userId, query, { limit = 20, signal, emit }) {
+  async function search(userId, query, { limit = 20, signal, emit, related = null }) {
     const terms = vaultSearchTerms(query);
     const root = await migrateLegacy(userId);
     const built = await index(userId, root);
@@ -552,6 +553,22 @@ export function createVaultService({ database, env = process.env, storage = crea
       if (!terms.length || matches(entry.title)) documents.push(entry);
     }
     emit({ type: "documents", results: documents });
+    // Passages by meaning and keyword from the passage index, beside the exact-word sources.
+    const relatedWork = terms.length && related ? (async () => {
+      try {
+        const found = await related();
+        if (signal?.aborted) return;
+        // Snippets only. A passing failure is reported; a setting the user chose is not.
+        emit({ type: "related", results: found.results.map(({ text: _text, similarity: _similarity, score: _score, ...result }) => {
+          const openId = result.sourceKind === "conversation" ? result.id : result.attachedTo;
+          return { ...result, ...(openId && built.pathById.has(openId) ? { path: built.pathById.get(openId) } : {}) };
+        }), ...(found.warningKind === "failed" ? { warning: found.warning } : {}) });
+      } catch (error) {
+        if (signal?.aborted) return;
+        console.error("Vault passage index search failed", error);
+        emit({ type: "related", results: [], warning: "Search by meaning is unavailable just now." });
+      }
+    })() : null;
     if (terms.length && database?.searchVaultPassages) {
       const patterns = likePatterns(terms);
       await Promise.all(PASSAGE_SOURCES.map(async (source) => {
@@ -564,6 +581,7 @@ export function createVaultService({ database, env = process.env, storage = crea
         }
       }));
     }
+    await relatedWork;
     const checkpoint = await database?.getVaultProjectionCheckpoint?.(userId).catch(() => null);
     // Passages come from the search projection, which can trail the newest save.
     emit({ type: "done", revision: root.revision, ...(checkpoint ? { indexedRevision: checkpoint.revision ?? null } : {}) });
@@ -682,13 +700,13 @@ export function createVaultService({ database, env = process.env, storage = crea
       return { configured: true, revision, entries };
     },
     /** See `search` above. Resolves once every result has been emitted. */
-    async search(userId, query, { limit = 20, signal, emit = () => undefined } = {}) {
+    async search(userId, query, { limit = 20, signal, emit = () => undefined, related = null } = {}) {
       if (!configured) {
         emit({ type: "done", revision: 0 });
         return;
       }
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new HttpError(400, "Ask for between 1 and 100 search results.");
-      await search(userId, query, { limit, signal, emit });
+      await search(userId, query, { limit, signal, emit, related });
     },
     async status(userId) {
       if (!configured) return { configured: false, manifest: emptyManifest() };

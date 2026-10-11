@@ -134,6 +134,28 @@ describe("cloud vault index and search", () => {
     expect(recent.some((event) => event.type === "passages")).toBe(false);
   });
 
+  test("the passage index's matches arrive before done, with the path to open and without full passage text", async () => {
+    const { userId, vault } = await seeded();
+    const events: any[] = [];
+    await vault.search(userId, "subscription cost", { emit: (event: any) => events.push(event), related: async () => ({ meaning: true, results: [
+      { id: "note", sourceKind: "conversation", kind: "note", title: "Pricing ideas", heading: null, text: "Long passage text", snippet: "usage pricing",
+        blockId: null, pageNumber: null, passageIndex: 0, updatedAt: null, matched: "meaning", similarity: 0.7, score: 0.02 },
+      { id: "file-1", sourceKind: "attachment", kind: "file", title: "Terms.pdf", heading: "Page 1", text: "Fees", snippet: "Fees",
+        blockId: null, pageNumber: 1, passageIndex: 0, updatedAt: null, matched: "meaning", attachedTo: "chat", similarity: 0.5, score: 0.01 },
+    ], warning: "Search by meaning is off in Settings.", warningKind: "off" }) });
+    const related = events.find((event) => event.type === "related");
+    expect(events.indexOf(related)).toBeLessThan(events.length - 1);
+    expect(related.warning).toBeUndefined();
+    expect(related.results[0]).toMatchObject({ id: "note", path: expect.stringMatching(/\.md$/u), snippet: "usage pricing" });
+    expect(related.results[1]).toMatchObject({ id: "file-1", attachedTo: "chat", path: expect.stringMatching(/\.md$/u) });
+    expect(JSON.stringify(related)).not.toContain("Long passage text");
+
+    const failed: any[] = [];
+    await vault.search(userId, "subscription cost", { emit: (event: any) => failed.push(event), related: async () => { throw new Error("database down"); } });
+    expect(failed.find((event) => event.type === "related")).toEqual({ type: "related", results: [], warning: "Search by meaning is unavailable just now." });
+    expect(failed.at(-1).type).toBe("done");
+  });
+
   test("another account's passages are never returned", async () => {
     await seeded();
     const stranger = await user();

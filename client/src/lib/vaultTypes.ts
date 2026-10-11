@@ -110,10 +110,33 @@ export interface VaultSearchPassage {
   updated?: string;
 }
 
+/** A passage from the vault's search index, found by keyword, by meaning, or both. */
+export interface VaultRelatedPassage {
+  /** The document, note or chat; for an uploaded file, the file's own ID. */
+  id: string;
+  sourceKind: "conversation" | "attachment";
+  kind: "document" | "note" | "chat" | "file";
+  title: string;
+  /** The headings it sits under, or the page of a file. */
+  heading: string | null;
+  snippet: string;
+  blockId: string | null;
+  pageNumber: number | null;
+  passageIndex: number;
+  updatedAt: string | null;
+  matched: "both" | "keyword" | "meaning";
+  /** For a file, the chat or document it is attached to. */
+  attachedTo?: string;
+  /** The vault path of the document to open, when the index lists it. */
+  path?: string;
+}
+
 /** One step of a streamed search: titles first, then passages from each source. */
 export type VaultSearchEvent =
   | { type: "documents"; results: VaultIndexEntry[] }
   | { type: "passages"; source: "documents" | "messages" | "notes"; results: VaultSearchPassage[]; error?: string }
+  /** The search index's best matches by keyword and meaning, best first. */
+  | { type: "related"; results: VaultRelatedPassage[]; warning?: string }
   | { type: "done"; revision: number; indexedRevision?: number | null }
   | { type: "error"; error: string };
 
