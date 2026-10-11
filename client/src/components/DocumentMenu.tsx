@@ -18,6 +18,8 @@ export interface DocumentMenuProps {
   onClose?: (id: string) => void;
   onRestore?: (id: string) => void;
   onNewMarginNote?: (id: string) => void;
+  maximized?: boolean;
+  onToggleMaximize?: (id: string) => void;
   onRename?: (id: string, title: string) => void;
   groups?: Record<string, ConversationGroup>;
   onAssignGroup?: (conversationId: string, groupId: string | null) => void;
@@ -27,7 +29,7 @@ export interface DocumentMenuProps {
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -168,6 +170,9 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         }
         if (event.key === "Tab") close(true);
       }}>
+      {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>
+        {maximized ? "Restore document size" : "Maximize document"}
+      </button> : null}
       {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
         {pinned ? "Unpin document" : "Pin document"}
       </button> : null}

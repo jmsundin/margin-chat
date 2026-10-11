@@ -725,6 +725,8 @@ function WorkspaceAppContent({
   const localDirectoryStatus = vault.localDirectoryStatus;
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
   const [closedMarginNotes, setClosedMarginNotes] = useState<Record<string, boolean>>({});
+  // One document filling the window; everything else stays mounted underneath so restoring is exact.
+  const [maximizedDocumentId, setMaximizedDocumentId] = useState<string | null>(null);
   const [marginResizePreviews, setMarginResizePreviews] = useState<Record<string, MarginDocumentSize | undefined>>({});
   const [graphFocusRequest, setGraphFocusRequest] = useState<{
     conversationId: string;
@@ -1009,6 +1011,34 @@ function WorkspaceAppContent({
     .join("|");
   const isTileView = mainViewMode === "tiles";
   const isGraphView = mainViewMode === "graph";
+  const visibleDocumentIds = new Set([...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]);
+  const maximizedDocument = !isTileView && !isGraphView && maximizedDocumentId && visibleDocumentIds.has(maximizedDocumentId)
+    ? state.conversations[maximizedDocumentId] : undefined;
+  const maximizedIsPinned = Boolean(maximizedDocument && pinnedDocumentIds.includes(maximizedDocument.id));
+  useEffect(() => {
+    if (!maximizedDocumentId) return;
+    // Leaving Document view or closing the document ends maximize; opening another
+    // full document (a child tab, search) moves maximize to it.
+    if (isTileView || isGraphView || !state.conversations[maximizedDocumentId]) { setMaximizedDocumentId(null); return; }
+    if (activeConversation.id !== maximizedDocumentId && !isCompactDocument(activeConversation) && visibleDocumentIds.has(activeConversation.id)) {
+      setMaximizedDocumentId(activeConversation.id);
+    } else if (!visibleDocumentIds.has(maximizedDocumentId)) setMaximizedDocumentId(null);
+  });
+  const toggleMaximizedDocument = useEffectEvent((id: string) => {
+    setMaximizedDocumentId((current) => current === id ? null : id);
+    if (state.activeConversationId !== id) handleFocusVisibleDocument(id);
+  });
+  useEffect(() => {
+    if (!maximizedDocument) return;
+    function restoreWithEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      // Escape belongs to whatever popup, dialog or selection composer is open first.
+      if (document.querySelector('[role="menu"], [role="dialog"], [aria-modal="true"], .selection-tooltip, .selection-mobile-composer')) return;
+      setMaximizedDocumentId(null);
+    }
+    window.addEventListener("keydown", restoreWithEscape);
+    return () => window.removeEventListener("keydown", restoreWithEscape);
+  }, [maximizedDocument?.id]);
   // A document opened by zooming through its map card. Pinching out (or Back
   // to map) returns to the map, which kept its place.
   const [mapReturnId, setMapReturnId] = useState<string | null>(null);
@@ -4105,6 +4135,8 @@ function WorkspaceAppContent({
         minimized={documentWorkspace.minimizedIds.includes(conversation.id)}
         onTogglePin={handleToggleDocumentPin} onTogglePinScope={handleToggleDocumentPinScope}
         onMinimize={handleMinimizeDocument} onClose={handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
+        maximized={maximizedDocument?.id === conversation.id}
+        onToggleMaximize={!isCompactDocument(conversation) ? toggleMaximizedDocument : undefined}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
@@ -4166,14 +4198,24 @@ function WorkspaceAppContent({
   }
 
   function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls) {
-    const dockHeader = view === "chat" && pinnedDocumentIds.includes(conversation.id);
+    const maximized = view === "chat" && maximizedDocument?.id === conversation.id;
+    const dockHeader = view === "chat" && !maximized && pinnedDocumentIds.includes(conversation.id);
     return <DocumentPanel key={conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)}
-      onMinimize={view === "chat" && !dockHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
-      onClose={view === "chat" && !dockHeader ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
+      onMinimize={view === "chat" && !dockHeader && !maximized ? () => handleMinimizeDocument(conversation.id) : undefined}
+      onClose={view === "chat" && !dockHeader && !maximized ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
       parentDocument={conversation.parentId ? state.conversations[conversation.parentId] : undefined}
-      headerControls={dockHeader ? null : renderDocumentControls(conversation, view)}
+      headerControls={dockHeader ? null : <>
+        {renderDocumentControls(conversation, view)}
+        {maximized ? <button type="button" className="document-restore-size-button" aria-keyshortcuts="Escape"
+          aria-label={`Restore document size: ${conversation.title || "Untitled document"}`} title="Restore document size (Esc)"
+          onClick={() => setMaximizedDocumentId(null)}>
+          <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3v5H3M12 3v5h5M8 17v-5H3M12 17v-5h5" />
+          </svg>
+        </button> : null}
+      </>}
       childTabs={renderChildTabs(conversation)}
       siblingTabs={view === "chat" ? renderSiblingTabs(conversation) : null}
       documentMenu={dockHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
@@ -4224,7 +4266,8 @@ function WorkspaceAppContent({
   function renderDocumentMarginNotes(conversation: Conversation, view: "chat" | "graph" = "chat"): React.ReactNode {
     const notes = getMarginDocuments(conversation);
     if (!notes.length || closedMarginNotes[conversation.id]) return null;
-    return <aside className="document-margin-notes" aria-label={`Notes for ${conversation.title}`} data-margin-notes-for={conversation.id}
+    return <aside className={`document-margin-notes${maximizedDocument?.id === conversation.id ? " is-maximized-document" : ""}`}
+      aria-label={`Notes for ${conversation.title}`} data-margin-notes-for={conversation.id}
       style={{ "--margin-column-width": `${getMarginColumnWidth(conversation)}px` } as CSSProperties}>
       <header className="document-margin-notes-header">
         <div><strong>Margin notes</strong><span title={conversation.title}>{conversation.title}</span></div>
@@ -4269,11 +4312,8 @@ function WorkspaceAppContent({
 
     return (
       <div
-        className={
-          isResizing
-            ? "conversation-tree-expanded panel-slot is-resizable is-split-context is-resizing"
-            : "conversation-tree-expanded panel-slot is-resizable is-split-context"
-        }
+        className={`conversation-tree-expanded panel-slot is-resizable is-split-context${isResizing ? " is-resizing" : ""}${
+          maximizedDocument?.id === conversation.id ? " is-maximized-document" : ""}`}
         data-expanded-conversation-id={conversation.id}
         data-document-id={conversation.id}
         onPointerDownCapture={() => handleFocusVisibleDocument(conversation.id)}
@@ -4353,7 +4393,7 @@ function WorkspaceAppContent({
       status: jev.status,
       onCreateAndAssign: handleCreateAndAssignGroup,
     }}>
-    <div className="app-shell">
+    <div className={`app-shell${maximizedDocument ? " is-document-maximized" : ""}`}>
       <div className="app-chrome">
         <div className="workspace-notifications">
           {!leftSidebarOpen || isMobileViewport ? <VaultFetchIndicator status={vault.fetchStatus ?? null} compact /> : null}
@@ -4652,7 +4692,7 @@ function WorkspaceAppContent({
                     onClose={() => setSearchPanel(null)} /> : null}
                   <DocumentWorkspaceLayout width={documentDock?.width ?? 0.4} position={documentDock?.position}
                     onWidthChange={(width) => setState((current) => ({ ...current, documentDock: { ...current.documentDock, tree: current.documentDock?.tree ?? null, width } }))}
-                    dock={documentDock?.tree && visiblePinnedDocumentIds.length ? <DocumentDock
+                    dock={documentDock?.tree && visiblePinnedDocumentIds.length && !maximizedIsPinned ? <DocumentDock
                       tree={documentDock.tree} conversations={state.conversations} activeDocumentId={activeConversation.id}
                       visibleDocumentIds={visiblePinnedDocumentIds}
                       onMinimize={handleMinimizeDocument} onClose={handleCloseDocument}
@@ -4670,6 +4710,10 @@ function WorkspaceAppContent({
                       {renderExpandedTreeConversation(conversation)}
                       {renderDocumentMarginNotes(conversation)}
                     </Fragment>)}
+                    {maximizedDocument && maximizedIsPinned ? <>
+                      {renderExpandedTreeConversation(maximizedDocument)}
+                      {renderDocumentMarginNotes(maximizedDocument)}
+                    </> : null}
                     {!scrollingDocuments.length ? <div className="document-workspace-empty">
                       <p>Open a document from the sidebar or add a side document here.</p>
                       <button type="button" onClick={() => handleAddSideChat(activeConversation.id)}>New side document</button>
@@ -4694,7 +4738,7 @@ function WorkspaceAppContent({
               </div>
             </div>
 
-          {!isTileView && !isGraphView && connections.length ? (
+          {!isTileView && !isGraphView && !maximizedDocument && connections.length ? (
             <ConnectorOverlay
               connections={connections}
               occlusionRects={connectorOcclusionRects}
