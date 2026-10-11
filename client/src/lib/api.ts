@@ -387,6 +387,26 @@ export async function requestUploadDocument(
   return payload.document;
 }
 
+/** Sends one voice-typing recording and returns its transcript. */
+export async function requestDictationTranscript(audio: Blob, args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<string> {
+  const response = await apiFetch("/api/dictation/transcribe", {
+    body: audio,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": audio.type || "audio/webm",
+      ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}),
+    },
+    method: "POST",
+    signal: args.signal,
+  });
+  const payload = (await readJson(response)) as { text?: unknown } | ErrorPayload | null;
+  ensureOk(response, payload, "Voice typing could not transcribe that recording.");
+  if (!payload || typeof payload !== "object" || !("text" in payload) || typeof payload.text !== "string") {
+    throw new Error("Backend returned an invalid transcript.");
+  }
+  return payload.text;
+}
+
 export async function requestDeleteDocument(documentId: string, expectedUserId?: string): Promise<void> {
   const response = await apiFetch(
     `/api/documents/${encodeURIComponent(documentId)}`,

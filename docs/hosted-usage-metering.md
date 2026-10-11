@@ -4,7 +4,7 @@ Hosted model work uses prepaid credits for every member, including subscribers. 
 
 ## Configure prices before enabling hosted models
 
-Set `HOSTED_MODEL_PRICES_JSON` to an object keyed by the exact requested `provider:model` identifier. Providers are `openai`, `anthropic`, `gemini`, `huggingface`, and `xai`; OpenAI Agent uses the same `openai:model` entry as ordinary OpenAI chat. Every hosted model that automatic routing might select needs an entry. Document upload and retrieval also need `openai:text-embedding-3-small`.
+Set `HOSTED_MODEL_PRICES_JSON` to an object keyed by the exact requested `provider:model` identifier. Providers are `openai`, `anthropic`, `gemini`, `huggingface`, and `xai`; OpenAI Agent uses the same `openai:model` entry as ordinary OpenAI chat. Every hosted model that automatic routing might select needs an entry. Document upload and retrieval also need `openai:text-embedding-3-small`. Voice typing needs `openai:gpt-4o-mini-transcribe`: its input price is OpenAI's audio-input rate ($3 per million tokens) and its output price is the transcript text rate ($5); the October 9 map includes it. Because audio is not JSON, voice typing reserves from the recording's size (one input token per 16 bytes, one output token per 64 bytes, each plus 1,024) and settles at the tokens OpenAI reports.
 
 Each entry requires `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens`, as nonnegative safe integers with at least one positive rate. One dollar is 1,000,000 microdollars. Thus a verified price of $0.50 per million tokens would be configured as `500000`, not `0.50`. This example explains the unit; it is not a current provider price quote.
 

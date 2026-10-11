@@ -14,6 +14,7 @@ import {
 import { rememberOfflineUser, loadOfflineUser, forgetOfflineUser } from "./lib/offlineSession";
 import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type ThemeMode } from "./lib/appearance";
 import { getCheckoutConfirmationNotice, getCheckoutReturn } from "./lib/billing";
+import DictationControl from "./components/DictationControl";
 import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData, BillingPlan } from "./types";
 
 // Documents open in the block editor, so fetch its chunk alongside the workspace rather than after it renders.
@@ -534,6 +535,8 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
 
   return (
     <Suspense fallback={<div className="app-shell"><div className="auth-loading-card" role="status">Opening your workspace…</div></div>}>
+    {/* The extension's frame sits inside other sites, which must not get to grant or hold a microphone. */}
+    {extension ? null : <DictationControl userId={authUser.id} />}
     <WorkspaceApp
       browserCaptureRequest={browserCaptureRequest}
       onBrowserCaptureHandled={onBrowserCaptureHandled}
