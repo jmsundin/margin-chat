@@ -185,8 +185,15 @@ export function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement
 export interface ConversationGraphViewProps {
   toolbarLeading?: ReactNode;
   toolbarTrailing?: ReactNode;
-  /** Offers other places to look when a map search finds nothing. */
-  renderSearchFallback?: (query: string, close: () => void) => ReactNode;
+  /** Offers other places to look for a map search; `matchedIds` are the documents it found, best first. */
+  renderSearchFallback?: (query: string, close: () => void, matchedIds: string[]) => ReactNode;
+  /** Enter in the map search. Returning true means it was handled; otherwise the first match opens. */
+  onSearchSubmit?: (query: string, matchedIds: string[]) => boolean;
+  /** Puts text in the map search and opens its results, as when a link is pasted on the map. */
+  searchRequest?: { query: string; requestId: number } | null;
+  searchPlaceholder?: string;
+  /** Draws over the map in screen pixels, such as previews of explored topics. */
+  renderMapOverlay?: (context: MapOverlayContext) => ReactNode;
   explorerContainer?: HTMLElement | null;
   onOpenExplorer?: () => void;
   onFocusCanvas?: () => void;
@@ -233,6 +240,17 @@ export interface ConversationGraphViewProps {
   dockControlsInHeader?: boolean;
 }
 
+/** Where things are on screen, for drawing over the map. */
+export interface MapOverlayContext {
+  /** A document's card on screen, or null when this view does not draw it. */
+  nodeBox(conversationId: string): { x: number; y: number; width: number; height: number } | null;
+  /** Open space just right of the documents on the map, on screen. */
+  openSpace: { x: number; y: number };
+  size: { width: number; height: number };
+  /** Pans, without zooming, so a box on screen is in view. */
+  reveal(box: { x: number; y: number; width: number; height: number }): void;
+}
+
 /** Split pane controls that the docked document shows in its own header. */
 export interface GraphDockControls {
   /** Move handle, pin and (on phones) collapse, for the start of the header. */
@@ -268,6 +286,11 @@ function readDockSize(): number | null {
     const size = Number(localStorage.getItem(DOCK_SIZE_STORAGE_KEY));
     return Number.isFinite(size) && size > 0 ? size : null;
   } catch { return null; }
+}
+
+/** The documents a map search found, best first, each once. */
+function matchedConversationIds(items: Array<{ evidence: { conversationId: string } }>) {
+  return [...new Set(items.map((item) => item.evidence.conversationId))];
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -852,6 +875,10 @@ export default function ConversationGraphView({
   toolbarLeading,
   toolbarTrailing,
   renderSearchFallback,
+  onSearchSubmit,
+  searchRequest,
+  searchPlaceholder = "Search this map…",
+  renderMapOverlay,
   explorerContainer,
   onOpenExplorer,
   onFocusCanvas,
@@ -921,6 +948,7 @@ export default function ConversationGraphView({
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
   const explorerTriggerRef = useRef<HTMLButtonElement>(null);
@@ -1580,6 +1608,44 @@ export default function ConversationGraphView({
       detailLevel: "compact", expandedGroups: [] });
     if (returningFromGrid) { fitAsOverviewRef.current = true; setFitAfterArrange(true); }
   }, [applyViewport, focusedTerritoryId, focusedTerritoryScale, focusedLayout, completeScene, territoryGroups, navigation.update, showTerritories, groupScaleThreshold, territories, browsingGroups, documentsOnly, isCanvasMode]);
+
+  const nodeVisualBounds = useMemo(() => new Map(renderedNodeDetails.map(({ placement, visualBounds }) => [placement.conversationId, visualBounds])), [renderedNodeDetails]);
+  const overlayContext = useMemo<MapOverlayContext | null>(() => {
+    if (!renderMapOverlay || panelView || !viewportSize.width || !viewportSize.height) return null;
+    const toScreen = (box: { x: number; y: number; width: number; height: number }) => ({
+      x: viewport.x + box.x * viewport.scale, y: viewport.y + box.y * viewport.scale, width: box.width * viewport.scale, height: box.height * viewport.scale });
+    return {
+      nodeBox: (id) => {
+        if (showTerritories || hiddenConversationIds.has(id)) return null;
+        const bounds = nodeVisualBounds.get(id);
+        if (bounds) return toScreen(bounds);
+        // Drawn as a dot, or just off screen: start from its center.
+        const placement = placementByConversationId.get(id);
+        if (!placement) return null;
+        const center = toScreen({ x: placement.x + placement.width / 2, y: placement.y + placement.height / 2, width: 0, height: 0 });
+        return { x: center.x - 6, y: center.y - 6, width: 12, height: 12 };
+      },
+      openSpace: { x: viewport.x + worldBounds.right * viewport.scale, y: viewport.y + (worldBounds.top + worldBounds.height / 2) * viewport.scale },
+      size: viewportSize,
+      reveal: (box) => {
+        const margin = 24, top = 64;
+        let dx = 0, dy = 0;
+        if (box.x + box.width > viewportSize.width - margin) dx = viewportSize.width - margin - (box.x + box.width);
+        if (box.x + dx < margin) dx = margin - box.x;
+        if (box.y + box.height > viewportSize.height - margin) dy = viewportSize.height - margin - (box.y + box.height);
+        if (box.y + dy < top) dy = top - box.y;
+        const current = viewportStateRef.current;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1) applyViewport({ ...current, x: current.x + dx, y: current.y + dy });
+      },
+    };
+  }, [renderMapOverlay, panelView, viewportSize, viewport, showTerritories, hiddenConversationIds, nodeVisualBounds, placementByConversationId, worldBounds, applyViewport]);
+
+  useEffect(() => {
+    if (!searchRequest) return;
+    navigation.update({ query: searchRequest.query });
+    setSearchOpen(true);
+    searchInputRef.current?.focus({ preventScroll: true });
+  }, [searchRequest?.requestId]);
 
   const interactions = useGraphInteractions({
     getViewport: () => viewportStateRef.current,
@@ -2969,15 +3035,22 @@ export default function ConversationGraphView({
         <button type="button" className="graph-map-all-groups" aria-label="Zoom out to all groups" onClick={showAllGroups}>All groups</button>
         <span className={`graph-map-scope${focusedNodeId || scope.kind === "all" && !focusedTerritory ? " is-overview" : ""}`} aria-live="polite">{focusedTerritory ? `${focusedTerritory.label} · ${focusedTerritory.nodes.length} sources` : `${scopeLabel} · ${scopedIds.size} of ${Object.keys(conversations).length} sources`}</span>
         <div className="graph-map-search" ref={searchRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
-          <input type="search" aria-label="Search this map" placeholder="Search this map…" value={query}
+          <input type="search" ref={searchInputRef} aria-label="Search this map" placeholder={searchPlaceholder} value={query}
             onFocus={() => setSearchOpen(true)} onChange={(event) => { navigation.update({ query: event.target.value }); setSearchOpen(true); }}
-            onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSearchOpen(false); } }} />
+            onKeyDown={(event) => {
+              if (event.key === "Escape") { event.stopPropagation(); setSearchOpen(false); return; }
+              if (event.key !== "Enter" || event.nativeEvent.isComposing || !query.trim()) return;
+              event.preventDefault();
+              const matches = searchGraphSources(conversations, query).filter((item) => scopedIds.has(item.evidence.conversationId));
+              if (onSearchSubmit?.(query.trim(), matchedConversationIds(matches))) { setSearchOpen(false); return; }
+              if (matches[0]) { setSearchOpen(false); onFocusCanvas?.(); openEvidence(matches[0].evidence); }
+            }} />
           {searchOpen && query.trim() ? <div className="graph-map-search-results" aria-label="Map search results">
             {sourceItems.slice(0, 5).map((item) => <button type="button" key={item.id} onClick={() => { setSearchOpen(false); onFocusCanvas?.(); openEvidence(item.evidence); }}>
               <strong>{item.title}</strong><span>{item.preview}</span>
             </button>)}
-            {!sourceItems.length ? <p>No matching chats or notes in this view.</p> : null}
-            {!sourceItems.length && renderSearchFallback && deferredQuery === query ? renderSearchFallback(query.trim(), () => setSearchOpen(false)) : null}
+            {!sourceItems.length && !renderSearchFallback ? <p>No matching chats or notes in this view.</p> : null}
+            {renderSearchFallback && deferredQuery === query ? renderSearchFallback(query.trim(), () => setSearchOpen(false), matchedConversationIds(sourceItems)) : null}
             <button type="button" onClick={openExplorer}>View all results · {sourceItems.length}</button>
           </div> : null}
         </div>
@@ -3309,6 +3382,7 @@ export default function ConversationGraphView({
               ) : null;
             })}
           </div>
+          {overlayContext ? renderMapOverlay!(overlayContext) : null}
 
           {zoomThrough && conversations[zoomThrough.id] ? <div className="graph-zoom-through-hint" role="status">
             <span>Keep zooming to open <strong>{conversations[zoomThrough.id].title}</strong></span>

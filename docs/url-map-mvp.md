@@ -1,6 +1,6 @@
 # Map a URL
 
-Graph view → **Map a URL** reads one public webpage and creates a small AI-generated topic map. The optional focus guides concept selection. The form collapses after success to leave room for exploration.
+Pasting a web address into the map search and choosing **Map this page** reads one public webpage and previews a small AI-generated topic map on the user's own map. The separate Map a URL mode and its panel were retired; see [map search and previews](map-search-and-previews.md) for how page topics are previewed, kept, and remembered in history. The list below describes the retired panel; the server side under Implementation is unchanged.
 
 - Select a topic to inspect its summary and supporting passage. Select a relationship to see its direction, source passage, or explicit AI-inference label.
 - Overview cards retain readable titles and hide secondary text/actions. At working zoom, each topic has top-right actions to explore the source's links or add the topic to My map; these actions are always available in details. Fit respects the minimum readable footprint, so larger maps remain pannable on narrow screens.
@@ -23,6 +23,6 @@ Topic identity is a hash of the final page URL and normalized concept label. Reg
 
 ## Verification
 
-Run `bun test tests/url-map.test.ts tests/url-map-api.test.ts tests/url-map-interactions.test.ts tests/api-deployment.test.ts` and `bun run build`.
+Run `bun test tests/url-map.test.ts tests/url-map-api.test.ts tests/map-exploration-interactions.test.ts tests/api-deployment.test.ts` and `bun run build`.
 
 For browser verification, `bun tests/helpers/serveUrlMapPreview.ts` starts an isolated fixture at `http://127.0.0.1:5184`. Use `https://example.org/trees`; URLs containing `slow` exercise Stop, and URLs containing `failure` exercise retry. The fixture uses the real API orchestration, extraction, validation, client, and workspace-saving path with deterministic AI output; it does not invoke a paid provider.

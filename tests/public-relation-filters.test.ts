@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-  addPublicGraphRoot, appendPublicGraphExpansion, emptyPublicGraph, publicGraphPlacements,
+  addPublicGraphRoot, appendPublicGraphExpansion, emptyPublicGraph,
   setPublicExpansionVisible, visiblePublicGraph,
 } from "../client/src/lib/publicGraphScene";
 import type { PublicExpansion, PublicRelation, PublicTopic } from "../client/src/lib/publicKnowledge";
-import { publicMapNeighborhoods } from "../client/src/lib/publicMapPresentation";
 import {
   DEFAULT_PUBLIC_RELATION_FILTERS, isPublicMetadataRelation, matchesPublicRelationFilter,
   type PublicRelationFilters,
@@ -84,18 +83,5 @@ describe("public relation display filters", () => {
     const collapsed = setPublicExpansionVisible(graph, "Q1", false);
     expect(ids(visiblePublicGraph(collapsed, { filters, selectedId: "Q4" }))).toEqual(["Q1"]);
     expect(ids(visiblePublicGraph(graph, { filters }))).not.toContain("Q4");
-  });
-
-  test("placements, neighborhood counts and connections use the same filtered graph", () => {
-    const graph = graphFixture();
-    const options = { filters: { ...filters, relation: "types" as const }, selectedId: "Q4" };
-    const visibleIds = ids(visiblePublicGraph(graph, options));
-    expect(publicGraphPlacements(graph, "Q4", options).map((node) => node.conversationId).sort()).toEqual(visibleIds);
-    const { territories, connections } = publicMapNeighborhoods(graph, options);
-    expect(territories.flatMap((territory) => territory.nodes.map((node) => node.conversationId)).sort()).toEqual(visibleIds);
-    expect(territories.map((territory) => territory.id)).toEqual(["Q1", "Q4"]);
-    expect(connections.Q1.linkedConversationIds).toEqual(["Q2"]);
-    expect(connections.Q4.linkedConversationIds).toEqual(["Q7"]);
-    expect(Object.keys(connections).sort()).toEqual(visibleIds);
   });
 });

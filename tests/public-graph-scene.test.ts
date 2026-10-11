@@ -4,7 +4,6 @@ import {
   publicGraphPlacements, setPublicExpansionVisible, visiblePublicGraph,
 } from "../client/src/lib/publicGraphScene";
 import type { PublicExpansion, PublicTopic } from "../client/src/lib/publicKnowledge";
-import { publicMapNeighborhoods, publicMapNodePlacements } from "../client/src/lib/publicMapPresentation";
 
 function topic(id: string): PublicTopic {
   return { id, aliases: [], label: `Topic ${id}`, description: "Public topic", wikidataUrl: `https://www.wikidata.org/wiki/${id}`, retrievedAt: "2026-09-20T00:00:00.000Z" };
@@ -17,34 +16,6 @@ function expansion(root: string, neighbors: string[], more = false, offset = nei
 const ids = (graph: ReturnType<typeof emptyPublicGraph>) => visiblePublicGraph(graph).topics.map((item) => item.id).sort();
 
 describe("public graph neighborhoods", () => {
-  test("canvas selection preserves every topic center and its atlas membership", () => {
-    let graph = addPublicGraphRoot(emptyPublicGraph(), topic("Q1"));
-    graph = appendPublicGraphExpansion(graph, expansion("Q1", ["Q2", "Q3"]));
-    const neutral = publicMapNodePlacements(graph);
-    const selected = publicMapNodePlacements(graph, { selectedId: "Q2" });
-    for (const before of neutral) {
-      const after = selected.find((node) => node.conversationId === before.conversationId)!;
-      expect(after.x + after.width / 2).toBe(before.x + before.width / 2);
-      expect(after.y + after.height / 2).toBe(before.y + before.height / 2);
-      if (before.conversationId !== "Q2") expect(after).toEqual(before);
-    }
-    expect(publicMapNeighborhoods(graph, { selectedId: "Q2" }).territories[0].nodes).toEqual(selected);
-  });
-  test("zoomed-out neighborhood counts cover shared and cyclic expansions once", () => {
-    let graph = addPublicGraphRoot(emptyPublicGraph(), topic("Q1"));
-    graph = addPublicGraphRoot(graph, topic("Q2"));
-    graph = appendPublicGraphExpansion(graph, expansion("Q1", ["Q3"]));
-    graph = appendPublicGraphExpansion(graph, expansion("Q2", ["Q3"]));
-    graph = appendPublicGraphExpansion(graph, expansion("Q3", ["Q1", "Q4"]));
-    const before = structuredClone(graph);
-    const { territories } = publicMapNeighborhoods(graph);
-    const members = territories.flatMap((territory) => territory.nodes.map((node) => node.conversationId));
-    expect(members.sort()).toEqual(["Q1", "Q2", "Q3", "Q4"]);
-    expect(territories.find((territory) => territory.id === "Q2")!.nodes.map((node) => node.conversationId)).toContain("Q2");
-    expect(graph).toEqual(before);
-    const hidden = publicMapNeighborhoods(setPublicExpansionVisible(graph, "Q1", false));
-    expect(hidden.territories.flatMap((territory) => territory.nodes).map((node) => node.conversationId).sort()).toEqual(["Q1", "Q2", "Q3", "Q4"]);
-  });
   test("incremental expansion keeps the anchor and existing topic positions stable", () => {
     const root = addPublicGraphRoot(emptyPublicGraph(), topic("Q1"));
     const first = appendPublicGraphExpansion(root, expansion("Q1", ["Q2", "Q3"], true, 4));

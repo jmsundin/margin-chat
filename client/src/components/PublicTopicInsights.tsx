@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { PublicTopic } from "../lib/publicKnowledge";
 import { getWikipediaSummary, type WikipediaSummary } from "../lib/wikipedia";
-import { askPublicMap, deletePublicAnswer, listPublicAnswers, type PublicAnswer, type PublicMapAIOptions } from "../lib/publicMapApi";
+import { askPublicMap, deletePublicAnswer, listPublicAnswers, type PublicAnswer, type PublicAnswerTopic, type PublicMapAIOptions } from "../lib/publicMapApi";
 import { ApiError } from "../lib/apiError";
 
 export interface PublicMapAccount {
@@ -19,7 +19,7 @@ const answerDate = (value: string) => Number.isNaN(Date.parse(value)) ? "" : new
 
 function AnswerCard({ answer, account, onShowOnMap, onOpenTopic, onDeleted }: {
   answer: PublicAnswer; account: PublicMapAccount;
-  onShowOnMap(answer: PublicAnswer): void; onOpenTopic(id: string): void; onDeleted(id: string): void;
+  onShowOnMap(answer: PublicAnswer): void; onOpenTopic(id: string, topic: PublicAnswerTopic): void; onDeleted(id: string): void;
 }) {
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -33,7 +33,7 @@ function AnswerCard({ answer, account, onShowOnMap, onOpenTopic, onDeleted }: {
     <strong className="public-answer-question">{answer.question}</strong>
     <p className="public-answer-text">{answer.answer}</p>
     {answer.related.length ? <div className="public-answer-topics" aria-label="Topics in this answer">{answer.related.map((topic) =>
-      <button type="button" key={topic.id} title={topic.description || topic.relation} onClick={() => onOpenTopic(topic.id)}><span>{topic.relation}</span>{topic.label}</button>)}</div> : null}
+      <button type="button" key={topic.id} title={topic.description || topic.relation} onClick={() => onOpenTopic(topic.id, topic)}><span>{topic.relation}</span>{topic.label}</button>)}</div> : null}
     <div className="public-answer-meta">
       <span>AI answer · {answer.mine ? "Asked by you" : "Asked by a member"}{answerDate(answer.createdAt) ? ` · ${answerDate(answer.createdAt)}` : ""}</span>
       {answer.related.length ? <button type="button" onClick={() => onShowOnMap(answer)}>Show on map</button> : null}
@@ -49,7 +49,7 @@ export function PublicTopicInsights({ topic, account, onAnswered, onShowOnMap, o
   account: PublicMapAccount;
   onAnswered(answer: PublicAnswer): void;
   onShowOnMap(answer: PublicAnswer): void;
-  onOpenTopic(id: string): void;
+  onOpenTopic(id: string, topic: PublicAnswerTopic): void;
 }) {
   const [summary, setSummary] = useState<{ topicId: string; value: WikipediaSummary | null; error?: string } | null>(null);
   const [answers, setAnswers] = useState<{ topicId: string; items: PublicAnswer[]; error?: string } | null>(null);
