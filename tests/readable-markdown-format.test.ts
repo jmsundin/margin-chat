@@ -20,6 +20,16 @@ function parsed(source: string) {
 }
 
 describe("readable Markdown transport", () => {
+  test("a file whose guard comment was removed by another editor still opens", () => {
+    const source = encodeReadableMarkdown(fixture());
+    const guard = "# <!-- margin-chat-metadata: frontmatter format 5 -->\n";
+    expect(source).toContain(guard);
+    const edited = source.replace(guard, "");
+    expect(decodeReadableMarkdown(edited)).toBe(decodeReadableMarkdown(source));
+    expect(parsed(edited).document?.blocks[0].content).toBe("First paragraph.\n\n**Markdown** stays readable.");
+    expect(() => decodeReadableMarkdown(source.replace(guard, guard + guard))).toThrow();
+  });
+
   test("moves metadata into one header without duplicating body content", () => {
     const legacy = fixture();
     const source = encodeReadableMarkdown(legacy);

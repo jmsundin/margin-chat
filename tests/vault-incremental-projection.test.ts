@@ -97,6 +97,30 @@ describe("incremental vault projection", () => {
     expect((await titles(userId)).Beta).toBeDefined();
   });
 
+  test("an unreadable or duplicated file does not stall indexing for the rest of the vault", async () => {
+    const userId = await user();
+    const storage = memoryStorage();
+    const vault = createVaultService({ storage, database: database() });
+    const identified = (title: string) => `---\nmargin-chat-id: shared-note\n---\n# ${title}\n\nText.\n`;
+    const result = await vault.commit(userId, [
+      { path: "Alpha.md", content: note("Alpha"), baseRevision: null },
+      { path: "Original.md", content: identified("Original"), baseRevision: null },
+      // Obsidian's "Duplicate file" copies the identity along with the text.
+      { path: "Original 1.md", content: identified("Copy"), baseRevision: null },
+      { path: "Damaged.md", content: "# Damaged\n\n<!-- margin-chat-metadata {not json} -->\n", baseRevision: null },
+      { path: "Bom.md", content: `\uFEFF${note("Bom")}`, baseRevision: null },
+    ]);
+    expect(result.projection.status).toBe("ready");
+    const projected = await titles(userId);
+    expect(projected.Alpha).toBeDefined();
+    expect(projected.Original).toBeDefined();
+    expect(projected.Bom).toBeDefined();
+    expect(projected.Copy).toBeUndefined();
+    expect(projected.Damaged).toBeUndefined();
+    // The skipped files themselves are kept exactly as written.
+    expect((await vault.readFile({ userId, path: "Damaged.md" })).bytes.toString("utf8")).toContain("{not json}");
+  });
+
   test("fingerprints from another revision are never trusted", async () => {
     const userId = await user();
     const storage = memoryStorage();

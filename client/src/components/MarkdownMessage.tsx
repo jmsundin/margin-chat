@@ -9,7 +9,7 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
-import { renderMarkdownToHtml } from "../lib/markdown";
+import { renderMarkdownToHtml, renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { MERMAID_BLOCK_SELECTOR, getMermaidConfig, setMermaidStatus } from "../lib/mermaidDiagrams";
 import { getHeadingOutlineId } from "../lib/chatOutline";
 import {
@@ -27,6 +27,8 @@ interface MarkdownMessageProps {
   conversationId: string;
   enableMermaidRendering: boolean;
   messageId: string;
+  /** Vault documents read wiki links, callouts and hidden comments the way Obsidian does. */
+  obsidian?: boolean;
   notes: ConversationNote[];
   onOpenBranch: (conversationId: string) => void;
   pendingSelection: SelectionDraft | null;
@@ -272,6 +274,7 @@ export default function MarkdownMessage({
   content,
   conversationId,
   enableMermaidRendering,
+  obsidian = false,
   messageId,
   notes,
   onOpenBranch,
@@ -303,7 +306,7 @@ export default function MarkdownMessage({
     x: 0,
     y: 0,
   });
-  const renderedHtml = renderMarkdownToHtml(content);
+  const renderedHtml = obsidian ? renderObsidianMarkdownToHtml(content) : renderMarkdownToHtml(content);
   const decorations = buildMessageDecorations(anchors, notes, pendingSelection);
   const decorationsKey = getMessageDecorationKey(decorations);
 

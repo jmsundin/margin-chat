@@ -374,7 +374,9 @@ export function createVaultService({ database, env = process.env, storage = crea
     return (await applyCommit(userId, changes, { trusted: true, onlyInitialize: true })).root;
   }
 
-  async function readWorkspace(userId, manifest) {
+  /** `tolerant` leaves unreadable files out; only read-only indexing may use it,
+   * because a caller that writes the state back would drop those files. */
+  async function readWorkspace(userId, manifest, { tolerant = false } = {}) {
     manifest ??= (await snapshot(userId)).manifest;
     const records = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && !/^(?:_conflicts|attachments|\.margin-chat)\//iu.test(path)
       && ((/\.md$/iu.test(path) && entry.encoding !== "base64") || path === "workspace.json"));
@@ -382,8 +384,13 @@ export function createVaultService({ database, env = process.env, storage = crea
     const files = Object.fromEntries(await mapConcurrent(records, async ([path, entry]) => [path, (await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8")]));
     const metadata = files["workspace.json"] ? JSON.parse(files["workspace.json"]) : undefined;
     delete files["workspace.json"];
-    const { discoverMarkdownWorkspace, parseMarkdownWorkspace } = await codec();
-    const workspace = discoverMarkdownWorkspace(files, metadata);
+    const { discoverMarkdownWorkspace, discoverReadableMarkdownWorkspace, parseMarkdownWorkspace } = await codec();
+    let workspace;
+    if (tolerant) {
+      const readable = discoverReadableMarkdownWorkspace(files, metadata);
+      if (readable.skipped.length) console.warn("Vault projection skipped unreadable Markdown", readable.skipped);
+      workspace = readable.workspace;
+    } else workspace = discoverMarkdownWorkspace(files, metadata);
     const state = parseMarkdownWorkspace(workspace.manifest, workspace.files);
     if (!state) throw new Error("The saved Markdown could not be indexed. The original files are retained.");
     if (!Object.keys(state.conversations).length) return null;
@@ -600,7 +607,7 @@ export function createVaultService({ database, env = process.env, storage = crea
         : { revision: await database.getVaultProjectionRevision?.(userId), attachments: {} };
       if (!force && (checkpoint?.revision ?? -1) >= revision) return { status: "ready", revision };
       const manifest = await load();
-      const state = await readWorkspace(userId, manifest);
+      const state = await readWorkspace(userId, manifest, { tolerant: true });
       const attachments = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && /^Attachments\/[^/]+\/metadata\.json$/u.test(path));
       const attachmentRevisions = {};
       const originals = (await mapConcurrent(attachments, async ([path, entry]) => {

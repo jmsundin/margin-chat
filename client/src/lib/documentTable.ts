@@ -1,7 +1,16 @@
-import { Table, TableView } from "@tiptap/extension-table";
+import { renderTableToMarkdown, Table, TableView } from "@tiptap/extension-table";
+
+/** A "|" in cell text would end the cell, so every unescaped pipe is written as "\|". */
+function escapeCellPipes(markdown: string) {
+  return markdown.replace(/(\\*)\|/g, (match, slashes: string) => slashes.length % 2 ? match : `${slashes}\\|`);
+}
 
 /** Controls live outside the table content so they can never enter Markdown. */
 export const DocumentTable = Table.extend({
+  renderMarkdown(node, helpers) {
+    const renderChildren: typeof helpers.renderChildren = (...args) => escapeCellPipes(helpers.renderChildren(...args));
+    return renderTableToMarkdown(node, { ...helpers, renderChildren });
+  },
   addNodeView() {
     return ({ node, view, HTMLAttributes, editor }) => {
       const tableView = new TableView(node, this.options.cellMinWidth, view, HTMLAttributes);

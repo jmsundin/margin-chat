@@ -321,7 +321,7 @@ try {
 
   const advanced = block("advanced");
   assert.equal(advanced.querySelector(".tiptap"), null);
-  assert(advanced.textContent?.includes("Edit callout source") || advanced.textContent?.includes("Edit wiki link source"));
+  assert.match(advanced.textContent ?? "", /Edit (callout|hidden comment) source/);
   await act(async () => (advanced.querySelector(".rich-document-source-action") as any).click());
   const source = advanced.querySelector("textarea") as any;
   assert.equal(source.value, initial[3].content, "Unsupported constructs must remain byte-for-byte intact.");

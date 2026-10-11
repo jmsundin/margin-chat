@@ -43,8 +43,9 @@ function readRegistry(source, header) {
     try { registry = JSON.parse(json.join("\n")); } catch { fail(); }
     if (!record(registry) || ![2, 3].includes(registry.schemaVersion) || !record(registry.metadata)
         || !record(registry.blocks) || !record(registry.messages)) fail();
+    // The guard comment is optional: editors such as Obsidian's Properties panel drop YAML comments.
     const guards = lines.filter((line) => line.value === (registry.schemaVersion === 3 ? AUTHOR_GUARD : GUARD));
-    if (guards.length !== 1) fail();
+    if (guards.length > 1) fail();
     return { registry, removals: [{ start: lines[start].start, end: lines[end - 1].end }, ...guards] };
 }
 
@@ -241,8 +242,11 @@ function writeRegistry(source, registry, header, parsed) {
     const field = parsed.removals[0];
     const guard = parsed.removals[1];
     const json = JSON.stringify(registry, null, 2).split("\n").map((line) => `  ${line}`).join(header.newline);
-    return replaceRanges(source, [{ ...field, text: `margin-chat: |-${header.newline}${json}${header.newline}` },
-        { ...guard, text: `${registry.schemaVersion === 3 ? AUTHOR_GUARD : GUARD}${header.newline}` }]);
+    const fieldText = `margin-chat: |-${header.newline}${json}${header.newline}`;
+    const guardText = `${registry.schemaVersion === 3 ? AUTHOR_GUARD : GUARD}${header.newline}`;
+    // A guard removed by another editor is written back above the field.
+    return replaceRanges(source, guard ? [{ ...field, text: fieldText }, { ...guard, text: guardText }]
+        : [{ ...field, text: guardText + fieldText }]);
 }
 
 function compactNodes(source, header, registry) {

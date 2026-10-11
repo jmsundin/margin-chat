@@ -30,6 +30,8 @@ export function readLatexAtStart(source: string, displayMode?: boolean): LatexTo
     if (escapedAt(source, end)) { end += closer.length; continue; }
     const latex = source.slice(delimiter.length, end);
     if (!latex.trim() || !display && /[\r\n]/.test(latex)) return null;
+    // "\[\[Title\]\]" is an escaped wiki link that older document saves wrote, not an equation.
+    if (delimiter === "\\[" && /^\\?\[/.test(latex)) return null;
     // Do not turn prices such as "$5 and $10" into a formula, or jump over
     // another dollar sign looking for a later, unrelated equation's closer.
     if (delimiter === "$" && (/\s/.test(source[end - 1]) || /\d/.test(source[end + 1] ?? "") || source[end + 1] === "$")) return null;
@@ -38,12 +40,39 @@ export function readLatexAtStart(source: string, displayMode?: boolean): LatexTo
   return null;
 }
 
-/** Marked handles code spans/fences first; this locates unescaped math in its text. */
+/**
+ * Inline math inside a line. "\[" only opens display math at the start of a
+ * line (see readBlockLatex): mid-line it is an escaped bracket, as in "\[1\]".
+ */
+export function readInlineLatexAtStart(source: string, displayMode?: boolean): LatexToken | null {
+  const math = readLatexAtStart(source, displayMode);
+  return math?.delimiter === "\\[" ? null : math;
+}
+
+/** Marked handles code spans/fences first; this locates unescaped inline math in its text. */
 export function findLatexStart(source: string, displayMode?: boolean): number {
-  for (let index = 0; index < source.length; index += 1) {
-    if ((source[index] === "$" || source[index] === "\\") && !escapedAt(source, index) && readLatexAtStart(source.slice(index), displayMode)) return index;
+  for (let index = source.search(/[$\\]/); index !== -1 && index < source.length; index += 1) {
+    if ((source[index] === "$" || source[index] === "\\") && !escapedAt(source, index) && readInlineLatexAtStart(source.slice(index), displayMode)) return index;
   }
   return -1;
+}
+
+/** Display math that starts a line and ends its line, as Marked block extensions need. */
+export function readBlockLatex(source: string): (LatexToken & { indent: string; trailing: string }) | null {
+  const indent = /^ {0,3}/.exec(source)![0];
+  const math = readLatexAtStart(source.slice(indent.length), true);
+  if (!math) return null;
+  const trailing = /^[ \t]*(?:\r?\n|$)/.exec(source.slice(indent.length + math.raw.length));
+  return trailing ? { ...math, indent, trailing: trailing[0] } : null;
+}
+
+/** Only line starts can open block math, so a paragraph is never split mid-line. */
+export function findBlockLatexStart(source: string): number | undefined {
+  for (const match of source.matchAll(/(?:^|\n) {0,3}(?:\$\$|\\\[)/g)) {
+    const start = match.index! + (match[0].startsWith("\n") ? 1 : 0);
+    if (readBlockLatex(source.slice(start))) return start;
+  }
+  return undefined;
 }
 
 function escapeHtml(value: string) {
@@ -68,21 +97,12 @@ export function renderLatexToHtml(latex: string, displayMode = false, source?: s
 export const latexMarkedExtensions: TokenizerAndRendererExtension[] = [
   {
     name: "latexBlock", level: "block",
-    start(source) {
-      const candidate = /(?:^|\n) {0,3}(?:\$\$|\\\[)/g;
-      for (const match of source.matchAll(candidate)) {
-        const start = match.index! + (match[0].startsWith("\n") ? 1 : 0);
-        if (readLatexAtStart(source.slice(start).replace(/^ {0,3}/, ""), true)) return start;
-      }
-      return undefined;
-    },
+    start(source) { return findBlockLatexStart(source); },
     tokenizer(source) {
-      const indent = /^ {0,3}/.exec(source)![0];
-      const math = readLatexAtStart(source.slice(indent.length), true);
+      const math = readBlockLatex(source);
       if (!math) return undefined;
-      const trailing = /^[ \t]*(?:\r?\n|$)/.exec(source.slice(indent.length + math.raw.length));
-      if (!trailing) return undefined;
-      return { ...math, type: "latexBlock", raw: indent + math.raw + trailing[0] };
+      const { indent, trailing, ...token } = math;
+      return { ...token, type: "latexBlock", raw: indent + math.raw + trailing };
     },
     renderer(token) { return `${renderLatexToHtml(token.latex, true, token.raw)}\n`; },
   },
@@ -90,7 +110,7 @@ export const latexMarkedExtensions: TokenizerAndRendererExtension[] = [
     name: "latexInline", level: "inline",
     start(source) { return findLatexStart(source); },
     tokenizer(source) {
-      const math = readLatexAtStart(source);
+      const math = readInlineLatexAtStart(source);
       return math ? { ...math, type: "latexInline" } : undefined;
     },
     renderer(token) { return renderLatexToHtml(token.latex, token.displayMode, token.raw); },
