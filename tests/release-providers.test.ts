@@ -20,6 +20,10 @@ function blobFake({ pageSize = 1 } = {}) {
     async list(options: any) {
       events.push({ method: "list", ...options });
       const all = [...stores.get(options.token)!].filter(([key]) => key.startsWith(options.prefix)).sort(([a], [b]) => a.localeCompare(b));
+      if (options.mode === "folded") {
+        const folders = [...new Set(all.map(([key]) => key.slice(options.prefix.length)).filter((rest) => rest.includes("/")).map((rest) => `${options.prefix}${rest.split("/")[0]}/`))];
+        return { blobs: [], folders, hasMore: false };
+      }
       const start = Number(options.cursor || 0);
       const rows = all.slice(start, start + pageSize);
       return { blobs: rows.map(([pathname, record]) => ({ pathname, etag: record.etag, size: record.bytes.length })), hasMore: start + pageSize < all.length, cursor: String(start + pageSize) };
@@ -32,7 +36,7 @@ function blobFake({ pageSize = 1 } = {}) {
     },
     async put(pathname: string, bytes: Buffer, options: any) {
       events.push({ method: "put", pathname, ...options });
-      if (stores.get(options.token)!.has(pathname)) throw new Error("exists");
+      if (!options.allowOverwrite && stores.get(options.token)!.has(pathname)) throw new Error("exists");
       save(options.token, pathname, bytes, options.contentType);
       return { pathname, etag: stores.get(options.token)!.get(pathname).etag };
     },
@@ -293,6 +297,64 @@ describe("release Blob providers", () => {
     await expect(restoreBlobBackup({ ...args, targetPrefix: "" })).rejects.toThrow("isolated target prefix");
     fake.save(targetToken, `rehearsals/restore/${bodyKey}`, "different");
     await expect(restoreBlobBackup(args)).rejects.toThrow("verification failed");
+  });
+
+  test("a later backup reuses unchanged files from the earlier one and copies only what changed", async () => {
+    const fake = blobFake({ pageSize: 1000 });
+    const { bodyKey, manifestKey } = seedVault(fake);
+    fake.save(sourceToken, "legacy/attachment.pdf", "PDF contents", "application/pdf");
+    const first = await backupBlobStore({ releaseId: "20261011000000-first", sourceToken, backupToken, sdk: fake.sdk });
+    const next = seedVault(fake, { body: "A new revision", manifestRevision: 2 });
+    fake.events.length = 0;
+    const progress: string[] = [];
+    const second = await backupBlobStore({ releaseId: "20261011010000-second", sourceToken, backupToken, sdk: fake.sdk, onProgress: (line: string) => progress.push(line) });
+    expect(second.objectCount).toBe(4);
+    const byPath = new Map(second.inventory.objects.map((object: any) => [object.pathname, object]));
+    expect(byPath.get(bodyKey).backupPathname).toStartWith("releases/20261011000000-first/");
+    expect(byPath.get("legacy/attachment.pdf").backupPathname).toStartWith("releases/20261011000000-first/");
+    expect(byPath.get(next.bodyKey).backupPathname).toStartWith("releases/20261011010000-second/");
+    // Unchanged files are neither read again nor copied; the new body and the
+    // advanced manifest are.
+    const sourceReads = fake.events.filter((event) => event.method === "get" && event.token === sourceToken).map((event) => event.pathname);
+    expect(sourceReads).not.toContain(bodyKey);
+    expect(sourceReads).not.toContain("legacy/attachment.pdf");
+    const puts = fake.events.filter((event) => event.method === "put").map((event) => event.pathname);
+    expect(puts.at(-1)).toBe(second.inventoryPathname);
+    expect(puts.sort()).toEqual([`releases/20261011010000-second/objects/${hash(next.bodyKey)}/${hash(next.body)}`,
+      `releases/20261011010000-second/objects/${hash(manifestKey)}/${byPath.get(manifestKey).sha256}`, second.inventoryPathname].sort());
+    expect(progress).toContain("Blob backup: reused 2 unchanged files from backup 20261011000000-first");
+    // The shared-object inventory is still a complete, restorable snapshot.
+    await restoreBlobBackup({ inventory: second.inventory, backupToken, targetToken, targetPrefix: "rehearsal/shared", sdk: fake.sdk });
+    expect(fake.stores.get(targetToken)!.get(`rehearsal/shared/${bodyKey}`).bytes.toString()).toBe("# Important note\nSaved content");
+    expect(JSON.parse(fake.stores.get(targetToken)!.get(`rehearsal/shared/${manifestKey}`).bytes.toString()).revision).toBe(2);
+    expect(first.inventory.objects.every((object: any) => object.backupPathname.startsWith("releases/20261011000000-first/"))).toBe(true);
+  });
+
+  test("copies a file again when its earlier backup copy is gone", async () => {
+    const fake = blobFake({ pageSize: 1000 });
+    fake.save(sourceToken, "legacy/a.pdf", "A", "application/pdf");
+    const first = await backupBlobStore({ releaseId: "20261011000000-first", sourceToken, backupToken, sdk: fake.sdk });
+    fake.stores.get(backupToken)!.delete(first.inventory.objects[0].backupPathname);
+    const second = await backupBlobStore({ releaseId: "20261011010000-second", sourceToken, backupToken, sdk: fake.sdk });
+    expect(second.inventory.objects[0].backupPathname).toStartWith("releases/20261011010000-second/");
+  });
+
+  test("restore keeps unchanged files from the last rehearsal and replaces its manifests", async () => {
+    const fake = blobFake({ pageSize: 1000 });
+    const { bodyKey, manifestKey } = seedVault(fake);
+    const first = await backupBlobStore({ releaseId: "20261011000000-first", sourceToken, backupToken, sdk: fake.sdk });
+    await restoreBlobBackup({ inventory: first.inventory, backupToken, targetToken, targetPrefix: "rehearsal/current", sdk: fake.sdk });
+    const next = seedVault(fake, { body: "A new revision", manifestRevision: 2 });
+    const second = await backupBlobStore({ releaseId: "20261011010000-second", sourceToken, backupToken, sdk: fake.sdk });
+    fake.events.length = 0;
+    const result = await restoreBlobBackup({ inventory: second.inventory, backupToken, targetToken, targetPrefix: "rehearsal/current", sdk: fake.sdk });
+    expect(result).toMatchObject({ objectCount: 3, copiedCount: 2 });
+    const puts = fake.events.filter((event) => event.method === "put");
+    expect(puts.map((event) => event.pathname)).toEqual([`rehearsal/current/${next.bodyKey}`, `rehearsal/current/${manifestKey}`]);
+    expect(puts.map((event) => event.allowOverwrite)).toEqual([false, true]);
+    expect(fake.events.some((event) => event.method === "get" && event.pathname.endsWith(hash("# Important note\nSaved content")))).toBe(false);
+    expect(JSON.parse(fake.stores.get(targetToken)!.get(`rehearsal/current/${manifestKey}`).bytes.toString()).revision).toBe(2);
+    expect(fake.stores.has(targetToken) && fake.stores.get(targetToken)!.has(`rehearsal/current/${bodyKey}`)).toBe(true);
   });
 
   test("copies files in parallel up to the limit and reads each backup file once on restore", async () => {

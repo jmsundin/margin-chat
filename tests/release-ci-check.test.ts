@@ -49,4 +49,25 @@ describe("release reuses CI for the release commit", () => {
     await expect(ciResultForCommit({ ...base, fetchImpl: api.fetchImpl, now: () => clock, sleep: async (ms: number) => { clock += ms; }, timeoutMs: 30_000 }))
       .rejects.toThrow("still running");
   });
+
+  test("in the background, returns at once while CI runs and settles when it finishes", async () => {
+    const api = github([[{ id: 8, head_sha: sha, status: "in_progress" }], [{ id: 8, head_sha: sha, status: "in_progress" }], [{ id: 8, head_sha: sha, status: "completed", conclusion: "success" }]]);
+    const progress: string[] = [];
+    let release = () => {};
+    const gate = new Promise<void>((done) => { release = done; });
+    const result: any = await ciResultForCommit({ ...base, fetchImpl: api.fetchImpl, background: true, sleep: () => gate, onProgress: (line: string) => progress.push(line) });
+    expect(api.requests).toHaveLength(1);
+    release();
+    expect((await result.pending).runId).toBe(8);
+    expect(progress.at(-1)).toBe("CI passed on this commit (run 8)");
+  });
+
+  test("in the background, a failed or cancelled CI run rejects the pending result", async () => {
+    const failed: any = await ciResultForCommit({ ...base, background: true, sleep: async () => {},
+      fetchImpl: github([[{ head_sha: sha, status: "queued" }], [{ head_sha: sha, status: "completed", conclusion: "failure" }]]).fetchImpl });
+    await expect(failed.pending).rejects.toThrow("CI failed on this commit");
+    const cancelled: any = await ciResultForCommit({ ...base, background: true, sleep: async () => {},
+      fetchImpl: github([[{ head_sha: sha, status: "queued" }], [{ head_sha: sha, status: "completed", conclusion: "cancelled" }]]).fetchImpl });
+    await expect(cancelled.pending).rejects.toThrow("without passing");
+  });
 });
