@@ -2,6 +2,8 @@ import { getDocumentBlockAuthorship } from "./editableDocument.mjs";
 
 const GUARD = "# <!-- margin-chat-metadata: frontmatter format 4 -->";
 const AUTHOR_GUARD = "# <!-- margin-chat-metadata: frontmatter format 5 -->";
+const RUN_GUARD = "# <!-- margin-chat-metadata: frontmatter format 6 -->";
+const guardFor = (schemaVersion) => schemaVersion === 4 ? RUN_GUARD : schemaVersion === 3 ? AUTHOR_GUARD : GUARD;
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const safeJson = (value) => JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e");
 const fail = () => { throw new Error("Invalid readable Markdown metadata or block boundaries. The original file was preserved."); };
@@ -41,10 +43,10 @@ function readRegistry(source, header) {
     }
     let registry;
     try { registry = JSON.parse(json.join("\n")); } catch { fail(); }
-    if (!record(registry) || ![2, 3].includes(registry.schemaVersion) || !record(registry.metadata)
+    if (!record(registry) || ![2, 3, 4].includes(registry.schemaVersion) || !record(registry.metadata)
         || !record(registry.blocks) || !record(registry.messages)) fail();
     // The guard comment is optional: editors such as Obsidian's Properties panel drop YAML comments.
-    const guards = lines.filter((line) => line.value === (registry.schemaVersion === 3 ? AUTHOR_GUARD : GUARD));
+    const guards = lines.filter((line) => line.value === guardFor(registry.schemaVersion));
     if (guards.length > 1) fail();
     return { registry, removals: [{ start: lines[start].start, end: lines[end - 1].end }, ...guards] };
 }
@@ -238,12 +240,171 @@ function unescapeAttribute(value) {
     });
 }
 
+/**
+ * A line something points at (a note, highlight, branch or link) carries an
+ * Obsidian block ID, so `[[Document#^id]]` finds it. Obsidian reads `text ^id`
+ * at the end of a paragraph; a heading, list, table, quote, code or math block
+ * (anything whose last line could change meaning) takes the ID on its own line after it.
+ */
+function blockReference(id, content, referenced) {
+    if (!referenced?.has(id) || !/^[A-Za-z0-9-]+$/.test(id) || !content.trim()) return null;
+    const last = content.split(/\r?\n/).at(-1);
+    return !last.trim() || /^(?: {4}|\t| {0,3}(?:[-+*>|#<=]|\d+[.)]|```|~~~|\$\$|%%|\[\^))|\|/.test(last) ? "line" : "inline";
+}
+const referenceText = (id, reference, newline) => reference === "inline" ? ` ^${id}` : reference === "line" ? `${newline}${newline}^${id}` : "";
+/** Where a line's `^id` sits in `text`, in either form, wherever another app moved it. */
+function blockReferenceAt(text, id, reference) {
+    if (!reference || !/^[A-Za-z0-9-]+$/.test(id)) return null;
+    let found = null;
+    for (const match of text.matchAll(new RegExp(`(?: |\\r?\\n\\r?\\n|^)\\^${id}(?=[ \\t]*(?:\\r?\\n|$))`, "g"))) found = { start: match.index, end: match.index + match[0].length };
+    return found;
+}
+function withoutBlockReference(text, id, reference) {
+    const marker = blockReferenceAt(text, id, reference);
+    if (!marker) return text;
+    // An ID left at the top of a line's text takes its blank line with it.
+    const after = marker.start ? marker.end : marker.end + separatorAt(text, marker.end);
+    return text.slice(0, marker.start) + text.slice(after);
+}
+
+function separatorAt(content, index) {
+    return content.startsWith("\r\n\r\n", index) ? 4 : content.startsWith("\n\n", index) ? 2 : 0;
+}
+function separatorBefore(content, index) {
+    return index >= 4 && content.startsWith("\r\n\r\n", index - 4) ? 4 : index >= 2 && content.startsWith("\n\n", index - 2) ? 2 : 0;
+}
+/** Markdown blocks separated by blank lines, outside fenced code. */
+function blankLineChunks(text) {
+    const fences = fencedRanges(text, 0);
+    const chunks = [];
+    let current = null;
+    for (const line of text.matchAll(/([^\r\n]*)(\r?\n|$)/g)) {
+        if (!line[0]) break;
+        const blank = !line[1].trim() && !fences.some((range) => line.index >= range.start && line.index < range.end);
+        if (blank) { if (current) chunks.push(current); current = null; continue; }
+        if (!current) current = { start: line.index, end: 0 };
+        current.end = line.index + line[1].length;
+    }
+    if (current) chunks.push(current);
+    return chunks;
+}
+/**
+ * Split one wrapper's text back into its lines, in the order the text now has
+ * them; each part still holds its `^id`. Lines whose saved length and
+ * fingerprint still match are taken from both ends. The text between, edited
+ * in another app, splits at blank lines: a line finds its own text by its
+ * `^id` or its fingerprint, wherever it moved; the other lines take the
+ * remaining blocks after the line before them; text no line takes stays with
+ * the line before it. A line with no text left was removed.
+ */
+function splitRun(content, members, registry, newline) {
+    const lines = members.map((id) => {
+        const metadata = registry.blocks[id];
+        return { id, reference: metadata.blockReference, fingerprint: metadata.contentFingerprint,
+            length: metadata.contentLength + referenceText(id, metadata.blockReference, newline).length };
+    });
+    const unchanged = (line, text) => !line.fingerprint || line.fingerprint === fingerprint(withoutBlockReference(text, line.id, line.reference));
+    const ranges = new Array(lines.length).fill(null);
+    let front = 0;
+    let back = content.length;
+    let first = 0;
+    let last = lines.length - 1;
+    while (first < last) {
+        const end = front + lines[first].length;
+        const separator = separatorAt(content, end);
+        if (!Number.isSafeInteger(lines[first].length) || end > back || end < back && !separator || !unchanged(lines[first], content.slice(front, end))) break;
+        ranges[first] = { start: front, end };
+        front = Math.min(back, end + separator);
+        first += 1;
+    }
+    while (last >= first) {
+        const start = back - lines[last].length;
+        const separator = start > front ? separatorBefore(content, start) : 0;
+        if (!Number.isSafeInteger(lines[last].length) || start < front || start > front && (!separator || start - separator < front)
+            || !unchanged(lines[last], content.slice(start, back))) break;
+        ranges[last] = { start, end: back };
+        back = Math.max(front, start - separator);
+        last -= 1;
+    }
+    const middle = content.slice(front, back);
+    const ordered = () => ranges.map((range, index) => range && { index, start: range.start, text: content.slice(range.start, range.end) })
+        .filter(Boolean).sort((a, b) => a.start - b.start);
+    if (!middle.trim()) return ordered();
+    if (first > last) {
+        // Text added between unchanged lines joins the line before it, or the first line.
+        if (first) ranges[first - 1].end = back;
+        else ranges[0].start = front;
+        return ordered();
+    }
+    if (first === last) { ranges[first] = { start: front, end: back }; return ordered(); }
+    const chunks = blankLineChunks(middle).map((chunk) => ({ ...chunk, line: -1 }));
+    const spans = new Map();
+    const claim = (index, start, end) => {
+        spans.set(index, { start, end });
+        for (let chunk = start; chunk <= end; chunk += 1) chunks[chunk].line = index;
+    };
+    const text = (start, end) => middle.slice(chunks[start].start, chunks[end].end);
+    // The free chunks ending at `end` (or at the line's own `^id`) that hold this line's saved text.
+    const matching = (index, end, own = false) => {
+        const { fingerprint: saved, id, reference } = lines[index];
+        if (!saved) return null;
+        for (let start = end; start >= 0 && (own && start === end || chunks[start].line < 0 && !chunks[start].marker); start -= 1) {
+            if (saved === fingerprint(withoutBlockReference(text(start, end), id, reference))) return start;
+        }
+        return null;
+    };
+    // A chunk ending in a line's `^id`, or holding only it, ends that line.
+    for (const [position, chunk] of chunks.entries()) {
+        const raw = middle.slice(chunk.start, chunk.end);
+        for (let index = first; index <= last; index += 1) {
+            const { id, reference } = lines[index];
+            if (!reference || spans.has(index) || raw !== `^${id}` && !raw.endsWith(` ^${id}`)) continue;
+            chunk.marker = raw === `^${id}` ? "line" : "inline";
+            claim(index, position, position);
+            break;
+        }
+    }
+    for (const [index, span] of spans) {
+        const start = chunks[span.end].marker === "line" ? span.end && matching(index, span.end - 1) : matching(index, span.end, true);
+        if (start !== null) claim(index, start, span.end);
+    }
+    // Lines without an `^id` find their unchanged text anywhere it moved.
+    for (let index = first; index <= last; index += 1) {
+        if (spans.has(index) || !lines[index].fingerprint) continue;
+        let found = null;
+        for (let end = 0; end < chunks.length && !found; end += 1) {
+            if (chunks[end].line >= 0 || chunks[end].marker) continue;
+            const start = matching(index, end);
+            if (start !== null) found = [start, end];
+        }
+        if (found) claim(index, ...found);
+    }
+    // An `^id` on its own line names the block above it.
+    for (const [index, span] of spans) {
+        if (chunks[span.start].marker === "line" && span.start && chunks[span.start - 1].line < 0 && !chunks[span.start - 1].marker) claim(index, span.start - 1, span.end);
+    }
+    // Lines that lost both take the next free block after the line before them.
+    let previous = -1;
+    for (let index = first; index <= last; index += 1) {
+        const span = spans.get(index);
+        if (span) { previous = span.end; continue; }
+        const next = previous + 1;
+        if (next < chunks.length && chunks[next].line < 0) { claim(index, next, next); previous = next; }
+    }
+    const starts = [...spans].sort((a, b) => a[1].start - b[1].start);
+    starts.forEach(([index, span], position) => {
+        ranges[index] = { start: front + (position ? chunks[span.start].start : 0),
+            end: front + (position < starts.length - 1 ? chunks[starts[position + 1][1].start - 1].end : middle.length) };
+    });
+    return ordered();
+}
+
 function writeRegistry(source, registry, header, parsed) {
     const field = parsed.removals[0];
     const guard = parsed.removals[1];
     const json = JSON.stringify(registry, null, 2).split("\n").map((line) => `  ${line}`).join(header.newline);
     const fieldText = `margin-chat: |-${header.newline}${json}${header.newline}`;
-    const guardText = `${registry.schemaVersion === 3 ? AUTHOR_GUARD : GUARD}${header.newline}`;
+    const guardText = `${guardFor(registry.schemaVersion)}${header.newline}`;
     // A guard removed by another editor is written back above the field.
     return replaceRanges(source, guard ? [{ ...field, text: fieldText }, { ...guard, text: guardText }]
         : [{ ...field, text: guardText + fieldText }]);
@@ -288,12 +449,14 @@ function noteBody(source, nodes, metadata, documentEnd) {
 }
 
 /** Version 5 gives current document content one visible body, with provenance
- * wrappers. Original messages remain recoverable history in the same header. */
-export function encodeReadableMarkdown(source) {
+ * wrappers. Original messages remain recoverable history in the same header.
+ * Version 6 wraps each run of lines by one author once, and marks the lines in
+ * `referencedBlockIds` with Obsidian block IDs. */
+export function encodeReadableMarkdown(source, options = {}) {
     if (isReadableMarkdown(source)) {
         const header = frontmatter(source);
         const parsed = readRegistry(source, header);
-        if (parsed.registry.schemaVersion === 3) return source;
+        if (parsed.registry.schemaVersion >= 3) return source;
         source = decodeCompactMarkdown(source);
     }
     const compact = encodeCompactMarkdown(source);
@@ -324,24 +487,40 @@ export function encodeReadableMarkdown(source) {
         registry.history = { afterDocument: compact.slice(documentEnd, historyEnd) };
         replacements.push({ start: documentEnd, end: historyEnd, text: "" });
     }
+    const runs = [];
     for (const node of nodes) {
         if (historyEnd !== null && node.start >= documentEnd && node.end <= historyEnd) continue;
         const author = node.group === "blocks" ? getDocumentBlockAuthorship(node.metadata, messages)
             : node.metadata.role === "assistant" ? "ai" : node.metadata.role === "system" ? "system" : "user";
-        const tag = author === "mixed" ? "ai" : author;
-        const attribute = node.group === "blocks" ? "id" : "message-id";
+        let visible = node.content;
         if (node.group === "blocks") {
-            registry.blocks[node.id] = { ...node.metadata, contentFingerprint: fingerprint(node.content) };
+            const reference = blockReference(node.id, node.content, options.referencedBlockIds);
+            registry.blocks[node.id] = { ...node.metadata, contentFingerprint: fingerprint(node.content), ...(reference ? { blockReference: reference } : {}) };
+            visible += referenceText(node.id, reference, node.newline);
         }
-        replacements.push({ start: node.start, end: node.end,
-            text: `<${tag} ${attribute}="${escapeAttribute(node.id)}"${author === "mixed" ? ' edited-by="user"' : ""}>${node.newline}${node.newline}${node.content}${node.closingNewline}${node.closingNewline}</${tag}>${node.trailingCR}` });
+        // Consecutive lines by the same author share one wrapper.
+        const run = runs.at(-1);
+        const previous = run?.nodes.at(-1);
+        if (node.group === "blocks" && previous?.group === "blocks" && run.author === author && /^\n\r?\n$/.test(compact.slice(previous.end, node.start))) {
+            run.nodes.push(node);
+            run.visible.push(visible);
+        } else runs.push({ author, nodes: [node], visible: [visible] });
+    }
+    for (const { author, nodes: members, visible } of runs) {
+        const [first] = members;
+        const last = members.at(-1);
+        const tag = author === "mixed" ? "ai" : author;
+        const attribute = first.group === "blocks" ? "id" : "message-id";
+        if (members.length > 1) (registry.runs ??= {})[first.id] = members.map((member) => member.id);
+        replacements.push({ start: first.start, end: last.end,
+            text: `<${tag} ${attribute}="${escapeAttribute(first.id)}"${author === "mixed" ? ' edited-by="user"' : ""}>${first.newline}${first.newline}${visible.join(first.newline + first.newline)}${last.closingNewline}${last.closingNewline}</${tag}>${last.trailingCR}` });
     }
     if (note && historyEnd === null) {
         registry.notes = { [note.id]: { contentLength: note.content.length, ...(note.needsSeparator ? { addedSeparator: true } : {}) } };
         replacements.push({ start: note.start, end: note.end,
             text: `${note.needsSeparator ? header.newline + header.newline : ""}<user note-id="${escapeAttribute(note.id)}">${header.newline}${header.newline}${note.content}${header.newline}${header.newline}</user>` });
     }
-    registry.schemaVersion = 3;
+    registry.schemaVersion = registry.runs || Object.values(registry.blocks).some((block) => block.blockReference) ? 4 : 3;
     const result = replaceRanges(compact, replacements);
     return writeRegistry(result, registry, header, parsed);
 }
@@ -401,7 +580,7 @@ function fencedRanges(source, start, end = source.length) {
 function decodeAuthoredMarkdown(source, header, parsed) {
     const registry = parsed.registry;
     if (registry.notes !== undefined && !record(registry.notes) || registry.history !== undefined
-        && (!record(registry.history) || typeof registry.history.afterDocument !== "string")) fail();
+        && (!record(registry.history) || typeof registry.history.afterDocument !== "string") || registry.runs !== undefined && !record(registry.runs)) fail();
     const replacements = [];
     const ranges = [];
     const seen = { blocks: new Set(), messages: new Set(), notes: new Set() };
@@ -420,27 +599,43 @@ function decodeAuthoredMarkdown(source, header, parsed) {
         const metadata = registry[group]?.[id];
         if (!id || !Object.hasOwn(registry[group] ?? {}, id) || !record(metadata) || seen[group].has(id)
             || group !== "notes" && metadata.id !== id || group !== "messages" && tag === "system" || source[marker.lastIndex] !== "\n") fail();
-        seen[group].add(id);
+        // A run of lines by one author shares this wrapper; the header lists them in order.
+        const members = group === "blocks" && registry.runs?.[id] !== undefined ? registry.runs[id] : [id];
+        if (!Array.isArray(members) || members[0] !== id || members.some((member, index) => typeof member !== "string" || index && (!Object.hasOwn(registry.blocks, member)
+            || !record(registry.blocks[member]) || registry.blocks[member].id !== member || seen.blocks.has(member) || members.indexOf(member) !== index))) fail();
+        members.forEach((member) => seen[group].add(member));
         const newline = source[marker.lastIndex - 1] === "\r" ? "\r\n" : "\n";
         const contentStart = marker.lastIndex + 1 + newline.length;
         if (source.slice(marker.lastIndex + 1, contentStart) !== newline) fail();
         // The owned blank line has a raw width and a normalized width. Editors
         // may change LF to CRLF without changing the saved content length.
-        const lengths = [metadata.contentLength + newline.length, metadata.contentLength + 1];
-        const normalizedLength = typeof metadata.contentFingerprint === "string" ? Number(metadata.contentFingerprint.split(":", 1)[0]) : NaN;
-        if (Number.isSafeInteger(normalizedLength) && normalizedLength >= 0) lengths.push(normalizedLength + 1);
+        const width = (separator, lengthOf) => members.reduce((total, member, index) => {
+            const line = registry[group][member];
+            return total + lengthOf(line) + referenceText(member, line.blockReference, separator).length + (index ? separator.length * 2 : 0);
+        }, 0);
+        const normalized = (line) => typeof line.contentFingerprint === "string" ? Number(line.contentFingerprint.split(":", 1)[0]) : NaN;
+        const lengths = [width(newline, (line) => line.contentLength) + newline.length, width("\n", (line) => line.contentLength) + 1, width("\n", normalized) + 1]
+            .filter((length) => Number.isSafeInteger(length) && length >= 0);
         const end = taggedEnd(source, contentStart, tag, lengths, registry);
         if (source.slice(end.contentEnd - end.newline.length, end.contentEnd) !== end.newline) fail();
         const content = source.slice(contentStart, end.contentEnd - end.newline.length);
         let text;
         if (group === "notes") text = content;
         else {
-            const { contentFingerprint, ...original } = metadata;
-            const authorship = tag === "user" ? "user" : match[4] || contentFingerprint && contentFingerprint !== fingerprint(content) ? "mixed" : "ai";
-            const inferred = getDocumentBlockAuthorship(original, Object.values(registry.messages));
-            registry[group][id] = { ...original, ...(group === "blocks" && authorship !== inferred ? { authorship } : {}), contentLength: content.length };
+            const parts = members.length > 1 ? splitRun(content, members, registry, newline) : [{ index: 0, text: content }];
             const compact = group === "blocks" ? "block" : "msg";
-            text = `<!-- margin-chat-${compact} ${safeJson(id)} -->${newline}${content}${end.newline}<!-- margin-chat-${compact}-end ${safeJson(id)} -->${source[end.end - 1] === "\r" ? "\r" : ""}`;
+            const lines = [];
+            // A line removed in another app is gone; an emptied wrapper keeps its first line.
+            (parts.length ? parts : [{ index: 0, text: "" }]).forEach(({ index, text: part }) => {
+                const member = members[index];
+                const { contentFingerprint, blockReference, ...original } = registry[group][member];
+                const value = withoutBlockReference(part, member, blockReference);
+                const authorship = tag === "user" ? "user" : match[4] || contentFingerprint && contentFingerprint !== fingerprint(value) ? "mixed" : "ai";
+                const inferred = getDocumentBlockAuthorship(original, Object.values(registry.messages));
+                registry[group][member] = { ...original, ...(group === "blocks" && authorship !== inferred ? { authorship } : {}), contentLength: value.length };
+                lines.push(`<!-- margin-chat-${compact} ${safeJson(member)} -->${newline}${value}${end.newline}<!-- margin-chat-${compact}-end ${safeJson(member)} -->`);
+            });
+            text = `${lines.join(newline + newline)}${source[end.end - 1] === "\r" ? "\r" : ""}`;
         }
         let start = match.index;
         if (group === "notes" && metadata.addedSeparator && !content && source.slice(start - newline.length * 2, start) === newline + newline) start -= newline.length * 2;
@@ -463,8 +658,18 @@ function decodeAuthoredMarkdown(source, header, parsed) {
     registry.schemaVersion = 2;
     delete registry.history;
     delete registry.notes;
+    delete registry.runs;
     result = writeRegistry(result, registry, header, parsed);
     return decodeCompactMarkdown(result);
+}
+
+/** Lines this file already marks with Obsidian block IDs. */
+export function markedBlockIds(source) {
+    if (typeof source !== "string" || !isReadableMarkdown(source)) return new Set();
+    try {
+        const { registry } = readRegistry(source, frontmatter(source));
+        return new Set(Object.entries(registry.blocks).flatMap(([id, block]) => record(block) && block.blockReference ? [id] : []));
+    } catch { return new Set(); }
 }
 
 /** Both earlier portable formats remain readable. Literal Markdown tags inside
@@ -472,10 +677,10 @@ function decodeAuthoredMarkdown(source, header, parsed) {
 export function decodeReadableMarkdown(source) {
     if (!isReadableMarkdown(source)) {
         const header = frontmatter(source);
-        if (header?.text.includes(AUTHOR_GUARD)) fail();
+        if (header?.text.includes(AUTHOR_GUARD) || header?.text.includes(RUN_GUARD)) fail();
         return decodeCompactMarkdown(source);
     }
     const header = frontmatter(source);
     const parsed = readRegistry(source, header);
-    return parsed.registry.schemaVersion === 3 ? decodeAuthoredMarkdown(source, header, parsed) : decodeCompactMarkdown(source);
+    return parsed.registry.schemaVersion >= 3 ? decodeAuthoredMarkdown(source, header, parsed) : decodeCompactMarkdown(source);
 }

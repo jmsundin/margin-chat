@@ -444,6 +444,14 @@ describe("readable-format merging", () => {
     expect(metadata.file.aliases).not.toContain(path);
     expect(blocks(result.file!.content)).toEqual([["one", "Local first."], ["two", "Cloud second."]]);
   });
+
+  test("a line's Obsidian block ID survives a merge of both sides' edits", () => {
+    const source = document([["one", "First."], ["two", "Second."], ["three", "Third."]]).render();
+    const marked = (body: string) => encodeReadableMarkdown(body, { referencedBlockIds: new Set(["two"]) });
+    const result = merge(marked(source), marked(source.replace("First.", "Local first.")), marked(source.replace("Third.", "Cloud third.")));
+    expect(result.file!.content).toContain("Local first.\n\nSecond. ^two\n\nCloud third.");
+    expect(blocks(result.file!.content)).toEqual([["one", "Local first."], ["two", "Second."], ["three", "Cloud third."]]);
+  });
 });
 
 describe("workspace sidecar merge", () => {

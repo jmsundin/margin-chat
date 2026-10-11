@@ -77,7 +77,7 @@ export function buildMarkdownVaultIndex(summaries: MarkdownVaultFileSummary[]): 
 export function getAttachmentVaultPath(document: Pick<ConversationDocument, "id" | "filename">): string | null;
 export function isSafeMarkdownPath(path: string): boolean;
 
-export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown } from "./markdownReadable.mjs";
+export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown, markedBlockIds } from "./markdownReadable.mjs";
 
 export function preserveMarkdownFileLocation(source: string, currentSource: string, path: string): string;
 export { markdownIdentitySuffix } from "./markdownPaths.mjs";

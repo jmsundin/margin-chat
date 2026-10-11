@@ -25,13 +25,17 @@ the app. Keep those preservation tests when changing the codec.
 New Markdown uses manifest version 5, while versions 3 and 4 remain readable. The
 YAML header's `margin-chat: |-` field holds an indented JSON registry with
 `schemaVersion: 3`. Current blocks use `<ai id="…">` / `<user id="…">` wrappers;
-AI-origin blocks edited by a user use `edited-by="user"`. Original messages and
+AI-origin blocks edited by a user use `edited-by="user"`. Schema version 4
+(guard "frontmatter format 6") wraps each run of same-author lines once, lists
+the run's line IDs in `registry.runs`, and ends each line in
+`referencedBlockIds` with an Obsidian block ID (`blockReference: "inline"` or
+`"line"`); the encoder writes version 3 when neither applies. Original messages and
 note bodies remain header history when editable blocks exist, leaving one visible
 current body. Stable IDs support merging and moves; whole-block authorship is
 normalized as `ai`, `user`, or `mixed`. A compatibility comment prevents older
 readers from treating the new structure as a plain note.
 
-`encodeReadableMarkdown`, `decodeReadableMarkdown`, and `isReadableMarkdown`
+`encodeReadableMarkdown`, `decodeReadableMarkdown`, `isReadableMarkdown`, and `markedBlockIds`
 bridge the readable representation and legacy JSON-bearing marker format.
 Readers accept both representations. Preserve legacy fixtures and test actual
 readable-source edits as well: decoding every test input would miss regressions
