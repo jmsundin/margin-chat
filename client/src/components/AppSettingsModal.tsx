@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
+import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, saveDictationButtonPreference, subscribeDictationButtonPreference } from "../lib/dictation";
 import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
@@ -44,6 +45,7 @@ export default function AppSettingsModal({
   onSetJevEnabled,
   vaultIndex,
 }: AppSettingsModalProps) {
+  const showDictationButton = useSyncExternalStore(subscribeDictationButtonPreference, readDictationButtonPreference, () => true);
   useEffect(() => {
     if (!isOpen) {
       return undefined;
@@ -184,6 +186,17 @@ export default function AppSettingsModal({
             {jevEnabled && (jevStatus === "unconfigured" || jevStatus === "unavailable") ? <p className="app-settings-description" role="status">{jevStatus === "unconfigured" ? "Jev is not configured on this server." : "Jev is temporarily unavailable."} The usual chat and categories remain available.</p> : null}
           </div>
           <input id="jev-assistance" type="checkbox" role="switch" aria-describedby="jev-assistance-disclosure" checked={jevEnabled} onChange={(event) => onSetJevEnabled(event.target.checked)} />
+        </div> : null}
+
+        {dictationSupported() ? <div className="app-settings-section app-settings-switch-section">
+          <div className="app-settings-copy">
+            <label className="app-settings-label" htmlFor="dictation-button">Voice typing button</label>
+            <p className="app-settings-description" id="dictation-button-disclosure">
+              Shows a mic on the text field you&apos;re in. Press {dictationShortcutLabel()} to start and again to stop, or hold it while you talk; Esc cancels. Recordings are sent to OpenAI to transcribe, using your OpenAI key when you&apos;ve added one, otherwise your Plus credit.
+            </p>
+          </div>
+          <input id="dictation-button" type="checkbox" role="switch" aria-describedby="dictation-button-disclosure"
+            checked={showDictationButton} onChange={(event) => saveDictationButtonPreference(event.target.checked)} />
         </div> : null}
 
         {vaultIndex ? <div className="app-settings-section app-settings-switch-section">

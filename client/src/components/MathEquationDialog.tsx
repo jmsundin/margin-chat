@@ -34,7 +34,7 @@ export default function MathEquationDialog({ latex: initial, display: initialDis
       <label>Equation layout<select aria-label="Equation layout" value={display ? "display" : "inline"} onChange={(event) => setDisplay(event.target.value === "display")}>
         <option value="inline">Inline (default)</option><option value="display">Display (separate line)</option>
       </select></label>
-      <label>LaTeX equation<textarea ref={inputRef} aria-label="LaTeX equation" value={latex} onChange={(event) => setLatex(event.target.value)} placeholder="E = mc^2" spellCheck={false} rows={4} /></label>
+      <label>LaTeX equation<textarea data-dictation="off" ref={inputRef} aria-label="LaTeX equation" value={latex} onChange={(event) => setLatex(event.target.value)} placeholder="E = mc^2" spellCheck={false} rows={4} /></label>
       <div className="math-equation-preview" aria-label="Equation preview" dangerouslySetInnerHTML={{ __html: preview }} />
       {error && <p role="alert">{error}</p>}
       <footer><button type="button" onClick={onClose}>Cancel</button><button type="submit" disabled={!latex.trim()}>{editing ? "Save equation" : "Insert equation"}</button></footer>

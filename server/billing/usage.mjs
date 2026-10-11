@@ -73,12 +73,14 @@ export function createHostedUsageMeter({ env, billingService, requestId, userId,
   let sequence = 0;
   const entries = [];
   return {
-    async begin({ provider, model, body, maxOutputTokens, kind = "generation" }) {
+    async begin({ provider, model, body, maxOutputTokens, kind = "generation", inputTokenLimit }) {
       const price = getHostedModelPrice(env, provider, model);
       if (!isCount(maxOutputTokens) || (kind !== "embedding" && maxOutputTokens === 0)) throw new HttpError(503, "Hosted requests require an explicit output token limit.");
+      if (inputTokenLimit !== undefined && (!isCount(inputTokenLimit) || inputTokenLimit === 0)) throw new HttpError(503, "Invalid hosted input token limit.");
       // Reserve from UTF-8 bytes of the complete serialized body, including
       // tool schemas/history, with additional provider framing allowance.
-      const inputBound = Buffer.byteLength(JSON.stringify(body), "utf8") + 1024;
+      // Audio bodies are not JSON, so their caller states the bound instead.
+      const inputBound = inputTokenLimit ?? Buffer.byteLength(JSON.stringify(body), "utf8") + 1024;
       const outputBound = maxOutputTokens + (provider === "gemini" ? price.maxReasoningTokens : 0);
       if (!isCount(outputBound)) throw new HttpError(503, "Invalid hosted output token limit.");
       const estimate = { inputTokens: inputBound, outputTokens: outputBound, cachedInputTokens: 0,

@@ -20,6 +20,7 @@ import { handleTopicExpansionRequest } from "./topicExpansion.mjs";
 import { createPublicMapService } from "../publicMap/index.mjs";
 import { handlePublicMapRequest, handleWebSearchRequest } from "./publicMap.mjs";
 import { createWebSearchService } from "../webSearch/index.mjs";
+import { createDictationService, MAX_DICTATION_AUDIO_BYTES } from "../dictation/index.mjs";
 import { createDesktopDownloadService, describeDownloadRequest } from "../downloads/index.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
@@ -106,6 +107,7 @@ export function createApiHandler({
   topicEmbeddingService,
   passageService,
   desktopDownloadService,
+  dictationService,
   env = process.env,
   rateLimits,
 }) {
@@ -118,6 +120,7 @@ export function createApiHandler({
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
+  const dictation = dictationService ?? createDictationService({ env });
   const desktopDownloads = desktopDownloadService ?? createDesktopDownloadService({ database, env });
 
   const limits = { ...DEFAULT_AUTH_RATE_LIMITS, ...rateLimits };
@@ -379,7 +382,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "dictationTranscribe", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -763,6 +766,20 @@ export function createApiHandler({
           revision: storedWorkspace.revision,
           workspace: createWorkspaceDocument(storedWorkspace.state),
         });
+        return;
+      }
+
+      if (route?.id === "dictationTranscribe") {
+        const contentType = String(request.headers["content-type"] ?? "");
+        const language = url.searchParams.get("language") || null;
+        const bytes = await readRawBody(request, MAX_DICTATION_AUDIO_BYTES);
+        const scope = createRequestAbortScope(request, response);
+        try {
+          const context = await executeChatReply.createUsageContext({ user: authContext.user, signal: scope.signal, operation: "dictation" });
+          sendJson(response, 200, await dictation.transcribe({ bytes, contentType, language, context }), { "Cache-Control": "private, no-store" });
+        } finally {
+          scope.dispose();
+        }
         return;
       }
 

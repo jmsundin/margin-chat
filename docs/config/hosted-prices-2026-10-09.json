@@ -41,6 +41,10 @@
     "cacheWriteInputMicrosPerMillionTokens": 250000,
     "outputMicrosPerMillionTokens": 1200000
   },
+  "openai:gpt-4o-mini-transcribe": {
+    "inputMicrosPerMillionTokens": 3000000,
+    "outputMicrosPerMillionTokens": 5000000
+  },
   "openai:text-embedding-3-small": {
     "inputMicrosPerMillionTokens": 20000,
     "outputMicrosPerMillionTokens": 0

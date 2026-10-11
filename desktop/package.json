@@ -38,6 +38,9 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.png",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Margin Chat uses the microphone for voice typing."
+      },
       "target": [
         {
           "target": "dmg",

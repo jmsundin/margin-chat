@@ -227,10 +227,12 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     protocol.handle(SCHEME, handleAppRequest);
 
-    // Grant only what the vault and editor use, and only to the app itself.
+    // Grant only what the vault, editor and voice typing use, and only to the app itself.
     const allowed = new Set(["fileSystem", "clipboard-read", "clipboard-sanitized-write"]);
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-      callback(allowed.has(permission) && isAppUrl(webContents.getURL()));
+    const microphoneOnly = (permission, details) => permission === "media" &&
+      Array.isArray(details?.mediaTypes) && details.mediaTypes.length > 0 && details.mediaTypes.every((type) => type === "audio");
+    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+      callback((allowed.has(permission) || microphoneOnly(permission, details)) && isAppUrl(webContents.getURL()));
     });
 
     buildAppMenu();
