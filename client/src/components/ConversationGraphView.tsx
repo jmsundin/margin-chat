@@ -1177,8 +1177,8 @@ export default function ConversationGraphView({
   const generatedClusterLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
     active: !!jev?.ready && isVisible && isClustersMode, clusters: labelTargets, conversations });
   const clusterLabels = useMemo(() => ({ ...generatedClusterLabels, labels: clusterLayout
-    ? labelClusterGroups(generatedClusterLabels.labels, clusterLayout.clusters, clusterLayout.levels) : generatedClusterLabels.labels }),
-  [generatedClusterLabels, clusterLayout]);
+    ? labelClusterGroups(generatedClusterLabels.labels, clusterLayout.clusters, clusterLayout.levels, groupBySubject ? "Unfiled" : "Unlinked") : generatedClusterLabels.labels }),
+  [generatedClusterLabels, clusterLayout, groupBySubject]);
   const clusterCircles = useMemo(() => new Map<string, GravityCluster | GravityClusterGroup>(clusterLayout
     ? [...clusterLayout.clusters, ...clusterLayout.levels.flatMap((level) => level.groups)].map((circle) => [circle.id, circle]) : []),
   [clusterLayout]);

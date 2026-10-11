@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { applyClusterPlacements, findGravityClusters, layoutGravityClusters, mergeClustersByTopic, UNLINKED_CLUSTER_ID } from "../client/src/lib/gravityClusters";
+import { applyClusterPlacements, findGravityClusters, groupDocumentsByMeaning, layoutGravityClusters, UNLINKED_CLUSTER_ID } from "../client/src/lib/gravityClusters";
 import { decodeTopicEmbedding, groupByTopicEmbedding } from "../client/src/lib/topicEmbeddings";
 
 const link = (sourceId: string, targetId: string) => ({ sourceId, targetId });
@@ -44,13 +44,31 @@ describe("grouping clusters by subject", () => {
     expect(clusters.filter((cluster) => cluster.memberIds.some((id) => ANGULAR.includes(id)))).toHaveLength(4);
   });
 
-  test("with embeddings, the Angular clusters join and other subjects stay apart", () => {
+  test("with embeddings, the Angular notes form one cluster and other subjects stay apart", () => {
     const vectors = subjectVectors({ angular: ANGULAR, react: REACT, bread: BREAD, marathon: ["marathon"], budget: ["budget"], trip: ["trip"] });
-    const merged = mergeClustersByTopic(findGravityClusters(ids, connections).clusters, (id) => vectors.get(id));
+    const merged = groupDocumentsByMeaning(ids, connections, (id) => vectors.get(id));
     const angular = merged.find((cluster) => cluster.memberIds.includes("viewchild"))!;
     expect([...angular.memberIds].sort()).toEqual([...ANGULAR].sort());
     expect(merged.find((cluster) => cluster.memberIds.includes("react"))!.memberIds.sort()).toEqual([...REACT].sort());
     expect(merged.at(-1)).toEqual({ hubId: null, memberIds: [...LONE].sort() });
+  });
+
+  test("a link to another subject does not pull documents across", () => {
+    const vectors = subjectVectors({ angular: ANGULAR, react: REACT, bread: BREAD });
+    const merged = groupDocumentsByMeaning(ids, [...connections, link("components", "react"), link("viewchild", "react-memo")], (id) => vectors.get(id));
+    expect([...merged.find((cluster) => cluster.memberIds.includes("angular"))!.memberIds].sort()).toEqual([...ANGULAR].sort());
+    expect([...merged.find((cluster) => cluster.memberIds.includes("react"))!.memberIds].sort()).toEqual([...REACT].sort());
+  });
+
+  test("the hub is the most linked member, and a document without an embedding follows its links", () => {
+    const vectors = subjectVectors({ angular: ANGULAR, react: REACT, bread: BREAD });
+    vectors.delete("lifecycle");
+    const merged = groupDocumentsByMeaning([...ids, "hooks"], [...connections, link("react", "hooks"), link("components", "angular")], (id) => vectors.get(id));
+    const angular = merged.find((cluster) => cluster.memberIds.includes("angular"))!;
+    expect(angular.memberIds).toContain("lifecycle");
+    expect(angular.hubId).toBe("components");
+    expect(angular.memberIds[0]).toBe("components");
+    expect(merged.find((cluster) => cluster.memberIds.includes("react"))!.memberIds).toContain("hooks");
   });
 
   test("an unlinked note joins the cluster it is about", () => {
@@ -83,7 +101,7 @@ describe("filing and moving documents", () => {
     const loose = new Float32Array(64); loose[0] = 0.36; loose[10] = 0.93;
     const length = Math.hypot(...loose);
     vectors.set("forms", loose.map((value) => value / length));
-    const merged = mergeClustersByTopic(findGravityClusters([...ids, "forms"], connections).clusters, (id) => vectors.get(id));
+    const merged = groupDocumentsByMeaning([...ids, "forms"], connections, (id) => vectors.get(id));
     expect(merged.find((cluster) => cluster.memberIds.includes("forms"))!.memberIds).toContain("angular");
     expect(merged.at(-1)!.hubId).toBeNull();
   });
@@ -103,5 +121,35 @@ describe("filing and moving documents", () => {
   test("placements apply in the laid-out map", () => {
     const layout = layoutGravityClusters(ids.map(node), { width: 1200, height: 800 }, connections, { placements: new Map([["trip", "react"]]) });
     expect(layout.clusterByDocumentId.get("trip")).toBe(layout.clusterByDocumentId.get("react"));
+  });
+});
+
+describe("regions by meaning", () => {
+  test("on a large map, clusters on related subjects share a region", () => {
+    // 20 fields of 2 subjects each, 3 notes per subject: 40 clusters, over the grouping threshold.
+    const dimensions = 96;
+    const vectors = new Map<string, Float32Array>();
+    const fieldOf = new Map<string, number>();
+    let seed = 7;
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5;
+    for (let subject = 0; subject < 40; subject++) for (let note = 0; note < 3; note++) {
+      const id = `s${subject}-${note}`;
+      const vector = new Float32Array(dimensions);
+      vector[subject] = 1;
+      vector[40 + Math.floor(subject / 2)] = 0.6;
+      for (let index = 0; index < dimensions; index++) vector[index] += random() * 0.2;
+      const length = Math.hypot(...vector);
+      vectors.set(id, vector.map((value) => value / length));
+      fieldOf.set(id, Math.floor(subject / 2));
+    }
+    const layout = layoutGravityClusters([...vectors.keys()].map(node), { width: 1200, height: 800 }, [], { topicVector: (id) => vectors.get(id) });
+    expect(layout.clusters).toHaveLength(40);
+    const regions = layout.levels[0].groups;
+    expect(regions.length).toBeLessThan(40);
+    // Clusters that found no related subject share one leftover group.
+    const pure = regions.filter((region) => new Set(region.memberIds.map((id) => fieldOf.get(id))).size === 1);
+    expect(pure.length).toBeGreaterThanOrEqual(regions.length - 1);
+    expect(pure.length).toBeGreaterThanOrEqual(15);
+    expect(regions.some((region) => region.childIds.length === 2)).toBe(true);
   });
 });

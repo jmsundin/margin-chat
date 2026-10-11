@@ -194,40 +194,79 @@ function median(values: number[]) {
 type FoundCluster = { hubId: string | null; memberIds: string[] };
 
 /**
- * Joins clusters, and unlinked documents, that are about the same subject.
- * Links decide clusters first; embeddings then merge clusters whose documents
- * mean similar things, so four Angular notes that each lead their own family
- * of linked notes still land in one cluster. Unlinked documents that match
- * nothing stay in the unlinked bucket.
+ * Groups documents by meaning first: documents whose embeddings are alike form
+ * a cluster whether or not they link, and links only settle close calls. A
+ * document left alone joins the cluster it is nearest in meaning, else the
+ * cluster its links lead to; what is left is unfiled. Each cluster's hub is its
+ * most linked member, or the one closest to its meaning when nothing links.
  */
-export function mergeClustersByTopic(found: FoundCluster[], vectorOf: (id: string) => Float32Array | undefined): FoundCluster[] {
-  const linked = found.filter((cluster) => cluster.hubId !== null);
-  const unlinked = found.find((cluster) => cluster.hubId === null)?.memberIds ?? [];
-  const items = [...linked.map((cluster) => ({ documentIds: cluster.memberIds, hubId: cluster.hubId })),
-    ...unlinked.map((id) => ({ documentIds: [id], hubId: null as string | null }))];
-  const merged: FoundCluster[] = [];
-  const leftOver: string[] = [];
-  for (const group of groupByTopicEmbedding(items, vectorOf)) {
-    const parts = group.itemIndices.map((position) => items[position]);
-    if (parts.length === 1) {
-      if (parts[0].hubId === null) leftOver.push(parts[0].documentIds[0]);
-      else merged.push(linked[group.itemIndices[0]]);
-      continue;
-    }
-    // The biggest linked cluster leads; a group of unlinked notes is led by its first.
-    const hubId = parts.find((part) => part.hubId !== null)?.hubId ?? parts[0].documentIds[0];
-    merged.push({ hubId, memberIds: parts.flatMap((part) => part.documentIds) });
+export function groupDocumentsByMeaning(ids: string[], connections: Connection[],
+  vectorOf: (id: string) => Float32Array | undefined): FoundCluster[] {
+  const position = new Map(ids.map((id, index) => [id, index]));
+  const neighbors = new Map<string, Set<string>>(ids.map((id) => [id, new Set()]));
+  const links: Array<[number, number]> = [];
+  for (const { sourceId, targetId } of connections) {
+    const a = position.get(sourceId), b = position.get(targetId);
+    if (a === undefined || b === undefined || a === b) continue;
+    neighbors.get(sourceId)!.add(targetId);
+    neighbors.get(targetId)!.add(sourceId);
+    links.push([a, b]);
   }
-  // Unlinked documents that matched nothing closely still join the cluster they are nearest to.
-  const filed = nearestTopicGroup(leftOver, merged.map((cluster) => cluster.memberIds), vectorOf);
+  const groups = groupByTopicEmbedding(ids.map((id) => ({ documentIds: [id] })), vectorOf, undefined, { links });
+  const clusters: string[][] = [];
+  const alone: string[] = [];
+  for (const group of groups) {
+    if (group.itemIndices.length > 1) clusters.push(group.itemIndices.map((index) => ids[index]));
+    else alone.push(ids[group.itemIndices[0]]);
+  }
+  const clusterOf = new Map<string, number>();
+  clusters.forEach((members, index) => { for (const id of members) clusterOf.set(id, index); });
+  const nearest = nearestTopicGroup(alone, clusters, vectorOf);
   const unfiled: string[] = [];
-  const joining = merged.map(() => [] as string[]);
-  leftOver.forEach((id, position) => { if (filed[position] < 0) unfiled.push(id); else joining[filed[position]].push(id); });
-  joining.forEach((ids, position) => { if (ids.length) merged[position] = { ...merged[position], memberIds: [...merged[position].memberIds, ...ids] }; });
-  if (unfiled.length) merged.push({ hubId: null, memberIds: unfiled.sort() });
-  merged.sort((a, b) => (a.hubId === null ? 1 : 0) - (b.hubId === null ? 1 : 0) || b.memberIds.length - a.memberIds.length
+  const joining = clusters.map(() => [] as string[]);
+  alone.forEach((id, index) => {
+    let target = nearest[index];
+    if (target < 0) {
+      // No close meaning: follow the links, to the cluster most of them lead to.
+      const votes = new Map<number, number>();
+      for (const neighbor of neighbors.get(id)!) {
+        const cluster = clusterOf.get(neighbor);
+        if (cluster !== undefined) votes.set(cluster, (votes.get(cluster) ?? 0) + 1);
+      }
+      for (const [cluster, count] of votes) if (target < 0 || count > votes.get(target)! || (count === votes.get(target)! && cluster < target)) target = cluster;
+    }
+    if (target < 0) unfiled.push(id); else joining[target].push(id);
+  });
+  const found: FoundCluster[] = clusters.map((members, index) => {
+    const all = [...members, ...joining[index]];
+    const inside = new Set(all);
+    const insideDegree = (id: string) => { let count = 0; for (const neighbor of neighbors.get(id)!) if (inside.has(neighbor)) count++; return count; };
+    // `all` runs closest to the cluster's meaning first, so ties go to the most typical member.
+    let hubId = all[0], hubDegree = insideDegree(all[0]);
+    for (const id of all) { const degree = insideDegree(id); if (degree > hubDegree) { hubId = id; hubDegree = degree; } }
+    return { hubId, memberIds: orderByLinksThenMeaning(hubId, all, neighbors) };
+  });
+  if (unfiled.length) found.push({ hubId: null, memberIds: unfiled.sort() });
+  found.sort((a, b) => (a.hubId === null ? 1 : 0) - (b.hubId === null ? 1 : 0) || b.memberIds.length - a.memberIds.length
     || (a.hubId! < b.hubId! ? -1 : 1));
-  return merged;
+  return found;
+}
+
+/** Hub first, then members linked to it nearest first, then the rest in the order given. */
+function orderByLinksThenMeaning(hubId: string, memberIds: string[], neighbors: Map<string, Set<string>>) {
+  const inside = new Set(memberIds);
+  const depth = new Map([[hubId, 0]]);
+  const queue = [hubId];
+  for (let index = 0; index < queue.length; index++) {
+    for (const next of neighbors.get(queue[index])!) {
+      if (!inside.has(next) || depth.has(next)) continue;
+      depth.set(next, depth.get(queue[index])! + 1);
+      queue.push(next);
+    }
+  }
+  const given = new Map(memberIds.map((id, index) => [id, index]));
+  const rank = (id: string) => depth.get(id) ?? Number.MAX_SAFE_INTEGER;
+  return [...memberIds].sort((a, b) => rank(a) - rank(b) || given.get(a)! - given.get(b)!);
 }
 
 /**
@@ -261,8 +300,9 @@ export function applyClusterPlacements(found: FoundCluster[], placements: Readon
 }
 
 /**
- * The document categories Clusters shows, without laying anything out: links
- * first, then subject (embeddings) when given, then the user's own moves.
+ * The document categories Clusters shows, without laying anything out: by
+ * meaning when embeddings are given (links only settle close calls), by links
+ * otherwise, then the user's own moves.
  * Other views (the document sidebar, say) can group by these, and name them
  * with useClusterLabels, which keys names by each cluster's fingerprint.
  */
@@ -270,8 +310,8 @@ export function findSubjectClusters(ids: string[], connections: Connection[], op
   topicVector?: (id: string) => Float32Array | undefined;
   placements?: ReadonlyMap<string, string>;
 } = {}): Array<{ hubId: string | null; memberIds: string[]; fingerprint: string }> {
-  const linkClusters = findGravityClusters(ids, connections).clusters;
-  const byTopic: FoundCluster[] = options.topicVector ? mergeClustersByTopic(linkClusters, options.topicVector) : linkClusters;
+  const byTopic: FoundCluster[] = options.topicVector ? groupDocumentsByMeaning(ids, connections, options.topicVector)
+    : findGravityClusters(ids, connections).clusters;
   const found = options.placements ? applyClusterPlacements(byTopic, options.placements) : byTopic;
   return found.map((cluster) => ({ ...cluster, fingerprint: clusterFingerprint(cluster.memberIds) }));
 }
@@ -350,7 +390,7 @@ export function layoutGravityClusters(
   if (islands.length <= CLUSTER_GROUPING_THRESHOLD) {
     for (const [id, center] of settleIslands(islands, islandLinks, CLUSTER_GAP)) centers.set(id, center);
   } else {
-    layoutGroupedIslands(islands, islandLinks, connections, clusterByDocumentId, options.createdAt, centers, levels);
+    layoutGroupedIslands(islands, islandLinks, connections, clusterByDocumentId, options.createdAt, centers, levels, options.topicVector);
   }
   const placed = nodes.map((node) => {
     const center = centers.get(clusterByDocumentId.get(node.conversationId)!)!;
@@ -376,7 +416,7 @@ type Item = { id: string; radius: number; memberIds: string[]; hubId: string | n
  */
 function layoutGroupedIslands(islands: Item[], islandLinks: WeightedLink[], connections: Connection[],
   clusterOf: Map<string, string>, createdAt: ((id: string) => number | undefined) | undefined,
-  centers: Map<string, Point>, levels: GravityClusterLevel[]) {
+  centers: Map<string, Point>, levels: GravityClusterLevel[], topicVector?: (id: string) => Float32Array | undefined) {
   const timeOf = (memberIds: string[]) => createdAt ? median(memberIds.flatMap((id) => createdAt(id) ?? [])) : undefined;
   let items: Item[] = islands.map((island) => ({ ...island, time: island.period ? island.period.start : timeOf(island.memberIds) }));
   let links = islandLinks;
@@ -388,7 +428,8 @@ function layoutGroupedIslands(islands: Item[], islandLinks: WeightedLink[], conn
   const parentOf = new Map<string, string>();
   for (let level = 1; level <= MAX_GROUP_LEVELS && items.length > TOP_LEVEL_TARGET; level++) {
     const byId = new Map(items.map((item) => [item.id, item]));
-    const { clusters } = findGravityClusters(items.map((item) => item.id), links.map(({ a, b }) => ({ sourceId: a, targetId: b })));
+    const { clusters } = topicVector ? groupItemsByMeaning(items, links, topicVector, level)
+      : findGravityClusters(items.map((item) => item.id), links.map(({ a, b }) => ({ sourceId: a, targetId: b })));
     const made: Array<{ childIds: string[]; hubChild: string | null; period?: { start: number; end: number } }> = [];
     for (const cluster of clusters) {
       if (cluster.hubId !== null) { made.push({ childIds: cluster.memberIds, hubChild: cluster.hubId }); continue; }
@@ -447,6 +488,40 @@ function layoutGroupedIslands(islands: Item[], islandLinks: WeightedLink[], conn
   };
   for (const level of levels) for (const group of level.groups) group.center = absolute(group.id);
   for (const island of islands) absolute(island.id);
+}
+
+/** Average similarity a region needs at each level; broader subjects score lower. */
+const REGION_THRESHOLDS = [0.28, 0.22, 0.17, 0.12];
+
+/**
+ * Groups clusters into broader subjects (Angular and React into web
+ * development, say), loosening the bar until most clusters have a region.
+ * Items that join nothing come back as one hubless set, which is split by date.
+ */
+function groupItemsByMeaning(items: Item[], links: WeightedLink[], topicVector: (id: string) => Float32Array | undefined, level: number) {
+  const position = new Map(items.map((item, index) => [item.id, index]));
+  const pairs = links.flatMap(({ a, b }): Array<[number, number]> => {
+    const first = position.get(a), second = position.get(b);
+    return first === undefined || second === undefined ? [] : [[first, second]];
+  });
+  // Region membership only needs a sample of each cluster's documents.
+  const sampled = items.map((item) => ({ documentIds: item.memberIds.slice(0, 40) }));
+  let groups: ReturnType<typeof groupByTopicEmbedding> = [];
+  for (const threshold of REGION_THRESHOLDS.slice(Math.min(level - 1, REGION_THRESHOLDS.length - 1))) {
+    groups = groupByTopicEmbedding(sampled, topicVector, threshold, { links: pairs });
+    if (groups.filter((group) => group.itemIndices.length === 1).length <= items.length * 0.3) break;
+  }
+  const clusters: FoundCluster[] = [];
+  const alone: string[] = [];
+  for (const group of groups) {
+    if (group.itemIndices.length === 1) { alone.push(items[group.itemIndices[0]].id); continue; }
+    const children = group.itemIndices.map((index) => items[index]);
+    // The biggest child with a hub leads the region.
+    const lead = [...children].sort((a, b) => (a.hubId === null ? 1 : 0) - (b.hubId === null ? 1 : 0) || b.memberIds.length - a.memberIds.length)[0];
+    clusters.push({ hubId: lead.id, memberIds: [lead.id, ...children.filter((child) => child !== lead).map((child) => child.id)] });
+  }
+  if (alone.length) clusters.push({ hubId: null, memberIds: alone });
+  return { clusters };
 }
 
 function settleIslands(islands: Array<{ id: string; radius: number }>, links: WeightedLink[], gap: number) {

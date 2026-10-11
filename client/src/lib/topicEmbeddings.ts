@@ -1,28 +1,33 @@
 /**
  * Grouping by subject for the Clusters view. Each document has an embedding (a
- * meaning fingerprint made on the server); clusters whose documents mean
- * similar things merge, so notes on Angular, ViewChild and Angular components
- * share one cluster even when nobody linked them.
+ * meaning fingerprint made on the server). Documents are grouped by meaning
+ * first; links only nudge close calls, so notes on Angular, ViewChild and
+ * Angular components share one cluster whether or not anybody linked them.
  */
 
 /**
- * Cosine similarity two groups need to merge. text-embedding-3-small scores
- * different documents on one subject (Angular components, ViewChild) around
- * 0.45 to 0.6, and documents that only share a broad field (Angular and
- * React) lower. 0.5 left Jon's Angular clusters apart on real documents.
+ * Average similarity, over every pair of documents across two groups, needed
+ * for them to merge. text-embedding-3-small scores documents on one subject
+ * roughly 0.35 to 0.6 and documents that only share a broad field (Angular and
+ * React) lower. An average, unlike a centroid, does not rise as groups grow,
+ * so two large neighbouring subjects do not fuse.
  */
-export const TOPIC_SIMILARITY_THRESHOLD = 0.42;
+export const TOPIC_SIMILARITY_THRESHOLD = 0.36;
+/** Added to a pair of groups with a link between them. */
+export const TOPIC_LINK_BONUS = 0.05;
 /**
- * An unlinked document that matched no other item joins the cluster it is
- * closest to when it scores at least this, so few documents stay unfiled.
+ * A document left alone joins the cluster it is closest to when it scores at
+ * least this against the cluster's mean direction, so few documents stay unfiled.
  */
 export const TOPIC_ATTACH_THRESHOLD = 0.3;
-/** Unlinked documents times clusters compared when filing documents. */
-const MAX_ATTACH_COMPARISONS = 1_500_000;
-/** Strongest partners kept per item before merging. */
-const PARTNERS_PER_ITEM = 8;
-/** Items compared pairwise; beyond this the largest clusters are compared and the rest keep their links-only grouping. */
-export const MAX_TOPIC_ITEMS = 1_200;
+/** Documents times clusters compared when filing documents. */
+const MAX_ATTACH_COMPARISONS = 4_000_000;
+/** Closest candidates kept per item before merging. */
+const PARTNERS_PER_ITEM = 12;
+/** Leading dimensions used to find candidates; text-embedding-3 vectors keep most of their meaning when cut short. */
+const SCREEN_DIMENSIONS = 128;
+/** Items searched for partners; the rest are filed into the nearest group afterwards. */
+export const MAX_TOPIC_ITEMS = 3_000;
 
 /** Base64 signed bytes from the server, as a unit-length vector. */
 export function decodeTopicEmbedding(base64: string): Float32Array | null {
@@ -55,99 +60,208 @@ function unit(vector: Float32Array) {
 }
 
 export interface TopicGroup {
-  /** Indices into the items passed in, largest item first. */
+  /** Indices into the items passed in, the item closest to the group's meaning first. */
   itemIndices: number[];
 }
 
+/** A binary max-heap of candidate merges. */
+class MergeQueue {
+  private scores: number[] = [];
+  private pairs: Array<[number, number, number, number]> = [];
+  get size() { return this.scores.length; }
+  push(score: number, pair: [number, number, number, number]) {
+    let index = this.scores.length;
+    this.scores.push(score); this.pairs.push(pair);
+    while (index > 0) {
+      const parent = (index - 1) >> 1;
+      if (this.scores[parent] >= score) break;
+      this.swap(index, parent); index = parent;
+    }
+  }
+  pop() {
+    const score = this.scores[0], pair = this.pairs[0];
+    const lastScore = this.scores.pop()!, lastPair = this.pairs.pop()!;
+    if (this.scores.length) {
+      this.scores[0] = lastScore; this.pairs[0] = lastPair;
+      let index = 0;
+      for (;;) {
+        const left = index * 2 + 1, right = left + 1;
+        let top = index;
+        if (left < this.scores.length && this.scores[left] > this.scores[top]) top = left;
+        if (right < this.scores.length && this.scores[right] > this.scores[top]) top = right;
+        if (top === index) break;
+        this.swap(index, top); index = top;
+      }
+    }
+    return { score, pair };
+  }
+  private swap(a: number, b: number) {
+    [this.scores[a], this.scores[b]] = [this.scores[b], this.scores[a]];
+    [this.pairs[a], this.pairs[b]] = [this.pairs[b], this.pairs[a]];
+  }
+}
+
 /**
- * Merges items (clusters or single documents) whose documents mean similar
- * things, most similar pairs first. A pair only merges while the two growing
- * groups still match as wholes, so a chain of loosely related notes does not
- * snowball into one blob. Items without embeddings stay alone.
+ * Groups items (single documents or clusters) by meaning with average-linkage
+ * agglomerative clustering: the two groups whose documents are most alike on
+ * average merge first, until no pair reaches `threshold`. Linked groups get a
+ * small bonus, so links settle close calls without deciding groups. Candidate
+ * pairs come from each item's nearest neighbours, so the work stays near
+ * items x neighbours rather than every pair. Items without embeddings stay alone.
  */
 export function groupByTopicEmbedding(items: Array<{ documentIds: string[] }>,
-  vectorOf: (id: string) => Float32Array | undefined, threshold = TOPIC_SIMILARITY_THRESHOLD): TopicGroup[] {
-  // Each item's mean direction, plus its unnormalized sum for growing groups.
-  const sums: Array<Float32Array | null> = items.map((item) => {
-    let sum: Float32Array | null = null;
+  vectorOf: (id: string) => Float32Array | undefined, threshold = TOPIC_SIMILARITY_THRESHOLD,
+  options: { links?: Array<[number, number]>; linkBonus?: number } = {}): TopicGroup[] {
+  const linkBonus = options.linkBonus ?? TOPIC_LINK_BONUS;
+  // Each item's summed vectors and how many documents were summed.
+  const sums: Array<Float64Array | null> = [];
+  const counts: number[] = [];
+  for (const item of items) {
+    let sum: Float64Array | null = null, count = 0;
     for (const id of item.documentIds) {
       const vector = vectorOf(id);
       if (!vector) continue;
-      if (!sum) sum = new Float32Array(vector.length);
+      if (!sum) sum = new Float64Array(vector.length);
       else if (sum.length !== vector.length) continue;
       for (let index = 0; index < vector.length; index++) sum[index] += vector[index];
+      count++;
     }
-    return sum;
-  });
-  const compared = items.map((_, position) => position).filter((position) => sums[position])
+    sums.push(sum); counts.push(count);
+  }
+  const width = sums.find(Boolean)?.length ?? 0;
+  const searched = items.map((_, position) => position).filter((position) => sums[position]?.length === width)
     .sort((a, b) => items[b].documentIds.length - items[a].documentIds.length || a - b).slice(0, MAX_TOPIC_ITEMS);
-  // One flat matrix of unit rows keeps the pairwise loop tight.
-  const width = compared.length ? sums[compared[0]]!.length : 0;
-  const rows = new Float64Array(compared.length * width);
-  compared.forEach((position, row) => {
-    const direction = unit(Float32Array.from(sums[position]!));
-    if (direction.length === width) rows.set(direction, row * width);
-  });
 
-  const pairs: Array<{ a: number; b: number; similarity: number }> = [];
-  const best = new Float64Array(PARTNERS_PER_ITEM);
-  const bestRow = new Int32Array(PARTNERS_PER_ITEM);
-  for (let i = 0; i < compared.length; i++) {
-    let kept = 0;
-    const offsetI = i * width;
-    for (let j = i + 1; j < compared.length; j++) {
-      const offsetJ = j * width;
+  // Candidates: each item's closest items by the leading dimensions of their mean direction.
+  const screen = Math.min(width, SCREEN_DIMENSIONS);
+  const rows = new Float64Array(searched.length * screen);
+  searched.forEach((position, row) => {
+    const sum = sums[position]!;
+    let length = 0;
+    for (let index = 0; index < screen; index++) length += sum[index] * sum[index];
+    length = Math.sqrt(length) || 1;
+    for (let index = 0; index < screen; index++) rows[row * screen + index] = sum[index] / length;
+  });
+  const candidates = new Map<number, Set<number>>();
+  const addCandidate = (a: number, b: number) => {
+    if (a === b) return;
+    (candidates.get(a) ?? candidates.set(a, new Set()).get(a)!).add(b);
+    (candidates.get(b) ?? candidates.set(b, new Set()).get(b)!).add(a);
+  };
+  // Screening is loose: a cut-short vector scores a little off its full one.
+  const floor = threshold - 0.15;
+  const top = searched.map(() => ({ kept: 0, best: new Float64Array(PARTNERS_PER_ITEM), rows: new Int32Array(PARTNERS_PER_ITEM) }));
+  const offer = (row: number, other: number, similarity: number) => {
+    const entry = top[row];
+    if (similarity < floor || (entry.kept === PARTNERS_PER_ITEM && similarity <= entry.best[entry.kept - 1])) return;
+    let slot = entry.kept < PARTNERS_PER_ITEM ? entry.kept++ : entry.kept - 1;
+    while (slot > 0 && entry.best[slot - 1] < similarity) { entry.best[slot] = entry.best[slot - 1]; entry.rows[slot] = entry.rows[slot - 1]; slot--; }
+    entry.best[slot] = similarity; entry.rows[slot] = other;
+  };
+  for (let i = 0; i < searched.length; i++) {
+    const offsetI = i * screen;
+    for (let j = i + 1; j < searched.length; j++) {
+      const offsetJ = j * screen;
       // Four running sums let the engine pipeline the multiply-adds.
       let s0 = 0, s1 = 0, s2 = 0, s3 = 0, index = 0;
-      for (; index + 3 < width; index += 4) {
+      for (; index + 3 < screen; index += 4) {
         s0 += rows[offsetI + index] * rows[offsetJ + index];
         s1 += rows[offsetI + index + 1] * rows[offsetJ + index + 1];
         s2 += rows[offsetI + index + 2] * rows[offsetJ + index + 2];
         s3 += rows[offsetI + index + 3] * rows[offsetJ + index + 3];
       }
-      for (; index < width; index++) s0 += rows[offsetI + index] * rows[offsetJ + index];
+      for (; index < screen; index++) s0 += rows[offsetI + index] * rows[offsetJ + index];
       const similarity = s0 + s1 + s2 + s3;
-      if (similarity < threshold || (kept === PARTNERS_PER_ITEM && similarity <= best[kept - 1])) continue;
-      // Insert into the short list of the strongest partners, strongest first.
-      let slot = kept < PARTNERS_PER_ITEM ? kept++ : kept - 1;
-      while (slot > 0 && best[slot - 1] < similarity) { best[slot] = best[slot - 1]; bestRow[slot] = bestRow[slot - 1]; slot--; }
-      best[slot] = similarity; bestRow[slot] = j;
-    }
-    for (let slot = 0; slot < kept; slot++) {
-      const a = compared[i], b = compared[bestRow[slot]];
-      pairs.push(a < b ? { a, b, similarity: best[slot] } : { a: b, b: a, similarity: best[slot] });
+      if (similarity < floor) continue;
+      offer(i, j, similarity); offer(j, i, similarity);
     }
   }
-  pairs.sort((x, y) => y.similarity - x.similarity || x.a - y.a || x.b - y.b);
+  top.forEach((entry, row) => { for (let slot = 0; slot < entry.kept; slot++) addCandidate(searched[row], searched[entry.rows[slot]]); });
 
-  const parent = items.map((_, position) => position);
-  const find = (position: number): number => {
-    while (parent[position] !== position) { parent[position] = parent[parent[position]]; position = parent[position]; }
-    return position;
+  // Links between items, counted per pair of groups as groups merge.
+  const linked = new Map<number, Map<number, number>>();
+  const isSearched = new Set(searched);
+  for (const [a, b] of options.links ?? []) {
+    if (a === b || !isSearched.has(a) || !isSearched.has(b)) continue;
+    for (const [from, to] of [[a, b], [b, a]]) {
+      const map = linked.get(from) ?? linked.set(from, new Map()).get(from)!;
+      map.set(to, (map.get(to) ?? 0) + 1);
+    }
+    addCandidate(a, b);
+  }
+
+  const version = items.map(() => 0);
+  const alive = new Set(searched);
+  const score = (a: number, b: number) => {
+    const sumA = sums[a]!, sumB = sums[b]!;
+    let total = 0;
+    for (let index = 0; index < width; index++) total += sumA[index] * sumB[index];
+    return total / (counts[a] * counts[b]) + (linked.get(a)?.has(b) ? linkBonus : 0);
   };
-  const groupSum = new Map(compared.map((position) => [position, Float32Array.from(sums[position]!)]));
-  const cosine = (a: Float32Array, b: Float32Array) => dot(a, b) / Math.sqrt(dot(a, a) * dot(b, b) || 1);
-  for (const { a, b } of pairs) {
-    const rootA = find(a), rootB = find(b);
-    if (rootA === rootB) continue;
-    const sumA = groupSum.get(rootA)!, sumB = groupSum.get(rootB)!;
-    if (cosine(sumA, sumB) < threshold) continue;
-    const [kept, absorbed] = rootA < rootB ? [rootA, rootB] : [rootB, rootA];
-    parent[absorbed] = kept;
-    const keptSum = groupSum.get(kept)!, absorbedSum = groupSum.get(absorbed)!;
-    for (let index = 0; index < keptSum.length; index++) keptSum[index] += absorbedSum[index];
-    groupSum.delete(absorbed);
+  const queue = new MergeQueue();
+  for (const [a, others] of candidates) for (const b of others) {
+    if (a >= b) continue;
+    const similarity = score(a, b);
+    if (similarity >= threshold) queue.push(similarity, [a, b, 0, 0]);
+  }
+  const members = new Map<number, number[]>(searched.map((position) => [position, [position]]));
+  while (queue.size) {
+    const { pair: [a, b, versionA, versionB] } = queue.pop();
+    if (!alive.has(a) || !alive.has(b) || version[a] !== versionA || version[b] !== versionB) continue;
+    // The larger group keeps its index.
+    const [kept, absorbed] = counts[a] >= counts[b] ? [a, b] : [b, a];
+    const keptSum = sums[kept]!, absorbedSum = sums[absorbed]!;
+    for (let index = 0; index < width; index++) keptSum[index] += absorbedSum[index];
+    counts[kept] += counts[absorbed];
+    members.get(kept)!.push(...members.get(absorbed)!);
+    members.delete(absorbed);
+    alive.delete(absorbed);
+    version[kept]++;
+    const keptLinks = linked.get(kept) ?? linked.set(kept, new Map()).get(kept)!;
+    for (const [other, count] of linked.get(absorbed) ?? []) {
+      if (other === kept) continue;
+      keptLinks.set(other, (keptLinks.get(other) ?? 0) + count);
+      const otherLinks = linked.get(other)!;
+      otherLinks.delete(absorbed);
+      otherLinks.set(kept, (otherLinks.get(kept) ?? 0) + count);
+    }
+    keptLinks.delete(absorbed);
+    linked.delete(absorbed);
+    const keptCandidates = candidates.get(kept) ?? candidates.set(kept, new Set()).get(kept)!;
+    for (const other of candidates.get(absorbed) ?? []) {
+      if (other === kept) continue;
+      keptCandidates.add(other);
+      const set = candidates.get(other)!;
+      set.delete(absorbed); set.add(kept);
+    }
+    keptCandidates.delete(absorbed);
+    candidates.delete(absorbed);
+    for (const other of keptCandidates) {
+      if (!alive.has(other)) continue;
+      const similarity = score(kept, other);
+      if (similarity >= threshold) queue.push(similarity, kept < other ? [kept, other, version[kept], version[other]] : [other, kept, version[other], version[kept]]);
+    }
   }
 
-  const members = new Map<number, number[]>();
-  items.forEach((_, position) => {
-    const root = find(position);
-    const list = members.get(root);
-    if (list) list.push(position); else members.set(root, [position]);
-  });
-  return [...members.values()].map((itemIndices) => ({
-    itemIndices: itemIndices.sort((a, b) => items[b].documentIds.length - items[a].documentIds.length || a - b),
-  }));
+  // Members closest to their group's meaning first.
+  const groups: TopicGroup[] = [];
+  for (const [root, list] of members) {
+    const sum = sums[root]!;
+    const closeness = (position: number) => {
+      let total = 0;
+      for (const id of items[position].documentIds) {
+        const vector = vectorOf(id);
+        if (!vector || vector.length !== width) continue;
+        for (let index = 0; index < width; index++) total += vector[index] * sum[index];
+      }
+      return total / Math.max(1, items[position].documentIds.length);
+    };
+    const ranked = list.map((position) => ({ position, closeness: closeness(position) }))
+      .sort((x, y) => y.closeness - x.closeness || x.position - y.position);
+    groups.push({ itemIndices: ranked.map((entry) => entry.position) });
+  }
+  items.forEach((_, position) => { if (!isSearched.has(position)) groups.push({ itemIndices: [position] }); });
+  return groups;
 }
 
 /**
