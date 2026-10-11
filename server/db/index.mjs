@@ -409,5 +409,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     listStaleTopicSources: (args) => withClient((client) => topics.listStaleTopicSources(client, args)),
     saveTopicEmbeddings: (args) => withClient((client) => topics.saveTopicEmbeddings(client, args)),
     readTopicEmbeddings: (args) => withClient((client) => topics.readTopicEmbeddings(client, args)),
+    readTopicPlacements: (args) => withClient((client) => topics.readTopicPlacements(client, args)),
+    writeTopicPlacement: (args) => withClient((client) => topics.writeTopicPlacement(client, args)),
   };
 }

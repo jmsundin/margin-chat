@@ -65,6 +65,11 @@
       "id": "0013_topic_embeddings",
       "file": "0013_topic_embeddings.sql",
       "transaction": true
+    },
+    {
+      "id": "0014_topic_placements",
+      "file": "0014_topic_placements.sql",
+      "transaction": true
     }
   ]
 }

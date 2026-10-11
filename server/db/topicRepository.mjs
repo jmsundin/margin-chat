@@ -98,3 +98,38 @@ export async function readTopicEmbeddings(client, { userId, model, since }) {
     cursor: rows.length ? new Date(rows.at(-1).updated_at).toISOString() : since ?? null,
   };
 }
+
+/** Documents the user moved to another cluster, each with the document whose cluster it joins. */
+export async function readTopicPlacements(client, { userId }) {
+  const sessionId = await sessionIdFor(client, userId);
+  if (!sessionId) return [];
+  const rows = (await client.query(
+    `select p.conversation_id, p.anchor_conversation_id
+     from marginchat_topic_placements p
+     where p.session_id = $1
+       and exists (select 1 from marginchat_conversations c where c.id = p.conversation_id)
+       and exists (select 1 from marginchat_conversations c where c.id = p.anchor_conversation_id)
+     order by p.conversation_id`,
+    [sessionId],
+  )).rows;
+  return rows.map((row) => ({ id: fromWorkspaceEntityId(sessionId, row.conversation_id), anchorId: fromWorkspaceEntityId(sessionId, row.anchor_conversation_id) }));
+}
+
+/** Moves a document to the cluster of `anchorId`, or back to automatic placement when it is null. */
+export async function writeTopicPlacement(client, { userId, id, anchorId }) {
+  const sessionId = await sessionIdFor(client, userId);
+  if (!sessionId) return false;
+  const stored = toWorkspaceEntityId(sessionId, id);
+  if (anchorId === null) {
+    await client.query("delete from marginchat_topic_placements where session_id = $1 and conversation_id = $2", [sessionId, stored]);
+    return true;
+  }
+  await client.query(
+    `insert into marginchat_topic_placements (session_id, conversation_id, anchor_conversation_id, updated_at)
+     values ($1, $2, $3, now())
+     on conflict (session_id, conversation_id) do update set
+       anchor_conversation_id = excluded.anchor_conversation_id, updated_at = excluded.updated_at`,
+    [sessionId, stored, toWorkspaceEntityId(sessionId, anchorId)],
+  );
+  return true;
+}

@@ -6,11 +6,19 @@
  */
 
 /**
- * Cosine similarity two groups need to merge. Documents on one subject score
- * well above this with text-embedding-3-small; documents that only share a
- * broad field (Angular and React, say) score below it.
+ * Cosine similarity two groups need to merge. text-embedding-3-small scores
+ * different documents on one subject (Angular components, ViewChild) around
+ * 0.45 to 0.6, and documents that only share a broad field (Angular and
+ * React) lower. 0.5 left Jon's Angular clusters apart on real documents.
  */
-export const TOPIC_SIMILARITY_THRESHOLD = 0.5;
+export const TOPIC_SIMILARITY_THRESHOLD = 0.42;
+/**
+ * An unlinked document that matched no other item joins the cluster it is
+ * closest to when it scores at least this, so few documents stay unfiled.
+ */
+export const TOPIC_ATTACH_THRESHOLD = 0.3;
+/** Unlinked documents times clusters compared when filing documents. */
+const MAX_ATTACH_COMPARISONS = 1_500_000;
 /** Strongest partners kept per item before merging. */
 const PARTNERS_PER_ITEM = 8;
 /** Items compared pairwise; beyond this the largest clusters are compared and the rest keep their links-only grouping. */
@@ -140,4 +148,37 @@ export function groupByTopicEmbedding(items: Array<{ documentIds: string[] }>,
   return [...members.values()].map((itemIndices) => ({
     itemIndices: itemIndices.sort((a, b) => items[b].documentIds.length - items[a].documentIds.length || a - b),
   }));
+}
+
+/**
+ * For each document, the index of the group whose mean direction it is
+ * closest to, when that similarity reaches `threshold`; -1 otherwise.
+ */
+export function nearestTopicGroup(documentIds: string[], groups: string[][],
+  vectorOf: (id: string) => Float32Array | undefined, threshold = TOPIC_ATTACH_THRESHOLD): number[] {
+  const result = documentIds.map(() => -1);
+  if (!documentIds.length || !groups.length || documentIds.length * groups.length > MAX_ATTACH_COMPARISONS) return result;
+  const centers = groups.map((members) => {
+    let sum: Float32Array | null = null;
+    for (const id of members) {
+      const vector = vectorOf(id);
+      if (!vector) continue;
+      if (!sum) sum = new Float32Array(vector.length);
+      if (sum.length !== vector.length) continue;
+      for (let index = 0; index < vector.length; index++) sum[index] += vector[index];
+    }
+    return sum ? unit(sum) : null;
+  });
+  documentIds.forEach((id, position) => {
+    const vector = vectorOf(id);
+    if (!vector) return;
+    let best = threshold, bestGroup = -1;
+    centers.forEach((center, group) => {
+      if (!center || center.length !== vector.length) return;
+      const similarity = dot(vector, center);
+      if (similarity >= best) { best = similarity; bestGroup = group; }
+    });
+    result[position] = bestGroup;
+  });
+  return result;
 }

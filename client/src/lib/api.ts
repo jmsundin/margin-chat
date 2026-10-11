@@ -268,6 +268,19 @@ export interface TopicEmbeddingsResponse {
   pending: number;
   /** Why new documents could not be embedded. */
   unavailable?: string;
+  /** Documents the user moved to another cluster, each with the document whose cluster it joins. */
+  placements?: Array<{ id: string; anchorId: string }>;
+}
+
+/** Moves a document to the cluster of `anchorId`, or back to automatic placement with null. */
+export async function saveTopicPlacement(args: { id: string; anchorId: string | null; expectedUserId?: string }): Promise<void> {
+  const response = await apiFetch("/api/vault/topics/placement", {
+    body: JSON.stringify({ id: args.id, anchorId: args.anchorId }),
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
+    method: "PUT",
+  });
+  ensureOk(response, await readJson(response), "Moving the document failed.");
 }
 
 /** Embeds new or changed documents on the server and returns embeddings changed after `since`. */

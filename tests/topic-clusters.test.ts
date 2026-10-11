@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findGravityClusters, layoutGravityClusters, mergeClustersByTopic, UNLINKED_CLUSTER_ID } from "../client/src/lib/gravityClusters";
+import { applyClusterPlacements, findGravityClusters, layoutGravityClusters, mergeClustersByTopic, UNLINKED_CLUSTER_ID } from "../client/src/lib/gravityClusters";
 import { decodeTopicEmbedding, groupByTopicEmbedding } from "../client/src/lib/topicEmbeddings";
 
 const link = (sourceId: string, targetId: string) => ({ sourceId, targetId });
@@ -73,5 +73,35 @@ describe("grouping clusters by subject", () => {
     const vector = decodeTopicEmbedding(btoa(String.fromCharCode(127, 256 - 63, 25, 0)))!;
     expect(Math.hypot(...vector)).toBeCloseTo(1, 5);
     expect(vector[1]).toBeLessThan(0);
+  });
+});
+
+describe("filing and moving documents", () => {
+  test("an unlinked note that matches nothing closely still joins its nearest cluster", () => {
+    const vectors = subjectVectors({ angular: ANGULAR, react: REACT, bread: BREAD }, 0.35);
+    // Halfway between Angular and nothing in particular: too far to merge, close enough to file.
+    const loose = new Float32Array(64); loose[0] = 0.36; loose[10] = 0.93;
+    const length = Math.hypot(...loose);
+    vectors.set("forms", loose.map((value) => value / length));
+    const merged = mergeClustersByTopic(findGravityClusters([...ids, "forms"], connections).clusters, (id) => vectors.get(id));
+    expect(merged.find((cluster) => cluster.memberIds.includes("forms"))!.memberIds).toContain("angular");
+    expect(merged.at(-1)!.hubId).toBeNull();
+  });
+
+  test("a document moved by hand joins its anchor's cluster, and a moved hub hands its cluster on", () => {
+    const { clusters } = findGravityClusters(ids, connections);
+    const moved = applyClusterPlacements(clusters, new Map([["react", "sourdough"], ["marathon", "angular"]]));
+    const bread = moved.find((cluster) => cluster.memberIds.includes("sourdough"))!;
+    expect(bread.memberIds).toContain("react");
+    const react = moved.find((cluster) => cluster.memberIds.includes("react-effects"))!;
+    expect(react.hubId).not.toBe("react");
+    expect(react.memberIds).not.toContain("react");
+    expect(moved.find((cluster) => cluster.memberIds.includes("angular"))!.memberIds).toContain("marathon");
+    expect(moved.at(-1)).toEqual({ hubId: null, memberIds: ["budget", "trip"] });
+  });
+
+  test("placements apply in the laid-out map", () => {
+    const layout = layoutGravityClusters(ids.map(node), { width: 1200, height: 800 }, connections, { placements: new Map([["trip", "react"]]) });
+    expect(layout.clusterByDocumentId.get("trip")).toBe(layout.clusterByDocumentId.get("react"));
   });
 });
