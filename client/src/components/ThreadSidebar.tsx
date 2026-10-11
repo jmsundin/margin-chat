@@ -804,7 +804,7 @@ export default function ThreadSidebar({
             .filter(Boolean)
             .join(" ")
         }
-        data-document-id={thread.id}
+        data-sidebar-document-id={thread.id}
         key={thread.id}
       >
         <span className="thread-item-drag-handle" title="Drag to pin or group">
