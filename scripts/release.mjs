@@ -133,6 +133,19 @@ export async function releaseProduction({ config, env = process.env, onProgress 
     assert.equal(current.sha, plan.sha, "HEAD changed during this run. Restart from the deployed commit.");
     if ((await project()).targets?.production?.id !== previous.id) throw new Error("Production changed outside this release. Start a new run.");
   }
+  // Runs the tests and builds here, for a commit no CI run vouches for.
+  async function validateLocally() {
+    // Validation never inherits production credentials or local dotenv files.
+    const validationEnv = Object.fromEntries(["PATH", "HOME", "TMPDIR", "CI"].filter((key) => env[key]).map((key) => [key, env[key]]));
+    await command("bun", ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts"], validationEnv);
+    await command("bun", ["--no-env-file", "test"], validationEnv);
+    // The client and extension builds are independent, so they run side by side.
+    await Promise.all([
+      command("bun", ["--no-env-file", "run", "build"], validationEnv),
+      command("bun", ["--no-env-file", "run", "build:extension"], validationEnv),
+    ]);
+    assert.equal((await localPlan(config, env)).dirty, false, "Validation changed tracked release inputs.");
+  }
   // Uploads and builds this commit as an unpromoted production candidate.
   async function deployCandidate() {
     const args = ["--no-env-file", "x", "--no-install", "vercel", "deploy", "--yes", "--prod", "--skip-domain", "--archive=tgz",
@@ -185,16 +198,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
           return { sha: plan.sha, previousDeployment: previous.id, checks: ["CI still running on this commit; required to pass before migrate"] };
         }
         if (ci) return { sha: plan.sha, previousDeployment: previous.id, checks: [`CI passed on this commit (run ${ci.runId})`] };
-        // Validation never inherits production credentials or local dotenv files.
-        const validationEnv = Object.fromEntries(["PATH", "HOME", "TMPDIR", "CI"].filter((key) => env[key]).map((key) => [key, env[key]]));
-        await command("bun", ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts"], validationEnv);
-        await command("bun", ["--no-env-file", "test"], validationEnv);
-        // The client and extension builds are independent, so they run side by side.
-        await Promise.all([
-          command("bun", ["--no-env-file", "run", "build"], validationEnv),
-          command("bun", ["--no-env-file", "run", "build:extension"], validationEnv),
-        ]);
-        assert.equal((await localPlan(config, env)).dirty, false, "Validation changed tracked release inputs.");
+        await validateLocally();
         return { sha: plan.sha, previousDeployment: previous.id, checks: ["tests", "client build", "extension build"] };
       },
       async lock() {
@@ -279,7 +283,12 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       },
       async migrate() {
         await assertLock();
-        if (ciPending) await ciPending;
+        if (ciPending && !await ciPending) {
+          // CI stopped without a result (e.g. cancelled). Let the candidate
+          // upload finish first: local builds write into this checkout.
+          await candidateBuild?.catch(() => {});
+          await validateLocally();
+        }
         await assertReleaseInputs();
         const result = await migrateDatabase(productionClient, { migrations });
         productionContext = createAppContext(appEnv(productionUrl, env.BLOB_READ_WRITE_TOKEN));

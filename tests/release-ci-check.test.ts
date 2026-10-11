@@ -62,12 +62,12 @@ describe("release reuses CI for the release commit", () => {
     expect(progress.at(-1)).toBe("CI passed on this commit (run 8)");
   });
 
-  test("in the background, a failed or cancelled CI run rejects the pending result", async () => {
+  test("in the background, a failed run rejects the pending result and a cancelled one leaves it to local validation", async () => {
     const failed: any = await ciResultForCommit({ ...base, background: true, sleep: async () => {},
       fetchImpl: github([[{ head_sha: sha, status: "queued" }], [{ head_sha: sha, status: "completed", conclusion: "failure" }]]).fetchImpl });
     await expect(failed.pending).rejects.toThrow("CI failed on this commit");
     const cancelled: any = await ciResultForCommit({ ...base, background: true, sleep: async () => {},
       fetchImpl: github([[{ head_sha: sha, status: "queued" }], [{ head_sha: sha, status: "completed", conclusion: "cancelled" }]]).fetchImpl });
-    await expect(cancelled.pending).rejects.toThrow("without passing");
+    expect(await cancelled.pending).toBeNull();
   });
 });

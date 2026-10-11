@@ -5,10 +5,11 @@ on:
   push:
     branches: [main]
 
-# A newer push supersedes an in-flight run for the same pull request or branch.
+# A newer push supersedes an in-flight run for the same pull request. Runs on
+# main always finish: the production release reuses the result for its commit.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
