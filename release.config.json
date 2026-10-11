@@ -18,6 +18,7 @@
     "rehearsalStoreId": "xaaujts0exxeqjxy"
   },
   "jobs": [],
+  "checkpoint": "when-data-changes",
   "compatibility": {
     "oldApplication": true,
     "oldClients": true,

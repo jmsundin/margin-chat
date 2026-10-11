@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import pg from "pg";
 import { createAppContext } from "../server/app.mjs";
 import { loadMigrations, migrateDatabase, inspectMigrations } from "../server/db/migrations.mjs";
-import { runPersistenceJobs } from "../server/releases/jobs.mjs";
+import { getPersistenceJobStatus, runPersistenceJobs } from "../server/releases/jobs.mjs";
 import { PERSISTENCE_JOB_REGISTRY } from "../server/releases/job-registry.mjs";
 import { readReleaseConfig, configurationGaps, redact } from "./release/config.mjs";
 import { executeRelease, RELEASE_STEPS, VERCEL_SYNC_STEPS } from "./release/sequence.mjs";
@@ -115,7 +115,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
   } });
   const migrations = await loadMigrations();
   let productionClient, productionUrl, pooledUrl, previous, candidate, branches, backup, productionContext;
-  let clientFailure, stopLockHeartbeat;
+  let clientFailure, stopLockHeartbeat, skipCheckpoint = false;
   const prefix = `release-rehearsal/${id}/`;
   const vercelEnv = { ...env, VERCEL_ORG_ID: config.vercel.orgId, VERCEL_PROJECT_ID: config.vercel.projectId };
   const vercelApi = createVercelApi({ config: config.vercel, token: env.VERCEL_TOKEN });
@@ -187,10 +187,19 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         // Recheck routing after taking the global lock; another release may have
         // completed during this run's local validation.
         if ((await project()).targets?.production?.id !== previous.id) throw new Error("Production changed during validation. Start a new release.");
-        return { acquired: true };
+        // Read under the lock: no other release can apply migrations now.
+        const { pending } = await inspectMigrations(productionClient, { migrations });
+        const pendingJobs = (await getPersistenceJobStatus({ client: productionClient, jobIds: config.jobs }))
+          .filter(({ status }) => status !== "complete").map(({ id: jobId }) => jobId);
+        skipCheckpoint = !pending.length && !pendingJobs.length && config.checkpoint === "when-data-changes";
+        if (skipCheckpoint) delete resources.blobInventory;
+        return { acquired: true, pendingMigrations: pending, pendingJobs, backup: skipCheckpoint ? "skipped" : "required" };
       },
       async checkpoint() {
         await assertLock();
+        // Jon's choice (2026-10-11): an app-only release does not change the
+        // database or stored files, so it skips the backup and rehearsal.
+        if (skipCheckpoint) return { skipped: "No pending migrations or data jobs." };
         branches = await neon.ensureReleaseBranches(id);
         backup = await backupBlobStore({ releaseId: id, sourceToken: env.BLOB_READ_WRITE_TOKEN, backupToken: env.BACKUP_BLOB_READ_WRITE_TOKEN, onProgress });
         return { recoveryBranch: branches.recovery.id, rehearsalBranch: branches.rehearsal.id,
@@ -199,6 +208,8 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       },
       async rehearse() {
         await assertLock();
+        // The candidate still passes the same persistence checks before promotion.
+        if (skipCheckpoint) return { skipped: "No pending migrations or data jobs to rehearse." };
         await restoreBlobBackup({ inventory: backup.inventory, backupToken: env.BACKUP_BLOB_READ_WRITE_TOKEN,
           targetToken: env.REHEARSAL_BLOB_READ_WRITE_TOKEN, targetPrefix: prefix.replace(/\/$/u, ""), onProgress });
         const rehearsalUrl = await neon.connectionUri(branches.rehearsal.id);

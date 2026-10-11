@@ -14,6 +14,9 @@ export async function readReleaseConfig(path = new URL("../../release.config.jso
   if (config.compatibility?.oldApplication !== true || config.compatibility?.oldClients !== true) {
     throw new Error("The automated release requires compatibility with the serving application and existing clients. Split incompatible changes into expand/migrate/contract releases.");
   }
+  if (config.checkpoint !== undefined && !["always", "when-data-changes"].includes(config.checkpoint)) {
+    throw new Error('checkpoint must be "always" or "when-data-changes".');
+  }
   if (typeof config.compatibility.automaticAppRollback !== "boolean") throw new Error("Declare automaticAppRollback explicitly.");
   if (!Number.isInteger(config.observation?.checks) || config.observation.checks < 1 || config.observation.checks > 30 ||
       !Number.isInteger(config.observation.intervalSeconds) || config.observation.intervalSeconds < 1 || config.observation.intervalSeconds > 60) {
