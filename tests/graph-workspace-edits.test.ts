@@ -49,4 +49,10 @@ describe("quick map edits", () => {
     expect(getRemovableMapNote(state, state.rootId)).not.toBeNull();
     expect(getRemovableMapNote(state, "conversation-root")).toBeNull();
   });
+
+  test("a note made by double-clicking Canvas is placed where it was made", () => {
+    const placed = createMapNote(createEmptyState(), { ...note("placed"), position: { x: 120.4, y: -40.6 } });
+    expect(placed.graphLayouts.placed).toMatchObject({ x: 120, y: -41, positioned: true });
+    expect(createMapNote(createEmptyState(), note("unplaced")).graphLayouts.unplaced?.positioned).toBe(false);
+  });
 });

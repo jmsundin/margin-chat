@@ -3221,7 +3221,7 @@ function WorkspaceAppContent({
     setMapEditMessage(`Answer saved as a note${conversationId ? ` under ${state.conversations[conversationId]?.title}` : ""}${answer.related.length ? ", with its topics connected" : ""}.`);
   }
 
-  function handleCreateMapNote(args: { linkedTo?: string; url?: string }) {
+  function handleCreateMapNote(args: { linkedTo?: string; url?: string; position?: { x: number; y: number } }) {
     const id = createId("note-conversation");
     const createdAt = new Date().toISOString();
     const noteId = createId("note");

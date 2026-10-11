@@ -15,6 +15,7 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
@@ -50,7 +51,7 @@ import { getGraphAnalysisEdges } from "../lib/graphAnalysis";
 import { DOCUMENT_RELATION_TYPES, documentGraphEdgeLabel, getDocumentGraphEdges, getDocumentRelationType, type DocumentGraphEdge } from "../lib/documentRelations";
 import type { DocumentRelationTypeId } from "../types";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
-import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterLayout } from "../lib/gravityClusters";
+import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterGroup, type GravityClusterLayout } from "../lib/gravityClusters";
 import { useTopicEmbeddings } from "../lib/useTopicEmbeddings";
 import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
@@ -127,46 +128,16 @@ const MAX_GRAPH_CONNECTIONS = 1_200;
 /**
  * Keeps the cards nearest the viewport center, plus any that must stay cards
  * (selected, active, docked). The rest come back as `overflow`, for dots.
- * With `scale`, a card is also left as a dot where, drawn at its readable
- * size, it would cover a card already kept. Cards are then kept top to bottom,
- * left to right, so panning doesn't swap which ones are cards.
  */
 export function limitGraphCards(placements: ConversationGraphNodePlacement[], bounds: ConversationGraphBounds, limit: number,
-  keepIds: Array<string | null | undefined> = [], scale?: number) {
-  const spread = scale ? readableNodeSize(scale) : 1;
-  if (placements.length <= limit && spread <= 1) return { cards: placements, overflow: [] as ConversationGraphNodePlacement[] };
+  keepIds: Array<string | null | undefined> = []) {
+  if (placements.length <= limit) return { cards: placements, overflow: [] as ConversationGraphNodePlacement[] };
   const keep = new Set(keepIds.filter(Boolean));
   const centerX = (bounds.left + bounds.right) / 2, centerY = (bounds.top + bounds.bottom) / 2;
-  const distance = (placement: ConversationGraphNodePlacement) => keep.has(placement.conversationId) ? -1
-    : (placement.x + placement.width / 2 - centerX) ** 2 + (placement.y + placement.height / 2 - centerY) ** 2;
-  const ranked = placements.map((placement) => ({ placement, distance: distance(placement) }));
-  if (spread <= 1) ranked.sort((a, b) => a.distance - b.distance);
-  else ranked.sort((a, b) => Math.min(0, a.distance) - Math.min(0, b.distance) || a.placement.y - b.placement.y || a.placement.x - b.placement.x);
-  if (spread <= 1) return { cards: ranked.slice(0, limit).map((item) => item.placement), overflow: ranked.slice(limit).map((item) => item.placement) };
-
-  const cellSize = placements.reduce((size, placement) => Math.max(size, placement.width, placement.height), 1) * spread;
-  const taken = new Map<string, Array<{ left: number; top: number; right: number; bottom: number }>>();
-  const cards: ConversationGraphNodePlacement[] = [];
-  const overflow: ConversationGraphNodePlacement[] = [];
-  for (const { placement, distance: rank } of ranked) {
-    const halfWidth = placement.width * spread / 2, halfHeight = placement.height * spread / 2;
-    const middleX = placement.x + placement.width / 2, middleY = placement.y + placement.height / 2;
-    const rect = { left: middleX - halfWidth, top: middleY - halfHeight, right: middleX + halfWidth, bottom: middleY + halfHeight };
-    const column = Math.floor(middleX / cellSize), row = Math.floor(middleY / cellSize);
-    let covers = false;
-    if (rank >= 0) {
-      if (cards.length >= limit) covers = true;
-      for (let x = column - 1; x <= column + 1 && !covers; x++) for (let y = row - 1; y <= row + 1 && !covers; y++) {
-        covers = (taken.get(`${x}:${y}`) ?? []).some((other) => rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top);
-      }
-    }
-    if (covers) { overflow.push(placement); continue; }
-    cards.push(placement);
-    const key = `${column}:${row}`;
-    const cell = taken.get(key);
-    if (cell) cell.push(rect); else taken.set(key, [rect]);
-  }
-  return { cards, overflow };
+  const ranked = placements.map((placement) => ({ placement, distance: keep.has(placement.conversationId) ? -1
+    : (placement.x + placement.width / 2 - centerX) ** 2 + (placement.y + placement.height / 2 - centerY) ** 2 }));
+  ranked.sort((a, b) => a.distance - b.distance);
+  return { cards: ranked.slice(0, limit).map((item) => item.placement), overflow: ranked.slice(limit).map((item) => item.placement) };
 }
 const GRAPH_SPARSE_GROUP_SCALE = 0.35;
 const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
@@ -185,7 +156,24 @@ function getNodeZoomDetail(footprint?: { width: number; height: number }): Conve
   return "compact";
 }
 
-function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement, scale: number, detail: ConversationGraphDetail) {
+/** Canvas shows group labels only when zoomed out further than this. */
+const CANVAS_GROUP_LABEL_SCALE = 0.6;
+/** Below this on-screen width, a zoomed-out Canvas card is drawn as a dot. */
+const MIN_CANVAS_CARD_WIDTH = 24;
+
+/**
+ * On-screen size of a card. Zoomed in, cards grow with the camera. On Canvas
+ * (`shrink`) they also shrink with it when zoomed out, showing just a title
+ * that stops rendering below 8px, so cards never grow over their neighbors.
+ */
+export function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement, scale: number, detail: ConversationGraphDetail, shrink = false) {
+  if (shrink && scale < 0.9 && detail === "compact") {
+    const width = placement.width * scale, height = placement.height * scale;
+    // Titles stay at least 9px; a card too narrow to fit a few letters drops it.
+    const titleFontSize = Math.max(9, Math.min(14, 20 * scale));
+    return { width, height, titleFontSize,
+      titleLines: width < 56 ? 0 : Math.max(1, Math.min(3, Math.floor((height - 6) / (titleFontSize * 1.3)))) };
+  }
   if (scale < 1.15 || detail === "reader") return undefined;
   // An explicitly opened preview keeps its reading space while the camera
   // catches up, then grows along with the surrounding document cards.
@@ -230,6 +218,8 @@ export interface ConversationGraphViewProps {
   onActivateConversation: (conversationId: string) => void;
   onAssignGroup: (conversationId: string, groupId: string | null) => void;
   onCreateChildConversation: (conversationId: string) => string | null;
+  /** Double-clicking empty Canvas space makes a new note there, at this map position. */
+  onCreateNoteAt?: (position: { x: number; y: number }) => void;
   onOpenConversation: (conversationId: string) => void;
   /** Zooming in past a full-screen card opens its document; the map keeps its place. */
   onZoomIntoConversation?: (conversationId: string) => void;
@@ -357,6 +347,8 @@ function getSourceQuote(conversation: Conversation) {
 export function calculateFitViewport(
   scene: ConversationGraphScene,
   viewportElement: Pick<HTMLDivElement, "clientWidth" | "clientHeight">,
+  /** False where cards shrink with the camera (Canvas), so none outgrow their spot. */
+  cardsGrow = true,
 ): GraphViewport {
   const availableWidth = Math.max(240, viewportElement.clientWidth - 56);
   const availableHeight = Math.max(220, viewportElement.clientHeight - 48);
@@ -382,7 +374,7 @@ export function calculateFitViewport(
   // for the ones on the edges to show whole.
   const widest = scene.nodes.reduce((maximum, node) => Math.max(maximum, node.width), 0);
   const tallest = scene.nodes.reduce((maximum, node) => Math.max(maximum, node.height), 0);
-  for (let pass = 0; pass < 2; pass++) {
+  for (let pass = 0; pass < 2 && cardsGrow; pass++) {
     const growth = readableNodeSize(scale) * scale - scale;
     if (growth <= 0) break;
     scale = clamp(Math.min(
@@ -538,6 +530,7 @@ function GraphNode({
   onSource,
   onMoveStart,
   onBodyPress,
+  onLinkStart,
   onOpen,
   onSelect,
   placement,
@@ -573,6 +566,11 @@ function GraphNode({
   onFocus: (conversationId: string) => void;
   onSource: (conversationId: string) => void;
   onMoveStart: (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    conversationId: string,
+  ) => void;
+  /** Dragging from the card's edge handle to another card links the two. */
+  onLinkStart?: (
     event: ReactPointerEvent<HTMLButtonElement>,
     conversationId: string,
   ) => void;
@@ -651,6 +649,17 @@ function GraphNode({
           <path d="m12 3-3 3m3-3 3 3M12 3v18m0 0-3-3m3 3 3-3M3 12l3-3m-3 3 3 3M3 12h18m0 0-3-3m3 3-3 3" />
         </svg>
       </button>
+
+      {onLinkStart ? <button
+        aria-label={`Link ${conversation.title} to another card`}
+        className="conversation-graph-node-link-handle"
+        onClick={(event) => event.stopPropagation()}
+        onPointerDown={(event) => onLinkStart(event, conversation.id)}
+        title="Drag to another card to link them"
+        type="button"
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5" /></svg>
+      </button> : null}
 
       <button
         aria-label={`${isSelectionMode ? "Select" : "Preview"} ${conversation.title}`}
@@ -850,6 +859,7 @@ export default function ConversationGraphView({
   onActivateConversation,
   onAssignGroup,
   onCreateChildConversation,
+  onCreateNoteAt,
   onOpenConversation,
   onZoomIntoConversation,
   onToggleGroup,
@@ -886,6 +896,8 @@ export default function ConversationGraphView({
   const [concepts, setConcepts] = useState<GraphConcept[]>(() => workspaceKey ? readGraphConcepts(workspaceKey) : []);
   const [conceptSaveError, setConceptSaveError] = useState(false);
   const [inspectedEdge, setInspectedEdge] = useState<GraphAggregatedEdge | null>(null);
+  /** A cluster (or group of clusters) whose details fill the side panel. */
+  const [inspectedClusterId, setInspectedClusterId] = useState<string | null>(null);
   const [inspectedPersonalConnection, setInspectedPersonalConnection] = useState<[string, string] | null>(null);
   const [inspectedRelationId, setInspectedRelationId] = useState<string | null>(null);
   const [inspectedOverviewSources, setInspectedOverviewSources] = useState<string[]>([]);
@@ -931,6 +943,10 @@ export default function ConversationGraphView({
   // pixels; a press that stays put is still a click that previews the card.
   const cardPressRef = useRef<{ pointerId: number; x: number; y: number; conversationId: string; target: HTMLElement } | null>(null);
   const suppressCardClickRef = useRef(false);
+  /** Dragging a link from one Canvas card toward another, in viewport pixels. */
+  const [linkDrag, setLinkDrag] = useState<{ pointerId: number; sourceId: string; x: number; y: number; targetId: string | null } | null>(null);
+  const linkDragRef = useRef(linkDrag);
+  linkDragRef.current = linkDrag;
   const [isMultiSelectActive, setIsMultiSelectActive] = useState(false);
   const [multiSelectedConversationIds, setMultiSelectedConversationIds] =
     useState<Set<string>>(() => new Set());
@@ -1118,6 +1134,31 @@ export default function ConversationGraphView({
   const clusterLabels = useMemo(() => ({ ...generatedClusterLabels, labels: clusterLayout
     ? labelClusterGroups(generatedClusterLabels.labels, clusterLayout.clusters, clusterLayout.levels) : generatedClusterLabels.labels }),
   [generatedClusterLabels, clusterLayout]);
+  const clusterCircles = useMemo(() => new Map<string, GravityCluster | GravityClusterGroup>(clusterLayout
+    ? [...clusterLayout.clusters, ...clusterLayout.levels.flatMap((level) => level.groups)].map((circle) => [circle.id, circle]) : []),
+  [clusterLayout]);
+  useEffect(() => { if (!isClustersMode) setInspectedClusterId(null); }, [isClustersMode]);
+  const inspectedCluster = isClustersMode && !panelView && inspectedClusterId ? clusterCircles.get(inspectedClusterId) ?? null : null;
+  // Breadcrumbs: the cluster last zoomed into and the groups holding it,
+  // outermost first. A crumb drops off once the camera leaves it or zooms
+  // well out of it.
+  const [openedClusterId, setOpenedClusterId] = useState<string | null>(null);
+  const clusterTrail = useMemo(() => {
+    const opened = isClustersMode && !panelView && openedClusterId ? clusterCircles.get(openedClusterId) : undefined;
+    if (!opened || !clusterLayout || !viewportSize.width || !viewportSize.height) return [];
+    const parents = new Map<string, GravityClusterGroup>();
+    for (const level of clusterLayout.levels) for (const group of level.groups) for (const child of group.childIds) parents.set(child, group);
+    const chain: Array<GravityCluster | GravityClusterGroup> = [opened];
+    for (let parent = parents.get(opened.id); parent; parent = parents.get(parent.id)) chain.unshift(parent);
+    const centerX = (viewportSize.width / 2 - viewport.x) / viewport.scale, centerY = (viewportSize.height / 2 - viewport.y) / viewport.scale;
+    const trail: typeof chain = [];
+    for (const circle of chain) {
+      if (Math.hypot(circle.center.x - centerX, circle.center.y - centerY) > circle.radius
+        || viewport.scale < fitGravityCluster(circle, viewportSize).scale * 0.6) break;
+      trail.push(circle);
+    }
+    return trail;
+  }, [openedClusterId, clusterCircles, clusterLayout, isClustersMode, panelView, viewport, viewportSize]);
   const documentLayout = useMemo(() => forceLayout ? { ...forceLayout, arranged: true, centerNodeId: null }
     : documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 },
@@ -1138,7 +1179,7 @@ export default function ConversationGraphView({
     } : node);
     const footprints = placements.map((node) => {
       const factor = readableNodeSize(viewport.scale, node.conversationId === selectedConversation.id);
-      const footprint = getCanvasNodeFootprint(node, viewport.scale, node.conversationId === selectedConversation.id ? detailLevel : "compact");
+      const footprint = getCanvasNodeFootprint(node, viewport.scale, node.conversationId === selectedConversation.id ? detailLevel : "compact", isCanvasMode);
       const width = footprint ? footprint.width / viewport.scale : node.width * factor;
       const height = footprint ? footprint.height / viewport.scale : node.height * factor;
       return { ...node, x: node.x + (node.width - width) / 2, y: node.y + (node.height - height) / 2, width, height };
@@ -1149,13 +1190,13 @@ export default function ConversationGraphView({
       const original = originalById.get(node.conversationId)!;
       return { ...original, x: node.x + (node.width - original.width) / 2, y: node.y + (node.height - original.height) / 2 };
     }));
-  }, [displayScene, selectedConversation, detailLevel, semanticLevel, viewport.scale, compactTerritoryNodes, browsingGroups, documentsOnly]);
+  }, [displayScene, selectedConversation, detailLevel, semanticLevel, viewport.scale, compactTerritoryNodes, browsingGroups, documentsOnly, isCanvasMode]);
   const nodeScreenFootprint = useCallback((placement: ConversationGraphNodePlacement) => {
     const selectedDetail = placement.conversationId === selectedConversationId ? detailLevel : "compact";
     if (selectedDetail === "reader") return undefined;
     return documentsOnly ? documentFootprint : browsingFootprints.get(placement.conversationId)
-      ?? (compactTerritoryNodes ? compactFootprint : getCanvasNodeFootprint(placement, viewport.scale, selectedDetail));
-  }, [selectedConversationId, detailLevel, documentsOnly, documentFootprint, browsingFootprints, compactTerritoryNodes, compactFootprint, viewport.scale]);
+      ?? (compactTerritoryNodes ? compactFootprint : getCanvasNodeFootprint(placement, viewport.scale, selectedDetail, isCanvasMode));
+  }, [selectedConversationId, detailLevel, documentsOnly, documentFootprint, browsingFootprints, compactTerritoryNodes, compactFootprint, viewport.scale, isCanvasMode]);
   const worldBounds = useMemo(() => getGraphWorldBounds([...scene.nodes, ...scene.groups], 24), [scene]);
   const sourceItems = useMemo(() => searchGraphSources(conversations, deferredQuery).filter((item) => scopedIds.has(item.evidence.conversationId)), [conversations, deferredQuery, query, scopedIds]);
   const overviewItems = useMemo<GraphExplorationOverviewItem[]>(() => {
@@ -1189,6 +1230,9 @@ export default function ConversationGraphView({
     return [item.id, [...getGraphScopeConversationIds({ scope: itemScope, conversations, groups, concepts, threads: categorizedThreads })]];
   })), [overviewItems, conversations, groups, concepts, categorizedThreads]);
   const showThemeOverview = !panelView && scope.kind === "all" && !selectedConversation && navigation.state.overviewPresentation === "themes";
+  // Group labels help find your way around a zoomed-out Canvas; close up, or
+  // while a document is selected, they only get in the way.
+  const hideCanvasGroupLabels = isCanvasMode && (viewport.scale >= CANVAS_GROUP_LABEL_SCALE || !!selectedConversationId);
   const canvasTerritories = useMemo(() => buildMapTerritories(scene, territoryGroups), [scene, territoryGroups]);
   const territoriesPossible = !isCanvasMode && !documentsOnly && !browsingGroups;
   const crowdedLabels = useMemo(() => territoriesPossible && mapLabelsOverlap(unfocusedScene.nodes, viewport.scale),
@@ -1261,9 +1305,13 @@ export default function ConversationGraphView({
   // Until the viewport is measured and fitted, large maps draw only a few
   // cards, since that first frame is thrown away right after.
   const largeMap = scene.nodes.length > MAX_GRAPH_CARDS;
-  const cardBudget = largeMap && viewport.scale < MIN_CARD_SCALE ? 0
+  // Canvas cards shrink with the camera, so only their count and a minimum
+  // on-screen size limit them.
+  const canvasCards = isCanvasMode && !panelView;
+  const cardBudget = canvasCards && viewport.scale * Math.max(...scene.nodes.slice(0, 50).map((node) => node.width), 0) < MIN_CANVAS_CARD_WIDTH ? 0
+    : largeMap && viewport.scale < MIN_CARD_SCALE ? 0
     : largeMap && (!viewportSize.width || !initialSceneFitted) ? PRE_FIT_GRAPH_CARDS
-    : viewport.scale >= 0.9 || !viewportSize.width ? MAX_GRAPH_CARDS
+    : viewport.scale >= 0.9 || !viewportSize.width || canvasCards ? MAX_GRAPH_CARDS
     : Math.min(MAX_GRAPH_CARDS, Math.max(60, Math.round(3 * viewportSize.width * viewportSize.height / (180 * 96))));
   const cardOverflow = nearbyNodePlacements.length > cardBudget;
   const showClusterDots = clusterDots || (isClustersMode && !panelView && cardOverflow);
@@ -1271,11 +1319,8 @@ export default function ConversationGraphView({
   const { cards: baseRenderedNodePlacements, overflow: overflowNodePlacements } = useMemo(() => {
     if (stageHidden) return { cards: [], overflow: [] };
     const shown = nearbyNodePlacements.filter((placement) => !hiddenConversationIds.has(placement.conversationId));
-    // Canvas grows zoomed-out cards to a readable size; one that would cover
-    // another is drawn as a dot until zooming in makes room for it.
-    return limitGraphCards(shown, viewportBounds, cardBudget, [selectedConversationId, activeConversationId, dockedConversationId],
-      isCanvasMode && !panelView ? viewport.scale : undefined);
-  }, [hiddenConversationIds, nearbyNodePlacements, stageHidden, viewportBounds, cardBudget, selectedConversationId, activeConversationId, dockedConversationId, isCanvasMode, panelView, viewport.scale]);
+    return limitGraphCards(shown, viewportBounds, cardBudget, [selectedConversationId, activeConversationId, dockedConversationId]);
+  }, [hiddenConversationIds, nearbyNodePlacements, stageHidden, viewportBounds, cardBudget, selectedConversationId, activeConversationId, dockedConversationId]);
   const previewPlacementByConversationId = useMemo(
     () =>
       movingNodePosition
@@ -1547,7 +1592,7 @@ export default function ConversationGraphView({
     }
 
     const canvas = { width: viewportElement.clientWidth, height: viewportElement.clientHeight };
-    if (isCanvasMode) { applyViewport(calculateFitViewport(scene, viewportElement)); fitAsOverviewRef.current = false; return; }
+    if (isCanvasMode) { applyViewport(calculateFitViewport(scene, viewportElement, false)); fitAsOverviewRef.current = false; return; }
     if (forceLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
       applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }).viewport);
@@ -1743,17 +1788,20 @@ export default function ConversationGraphView({
       return;
     }
     revealedSelectionKeyRef.current = null;
-    if (documentsOnly) setDockCollapsed(false);
+    // Canvas and the computed views open a document in the side panel.
+    const inPanel = documentsOnly || isCanvasMode;
+    if (inPanel) setDockCollapsed(false);
     navigation.navigate({
       focusedTerritoryId: null, focusedTerritoryScale: null,
       overviewPresentation: documentsOnly ? "documents" : "canvas",
-      scope: neighborhoodDepth ? { kind: "focus", conversationId: focusRequest.conversationId, depth: neighborhoodDepth } : { kind: "all" }, selectedConversationId: focusRequest.conversationId, detailLevel: focusRequest.openReader && !documentsOnly ? "reader" : "preview", query: "",
-      ...(documentsOnly ? { dockedConversationId: focusRequest.conversationId, readerScroll: 0 } : {}),
+      scope: neighborhoodDepth ? { kind: "focus", conversationId: focusRequest.conversationId, depth: neighborhoodDepth } : { kind: "all" }, selectedConversationId: focusRequest.conversationId,
+      detailLevel: isCanvasMode ? "compact" : focusRequest.openReader && !documentsOnly ? "reader" : "preview", query: "",
+      ...(inPanel ? { dockedConversationId: focusRequest.conversationId, readerScroll: 0 } : {}),
       expandedGroups: Object.values(groups).filter((group) => group.conversationIds.includes(focusRequest.conversationId)).map((group) => group.id),
     });
     setFitAfterArrange(false);
     onFocusRequestHandled?.(focusRequest.requestId);
-  }, [conversations, focusRequest, groups, navigation.navigate, onFocusRequestHandled, isVisible, documentsOnly, panelView]);
+  }, [conversations, focusRequest, groups, navigation.navigate, onFocusRequestHandled, isVisible, documentsOnly, panelView, isCanvasMode]);
 
   useEffect(() => {
     if (dockedConversationId && !dockedConversation) closeDock();
@@ -2165,6 +2213,34 @@ export default function ConversationGraphView({
     interactions.startNode(start, conversationId, conversationIds);
   }
 
+  function viewportPoint(clientX: number, clientY: number) {
+    const bounds = viewportRef.current?.getBoundingClientRect();
+    return { x: clientX - (bounds?.left ?? 0), y: clientY - (bounds?.top ?? 0) };
+  }
+
+  function linkTargetAt(clientX: number, clientY: number, sourceId: string) {
+    const element = document.elementFromPoint?.(clientX, clientY);
+    const id = element?.closest<HTMLElement>(".conversation-graph-node[data-conversation-id]")?.dataset.conversationId;
+    return id && id !== sourceId && conversations[id] ? id : null;
+  }
+
+  function startLink(event: ReactPointerEvent<HTMLButtonElement>, conversationId: string) {
+    if (event.button !== 0 || interactions.isActive() || !onConnectConversation) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setLinkDrag({ pointerId: event.pointerId, sourceId: conversationId, ...viewportPoint(event.clientX, event.clientY), targetId: null });
+  }
+
+  function createNoteAtPointer(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!isCanvasMode || panelView || !onCreateNoteAt || isMultiSelectActive) return;
+    if ((event.target as HTMLElement).closest("button, a, input, textarea, select, .conversation-graph-node, [data-graph-ui], [data-graph-reader-scroll]")) return;
+    const point = viewportPoint(event.clientX, event.clientY);
+    const { width, height } = getConversationGraphNodeDimensions({ conversation: conversations[activeConversationId] ?? Object.values(conversations)[0],
+      detailLevel: "compact", isSelected: false, mode: "overview", semanticLevel: "compact" });
+    onCreateNoteAt({ x: Math.round((point.x - viewport.x) / viewport.scale - width / 2), y: Math.round((point.y - viewport.y) / viewport.scale - height / 2) });
+  }
+
   function pressNodeBody(event: ReactPointerEvent<HTMLButtonElement>, conversationId: string) {
     // Touch keeps dragging a card to pan the map; the move handle still works there.
     cardPressRef.current = null;
@@ -2238,6 +2314,12 @@ export default function ConversationGraphView({
     if (touchPointersRef.current.has(event.pointerId)) touchPointersRef.current.set(event.pointerId, { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY });
     const press = backgroundPressRef.current;
     if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) press.moved = true;
+    const link = linkDragRef.current;
+    if (link?.pointerId === event.pointerId) {
+      setLinkDrag({ ...link, ...viewportPoint(event.clientX, event.clientY), targetId: linkTargetAt(event.clientX, event.clientY, link.sourceId) });
+      event.preventDefault();
+      return;
+    }
     const cardPress = cardPressRef.current;
     if (cardPress?.pointerId === event.pointerId && Math.hypot(event.clientX - cardPress.x, event.clientY - cardPress.y) > 4) {
       cardPressRef.current = null;
@@ -2251,6 +2333,13 @@ export default function ConversationGraphView({
   }
 
   function handleViewportPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const link = linkDragRef.current;
+    if (link?.pointerId === event.pointerId) {
+      setLinkDrag(null);
+      const targetId = linkTargetAt(event.clientX, event.clientY, link.sourceId);
+      if (targetId) onConnectConversation?.(link.sourceId, targetId);
+      return;
+    }
     const press = backgroundPressRef.current;
     backgroundPressRef.current = null;
     cardPressRef.current = null;
@@ -2277,6 +2366,7 @@ export default function ConversationGraphView({
     touchPointersRef.current.delete(event.pointerId);
     backgroundPressRef.current = null;
     cardPressRef.current = null;
+    if (linkDragRef.current?.pointerId === event.pointerId && event.type === "pointercancel") setLinkDrag(null);
     interactions.end(event, false);
   }
 
@@ -2423,23 +2513,27 @@ export default function ConversationGraphView({
       return;
     }
 
-    if (selectedConversationId === conversationId && !((compactTerritoryNodes || browsingGroups || documentsOnly) && dockedConversationId !== conversationId)) {
+    // Canvas cards stay put: selecting one outlines it and opens it in the
+    // side panel to read and edit, as the computed views already do.
+    const opensInPanel = compactTerritoryNodes || browsingGroups || documentsOnly || isCanvasMode;
+    if (selectedConversationId === conversationId && !(opensInPanel && dockedConversationId !== conversationId)) {
       navigation.navigate({ selectedConversationId: null, detailLevel: "compact" });
       return;
     }
 
     setInspectedEdge(null);
+    setInspectedClusterId(null);
     setSearchOpen(false);
     setExplorerOpen(false);
-    if (compactTerritoryNodes || browsingGroups || documentsOnly) setDockCollapsed(false);
+    if (opensInPanel) setDockCollapsed(false);
     onFocusCanvas?.();
     const outsideGroup = !!focusedTerritory && !focusedTerritory.nodes.some((node) => node.conversationId === conversationId);
-    preserveSelectionViewRef.current = outsideGroup ? null : `${conversationId}:preview`;
-    navigation.navigate({ selectedConversationId: conversationId, detailLevel: "preview", source: null,
+    preserveSelectionViewRef.current = outsideGroup ? null : `${conversationId}:${isCanvasMode ? "compact" : "preview"}`;
+    navigation.navigate({ selectedConversationId: conversationId, detailLevel: isCanvasMode ? "compact" : "preview", source: null,
       ...(!scopedIds.has(conversationId) ? { scope: { kind: "all" } as GraphScope } : {}),
       ...(outsideGroup
         ? { focusedTerritoryId: null, focusedTerritoryScale: null, overviewPresentation: "canvas" as const } : {}),
-      ...(compactTerritoryNodes || browsingGroups || documentsOnly ? { dockedConversationId: conversationId, readerScroll: 0 } : {}) });
+      ...(opensInPanel ? { dockedConversationId: conversationId, readerScroll: 0 } : {}) });
   }
 
   function expandConversation(conversationId: string) {
@@ -2572,10 +2666,20 @@ export default function ConversationGraphView({
     if (territory) fitTerritory(territory);
   }
 
+  function selectCluster(cluster: GravityCluster | GravityClusterGroup) {
+    if (inspectedClusterId === cluster.id) { setInspectedClusterId(null); return; }
+    setInspectedEdge(null);
+    setSearchOpen(false);
+    setExplorerOpen(false);
+    navigation.navigate({ selectedConversationId: null, dockedConversationId: null, detailLevel: "compact", source: null });
+    setInspectedClusterId(cluster.id);
+  }
+
   function openCluster(cluster: GravityCluster) {
     const canvas = viewportRef.current;
     if (!canvas) return;
     interactions.cancel();
+    setOpenedClusterId(cluster.id);
     applyManualViewport(fitGravityCluster(cluster, { width: canvas.clientWidth, height: canvas.clientHeight }));
   }
 
@@ -2811,6 +2915,8 @@ export default function ConversationGraphView({
         <span>Documents sit in the groups you made. Zoom into a group to see its documents.</span>
         <button type="button" onClick={() => { closeViewOptions(); showAllGroups(); }}>Show all groups</button>
       </>}
+    </div> : isCanvasMode ? <div className="graph-mode-context" aria-label="Canvas status">
+      <span>Your own board: documents stay where you put them. Drag a card to move it{onCreateNoteAt ? ", double-click empty space to add a note" : ""}{onConnectConversation ? ", drag from a card's edge to link it" : ""}.</span>
     </div> : viewMode === "documents" ? <div className="graph-mode-context" aria-label="All documents status">
       <span>Every document, laid out by its connections. Use Layout at the bottom of the map to change the shape.</span>
       {selectedConversation ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selectedConversation.id, 1, documentLayoutMode); }}>Focus on {selectedConversation.title}</button> : null}
@@ -2864,19 +2970,6 @@ export default function ConversationGraphView({
           </div></DismissibleDetails> : null}
         {toolbarTrailing}
       </div>
-      {isClustersMode && !panelView && jev?.enabled && selectedConversation && clusterLayout?.clusterByDocumentId.has(selectedConversation.id) ? <div className="graph-mode-context graph-cluster-move-bar" aria-label="Cluster for the selected document">
-        <strong>{selectedConversation.title}</strong>
-        <ClusterMoveMenu
-          documentTitle={selectedConversation.title}
-          currentClusterId={clusterLayout.clusterByDocumentId.get(selectedConversation.id) ?? null}
-          targets={clusterLayout.clusters.flatMap((cluster) => {
-            const anchorId = cluster.hubId ?? cluster.memberIds.find((id) => id !== selectedConversation.id);
-            return anchorId && anchorId !== selectedConversation.id
-              ? [{ id: cluster.id, label: clusterLabels.labels[cluster.id]?.label ?? "Cluster", anchorId }] : [];
-          })}
-          movedByHand={topicEmbeddings.placements.has(selectedConversation.id)}
-          onMove={(anchorId) => topicEmbeddings.moveDocument(selectedConversation.id, anchorId)} />
-      </div> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
@@ -2890,7 +2983,7 @@ export default function ConversationGraphView({
         </div> : null}
       <div
         className={
-          `conversation-graph-workspace${dockedConversation ? " has-docked-chat" : ""}${dockSide === "right" ? "" : ` is-dock-${dockSide}`}`
+          `conversation-graph-workspace${dockedConversation || inspectedCluster ? " has-docked-chat" : ""}${!dockedConversation || dockSide === "right" ? "" : ` is-dock-${dockSide}`}`
         }
         ref={workspaceRef}
         style={{ "--personal-map-dock-width": `${dockWidth}px` } as CSSProperties}
@@ -2916,6 +3009,7 @@ export default function ConversationGraphView({
           onPointerDownCapture={startTouchGesture}
           onPointerMove={handleViewportPointerMove}
           onPointerUp={handleViewportPointerUp}
+          onDoubleClick={createNoteAtPointer}
           ref={viewportRef}
           style={viewportStyle}
         >
@@ -2963,7 +3057,7 @@ export default function ConversationGraphView({
             })}
           </nav>
 
-          {!showThemeOverview && !documentsOnly ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={relationshipConversations} viewport={viewport}
+          {!showThemeOverview && !documentsOnly && !hideCanvasGroupLabels ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={relationshipConversations} viewport={viewport}
             semanticLabels={groupSemantics.categoryLabels}
             mode={browsingGroups || showTerritories ? "overview" : "canvas"} activeTerritoryId={focusedTerritory?.id}
             selectedNodeId={selectedConversationId}
@@ -2973,7 +3067,23 @@ export default function ConversationGraphView({
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
             connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
-            onOpenCluster={openCluster} onSelectDocument={selectConversation} /> : null}
+            onOpenCluster={openCluster} onSelectDocument={selectConversation}
+            onSelectCluster={selectCluster} selectedClusterId={inspectedCluster?.id ?? null} /> : null}
+          {linkDrag && placementByConversationId.get(linkDrag.sourceId) ? (() => {
+            const source = placementByConversationId.get(linkDrag.sourceId)!;
+            const x1 = viewport.x + (source.x + source.width / 2) * viewport.scale, y1 = viewport.y + (source.y + source.height / 2) * viewport.scale;
+            return <svg className={`graph-link-drag${linkDrag.targetId ? " has-target" : ""}`} aria-hidden="true" width={viewportSize.width} height={viewportSize.height}>
+              <line x1={x1} y1={y1} x2={linkDrag.x} y2={linkDrag.y} />
+              <circle cx={linkDrag.x} cy={linkDrag.y} r={linkDrag.targetId ? 7 : 5} />
+            </svg>;
+          })() : null}
+          {linkDrag?.targetId && conversations[linkDrag.targetId] ? <p className="graph-link-drag-hint" role="status">Link to {conversations[linkDrag.targetId].title || "Untitled"}</p> : null}
+          {clusterTrail.length ? <nav className="graph-cluster-breadcrumbs" data-graph-ui="true" aria-label="Where you are in the clusters"><ol>
+            <li><button type="button" onClick={() => { interactions.cancel(); setOpenedClusterId(null); fitGraph(); }}>All clusters</button></li>
+            {clusterTrail.map((circle, index) => <li key={circle.id}><button type="button"
+              aria-current={index === clusterTrail.length - 1 ? "location" : undefined}
+              onClick={() => openCluster(circle)}>{clusterLabels.labels[circle.id]?.label ?? "Cluster"}</button></li>)}
+          </ol></nav> : null}
           <div
             className="conversation-graph-stage"
             data-group-layout={focusedLayout?.arranged ? "spaced" : undefined}
@@ -3151,6 +3261,7 @@ export default function ConversationGraphView({
                   onSource={(id) => { const evidence = branchEvidence(conversations[id]); if (evidence) openEvidence(evidence); }}
                   onMoveStart={startNodeMove}
                   onBodyPress={isCanvasMode ? pressNodeBody : undefined}
+                  onLinkStart={isCanvasMode && onConnectConversation && !isMultiSelectActive ? startLink : undefined}
                   onOpen={onOpenConversation}
                   onSelect={(id) => connectingConversationId && onConnectConversation ? onConnectConversation(connectingConversationId, id) : selectConversation(id)}
                   placement={placement}
@@ -3405,6 +3516,18 @@ export default function ConversationGraphView({
                 ×
               </button>
             </div>}
+            {isClustersMode && jev?.enabled && clusterLayout?.clusterByDocumentId.has(dockedConversation.id) ? <div className="graph-dock-cluster-move">
+              <ClusterMoveMenu
+                documentTitle={dockedConversation.title}
+                currentClusterId={clusterLayout.clusterByDocumentId.get(dockedConversation.id) ?? null}
+                targets={clusterLayout.clusters.flatMap((cluster) => {
+                  const anchorId = cluster.hubId ?? cluster.memberIds.find((id) => id !== dockedConversation.id);
+                  return anchorId && anchorId !== dockedConversation.id
+                    ? [{ id: cluster.id, label: clusterLabels.labels[cluster.id]?.label ?? "Cluster", anchorId }] : [];
+                })}
+                movedByHand={topicEmbeddings.placements.has(dockedConversation.id)}
+                onMove={(anchorId) => topicEmbeddings.moveDocument(dockedConversation.id, anchorId)} />
+            </div> : null}
             {source && resolvedSource ? <section className="graph-map-evidence" aria-label="Source passage">
               <div><strong>{source.sourceKind === "document" ? "Document passage" : source.sourceKind === "message" ? "Source message" : source.sourceKind === "standalone-note" ? "Source note" : "Selected discussion"}</strong><button type="button" onClick={() => navigation.update({ source: null })}>Close passage</button></div>
               {resolvedSource.status === "missing" || resolvedSource.status === "stale" ? <p role="status">{resolvedSource.status === "missing" ? "The source has been removed." : "The quoted passage has changed. Review the current text; the old quote is not highlighted."}</p> : null}
@@ -3428,10 +3551,62 @@ export default function ConversationGraphView({
             </div>
           </aside>
           </>
-        ) : null}
+        ) : inspectedCluster ? <>
+          <div className="conversation-graph-dock-gap" aria-hidden="true" />
+          <aside aria-label={`Cluster: ${clusterLabels.labels[inspectedCluster.id]?.label ?? "Cluster"}`} className="conversation-graph-dock graph-cluster-dock">
+          <GraphClusterPanel cluster={inspectedCluster} labels={clusterLabels.labels} circles={clusterCircles} conversations={conversations}
+            onClose={() => setInspectedClusterId(null)} onZoomIn={() => openCluster(inspectedCluster)}
+            onSelectCluster={selectCluster} onOpenDocument={selectConversation} />
+        </aside>
+        </> : null}
       </div>
     </section>
   );
+}
+
+const CLUSTER_PANEL_DOCUMENTS = 60;
+
+/** Details about one cluster or group of clusters, shown in the map's side panel. */
+function GraphClusterPanel({ cluster, labels, circles, conversations, onClose, onZoomIn, onSelectCluster, onOpenDocument }: {
+  cluster: GravityCluster | GravityClusterGroup;
+  labels: Record<string, { label: string; generated: boolean }>;
+  circles: Map<string, GravityCluster | GravityClusterGroup>;
+  conversations: Record<string, Conversation>;
+  onClose: () => void;
+  onZoomIn: () => void;
+  onSelectCluster: (cluster: GravityCluster | GravityClusterGroup) => void;
+  onOpenDocument: (id: string) => void;
+}) {
+  const label = labels[cluster.id];
+  const name = label?.label ?? "Cluster";
+  const children = "childIds" in cluster ? cluster.childIds.flatMap((id) => circles.get(id) ?? []) : [];
+  const parent = [...circles.values()].find((circle) => "childIds" in circle && circle.childIds.includes(cluster.id));
+  const hub = cluster.hubId ? conversations[cluster.hubId] : null;
+  const documents = cluster.memberIds.filter((id) => conversations[id]);
+  const count = (value: number, one: string, many: string) => `${value.toLocaleString("en-US")} ${value === 1 ? one : many}`;
+  return <div className="graph-cluster-panel">
+    <header>
+      <div>
+        <h2>{name}</h2>
+        <p>{children.length ? `${count(children.length, "topic", "topics")} · ` : ""}{count(documents.length, "document", "documents")}
+          {label?.generated ? " · named by Luna" : cluster.hubId === null && !children.length ? " · not linked to other documents" : ""}</p>
+      </div>
+      <button type="button" aria-label={`Close ${name} details`} onClick={onClose}>×</button>
+    </header>
+    <button type="button" className="graph-cluster-panel-zoom" onClick={onZoomIn}>
+      <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" /></svg>
+      Zoom into {name}
+    </button>
+    {parent ? <section><h3>Part of</h3><ul><li><button type="button" onClick={() => onSelectCluster(parent)}>{labels[parent.id]?.label ?? "Cluster"}<small>{count(parent.memberIds.length, "document", "documents")}</small></button></li></ul></section> : null}
+    {hub ? <section><h3>Most connected</h3><ul><li><button type="button" onClick={() => onOpenDocument(hub.id)}>{hub.title || "Untitled"}</button></li></ul></section> : null}
+    {children.length ? <section><h3>Topics</h3><ul>
+      {[...children].sort((a, b) => b.memberIds.length - a.memberIds.length).map((child) => <li key={child.id}>
+        <button type="button" onClick={() => onSelectCluster(child)}>{labels[child.id]?.label ?? "Cluster"}<small>{count(child.memberIds.length, "document", "documents")}</small></button>
+      </li>)}
+    </ul></section> : <section><h3>Documents</h3><ul>
+      {documents.slice(0, CLUSTER_PANEL_DOCUMENTS).map((id) => <li key={id}><button type="button" onClick={() => onOpenDocument(id)}>{conversations[id].title || "Untitled"}</button></li>)}
+    </ul>{documents.length > CLUSTER_PANEL_DOCUMENTS ? <small>And {count(documents.length - CLUSTER_PANEL_DOCUMENTS, "more document", "more documents")}. Zoom in to see them all.</small> : null}</section>}
+  </div>;
 }
 
 /** Where a relation's evidence lives in its source document. */

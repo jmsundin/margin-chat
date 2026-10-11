@@ -131,3 +131,53 @@
 .graph-cluster-move { display: inline-flex; align-items: center; gap: 6px; }
 .graph-cluster-move select { border: 1px solid var(--line); background: var(--panel-bg); color: var(--ink); padding: 3px 6px; border-radius: 6px; font: inherit; max-width: 220px; }
 .graph-cluster-move [role="alert"] { color: var(--danger, #d14343); }
+/* Clusters: a label selects its cluster; zooming in is the badge on its corner. */
+.graph-cluster-label.is-selectable { cursor: pointer; }
+.graph-cluster-label.is-selected { border-color: hsl(var(--cluster-hue) 55% 45%); background: var(--panel-strong); box-shadow: 0 0 0 2px hsl(var(--cluster-hue) 55% 45% / .25); }
+.graph-cluster-zoom { position: absolute; z-index: 1; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border: 1px solid hsl(var(--cluster-hue) 50% 50% / .55); border-radius: 999px; background: var(--panel-strong); color: var(--ink); font: inherit; font-size: 11px; white-space: nowrap; cursor: zoom-in; pointer-events: auto; opacity: 0; transform: translateY(2px); transition: opacity .12s ease, transform .12s ease; box-shadow: 0 4px 12px #0003; }
+.graph-cluster-zoom svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.graph-cluster-label:is(:hover, :focus-visible, .is-selected) + .graph-cluster-zoom, .graph-cluster-zoom:is(:hover, :focus-visible) { opacity: 1; transform: none; }
+@media (hover: none) { .graph-cluster-label.is-selected + .graph-cluster-zoom { opacity: 1; transform: none; } }
+
+/* Where you are among clusters of clusters, at the top of the map. */
+.graph-cluster-breadcrumbs { position: absolute; top: 10px; left: 12px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; max-width: calc(100% - 24px); padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--panel-strong) 92%, transparent); font-size: 12px; box-shadow: 0 4px 14px #0002; }
+.graph-cluster-breadcrumbs ol { display: contents; list-style: none; margin: 0; padding: 0; }
+.graph-cluster-breadcrumbs li { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.graph-cluster-breadcrumbs li + li::before { content: "›"; color: var(--muted); padding: 0 2px; }
+.graph-cluster-breadcrumbs button { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.graph-cluster-breadcrumbs button:hover { background: var(--button-active-surface); color: var(--ink); }
+.graph-cluster-breadcrumbs [aria-current="location"] { color: var(--ink); font-weight: 600; }
+
+/* Details about a selected cluster, in the map's side panel. */
+.graph-cluster-panel { display: flex; flex-direction: column; gap: 14px; padding: 16px; overflow: auto; }
+.graph-cluster-panel header { display: flex; align-items: flex-start; gap: 8px; }
+.graph-cluster-panel header > div { flex: 1; min-width: 0; }
+.graph-cluster-panel h2 { margin: 0; font-size: 18px; line-height: 1.3; overflow-wrap: anywhere; }
+.graph-cluster-panel header p, .graph-cluster-panel small { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.graph-cluster-panel header button { flex-shrink: 0; }
+.graph-cluster-panel h3 { margin: 0 0 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.graph-cluster-panel ul { display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.graph-cluster-panel li button { display: flex; justify-content: space-between; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.graph-cluster-panel li button:hover { background: var(--button-active-surface); }
+.graph-cluster-panel li button small { margin: 0; flex-shrink: 0; }
+.graph-cluster-panel-zoom { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--accent-soft); color: var(--accent-strong); font: inherit; font-size: 13px; font-weight: 600; cursor: zoom-in; }
+
+/* Canvas: drag from a card's edge handle to another card to link them. */
+.conversation-graph-node-link-handle { position: absolute; top: calc(50% - 12px); right: -13px; z-index: 13; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel-bg); color: var(--muted); box-shadow: var(--status-shadow); cursor: crosshair; touch-action: none; opacity: 0; visibility: hidden; transform: scale(.86); transition: opacity 140ms ease, transform 140ms ease; }
+.conversation-graph-node-link-handle svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.conversation-graph-node:is(:hover, :focus-within) .conversation-graph-node-link-handle { opacity: 1; visibility: visible; transform: none; }
+.conversation-graph-node-link-handle:hover { color: var(--accent); border-color: var(--accent); }
+.graph-link-drag { position: absolute; inset: 0; z-index: 12; pointer-events: none; overflow: visible; }
+.graph-link-drag line { stroke: var(--muted); stroke-width: 2; stroke-dasharray: 6 5; }
+.graph-link-drag circle { fill: var(--panel-strong); stroke: var(--muted); stroke-width: 2; }
+.graph-link-drag.has-target line { stroke: var(--accent); stroke-dasharray: none; }
+.graph-link-drag.has-target circle { fill: var(--accent); stroke: var(--accent); }
+.graph-link-drag-hint { position: absolute; top: 12px; left: 50%; z-index: 12; margin: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); color: var(--ink); font-size: 12px; transform: translateX(-50%); pointer-events: none; }
+/* Zoomed-out Canvas cards are small; keep their padding in proportion. */
+.semantic-map[data-view-mode="canvas"] .conversation-graph-node.is-group-compact .conversation-graph-node-select { padding: calc(var(--map-card-title-size, 14px) * .35) calc(var(--map-card-title-size, 14px) * .55); }
+/* Keeps the cluster panel in the dock's grid column, where the resize bar sits for documents. */
+.semantic-map .conversation-graph-dock-gap { background: var(--panel-bg); }
+.graph-cluster-dock > .graph-cluster-panel { flex: 1; min-height: 0; }
+/* The selected document's cluster, at the top of the side panel in Clusters. */
+.graph-dock-cluster-move { flex: 0 0 auto; padding: 8px 48px 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.graph-dock-cluster-move .graph-cluster-move > span:first-child { color: var(--muted); }

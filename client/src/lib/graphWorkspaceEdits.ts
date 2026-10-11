@@ -1,5 +1,6 @@
 import type { AppState, Conversation } from "../types";
 import { createStandaloneNoteConversation } from "../initialState";
+import { createDefaultGraphNodeLayout } from "./graphLayout";
 import { addChildConversation, addRootConversation, deleteThread } from "./workspaceCommands";
 import { getStandaloneNote } from "./standaloneNotes";
 import { getConversationRootId } from "./tree";
@@ -25,7 +26,9 @@ export function setPersonalMapConnection(state: AppState, sourceId: string, targ
   } };
 }
 
-export function createMapNote(state: AppState, args: { id: string; noteId: string; createdAt: string; linkedTo?: string; url?: string; title?: string; content?: string }): AppState {
+export function createMapNote(state: AppState, args: { id: string; noteId: string; createdAt: string; linkedTo?: string; url?: string; title?: string; content?: string;
+  /** Where the note goes on Canvas; without one it joins the grid of unplaced documents. */
+  position?: { x: number; y: number } }): AppState {
   const note = createStandaloneNoteConversation({ ...args, serviceId: state.defaultServiceId, modelId: state.defaultModelId });
   if (args.title?.trim()) note.title = args.title.trim();
   if (args.content !== undefined) note.notes![0].content = args.content;
@@ -37,6 +40,10 @@ export function createMapNote(state: AppState, args: { id: string; noteId: strin
   }
   let next = addRootConversation(state, note);
   if (args.linkedTo) next = setPersonalMapConnection(next, args.linkedTo, note.id, true, args.createdAt);
+  if (args.position && Number.isFinite(args.position.x) && Number.isFinite(args.position.y)) {
+    next = { ...next, graphLayouts: { ...next.graphLayouts,
+      [note.id]: { ...(next.graphLayouts[note.id] ?? createDefaultGraphNodeLayout()), x: Math.round(args.position.x), y: Math.round(args.position.y), positioned: true } } };
+  }
   return next;
 }
 

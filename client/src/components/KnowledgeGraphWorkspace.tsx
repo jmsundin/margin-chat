@@ -20,7 +20,7 @@ interface Props extends ConversationGraphViewProps {
   urlMapAIOptions?: UrlMapAIOptions;
   onSavePublicTopic: (topic: PublicTopic) => void;
   publicMapAccount?: PublicMapAccount;
-  onCreateMapNote: (args: { linkedTo?: string; url?: string }) => void;
+  onCreateMapNote: (args: { linkedTo?: string; url?: string; position?: { x: number; y: number } }) => void;
   onSetMapConnection: (sourceId: string, targetId: string, connected: boolean) => void;
   onRemoveMapNote: (id: string) => void;
   onUndoMapEdit: () => void;
@@ -183,7 +183,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         focusRequest={personalProps.focusRequest ?? personalFocus}
         onFocusRequestHandled={(id) => { if (personalProps.focusRequest?.requestId === id) personalProps.onFocusRequestHandled?.(id); else setPersonalFocus(null); }}
         onConnectConversation={(source, target) => { if (source !== target) { onSetMapConnection(source, target, true); setConnectingId(null); } }}
-        onRemoveConnection={(source, target) => onSetMapConnection(source, target, false)} />
+        onRemoveConnection={(source, target) => onSetMapConnection(source, target, false)}
+        onCreateNoteAt={(position) => onCreateMapNote({ position })} />
       {personalVisible && sourcesFor && publicMapAccount && onAddTopicConnections && (sourcesFor === "add" || sourceNote) ? <MapTopicSourcesPanel
         note={sourcesFor === "add" ? null : sourceNote} account={publicMapAccount} onClose={() => setSourcesFor(null)}
         onAddTopic={(topic) => { onSavePublicTopic(topic); setAddedTopicId(topic.id); }}

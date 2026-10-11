@@ -663,18 +663,19 @@ describe("card budget", () => {
     expect(limitGraphCards(placements.slice(0, 3), bounds, 5).overflow).toEqual([]);
   });
 
-  test("zoomed out, leaves a card as a dot where it would cover one already kept", async () => {
-    const { limitGraphCards } = await import("../client/src/components/ConversationGraphView");
-    // A row of 200 px cards 340 px apart. At scale 0.3 each is drawn 180 px
-    // wide on screen (600 map px), so only every other one fits.
-    const placements: ConversationGraphNodePlacement[] = Array.from({ length: 6 }, (_, index) => ({
-      conversationId: `n${index}`, depth: 0, x: index * 340, y: 0, width: 200, height: 96,
-    }));
-    const bounds = { left: -400, top: -400, right: 2400, bottom: 400 };
-    const zoomedOut = limitGraphCards(placements, bounds, 400, ["n3"], 0.3);
-    expect(zoomedOut.cards.map((card) => card.conversationId)).toEqual(["n3", "n0", "n5"]);
-    expect(zoomedOut.overflow.map((card) => card.conversationId)).toEqual(["n1", "n2", "n4"]);
-    // Close enough that cards keep their own size, every one is a card.
-    expect(limitGraphCards(placements, bounds, 400, [], 1).overflow).toEqual([]);
+  test("zoomed out, Canvas cards shrink with the camera instead of growing over their neighbors", async () => {
+    const { getCanvasNodeFootprint } = await import("../client/src/components/ConversationGraphView");
+    const card: ConversationGraphNodePlacement = { conversationId: "n", depth: 0, x: 0, y: 0, width: 200, height: 96 };
+    const halfway = getCanvasNodeFootprint(card, 0.5, "compact", true)!;
+    expect(halfway.width).toBe(100);
+    expect(halfway.height).toBe(48);
+    expect(halfway.titleFontSize).toBe(10);
+    expect(halfway.titleLines).toBeGreaterThan(0);
+    // Titles never drop below 9px; a card too narrow for that drops its title.
+    expect(getCanvasNodeFootprint(card, 0.3, "compact", true)).toMatchObject({ titleFontSize: 9, titleLines: 1 });
+    expect(getCanvasNodeFootprint(card, 0.25, "compact", true)!.titleLines).toBe(0);
+    // Other views keep readable-size cards, and close up nothing changes.
+    expect(getCanvasNodeFootprint(card, 0.5, "compact")).toBeUndefined();
+    expect(getCanvasNodeFootprint(card, 1, "compact", true)).toBeUndefined();
   });
 });

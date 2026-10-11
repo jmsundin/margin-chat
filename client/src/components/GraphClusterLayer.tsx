@@ -72,7 +72,7 @@ function cssVar(element: Element, name: string, fallback: string) {
 }
 
 export default function GraphClusterLayer({ clusters, levels = [], placements, connections, labels, viewport, size, showDots,
-  selectedId, titles, onOpenCluster, onSelectDocument, itemLabel = ["document", "documents"] }: {
+  selectedId, titles, onOpenCluster, onSelectDocument, onSelectCluster, selectedClusterId = null, itemLabel = ["document", "documents"] }: {
   clusters: GravityCluster[];
   /** Groups of clusters, smallest first. */
   levels?: GravityClusterLevel[];
@@ -86,6 +86,12 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
   titles: (id: string) => string;
   onOpenCluster: (cluster: GravityCluster) => void;
   onSelectDocument: (id: string) => void;
+  /**
+   * When given, clicking a label selects its cluster (for a details panel) and
+   * zooming in moves to a separate button that shows on hover or selection.
+   */
+  onSelectCluster?: (cluster: GravityCluster | GravityClusterGroup) => void;
+  selectedClusterId?: string | null;
   /** Singular and plural names for the clustered items. */
   itemLabel?: [string, string];
 }) {
@@ -262,6 +268,8 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       frame = window.setTimeout(() => { frame = 0; setHovered(nearest(event)); }, 16);
     };
     const click = (event: MouseEvent) => {
+      // Labels and their buttons sit over the dots and handle their own clicks.
+      if ((event.target as Element | null)?.closest?.("button")) return;
       const hit = nearest(event);
       if (!hit) return;
       event.stopPropagation();
@@ -315,17 +323,30 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       const clusterHue = hue(cluster.id);
       const groups = "level" in cluster ? `${plural(cluster.childIds.length, cluster.level === 1 ? ["topic", "topics"] : ["area", "areas"])} · ` : "";
       const count = `${groups}${plural(cluster.memberIds.length, itemLabel)}`;
-      return <button key={`${level}:${cluster.id}`} type="button" data-graph-ui="true" data-cluster-id={cluster.id}
-        className={`graph-cluster-label${label?.generated ? " is-generated" : ""}${level ? " is-group" : ""}`}
+      const name = label?.label ?? "this cluster";
+      const selected = cluster.id === selectedClusterId;
+      const labelButton = <button key={`${level}:${cluster.id}`} type="button" data-graph-ui="true" data-cluster-id={cluster.id}
+        className={`graph-cluster-label${label?.generated ? " is-generated" : ""}${level ? " is-group" : ""}${onSelectCluster ? " is-selectable" : ""}${selected ? " is-selected" : ""}`}
         data-unlinked={clusterHue === null || undefined}
         style={{ left: rect.x, top: rect.y, width: rect.width, "--cluster-hue": clusterHue ?? 0, "--cluster-label-size": `${fontSize}px` } as CSSProperties}
-        title={label?.generated ? `Topic named by Luna. Zoom into ${label.label}` : `Zoom into ${label?.label ?? "this cluster"}`}
-        aria-label={`Zoom into ${label?.label ?? "cluster"}, ${count}`}
+        title={onSelectCluster ? `Show details about ${name}` : label?.generated ? `Topic named by Luna. Zoom into ${label.label}` : `Zoom into ${name}`}
+        aria-label={onSelectCluster ? `${label?.label ?? "Cluster"}, ${count}` : `Zoom into ${label?.label ?? "cluster"}, ${count}`}
+        aria-pressed={onSelectCluster ? selected : undefined}
         onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => { event.stopPropagation(); onOpenCluster(cluster); }}>
+        onClick={(event) => { event.stopPropagation(); if (onSelectCluster) onSelectCluster(cluster); else onOpenCluster(cluster); }}>
         <strong>{label?.label}</strong>
         <span>{count}</span>
       </button>;
+      if (!onSelectCluster) return labelButton;
+      return [labelButton,
+        <button key={`${level}:${cluster.id}:zoom`} type="button" data-graph-ui="true" className="graph-cluster-zoom"
+          style={{ left: rect.x + rect.width - 14, top: rect.y - 12, "--cluster-hue": clusterHue ?? 0 } as CSSProperties}
+          title={`Zoom into ${name}`} aria-label={`Zoom into ${name}`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => { event.stopPropagation(); onOpenCluster(cluster); }}>
+          <svg aria-hidden="true" viewBox="0 0 16 16"><path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9" /></svg>
+          <span>Zoom in</span>
+        </button>];
     })}
   </div>;
 }
