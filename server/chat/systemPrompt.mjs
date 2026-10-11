@@ -60,7 +60,7 @@ export function buildSystemInstruction(chatRequest) {
 
 /**
  * `vaultTools`: the saved-vault tools are offered. `canWidenScope`: they could be,
- * if the user let AI search their workspace.
+ * if the user stopped limiting what Agent mode can search.
  */
 export function buildAgentInstruction(chatRequest, { vaultTools = false, canWidenScope = false } = {}) {
   const reach = vaultTools ? [
@@ -70,7 +70,7 @@ export function buildAgentInstruction(chatRequest, { vaultTools = false, canWide
   ] : [
     "Workspace tools inspect only the permitted local snapshot supplied for this request, including the current conversation and its ancestors.",
     "Other workspace content and private margin annotations are unavailable. Do not infer that the supplied snapshot is the whole workspace.",
-    ...(canWidenScope ? ["If the user asks about documents you cannot see, tell them they can open the model picker and set AI context to \"Search relevant notes and conversations in my workspace\" so you can search their saved documents."] : []),
+    ...(canWidenScope ? ["If the user asks about documents you cannot see, tell them they limited what Agent mode can search, and they can widen it under AI context in the model picker by setting \"Agent mode can search\" to \"All my saved documents\"."] : []),
   ];
   return [
     buildSystemInstruction(chatRequest),

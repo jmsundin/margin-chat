@@ -29,6 +29,9 @@ export function validateAIOptions(input) {
   if (ai.agentBudgetMicros !== undefined && !AGENT_BUDGET_CHOICES_MICROS.includes(ai.agentBudgetMicros)) {
     throw new HttpError(400, "agentBudgetMicros must be one of the offered agent budgets.");
   }
+  if (ai.agentScope !== undefined && !["conversation", "selected", "workspace"].includes(ai.agentScope)) {
+    throw new HttpError(400, "Unsupported agent search scope.");
+  }
   if (ai.allowedProviders !== undefined && (!Array.isArray(ai.allowedProviders) ||
       ai.allowedProviders.some((provider) => !AI_PROVIDERS.has(provider)))) {
     throw new HttpError(400, "allowedProviders must contain supported provider names.");
@@ -38,7 +41,7 @@ export function validateAIOptions(input) {
     contextScope,
     selectedConversationIds: [...new Set(selectedConversationIds)],
     ...(ai.jevEnabled === true ? { jevEnabled: true } : {}),
-    ...(ai.agent === true ? { agent: true, agentBudgetMicros: ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS } : {}),
+    ...(ai.agent === true ? { agent: true, agentBudgetMicros: ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, agentScope: ai.agentScope ?? "workspace" } : {}),
     ...(ai.allowedProviders === undefined ? {} : { allowedProviders: [...new Set(ai.allowedProviders)] }),
   };
 }

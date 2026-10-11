@@ -20,6 +20,7 @@ export function normalizeAISettings(input) {
     ...(value.jevEnabled === true ? { jevEnabled: true } : {}),
     ...(value.agent === true ? { agent: true } : {}),
     ...(AGENT_BUDGET_CHOICES_MICROS.includes(value.agentBudgetMicros) ? { agentBudgetMicros: value.agentBudgetMicros } : {}),
+    ...(scopes.has(value.agentScope) ? { agentScope: value.agentScope } : {}),
     ...(Array.isArray(value.allowedProviders) ? {
       allowedProviders: [...new Set(value.allowedProviders.filter((provider) => AI_PROVIDERS.includes(provider)))],
     } : {}),
