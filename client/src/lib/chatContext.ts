@@ -10,6 +10,8 @@ import {
 } from "./standaloneNotes";
 import { getConversationPath } from "./tree";
 import { getCurrentDocumentText } from "./documentSources";
+import type { VaultFileContext } from "./vaultFileContext";
+import { vaultFileTitle } from "./vaultFileDocuments";
 
 export interface ConversationContext {
   ancestorContext: Array<{
@@ -20,6 +22,8 @@ export interface ConversationContext {
   }>;
   branchAnchor: BranchAnchor | null;
   documents: ConversationDocument[];
+  /** The PDF or image the conversation is about, added just before sending. */
+  file?: VaultFileContext;
   id: string;
   parentId: string | null;
   title: string;
@@ -50,7 +54,7 @@ export function getConversationRequestPayload(
       branchAnchor: ancestor.branchAnchor,
       id: ancestor.id,
       messages: ancestor.document
-        ? [{ content: getCurrentDocumentText(ancestor), createdAt: ancestor.updatedAt, id: `document-context-${ancestor.id}`, role: "user" as const }]
+        ? [{ content: documentContextText(ancestor), createdAt: ancestor.updatedAt, id: `document-context-${ancestor.id}`, role: "user" as const }]
         : standaloneNote?.content.trim()
         ? [
             {
@@ -75,4 +79,12 @@ export function getConversationRequestPayload(
     parentId: conversation.parentId,
     title: conversation.title,
   };
+}
+
+/** A document's text for its branches; a PDF or image is named, since its content travels separately. */
+function documentContextText(conversation: Conversation) {
+  const text = getCurrentDocumentText(conversation);
+  if (!conversation.vaultFile) return text;
+  const kind = conversation.vaultFile.kind === "pdf" ? "PDF" : "image";
+  return [`The ${kind} “${vaultFileTitle(conversation.vaultFile.path)}”.`, text.trim() ? `The user's notes on it:\n${text}` : ""].filter(Boolean).join("\n\n");
 }

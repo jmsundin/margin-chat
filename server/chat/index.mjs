@@ -14,6 +14,7 @@ import { buildAgentInstruction, buildSystemInstruction } from "./systemPrompt.mj
 import { buildChatTitleInstruction, sanitizeGeneratedChatTitle, sanitizeGeneratedClusterLabel, validateChatTitleRequest } from "./title.mjs";
 import { validateAIOptions, validateChatRequest } from "./validation.mjs";
 import { prepareChatContext } from "./context.mjs";
+import { cannotSeeImageInstruction, modelSeesImages, vaultFileInstruction } from "./fileContext.mjs";
 import { applySemanticRouting, createSemanticRouteCandidates, isProviderAllowed, planRoutes, providerName, routingReasonForAttempt } from "./routing.mjs";
 import { PROFILE_EVIDENCE } from "./modelProfiles.mjs";
 import { createHostedUsageMeter } from "../billing/usage.mjs";
@@ -303,12 +304,23 @@ export function createChatService({ database, documentService, env, runtimeConfi
       agentRequested || instructionOverride ? null : getVaultPassageContext(initialContext.chatRequest, context),
     ]);
     context.signal?.throwIfAborted();
-    const documentContext = vaultContext ? {
+    // The PDF or image the conversation is about comes first: it is what the user is looking at.
+    const file = instructionOverride ? null : chatRequest.conversation.file ?? null;
+    const latestPrompt = [...chatRequest.messages].reverse().find((message) => message.role === "user")?.content ?? "";
+    const fileContext = file ? vaultFileInstruction(file, { query: latestPrompt, quote: chatRequest.conversation.branchAnchor?.quote,
+      mode: chatRequest.ai.mode, maxCharacters: context.hostedMaxInputCharacters }) : null;
+    const extraContexts = [fileContext ? { ...fileContext, sources: [{ kind: "document", id: chatRequest.conversation.id, title: file.name }] } : null, vaultContext].filter(Boolean);
+    const documentContext = extraContexts.length ? {
       ...attachedContext,
-      instruction: [attachedContext.instruction, vaultContext.instruction].filter(Boolean).join("\n\n") || null,
-      sources: [...(attachedContext.sources ?? []), ...vaultContext.sources],
-      warnings: [...(attachedContext.warnings ?? []), ...vaultContext.warnings],
+      instruction: [fileContext?.instruction, attachedContext.instruction, vaultContext?.instruction].filter(Boolean).join("\n\n") || null,
+      sources: [...(attachedContext.sources ?? []), ...extraContexts.flatMap((item) => item.sources ?? [])],
+      warnings: [...(attachedContext.warnings ?? []), ...extraContexts.flatMap((item) => item.warnings ?? [])],
     } : attachedContext;
+    // Asked about an image, automatic routing uses only models that can see it, when it has any.
+    if (file?.image) {
+      const seeing = routes.filter((route) => modelSeesImages(providerName(route.serviceId)));
+      if (seeing.length) routes = seeing;
+    }
     const prepared = orderedRequest !== chatRequest || documentContext.instruction || documentContext.warnings?.length
       ? prepareChatContext(orderedRequest, documentContext, budgetOptions) : initialContext;
     const fallbacks = [];
@@ -335,6 +347,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
       agentSearches = [];
       const credential = getProviderCredential(route.serviceId, context);
       const agentProvider = agentRequested && AGENT_PROVIDERS.includes(providerName(route.serviceId)) ? providerName(route.serviceId) : null;
+      const sendsImage = Boolean(file?.image) && !agentProvider && modelSeesImages(providerName(route.serviceId));
+      const blindToImage = file?.kind === "image" && !sendsImage && !file.text;
       const receipt = {
         schemaVersion: 1,
         status: "streaming",
@@ -350,7 +364,10 @@ export function createChatService({ database, documentService, env, runtimeConfi
         truncated: prepared.truncated,
         fallbacks: [...fallbacks],
         warnings: [...prepared.warnings, ...semanticWarnings, ...(chatRequest.serviceId === "backend-services" ? [PROFILE_EVIDENCE.limitation] : []),
-          ...(agentRequested && !agentProvider ? [`Agent mode isn't available for ${providerName(route.serviceId)} models, so this reply was written without workspace tools.`] : [])],
+          ...(agentRequested && !agentProvider ? [`Agent mode isn't available for ${providerName(route.serviceId)} models, so this reply was written without workspace tools.`] : []),
+          ...(blindToImage ? [agentProvider ? `Agent mode can't look at images yet, so this reply saw only the name of "${file.name}".`
+            : file.image ? `${route.model} can't see images, so this reply saw only the name of "${file.name}". Choose a Claude, GPT, Gemini or Grok model to ask about the picture.`
+            : `"${file.name}" couldn't be sent to AI, so this reply saw only its name.`] : [])],
       };
       const metadata = {
         credentialSource: credential.source,
@@ -375,9 +392,10 @@ export function createChatService({ database, documentService, env, runtimeConfi
         maxInputCharacters: prepared.chatRequest.contextCharacterBudget,
         model: route.model,
         signal: context.signal,
-        systemInstruction: instructionOverride ?? (agentProvider
+        systemInstruction: [instructionOverride ?? (agentProvider
           ? buildAgentInstruction(prepared.chatRequest, { vaultTools, canWidenScope: Boolean(workspace) && !vaultTools })
-          : buildSystemInstruction(prepared.chatRequest)),
+          : buildSystemInstruction(prepared.chatRequest)), blindToImage ? cannotSeeImageInstruction(file) : ""].filter(Boolean).join("\n\n"),
+        image: sendsImage ? file.image : null,
         userId: context.userId,
         usageMeter: credential.source === "hosted" ? context.usageMeter : null,
       };

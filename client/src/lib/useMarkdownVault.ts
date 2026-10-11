@@ -12,12 +12,13 @@ import { VaultSync, pendingVaultChanges } from "./vaultSync";
 import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSearchEvent, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
 import { planVaultEviction, preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
 import { WORKING_SET_IDLE_MS, claimWorkingSetCheck, loadOpenedDocuments, recordOpenedDocuments, workspaceReferenceIds } from "./vaultWorkingSet";
-import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
+import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultFileListings, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
+import { vaultFileContentType, withoutUntouchedVaultFileDocuments, type VaultFileListing } from "./vaultFileDocuments";
 import {
   canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, requestLocalDirectoryPermission, clearLocalDirectory, getLocalDirectoryStatus,
   listLocalDirectories, reconnectLocalDirectory, watchLocalDirectory, type RememberedLocalDirectory,
   getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectoryWorkspace,
-  readLocalDirectoryCompanions, syncLocalDirectoryCompanions,
+  readLocalDirectoryCompanions, syncLocalDirectoryCompanions, listLocalDirectoryFiles, readLocalDirectoryFile, isCompanionPath,
   type LocalDirectoryStatus,
 } from "./workspaceStorage";
 import type { MarkdownWorkspace } from "./workspaceMarkdown";
@@ -85,6 +86,8 @@ export function useMarkdownVault(args: {
   const folder = useRef<MarkdownWorkspace | null>(null);
   const folderId = useRef<string | null>(null);
   const folderCompanions = useRef<Record<string, VaultFile>>({});
+  /** PDFs and images in the connected folder, including ones too large to sync. */
+  const localFiles = useRef<VaultFileListing[]>([]);
   const mounted = useRef(true);
   const queue = useRef(Promise.resolve());
   const localInFlight = useRef<Promise<VaultSnapshot> | null>(null);
@@ -132,7 +135,8 @@ export function useMarkdownVault(args: {
 
   function publish(snapshot: VaultSnapshot) {
     rememberDeferred(snapshot);
-    const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current);
+    const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current,
+      vaultFileListings(snapshot.files, Object.keys(snapshot.deferred ?? {}), localFiles.current));
     if (pendingFocus.current === next.activeConversationId) pendingFocus.current = null;
     // Saved files are never changed in place, so the displayed set can share them.
     displayedFiles.current = { ...snapshot.files };
@@ -173,7 +177,7 @@ export function useMarkdownVault(args: {
     }
     // Keep settings durable without turning the empty editor into a document,
     // including after the last authored document was deleted on another device.
-    const conversations = Object.values(stateRef.current.conversations);
+    const conversations = Object.values(withoutUntouchedVaultFileDocuments(stateRef.current).conversations);
     const pristine = conversations.length === 1 && conversations[0].kind !== "note" && conversations[0].title === "New chat"
       && !conversations[0].messages.length && !conversations[0].notes?.length && !conversations[0].documents?.length
       && !conversations[0].document?.blocks.some((block) => block.content.trim());
@@ -214,7 +218,7 @@ export function useMarkdownVault(args: {
     const status = await getLocalDirectoryStatus(storageUserId);
     await showDirectoryStatus(status);
     if (status.permission !== "granted" || !status.directoryId) {
-      folderId.current = null; folder.current = null; folderCompanions.current = {};
+      folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
       return;
     }
     if (folderId.current !== status.directoryId) {
@@ -226,13 +230,16 @@ export function useMarkdownVault(args: {
           .map(([path, file]) => [path, file.content])),
       } : null;
       folderCompanions.current = baseline ? Object.fromEntries(Object.entries(baseline.files)
-        .filter(([path]) => path === "workspace.json" || /^(?:attachments|_conflicts|\.margin-chat)\//i.test(path))) : {};
+        .filter(([path]) => isCompanionPath(path))) : {};
       folderId.current = status.directoryId;
     }
     const incoming = await readLocalDirectoryWorkspace(storageUserId, folder.current?.manifest, folder.current?.files, status.directoryId);
     if (!incoming) return;
-    const companions = await readLocalDirectoryCompanions(storageUserId, folderCompanions.current, status.directoryId);
+    const listing = await listLocalDirectoryFiles(storageUserId, status.directoryId);
+    if (!listing) return;
+    const companions = await readLocalDirectoryCompanions(storageUserId, folderCompanions.current, status.directoryId, listing);
     if (!companions) return;
+    localFiles.current = listing;
     // Settings are parsed/canonicalized with Markdown; preserve raw companion bytes for disk checks.
     const withoutSettings = (files: Record<string, VaultFile>) => Object.fromEntries(Object.entries(files).filter(([path]) => path !== "workspace.json"));
     // A new plain file without a date takes its time on disk, so it lists with recent documents
@@ -612,7 +619,7 @@ export function useMarkdownVault(args: {
       await hydrateEverything();
       const status = await connectLocalDirectory(storageUserId, handle);
       await showDirectoryStatus(status);
-      folderId.current = null; folder.current = null; folderCompanions.current = {};
+      folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
       if (status.permission === "granted") await saveAndRefresh(false);
     });
   }
@@ -625,12 +632,17 @@ export function useMarkdownVault(args: {
     async read(target) {
       let snapshot = await engine.read();
       const path = resolveVaultMediaPath(target, [...Object.keys(snapshot.files), ...Object.keys(snapshot.deferred ?? {})]);
-      if (!path) return null;
+      if (!path) {
+        // A file too large to sync opens from the connected folder on this device.
+        const local = resolveVaultMediaPath(target, localFiles.current.filter((file) => file.localOnly).map((file) => file.path));
+        const blob = local && folderId.current ? await readLocalDirectoryFile(storageUserId, local, folderId.current) : null;
+        return local && blob ? { path: local, blob } : null;
+      }
       const deferred = snapshot.deferred?.[path];
       if (!snapshot.files[path] && deferred) snapshot = await engine.pull([[path, deferred]]) ?? await engine.read();
       const file = snapshot.files[path];
       if (!file) return null;
-      const type = file.contentType && file.contentType !== "application/octet-stream" ? file.contentType : mediaContentType(path);
+      const type = file.contentType && file.contentType !== "application/octet-stream" ? file.contentType : vaultFileContentType(path);
       return { path, blob: new Blob([new Uint8Array(vaultFileBytes(file))], { type }) };
     },
     async save(file) {

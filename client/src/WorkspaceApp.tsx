@@ -121,6 +121,7 @@ import {
   loadStoredState,
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
+import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
 import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument } from "./lib/workspaceCommands";
@@ -2125,10 +2126,10 @@ function WorkspaceAppContent({
     window.getSelection()?.removeAllRanges();
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
-      request: (onDelta, signal, onMetadata, onStep) => requestChatReply({
+      request: async (onDelta, signal, onMetadata, onStep) => requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
         ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
-        conversation: getConversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
+        conversation: await conversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
         modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, onStep, signal,
       }),
       onError(error) {
@@ -2290,16 +2291,23 @@ function WorkspaceAppContent({
     });
   }
 
+  /** The conversation for an AI request, with the PDF or image it is about when there is one. */
+  async function conversationRequestPayload(conversations: Record<string, Conversation>, conversation: Conversation) {
+    const payload = getConversationRequestPayload(conversations, conversation);
+    const found = nearestVaultFile({ ...conversations, [conversation.id]: conversation }, conversation);
+    return found ? { ...payload, file: await loadVaultFileContext(vault.media, found) } : payload;
+  }
+
   function startAssistantStream(conversation: Conversation, messages: Message[]) {
     return chatExecutions.start({
       conversationId: conversation.id,
       messageId: createId("message"),
       createdAt: new Date().toISOString(),
-      request: (onDelta, signal, onMetadata, onStep) => requestChatReply({
+      request: async (onDelta, signal, onMetadata, onStep) => requestChatReply({
         ...prepareAIContext(state.conversations, conversation, messages),
         ai: withJevConsent(conversation.ai, jevEnabled),
         expectedUserId: user.id,
-        conversation: getConversationRequestPayload(state.conversations, conversation),
+        conversation: await conversationRequestPayload(state.conversations, conversation),
         messages,
         modelId: conversation.modelId,
         onDelta,

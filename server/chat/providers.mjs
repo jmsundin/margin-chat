@@ -65,8 +65,18 @@ export async function requestResponsesApiStream({ apiKey, body, fallbackError, o
   });
 }
 
+/** Puts the image the user is asking about into the latest user message, in each provider's shape. */
+function withImage(messages, image, imagePart, textPart) {
+  if (!image) return messages;
+  const index = messages.findLastIndex((message) => message.role === "user");
+  if (index < 0) return messages;
+  return messages.map((message, position) => position === index
+    ? { ...message, content: [imagePart(image), textPart(message.content)] } : message);
+}
+
 function responsesBody(args, provider) {
-  const messages = extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content }));
+  const messages = withImage(extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content })), args.image,
+    (image) => ({ type: "input_image", image_url: `data:${image.mediaType};base64,${image.data}` }), (text) => ({ type: "input_text", text }));
   return provider === "openai"
     ? { input: messages, instructions: args.systemInstruction, max_output_tokens: args.maxOutputTokens, model: args.model }
     : { input: [{ content: args.systemInstruction, role: "system" }, ...messages], max_output_tokens: args.maxOutputTokens, model: args.model };
@@ -93,7 +103,9 @@ export const requestOpenAIResponsesPayload = (args) => requestProviderJson({ ...
 
 function geminiBody(args) {
   return {
-    contents: extractConversationMessages(args.chatRequest.messages).map((message) => ({ parts: [{ text: message.content }], role: message.role === "assistant" ? "model" : "user" })),
+    contents: withImage(extractConversationMessages(args.chatRequest.messages), args.image,
+      (image) => ({ inline_data: { mime_type: image.mediaType, data: image.data } }), (text) => ({ text }))
+      .map((message) => ({ parts: Array.isArray(message.content) ? message.content : [{ text: message.content }], role: message.role === "assistant" ? "model" : "user" })),
     generationConfig: { maxOutputTokens: args.maxOutputTokens, candidateCount: 1 },
     system_instruction: { parts: [{ text: args.systemInstruction }] },
   };
@@ -190,7 +202,8 @@ export function anthropicBody(args) {
     model: args.model,
     max_tokens: args.maxOutputTokens ?? ANTHROPIC_DEFAULT_MAX_TOKENS,
     system: args.systemInstruction,
-    messages: extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content })),
+    messages: withImage(extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content })), args.image,
+      (image) => ({ type: "image", source: { type: "base64", media_type: image.mediaType, data: image.data } }), (text) => ({ type: "text", text })),
     output_config: { effort: anthropicEffort(args) },
     ...(ANTHROPIC_FALLBACK_MODELS.has(args.model) ? { fallbacks: "default" } : {}),
   };

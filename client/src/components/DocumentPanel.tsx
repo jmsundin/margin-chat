@@ -13,6 +13,7 @@ import type { RichDocumentInvocation, RichDocumentDecoration, RichDocumentEditor
 import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentEditor";
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
+import VaultFileViewer from "./VaultFileViewer";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
 import MobileAIComposer from "./MobileAIComposer";
@@ -428,6 +429,11 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </header> : null}
     <div className={`document-panel-content${props.childTabs ? " has-child-tabs" : ""}`}>
     <div className={`panel-body document-body${hasPrompts ? " has-prompt-markers" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+      {conversation.vaultFile ? <>
+        <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
+          onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch}/>
+        <div className="vault-file-notes-label">Notes</div>
+      </> : null}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
         onChangeBlocks={changeBlocks}
