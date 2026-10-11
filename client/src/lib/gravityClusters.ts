@@ -2,6 +2,7 @@ import type { ConversationGraphNodePlacement } from "./conversationGraph";
 import { getDocumentNodeFootprint } from "./documentMapLayout";
 import type { GraphViewport } from "./graphInteractions";
 import { fitNetworkMapViewport } from "./networkMapLayout";
+import { groupByTopicEmbedding } from "./topicEmbeddings";
 
 const CARD = getDocumentNodeFootprint(1);
 // Members of one cluster sit a card gap apart; clusters keep a much wider gap so
@@ -190,6 +191,39 @@ function median(values: number[]) {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
+type FoundCluster = { hubId: string | null; memberIds: string[] };
+
+/**
+ * Joins clusters, and unlinked documents, that are about the same subject.
+ * Links decide clusters first; embeddings then merge clusters whose documents
+ * mean similar things, so four Angular notes that each lead their own family
+ * of linked notes still land in one cluster. Unlinked documents that match
+ * nothing stay in the unlinked bucket.
+ */
+export function mergeClustersByTopic(found: FoundCluster[], vectorOf: (id: string) => Float32Array | undefined): FoundCluster[] {
+  const linked = found.filter((cluster) => cluster.hubId !== null);
+  const unlinked = found.find((cluster) => cluster.hubId === null)?.memberIds ?? [];
+  const items = [...linked.map((cluster) => ({ documentIds: cluster.memberIds, hubId: cluster.hubId })),
+    ...unlinked.map((id) => ({ documentIds: [id], hubId: null as string | null }))];
+  const merged: FoundCluster[] = [];
+  const leftOver: string[] = [];
+  for (const group of groupByTopicEmbedding(items, vectorOf)) {
+    const parts = group.itemIndices.map((position) => items[position]);
+    if (parts.length === 1) {
+      if (parts[0].hubId === null) leftOver.push(parts[0].documentIds[0]);
+      else merged.push(linked[group.itemIndices[0]]);
+      continue;
+    }
+    // The biggest linked cluster leads; a group of unlinked notes is led by its first.
+    const hubId = parts.find((part) => part.hubId !== null)?.hubId ?? parts[0].documentIds[0];
+    merged.push({ hubId, memberIds: parts.flatMap((part) => part.documentIds) });
+  }
+  if (leftOver.length) merged.push({ hubId: null, memberIds: leftOver.sort() });
+  merged.sort((a, b) => (a.hubId === null ? 1 : 0) - (b.hubId === null ? 1 : 0) || b.memberIds.length - a.memberIds.length
+    || (a.hubId! < b.hubId! ? -1 : 1));
+  return merged;
+}
+
 /** A group of clusters, or of groups; level 1 groups clusters, level 2 groups level 1, and so on. */
 export interface GravityClusterGroup extends GravityCluster {
   level: number;
@@ -225,11 +259,16 @@ export function layoutGravityClusters(
   nodes: ConversationGraphNodePlacement[],
   canvas: { width: number; height: number },
   connections: Connection[],
-  options: { createdAt?: (id: string) => number | undefined } = {},
+  options: {
+    createdAt?: (id: string) => number | undefined;
+    /** Each document's embedding; when given, clusters about the same subject merge. */
+    topicVector?: (id: string) => Float32Array | undefined;
+  } = {},
 ): GravityClusterLayout {
   const ids = nodes.map((node) => node.conversationId);
-  const { clusters: found } = findGravityClusters(ids, connections);
-  const groups: Array<{ hubId: string | null; memberIds: string[]; id: string; period?: { start: number; end: number } }> = [];
+  const linkClusters = findGravityClusters(ids, connections).clusters;
+  const found: FoundCluster[] = options.topicVector ? mergeClustersByTopic(linkClusters, options.topicVector) : linkClusters;
+  const groups: Array<FoundCluster & { id: string; period?: { start: number; end: number } }> = [];
   for (const group of found) {
     if (group.hubId !== null) { groups.push({ ...group, id: `cluster:${group.hubId}` }); continue; }
     const times = options.createdAt;

@@ -5,6 +5,7 @@ import type { AISettings, Conversation } from "../types";
 
 const labels = { openai: "OpenAI", anthropic: "Anthropic Claude", gemini: "Google Gemini", huggingface: "Hugging Face", xai: "xAI" };
 const scopes = { conversation: "This chat + branch", selected: "Selected material", workspace: "Search my workspace" };
+const agentScopes = { conversation: "this chat + branch", selected: "selected material", workspace: "all documents" };
 
 export default function AIControls({ conversation, conversations, disabled, onChange }: {
   conversation: Conversation;
@@ -15,9 +16,11 @@ export default function AIControls({ conversation, conversations, disabled, onCh
   const settings = normalizeAISettings(conversation.ai);
   const [query, setQuery] = useState("");
   const permitted = settings.allowedProviders ?? [...AI_PROVIDERS];
+  const agentOn = settings.agent === true || conversation.serviceId === "openai-agent";
+  const agentScope = settings.agentScope ?? "workspace";
   const choices = Object.values(conversations).filter((item) => item.id !== conversation.id && item.title.toLowerCase().includes(query.toLowerCase()));
   return <DismissibleDetails className="ai-controls">
-    <summary tabIndex={0}>{conversation.serviceId === "backend-services" ? `Auto · ${settings.mode[0].toUpperCase()}${settings.mode.slice(1)} · ` : "AI context · "}{scopes[settings.contextScope]}</summary>
+    <summary tabIndex={0}>{conversation.serviceId === "backend-services" ? `Auto · ${settings.mode[0].toUpperCase()}${settings.mode.slice(1)} · ` : "AI context · "}{scopes[settings.contextScope]}{agentOn ? ` · Agent: ${agentScopes[agentScope]}` : ""}</summary>
     <div className="ai-controls-body">
       {conversation.serviceId === "backend-services" ? <label>Auto preference
         <select aria-label="Auto preference" disabled={disabled} value={settings.mode} onChange={(event) => onChange({ ...settings, mode: event.target.value as AISettings["mode"] })}>
@@ -33,7 +36,14 @@ export default function AIControls({ conversation, conversations, disabled, onCh
           <option value="workspace">Search relevant notes and conversations in my workspace</option>
         </select>
       </label>
-      {settings.contextScope === "selected" ? <div className="ai-context-picker">
+      {agentOn ? <label>Agent mode can search
+        <select aria-label="What Agent mode can search" disabled={disabled} value={agentScope} onChange={(event) => onChange({ ...settings, agentScope: event.target.value as NonNullable<AISettings["agentScope"]> })}>
+          <option value="workspace">All my saved documents</option>
+          <option value="selected">Only the selected notes and conversations</option>
+          <option value="conversation">Only this conversation and its branch</option>
+        </select>
+      </label> : null}
+      {settings.contextScope === "selected" || (agentOn && agentScope === "selected") ? <div className="ai-context-picker">
         <input aria-label="Find context material" placeholder="Find a note or conversation…" value={query} onChange={(event) => setQuery(event.target.value)} />
         <span>{settings.selectedConversationIds.length} selected</span>
         <div className="ai-context-options">{choices.slice(0, 50).map((item) => <label key={item.id}>

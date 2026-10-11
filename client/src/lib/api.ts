@@ -258,6 +258,35 @@ async function requestTitle(args: {
   return payload.title.trim();
 }
 
+export interface TopicEmbeddingsResponse {
+  model: string;
+  dimensions: number;
+  /** Signed bytes, base64, one per dimension. */
+  embeddings: Array<{ id: string; embedding: string }>;
+  cursor: string | null;
+  /** Documents still waiting to be embedded. */
+  pending: number;
+  /** Why new documents could not be embedded. */
+  unavailable?: string;
+}
+
+/** Embeds new or changed documents on the server and returns embeddings changed after `since`. */
+export async function requestTopicEmbeddings(args: { since: string | null; expectedUserId?: string; signal?: AbortSignal }): Promise<TopicEmbeddingsResponse> {
+  const response = await apiFetch("/api/vault/topics", {
+    body: JSON.stringify({ since: args.since }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as TopicEmbeddingsResponse | ErrorPayload | null;
+  ensureOk(response, payload, "Grouping documents by subject failed.");
+  if (!payload || typeof payload !== "object" || !("embeddings" in payload) || !Array.isArray(payload.embeddings)) {
+    throw new Error("Backend returned invalid document embeddings.");
+  }
+  return payload;
+}
+
 export async function requestUploadDocument(
   file: File,
   expectedUserId?: string,

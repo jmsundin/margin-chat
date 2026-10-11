@@ -133,3 +133,33 @@ describe("persisted map source validation", () => {
     expect(restored.canGoForward).toBe(true);
   });
 });
+
+describe("where Map view opens", () => {
+  const originalLocal = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  afterEach(() => {
+    if (originalLocal) Object.defineProperty(globalThis, "localStorage", originalLocal);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  });
+  function open(session: unknown, lastView: unknown) {
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: () => lastView === null ? null : JSON.stringify(lastView), setItem() {} } });
+    return restoreLocation(session);
+  }
+
+  test("a first visit opens Clusters grouped by links", () => {
+    const navigation = open(null, null);
+    expect(navigation.state.viewMode).toBe("clusters");
+    expect(navigation.restored).toBe(false);
+  });
+
+  test("a later session reopens the last view, refitted and without its history", () => {
+    const navigation = open(null, { ...defaultGraphLocation(), viewMode: "canvas", overviewPresentation: "canvas", viewport: { x: 40, y: -20, scale: 0.8 } });
+    expect(navigation.state.viewMode).toBe("canvas");
+    expect(navigation.restored).toBe(false);
+    expect(navigation.canGoBack).toBe(false);
+  });
+
+  test("the current session's history wins over the saved last view", () => {
+    const navigation = open({ ...defaultGraphLocation(), viewMode: "network", overviewPresentation: "documents" }, { ...defaultGraphLocation(), viewMode: "canvas" });
+    expect(navigation.state.viewMode).toBe("network");
+  });
+});

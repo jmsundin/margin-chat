@@ -45,6 +45,13 @@ export const defaultGraphLocation = (): GraphExplorationLocation => ({
   documentLayoutMode: "auto",
 });
 
+/** Where Map view opens the first time: Clusters, grouped by links. */
+export const firstVisitGraphLocation = (): GraphExplorationLocation => ({
+  ...defaultGraphLocation(), viewMode: "clusters", documentViewMode: "clusters", overviewPresentation: "documents", documentLayoutMode: "connections",
+});
+
+const lastViewKey = (key: string) => `margin-graph-last-view:${key}`;
+
 function normalizeLocation(value: any): GraphExplorationLocation | null {
   try {
     if (!value || !value.viewport || ![value.viewport.x, value.viewport.y, value.viewport.scale].every(Number.isFinite) || value.viewport.scale <= 0) return null;
@@ -100,6 +107,15 @@ function readHistory(key?: string): GraphHistory | null {
   } catch { return null; }
 }
 
+/** The last map view from an earlier session, so Map view reopens where the user left it. */
+function readLastView(key?: string): GraphHistory | null {
+  if (!key) return null;
+  try {
+    const present = normalizeLocation(JSON.parse(localStorage.getItem(lastViewKey(key)) ?? "null"));
+    return present ? { present, past: [], future: [] } : null;
+  } catch { return null; }
+}
+
 /** A pinned split pane keeps its document while the rest of the map navigates. */
 export function keepPinnedDock(location: GraphExplorationLocation, pinnedId: string | null): GraphExplorationLocation {
   if (!pinnedId || location.dockedConversationId === pinnedId) return location;
@@ -108,8 +124,11 @@ export function keepPinnedDock(location: GraphExplorationLocation, pinnedId: str
 
 export function useGraphExplorationNavigation(workspaceKey?: string) {
   const [initial] = useState(() => readHistory(workspaceKey));
-  const [history, setHistory] = useState<GraphHistory>(() => initial ?? ({
-    past: [], present: defaultGraphLocation(), future: [],
+  // A view from an earlier session reopens refitted, since documents may have
+  // moved or changed since its camera was saved.
+  const [history, setHistory] = useState<GraphHistory>(() => initial ?? readLastView(workspaceKey) ?? ({
+    // Without an account key nothing can be remembered, so there is no first visit to mark.
+    past: [], present: workspaceKey ? firstVisitGraphLocation() : defaultGraphLocation(), future: [],
   }));
   const [pinnedDockId, setPinnedDockIdState] = useState<string | null>(null);
   const pinnedDockRef = useRef<string | null>(null);
@@ -137,6 +156,10 @@ export function useGraphExplorationNavigation(workspaceKey?: string) {
     if (!workspaceKey) return;
     try { sessionStorage.setItem(`margin-graph-location:${workspaceKey}`, JSON.stringify(history)); }
     catch { /* Navigation remains available when session storage is unavailable. */ }
+    // A later session reopens this view. Readers and search are left behind,
+    // since the documents they point at may have changed by then.
+    try { localStorage.setItem(lastViewKey(workspaceKey), JSON.stringify({ ...history.present, dockedConversationId: null, source: null, readerScroll: 0, query: "" })); }
+    catch { /* Map view then opens on its first-visit view next session. */ }
   }, [history, workspaceKey]);
   return { state: history.present, update, navigate, back, forward, pinnedDockId, setPinnedDockId, canGoBack: history.past.length > 0, canGoForward: history.future.length > 0, restored: Boolean(initial) };
 }

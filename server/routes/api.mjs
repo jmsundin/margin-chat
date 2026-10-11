@@ -9,6 +9,7 @@ import { createRateLimiter, getClientAddress } from "../http/rateLimit.mjs";
 import { createNdjsonResponse, sendStreamingJson } from "../http/streamingJson.mjs";
 import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
+import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
@@ -100,6 +101,7 @@ export function createApiHandler({
   topicExpansionService,
   publicMapService,
   webSearchService,
+  topicEmbeddingService,
   env = process.env,
   rateLimits,
 }) {
@@ -108,6 +110,7 @@ export function createApiHandler({
   const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
+  const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
 
@@ -622,6 +625,23 @@ export function createApiHandler({
             ? acknowledgeVaultCommit(await vaultService.commit(userId, body?.changes, { acknowledge: acknowledgesChanges(url) }), body.changes.map((change) => change.path), url)
             : await vaultService.rebuild(userId);
           await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (route?.id === "vaultTopics") {
+          if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+              !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+            throw new HttpError(403, "Group documents from Margin Chat.");
+          }
+          const body = await readJsonBody(request, 16 * 1024);
+          const since = typeof body?.since === "string" && !Number.isNaN(Date.parse(body.since)) ? body.since : null;
+          const ai = body?.ai === undefined ? undefined : validateAIOptions(body.ai);
+          const scope = createRequestAbortScope(request, response);
+          try {
+            const context = await executeChatReply.createUsageContext({ user: authContext.user, signal: scope.signal, operation: "topic-embeddings" });
+            const result = await topicEmbeddings.sync({ userId, since,
+              context: { ...context, ...(ai ? { allowedProviders: ai.allowedProviders } : {}) } });
+            await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          } finally { scope.dispose(); }
           return;
         }
       }

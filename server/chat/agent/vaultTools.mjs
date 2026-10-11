@@ -31,15 +31,17 @@ export const VAULT_TOOL_DEFINITIONS = [
 const VAULT_TOOL_NAMES = new Set(VAULT_TOOL_DEFINITIONS.map((tool) => tool.name));
 
 /**
- * Which documents the vault tools may reach: all of them when the user lets AI
- * search their workspace, only the chosen material (plus this conversation and
- * its ancestors) when they picked it, and none otherwise. Null means no vault tools.
+ * Which documents the vault tools may reach, from the request's agent scope: the
+ * whole vault by default, only the chosen material (plus this conversation and
+ * its ancestors) when the user limits it to that, and none when they limit it to
+ * this conversation. Null means no vault tools.
  */
 export function vaultToolAccess(chatRequest, workspace) {
   if (!workspace?.userId || !workspace.vault?.configured) return null;
   const ai = chatRequest.ai ?? {};
-  if (ai.contextScope === "workspace") return () => true;
-  if (ai.contextScope !== "selected") return null;
+  const scope = ai.agentScope ?? "workspace";
+  if (scope === "workspace") return () => true;
+  if (scope !== "selected") return null;
   const allowed = new Set([chatRequest.conversation.id, ...(ai.selectedConversationIds ?? []),
     ...(chatRequest.conversation.ancestorContext ?? []).map((item) => item.id)]);
   return (id) => allowed.has(id);

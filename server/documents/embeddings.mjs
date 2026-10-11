@@ -5,7 +5,7 @@ export const DOCUMENT_EMBEDDING_MODEL = "text-embedding-3-small";
 export const DOCUMENT_EMBEDDING_DIMENSIONS = 1536;
 const EMBEDDING_BATCH_SIZE = 64;
 
-export async function createEmbeddings({ apiKey, inputs, userId, signal, usageMeter }) {
+export async function createEmbeddings({ apiKey, inputs, userId, signal, usageMeter, dimensions = DOCUMENT_EMBEDDING_DIMENSIONS }) {
   signal?.throwIfAborted();
   if (!apiKey) {
     throw new HttpError(
@@ -26,7 +26,7 @@ export async function createEmbeddings({ apiKey, inputs, userId, signal, usageMe
       url: "https://api.openai.com/v1/embeddings",
       usageMeter,
       body: {
-        dimensions: DOCUMENT_EMBEDDING_DIMENSIONS,
+        dimensions,
         input: batch,
         model: DOCUMENT_EMBEDDING_MODEL,
         user: userId,
@@ -45,7 +45,7 @@ export async function createEmbeddings({ apiKey, inputs, userId, signal, usageMe
       batchEmbeddings.some(
         (embedding) =>
           !Array.isArray(embedding) ||
-          embedding.length !== DOCUMENT_EMBEDDING_DIMENSIONS,
+          embedding.length !== dimensions,
       )
     ) {
       throw new HttpError(502, "OpenAI returned invalid document embeddings.");

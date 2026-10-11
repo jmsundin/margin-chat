@@ -13,6 +13,8 @@ export interface AISettings {
   agent?: boolean;
   /** Spending cap for one agent run, in micro-dollars (one of the offered choices). */
   agentBudgetMicros?: number;
+  /** What Agent mode may search in the saved vault: all of it unless the user limits it. */
+  agentScope?: "conversation" | "selected" | "workspace";
 }
 export interface AgentRunStep {
   kind: "tool" | "note";

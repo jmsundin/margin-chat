@@ -47,6 +47,7 @@ import { readAgentConversation, searchAgentPassages, searchVaultPassages } from 
 import { normalizeAppState } from "./validation.mjs";
 import * as captures from "./captureRepository.mjs";
 import * as publicMap from "./publicMapRepository.mjs";
+import * as topics from "./topicRepository.mjs";
 
 const { Pool } = pg;
 
@@ -405,5 +406,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     createPublicAnswer: (args) => withClient((client) => publicMap.createPublicAnswer(client, args)),
     listPublicAnswers: (args) => withClient((client) => publicMap.listPublicAnswers(client, args)),
     deletePublicAnswer: (args) => withClient((client) => publicMap.deletePublicAnswer(client, args)),
+    listStaleTopicSources: (args) => withClient((client) => topics.listStaleTopicSources(client, args)),
+    saveTopicEmbeddings: (args) => withClient((client) => topics.saveTopicEmbeddings(client, args)),
+    readTopicEmbeddings: (args) => withClient((client) => topics.readTopicEmbeddings(client, args)),
   };
 }

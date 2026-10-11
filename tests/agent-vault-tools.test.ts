@@ -59,7 +59,7 @@ function workspace() {
 
 function request(ai: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return {
-    ai: { mode: "balanced", contextScope: "workspace", selectedConversationIds: [], ...ai },
+    ai: { mode: "balanced", contextScope: "conversation", selectedConversationIds: [], ...ai },
     conversation: { id: "current", title: "Current", ancestorContext: [] },
     messages: [{ role: "user", content: "What did we decide about pricing?" }],
     workspaceContext: [],
@@ -123,7 +123,7 @@ describe("agent vault tools", () => {
   });
 
   test("the request's own snapshot wins over the saved copy", async () => {
-    const run = tools({}, { workspaceContext: [{ id: "plan", title: "Launch plan", updatedAt: at(21), content: "Unsaved: pricing moves to usage.", messages: [] }] });
+    const run = tools({ contextScope: "workspace" }, { workspaceContext: [{ id: "plan", title: "Launch plan", updatedAt: at(21), content: "Unsaved: pricing moves to usage.", messages: [] }] });
     expect((await run("read_document", { document_id: "plan" }) as any).document.text).toBe("Unsaved: pricing moves to usage.");
   });
 
@@ -135,13 +135,15 @@ describe("agent vault tools", () => {
     expect((await run("list_related", { document_id: "note" }) as any).related.map((item: any) => [item.title, item.relation])).toEqual([["Launch plan", "linked from"]]);
   });
 
-  test("selected material limits what the tools reach, and this-chat-only offers none", async () => {
+  test("the whole vault by default; the user can limit it to selected material or this chat", async () => {
     const workspaceAccess = { userId, vault, database };
-    expect(agentToolDefinitions(request({ contextScope: "conversation" }), workspaceAccess).map((tool: any) => tool.name))
+    // The AI context setting for plain Ask AI doesn't limit the agent.
+    expect(agentToolDefinitions(request({ contextScope: "conversation" }), workspaceAccess).map((tool: any) => tool.name).slice(3))
+      .toEqual(["search_vault", "read_document", "list_related"]);
+    expect(agentToolDefinitions(request({ agentScope: "conversation" }), workspaceAccess).map((tool: any) => tool.name))
       .toEqual(["search_conversations", "list_recent_conversations", "get_conversation"]);
     expect(agentToolDefinitions(request({}), null)).toHaveLength(3);
-    expect(agentToolDefinitions(request({}), workspaceAccess).map((tool: any) => tool.name).slice(3)).toEqual(["search_vault", "read_document", "list_related"]);
-    const run = tools({ contextScope: "selected", selectedConversationIds: ["note"] });
+    const run = tools({ agentScope: "selected", selectedConversationIds: ["note"] });
     expect((await run("search_vault", { query: "pricing" }) as any).results.map((hit: any) => hit.title)).toEqual(["Pricing ideas"]);
     expect(await run("read_document", { document_id: "plan" })).toMatchObject({ found: false, error: expect.stringContaining("outside") });
     expect((await run("list_related", { document_id: "note" }) as any).related).toEqual([]);
@@ -165,25 +167,25 @@ describe("vault tools in the chat service", () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => { globalThis.fetch = originalFetch; });
 
-  function reply(contextScope: string) {
+  function reply(agentScope?: string) {
     const bodies: any[] = [];
     globalThis.fetch = (async (_url: any, init: any) => { bodies.push(JSON.parse(init.body)); return Response.json({ output_text: "Done.", output: [] }); }) as typeof fetch;
     const service = createChatService({ autoRouter: async () => null, database: {}, runtimeConfig: { defaultBackendProvider: "openai-api" },
       env: { OPENAI_API_KEY: "openai-test" }, vaultService: { configured: true } });
-    const payload = { ...request({ contextScope, agent: true }), serviceId: "openai-api", modelId: getDefaultModelIdForService("openai-api"),
+    const payload = { ...request({ agent: true, ...(agentScope ? { agentScope } : {}) }), serviceId: "openai-api", modelId: getDefaultModelIdForService("openai-api"),
       conversation: { ancestorContext: [], branchAnchor: null, id: "current", parentId: null, title: "Current" } };
     return service.requestReply(payload, { userId: "owner" }).then(() => bodies[0]);
   }
 
-  test("offers the vault tools when the user lets AI search their workspace", async () => {
-    const body = await reply("workspace");
+  test("offers the vault tools by default", async () => {
+    const body = await reply();
     expect(body.tools.map((tool: any) => tool.name)).toContain("search_vault");
     expect(body.instructions).toContain("saved vault in the cloud");
   });
 
-  test("otherwise tells the model how the user can widen its reach", async () => {
+  test("when the user limits the agent, tells the model how the user can widen its reach", async () => {
     const body = await reply("conversation");
     expect(body.tools.map((tool: any) => tool.name)).not.toContain("search_vault");
-    expect(body.instructions).toContain("Search relevant notes and conversations in my workspace");
+    expect(body.instructions).toContain("All my saved documents");
   });
 });
