@@ -48,6 +48,7 @@ import { normalizeAppState } from "./validation.mjs";
 import * as captures from "./captureRepository.mjs";
 import * as publicMap from "./publicMapRepository.mjs";
 import * as topics from "./topicRepository.mjs";
+import * as passages from "./passageRepository.mjs";
 
 const { Pool } = pg;
 
@@ -409,5 +410,18 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     listStaleTopicSources: (args) => withClient((client) => topics.listStaleTopicSources(client, args)),
     saveTopicEmbeddings: (args) => withClient((client) => topics.saveTopicEmbeddings(client, args)),
     readTopicEmbeddings: (args) => withClient((client) => topics.readTopicEmbeddings(client, args)),
+    listStalePassageSources: (args) => withClient((client) => passages.listStalePassageSources(client, args)),
+    listStaleFilePassageSources: (args) => withClient((client) => passages.listStaleFilePassageSources(client, args)),
+    deleteMissingPassageSources: (args) => withClient((client) => passages.deleteMissingPassageSources(client, args)),
+    replacePassageSources: (args) => withClient((client) => passages.replacePassageSources(client, args)),
+    listUnembeddedPassages: (args) => withClient((client) => passages.listUnembeddedPassages(client, args)),
+    readMatchingTopicEmbeddings: (args) => withClient((client) => passages.readMatchingTopicEmbeddings(client, args)),
+    savePassageEmbeddings: (args) => withClient((client) => passages.savePassageEmbeddings(client, args)),
+    clearPassageEmbeddings: (args) => withClient((client) => passages.clearPassageEmbeddings(client, args)),
+    readPassageIndexStatus: (args) => withClient((client) => passages.readPassageIndexStatus(client, args)),
+    readVaultIndexSettings: (args) => withClient((client) => passages.readVaultIndexSettings(client, args)),
+    writeVaultIndexSettings: (args) => withClient((client) => passages.writeVaultIndexSettings(client, args)),
+    searchPassages: (args) => withClient((client) => passages.searchPassages(client, args)),
+    readFilePassages: (args) => withClient((client) => passages.readFilePassages(client, args)),
   };
 }

@@ -33,7 +33,7 @@ export default function AIControls({ conversation, conversations, disabled, onCh
         <select aria-label="Context available to AI" disabled={disabled} value={settings.contextScope} onChange={(event) => onChange({ ...settings, contextScope: event.target.value as AISettings["contextScope"] })}>
           <option value="conversation">This conversation, its branch context and attachments</option>
           <option value="selected">Also include selected notes and conversations</option>
-          <option value="workspace">Search relevant notes and conversations in my workspace</option>
+          <option value="workspace">Search relevant documents, notes, chats and files in my workspace</option>
         </select>
       </label>
       {agentOn ? <label>Agent mode can search
@@ -59,7 +59,7 @@ export default function AIControls({ conversation, conversations, disabled, onCh
         })} />{labels[provider]}</label>)}
       </fieldset>
       {!permitted.length ? <p role="status">Choose at least one provider before sending a message.</p> : null}
-      {!permitted.includes("openai") ? <p className="ai-context-help">Attachment search uses OpenAI. With OpenAI excluded, original files are saved but their contents are not indexed or searched.</p> : null}
+      {!permitted.includes("openai") ? <p className="ai-context-help">Search by meaning uses OpenAI. With OpenAI excluded, this chat's attachments aren't searched and your vault is searched by exact words only.</p> : null}
       <p className="ai-context-help">Context uses your latest document edits, including margin documents within the selected scope. Each response records the sources and model it used.</p>
     </div>
   </DismissibleDetails>;

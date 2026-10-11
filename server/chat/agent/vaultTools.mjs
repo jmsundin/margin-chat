@@ -2,6 +2,7 @@ import { decodeReadableMarkdown, readDocumentGraphProperties, readFrontmatterVal
 import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearchTerms } from "../../vault/search.mjs";
 
 const SEARCH_RESULTS = 8;
+const INDEX_RESULTS = 20;
 const TITLE_SCAN_LIMIT = 100;
 const RELATED_RESULTS = 20;
 const MESSAGES_READ = 12;
@@ -13,12 +14,12 @@ const documentId = { document_id: { type: "string", description: "Exact document
 export const VAULT_TOOL_DEFINITIONS = [
   {
     name: "search_vault",
-    description: "Search the titles and text of the user's saved documents, notes and chats in their cloud vault: title matches first, then text matches, each newest first. Every word must appear, so use one to three distinctive keywords. Private margin comments are never searched.",
-    parameters: { type: "object", properties: { query: { type: "string", description: "One to three keywords." } }, required: ["query"], additionalProperties: false },
+    description: "Search the user's saved documents, notes, chats and uploaded files in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Private margin comments are never searched.",
+    parameters: { type: "object", properties: { query: { type: "string", description: "A few keywords or a short phrase." } }, required: ["query"], additionalProperties: false },
   },
   {
     name: "read_document",
-    description: "Read one saved document, note or chat by ID. Long text is shortened; a chat returns its newest messages.",
+    description: "Read one saved document, note, chat or uploaded file by ID. Long text is shortened; a chat returns its newest messages.",
     parameters: { type: "object", properties: documentId, required: ["document_id"], additionalProperties: false },
   },
   {
@@ -80,10 +81,28 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
   const entries = () => (indexed ??= vault.index(userId).then((index) => index.entries.filter((entry) => entry.type === "conversation")));
   const summary = (entry, extra) => ({ document_id: entry.id, title: entry.title, kind: entry.kind, updated_at: entry.updated ?? entry.created ?? null, ...extra });
 
+  /** The vault's passage index, best passage per document; null when it can't be searched. */
+  async function indexHits(query) {
+    if (!workspace.passages) return null;
+    try {
+      const found = await workspace.passages.search(query, { limit: INDEX_RESULTS });
+      const best = new Map();
+      for (const hit of found.results) {
+        if (!permits(hit.id) || best.has(hit.id)) continue;
+        best.set(hit.id, hit);
+      }
+      return { hits: [...best.values()], warning: found.warning };
+    } catch (error) {
+      console.error("Agent vault index search failed", error);
+      return null;
+    }
+  }
+
   async function search(args) {
     const query = String(args.query ?? "").trim();
     const terms = vaultSearchTerms(query);
     if (!terms.length) return { query, results: [], total_matches: 0, truncated: false };
+    const indexed = indexHits(query);
     const listed = await entries();
     const hits = new Map();
     let truncated = false;
@@ -93,6 +112,16 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
       if (hits.size >= TITLE_SCAN_LIMIT) { truncated = true; break; }
       hits.set(entry.id, summary(entry, { matched: "title" }));
     }
+    const index = await indexed;
+    for (const hit of index?.hits ?? []) {
+      const section = { ...(hit.heading ? { section: hit.heading } : {}), ...(hit.pageNumber ? { page: hit.pageNumber } : {}), snippet: hit.snippet };
+      const existing = hits.get(hit.id);
+      if (existing) { if (!existing.snippet) Object.assign(existing, section); continue; }
+      const entry = hit.sourceKind === "conversation" ? listed.find((candidate) => candidate.id === hit.id) : null;
+      hits.set(hit.id, { ...(entry ? summary(entry) : { document_id: hit.id, title: hit.title, kind: hit.kind, updated_at: hit.updatedAt ?? null }),
+        matched: hit.matched === "meaning" ? "meaning" : "text", ...section });
+    }
+    // Word-part matches the index misses (such as "auth" in "authentication") follow.
     let textSearchFailed = !database?.searchAgentPassages;
     const rows = textSearchFailed ? [] : (await Promise.all(PASSAGE_SOURCES.map((source) =>
       database.searchAgentPassages({ userId, source, patterns: likePatterns(terms), limit: 20 }).catch((error) => {
@@ -114,9 +143,10 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
         matched: "text", ...(snippet ? { snippet } : {}) });
     }
     const results = [...hits.values()];
+    const warning = textSearchFailed && !index ? "Only titles were searched; document text could not be searched." : index?.warning;
     return {
       query, results: results.slice(0, SEARCH_RESULTS), total_matches: results.length, truncated: truncated || results.length > SEARCH_RESULTS,
-      ...(textSearchFailed ? { warning: "Only titles were searched; document text could not be searched." } : {}),
+      ...(warning ? { warning } : {}),
     };
   }
 
@@ -133,7 +163,7 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
       ? { id, title: local.title, kind: local.kind, parentId: local.parentId, updatedAt: local.updatedAt,
         ...(local.kind === "note" ? { text: local.messages[0]?.content ?? "" } : { messages: local.messages.slice(-MESSAGES_READ), messageCount: local.messages.length }) }
       : stored;
-    if (!item) return { document_id: id, found: false };
+    if (!item) return workspace.passages ? readFile(id) : { document_id: id, found: false };
     const base = { document_id: id, title: item.title, kind: item.kind, parent_id: item.parentId ?? null, updated_at: item.updatedAt ?? null };
     if (typeof item.text === "string") {
       const text = clip(item.text, readCharacters);
@@ -142,6 +172,19 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
     const messages = item.messages.map((message) => ({ role: message.role, content: clip(message.content, MESSAGE_CHARACTERS) }));
     const truncated = item.messageCount > messages.length || item.messages.some((message) => message.content.length > MESSAGE_CHARACTERS);
     return { found: true, document: { ...base, messages, message_count: item.messageCount, truncated } };
+  }
+
+  /** An uploaded file, from the text the vault index extracted from it. */
+  async function readFile(id) {
+    const file = await workspace.passages.readFile(id);
+    if (!file) return { document_id: id, found: false };
+    const base = { document_id: id, title: file.title, kind: "file", updated_at: file.updatedAt };
+    if (!file.passages.length) {
+      return { found: true, document: { ...base, text: "", truncated: false, ...(file.error ? { error: "This file's text couldn't be read." } : {}) } };
+    }
+    const full = file.passages.map((passage) => passage.pageNumber ? `[Page ${passage.pageNumber}]\n${passage.content}` : passage.content).join("\n\n");
+    const text = clip(full, readCharacters);
+    return { found: true, document: { ...base, text, truncated: text.length < full.length } };
   }
 
   async function typedRelations(entry) {

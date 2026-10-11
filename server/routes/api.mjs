@@ -10,6 +10,7 @@ import { createNdjsonResponse, sendStreamingJson } from "../http/streamingJson.m
 import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createTopicEmbeddingService } from "../documents/topics.mjs";
+import { createVaultPassageService } from "../vault/passageIndex.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
@@ -102,6 +103,7 @@ export function createApiHandler({
   publicMapService,
   webSearchService,
   topicEmbeddingService,
+  passageService,
   env = process.env,
   rateLimits,
 }) {
@@ -111,6 +113,7 @@ export function createApiHandler({
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
   const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
+  const vaultPassages = passageService ?? createVaultPassageService({ database, env });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
 
@@ -571,8 +574,13 @@ export function createApiHandler({
             emitted = true;
             writing = writing.then(() => stream.write(value));
           };
+          // Search by meaning embeds the query, which is metered like any other AI request.
+          const related = vaultPassages.available ? async () => vaultPassages.search({
+            userId, query, limit: Math.min(limit, 10),
+            context: await executeChatReply.createUsageContext({ user: authContext.user, signal: aborted.signal, operation: "vault-search" }),
+          }) : null;
           try {
-            await vaultService.search(userId, query, { limit, signal: aborted.signal, emit });
+            await vaultService.search(userId, query, { limit, signal: aborted.signal, emit, related });
             await writing;
           } catch (error) {
             if (!emitted) throw error;
@@ -641,6 +649,30 @@ export function createApiHandler({
             const result = await topicEmbeddings.sync({ userId, since,
               context: { ...context, ...(ai ? { allowedProviders: ai.allowedProviders } : {}) } });
             await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
+          } finally { scope.dispose(); }
+          return;
+        }
+        if (route?.id === "vaultPassageStatus") {
+          sendJson(response, 200, await vaultPassages.status(userId), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (route?.id === "vaultPassageSync" || route?.id === "vaultPassageSettings") {
+          if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+              !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+            throw new HttpError(403, "Index your vault from Margin Chat.");
+          }
+          const body = await readJsonBody(request, 16 * 1024);
+          if (route.id === "vaultPassageSettings") {
+            if (typeof body?.cloudEmbeddings !== "boolean") throw new HttpError(400, "Say whether search by meaning is on.");
+            sendJson(response, 200, await vaultPassages.setCloudEmbeddings({ userId, enabled: body.cloudEmbeddings }), { "Cache-Control": "private, no-store" });
+            return;
+          }
+          const ai = body?.ai === undefined ? undefined : validateAIOptions(body.ai);
+          const scope = createRequestAbortScope(request, response);
+          try {
+            const context = await executeChatReply.createUsageContext({ user: authContext.user, signal: scope.signal, operation: "vault-index" });
+            const result = await vaultPassages.sync({ userId, context: { ...context, ...(ai ? { allowedProviders: ai.allowedProviders } : {}) } });
+            sendJson(response, 200, result, { "Cache-Control": "private, no-store" });
           } finally { scope.dispose(); }
           return;
         }

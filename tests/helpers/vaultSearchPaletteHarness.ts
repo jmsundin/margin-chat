@@ -132,5 +132,21 @@ await key("Enter");
 assert.equal(opened.at(-1), "here:passage:porch");
 checks.push("passages the server finds in cloud documents stream in and open");
 
+// The search index adds its best matches by meaning, ranked, ahead of the exact-word passages.
+provider = createVaultSearchProvider(() => ({ conversations, cloudDocuments }), async (_query, _options, onEvent) => {
+  onEvent({ type: "related", results: [{ id: "trees", sourceKind: "conversation", kind: "chat", title: "Trees vs. shade sails", heading: null,
+    snippet: "Fabric shade only blocks light.", blockId: null, pageNumber: null, passageIndex: 1, updatedAt: "2026-10-07T10:00:00Z", matched: "meaning" }] });
+  onEvent({ type: "done", revision: 3 });
+});
+await act(async () => { root.render(createElement(Host)); setOpen(true); });
+await type("cooling streets");
+await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+const sections = [...dialog()!.querySelectorAll(".vault-search-section")].map((section) => section.firstElementChild?.textContent);
+assert.deepEqual(sections, ["Best matches"]);
+assert.equal(selectedTitle(), "Trees vs. shade sailsRelated by meaning");
+await key("Enter");
+assert.equal(opened.at(-1), "here:passage:trees");
+checks.push("best matches by meaning are listed first and open");
+
 await act(async () => { root.unmount(); });
 console.log(JSON.stringify({ checks }));

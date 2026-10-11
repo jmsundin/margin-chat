@@ -132,4 +132,55 @@ describe("document RAG", () => {
       "[Source 1: policy.md]",
     );
   });
+  test("with All notes as context, adds the best passages from the saved vault, skipping what was already sent", async () => {
+    let geminiBody: Record<string, any> | null = null;
+    const searches: any[] = [];
+    const passageService = {
+      available: true,
+      search: async (args: any) => {
+        searches.push(args);
+        return { meaning: true, results: [
+          { id: "sent", sourceKind: "conversation", kind: "note", title: "Already sent", heading: null, text: "Sent in the snapshot." },
+          { id: "guide", sourceKind: "conversation", kind: "document", title: "Car guide", heading: "Tyres", text: "Rotate the tyres every season.", updatedAt: "2026-10-01T10:00:00.000Z" },
+          { id: "file-1", sourceKind: "attachment", kind: "file", title: "Manual.pdf", heading: "Page 4", text: "Pressure is 2.3 bar." },
+        ] };
+      },
+    };
+    const chatService = createChatService({
+      database: {},
+      documentService: { retrieveContext: async () => ({ chunks: [], instruction: null }) },
+      passageService,
+      env: { GEMINI_API_KEY: "gemini-key" },
+      runtimeConfig: {
+        defaultBackendProvider: "gemini-api",
+        geminiModel: "gemini-3.1-pro-preview",
+        huggingFaceModel: "openai/gpt-oss-120b",
+        openaiModel: "gpt-5.6",
+        xaiModel: "grok-4.5",
+      },
+    });
+    globalThis.fetch = (async (_input, init) => {
+      geminiBody = JSON.parse(String(init?.body));
+      return Response.json({ candidates: [{ content: { parts: [{ text: "Every season [Vault 1]." }] } }] });
+    }) as typeof fetch;
+
+    const payload = (contextScope: string) => ({
+      ai: { mode: "balanced", contextScope, selectedConversationIds: [] },
+      conversation: { ancestorContext: [], branchAnchor: null, documents: [], id: "conversation-1", parentId: null, title: "Car questions" },
+      messages: [{ content: "How often should I rotate my tyres?", role: "user" }],
+      workspaceContext: [{ id: "sent", title: "Already sent", updatedAt: "2026-10-01T10:00:00.000Z", content: "Sent in the snapshot.", messages: [] }],
+      modelId: "gemini-3.1-pro-preview",
+      serviceId: "gemini-api",
+    });
+    await chatService.requestReply(payload("workspace"), { userId: "u1" });
+    const system = geminiBody?.system_instruction.parts[0].text as string;
+    expect(searches[0]).toMatchObject({ userId: "u1", query: "How often should I rotate my tyres?" });
+    expect(system).toContain("[Vault 1: Car guide › Tyres]\nRotate the tyres every season.");
+    expect(system).toContain("[Vault 2: Manual.pdf › Page 4]\nPressure is 2.3 bar.");
+    expect(system).not.toContain("[Vault 3");
+
+    // Only when the user chose their whole workspace as context.
+    await chatService.requestReply(payload("conversation"), { userId: "u1" });
+    expect(searches).toHaveLength(1);
+  });
 });

@@ -99,9 +99,11 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   const searching = !!query.trim();
   const documents = results?.documents ?? [];
   const passages = results?.passages ?? [];
+  const related = searching ? results?.related ?? [] : [];
   const shownPassages = passages.slice(0, passageLimit);
   const entries: Entry[] = [
     ...documents.map((hit) => ({ kind: "document" as const, hit })),
+    ...related.map((hit) => ({ kind: "passage" as const, hit })),
     ...shownPassages.map((hit) => ({ kind: "passage" as const, hit })),
   ];
   const selected = entries.find((entry) => entryKey(entry) === selectedKey) ?? entries[0] ?? null;
@@ -187,7 +189,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
 
   const status = !searching ? "Recent documents. Type to search titles and passages in your whole vault."
     : stale ? "Searching…"
-    : `${documents.length} ${documents.length === 1 ? "title" : "titles"} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
+    : `${documents.length} ${documents.length === 1 ? "title" : "titles"}${related.length ? `, ${related.length} best ${related.length === 1 ? "match" : "matches"}` : ""} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
 
   const modal = <div className="vault-search-backdrop" role="presentation" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
     onClick={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose(); }}>
@@ -214,7 +216,12 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
               <span className="vault-search-row-title">{highlight(hit.title, query)}{hit.target.kind === "cloud" ? <span className="vault-search-cloud">{openingPath === hit.target.path ? "Opening…" : "In cloud"}</span> : null}</span>
               <span className="vault-search-meta">{meta(hit)}</span>
             </>))}
-            {searching && passages.length ? <li className="vault-search-section" role="presentation"><span>Passages</span><span>{passages.length}{results?.complete === false ? " so far" : ""}</span></li> : null}
+            {related.length ? <li className="vault-search-section" role="presentation" title="Ranked by matching words and by meaning"><span>Best matches</span><span>{related.length}</span></li> : null}
+            {related.map((hit) => row({ kind: "passage", hit }, <>
+              <span className="vault-search-row-title">{hit.title}{hit.cloudPath ? <span className="vault-search-cloud">{openingPath === hit.cloudPath ? "Opening…" : "In cloud"}</span> : null}<span className="vault-search-meta">{hit.matchLabel}</span></span>
+              <span className="vault-search-snippet">{highlight(hit.preview, query)}</span>
+            </>))}
+            {searching && passages.length ? <li className="vault-search-section" role="presentation"><span>{related.length ? "All passages with these words" : "Passages"}</span><span>{passages.length}{results?.complete === false ? " so far" : ""}</span></li> : null}
             {shownPassages.map((hit) => row({ kind: "passage", hit }, <>
               <span className="vault-search-row-title">{hit.title}{hit.cloudPath ? <span className="vault-search-cloud">{openingPath === hit.cloudPath ? "Opening…" : "In cloud"}</span> : null}<span className="vault-search-meta">{meta(hit)}</span></span>
               <span className="vault-search-snippet">{highlight(hit.preview, query)}</span>

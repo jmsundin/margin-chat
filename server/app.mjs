@@ -11,6 +11,7 @@ import { createDocumentService } from "./documents/index.mjs";
 import { createApiHandler } from "./routes/api.mjs";
 import { createCaptureService } from "./captures/index.mjs";
 import { createVaultService } from "./vault/index.mjs";
+import { createVaultPassageService } from "./vault/passageIndex.mjs";
 import { createSemanticService } from "./semantic/index.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +37,7 @@ export function createAppContext(env = process.env) {
     env,
   });
   const vaultService = createVaultService({ database, env, backgroundProjection: true });
+  const passageService = createVaultPassageService({ database, env });
   const semanticService = createSemanticService({ env });
   const documentService = createDocumentService({
     database,
@@ -48,6 +50,7 @@ export function createAppContext(env = process.env) {
     documentService,
     env,
     runtimeConfig,
+    passageService,
     semanticService,
     vaultService,
   });
@@ -62,6 +65,7 @@ export function createAppContext(env = process.env) {
     documentService,
     runtimeConfig,
     vaultService,
+    passageService,
     semanticService,
   });
 

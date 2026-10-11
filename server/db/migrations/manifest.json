@@ -65,6 +65,11 @@
       "id": "0013_topic_embeddings",
       "file": "0013_topic_embeddings.sql",
       "transaction": true
+    },
+    {
+      "id": "0015_vault_passages",
+      "file": "0015_vault_passages.sql",
+      "transaction": true
     }
   ]
 }

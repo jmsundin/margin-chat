@@ -1859,8 +1859,8 @@ button {
   margin: 6px 0 0;
 }
 
-.jev-settings-section { align-items: flex-start; }
-.jev-settings-section input { accent-color: var(--ink); cursor: pointer; flex: 0 0 auto; height: 22px; width: 22px; }
+.jev-settings-section, .app-settings-switch-section { align-items: flex-start; }
+.jev-settings-section input, .app-settings-switch-section input { accent-color: var(--ink); cursor: pointer; flex: 0 0 auto; height: 22px; width: 22px; }
 .conversation-graph-node-category { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 
 .app-settings-option-group {

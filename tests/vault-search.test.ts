@@ -94,6 +94,37 @@ test("the server adds what the rest of the vault holds, after this device answer
   expect(last.passages.filter((hit) => hit.conversationId === "heat")).toHaveLength(1);
 });
 
+test("the search index's best matches by meaning come back ranked, and open where they live", async () => {
+  const related: VaultSearchEvent = { type: "related", results: [
+    { id: "trees", sourceKind: "conversation", kind: "chat", title: "Trees vs. shade sails", heading: null, snippet: "Trees cool the air",
+      blockId: null, pageNumber: null, passageIndex: 0, updatedAt: "2026-10-07T10:00:00Z", matched: "meaning", path: "trees.md" },
+    { id: "plants", sourceKind: "conversation", kind: "note", title: "Shade-tolerant plants", heading: "Ferns", snippet: "Ferns like it dim",
+      blockId: null, pageNumber: null, passageIndex: 1, updatedAt: "2026-09-01T10:00:00Z", matched: "both", path: "plants.md" },
+    { id: "file-1", sourceKind: "attachment", kind: "file", title: "Canopy study.pdf", heading: "Page 3", snippet: "Canopy cover lowers street temperature",
+      blockId: null, pageNumber: 3, passageIndex: 2, updatedAt: "2026-09-02T10:00:00Z", matched: "meaning", attachedTo: "heat" },
+    // A file attached nowhere this device can open is left out.
+    { id: "file-2", sourceKind: "attachment", kind: "file", title: "Orphan.pdf", heading: null, snippet: "Shade",
+      blockId: null, pageNumber: null, passageIndex: 0, updatedAt: null, matched: "keyword" },
+  ] };
+  const searchCloud: VaultCloudSearch = async (_query, _options, onEvent) => { onEvent(related); onEvent({ type: "done", revision: 7 }); };
+  const emitted: VaultSearchResults[] = [];
+  createVaultSearchProvider(() => input, searchCloud).search({ query: "cool streets", scope: "all" }, (results) => emitted.push(results));
+  await settle();
+  const last = emitted.at(-1)!;
+  expect(last.related!.map((hit) => [hit.conversationId, hit.matchLabel])).toEqual([
+    ["trees", "Related by meaning"], ["plants", "Ferns · Same words and meaning"], ["heat", "Page 3 · Related by meaning"],
+  ]);
+  // Loaded documents open here; the rest download first.
+  expect(last.related![0].cloudPath).toBeUndefined();
+  expect(last.related![1]).toMatchObject({ cloudPath: "plants.md", evidence: { conversationId: "plants", sourceKind: "conversation" } });
+  expect(last.related![2]).toMatchObject({ title: "Canopy study.pdf", kindLabel: "File", familyTitle: "In Urban heat draft" });
+
+  const notes: VaultSearchResults[] = [];
+  createVaultSearchProvider(() => input, searchCloud).search({ query: "cool streets", scope: "notes" }, (results) => notes.push(results));
+  await settle();
+  expect(notes.at(-1)!.related!.map((hit) => hit.conversationId)).toEqual(["plants"]);
+});
+
 test("the family scope, an empty query and a failed server stay on this device", async () => {
   let calls = 0;
   const failing: VaultCloudSearch = async () => { calls++; throw new Error("This server cannot search the vault yet."); };
