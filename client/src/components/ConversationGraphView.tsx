@@ -254,7 +254,13 @@ function readDockSide(): GraphDockSide {
   } catch { return "right"; }
 }
 
-/** The panel size the user dragged to, or null to open at half the map. */
+/** The panel opens at the old maximum: 640 px, or 60% of a smaller map. */
+const DEFAULT_DOCK_SIZE = 640;
+const DEFAULT_DOCK_SHARE = 0.6;
+/** Resizing can widen the panel until only this much map is left. */
+const MIN_MAP_BESIDE_DOCK = 120;
+
+/** The panel size the user dragged to, or null for the default. */
 function readDockSize(): number | null {
   try {
     const size = Number(localStorage.getItem(DOCK_SIZE_STORAGE_KEY));
@@ -2449,15 +2455,16 @@ export default function ConversationGraphView({
   function dockAvailable() {
     return (dockVertical ? workspaceRef.current?.clientHeight : workspaceRef.current?.clientWidth) || 1000;
   }
-  // Until the user resizes it, the panel takes half the map so a document and its children fit.
+  // Until the user resizes it, the panel is wide enough for a document and its children.
   function currentDockSize() {
     if (dockWidth !== null) return dockWidth;
     const bounds = dockBodyRef.current?.parentElement?.getBoundingClientRect();
-    return (dockVertical ? bounds?.height : bounds?.width) || Math.round(dockAvailable() / 2);
+    return (dockVertical ? bounds?.height : bounds?.width) || Math.round(Math.min(DEFAULT_DOCK_SIZE, dockAvailable() * DEFAULT_DOCK_SHARE));
   }
+  const dockMaximum = Math.max(dockMinimum, dockAvailable() - MIN_MAP_BESIDE_DOCK);
 
   function resizeDock(size: number) {
-    const next = Math.round(clamp(size, dockMinimum, Math.max(dockMinimum, dockAvailable() - dockMinimum)));
+    const next = Math.round(clamp(size, dockMinimum, Math.max(dockMinimum, dockAvailable() - MIN_MAP_BESIDE_DOCK)));
     setDockWidth(next);
     try { localStorage.setItem(DOCK_SIZE_STORAGE_KEY, String(next)); }
     catch { /* The size still applies for this visit. */ }
@@ -3007,7 +3014,7 @@ export default function ConversationGraphView({
           `conversation-graph-workspace${dockedConversation || inspectedCluster ? " has-docked-chat" : ""}${!dockedConversation || dockSide === "right" ? "" : ` is-dock-${dockSide}`}`
         }
         ref={workspaceRef}
-        style={{ "--personal-map-dock-width": dockWidth === null ? "50%" : `${dockWidth}px` } as CSSProperties}
+        style={{ "--personal-map-dock-width": dockWidth === null ? `min(${DEFAULT_DOCK_SIZE}px, ${DEFAULT_DOCK_SHARE * 100}%)` : `${dockWidth}px` } as CSSProperties}
       >
         <div
           className={`conversation-graph-viewport${panelView ? " is-analysis-view" : ""}${isPanning ? " is-panning" : ""}${returningFromDocument ? " is-returning-from-document" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
@@ -3497,7 +3504,7 @@ export default function ConversationGraphView({
         {dockedConversation ? (
           <>
           <div className="conversation-graph-dock-resize" role="separator" tabIndex={0}
-            aria-label="Resize docked chat" aria-orientation={dockVertical ? "horizontal" : "vertical"} aria-valuemin={dockMinimum} aria-valuemax={Math.max(dockMinimum, dockAvailable() - dockMinimum)} aria-valuenow={currentDockSize()}
+            aria-label="Resize docked chat" aria-orientation={dockVertical ? "horizontal" : "vertical"} aria-valuemin={dockMinimum} aria-valuemax={dockMaximum} aria-valuenow={currentDockSize()}
             title={dockVertical ? "Drag to resize; use Up and Down arrow keys" : "Drag to resize; use Left and Right arrow keys"}
             onKeyDown={handleDockResizeKeyDown}
             onPointerDown={(event) => {

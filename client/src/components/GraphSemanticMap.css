@@ -42,7 +42,7 @@
 .semantic-map .conversation-graph-viewport:focus-visible { outline: 2px solid var(--accent, #5c84cc); outline-offset: -3px; }
 .semantic-map .conversation-graph-viewport:focus-visible > .conversation-graph-pan-hint { display: block; max-width: calc(100% - 32px); bottom: 64px; padding: 8px 12px; border-radius: 8px; background: var(--panel-strong); color: var(--ink); }
 .semantic-map .conversation-graph-pan-hint > span { display: block; margin-top: 4px; }
-.semantic-map .conversation-graph-workspace.has-docked-chat { grid-template-columns: minmax(0, 1fr) 8px min(60%, var(--personal-map-dock-width, 380px)); }
+.semantic-map .conversation-graph-workspace.has-docked-chat { grid-template-columns: minmax(0, 1fr) 8px min(var(--personal-map-dock-width, 380px), calc(100% - 128px)); }
 .semantic-map .conversation-graph-dock-resize { z-index: 2; cursor: col-resize; background: var(--panel-bg); touch-action: none; position: relative; }
 .semantic-map .conversation-graph-dock-resize::after { content: ""; position: absolute; left: 3px; top: calc(50% - 22px); width: 2px; height: 44px; border-radius: 2px; background: var(--line-strong); }
 .semantic-map .conversation-graph-dock-resize:hover::after, .semantic-map .conversation-graph-dock-resize:focus-visible::after { background: var(--accent, #5c84cc); }
@@ -67,13 +67,13 @@
 .conversation-graph-dock-title { min-width: 0; margin-left: 4px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Panel positions match Document View's: left, right, top or bottom of the map. */
 .semantic-map .conversation-graph-workspace { position: relative; }
-.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-left { grid-template-columns: min(60%, var(--personal-map-dock-width, 380px)) 8px minmax(0, 1fr); }
+.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-left { grid-template-columns: min(var(--personal-map-dock-width, 380px), calc(100% - 128px)) 8px minmax(0, 1fr); }
 .semantic-map .is-dock-left > .conversation-graph-dock { grid-column: 1; grid-row: 1; border-left: 0; border-right: 1px solid var(--line); }
 .semantic-map .is-dock-left > .conversation-graph-dock-resize { grid-column: 2; grid-row: 1; }
 .semantic-map .is-dock-left > .conversation-graph-viewport { grid-column: 3; grid-row: 1; }
 .semantic-map .conversation-graph-workspace.has-docked-chat:is(.is-dock-top, .is-dock-bottom) { grid-template-columns: minmax(0, 1fr); }
-.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-bottom { grid-template-rows: minmax(0, 1fr) 8px min(60%, var(--personal-map-dock-width, 380px)); }
-.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-top { grid-template-rows: min(60%, var(--personal-map-dock-width, 380px)) 8px minmax(0, 1fr); }
+.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-bottom { grid-template-rows: minmax(0, 1fr) 8px min(var(--personal-map-dock-width, 380px), calc(100% - 128px)); }
+.semantic-map .conversation-graph-workspace.has-docked-chat.is-dock-top { grid-template-rows: min(var(--personal-map-dock-width, 380px), calc(100% - 128px)) 8px minmax(0, 1fr); }
 .semantic-map :is(.is-dock-top, .is-dock-bottom) > * { grid-column: 1; }
 .semantic-map .is-dock-top > .conversation-graph-dock { grid-row: 1; }
 .semantic-map .is-dock-top > .conversation-graph-dock-resize { grid-row: 2; }
@@ -83,7 +83,7 @@
 .semantic-map .is-dock-top > .conversation-graph-dock { border-bottom: 1px solid var(--line); }
 .semantic-map :is(.is-dock-top, .is-dock-bottom) > .conversation-graph-dock-resize { cursor: row-resize; }
 .semantic-map :is(.is-dock-top, .is-dock-bottom) > .conversation-graph-dock-resize::after { left: calc(50% - 22px); top: 3px; width: 44px; height: 2px; }
-.conversation-graph-dock-drop { position: absolute; z-index: 40; display: grid; place-items: center; pointer-events: none; border: 2px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 18%, transparent); --drop-size: min(60%, var(--personal-map-dock-width, 380px)); }
+.conversation-graph-dock-drop { position: absolute; z-index: 40; display: grid; place-items: center; pointer-events: none; border: 2px solid var(--accent); border-radius: 8px; background: color-mix(in srgb, var(--accent) 18%, transparent); --drop-size: var(--personal-map-dock-width, 380px); }
 .conversation-graph-dock-drop.is-left { inset: 0 auto 0 0; width: var(--drop-size); }
 .conversation-graph-dock-drop.is-right { inset: 0 0 0 auto; width: var(--drop-size); }
 .conversation-graph-dock-drop.is-top { inset: 0 0 auto 0; height: var(--drop-size); }
