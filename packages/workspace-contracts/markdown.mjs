@@ -407,6 +407,37 @@ export function discoverMarkdownWorkspace(files, fallbackManifest, previousFiles
         },
     };
 }
+/**
+ * Read-only indexing leaves out files it cannot read (a copy that reuses another file's
+ * identity, damaged metadata) instead of failing the whole vault. The files themselves
+ * are untouched; the editor still reports them by name before it would write anything.
+ */
+export function discoverReadableMarkdownWorkspace(files, fallbackManifest) {
+    const usable = {};
+    const skipped = [];
+    const ids = new Set();
+    // Copies get a suffix ("Note 1.md"), so shorter paths keep a shared identity.
+    const ordered = Object.entries(files).sort(([left], [right]) => left.length - right.length || left.localeCompare(right));
+    for (const [path, original] of ordered) {
+        const source = original.replace(/^\uFEFF/, "");
+        if (!isSafeMarkdownPath(path) || isAuxiliaryMarkdownPath(path)) {
+            usable[path] = source;
+            continue;
+        }
+        try {
+            const single = discoverMarkdownWorkspace({ [path]: source }, fallbackManifest);
+            const record = single.manifest.files[0];
+            if (record && ids.has(record.id)) throw new Error(`Duplicate Markdown identity in ${path}.`);
+            if (record && !parseMarkdownWorkspace(single.manifest, single.files)) throw new Error(`Unreadable Markdown in ${path}.`);
+            if (record) ids.add(record.id);
+            usable[path] = source;
+        }
+        catch (error) {
+            skipped.push({ path, error: error instanceof Error ? error.message : String(error) });
+        }
+    }
+    return { workspace: discoverMarkdownWorkspace(usable, fallbackManifest), skipped };
+}
 /** A content-free description of one vault file, small enough to index a whole vault. */
 export function summarizeMarkdownVaultFile(path, source) {
     if (!isSafeMarkdownPath(path) || isAuxiliaryMarkdownPath(path))

@@ -40,6 +40,10 @@ export function discoverMarkdownWorkspace(
   previousFiles?: Record<string, string>,
 ): MarkdownWorkspace;
 export function assignMarkdownFileIdentities(workspace: MarkdownWorkspace, createdAtByPath?: Record<string, string>): MarkdownWorkspace;
+export function discoverReadableMarkdownWorkspace(
+  files: Record<string, string>,
+  fallbackManifest?: MarkdownWorkspaceManifest,
+): { workspace: MarkdownWorkspace; skipped: Array<{ path: string; error: string }> };
 export function parseMarkdownWorkspace(
   manifest: MarkdownWorkspaceManifest,
   fileContents: Record<string, string>,
