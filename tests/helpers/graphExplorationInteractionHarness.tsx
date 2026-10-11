@@ -1,9 +1,11 @@
+import { startMapsInGroupedView } from "./groupedMapDefault";
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { Conversation, ConversationGroup, GraphNodeLayout } from "../../client/src/types";
 import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
 
 const browser = new Window({ url: "http://graph-exploration.test/" });
+startMapsInGroupedView(browser.localStorage as unknown as Storage);
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect"]) {
   const value = name === "window" ? browser : (browser as any)[name];
   Object.defineProperty(globalThis, name, { configurable: true, value });

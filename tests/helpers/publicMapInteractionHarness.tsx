@@ -1,8 +1,10 @@
+import { startMapsInGroupedView } from "./groupedMapDefault";
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { AppState } from "../../client/src/types";
 
 const browser = new Window({ url: "http://public-map-interactions.test/" });
+startMapsInGroupedView(browser.localStorage as unknown as Storage);
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? browser : (browser as any)[name] });
 }
