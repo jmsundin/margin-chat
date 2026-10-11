@@ -25,14 +25,14 @@ bun run build:extension
 2. Open `chrome://extensions` and enable **Developer mode**.
 3. Choose **Load unpacked** and select `extension/dist`. For an existing unpacked installation, click **Reload** on its card after rebuilding.
 4. Pin **Margin Chat**, reopen the source page if needed, and open the extension's **Settings**.
-5. Choose **Workspace + AI + capture** and sign in again. Existing sessions retain capture-only access; upgrading the package never silently expands their permissions.
+5. Sign in again. Existing capture-only sessions keep their access until you do; upgrading the package never silently expands their permissions.
 
-Both capture-only and workspace sign-in currently require a paid subscription or admin account, matching Cloud Inbox eligibility. Although the website supports local workspaces for other accounts, 0.3.0 does not provide a free-account or signed-out local workspace through the extension.
+Sign-in currently requires a paid subscription or admin account, matching Cloud Inbox eligibility. Although the website supports local workspaces for other accounts, 0.3.0 does not provide a free-account or signed-out local workspace through the extension.
 
 ## Connect and work above a page
 
-1. Enter your Margin Chat website origin in extension **Settings**, such as your HTTPS deployment or `http://localhost:5173`. The address also appears under **Cloud Inbox → Connect extension** on the website.
-2. Enter your Margin Chat email and password, choose **Workspace + AI + capture**, click **Sign in**, and grant access to that website. The password is sent to that configured origin and is not stored.
+1. Open extension **Settings**. The extension always connects to `https://www.marginchat.com`; there is no website field. For local development, build with `MARGIN_EXTENSION_SERVER_URL=http://localhost:5173 bun run build:extension`.
+2. Enter your Margin Chat email and password, click **Sign in**, and grant access to Margin Chat. Every sign-in gets Workspace + AI + capture access. The password is sent only to that origin and is not stored.
 3. Open a normal web page and click the Margin Chat toolbar button. Select a passage on the page, or right-click selected text and choose **Annotate in Margin Chat**.
 4. Open **Page context**. Choose **Selected passage**, **Readable page**, or **Link only**, and review the source preview. In **Annotate / save**, add an optional thought and choose **Save & open document**. The capture is saved to Cloud Inbox and imported as an editable source document in the workspace below.
 5. Choose **Ask page** or **Ask AI**, review the source and question, and press **Save source & ask AI**. That explicit submission saves the source, opens its document, and starts the current Margin Chat document AI flow in the same overlay. Selecting text, opening Ask, saving a note, or switching layouts does not itself call AI.

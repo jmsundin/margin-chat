@@ -20,14 +20,7 @@
         <button id="disconnect" type="button">Sign out of this browser</button>
       </div>
       <form id="connection-form">
-        <label for="server-url">Margin Chat website</label
-        ><input
-          id="server-url"
-          type="url"
-          placeholder="https://your-margin-chat-website"
-          required
-          autocomplete="url"
-        /><label for="email">Email address</label
+        <label for="email">Email address</label
         ><input
           id="email"
           type="email"
@@ -43,9 +36,8 @@
           required
           maxlength="200"
           autocomplete="current-password"
-        /><label for="access-mode">Extension access</label>
-        <select id="access-mode"><option value="workspace">Workspace + AI + capture</option><option value="capture">Capture only</option></select>
-        <p class="subtle">Workspace access lets this browser read and edit your cloud documents and run AI using your Margin Chat account. Account security and payments stay on the website. Existing capture-only sessions keep their original access until you sign in again.</p>
+        />
+        <p class="subtle">Workspace access lets this browser read and edit your cloud documents and run AI using your Margin Chat account. Account security and payments stay on the website.</p>
         <button id="connect" class="primary" type="submit">Sign in</button>
       </form>
       <p id="status" role="status" aria-live="polite"></p>

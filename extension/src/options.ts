@@ -1,11 +1,11 @@
-import { CONNECTION_API_PATH, normalizeServerUrl, parseCaptureConnection } from "@margin-chat/capture-contracts";
+import { CONNECTION_API_PATH, parseCaptureConnection } from "@margin-chat/capture-contracts";
 import { connectionIdentity, getPending, getSettings, trustedStorage } from "./storage";
-import { captureRequest, errorText, signIn, signInWorkspace, signOut } from "./network";
+import { captureRequest, errorText, signInWorkspace, signOut } from "./network";
 import { serverPermissionPattern } from "./permissions";
+import { MARGIN_CHAT_SERVER_URL } from "./server";
 import { chooseTheme, isTheme, syncExtensionPageTheme } from "./theme";
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const serverInput = el<HTMLInputElement>("server-url");
 const emailInput = el<HTMLInputElement>("email");
 const passwordInput = el<HTMLInputElement>("password");
 const status = el("status");
@@ -31,12 +31,16 @@ async function initialize() {
   const settings = await getSettings();
   el("connected").hidden = !settings;
   if (settings) {
-    serverInput.value = settings.serverUrl;
     emailInput.value = settings.email ?? "";
+    const name = settings.email ?? settings.displayName;
     const expired = settings.expiresAt && Date.parse(settings.expiresAt) <= Date.now();
     el("account").textContent = expired
-      ? `Your session for ${settings.email ?? settings.displayName} has expired. Sign in again below to continue.`
-      : `Signed in as ${settings.email ?? settings.displayName} at ${settings.serverUrl}`;
+      ? `Your session for ${name} has expired. Sign in again below to continue.`
+      : settings.serverUrl !== MARGIN_CHAT_SERVER_URL
+        ? `Signed in as ${name} at ${settings.serverUrl}. Sign in again below to switch to ${MARGIN_CHAT_SERVER_URL}.`
+        : !/^mc_workspace_/u.test(settings.token)
+          ? `Signed in as ${name} with capture-only access. Sign in again below to enable Workspace + AI.`
+          : `Signed in as ${name}`;
   }
 }
 
@@ -46,16 +50,15 @@ el("connection-form").addEventListener("submit", async (event) => {
   setBusy(true);
   status.className = "";
   try {
-    const serverUrl = normalizeServerUrl(serverInput.value);
+    const serverUrl = MARGIN_CHAT_SERVER_URL;
     const email = emailInput.value.trim();
     const password = passwordInput.value;
     if (!email || !password) throw new Error("Enter your Margin Chat email and password.");
     // Keep this permission request in the submit gesture; credentials go only to this origin.
     const allowed = await chrome.permissions.request({ origins: [serverPermissionPattern(serverUrl)] });
-    if (!allowed) throw new Error("Allow access to your Margin Chat website to sign in.");
+    if (!allowed) throw new Error("Allow access to Margin Chat to sign in.");
     status.textContent = "Signing in…";
-    const workspaceAccess = el<HTMLSelectElement>("access-mode").value === "workspace";
-    const session = await (workspaceAccess ? signInWorkspace : signIn)(serverUrl, email, password);
+    const session = await signInWorkspace(serverUrl, email, password);
     const previous = await getSettings();
     const connectionId = connectionIdentity(serverUrl, session.user.id);
 
@@ -85,12 +88,10 @@ el("connection-form").addEventListener("submit", async (event) => {
       await chrome.permissions.remove({ origins: [serverPermissionPattern(previous.serverUrl)] });
     }
     await initialize();
-    status.textContent = workspaceAccess
-      ? "Signed in. Open a web page and click Margin Chat to use your documents, notes, and AI above the page."
-      : "Signed in with capture-only access. Choose Workspace + AI above and sign in again to enable the full workspace.";
+    status.textContent = "Signed in. Open a web page and click Margin Chat to use your documents, notes, and AI above the page.";
   } catch (error) {
     status.className = "error";
-    status.textContent = errorText(error, "Could not reach Margin Chat. Check your website address and internet connection, then try again.");
+    status.textContent = errorText(error, "Could not reach Margin Chat. Check your internet connection, then try again.");
   } finally {
     passwordInput.value = "";
     setBusy(false);
