@@ -50,7 +50,7 @@ export async function authenticateCaptureToken(client, tokenHash) {
     update marginchat_capture_tokens t set last_used_at = now()
     from marginchat_users u
     where t.token_hash = $1 and t.expires_at > now() and u.id = t.user_id
-    returning u.id, u.display_name, u.role, u.billing_status, t.expires_at
+    returning u.id, u.display_name, u.role, u.billing_status, u.billing_price_id, t.expires_at
   `,
     [tokenHash],
   );

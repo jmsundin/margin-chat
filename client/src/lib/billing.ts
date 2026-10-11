@@ -25,6 +25,7 @@ export function getBillingStatusLabel(status: UserBilling["status"]) {
 
 export function getBillingDisplayLabel(billing: UserBilling) {
   if (billing.accessKind === "admin") return "Admin access";
+  if ((billing.status === "active" || billing.status === "trialing") && billing.plan === "cloud") return "Cloud plan";
   if (billing.status === "active" || billing.status === "trialing") return "Monthly prepaid plan";
   if (billing.creditBalanceMicros > 0) return `${formatCreditBalance(billing.creditBalanceMicros)} available`;
   return "Prepaid AI usage";
@@ -57,6 +58,12 @@ export function getBillingStatusCopy(billing: UserBilling) {
   const periodEnd = formatBillingPeriodEnd(billing.currentPeriodEnd);
   const balance = formatCreditBalance(billing.creditBalanceMicros);
   if (billing.accessKind === "admin") return "This admin account has hosted model access. Personal provider keys are billed by their provider.";
+  if ((billing.status === "active" || billing.status === "trialing") && billing.plan === "cloud") {
+    const renewal = billing.cancelAtPeriodEnd
+      ? `Your Cloud plan ends${periodEnd ? ` on ${periodEnd}` : " at the end of this period"}.`
+      : `$10 per month keeps your vault in the cloud and synced.${periodEnd ? ` Next renewal: ${periodEnd}.` : ""}`;
+    return `${renewal} AI uses your own API keys or added money. Available balance: ${balance}.`;
+  }
   if (billing.status === "active" || billing.status === "trialing") {
     const renewal = billing.cancelAtPeriodEnd
       ? `Monthly funding ends${periodEnd ? ` on ${periodEnd}` : " at the end of this period"}. Your unused credits remain available.`
@@ -100,7 +107,9 @@ export function getCheckoutConfirmationNotice(confirmation: CheckoutConfirmation
   };
   return {
     kind: "success",
-    message: confirmation.purchaseKind === "subscription"
+    message: confirmation.purchaseKind === "subscription" && confirmation.plan === "cloud"
+      ? "Your Cloud plan is active. Your vault now syncs to the cloud, and AI keeps using your own API keys."
+      : confirmation.purchaseKind === "subscription"
       ? "Your subscription payment is confirmed. Your monthly credit is available, and unused credit carries over."
       : "Your payment is confirmed and the money has been added to your AI balance.",
   };

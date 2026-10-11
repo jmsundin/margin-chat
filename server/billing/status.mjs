@@ -62,7 +62,14 @@ export function serializeBillingPeriodEnd(value) {
   return null;
 }
 
-export function mapBillingRow(row) {
+/** Which subscription the stored price belongs to. Plus is the default for older rows. */
+export function billingPlanForPriceId(priceId, env = process.env) {
+  if (!priceId) return null;
+  const cloudPriceId = env.STRIPE_CLOUD_PRICE_ID?.trim();
+  return cloudPriceId && priceId === cloudPriceId ? "cloud" : "plus";
+}
+
+export function mapBillingRow(row, env = process.env) {
   const status = normalizeBillingStatus(row?.billing_status);
   const trialCallsUsed = normalizeTrialCallsUsed(row?.trial_api_calls_used);
   const trialCallsLimit = normalizeTrialCallsLimit(row?.trial_api_calls_limit);
@@ -80,6 +87,11 @@ export function mapBillingRow(row) {
           ? "credits"
           : "none";
 
+  const priceId =
+    typeof row?.billing_price_id === "string" && row.billing_price_id
+      ? row.billing_price_id
+      : null;
+
   return {
     accessKind,
     cancelAtPeriodEnd: Boolean(row?.billing_cancel_at_period_end),
@@ -87,10 +99,8 @@ export function mapBillingRow(row) {
     currentPeriodEnd: serializeBillingPeriodEnd(row?.billing_current_period_end),
     hasAccess: row?.role === "admin" || creditBalanceMicros > 0,
     hasCustomer: Boolean(row?.stripe_customer_id),
-    priceId:
-      typeof row?.billing_price_id === "string" && row.billing_price_id
-        ? row.billing_price_id
-        : null,
+    plan: billingPlanForPriceId(priceId, env),
+    priceId,
     status,
     trialCallsLimit,
     trialCallsRemaining,

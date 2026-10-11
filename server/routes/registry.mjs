@@ -22,6 +22,7 @@ export const API_ROUTES = Object.freeze([
   { id: "authLogout", methods: ["POST"], path: "/api/auth/logout" },
   { id: "billingCheckout", methods: ["POST"], path: "/api/billing/checkout" },
   { id: "billingTopUp", methods: ["POST"], path: "/api/billing/topup" },
+  { id: "billingUpgrade", methods: ["POST"], path: "/api/billing/upgrade" },
   { id: "billingDashboard", methods: ["GET"], path: "/api/billing/dashboard" },
   { id: "captureToken", methods: ["GET", "POST", "DELETE"], path: "/api/settings/capture-token" },
   { id: "captureList", methods: ["GET"], path: CAPTURE_API_PATH },

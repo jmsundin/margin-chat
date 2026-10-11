@@ -5,7 +5,17 @@ export const MONTHLY_PLAN_MICROS = 20_000_000;
 export const MONTHLY_PLAN_KEY = "margin-chat-prepaid-monthly-v1";
 export const MIN_TOP_UP_CENTS = 500;
 export const MAX_TOP_UP_CENTS = 50_000;
+export const CLOUD_PLAN_CENTS = 1_000;
+export const CLOUD_PLAN_KEY = "margin-chat-cloud-monthly-v1";
 export const BILLING_PLAN = Object.freeze({ monthlyAmountMicros: MONTHLY_PLAN_MICROS, currency: "usd", rollover: true });
+// Cloud is storage and sync only: it grants no hosted AI credit.
+export const CLOUD_PLAN = Object.freeze({ monthlyPriceCents: CLOUD_PLAN_CENTS, currency: "usd", includesCreditMicros: 0 });
+export const SUBSCRIPTION_PLANS = Object.freeze(["plus", "cloud"]);
+
+export function requireSubscriptionPlan(value = "plus") {
+  if (!SUBSCRIPTION_PLANS.includes(value)) throw new HttpError(400, "Choose the Cloud or Plus plan.");
+  return value;
+}
 
 export function stripeId(value) {
   return typeof value === "string" ? value : value?.id ?? null;
@@ -26,14 +36,24 @@ export function validateTopUpCents(value) {
   return value;
 }
 
-export function isMonthlyPrice(price, configuredPriceId, { requireActive = false } = {}) {
+function isFixedMonthlyPrice(price, unitAmount, requireActive) {
   return Boolean(price && (!requireActive || price.active === true)
-    && price.currency === "usd" && price.unit_amount === MONTHLY_PLAN_CENTS
+    && price.currency === "usd" && price.unit_amount === unitAmount
     && price.type === "recurring" && price.recurring?.interval === "month"
     && price.recurring?.interval_count === 1 && price.recurring?.usage_type === "licensed"
-    && price.billing_scheme === "per_unit" && !price.transform_quantity
+    && price.billing_scheme === "per_unit" && !price.transform_quantity);
+}
+
+export function isMonthlyPrice(price, configuredPriceId, { requireActive = false } = {}) {
+  return isFixedMonthlyPrice(price, MONTHLY_PLAN_CENTS, requireActive)
     && (configuredPriceId ? price.id === configuredPriceId
-      : price.product?.metadata?.marginChatPlan === MONTHLY_PLAN_KEY));
+      : price.product?.metadata?.marginChatPlan === MONTHLY_PLAN_KEY);
+}
+
+/** The Cloud plan only exists with a configured Price, so its ID identifies the plan. */
+export function isCloudPrice(price, cloudPriceId, { requireActive = false } = {}) {
+  return Boolean(cloudPriceId) && isFixedMonthlyPrice(price, CLOUD_PLAN_CENTS, requireActive)
+    && price.id === cloudPriceId;
 }
 
 export function monthlyInvoiceLine(invoice) {
@@ -43,7 +63,7 @@ export function monthlyInvoiceLine(invoice) {
   const details = line?.parent?.subscription_item_details;
   const lineSubscription = stripeId(details?.subscription ?? line?.subscription);
   if (!invoice?.id || invoice.status !== "paid" || invoice.currency !== "usd"
-    || !["subscription_create", "subscription_cycle"].includes(invoice.billing_reason)
+    || !["subscription_create", "subscription_cycle", "subscription_update"].includes(invoice.billing_reason)
     || !Number.isSafeInteger(invoice.amount_paid) || invoice.amount_paid < MONTHLY_PLAN_CENTS
     || invoice.amount_paid !== invoice.total || invoice.amount_due !== invoice.total
     || invoice.amount_remaining !== 0 || invoice.paid_out_of_band === true

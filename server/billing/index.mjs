@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { HttpError } from "../lib/errors.mjs";
 import { billingStatusHasAccess, normalizeBillingStatus } from "./status.mjs";
 import {
-  BILLING_PLAN, MONTHLY_PLAN_CENTS, MONTHLY_PLAN_MICROS, MONTHLY_PLAN_KEY,
-  invoiceLinePriceId, invoiceSubscriptionId, isMonthlyPrice, monthlyInvoiceLine,
-  stripeId, topUpAmount, validateTopUpCents,
+  BILLING_PLAN, CLOUD_PLAN, CLOUD_PLAN_KEY, MONTHLY_PLAN_CENTS, MONTHLY_PLAN_MICROS, MONTHLY_PLAN_KEY,
+  invoiceLinePriceId, invoiceSubscriptionId, isCloudPrice, isMonthlyPrice, monthlyInvoiceLine,
+  requireSubscriptionPlan, stripeId, topUpAmount, validateTopUpCents,
 } from "./plan.mjs";
 import { verifyInvoicePayments, verifyPaymentIntent } from "./payments.mjs";
 
@@ -80,6 +80,7 @@ function getRequestOrigin(request, env) {
 
 export function createBillingService({ database, env, stripeClient = null }) {
   const configuredPriceId = env.STRIPE_PRICE_ID || null;
+  const cloudPriceId = env.STRIPE_CLOUD_PRICE_ID?.trim() || null;
   function getClient() {
     if (stripeClient) return stripeClient;
     if (!env.STRIPE_SECRET_KEY) throw new HttpError(503, "Stripe billing is not configured. Add STRIPE_SECRET_KEY first.");
@@ -145,11 +146,24 @@ export function createBillingService({ database, env, stripeClient = null }) {
     return isMonthlyPrice(price, configuredPriceId, { requireActive }) ? price : null;
   }
 
-  async function isPlanSubscription(subscription) {
+  async function retrieveCloudPrice(priceId, requireActive = false) {
+    if (!cloudPriceId || priceId !== cloudPriceId) return null;
+    const price = await getClient().prices.retrieve(priceId, { expand: ["product"] });
+    return isCloudPrice(price, cloudPriceId, { requireActive }) ? price : null;
+  }
+
+  /** "plus", "cloud", or null when the subscription is not a Margin Chat plan. */
+  async function subscriptionPlan(subscription) {
     const items = subscription?.items;
-    if (!items || items.has_more || items.data?.length !== 1 || items.data[0].quantity !== 1) return false;
-    if (!configuredPriceId && subscription.metadata?.planKey !== MONTHLY_PLAN_KEY) return false;
-    return Boolean(await retrieveMonthlyPrice(stripeId(items.data[0].price)));
+    if (!items || items.has_more || items.data?.length !== 1 || items.data[0].quantity !== 1) return null;
+    const priceId = stripeId(items.data[0].price);
+    if (await retrieveCloudPrice(priceId)) return "cloud";
+    if (!configuredPriceId && subscription.metadata?.planKey !== MONTHLY_PLAN_KEY) return null;
+    return await retrieveMonthlyPrice(priceId) ? "plus" : null;
+  }
+
+  async function isPlanSubscription(subscription) {
+    return Boolean(await subscriptionPlan(subscription));
   }
 
   async function resolveOwner({ customerId, metadataUserId = null, expectedUserId = null }) {
@@ -230,11 +244,17 @@ export function createBillingService({ database, env, stripeClient = null }) {
     return { subscription, account };
   }
 
-  async function createSubscriptionCheckoutSession({ request, user }) {
+  async function createSubscriptionCheckoutSession({ request, user, plan = "plus" }) {
+    requireSubscriptionPlan(plan);
     if (user.role === "admin") throw new HttpError(409, "Admin accounts do not require a subscription.");
     const stripe = getClient();
     let lineItem;
-    if (configuredPriceId) {
+    if (plan === "cloud") {
+      if (!cloudPriceId || !await retrieveCloudPrice(cloudPriceId, true)) {
+        throw new HttpError(503, "The Cloud plan is not available yet. STRIPE_CLOUD_PRICE_ID must be an active $10.00 USD monthly, licensed, single-unit price.");
+      }
+      lineItem = { price: cloudPriceId, quantity: 1 };
+    } else if (configuredPriceId) {
       if (!await retrieveMonthlyPrice(configuredPriceId, true)) {
         throw new HttpError(503, "STRIPE_PRICE_ID must be an active $20.00 USD monthly, licensed, single-unit price.");
       }
@@ -250,11 +270,12 @@ export function createBillingService({ database, env, stripeClient = null }) {
     if (billingStatusHasAccess(account.billingStatus)) throw new HttpError(409, "Your subscription is already active. Manage billing instead.");
     const { customerId } = await ensureCustomerForUser(user);
     const origin = getRequestOrigin(request, env);
+    const planKey = plan === "cloud" ? CLOUD_PLAN_KEY : MONTHLY_PLAN_KEY;
     const session = await stripe.checkout.sessions.create({
       mode: "subscription", customer: customerId, client_reference_id: user.id,
       line_items: [lineItem], allow_promotion_codes: false, payment_method_types: ["card"],
-      metadata: { purchaseKind: "subscription", planKey: MONTHLY_PLAN_KEY, userId: user.id },
-      subscription_data: { metadata: { purchaseKind: "subscription", planKey: MONTHLY_PLAN_KEY, userId: user.id } },
+      metadata: { purchaseKind: "subscription", planKey, userId: user.id },
+      subscription_data: { metadata: { purchaseKind: "subscription", planKey, userId: user.id } },
       cancel_url: `${origin}/?checkout=subscription_canceled`,
       success_url: `${origin}/?checkout=subscription_success&session_id={CHECKOUT_SESSION_ID}`,
     });
@@ -313,15 +334,22 @@ export function createBillingService({ database, env, stripeClient = null }) {
       const subscriptionId = stripeId(session.subscription);
       if (!subscriptionId) return { confirmed: false, status: "incomplete" };
       const { subscription } = await retrieveAndSyncSubscription(subscriptionId, account.id);
-      if (stripeId(subscription.customer) !== customerId || !await isPlanSubscription(subscription)) {
-        throw new HttpError(409, "This Checkout Session does not contain the $20 Margin Chat monthly plan.");
+      const plan = stripeId(subscription.customer) === customerId ? await subscriptionPlan(subscription) : null;
+      if (!plan) {
+        throw new HttpError(409, "This Checkout Session does not contain a Margin Chat monthly plan.");
       }
       if (session.status !== "complete" || session.payment_status !== "paid" || !stripeId(session.invoice)) {
         return { confirmed: false, status: normalizeBillingStatus(subscription.status) };
       }
+      if (plan === "cloud") {
+        // Cloud grants storage and sync, not credit, so a paid, active subscription is the whole purchase.
+        const status = normalizeBillingStatus(subscription.status);
+        if (!billingStatusHasAccess(status)) return { confirmed: false, status };
+        return { confirmed: true, purchaseKind: "subscription", plan, credited: false, amountMicros: 0, status };
+      }
       const credit = await creditPaidInvoice(stripeId(session.invoice), account.id, subscriptionId);
       if (!credit) return { confirmed: false, status: normalizeBillingStatus(subscription.status) };
-      return { confirmed: true, purchaseKind: "subscription", ...credit };
+      return { confirmed: true, purchaseKind: "subscription", plan, ...credit };
     }
     if (session.mode !== "payment" || session.metadata?.purchaseKind !== "hosted_credits") {
       throw new HttpError(409, "This Checkout Session is not a Margin Chat purchase.");
@@ -366,10 +394,54 @@ export function createBillingService({ database, env, stripeClient = null }) {
     return { url: session.url };
   }
 
+  /**
+   * Cloud -> Plus. The cycle restarts now and Stripe bills the full $20 at once
+   * (no proration), so the upgrade invoice grants $20 like any other Plus invoice.
+   * Unused Cloud time is not refunded; the confirmation copy says so.
+   */
+  async function upgradeToPlus({ user }) {
+    if (user.role === "admin") throw new HttpError(409, "Admin accounts do not require a subscription.");
+    if (!configuredPriceId || !await retrieveMonthlyPrice(configuredPriceId, true)) {
+      throw new HttpError(503, "Upgrading needs STRIPE_PRICE_ID set to the active $20.00 USD monthly price.");
+    }
+    const account = await database.getUserBillingAccount(user.id);
+    if (!account) throw new HttpError(404, "User account not found.");
+    if (!account.stripeSubscriptionId || !billingStatusHasAccess(account.billingStatus)) {
+      throw new HttpError(409, "You don't have an active plan to upgrade. Subscribe to Plus instead.");
+    }
+    const stripe = getClient();
+    const current = await stripe.subscriptions.retrieve(account.stripeSubscriptionId);
+    if (stripeId(current.customer) !== account.stripeCustomerId) throw new HttpError(403, "Subscription customer mismatch.");
+    const plan = await subscriptionPlan(current);
+    if (plan === "plus") throw new HttpError(409, "You're already on Plus.");
+    if (plan !== "cloud" || !billingStatusHasAccess(normalizeBillingStatus(current.status))) {
+      throw new HttpError(409, "Only an active Cloud plan can be upgraded here. Manage your subscription in Stripe instead.");
+    }
+    let updated;
+    try {
+      updated = await stripe.subscriptions.update(current.id, {
+        items: [{ id: current.items.data[0].id, price: configuredPriceId, quantity: 1 }],
+        billing_cycle_anchor: "now", proration_behavior: "none", payment_behavior: "error_if_incomplete",
+        cancel_at_period_end: false,
+        metadata: { ...current.metadata, purchaseKind: "subscription", planKey: MONTHLY_PLAN_KEY, userId: account.id },
+      }, { idempotencyKey: `margin-upgrade:${current.id}:${account.billingRevision}` });
+    } catch (error) {
+      if (error?.type === "StripeCardError" || error?.code === "card_declined") {
+        throw new HttpError(402, "Your card was declined, so your plan didn't change. Update your card under Manage subscription, then try again.");
+      }
+      throw error;
+    }
+    const credit = stripeId(updated.latest_invoice)
+      ? await creditPaidInvoice(stripeId(updated.latest_invoice), account.id, updated.id)
+      : null;
+    if (!credit) await retrieveAndSyncSubscription(updated.id, account.id);
+    return { upgraded: true, plan: "plus", credited: Boolean(credit?.credited), amountMicros: credit ? MONTHLY_PLAN_MICROS : 0 };
+  }
+
   async function getBillingDashboard(userId) {
     const dashboard = await database.getBillingDashboard(userId);
     if (!dashboard) throw new HttpError(404, "User account not found.");
-    return { ...dashboard, plan: BILLING_PLAN };
+    return { ...dashboard, plan: BILLING_PLAN, cloudPlan: cloudPriceId ? CLOUD_PLAN : null };
   }
 
   async function handleWebhook({ rawBody, signature }) {
@@ -398,7 +470,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   return {
     createBillingPortalSession, createSubscriptionCheckoutSession, createTopUpCheckoutSession,
     createCheckoutSession: createSubscriptionCheckoutSession,
-    confirmCheckout, confirmSubscriptionCheckout: confirmCheckout,
+    confirmCheckout, confirmSubscriptionCheckout: confirmCheckout, upgradeToPlus,
     handleWebhook, getBillingDashboard, getHostedUsageLimits,
     reserveHostedRequest, settleHostedRequest, refundHostedRequest,
   };

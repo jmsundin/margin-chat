@@ -71,6 +71,36 @@ describe("prepaid billing", () => {
   });
 });
 
+describe("Cloud plan in Billing", () => {
+  const noop = () => {};
+  const inactive = { ...billingUser, billing: { ...billingUser.billing, accessKind: "none" as const, status: "inactive" as const, plan: null } };
+  const cloudUser = { ...billingUser, billing: { ...billingUser.billing, plan: "cloud" as const } };
+  const withCloud = { ...billingDashboard, cloudPlan: { monthlyPriceCents: 1000, currency: "usd" as const, includesCreditMicros: 0 } };
+
+  test("offers both plans when the server has a Cloud price, and only Plus otherwise", () => {
+    const render = (data: typeof withCloud) => renderToStaticMarkup(<BillingDashboard data={{ ...data, subscription: { ...data.subscription, status: "inactive" } }} loading={false} errorMessage={null} checkoutErrorMessage={null}
+      isSubmitting={false} user={inactive} onRefresh={noop} onAddMoney={noop} onStartSubscription={noop} onManageBilling={noop} />);
+    const both = render(withCloud);
+    expect(both).toContain("Subscribe to Cloud for $10.00/month");
+    expect(both).toContain("Subscribe to Plus for $20.00/month");
+    expect(both).toContain("Bring your own AI API keys");
+    const plusOnly = render({ ...billingDashboard, cloudPlan: null });
+    expect(plusOnly).not.toContain("Cloud");
+    expect(plusOnly).toContain("Subscribe for $20.00/month");
+  });
+
+  test("a Cloud subscriber sees their plan and an upgrade to Plus", () => {
+    const html = renderToStaticMarkup(<BillingDashboard data={withCloud} loading={false} errorMessage={null} checkoutErrorMessage={null}
+      isSubmitting={false} user={cloudUser} onRefresh={noop} onAddMoney={noop} onStartSubscription={noop} onUpgradeToPlus={noop} onManageBilling={noop} />);
+    expect(html).toContain("Cloud plan");
+    expect(html).toContain("Upgrade to Plus for $20.00/month");
+    expect(html).toContain("Manage subscription");
+    expect(getBillingDisplayLabel(cloudUser.billing)).toBe("Cloud plan");
+    expect(getBillingStatusCopy(cloudUser.billing)).toContain("own API keys");
+    expect(getCheckoutConfirmationNotice({ purchaseKind: "subscription", plan: "cloud", confirmed: true, status: "active" }).message).toContain("Cloud plan is active");
+  });
+});
+
 describe("billing API contracts", () => {
   test("loads current dashboard without browser cache and preserves account refresh data", async () => {
     let request: [unknown, RequestInit | undefined] | undefined;

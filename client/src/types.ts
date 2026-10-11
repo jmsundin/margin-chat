@@ -37,6 +37,9 @@ export type BillingStatus =
   | "paused"
   | "trialing"
   | "unpaid";
+/** Cloud ($10) is storage and sync with your own AI keys; Plus ($20) adds $20 of hosted AI credit. */
+export type BillingPlan = "cloud" | "plus";
+
 export type BillingAccessKind =
   | "admin"
   | "credits"
@@ -78,6 +81,8 @@ export interface UserBilling {
   currentPeriodEnd: string | null;
   hasAccess: boolean;
   hasCustomer: boolean;
+  /** The plan the stored subscription price belongs to; null without a subscription. */
+  plan?: BillingPlan | null;
   priceId: string | null;
   status: BillingStatus;
   trialCallsLimit: number;
@@ -104,6 +109,8 @@ export interface BillingDashboardData {
   transactions: BillingTransaction[];
   subscription: Pick<UserBilling, "status" | "cancelAtPeriodEnd" | "currentPeriodEnd">;
   plan: { monthlyAmountMicros: number; currency: "usd"; rollover: boolean };
+  /** Present when the server offers the Cloud plan. */
+  cloudPlan?: { monthlyPriceCents: number; currency: "usd"; includesCreditMicros: number } | null;
   user?: AuthenticatedUser;
 }
 
@@ -111,6 +118,7 @@ export interface CheckoutConfirmation {
   confirmed: boolean;
   status: string;
   purchaseKind: "subscription" | "hosted_credits";
+  plan?: BillingPlan;
   user?: AuthenticatedUser;
 }
 

@@ -8,6 +8,7 @@ import type {
   ApiKeySettings,
   AuthenticatedUser,
   BillingDashboardData,
+  BillingPlan,
 } from "../types";
 import {
   getBillingDisplayLabel,
@@ -47,7 +48,8 @@ interface ProfileModalProps {
   onSaveApiKeys: (args: {
     keys: Partial<Record<ApiKeyProvider, string | null>>;
   }) => Promise<ApiKeySettings>;
-  onStartSubscription: () => void | Promise<void>;
+  onStartSubscription: (plan?: BillingPlan) => void | Promise<void>;
+  onUpgradeToPlus?: () => void | Promise<void>;
   onSave: (args: { displayName: string; email: string }) => void | Promise<void>;
   user: AuthenticatedUser;
 }
@@ -146,6 +148,7 @@ export default function ProfileModal({
   onManageBilling,
   onSaveApiKeys,
   onStartSubscription,
+  onUpgradeToPlus,
   onSave,
   onOpenWebsiteSettings,
   user,
@@ -534,7 +537,7 @@ export default function ProfileModal({
             <section aria-labelledby="profile-tab-billing" className="profile-dialog-panel" id="profile-panel-billing" role="tabpanel">
               <BillingDashboard data={billingDashboard} loading={billingDashboardLoading} errorMessage={billingDashboardError}
                 checkoutErrorMessage={billingErrorMessage} isSubmitting={billingSubmitting} onRefresh={onRefreshBilling}
-                onAddMoney={onAddMoney} onStartSubscription={onStartSubscription} onManageBilling={onManageBilling} user={user} />
+                onAddMoney={onAddMoney} onStartSubscription={onStartSubscription} onUpgradeToPlus={onUpgradeToPlus} onManageBilling={onManageBilling} user={user} />
             </section>
           ) : null}
 

@@ -417,7 +417,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["billingCheckout", "billingTopUp", "billingDashboard", "billingConfirm", "billingPortal"].includes(route?.id)) {
+      if (["billingCheckout", "billingTopUp", "billingUpgrade", "billingDashboard", "billingConfirm", "billingPortal"].includes(route?.id)) {
         const expectedUser = request.headers["x-margin-billing-user"];
         if (expectedUser !== undefined && expectedUser !== String(authContext.user.id)) {
           throw new HttpError(409, "The signed-in account changed. Reload Margin Chat before continuing with billing.");
@@ -425,12 +425,27 @@ export function createApiHandler({
       }
 
       if (route?.id === "billingCheckout") {
+        // Older clients post no body and mean Plus.
+        const rawBody = await readRawBody(request, 4096);
+        let body = null;
+        if (rawBody.length) {
+          try { body = JSON.parse(rawBody.toString("utf8")); }
+          catch { throw new HttpError(400, "Request body must contain valid JSON."); }
+        }
         const result = await billingService.createSubscriptionCheckoutSession({
           request,
           user: authContext.user,
+          plan: body?.plan ?? "plus",
         });
 
         sendJson(response, 200, result);
+        return;
+      }
+
+      if (route?.id === "billingUpgrade") {
+        const result = await billingService.upgradeToPlus({ user: authContext.user });
+        const fresh = await authService.getAuthContext(request);
+        sendJson(response, 200, { ...result, user: fresh.user }, { "Cache-Control": "no-store" });
         return;
       }
 

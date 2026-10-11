@@ -185,6 +185,7 @@ import type {
   ApiKeySettings,
   AuthenticatedUser,
   BackendServiceId,
+  BillingPlan,
   ConnectionLine,
   ConnectorOcclusionRect,
   Conversation,
@@ -404,7 +405,8 @@ interface WorkspaceAppProps {
   billingSubmitting: boolean;
   onLogout: () => void;
   onManageBilling: () => void | Promise<void>;
-  onStartSubscription: () => void | Promise<void>;
+  onStartSubscription: (plan?: BillingPlan) => void | Promise<void>;
+  onUpgradeToPlus?: () => void | Promise<void>;
   onSetTheme: Dispatch<SetStateAction<ThemeMode>>;
   onUpdateProfile: (args: {
     displayName: string;
@@ -637,6 +639,7 @@ function WorkspaceAppContent({
   onLogout,
   onManageBilling,
   onStartSubscription,
+  onUpgradeToPlus,
   onSetTheme,
   onUpdateProfile,
   onChangePassword,
@@ -4982,6 +4985,7 @@ function WorkspaceAppContent({
             onSaveApiKeys={onUpdateApiKeys}
             onChangePassword={onChangePassword}
             onStartSubscription={onStartSubscription}
+            onUpgradeToPlus={onUpgradeToPlus}
             onSave={handleSaveProfile}
             user={user}
           />
