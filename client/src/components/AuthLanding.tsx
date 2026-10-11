@@ -22,6 +22,7 @@ interface AuthLandingProps {
   }) => void | Promise<void>;
   onToggleTheme: () => void;
   theme: ThemeMode;
+  initialMode?: "login" | "signup";
 }
 
 export default function AuthLanding({
@@ -33,9 +34,10 @@ export default function AuthLanding({
   onSignup,
   onToggleTheme,
   theme,
+  initialMode = "signup",
 }: AuthLandingProps) {
   const initialResetToken = new URLSearchParams(window.location.search).get("reset_token") ?? "";
-  const [mode, setMode] = useState<AuthMode>(initialResetToken ? "reset" : "signup");
+  const [mode, setMode] = useState<AuthMode>(initialResetToken ? "reset" : initialMode);
   const [localError, setLocalError] = useState<string | null>(null);
   const [showParentError, setShowParentError] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);

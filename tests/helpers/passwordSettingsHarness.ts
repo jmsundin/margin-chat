@@ -5,7 +5,8 @@ import { billingDashboard, billingUser } from "./billingFixture";
 
 const scenario = process.argv[2];
 const browser = new Window({
-  url: `http://password-settings.test/${scenario === "reset-confirm" ? "?reset_token=emailed-token" : ""}`,
+  // Signed-out visitors at the bare root see the marketing page, so the sign-in flow starts at /login.
+  url: `http://password-settings.test/${scenario === "reset-confirm" ? "?reset_token=emailed-token" : scenario === "reset-request" ? "login" : ""}`,
 });
 for (const name of ["window", "document", "navigator", "localStorage", "HTMLElement", "HTMLInputElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "Event", "MouseEvent", "KeyboardEvent"]) {
   const value = name === "window" ? browser : (browser as any)[name];
