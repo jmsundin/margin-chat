@@ -178,3 +178,6 @@
 /* Keeps the cluster panel in the dock's grid column, where the resize bar sits for documents. */
 .semantic-map .conversation-graph-dock-gap { background: var(--panel-bg); }
 .graph-cluster-dock > .graph-cluster-panel { flex: 1; min-height: 0; }
+/* The selected document's cluster, at the top of the side panel in Clusters. */
+.graph-dock-cluster-move { flex: 0 0 auto; padding: 8px 48px 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.graph-dock-cluster-move .graph-cluster-move > span:first-child { color: var(--muted); }

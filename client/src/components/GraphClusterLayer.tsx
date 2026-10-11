@@ -268,6 +268,8 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       frame = window.setTimeout(() => { frame = 0; setHovered(nearest(event)); }, 16);
     };
     const click = (event: MouseEvent) => {
+      // Labels and their buttons sit over the dots and handle their own clicks.
+      if ((event.target as Element | null)?.closest?.("button")) return;
       const hit = nearest(event);
       if (!hit) return;
       event.stopPropagation();

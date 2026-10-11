@@ -2970,19 +2970,6 @@ export default function ConversationGraphView({
           </div></DismissibleDetails> : null}
         {toolbarTrailing}
       </div>
-      {isClustersMode && !panelView && jev?.enabled && selectedConversation && clusterLayout?.clusterByDocumentId.has(selectedConversation.id) ? <div className="graph-mode-context graph-cluster-move-bar" aria-label="Cluster for the selected document">
-        <strong>{selectedConversation.title}</strong>
-        <ClusterMoveMenu
-          documentTitle={selectedConversation.title}
-          currentClusterId={clusterLayout.clusterByDocumentId.get(selectedConversation.id) ?? null}
-          targets={clusterLayout.clusters.flatMap((cluster) => {
-            const anchorId = cluster.hubId ?? cluster.memberIds.find((id) => id !== selectedConversation.id);
-            return anchorId && anchorId !== selectedConversation.id
-              ? [{ id: cluster.id, label: clusterLabels.labels[cluster.id]?.label ?? "Cluster", anchorId }] : [];
-          })}
-          movedByHand={topicEmbeddings.placements.has(selectedConversation.id)}
-          onMove={(anchorId) => topicEmbeddings.moveDocument(selectedConversation.id, anchorId)} />
-      </div> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
@@ -3529,6 +3516,18 @@ export default function ConversationGraphView({
                 ×
               </button>
             </div>}
+            {isClustersMode && jev?.enabled && clusterLayout?.clusterByDocumentId.has(dockedConversation.id) ? <div className="graph-dock-cluster-move">
+              <ClusterMoveMenu
+                documentTitle={dockedConversation.title}
+                currentClusterId={clusterLayout.clusterByDocumentId.get(dockedConversation.id) ?? null}
+                targets={clusterLayout.clusters.flatMap((cluster) => {
+                  const anchorId = cluster.hubId ?? cluster.memberIds.find((id) => id !== dockedConversation.id);
+                  return anchorId && anchorId !== dockedConversation.id
+                    ? [{ id: cluster.id, label: clusterLabels.labels[cluster.id]?.label ?? "Cluster", anchorId }] : [];
+                })}
+                movedByHand={topicEmbeddings.placements.has(dockedConversation.id)}
+                onMove={(anchorId) => topicEmbeddings.moveDocument(dockedConversation.id, anchorId)} />
+            </div> : null}
             {source && resolvedSource ? <section className="graph-map-evidence" aria-label="Source passage">
               <div><strong>{source.sourceKind === "document" ? "Document passage" : source.sourceKind === "message" ? "Source message" : source.sourceKind === "standalone-note" ? "Source note" : "Selected discussion"}</strong><button type="button" onClick={() => navigation.update({ source: null })}>Close passage</button></div>
               {resolvedSource.status === "missing" || resolvedSource.status === "stale" ? <p role="status">{resolvedSource.status === "missing" ? "The source has been removed." : "The quoted passage has changed. Review the current text; the old quote is not highlighted."}</p> : null}
