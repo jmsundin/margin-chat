@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
@@ -17,6 +18,8 @@ export interface VaultFileViewerProps {
   onSelection: (selection: SelectionDraft) => void;
   onClearSelection?: () => void;
   onOpenBranch: (id: string) => void;
+  /** The document header's slot for the page count and zoom controls; they sit above the file until it exists. */
+  toolbarTarget?: HTMLElement | null;
 }
 
 type Loaded = { status: "loading" } | { status: "missing" } | { status: "error"; message: string } | { status: "ready"; blob: Blob };
@@ -57,9 +60,9 @@ function clampScale(scale: number) {
   return Math.min(MAX_SCALE, Math.max(MIN_SCALE, Math.round(scale * 100) / 100));
 }
 
-function ZoomBar(props: { label: string; scale: number | null; fit: boolean; onScale: (scale: number) => void; onFit: () => void; children?: React.ReactNode }) {
+function ZoomBar(props: { label: string; scale: number | null; fit: boolean; onScale: (scale: number) => void; onFit: () => void; target?: HTMLElement | null; children?: React.ReactNode }) {
   const percent = props.scale ? `${Math.round(props.scale * 100)}%` : "…";
-  return <div className="vault-file-toolbar" role="toolbar" aria-label={`${props.label} view`}>
+  const bar = <div className={`vault-file-toolbar${props.target ? " is-in-header" : ""}`} role="toolbar" aria-label={`${props.label} view`}>
     {props.children}
     <span className="vault-file-toolbar-spacer" />
     <button type="button" aria-label="Zoom out" title="Zoom out" disabled={!props.scale || props.scale <= MIN_SCALE}
@@ -69,6 +72,7 @@ function ZoomBar(props: { label: string; scale: number | null; fit: boolean; onS
       onClick={() => props.scale && props.onScale(clampScale(props.scale * 1.2))}>+</button>
     <button type="button" aria-pressed={props.fit} title="Fit to width" onClick={props.onFit}>Fit width</button>
   </div>;
+  return props.target ? createPortal(bar, props.target) : bar;
 }
 
 /* ---------- PDF ---------- */
@@ -155,7 +159,7 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
 
   if (error) return <div className="vault-file-status" role="alert">{error}</div>;
   return <section className="vault-file-viewer vault-file-pdf" aria-label={`PDF: ${props.file.path}`}>
-    <ZoomBar label="PDF" scale={shownScale} fit={fit} onFit={() => setFit(true)} onScale={(next) => { setFit(false); setScale(next); }}>
+    <ZoomBar label="PDF" target={props.toolbarTarget} scale={shownScale} fit={fit} onFit={() => setFit(true)} onScale={(next) => { setFit(false); setScale(next); }}>
       <span className="vault-file-page-count">{pdf ? `Page ${currentPage} of ${pdf.numPages}` : "Opening…"}</span>
     </ZoomBar>
     <div className="vault-file-frame" ref={frameRef}>
@@ -433,7 +437,7 @@ function ImageView(props: VaultFileViewerProps & { blob: Blob }) {
 
   const box = drag ? { x: Math.min(drag.x, drag.toX), y: Math.min(drag.y, drag.toY), width: Math.abs(drag.toX - drag.x), height: Math.abs(drag.toY - drag.y) } : null;
   return <section className="vault-file-viewer vault-file-image" aria-label={`Image: ${props.file.path}`}>
-    <ZoomBar label="Image" scale={shownScale} fit={fit} onFit={() => setFit(true)} onScale={(next) => { setFit(false); setScale(next); }}>
+    <ZoomBar label="Image" target={props.toolbarTarget} scale={shownScale} fit={fit} onFit={() => setFit(true)} onScale={(next) => { setFit(false); setScale(next); }}>
       <button type="button" aria-pressed={picking} title="Drag across the image to pick an area to note or ask about"
         onClick={() => { setPicking((current) => !current); props.onClearSelection?.(); }}>{picking ? "Drag to pick an area…" : "Pick an area"}</button>
     </ZoomBar>

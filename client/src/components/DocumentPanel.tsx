@@ -103,6 +103,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const latestDocument = useRef(document);
   latestDocument.current = document;
   const bodyRef = useRef<HTMLDivElement>(null);
+  // The PDF or image viewer puts its page count and zoom here, in the header.
+  const [fileControls, setFileControls] = useState<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   // Each block is its own editor, so documents far outside the viewport wait
   // until they are scrolled near (or focused) before mounting them.
@@ -411,7 +413,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </svg>
       </button>)}
     </nav> : null}
-      {(props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.parentBreadcrumbs || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu) ? <header className="document-header">
+      {(conversation.vaultFile || props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.parentBreadcrumbs || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu) ? <header className="document-header">
         <div className="document-header-toolbar">
           {props.headerLeading}
           {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${conversation.title || "Untitled document"}`} title="Minimize document" onClick={props.onMinimize}>−</button> : null}
@@ -419,6 +421,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
             <button type="button" title={`Open parent: ${props.parentDocument?.title || "Source document"}`} onClick={() => props.onOpenBranch(conversation.parentId!)}>← {props.parentDocument?.title || "Source document"}</button>
             {!document.marginNote && conversation.branchAnchor ? <span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span> : null}
           </div> : null}
+          {conversation.vaultFile ? <div className="document-file-controls" ref={setFileControls} /> : null}
           <div className={`document-header-actions${document.marginNote ? " document-margin-actions" : ""}`}>
             {props.headerControls}
             {props.childNavigation}
@@ -433,7 +436,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     <div className={`panel-body document-body${hasPrompts ? " has-prompt-markers" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
-          onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch}/>
+          onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
