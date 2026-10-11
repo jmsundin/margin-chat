@@ -11,6 +11,7 @@ import type {
   AuthenticatedUser,
   BackendServiceId,
   BillingDashboardData,
+  BillingPlan,
   CheckoutConfirmation,
   ConversationDocument,
   Message,
@@ -700,10 +701,11 @@ export async function requestUpdateApiKeys(args: {
   return payload.apiKeys;
 }
 
-export async function requestCreateCheckoutSession(expectedUserId?: string): Promise<string> {
+export async function requestCreateCheckoutSession(expectedUserId?: string, plan: BillingPlan = "plus"): Promise<string> {
   const response = await apiFetch("/api/billing/checkout", {
+    body: JSON.stringify({ plan }),
     credentials: "same-origin",
-    headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
+    headers: { "Content-Type": "application/json", ...(expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : {}) },
     method: "POST",
   });
   const payload = (await readJson(response)) as RedirectSessionResponse | ErrorPayload | null;
@@ -794,6 +796,32 @@ export async function requestCreateTopUpSession(amountCents: number, expectedUse
   ensureOk(response, payload, "Unable to open Checkout to add money.");
   if (!isRedirectSessionResponse(payload)) throw new Error("Backend returned an invalid Checkout response.");
   return payload.url;
+}
+
+export interface PlanUpgradeResult {
+  upgraded: boolean;
+  plan: BillingPlan;
+  credited: boolean;
+  amountMicros: number;
+  user?: AuthenticatedUser;
+}
+
+/** Cloud -> Plus: Stripe charges $20 now, starts a new monthly period and adds $20 of credit. */
+export async function requestUpgradeToPlus(expectedUserId?: string): Promise<PlanUpgradeResult> {
+  const response = await apiFetch("/api/billing/upgrade", {
+    credentials: "same-origin",
+    headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
+    method: "POST",
+  });
+  const payload = await readJson<PlanUpgradeResult & ErrorPayload>(response);
+  ensureOk(response, payload, "Unable to upgrade to Plus. Your plan has not changed.");
+  if (!payload || payload.upgraded !== true || payload.plan !== "plus" || typeof payload.credited !== "boolean") {
+    throw new Error("Backend returned an invalid upgrade response.");
+  }
+  if (expectedUserId && payload.user?.id !== expectedUserId) {
+    throw new ApiError(409, "Your signed-in account changed. Reload the page to view its billing information.");
+  }
+  return payload;
 }
 
 export async function requestCreateBillingPortalSession(expectedUserId?: string): Promise<string> {

@@ -4,7 +4,11 @@ import { HttpError } from "../lib/errors.mjs";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 export function requireCaptureAccess(user) {
-  if (user?.role !== "admin" && user?.billing?.accessKind !== "subscription") {
+  if (user?.role === "admin") return;
+  if (user?.billing?.accessKind === "subscription" && user.billing.plan === "cloud") {
+    throw new HttpError(403, "The Chrome extension and Cloud Inbox come with Plus. Upgrade to Plus in Billing to use them.");
+  }
+  if (user?.billing?.accessKind !== "subscription") {
     throw new HttpError(
       403,
       "Cloud Inbox requires a paid plan or an admin account.",

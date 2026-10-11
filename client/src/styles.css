@@ -12301,6 +12301,24 @@ body .live-markdown-editor {
   font-weight: 600;
 }
 
+.billing-plan-option,
+.billing-upgrade-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.billing-plan-option + .billing-plan-option {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.billing-plan-option .thread-dialog-button,
+.billing-upgrade-confirm .thread-dialog-button {
+  margin-top: 0;
+}
+
 .billing-history {
   display: flex;
   flex-direction: column;

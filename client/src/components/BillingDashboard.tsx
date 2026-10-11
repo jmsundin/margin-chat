@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import NotificationToast from "./NotificationToast";
-import type { AuthenticatedUser, BillingDashboardData, BillingNotice } from "../types";
+import type { AuthenticatedUser, BillingDashboardData, BillingNotice, BillingPlan } from "../types";
 import {
   formatBillingPeriodEnd, formatCreditBalance, formatUsageCost, getBillingStatusLabel,
   getReceiptUrl, parseTopUpAmountCents,
@@ -15,16 +15,18 @@ interface BillingDashboardProps {
   isSubmitting: boolean;
   onRefresh: () => void | Promise<void>;
   onAddMoney: (amountCents: number) => void | Promise<void>;
-  onStartSubscription: () => void | Promise<void>;
+  onStartSubscription: (plan?: BillingPlan) => void | Promise<void>;
+  onUpgradeToPlus?: () => void | Promise<void>;
   onManageBilling: () => void | Promise<void>;
   user: AuthenticatedUser;
 }
 
 export default function BillingDashboard({
   data, loading, errorMessage, checkoutErrorMessage, notice, isSubmitting,
-  onRefresh, onAddMoney, onStartSubscription, onManageBilling, user,
+  onRefresh, onAddMoney, onStartSubscription, onUpgradeToPlus, onManageBilling, user,
 }: BillingDashboardProps) {
   const [amount, setAmount] = useState("20.00");
+  const [confirmingUpgrade, setConfirmingUpgrade] = useState(false);
   const [amountError, setAmountError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -56,6 +58,9 @@ export default function BillingDashboard({
   const subscribed = ["active", "trialing", "past_due", "unpaid", "paused"].includes(subscription.status);
   const monthlyAmount = formatCreditBalance(data?.plan.monthlyAmountMicros ?? 20_000_000);
   const periodEnd = formatBillingPeriodEnd(subscription.currentPeriodEnd);
+  const onCloud = subscribed && user.billing.plan === "cloud";
+  const cloudPrice = data?.cloudPlan ? formatCreditBalance(data.cloudPlan.monthlyPriceCents * 10_000) : null;
+  const statusLine = <p className="billing-plan-status">{getBillingStatusLabel(subscription.status)}{periodEnd ? ` · ${subscription.cancelAtPeriodEnd ? (onCloud ? "Plan ends" : "Funding ends") : "Current period ends"} ${periodEnd}` : ""}</p>;
 
   return (
     <div className="billing-dashboard">
@@ -89,17 +94,50 @@ export default function BillingDashboard({
       <p className="billing-budget-help">Hosted AI requests draw from your prepaid balance based on API usage. Reservations are separate from the available amount and settle when a request finishes. Interrupted requests without final usage totals may be charged using the reservation estimate. Personal API keys are billed directly by their provider.</p>
 
       <div className="billing-funding-grid">
-        <section className="billing-funding-card" aria-label="Monthly subscription">
-          <p className="eyebrow">Monthly funding</p>
+        {onCloud ? <section className="billing-funding-card" aria-label="Cloud plan">
+          <p className="eyebrow">Cloud plan</p>
+          <h3>{cloudPrice ?? "$10.00"}<span> / month</span></h3>
+          <p>Your vault is stored in the cloud and syncs automatically on every device. AI uses your own API keys, or money you add here.</p>
+          {statusLine}
+          {subscription.cancelAtPeriodEnd ? <p>Your Cloud plan won't renew. Your cloud vault stays available until the period ends.</p> : null}
+          {onUpgradeToPlus && !subscription.cancelAtPeriodEnd && subscription.status === "active" ? (confirmingUpgrade ? <div className="billing-upgrade-confirm" role="group" aria-label="Confirm upgrade">
+            <p>Upgrading charges {monthlyAmount} now, adds {monthlyAmount} of AI credit and starts a new monthly period today. The rest of this Cloud month isn't refunded.</p>
+            <button className="thread-dialog-button is-primary" disabled={isSubmitting} type="button"
+              onClick={() => { setConfirmingUpgrade(false); void onUpgradeToPlus(); }}>{isSubmitting ? "Upgrading…" : `Pay ${monthlyAmount} and upgrade`}</button>
+            <button className="thread-dialog-button" disabled={isSubmitting} type="button" onClick={() => setConfirmingUpgrade(false)}>Not now</button>
+          </div> : <button className="thread-dialog-button is-primary" disabled={isSubmitting} type="button" onClick={() => setConfirmingUpgrade(true)}>
+            Upgrade to Plus for {monthlyAmount}/month
+          </button>) : null}
+          <button className="thread-dialog-button" disabled={isSubmitting} onClick={() => void onManageBilling()} type="button">
+            {isSubmitting ? "Opening Stripe…" : "Manage subscription"}
+          </button>
+        </section> : subscribed || !cloudPrice ? <section className="billing-funding-card" aria-label="Monthly subscription">
+          <p className="eyebrow">{subscribed ? "Plus plan" : "Monthly funding"}</p>
           <h3>{monthlyAmount}<span> / month</span></h3>
           <p>Each successful monthly payment adds {monthlyAmount} to your AI budget. Unused credits carry over.</p>
-          <p className="billing-plan-status">{getBillingStatusLabel(subscription.status)}{periodEnd ? ` · ${subscription.cancelAtPeriodEnd ? "Funding ends" : "Current period ends"} ${periodEnd}` : ""}</p>
+          {statusLine}
           {subscription.cancelAtPeriodEnd ? <p>Future monthly payments are canceled. Your remaining credits stay available.</p> : null}
           <button className="thread-dialog-button is-primary" disabled={isSubmitting}
-            onClick={() => void (subscribed ? onManageBilling() : onStartSubscription())} type="button">
+            onClick={() => void (subscribed ? onManageBilling() : onStartSubscription("plus"))} type="button">
             {isSubmitting ? "Opening Stripe…" : subscribed ? "Manage subscription" : `Subscribe for ${monthlyAmount}/month`}
           </button>
-        </section>
+        </section> : <section className="billing-funding-card" aria-label="Choose a plan">
+          <p className="eyebrow">Monthly plans</p>
+          <div className="billing-plan-option">
+            <h3>Cloud <span>{cloudPrice} / month</span></h3>
+            <p>Cloud vault with automatic sync on every device. Bring your own AI API keys.</p>
+            <button className="thread-dialog-button" disabled={isSubmitting} onClick={() => void onStartSubscription("cloud")} type="button">
+              {isSubmitting ? "Opening Stripe…" : `Subscribe to Cloud for ${cloudPrice}/month`}
+            </button>
+          </div>
+          <div className="billing-plan-option">
+            <h3>Plus <span>{monthlyAmount} / month</span></h3>
+            <p>Everything in Cloud, plus {monthlyAmount} of hosted AI credit each month and the Chrome extension. Unused credits carry over.</p>
+            <button className="thread-dialog-button is-primary" disabled={isSubmitting} onClick={() => void onStartSubscription("plus")} type="button">
+              {isSubmitting ? "Opening Stripe…" : `Subscribe to Plus for ${monthlyAmount}/month`}
+            </button>
+          </div>
+        </section>}
         <form className="billing-funding-card" aria-label="Add money" onSubmit={(event) => void submitTopUp(event)}>
           <p className="eyebrow">One-time payment</p><h3>Add money</h3>
           <p>Top up whenever you need more credit. The money stays in your balance until you use it.</p>

@@ -18,9 +18,10 @@ function fixture(user: any = { id: "owner", billing: { creditBalanceMicros: 0 } 
     runtimeConfig: { host: "localhost", port: 8787 },
     authService: { getAuthContext: async () => ({ user: current }) },
     billingService: {
-      createSubscriptionCheckoutSession: async (args: any) => { calls.push(["subscription", args.user.id]); return { url: "https://checkout.stripe.com/subscription" }; },
+      createSubscriptionCheckoutSession: async (args: any) => { calls.push(["subscription", args.user.id, args.plan]); return { url: "https://checkout.stripe.com/subscription" }; },
       createTopUpCheckoutSession: async (args: any) => { calls.push(["topup", args.user.id, args.amountCents]); return { url: "https://checkout.stripe.com/topup" }; },
       getBillingDashboard: async (userId: string) => { calls.push(["dashboard", userId]); return { balanceMicros: 20_000_000, reservedMicros: 0, transactions: [] }; },
+      upgradeToPlus: async ({ user }: any) => { calls.push(["upgrade", user.id]); return { upgraded: true, plan: "plus", credited: true, amountMicros: 20_000_000 }; },
       confirmCheckout: async ({ sessionId, user }: any) => { calls.push(["confirm", user.id, sessionId]); current = { ...user, billing: { creditBalanceMicros: 20_000_000 } }; return { confirmed: true, status: "active", purchaseKind: "subscription" }; },
     },
   });
@@ -34,7 +35,7 @@ function fixture(user: any = { id: "owner", billing: { creditBalanceMicros: 0 } 
 describe("billing account routes", () => {
   test("blocks an old tab from paying for a different signed-in account", async () => {
     const f = fixture();
-    for (const [method, path] of [["GET", "dashboard"], ["POST", "checkout"], ["POST", "topup"], ["POST", "checkout/confirm"], ["POST", "portal"]]) {
+    for (const [method, path] of [["GET", "dashboard"], ["POST", "checkout"], ["POST", "topup"], ["POST", "upgrade"], ["POST", "checkout/confirm"], ["POST", "portal"]]) {
       const result = await f.request(method, `/api/billing/${path}`, { amountCents: 2000 }, { "x-margin-billing-user": "previous-user" });
       expect(result.status).toBe(409);
       expect(result.body.error).toContain("account changed");
@@ -50,7 +51,17 @@ describe("billing account routes", () => {
     expect(dashboard.status).toBe(200);
     expect(dashboard.headers["Cache-Control"]).toBe("no-store");
     expect(dashboard.body.user.id).toBe("owner");
-    expect(f.calls).toEqual([["subscription", "owner"], ["topup", "owner", 2500], ["dashboard", "owner"]]);
+    expect(f.calls).toEqual([["subscription", "owner", "plus"], ["topup", "owner", 2500], ["dashboard", "owner"]]);
+  });
+
+  test("checkout passes the chosen plan; an empty body means Plus; upgrade returns the fresh account", async () => {
+    const f = fixture();
+    expect((await f.request("POST", "/api/billing/checkout", { plan: "cloud" })).status).toBe(200);
+    expect((await f.request("POST", "/api/billing/checkout")).status).toBe(200);
+    const upgrade = await f.request("POST", "/api/billing/upgrade");
+    expect(upgrade.status).toBe(200);
+    expect(upgrade.body).toMatchObject({ upgraded: true, credited: true, user: { id: "owner" } });
+    expect(f.calls).toEqual([["subscription", "owner", "cloud"], ["subscription", "owner", "plus"], ["upgrade", "owner"]]);
   });
 
   test("confirmation returns a freshly loaded account after payment credit is applied", async () => {

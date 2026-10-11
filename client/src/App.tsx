@@ -8,13 +8,13 @@ import { AUTH_PATHS, resolveSiteRoute, type SiteRoute } from "./lib/siteRoutes";
 import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
   requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession,
-  requestCreateCheckoutSession, requestLogin, requestLogout, requestPasswordReset,
+  requestCreateCheckoutSession, requestUpgradeToPlus, requestLogin, requestLogout, requestPasswordReset,
   requestPasswordResetConfirm, requestSignup, requestUpdateApiKeys, requestUpdateProfile, requestChangePassword, ApiError,
 } from "./lib/api";
 import { rememberOfflineUser, loadOfflineUser, forgetOfflineUser } from "./lib/offlineSession";
 import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type ThemeMode } from "./lib/appearance";
 import { getCheckoutConfirmationNotice, getCheckoutReturn } from "./lib/billing";
-import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData } from "./types";
+import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData, BillingPlan } from "./types";
 
 // Documents open in the block editor, so fetch its chunk alongside the workspace rather than after it renders.
 const WorkspaceApp = lazy(() => {
@@ -431,12 +431,39 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     }
   }
 
-  async function handleStartSubscription() {
+  async function handleStartSubscription(plan: BillingPlan = "plus") {
     if (extension) { openWebsiteSettings("billing"); return; }
     await redirectToStripe(
-      requestCreateCheckoutSession,
+      (userId) => requestCreateCheckoutSession(userId, plan),
       "Unable to start the Stripe checkout flow.",
     );
+  }
+
+  async function handleUpgradeToPlus() {
+    if (extension) { openWebsiteSettings("billing"); return; }
+    const userId = authUserIdRef.current;
+    if (!userId) return;
+    setBillingSubmitting(true);
+    setBillingError(null);
+    try {
+      const result = await requestUpgradeToPlus(userId);
+      if (authUserIdRef.current !== userId) return;
+      if (result.user?.id === userId) {
+        rememberOfflineUser(result.user);
+        setAuthUser(result.user);
+      }
+      setBillingNotice({
+        kind: "success",
+        message: result.credited
+          ? "You're on Plus. $20 of AI credit has been added, and your next renewal is a month from today."
+          : "You're on Plus. Your $20 of credit appears as soon as Stripe confirms the payment.",
+      });
+      await refreshBilling();
+    } catch (error) {
+      if (authUserIdRef.current === userId) setBillingError(getErrorText(error, "Unable to upgrade to Plus. Your plan has not changed."));
+    } finally {
+      if (authUserIdRef.current === userId) setBillingSubmitting(false);
+    }
   }
 
   async function handleAddMoney(amountCents: number) {
@@ -532,6 +559,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
       }}
       onManageBilling={handleManageBilling}
       onStartSubscription={handleStartSubscription}
+      onUpgradeToPlus={handleUpgradeToPlus}
       onSetTheme={setTheme}
       onUpdateProfile={handleUpdateProfile}
       onChangePassword={handleChangePassword}

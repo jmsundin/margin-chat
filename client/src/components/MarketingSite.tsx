@@ -328,11 +328,12 @@ function HomePage({ site }: { site: SiteContext }) {
         <div className="mk-wrap mk-split is-top">
           <div>
             <h2 className="mk-h2">Simple pricing</h2>
-            <p className="mk-body">Start free with your own AI keys. Upgrade when you want us to run the models and keep your vault in the cloud.</p>
+            <p className="mk-body">Start free with your own AI keys. Add Cloud to sync your vault everywhere, or Plus when you want us to run the models too.</p>
             <p><a className="mk-strong-link" href={MARKETING_PATHS.pricing} onClick={site.go}>See full pricing →</a></p>
           </div>
-          <div className="mk-grid2">
+          <div className="mk-grid3">
             <div className="mk-plan-mini"><strong>Free</strong><span className="mk-price">$0</span><span>Your own API keys. Local vault.</span></div>
+            <div className="mk-plan-mini"><strong>Cloud</strong><span className="mk-price">$10<small>/mo</small></span><span>Your own API keys. Cloud vault that syncs automatically.</span></div>
             <div className="mk-plan-mini is-featured"><strong>Plus</strong><span className="mk-price">$20<small>/mo</small></span><span>Includes $20 of AI credit every month. Cloud vault.</span></div>
           </div>
         </div>
@@ -351,31 +352,40 @@ function HomePage({ site }: { site: SiteContext }) {
 const PLUS_FEATURES = [
   <><strong>$20 of AI credit every month</strong>, which rolls over</>,
   "No API keys needed: hosted Claude and GPT models",
-  "Cloud vault, so your notes are on every device",
+  "Chrome extension and Cloud Inbox",
   "Agent mode in Ask AI",
+  "Everything in Cloud",
+];
+const CLOUD_FEATURES = [
+  <><strong>Cloud vault</strong>, so your notes are on every device</>,
+  "Automatic sync between web, Mac and phone",
+  "Keep using your own OpenAI, Anthropic or Gemini API keys",
   "Everything in Free",
 ];
 const FREE_FEATURES = [
   "Branches, notes, maps and search",
   "Local Markdown vault on your computer",
   "Use your own OpenAI, Anthropic or Gemini API keys",
-  "Mac app, web, Chrome extension and phone",
+  "Mac app, web and phone",
 ];
-const COMPARE_ROWS: [string, string, string][] = [
-  ["Branches, notes, maps, search", "Yes", "Yes"],
-  ["Local Markdown vault", "Yes", "Yes"],
-  ["Cloud vault", "No", "Yes"],
-  ["AI with your own API keys", "Yes", "Yes"],
-  ["Hosted AI, no keys needed", "With top-up credit", "$20 of credit each month"],
-  ["Mac app, web, Chrome, phone", "Yes", "Yes"],
+const COMPARE_ROWS: [string, string, string, string][] = [
+  ["Branches, notes, maps, search", "Yes", "Yes", "Yes"],
+  ["Local Markdown vault", "Yes", "Yes", "Yes"],
+  ["Cloud vault with automatic sync", "No", "Yes", "Yes"],
+  ["AI with your own API keys", "Yes", "Yes", "Yes"],
+  ["Hosted AI, no keys needed", "With top-up credit", "With top-up credit", "$20 of credit each month"],
+  ["Chrome extension", "No", "No", "Yes"],
+  ["Mac app, web, phone", "Yes", "Yes", "Yes"],
 ];
 const FAQ: [string, string][] = [
   ["How is AI usage charged?", "Each request costs what the model provider charges for its tokens, taken from your credit. You can see every charge under Billing in your profile."],
   ["What happens to unused credit?", "It rolls over to the next month, and you keep it if you cancel."],
   ["Do my own API keys use credit?", "No. Requests made with your own keys are billed by your provider and never touch your Margin Chat credit."],
-  ["Where are my notes stored?", "In a folder on your computer by default. Plus adds a cloud vault so the same notes are on every device."],
-  ["Can I cancel any time?", "Yes, from Billing in your profile. Plus stays active until the end of the period you paid for."],
-  ["Can I add credit without subscribing?", "Yes. Top-ups from $5 to $500 work with or without Plus."],
+  ["Where are my notes stored?", "In a folder on your computer by default. Cloud and Plus add a cloud vault that syncs automatically, so the same notes are on every device."],
+  ["What's the difference between Cloud and Plus?", "Cloud is storage and sync: AI runs on your own API keys. Plus includes everything in Cloud, $20 of hosted AI credit each month, and the Chrome extension."],
+  ["Can I switch from Cloud to Plus?", "Yes, from Billing in your profile. You pay $20 that day, get $20 of credit, and your new monthly period starts then."],
+  ["Can I cancel any time?", "Yes, from Billing in your profile. Your plan stays active until the end of the period you paid for."],
+  ["Can I add credit without subscribing?", "Yes. Top-ups from $5 to $500 work on any plan, including Free and Cloud."],
 ];
 
 function PricingPage({ site }: { site: SiteContext }) {
@@ -384,16 +394,22 @@ function PricingPage({ site }: { site: SiteContext }) {
       <section className="mk-page-head">
         <div className="mk-wrap">
           <h1 className="mk-h1 is-page">Pay for the AI you use</h1>
-          <p className="mk-lede">Margin Chat is free with your own API keys. Plus runs the models for you and turns your subscription into AI credit, dollar for dollar.</p>
+          <p className="mk-lede">Margin Chat is free with your own API keys. Cloud keeps your vault synced everywhere. Plus also runs the models for you and turns your subscription into AI credit, dollar for dollar.</p>
         </div>
       </section>
       <section>
-        <div className="mk-wrap mk-wrap-narrow mk-grid2 is-plans">
+        <div className="mk-wrap mk-wrap-narrow mk-grid3 is-plans">
           <div className="mk-plan">
             <div><h2 className="mk-h3">Free</h2><p className="mk-muted">For people who bring their own keys</p></div>
             <div className="mk-price is-large">$0</div>
             <a className="mk-btn mk-btn-ghost" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Open Margin Chat" : "Get started"}</a>
             <ul className="mk-checks">{FREE_FEATURES.map((item) => <li key={item}><CheckIcon />{item}</li>)}</ul>
+          </div>
+          <div className="mk-plan">
+            <div><h2 className="mk-h3">Cloud</h2><p className="mk-muted">Cloud vault and sync, your own keys</p></div>
+            <div><span className="mk-price is-large">$10</span><span className="mk-muted"> / month</span></div>
+            <a className="mk-btn mk-btn-ghost" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Choose Cloud in Billing" : "Start with Cloud"}</a>
+            <ul className="mk-checks">{CLOUD_FEATURES.map((item, index) => <li key={index}><CheckIcon /><span>{item}</span></li>)}</ul>
           </div>
           <div className="mk-plan is-featured">
             <div><h2 className="mk-h3">Plus</h2><p className="mk-muted">Hosted AI and a cloud vault</p></div>
@@ -408,7 +424,7 @@ function PricingPage({ site }: { site: SiteContext }) {
           <div className="mk-panel mk-topup">
             <div>
               <h2 className="mk-h3">Need more? Top up any time.</h2>
-              <p className="mk-body">Add $5 to $500 of credit in one payment, with or without Plus. Credit stays yours if you cancel.</p>
+              <p className="mk-body">Add $5 to $500 of credit in one payment, on any plan. Credit stays yours if you cancel.</p>
             </div>
           </div>
         </div>
@@ -418,8 +434,8 @@ function PricingPage({ site }: { site: SiteContext }) {
           <h2 className="mk-h2">Compare plans</h2>
           <div className="mk-table-box">
             <table className="mk-table">
-              <thead><tr><th scope="col">Feature</th><th scope="col">Free</th><th scope="col">Plus</th></tr></thead>
-              <tbody>{COMPARE_ROWS.map(([feature, free, plus]) => <tr key={feature}><th scope="row">{feature}</th><td>{free}</td><td>{plus}</td></tr>)}</tbody>
+              <thead><tr><th scope="col">Feature</th><th scope="col">Free</th><th scope="col">Cloud</th><th scope="col">Plus</th></tr></thead>
+              <tbody>{COMPARE_ROWS.map(([feature, free, cloud, plus]) => <tr key={feature}><th scope="row">{feature}</th><td>{free}</td><td>{cloud}</td><td>{plus}</td></tr>)}</tbody>
             </table>
           </div>
         </div>
