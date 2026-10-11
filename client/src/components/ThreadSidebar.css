@@ -317,5 +317,7 @@
 .sidebar-sort-text > span { font-size: .8rem; font-weight: 600; }
 .sidebar-sort-text small { color: var(--muted); font-size: .7rem; font-weight: 450; line-height: 1.3; }
 .sidebar-sort-status { color: var(--muted); font-size: .72rem; margin: 6px 10px; }
-.thread-sidebar-footer.has-vault-switcher { align-items: center; flex-wrap: wrap; }
-.thread-sidebar:not(.is-collapsed) .thread-sidebar-footer.has-vault-switcher > .vault-switcher { flex-basis: 100%; }
+/* The vault switcher shares one row with profile, settings and theme, like Obsidian's footer. */
+.thread-sidebar:not(.is-collapsed) .thread-sidebar-footer.has-vault-switcher { align-items: center; gap: 4px; }
+.thread-sidebar:not(.is-collapsed) .thread-sidebar-footer.has-vault-switcher .vault-switcher-trigger { padding: 0 6px 0 10px; }
+.thread-sidebar:not(.is-collapsed) .thread-sidebar-footer.has-vault-switcher .sidebar-utility-button { width: 36px; }

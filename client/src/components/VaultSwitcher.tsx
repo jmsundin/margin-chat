@@ -25,12 +25,12 @@ function ChevronIcon() {
 /** What the sidebar calls the open vault, and a line about where it is kept. */
 export function describeVault(vault: Pick<Vault, "localDirectoryStatus" | "folderAccessMessage" | "saving" | "localSaveError" | "storageMode">, cloudSync: boolean) {
   const folder = vault.localDirectoryStatus.directoryName;
-  const name = folder ?? "Browser vault";
+  const name = folder ?? "App vault";
   const cloud = !cloudSync ? "" : vault.storageMode === "server" ? " · synced to the cloud" : " · not synced yet";
   const where = vault.folderAccessMessage ? "Needs access to see new files"
     : vault.localSaveError ? "Save needs attention"
     : vault.saving ? "Saving…"
-    : `${folder ? "Folder on this device" : "Saved in this browser"}${cloud}`;
+    : `${folder ? "Folder on this device" : "Saved in the app"}${cloud}`;
   return { name, where, folder };
 }
 
