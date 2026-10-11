@@ -6,7 +6,9 @@ export const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000;
 function parseVersion(value) {
   if (!value || typeof value.commit !== "string" || !/^[a-f0-9]{40}$/.test(value.commit)) return null;
   const time = Date.parse(value.committedAt ?? "");
-  return Number.isNaN(time) ? null : { commit: value.commit, time };
+  if (Number.isNaN(time)) return null;
+  // Published desktop builds also carry a version number like 0.2.0.
+  return { commit: value.commit, time, version: typeof value.version === "string" ? value.version : null };
 }
 
 // Only a strictly newer release counts, so a build from main that is ahead of

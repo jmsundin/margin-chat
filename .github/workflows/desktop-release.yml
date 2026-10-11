@@ -1,0 +1,132 @@
+name: Desktop release
+
+# Builds the Electron app for macOS, Windows and Linux from one commit and
+# publishes the installers as a GitHub release. marginchat.com/download serves
+# the latest release through /api/downloads/desktop, which records each download.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version number for this build, for example 0.2.0
+        required: true
+        type: string
+      commit:
+        description: Full commit SHA to build (leave empty for the head of the selected branch). Use the commit production runs.
+        required: false
+        type: string
+
+concurrency:
+  group: margin-chat-desktop-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - name: Check the version number
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "Use a version like 0.2.0"; exit 1; fi
+      - name: Install pinned dependencies
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts
+      - name: Build client
+        # Every installer bundles this same build; version.json records its commit.
+        run: bun run build
+      - uses: actions/upload-artifact@v6
+        with:
+          name: client
+          path: dist
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v6
+        with:
+          name: version-json
+          path: dist/version.json
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    needs: client
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac
+          - os: windows-latest
+            target: --win
+          - os: ubuntu-latest
+            target: --linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - uses: actions/download-artifact@v6
+        with:
+          name: client
+          path: dist
+      - name: Install desktop dependencies
+        run: bun --no-env-file install --frozen-lockfile
+        working-directory: desktop
+      - name: Package installers
+        shell: bash
+        working-directory: desktop
+        env:
+          VERSION: ${{ inputs.version }}
+          # Unsigned until Apple and Windows signing certificates are added.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: bunx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version="$VERSION"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: installers-${{ runner.os }}
+          path: |
+            desktop/release/*.dmg
+            desktop/release/*.exe
+            desktop/release/*.AppImage
+            desktop/release/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: "{installers-*,version-json}"
+          path: assets
+          merge-multiple: true
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit || github.sha }}
+        run: |
+          ls -la assets
+          gh release create "desktop-v$VERSION" assets/* \
+            --target "$COMMIT" \
+            --title "Margin Chat desktop $VERSION" \
+            --notes "Desktop app built from $COMMIT. Download it from https://www.marginchat.com/download." \
+            --latest

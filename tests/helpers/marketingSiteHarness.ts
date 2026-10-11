@@ -20,6 +20,8 @@ globalThis.fetch = (async (url) => {
   if (url === "/api/auth/login") { serverUser = billingUser; return Response.json({ user: serverUser }); }
   if (url === "/api/auth/logout") { serverUser = null; return Response.json({ ok: true }); }
   if (url === "/api/billing/dashboard") return Response.json({});
+  // Only the Mac build is published in this fixture.
+  if (url === "/api/downloads/desktop") return Response.json({ available: true, version: "0.2.0", files: { mac: { href: "/api/downloads/desktop/mac" } } });
   throw new Error(`Unexpected request ${url}`);
 }) as typeof fetch;
 
@@ -56,7 +58,11 @@ try {
   assert.equal(selected?.textContent, "Windows", "The download page preselects the visitor's system");
   const macTab = [...container.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "macOS") as unknown as HTMLElement;
   await click(macTab);
-  assert(container.textContent?.includes("The macOS app is on its way"), "Without a published build the Mac tab offers the web app");
+  const macDownload = [...container.querySelectorAll("a")].find((anchor) => anchor.textContent?.trim() === "Download for macOS");
+  assert.equal(macDownload?.getAttribute("href"), "/api/downloads/desktop/mac?from=download-page", "A published Mac build is offered from the server's list");
+  const linuxTab = [...container.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Linux") as unknown as HTMLElement;
+  await click(linuxTab);
+  assert(container.textContent?.includes("The Linux app is on its way"), "Without a published build the Linux tab offers the web app");
 
   await act(async () => { browser.history.back(); });
   await flushUntil(() => browser.location.pathname === "/pricing" && (container.textContent?.includes("Pay for the AI you use") ?? false), "Back returns to pricing");

@@ -28,7 +28,7 @@ describe("shared API deployment", () => {
     expect(new Bun.Glob(config.functions["api/*.mjs"].includeFiles).match("server/db/migrations/0001_baseline.sql")).toBe(true);
     expect(config.rewrites[0]).toEqual({ source: `/api/:${API_DEPLOYMENT_QUERY}*`, destination: `${API_DEPLOYMENT_PATH}?${API_DEPLOYMENT_QUERY}=:${API_DEPLOYMENT_QUERY}` });
     for (const route of API_ROUTES) {
-      const pathname = route.path.replace(":id", "11111111-1111-4111-8111-111111111111");
+      const pathname = route.path.replace(":id", "11111111-1111-4111-8111-111111111111").replace(":target", "mac");
       expect(pathname.startsWith("/api/")).toBe(true);
       for (const method of route.methods) {
         const request = { method, url: `${pathname}?revision=original` };

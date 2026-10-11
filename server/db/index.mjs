@@ -49,6 +49,7 @@ import * as captures from "./captureRepository.mjs";
 import * as publicMap from "./publicMapRepository.mjs";
 import * as topics from "./topicRepository.mjs";
 import * as passages from "./passageRepository.mjs";
+import { recordDesktopDownload } from "./downloadRepository.mjs";
 
 const { Pool } = pg;
 
@@ -425,5 +426,6 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     writeVaultIndexSettings: (args) => withClient((client) => passages.writeVaultIndexSettings(client, args)),
     searchPassages: (args) => withClient((client) => passages.searchPassages(client, args)),
     readFilePassages: (args) => withClient((client) => passages.readFilePassages(client, args)),
+    recordDesktopDownload: (args) => withClient((client) => recordDesktopDownload(client, args)),
   };
 }

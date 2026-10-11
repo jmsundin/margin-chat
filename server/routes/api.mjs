@@ -20,6 +20,7 @@ import { handleTopicExpansionRequest } from "./topicExpansion.mjs";
 import { createPublicMapService } from "../publicMap/index.mjs";
 import { handlePublicMapRequest, handleWebSearchRequest } from "./publicMap.mjs";
 import { createWebSearchService } from "../webSearch/index.mjs";
+import { createDesktopDownloadService, describeDownloadRequest } from "../downloads/index.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
@@ -104,6 +105,7 @@ export function createApiHandler({
   webSearchService,
   topicEmbeddingService,
   passageService,
+  desktopDownloadService,
   env = process.env,
   rateLimits,
 }) {
@@ -116,6 +118,7 @@ export function createApiHandler({
   const vaultPassages = passageService ?? createVaultPassageService({ database, env });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
+  const desktopDownloads = desktopDownloadService ?? createDesktopDownloadService({ database, env });
 
   const limits = { ...DEFAULT_AUTH_RATE_LIMITS, ...rateLimits };
   const loginByAddress = createRateLimiter(limits.loginFailuresByAddress);
@@ -257,6 +260,25 @@ export function createApiHandler({
             "Set-Cookie": authService.buildClearedSessionCookie(),
           }
         : undefined;
+
+      if (route?.id === "desktopRelease") {
+        sendJson(response, 200, await desktopDownloads.describe(), { "Cache-Control": "public, max-age=60" });
+        return;
+      }
+
+      if (route?.id === "desktopDownload") {
+        const location = await desktopDownloads.download({
+          target: route.params.target,
+          userId: authContext.user?.id ?? null,
+          details: describeDownloadRequest(request, {
+            address: clientAddress(request), trustProxyHeaders: runtimeConfig.trustProxyHeaders === true, url,
+          }),
+        });
+        // Nothing published for that system yet: back to the download page.
+        response.writeHead(302, { Location: location ?? "/download", "Cache-Control": "no-store", ...authHeaders });
+        response.end();
+        return;
+      }
 
       if (route?.id === "authSession") {
         sendJson(
