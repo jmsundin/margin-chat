@@ -1093,6 +1093,59 @@ async function checkTallDenseGroupZoom() {
   }
 }
 
+async function checkCanvasCardDrag() {
+  const cards = Object.fromEntries(["left", "right"].map((id) => {
+    const conversation = createMainConversation({ id: `drag-${id}`, createdAt });
+    conversation.title = `Drag ${id}`;
+    conversation.messages = [{ id: `${id}-message`, role: "assistant", content: "A card to move around the canvas.", createdAt }];
+    return [conversation.id, conversation];
+  }));
+  const layouts = {
+    "drag-left": createDefaultGraphNodeLayout({ x: 0, y: 0, positioned: true }),
+    "drag-right": createDefaultGraphNodeLayout({ x: 600, y: 0, positioned: true }),
+  };
+  const layoutWrites: Array<Record<string, Partial<GraphNodeLayout>>> = [];
+  await act(async () => {
+    root.render(createElement(ConversationGraphView, {
+      workspaceKey: "canvas-card-drag", activeConversationId: "drag-left", conversations: cards,
+      groups: {}, graphLayouts: layouts,
+      onActivateConversation() {}, onAssignGroup() {}, onCreateChildConversation: () => null,
+      onOpenConversation() {}, onToggleGroup() {},
+      onUpdateGraphNodeLayouts: (updates) => { layoutWrites.push(structuredClone(updates)); },
+    }));
+  });
+  await flushFrames();
+  await click(element('[aria-label="Canvas view"]'));
+  const viewport = element(".conversation-graph-viewport");
+  const body = () => element('[aria-label="Preview Drag left"]');
+  async function press(moves: number[], pointerId: number) {
+    const target = body();
+    target.setPointerCapture = () => {};
+    await act(async () => {
+      target.dispatchEvent(new browser.PointerEvent("pointerdown", { pointerId, pointerType: "mouse", button: 0, clientX: 100, clientY: 100, bubbles: true }));
+      for (const x of moves) viewport.dispatchEvent(new browser.PointerEvent("pointermove", { pointerId, pointerType: "mouse", clientX: 100 + x, clientY: 100, bubbles: true }));
+    });
+    await flushFrames();
+    const end = 100 + (moves.at(-1) ?? 0);
+    await act(async () => {
+      target.dispatchEvent(new browser.PointerEvent("pointerup", { pointerId, pointerType: "mouse", button: 0, clientX: end, clientY: 100, bubbles: true }));
+      target.click();
+    });
+    await flushFrames();
+  }
+  await press([2], 51);
+  assert(element('[data-conversation-id="drag-left"]').classList.contains("is-selected"), "A press that barely moves still previews the card");
+  assert.equal(layoutWrites.length, 0, "A click on a Canvas card never saves a position");
+  await click(body());
+  assert.equal(container.querySelector(".conversation-graph-node.is-selected"), null);
+  await press([20, 80, 160], 52);
+  assert.equal(container.querySelector(".conversation-graph-node.is-selected"), null, "Dragging a card moves it instead of previewing it");
+  const moved = layoutWrites.at(-1)?.["drag-left"];
+  assert(moved && moved.positioned && (moved.x ?? 0) > 0, `Dragging a Canvas card by its body saves its new position: ${JSON.stringify(layoutWrites)}`);
+  await click(body());
+  assert(element('[data-conversation-id="drag-left"]').classList.contains("is-selected"), "The next click after a drag previews as usual");
+}
+
 async function checkTemporarySelectionSpacing() {
   const denseConversations = Object.fromEntries(["center", "right", "below"].map((id) => {
     const conversation = createMainConversation({ id: `dense-${id}`, createdAt });
@@ -1409,6 +1462,8 @@ try {
   await checkDocumentLayoutChoices();
   await checkVeryWideMapZoom();
   await checkTallDenseGroupZoom();
+  // Last, so the Canvas mode it leaves behind cannot affect the checks above.
+  await checkCanvasCardDrag();
   console.log("Graph concept, source, search, scope, focus, history, account-isolation, and atlas navigation checks passed.");
 } finally {
   await act(async () => { root.unmount(); });

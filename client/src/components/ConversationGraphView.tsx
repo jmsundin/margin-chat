@@ -534,6 +534,7 @@ function GraphNode({
   onFocus,
   onSource,
   onMoveStart,
+  onBodyPress,
   onOpen,
   onSelect,
   placement,
@@ -569,6 +570,11 @@ function GraphNode({
   onFocus: (conversationId: string) => void;
   onSource: (conversationId: string) => void;
   onMoveStart: (
+    event: ReactPointerEvent<HTMLButtonElement>,
+    conversationId: string,
+  ) => void;
+  /** Pressing the card itself; on Canvas, dragging from here moves the card. */
+  onBodyPress?: (
     event: ReactPointerEvent<HTMLButtonElement>,
     conversationId: string,
   ) => void;
@@ -648,6 +654,7 @@ function GraphNode({
         aria-pressed={isSelectionMode ? isMultiSelected : isSelected}
         className="conversation-graph-node-select"
         onClick={() => onSelect(conversation.id)}
+        onPointerDown={onBodyPress ? (event) => onBodyPress(event, conversation.id) : undefined}
         type="button"
       >
         <span className="conversation-graph-node-head">
@@ -917,6 +924,10 @@ export default function ConversationGraphView({
   const backgroundPressRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean; territoryId?: string } | null>(null);
   const touchPointersRef = useRef(new Map<number, GraphPointer>());
   const suppressTouchClickRef = useRef(false);
+  // A mouse press on a Canvas card becomes a move once it travels a few
+  // pixels; a press that stays put is still a click that previews the card.
+  const cardPressRef = useRef<{ pointerId: number; x: number; y: number; conversationId: string; target: HTMLElement } | null>(null);
+  const suppressCardClickRef = useRef(false);
   const [isMultiSelectActive, setIsMultiSelectActive] = useState(false);
   const [multiSelectedConversationIds, setMultiSelectedConversationIds] =
     useState<Set<string>>(() => new Set());
@@ -2004,6 +2015,7 @@ export default function ConversationGraphView({
   }
 
   function startTouchGesture(event: ReactPointerEvent<HTMLDivElement>) {
+    suppressCardClickRef.current = false;
     if (panelView) return;
     if (event.pointerType !== "touch") suppressTouchClickRef.current = false;
     const target = event.target as Element;
@@ -2135,10 +2147,21 @@ export default function ConversationGraphView({
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
+    beginNodeMove(event, conversationId);
+  }
+
+  function beginNodeMove(start: { pointerId: number; clientX: number; clientY: number }, conversationId: string) {
     const conversationIds = multiSelectedConversationIds.has(conversationId)
       ? [...multiSelectedConversationIds].filter((id) => conversations[id])
       : [conversationId];
-    interactions.startNode(event, conversationId, conversationIds);
+    interactions.startNode(start, conversationId, conversationIds);
+  }
+
+  function pressNodeBody(event: ReactPointerEvent<HTMLButtonElement>, conversationId: string) {
+    // Touch keeps dragging a card to pan the map; the move handle still works there.
+    cardPressRef.current = null;
+    if (!isCanvasMode || panelView || event.pointerType === "touch" || event.button !== 0 || interactions.isActive() || !onUpdateGraphNodeLayouts) return;
+    cardPressRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, conversationId, target: event.currentTarget };
   }
 
   function commitNodeMove(move: GraphNodeMove) {
@@ -2207,12 +2230,25 @@ export default function ConversationGraphView({
     if (touchPointersRef.current.has(event.pointerId)) touchPointersRef.current.set(event.pointerId, { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY });
     const press = backgroundPressRef.current;
     if (press && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 4) press.moved = true;
+    const cardPress = cardPressRef.current;
+    if (cardPress?.pointerId === event.pointerId && Math.hypot(event.clientX - cardPress.x, event.clientY - cardPress.y) > 4) {
+      cardPressRef.current = null;
+      if (!interactions.isActive() && cardPress.target.isConnected) {
+        suppressCardClickRef.current = true;
+        cardPress.target.setPointerCapture(event.pointerId);
+        beginNodeMove({ pointerId: cardPress.pointerId, clientX: cardPress.x, clientY: cardPress.y }, cardPress.conversationId);
+      }
+    }
     if (interactions.move(event)) event.preventDefault();
   }
 
   function handleViewportPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
     const press = backgroundPressRef.current;
     backgroundPressRef.current = null;
+    cardPressRef.current = null;
+    // The click that follows a card drag is swallowed; a drag released off the
+    // card produces no click, so don't let the flag eat a later one.
+    if (suppressCardClickRef.current) window.setTimeout(() => { suppressCardClickRef.current = false; });
     interactions.end(event);
     if (touchPointersRef.current.delete(event.pointerId) && suppressTouchClickRef.current) {
       const remaining = [...touchPointersRef.current.values()][0];
@@ -2232,6 +2268,7 @@ export default function ConversationGraphView({
     if (event.pointerType === "touch" && !touchPointersRef.current.has(event.pointerId)) return;
     touchPointersRef.current.delete(event.pointerId);
     backgroundPressRef.current = null;
+    cardPressRef.current = null;
     interactions.end(event, false);
   }
 
@@ -2841,7 +2878,11 @@ export default function ConversationGraphView({
             const node = (event.target as HTMLElement).closest<HTMLElement>("[data-conversation-id]");
             if (node?.dataset.conversationId) keepConversationVisible(node.dataset.conversationId);
           }}
-          onClickCapture={(event) => { if (suppressTouchClickRef.current && event.detail > 0) { event.preventDefault(); event.stopPropagation(); } }}
+          onClickCapture={(event) => {
+            const dragged = suppressCardClickRef.current;
+            suppressCardClickRef.current = false;
+            if (dragged || (suppressTouchClickRef.current && event.detail > 0)) { event.preventDefault(); event.stopPropagation(); }
+          }}
           onLostPointerCapture={handleViewportPointerCancel}
           onPointerCancel={handleViewportPointerCancel}
           onPointerDown={startPan}
@@ -3082,6 +3123,7 @@ export default function ConversationGraphView({
                   onFocus={(id) => changeScope({ kind: "focus", conversationId: id, depth: 1 })}
                   onSource={(id) => { const evidence = branchEvidence(conversations[id]); if (evidence) openEvidence(evidence); }}
                   onMoveStart={startNodeMove}
+                  onBodyPress={isCanvasMode ? pressNodeBody : undefined}
                   onOpen={onOpenConversation}
                   onSelect={(id) => connectingConversationId && onConnectConversation ? onConnectConversation(connectingConversationId, id) : selectConversation(id)}
                   placement={placement}
@@ -3132,10 +3174,10 @@ export default function ConversationGraphView({
           <p className="conversation-graph-pan-hint" id={keyboardHintId}>
             {isMultiSelectActive
               ? multiSelectedConversationIds.size
-                ? "Drag a selected chat's move handle to move the group · Shift-drag to add more"
+                ? isCanvasMode ? "Drag a selected card to move them together · Shift-drag to add more" : "Drag a selected chat's move handle to move the group · Shift-drag to add more"
                 : "Drag across chats to select them · Shift-drag adds to the selection"
               : detailLevel === "compact"
-              ? "Click a chat for a preview · Drag to pan · Pinch to zoom"
+              ? isCanvasMode ? "Drag a card to move it · Click a card for a preview · Drag empty space to pan · Pinch or Ctrl-scroll to zoom" : "Click a chat for a preview · Drag to pan · Pinch to zoom"
               : detailLevel === "preview"
                 ? "Expand to read here · Dock to keep the graph interactive"
                 : "Scroll inside the chat · Minimize or dock when ready"}
@@ -3148,8 +3190,7 @@ export default function ConversationGraphView({
             role="group"
             aria-label="Graph navigation"
           >
-            {showTidyUp ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Tidy up</summary><div>
-            <button
+            {showTidyUp ? <button
               aria-label={
                 isMultiSelectActive
                   ? "Exit multi-select and clear selection"
@@ -3161,8 +3202,8 @@ export default function ConversationGraphView({
               onClick={toggleMultiSelect}
               title={
                 isMultiSelectActive
-                  ? "Drag across chats to select them; use a selected chat's move handle to move the group"
-                  : "Select and move multiple chats"
+                  ? "Drag across cards to select them, then drag any selected card to move them together"
+                  : "Select and move several cards at once"
               }
               type="button"
             >
@@ -3175,7 +3216,8 @@ export default function ConversationGraphView({
                   ? `${multiSelectedConversationIds.size} selected`
                   : "Select"}
               </span>
-            </button>
+            </button> : null}
+            {showTidyUp ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Tidy up</summary><div>
             <button
               aria-label="Auto-arrange graph with ELK"
               className="conversation-graph-auto-arrange"
