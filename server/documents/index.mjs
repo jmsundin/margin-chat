@@ -21,7 +21,7 @@ function sanitizeFilename(value) {
   return (filename || "document").slice(0, 240);
 }
 
-function getEmbeddingApiKey(context, env) {
+export function getEmbeddingApiKey(context, env) {
   if (context.allowedProviders && !context.allowedProviders.includes("openai")) return null;
   if (context.apiKeys?.openai) {
     return context.apiKeys.openai;

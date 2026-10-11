@@ -50,6 +50,7 @@ import { DOCUMENT_RELATION_TYPES, documentGraphEdgeLabel, getDocumentGraphEdges,
 import type { DocumentRelationTypeId } from "../types";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
 import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterLayout } from "../lib/gravityClusters";
+import { useTopicEmbeddings } from "../lib/useTopicEmbeddings";
 import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
@@ -1082,20 +1083,24 @@ export default function ConversationGraphView({
     networkCache.current.layout = { ...networkCache.current.layout, nodes };
     return { ...networkCache.current.layout, nodes };
   }, [isNetworkMode, unfocusedScene.nodes, viewportSize, documentConnections, navigation.state.networkIteration, navigation.state.networkPins]);
+  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && isClustersMode });
+  const groupBySubject = !!jev?.enabled && topicEmbeddings.vectors.size > 0;
   const clusterCache = useRef<{ key: string; layout: GravityClusterLayout } | null>(null);
   const clusterLayout = useMemo(() => {
     if (!isClustersMode) return null;
-    const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections]);
+    const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections,
+      groupBySubject ? topicEmbeddings.revision : -1]);
     if (clusterCache.current?.key !== key) clusterCache.current = { key, layout: layoutGravityClusters(unfocusedScene.nodes,
       viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }, documentConnections,
-      { createdAt: (id) => { const time = Date.parse(conversations[id]?.createdAt ?? ""); return Number.isNaN(time) ? undefined : time; } }) };
+      { createdAt: (id) => { const time = Date.parse(conversations[id]?.createdAt ?? ""); return Number.isNaN(time) ? undefined : time; },
+        ...(groupBySubject ? { topicVector: (id: string) => topicEmbeddings.vectors.get(id) } : {}) }) };
     const positions = new Map(clusterCache.current.layout.nodes.map((node) => [node.conversationId, node]));
     const nodes = unfocusedScene.nodes.map((node) => {
       const placed = positions.get(node.conversationId)!;
       return { ...node, x: placed.x, y: placed.y, width: placed.width, height: placed.height };
     });
     return { ...clusterCache.current.layout, nodes };
-  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections]);
+  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, topicEmbeddings.revision]);
   const forceLayout = networkLayout ?? clusterLayout;
   const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
@@ -2837,8 +2842,11 @@ export default function ConversationGraphView({
           <button type="button" aria-pressed={!isClustersMode} onClick={() => { if (isClustersMode) chooseViewMode("topics"); }}>My groups</button>
         </div>
         {isClustersMode ? <>
-          <span>Documents gather around their most connected hub. Zoom out for topics and dots, zoom in to read.</span>
-          {!jev?.enabled ? <span>Turn on Jev to name clusters by topic; hub titles are shown until then.</span>
+          <span>{groupBySubject ? "Documents gather around their most connected hub, and clusters on the same subject join."
+            : "Documents gather around their most connected hub."} Zoom out for topics and dots, zoom in to read.</span>
+          {!jev?.enabled ? <span>Turn on Jev to group clusters by subject and name them; hub titles are shown until then.</span>
+            : topicEmbeddings.loading ? <span aria-live="polite">Grouping by subject…</span>
+            : topicEmbeddings.warning ? <span>{topicEmbeddings.warning}</span>
             : clusterLabels.loading ? <span aria-live="polite">Naming clusters…</span> : null}
           <button type="button" onClick={fitGraph}>Show all clusters</button>
         </> : <>
