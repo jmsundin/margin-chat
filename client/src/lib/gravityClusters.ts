@@ -2,7 +2,7 @@ import type { ConversationGraphNodePlacement } from "./conversationGraph";
 import { getDocumentNodeFootprint } from "./documentMapLayout";
 import type { GraphViewport } from "./graphInteractions";
 import { fitNetworkMapViewport } from "./networkMapLayout";
-import { groupByTopicEmbedding } from "./topicEmbeddings";
+import { groupByTopicEmbedding, nearestTopicGroup } from "./topicEmbeddings";
 
 const CARD = getDocumentNodeFootprint(1);
 // Members of one cluster sit a card gap apart; clusters keep a much wider gap so
@@ -218,10 +218,62 @@ export function mergeClustersByTopic(found: FoundCluster[], vectorOf: (id: strin
     const hubId = parts.find((part) => part.hubId !== null)?.hubId ?? parts[0].documentIds[0];
     merged.push({ hubId, memberIds: parts.flatMap((part) => part.documentIds) });
   }
-  if (leftOver.length) merged.push({ hubId: null, memberIds: leftOver.sort() });
+  // Unlinked documents that matched nothing closely still join the cluster they are nearest to.
+  const filed = nearestTopicGroup(leftOver, merged.map((cluster) => cluster.memberIds), vectorOf);
+  const unfiled: string[] = [];
+  const joining = merged.map(() => [] as string[]);
+  leftOver.forEach((id, position) => { if (filed[position] < 0) unfiled.push(id); else joining[filed[position]].push(id); });
+  joining.forEach((ids, position) => { if (ids.length) merged[position] = { ...merged[position], memberIds: [...merged[position].memberIds, ...ids] }; });
+  if (unfiled.length) merged.push({ hubId: null, memberIds: unfiled.sort() });
   merged.sort((a, b) => (a.hubId === null ? 1 : 0) - (b.hubId === null ? 1 : 0) || b.memberIds.length - a.memberIds.length
     || (a.hubId! < b.hubId! ? -1 : 1));
   return merged;
+}
+
+/**
+ * Moves documents the user placed by hand into the cluster holding their
+ * anchor document. A moved hub hands its cluster to the next member.
+ */
+export function applyClusterPlacements(found: FoundCluster[], placements: ReadonlyMap<string, string>): FoundCluster[] {
+  if (!placements.size) return found;
+  const clusterOf = new Map<string, number>();
+  found.forEach((cluster, position) => { for (const id of cluster.memberIds) clusterOf.set(id, position); });
+  const moves = new Map<string, number>();
+  for (const [id, anchorId] of placements) {
+    // An anchor that was itself moved is followed once, so a pair moved onto each other still settles.
+    const target = clusterOf.get(placements.get(anchorId) ?? anchorId) ?? clusterOf.get(anchorId);
+    if (target === undefined || !clusterOf.has(id) || clusterOf.get(id) === target) continue;
+    moves.set(id, target);
+  }
+  if (!moves.size) return found;
+  const members = found.map((cluster) => cluster.memberIds.filter((id) => !moves.has(id)));
+  for (const [id, target] of moves) members[target].push(id);
+  const result: FoundCluster[] = [];
+  const unlinked: string[] = [];
+  found.forEach((cluster, position) => {
+    const memberIds = members[position];
+    if (!memberIds.length) return;
+    if (cluster.hubId === null) { unlinked.push(...memberIds); return; }
+    result.push({ hubId: memberIds.includes(cluster.hubId) ? cluster.hubId : memberIds[0], memberIds });
+  });
+  if (unlinked.length) result.push({ hubId: null, memberIds: unlinked.sort() });
+  return result;
+}
+
+/**
+ * The document categories Clusters shows, without laying anything out: links
+ * first, then subject (embeddings) when given, then the user's own moves.
+ * Other views (the document sidebar, say) can group by these, and name them
+ * with useClusterLabels, which keys names by each cluster's fingerprint.
+ */
+export function findSubjectClusters(ids: string[], connections: Connection[], options: {
+  topicVector?: (id: string) => Float32Array | undefined;
+  placements?: ReadonlyMap<string, string>;
+} = {}): Array<{ hubId: string | null; memberIds: string[]; fingerprint: string }> {
+  const linkClusters = findGravityClusters(ids, connections).clusters;
+  const byTopic: FoundCluster[] = options.topicVector ? mergeClustersByTopic(linkClusters, options.topicVector) : linkClusters;
+  const found = options.placements ? applyClusterPlacements(byTopic, options.placements) : byTopic;
+  return found.map((cluster) => ({ ...cluster, fingerprint: clusterFingerprint(cluster.memberIds) }));
 }
 
 /** A group of clusters, or of groups; level 1 groups clusters, level 2 groups level 1, and so on. */
@@ -263,11 +315,12 @@ export function layoutGravityClusters(
     createdAt?: (id: string) => number | undefined;
     /** Each document's embedding; when given, clusters about the same subject merge. */
     topicVector?: (id: string) => Float32Array | undefined;
+    /** Documents the user moved by hand, each to the cluster of its anchor document. */
+    placements?: ReadonlyMap<string, string>;
   } = {},
 ): GravityClusterLayout {
   const ids = nodes.map((node) => node.conversationId);
-  const linkClusters = findGravityClusters(ids, connections).clusters;
-  const found: FoundCluster[] = options.topicVector ? mergeClustersByTopic(linkClusters, options.topicVector) : linkClusters;
+  const found = findSubjectClusters(ids, connections, options);
   const groups: Array<FoundCluster & { id: string; period?: { start: number; end: number } }> = [];
   for (const group of found) {
     if (group.hubId !== null) { groups.push({ ...group, id: `cluster:${group.hubId}` }); continue; }

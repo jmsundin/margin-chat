@@ -9,6 +9,8 @@ import {
   sortDocumentsByCreation,
 } from "../lib/sidebarThreads";
 import type { ConversationGroup, MainViewMode, ThreadSummary } from "../types";
+import { SIDEBAR_DOCUMENT_SORTS, type SidebarDocumentSort } from "../lib/sidebarDocumentOrder";
+import type { SidebarDocumentOrder } from "../lib/useSidebarDocumentOrder";
 import "./ThreadSidebar.css";
 
 type ThemeMode = "light" | "dark";
@@ -21,6 +23,12 @@ const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
 interface ThreadSidebarProps {
   header?: ReactNode;
+  /** The open vault and a way to switch it, at the foot of the sidebar. */
+  vaultSwitcher?: ReactNode;
+  /** Order of the Documents list; without it, newest created first. */
+  documentOrder?: SidebarDocumentOrder;
+  documentSort?: SidebarDocumentSort;
+  onDocumentSortChange?: (sort: SidebarDocumentSort) => void;
   /** Documents that are still only in the cloud vault, listed after this device's documents. */
   cloudIndex?: ReactNode;
   /** Shown above the document list while documents download. */
@@ -144,6 +152,15 @@ function DocumentIcon() {
     >
       <path d="M6 3.5h8.5L19 8v12.5H6z" />
       <path d="M14.5 3.5V8H19M9 12h7M9 15.5h5" />
+    </svg>
+  );
+}
+
+function SortIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      <path d="M7 4v16M3.5 16.5 7 20l3.5-3.5M13 6h8M13 11h6M13 16h4" />
     </svg>
   );
 }
@@ -296,6 +313,10 @@ function ExpandIcon() {
 
 export default function ThreadSidebar({
   header,
+  vaultSwitcher,
+  documentOrder,
+  documentSort = "recent",
+  onDocumentSortChange,
   mapExplorerRef,
   mapExplorerActive = false,
   onSelectSidebarSection,
@@ -343,6 +364,10 @@ export default function ThreadSidebar({
   const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const [workspaceActionsOpen, setWorkspaceActionsOpen] = useState(false);
+  const [sortMenuOpen, setSortMenuOpen] = useState(false);
+  const [collapsedCategories, setCollapsedCategories] = useState<ReadonlySet<string>>(() => new Set());
+  const sortMenuRef = useRef<HTMLDivElement>(null);
+  const sortTriggerRef = useRef<HTMLButtonElement>(null);
   const [newGroupName, setNewGroupName] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const workspaceActionsRef = useRef<HTMLDivElement>(null);
@@ -401,6 +426,23 @@ export default function ThreadSidebar({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [workspaceActionsOpen]);
+
+  useEffect(() => {
+    if (!sortMenuOpen) return;
+    sortMenuRef.current?.querySelector<HTMLButtonElement>("[aria-checked='true']:not(:disabled), button:not(:disabled)")?.focus();
+    const outside = (event: Event) => {
+      if (event.target instanceof Node && !sortMenuRef.current?.contains(event.target) && !sortTriggerRef.current?.contains(event.target)) setSortMenuOpen(false);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setSortMenuOpen(false);
+      sortTriggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", key); };
+  }, [sortMenuOpen]);
 
   useEffect(() => {
     if (!renameTarget) {
@@ -478,6 +520,7 @@ export default function ThreadSidebar({
 
     setOpenMenuState(null);
     setWorkspaceActionsOpen(false);
+    setSortMenuOpen(false);
   }, [collapsed]);
 
   useEffect(() => {
@@ -659,13 +702,88 @@ export default function ThreadSidebar({
   );
   const ungroupedThreads = unpinnedThreads.filter((thread) => !thread.groupId);
   // Thousands of documents render a page at a time, always including the open one.
-  const documentPages = useProgressiveList(createdThreads.length, { include: createdThreads.findIndex((thread) => thread.id === activeThreadId) });
+  const listedThreads = documentOrder?.threads ?? createdThreads;
+  const documentPages = useProgressiveList(listedThreads.length, { include: listedThreads.findIndex((thread) => thread.id === activeThreadId) });
   const ungroupedPages = useProgressiveList(ungroupedThreads.length, { include: ungroupedThreads.findIndex((thread) => thread.id === activeThreadId) });
   const orderedThreads = sidebarContent === "groups" ? [
     ...recentPinnedThreads,
     ...groupedThreads,
     ...ungroupedThreads,
-  ] : createdThreads;
+  ] : listedThreads;
+  const sortLabel = SIDEBAR_DOCUMENT_SORTS.find((sort) => sort.id === documentSort)?.label ?? "Recently viewed";
+
+  function renderDocumentList() {
+    const categories = documentOrder?.categories;
+    if (!categories) {
+      return <>
+        {listedThreads.slice(0, documentPages.shown).map(renderThreadItem)}
+        {documentPages.more ? <div aria-hidden="true" className="thread-list-more" ref={documentPages.sentinel} /> : null}
+      </>;
+    }
+    // Sections page together: a category shows the documents within the first `shown` of the whole list.
+    let offset = 0;
+    return <>
+      {categories.map((category) => {
+        const start = offset;
+        offset += category.threads.length;
+        if (start >= documentPages.shown) return null;
+        const collapsedCategory = collapsedCategories.has(category.id) && !category.threads.some((thread) => thread.id === activeThreadId);
+        return (
+          <section aria-label={`${category.label} category`} className="thread-sidebar-section is-category" key={category.id}>
+            <div className="thread-group-section-header">
+              <button aria-expanded={!collapsedCategory} type="button" onClick={() => setCollapsedCategories((current) => {
+                const next = new Set(current);
+                if (next.has(category.id)) next.delete(category.id); else next.add(category.id);
+                return next;
+              })}>
+                <span>{category.label}</span>
+                <span className="thread-section-count">{category.threads.length}</span>
+                <span aria-hidden="true">{collapsedCategory ? "＋" : "−"}</span>
+              </button>
+            </div>
+            {collapsedCategory ? null : category.threads.slice(0, Math.max(0, documentPages.shown - start)).map(renderThreadItem)}
+          </section>
+        );
+      })}
+      {documentPages.more ? <div aria-hidden="true" className="thread-list-more" ref={documentPages.sentinel} /> : null}
+    </>;
+  }
+
+  function renderSortControl() {
+    if (!onDocumentSortChange || sidebarContent !== "documents") return null;
+    const unavailable = documentOrder?.meaningUnavailable ?? null;
+    return (
+      <div className="sidebar-sort">
+        <button ref={sortTriggerRef} type="button" className="sidebar-sort-trigger" aria-haspopup="menu" aria-expanded={sortMenuOpen}
+          aria-controls={sortMenuOpen ? "sidebar-sort-menu" : undefined} aria-label={`Sort documents: ${sortLabel}`}
+          title={`Sort: ${sortLabel}`} onClick={() => { setOpenMenuState(null); setSortMenuOpen((value) => !value); }}>
+          <SortIcon />
+        </button>
+        {sortMenuOpen ? (
+          <div ref={sortMenuRef} id="sidebar-sort-menu" className="sidebar-sort-menu" role="menu" aria-label="Sort documents">
+            {SIDEBAR_DOCUMENT_SORTS.map((sort) => {
+              const needsMeaning = sort.id === "semantic" || sort.id === "category";
+              const disabled = needsMeaning && !!unavailable;
+              return (
+                <button key={sort.id} type="button" role="menuitemradio" aria-checked={documentSort === sort.id} disabled={disabled}
+                  className="sidebar-sort-option" onClick={() => {
+                    onDocumentSortChange(sort.id);
+                    setSortMenuOpen(false);
+                    sortTriggerRef.current?.focus();
+                  }}>
+                  <span className="sidebar-sort-check" aria-hidden="true">{documentSort === sort.id ? "✓" : ""}</span>
+                  <span className="sidebar-sort-text">
+                    <span>{sort.label}</span>
+                    <small>{disabled ? unavailable : sort.hint}</small>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
 
   function renderThreadItem(thread: ThreadSummary) {
     const isExpanded = sidebarContent === "outline" && thread.id === activeThreadId;
@@ -686,6 +804,7 @@ export default function ThreadSidebar({
             .filter(Boolean)
             .join(" ")
         }
+        data-sidebar-document-id={thread.id}
         key={thread.id}
       >
         <span className="thread-item-drag-handle" title="Drag to pin or group">
@@ -943,12 +1062,14 @@ export default function ThreadSidebar({
               aria-controls="sidebar-document-list" onClick={() => showSidebarContent("groups")}>Groups</button>
             <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
               aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button>
+            {renderSortControl()}
           </div>
           {fetchIndicator}
           <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline"}>
             {sidebarContent !== "groups" ? <>
-              {createdThreads.slice(0, documentPages.shown).map(renderThreadItem)}
-              {documentPages.more ? <div aria-hidden="true" className="thread-list-more" ref={documentPages.sentinel} /> : null}
+              {documentOrder?.meaningLoading ? <p className="sidebar-sort-status" aria-live="polite">Sorting by meaning…</p>
+                : documentOrder?.note ? <p className="sidebar-sort-status">{documentOrder.note}</p> : null}
+              {renderDocumentList()}
               {cloudIndex}
             </> : <>
             {recentPinnedThreads.length || draggedThreadId ? (
@@ -1091,7 +1212,8 @@ export default function ThreadSidebar({
         </div>
       )}
 
-      <div className="thread-sidebar-footer">
+      <div className={`thread-sidebar-footer${vaultSwitcher ? " has-vault-switcher" : ""}`}>
+        {vaultSwitcher}
         <button
           aria-label="Open profile"
           className="sidebar-utility-button"

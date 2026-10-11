@@ -100,3 +100,6 @@
   .semantic-map[data-view-mode="canvas"] .conversation-graph-node-select { cursor: grab; }
   .semantic-map[data-view-mode="canvas"] .is-moving-nodes .conversation-graph-node-select { cursor: grabbing; }
 }
+.graph-cluster-move { display: inline-flex; align-items: center; gap: 6px; }
+.graph-cluster-move select { border: 1px solid var(--line); background: var(--panel-bg); color: var(--ink); padding: 3px 6px; border-radius: 6px; font: inherit; max-width: 220px; }
+.graph-cluster-move [role="alert"] { color: var(--danger, #d14343); }

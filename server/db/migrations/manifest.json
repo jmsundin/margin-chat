@@ -67,6 +67,11 @@
       "transaction": true
     },
     {
+      "id": "0014_topic_placements",
+      "file": "0014_topic_placements.sql",
+      "transaction": true
+    },
+    {
       "id": "0015_vault_passages",
       "file": "0015_vault_passages.sql",
       "transaction": true

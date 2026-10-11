@@ -51,6 +51,7 @@ import type { DocumentRelationTypeId } from "../types";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
 import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterLayout } from "../lib/gravityClusters";
 import { useTopicEmbeddings } from "../lib/useTopicEmbeddings";
+import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
@@ -1089,18 +1090,19 @@ export default function ConversationGraphView({
   const clusterLayout = useMemo(() => {
     if (!isClustersMode) return null;
     const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections,
-      groupBySubject ? topicEmbeddings.revision : -1]);
+      jev?.enabled ? topicEmbeddings.revision : -1]);
     if (clusterCache.current?.key !== key) clusterCache.current = { key, layout: layoutGravityClusters(unfocusedScene.nodes,
       viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }, documentConnections,
       { createdAt: (id) => { const time = Date.parse(conversations[id]?.createdAt ?? ""); return Number.isNaN(time) ? undefined : time; },
-        ...(groupBySubject ? { topicVector: (id: string) => topicEmbeddings.vectors.get(id) } : {}) }) };
+        ...(groupBySubject ? { topicVector: (id: string) => topicEmbeddings.vectors.get(id) } : {}),
+        ...(jev?.enabled ? { placements: topicEmbeddings.placements } : {}) }) };
     const positions = new Map(clusterCache.current.layout.nodes.map((node) => [node.conversationId, node]));
     const nodes = unfocusedScene.nodes.map((node) => {
       const placed = positions.get(node.conversationId)!;
       return { ...node, x: placed.x, y: placed.y, width: placed.width, height: placed.height };
     });
     return { ...clusterCache.current.layout, nodes };
-  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, topicEmbeddings.revision]);
+  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, jev?.enabled, topicEmbeddings.revision]);
   const forceLayout = networkLayout ?? clusterLayout;
   const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
@@ -2848,6 +2850,16 @@ export default function ConversationGraphView({
             : topicEmbeddings.loading ? <span aria-live="polite">Grouping by subject…</span>
             : topicEmbeddings.warning ? <span>{topicEmbeddings.warning}</span>
             : clusterLabels.loading ? <span aria-live="polite">Naming clusters…</span> : null}
+          {jev?.enabled && selectedConversation && clusterLayout?.clusterByDocumentId.has(selectedConversation.id) ? <ClusterMoveMenu
+            documentTitle={selectedConversation.title}
+            currentClusterId={clusterLayout.clusterByDocumentId.get(selectedConversation.id) ?? null}
+            targets={clusterLayout.clusters.flatMap((cluster) => {
+              const anchorId = cluster.hubId ?? cluster.memberIds.find((id) => id !== selectedConversation.id);
+              return anchorId && anchorId !== selectedConversation.id
+                ? [{ id: cluster.id, label: clusterLabels.labels[cluster.id]?.label ?? "Cluster", anchorId }] : [];
+            })}
+            movedByHand={topicEmbeddings.placements.has(selectedConversation.id)}
+            onMove={(anchorId) => topicEmbeddings.moveDocument(selectedConversation.id, anchorId)} /> : null}
           <button type="button" onClick={fitGraph}>Show all clusters</button>
         </> : <>
           <span>Documents sit in the groups you made. Zoom into a group to see its documents.</span>

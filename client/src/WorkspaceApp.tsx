@@ -99,6 +99,9 @@ import ThreadSidebar from "./components/ThreadSidebar";
 import ResizableSidebar from "./components/ResizableSidebar";
 import MobileEdgeSwipe from "./components/MobileEdgeSwipe";
 import CloudVaultIndex, { VaultFetchIndicator } from "./components/CloudVaultIndex";
+import VaultSwitcher from "./components/VaultSwitcher";
+import { loadSidebarDocumentSort, saveSidebarDocumentSort, type SidebarDocumentSort } from "./lib/sidebarDocumentOrder";
+import { useSidebarDocumentOrder } from "./lib/useSidebarDocumentOrder";
 import {
   ApiError,
   requestDeleteDocument,
@@ -1070,6 +1073,11 @@ function WorkspaceAppContent({
     })),
     [state.conversations, state.groups, summaryMinute],
   );
+  const [documentSort, setDocumentSort] = useState<SidebarDocumentSort>(() => loadSidebarDocumentSort(storageUserId));
+  const documentOrder = useSidebarDocumentOrder({
+    userId: user.id, storageUserId, jevEnabled, cloudSync: canSyncWorkspaceToCloud(user), sort: documentSort,
+    threads: documentSummaries, conversations: state.conversations, activeId: state.activeConversationId, ready: vault.ready,
+  });
   const threadSummaryById = new Map(
     documentSummaries.map((thread) => [thread.id, thread] as const),
   );
@@ -4372,6 +4380,11 @@ function WorkspaceAppContent({
             {!isMobileViewport && renderWorkspaceBrand()}
             <ThreadSidebar
               header={isMobileViewport ? renderWorkspaceBrand() : undefined}
+              vaultSwitcher={<VaultSwitcher vault={vault} cloudSync={cloudSyncEnabled}
+                onOpenSettings={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }} />}
+              documentOrder={documentOrder}
+              documentSort={documentSort}
+              onDocumentSortChange={(sort) => { setDocumentSort(sort); saveSidebarDocumentSort(storageUserId, sort); }}
               mapExplorerRef={setGraphExplorerContainer}
               mapExplorerActive={mapSidebarSection === "explore"}
               onSelectSidebarSection={setMapSidebarSection}

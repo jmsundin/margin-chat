@@ -1,3 +1,4 @@
+import { HttpError } from "../lib/errors.mjs";
 import { createEmbeddings, DOCUMENT_EMBEDDING_MODEL } from "./embeddings.mjs";
 import { getEmbeddingApiKey } from "./index.mjs";
 
@@ -24,7 +25,7 @@ export function createTopicEmbeddingService({ database, env = process.env, embed
    * OpenAI key the stored embeddings are still returned.
    */
   async function sync({ userId, context, since }) {
-    if (!database?.listStaleTopicSources) return { model: TOPIC_EMBEDDING_MODEL, dimensions: TOPIC_EMBEDDING_DIMENSIONS, embeddings: [], cursor: null, pending: 0 };
+    if (!database?.listStaleTopicSources) return { model: TOPIC_EMBEDDING_MODEL, dimensions: TOPIC_EMBEDDING_DIMENSIONS, embeddings: [], cursor: null, pending: 0, placements: [] };
     const stale = await database.listStaleTopicSources({ userId, model: TOPIC_EMBEDDING_MODEL, limit: DOCUMENTS_PER_REQUEST, maxCharacters: TOPIC_TEXT_CHARACTERS });
     const apiKey = getEmbeddingApiKey(context, env);
     let pending = stale.remaining;
@@ -47,9 +48,20 @@ export function createTopicEmbeddingService({ database, env = process.env, embed
       pending -= stale.sources.length;
     }
     const stored = await database.readTopicEmbeddings({ userId, model: TOPIC_EMBEDDING_MODEL, since });
+    const placements = database.readTopicPlacements ? await database.readTopicPlacements({ userId }) : [];
     return { model: TOPIC_EMBEDDING_MODEL, dimensions: TOPIC_EMBEDDING_DIMENSIONS, embeddings: stored.embeddings, cursor: stored.cursor,
-      pending: Math.max(0, pending), ...(unavailable ? { unavailable } : {}) };
+      pending: Math.max(0, pending), placements, ...(unavailable ? { unavailable } : {}) };
   }
 
-  return { sync };
+  /** Remembers that the user moved `id` to the cluster of `anchorId`; null returns it to automatic placement. */
+  async function place({ userId, id, anchorId }) {
+    const valid = (value) => typeof value === "string" && value.trim() && value.length <= 256;
+    if (!valid(id) || (anchorId !== null && (!valid(anchorId) || anchorId === id))) {
+      throw new HttpError(400, "Choose a document and the document whose cluster it joins.");
+    }
+    await database.writeTopicPlacement({ userId, id, anchorId });
+    return { id, anchorId };
+  }
+
+  return { sync, place };
 }
