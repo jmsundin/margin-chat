@@ -17,7 +17,8 @@ export interface AISettings {
   agentScope?: "conversation" | "selected" | "workspace";
 }
 export interface AgentRunStep {
-  kind: "tool" | "note";
+  /** tool: a tool it ran; note: text it wrote between tool calls; thinking: its summarized reasoning for one model call. */
+  kind: "tool" | "note" | "thinking";
   label: string;
   tool?: string;
   detail?: string;
@@ -26,6 +27,8 @@ export interface AgentRunStep {
 export interface AgentRunRecord {
   steps: AgentRunStep[];
   stopReason: "answered" | "budget" | "round-limit" | "time-limit";
+  /** Whether the model shared any of its thinking during the run; absent on runs saved before it was recorded. */
+  reasoning?: "shared" | "not-shared";
   modelCalls?: number;
   spentMicros?: number;
   budgetMicros?: number;

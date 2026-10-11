@@ -2125,11 +2125,11 @@ function WorkspaceAppContent({
     window.getSelection()?.removeAllRanges();
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
-      request: (onDelta, signal, onMetadata, onStep) => requestChatReply({
+      request: (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
         ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
         conversation: getConversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
-        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, onStep, signal,
+        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, onAgentEvent, signal,
       }),
       onError(error) {
         if (isApiErrorStatus(error,401)) onAuthExpired();
@@ -2295,7 +2295,7 @@ function WorkspaceAppContent({
       conversationId: conversation.id,
       messageId: createId("message"),
       createdAt: new Date().toISOString(),
-      request: (onDelta, signal, onMetadata, onStep) => requestChatReply({
+      request: (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
         ...prepareAIContext(state.conversations, conversation, messages),
         ai: withJevConsent(conversation.ai, jevEnabled),
         expectedUserId: user.id,
@@ -2304,7 +2304,7 @@ function WorkspaceAppContent({
         modelId: conversation.modelId,
         onDelta,
         onMetadata,
-        onStep,
+        onAgentEvent,
         serviceId: conversation.serviceId,
         signal,
       }),

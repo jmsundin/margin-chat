@@ -395,7 +395,12 @@ export function createChatService({ database, documentService, env, runtimeConfi
         const onDelta = async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); };
         const result = agentProvider ? await runAgent({
           ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros, workspace,
-          ...(handlers ? { onDelta, onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); } } : {}),
+          ...(handlers ? {
+            onDelta,
+            onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); },
+            onThinking: async (delta) => { await ensureReady(); await handlers.onThinking?.(delta); },
+            onActivity: async (activity) => { await ensureReady(); await handlers.onActivity?.(activity); },
+          } : {}),
         }) : handlers ? await provider.stream({ ...args, onDelta }) : await provider.reply(args);
         context.signal?.throwIfAborted();
         if (handlers) await ensureReady();

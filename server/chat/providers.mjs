@@ -28,7 +28,11 @@ export async function requestProviderJson({ apiKey, body, provider, url, signal,
   });
 }
 
-export async function requestResponsesApiStream({ apiKey, body, fallbackError, onDelta, onReady, url, signal, usageMeter }) {
+/** `onEvent` sees every stream event, such as reasoning summary deltas. A provider
+ * that answers with one JSON payload instead of a stream is read as that payload.
+ * With `acceptIncomplete`, a response cut short (such as by its output limit) is
+ * returned as it stands, as a non-streamed request would return it. */
+export async function requestResponsesApiStream({ apiKey, body, fallbackError, onDelta, onEvent, onReady, url, signal, usageMeter, acceptIncomplete = false }) {
   const provider = new URL(url).hostname === "api.x.ai" ? "xai" : "openai";
   const requestBody = { ...body, stream: true };
   return runMeteredProviderOperation(usageMeter, {
@@ -44,15 +48,23 @@ export async function requestResponsesApiStream({ apiKey, body, fallbackError, o
       throw new HttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? fallbackError);
     }
     await onReady?.();
+    if (response.headers.get("content-type")?.includes("application/json")) {
+      const payload = await response.json().catch(() => null);
+      tracker.recordUsage(payload);
+      const text = extractOpenAIReply(payload);
+      if (text) await onDelta?.(text);
+      return { completedPayload: payload, reply: text, usage: normalizeProviderUsage(provider, payload) };
+    }
     let completedPayload = null;
     let reply = "";
     for await (const data of parseServerSentEvents(response.body, signal)) {
       const event = parseStreamJson(data);
       if (!event) continue;
+      await onEvent?.(event);
       if ((event.type === "response.output_text.delta" || event.type === "response.refusal.delta") && typeof event.delta === "string") {
         reply += event.delta;
         await onDelta?.(event.delta);
-      } else if (event.type === "response.completed") {
+      } else if (event.type === "response.completed" || (acceptIncomplete && event.type === "response.incomplete")) {
         completedPayload = event.response ?? null;
         tracker.recordUsage(completedPayload);
       } else if (["response.failed", "response.incomplete", "error"].includes(event.type)) {
@@ -260,9 +272,10 @@ async function anthropicReply(args, stream) {
   });
 }
 
-/** One non-streamed Messages call that may return tool_use blocks. The final
- * message comes from the SDK's stream helper so long outputs never time out. */
-export async function requestAnthropicMessage({ apiKey, body, signal, usageMeter }) {
+/** One Messages call that may return tool_use blocks. The final message comes
+ * from the SDK's stream helper so long outputs never time out; `onEvent` sees
+ * each raw stream event as it arrives, such as thinking deltas. */
+export async function requestAnthropicMessage({ apiKey, body, signal, usageMeter, onEvent }) {
   assertKey(apiKey, "anthropic");
   const fallbackError = "anthropic request failed.";
   const description = { provider: "anthropic", model: body.model, body, maxOutputTokens: body.max_tokens, signal };
@@ -275,6 +288,7 @@ export async function requestAnthropicMessage({ apiKey, body, signal, usageMeter
       const stream = body.fallbacks
         ? client.beta.messages.stream({ ...body, betas: [ANTHROPIC_FALLBACK_BETA] }, { signal })
         : client.messages.stream(body, { signal });
+      if (onEvent) for await (const event of stream) await onEvent(event);
       message = await stream.finalMessage();
     } catch (error) {
       if (error instanceof Anthropic.APIError && error.status) tracker.markRejected();

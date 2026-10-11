@@ -100,8 +100,8 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
         {execution.status && execution.status !== "complete" ? <div><dt>Status</dt><dd>{execution.status === "stopped" ? "Stopped; partial answer saved" : execution.status === "failed" ? "Interrupted; partial answer saved" : isStreaming ? "Responding" : "Partial answer saved; completion not recorded"}</dd></div> : null}
       </dl>
       {execution.agent ? <div className="ai-agent-run"><strong>Agent steps</strong>
-        <AgentRunLog steps={execution.agent.steps} spentMicros={execution.agent.spentMicros} budgetMicros={execution.agent.budgetMicros} stopReason={execution.agent.stopReason}/>
-        {!execution.agent.steps.length ? <p className="ai-detail-note">The agent answered without needing any tools.</p> : null}
+        <AgentRunLog steps={execution.agent.steps} spentMicros={execution.agent.spentMicros} budgetMicros={execution.agent.budgetMicros} stopReason={execution.agent.stopReason} reasoning={execution.agent.reasoning}/>
+        {!execution.agent.steps.some((step) => step.kind === "tool") ? <p className="ai-detail-note">The agent answered without needing any tools.</p> : null}
       </div> : null}
       {retrieval ? <VaultSearch retrieval={retrieval} onOpenSource={onOpenSource} answered={execution.status === "complete"}/> : null}
       {sources.length ? <div className="ai-used-sources"><strong>Context used</strong><ul>{sources.map((source, index) => <li key={`${source.kind}:${source.id}:${index}`}>

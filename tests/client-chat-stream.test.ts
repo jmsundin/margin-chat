@@ -329,7 +329,7 @@ describe("client chat stream", () => {
 });
 
 describe("agent step events", () => {
-  test("passes well-formed steps with spend to onStep and ignores malformed ones", async () => {
+  test("passes well-formed steps with spend to onAgentEvent and ignores malformed ones", async () => {
     const lines = [
       { type: "metadata", metadata: { model: "gpt-5.6", requestedServiceId: "openai-api", resolvedServiceId: "openai-api" } },
       { type: "step", step: { kind: "tool", tool: "search_conversations", label: "Searched for “pricing”", detail: "2 matches", ok: true }, spentMicros: 1200 },
@@ -341,8 +341,8 @@ describe("agent step events", () => {
       headers: { "Content-Type": "application/x-ndjson" },
     })) as typeof fetch;
     const steps: unknown[] = [];
-    const result = await requestChatReply({ ...createRequestArgs(() => {}), onStep: (event) => steps.push(event) });
+    const result = await requestChatReply({ ...createRequestArgs(() => {}), onAgentEvent: (event) => steps.push(event) });
     expect(result.reply).toBe("Answer");
-    expect(steps).toEqual([{ step: { kind: "tool", tool: "search_conversations", label: "Searched for “pricing”", detail: "2 matches", ok: true }, spentMicros: 1200 }]);
+    expect(steps).toEqual([{ type: "step", step: { kind: "tool", tool: "search_conversations", label: "Searched for “pricing”", detail: "2 matches", ok: true }, spentMicros: 1200 }]);
   });
 });

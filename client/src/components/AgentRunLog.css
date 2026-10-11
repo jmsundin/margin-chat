@@ -2,12 +2,25 @@
 .agent-run-log ol { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .agent-run-log li { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .agent-run-mark { flex: 0 0 12px; text-align: center; color: var(--accent); }
-.agent-run-log li.is-failed .agent-run-mark { color: var(--muted); }
+.agent-run-log li.is-failed .agent-run-mark,
+.agent-run-log li.is-thinking .agent-run-mark { color: var(--muted); }
 .agent-run-label { color: var(--ink); overflow-wrap: anywhere; }
 .agent-run-log li.is-note .agent-run-label { color: var(--muted); font-style: italic; }
 .agent-run-log li small { color: var(--muted); white-space: nowrap; }
 .agent-run-log li small::before { content: "· "; }
 .agent-run-log li.is-working .agent-run-mark { animation: agent-run-pulse 1.2s ease-in-out infinite; }
+.agent-run-thought, .agent-run-current { flex: 1 1 auto; min-width: 0; }
+.agent-run-thought summary { display: flex; gap: 6px; min-width: 0; cursor: pointer; list-style: none; }
+.agent-run-thought summary::-webkit-details-marker { display: none; }
+.agent-run-thought summary .agent-run-label { flex: none; }
+.agent-run-thought summary:hover .agent-run-label { text-decoration: underline; }
+.agent-run-thought-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.agent-run-thought[open] .agent-run-thought-preview { display: none; }
+.agent-run-thinking { margin-top: 4px; padding-left: 8px; border-left: 2px solid var(--line); color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+.agent-run-thinking p { margin: 0 0 6px; }
+.agent-run-thinking p:last-child { margin-bottom: 0; }
+.agent-run-thinking strong { color: var(--ink); font-weight: 600; }
+.agent-run-thinking.is-live { max-height: 11em; overflow-y: auto; overscroll-behavior: contain; }
 .agent-run-meta { margin: 0; color: var(--muted); }
 @keyframes agent-run-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .agent-run-log li.is-working .agent-run-mark { animation: none; } }
