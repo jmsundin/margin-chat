@@ -2,6 +2,7 @@ import { startMapsInGroupedView } from "./groupedMapDefault";
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { Conversation } from "../../client/src/types";
+import { blockEditor, documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://map-document-zoom.test/" });
 startMapsInGroupedView(browser.localStorage as unknown as Storage);
@@ -140,7 +141,7 @@ async function zoomTo(scale: number) {
   }
   assert(Math.abs(camera().scale - scale) < 0.000001, `Requested zoom ${scale} is reachable`);
 }
-function editor(): any { return element('[data-document-block-id="message:answer"] .tiptap').editor; }
+function editor(): any { return blockEditor(container, "message:answer"); }
 function assertNoDock() { assert.equal(container.querySelector(".conversation-graph-dock"), null, "Reading remains in the document node"); }
 function assertCentered() {
   const bounds = cardBounds(), view = camera();
@@ -185,7 +186,8 @@ try {
   });
   await settle();
   assert(edits > 0);
-  assert(latest.document!.blocks.find((block) => block.id === "message:answer")!.content.includes("Refined while reading the map."));
+  // An edited answer saves one block per paragraph; the edit lands in the last one.
+  assert(latest.document!.blocks.some((block) => block.content.includes("Refined while reading the map.")));
   assert.equal(latest.messages[0].content, initial.messages[0].content, "Editing leaves original generation history intact");
   assert.deepEqual(camera(), beforeEdit, "Saving an edit does not reset the reading camera");
   checks.push("zoom mounts the real editor and saves edits without leaving the map");
@@ -202,13 +204,14 @@ try {
     assert.deepEqual(camera(), before, `Vertical reading gestures preserve the map at scroll position ${scrollTop}`);
     assert.equal(event.defaultPrevented, false, "The document retains native wheel scrolling");
   }
-  const emptyEditor = [...card().querySelectorAll(".tiptap")].at(-1) as any;
+  const emptyBlock = [...card().querySelectorAll("[data-document-block-id]")].at(-1) as any;
+  const emptyEditor = blockEditor(card(), emptyBlock.dataset.documentBlockId);
   await act(async () => {
-    emptyEditor.editor.commands.focus();
-    emptyEditor.dispatchEvent(new browser.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+    emptyEditor.commands.focus();
+    emptyEditor.view.dom.dispatchEvent(new browser.KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
   });
   await settle();
-  for (const target of [element('[data-document-block-id="message:answer"] .tiptap'), element('textarea[aria-label="AI prompt"]')]) {
+  for (const target of [editor().view.dom, element('textarea[aria-label="AI prompt"]')]) {
     const before = camera();
     await act(async () => target.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true })));
     await settle();
@@ -223,7 +226,7 @@ try {
   await zoomTo(0.8);
   assert.equal(card().querySelector(".conversation-graph-node-reader"), null);
   await zoomTo(2.4);
-  assert(editor().getMarkdown().includes("Refined while reading the map."), "Saved edits survive unmounting and remounting at zoom thresholds");
+  assert(documentEditor(card()).getMarkdown().includes("Refined while reading the map."), "Saved edits survive unmounting and remounting at zoom thresholds");
   assertNoDock();
   checks.push("edits survive zooming out to compact cards and back into the document");
 
@@ -236,7 +239,7 @@ try {
   checks.push("Expand zooms and centers an inline editor without opening a split view");
 
   await zoomTo(5);
-  assert(editor().getMarkdown().includes("Refined while reading the map."));
+  assert(documentEditor(card()).getMarkdown().includes("Refined while reading the map."));
   assert.equal(layoutWrites, 0, "Reading gestures never persist new authored graph positions");
   assert.deepEqual(layouts, originalLayouts);
   assert(Math.abs(cardBounds().worldX - compact.worldX) < 0.000001 && Math.abs(cardBounds().worldY - compact.worldY) < 0.000001,

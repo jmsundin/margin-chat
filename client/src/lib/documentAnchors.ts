@@ -38,6 +38,31 @@ function detach<T extends DocumentAnchorRange>(anchor: T, blocks: DocumentBlock[
   return { ...anchor, sourceBlockId };
 }
 
+/**
+ * Joining a line onto the one above it (Backspace at its start, or a passage
+ * selected across lines) removes its block and appends its text to the previous
+ * surviving block. Follow the passage there when its quote appears exactly once
+ * in the joined part.
+ */
+function mergedAnchor<T extends DocumentAnchorRange>(anchor: T, oldTarget: DocumentBlock, beforeBlocks: DocumentBlock[], afterBlocks: DocumentBlock[]): T | null {
+  const quote = anchor.quote ?? "";
+  if (!quote) return null;
+  const afterIds = new Set(afterBlocks.map((block) => block.id));
+  const index = beforeBlocks.indexOf(oldTarget);
+  let previous: DocumentBlock | undefined;
+  for (let cursor = index - 1; cursor >= 0 && !previous; cursor -= 1) if (afterIds.has(beforeBlocks[cursor].id)) previous = beforeBlocks[cursor];
+  if (!previous) return null;
+  const joined = afterBlocks.find((block) => block.id === previous!.id)!;
+  if (joined.sourceMessageId !== previous.sourceMessageId || joined.content.length <= previous.content.length) return null;
+  // Only the part beyond the surviving prefix of the previous block can hold the joined line.
+  let shared = 0;
+  while (shared < previous.content.length && previous.content[shared] === joined.content[shared]) shared += 1;
+  const matches = occurrences(joined.content.slice(shared), quote).map((from) => from + shared);
+  if (matches.length !== 1) return null;
+  return { ...anchor, sourceBlockId: joined.id, sourceMessageId: joined.sourceMessageId ?? `document:${joined.id}`,
+    startOffset: matches[0], endOffset: matches[0] + quote.length };
+}
+
 /** Track a passage through ordinary edits and a block split without borrowing unrelated matches. */
 export function remapDocumentAnchor<T extends DocumentAnchorRange>(anchor: T, beforeConversation: Conversation, afterConversation: Conversation): T {
   if (beforeConversation.id !== afterConversation.id || !anchor.sourceMessageId || anchor.startOffset === null || anchor.endOffset === null ||
@@ -45,6 +70,12 @@ export function remapDocumentAnchor<T extends DocumentAnchorRange>(anchor: T, be
   const before = getDocumentSourceText(beforeConversation, anchor.sourceMessageId, anchor.sourceBlockId);
   const after = getDocumentSourceText(afterConversation, anchor.sourceMessageId, anchor.sourceBlockId);
   const afterBlocks = getEditableDocument(afterConversation).blocks;
+  if (before !== undefined && after === undefined && anchor.sourceBlockId) {
+    const beforeBlocks = getEditableDocument(beforeConversation).blocks;
+    const oldTarget = beforeBlocks.find((block) => block.id === anchor.sourceBlockId);
+    const merged = oldTarget && !afterBlocks.some((block) => block.id === oldTarget.id) ? mergedAnchor(anchor, oldTarget, beforeBlocks, afterBlocks) : null;
+    if (merged) return merged;
+  }
   if (before === undefined || after === undefined) return anchor.sourceBlockId ? detach(anchor, afterBlocks) : anchor;
   if (before === after) return anchor;
 

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
-import { getDocumentBlockAuthorship, getEditableDocument } from "../lib/editableDocument";
+import { getEditableDocument } from "../lib/editableDocument";
+import { joinDocumentBlocks } from "../lib/continuousDocument";
 import { getGenerationBlocks, proposeAIChildNodes, type AIChildNodeProposal } from "../lib/aiChildNodes";
 import type { DocumentAIRequest } from "../lib/documentAI";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
@@ -147,7 +148,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const layout = () => {
       const markers = [...body.querySelectorAll<HTMLElement>(".document-prompt-marker")]
         .filter((marker) => marker.closest(".document-body") === body)
-        .map((marker) => ({ marker, top: marker.parentElement?.getBoundingClientRect().top ?? 0 }))
+        .map((marker) => ({ marker, top: (marker.closest(".rich-document-block") ?? marker.parentElement)?.getBoundingClientRect().top ?? 0 }))
         .sort((a, b) => a.top - b.top);
       let previousBottom = -Infinity;
       for (const { marker, top } of markers) {
@@ -177,33 +178,12 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     latestDocument.current = next;
     props.onChange(next);
   }
-  function updateBlock(id: string, content: string, edit?: DocumentEditOptions) {
+  /** The editor sends complete block lists; AI output still being written always keeps its latest text. */
+  function changeBlocks(next: Block[], edit?: DocumentEditOptions) {
     const current = latestDocument.current;
-    if (current.blocks.find((block) => block.id === id)?.content === content) return;
-    change({ ...current, blocks: current.blocks.map((block) => block.id === id ? { ...block, content, updatedAt: new Date().toISOString(),
-      authorship: getDocumentBlockAuthorship(block, conversation.messages) === "user" ? "user" : "mixed" } : block) }, edit);
-  }
-  function insertBlock(afterId: string | null, content: string, edit?: DocumentEditOptions) {
-    const current = latestDocument.current;
-    const block = freshBlock(content);
-    const blocks = [...current.blocks];
-    const index = blocks.findIndex((item) => item.id === afterId);
-    blocks.splice(index < 0 ? blocks.length : index + 1, 0, block);
-    change({ ...current, blocks }, { ...edit,
-      group: edit?.group ? `${block.id}:typing` : undefined,
-      afterFocus: { blockId: block.id, from: edit?.afterFocus?.from ?? content.length, to: edit?.afterFocus?.to ?? content.length },
-    });
-    return block.id;
-  }
-  function splitBlock(id: string, before: string, after: string, edit?: DocumentEditOptions) {
-    const current = latestDocument.current;
-    const source = current.blocks.find((block) => block.id === id);
-    if (!source) return "";
-    const block: Block = { ...freshBlock(after), sourceMessageId: source.sourceMessageId, generationId: source.generationId,
-      authorship: after ? getDocumentBlockAuthorship(source, conversation.messages) : "user" };
-    const blocks = current.blocks.flatMap((item) => item.id === id ? [{ ...item, content: before, updatedAt: new Date().toISOString() }, block] : [item]);
-    change({ ...current, blocks }, { ...edit, group: undefined, afterFocus: { blockId: block.id, from: 0, to: 0 } });
-    return block.id;
+    const streaming = new Set(streamingIds);
+    const blocks = next.map((block) => streaming.has(block.id) ? current.blocks.find((item) => item.id === block.id) ?? block : block);
+    change({ ...current, blocks: blocks.length ? blocks : [freshBlock()] }, edit);
   }
   function historyAction(action: "undo" | "redo") {
     const current = latestDocument.current;
@@ -451,16 +431,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     <div className={`panel-body document-body${hasPrompts ? " has-prompt-markers" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
-        onUpdateBlock={updateBlock} onInsertBlock={insertBlock} onSplitBlock={splitBlock}
+        onChangeBlocks={changeBlocks}
         onHistory={historyAction}
-        onDeleteBlock={(id, edit) => {
-          const current=latestDocument.current;
-          const index = current.blocks.findIndex((block) => block.id === id);
-          const blocks=current.blocks.filter((block)=>block.id!==id);
-          if (!blocks.length) blocks.push(freshBlock());
-          const focus = blocks[Math.max(0, index - 1)] ?? blocks[0];
-          change({...current,blocks}, { ...edit, afterFocus: { blockId: focus.id, from: focus.content.length, to: focus.content.length } });
-        }}
         onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks}, { beforeFocus: { blockId: id, from: 0, to: 0 }, afterFocus: { blockId: id, from: 0, to: 0 } });}}
         onInvokeAI={(next) => {
           const open = () => { props.onClearSelection?.(); setInvocation(next); setDestination(next.selection ? "side" : "inline"); setReplaceSelection(false); setOpenPromptId(null); };
@@ -479,7 +451,12 @@ export default function DocumentPanel(props: DocumentPanelProps) {
             }
           }
         }}
-        onSelectionChange={(selection) => { if(selection)props.onSelection({...selection,prompt:"",sourceKind:"message",sourceContent:document.blocks.find((block)=>block.id===selection.sourceBlockId)?.content}); else props.onClearSelection?.(); }}
+        onSelectionChange={(selection) => {
+          if (!selection) { props.onClearSelection?.(); return; }
+          // A passage across lines is read in those lines joined as one block.
+          const blocks = selection.joinBlockIds ? joinDocumentBlocks(document.blocks, selection.sourceBlockId, selection.joinBlockIds) : document.blocks;
+          props.onSelection({ ...selection, prompt: "", sourceKind: "message", sourceContent: blocks?.find((block) => block.id === selection.sourceBlockId)?.content });
+        }}
         renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering obsidian theme={props.theme}/>}
         renderAfterBlock={(block) => <>
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPrompt)}

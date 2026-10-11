@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
+import { blockEditor } from "./blockEditor";
 import type { Conversation, SelectionDraft } from "../../client/src/types";
 
 const browser = new Window({ url: "http://document-panel.test" });
@@ -63,7 +64,7 @@ browser.document.body.append(selectedPassagePrompt);
 const root = createRoot(container as unknown as Element);
 function element(selector: string): any { const node = container.querySelector(selector); assert(node, `Missing ${selector}`); return node; }
 function button(label: string): any { const node = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent.trim() === label); assert(node, `Missing button ${label}`); return node; }
-function editor(id: string): any { return element(`[data-document-block-id="${id}"] .tiptap`).editor; }
+function editor(id: string): any { return blockEditor(browser.document, id); }
 async function click(node: any) { await act(async () => node.click()); }
 async function fill(label: string, value: string) {
   await act(async () => {

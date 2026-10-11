@@ -3,6 +3,7 @@ import { mock } from "bun:test";
 import { Window } from "happy-dom";
 import type { AppState } from "../../client/src/types";
 import { billingUser } from "./billingFixture";
+import { blockEditor, documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://margin-documents.test" });
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
@@ -114,7 +115,10 @@ function restoreButton(parentId: string, title: string): any {
   assert.equal(button.title, `Open side document: ${title}`);
   return button;
 }
-function editor(id: string): any { return element(`[data-document-id="${id}"], [data-dock-document-id="${id}"]`).querySelector(".tiptap").editor; }
+function documentElement(id: string): any { return element(`[data-document-id="${id}"], [data-dock-document-id="${id}"]`); }
+function editor(id: string): any { return documentEditor(documentElement(id)); }
+/** The document's first block, with positions relative to it. */
+function firstBlock(id: string): any { return blockEditor(documentElement(id), documentElement(id).querySelector("[data-document-block-id]").dataset.documentBlockId); }
 async function settle() {
   for (let iteration = 0; frames.size && iteration < 30; iteration++) {
     const callbacks = [...frames.values()]; frames.clear();
@@ -165,7 +169,7 @@ try {
   assert(notePane(noteId).querySelector('.document-margin-actions .document-menu-trigger'));
   checks.push('legacy notes become child documents in the sidebar, tabs and parent margin');
 
-  const noteEditor = editor(noteId);
+  const noteEditor = firstBlock(noteId);
   await act(async () => {
     noteEditor.commands.setContent('<h2>Edited mini document</h2><ul><li>Full editor features</li></ul>');
   });
@@ -210,8 +214,8 @@ try {
 
   await click(tab(mainId));
   await act(async () => {
-    editor(mainId).view.dom.focus();
-    editor(mainId).commands.setTextSelection({ from: 10, to: 14 });
+    firstBlock(mainId).view.dom.focus();
+    firstBlock(mainId).commands.setTextSelection({ from: 10, to: 14 });
   });
   await settle();
   await click(element('[aria-label="Add a margin note"]'));
@@ -229,6 +233,44 @@ try {
   assert.equal(latest.conversations[passageId].document!.marginNote!.display, 'compact');
   assert(notePane(passageId).querySelector('.rich-document-editor'));
   checks.push('a selected passage creates an editable mini document with a normal passage anchor');
+
+  // A note across two lines joins them into one block, since a passage points into one block.
+  const firstLineId = latest.conversations[mainId].document!.blocks[0].id;
+  await act(async () => {
+    firstBlock(mainId).commands.focus("end");
+    editor(mainId).commands.splitBlock();
+    editor(mainId).commands.insertContent("Second main line.");
+  });
+  await settle();
+  const mainLines = latest.conversations[mainId].document!.blocks.filter((block) => block.content.trim());
+  assert.deepEqual(mainLines.map((block) => block.content), ["Original main document text.", "Second main line."]);
+  const secondLine = blockEditor(documentElement(mainId), mainLines[1].id);
+  await act(async () => {
+    editor(mainId).view.dom.focus();
+    editor(mainId).commands.setTextSelection({ from: firstBlock(mainId).position(10), to: secondLine.position(7) });
+  });
+  await settle();
+  await click(element('[aria-label="Add a margin note"]'));
+  const beforeJoinedIds = new Set(Object.keys(latest.conversations));
+  await act(async () => {
+    const input = element('input[aria-label="Margin note"]');
+    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, 'A thought across two lines');
+    input.dispatchEvent(new browser.Event('input', { bubbles: true }));
+  });
+  await click(element('[aria-label="Save margin note"]'));
+  const joinedNoteId = Object.keys(latest.conversations).find((id) => !beforeJoinedIds.has(id))!;
+  assert(joinedNoteId);
+  const joinedBlock = latest.conversations[mainId].document!.blocks.find((block) => block.id === firstLineId)!;
+  assert.equal(joinedBlock.content, "Original main document text.\n\nSecond main line.", "The two lines join into the first, with the text unchanged.");
+  assert(!latest.conversations[mainId].document!.blocks.some((block) => block.id === mainLines[1].id));
+  const joinedAnchor = latest.conversations[joinedNoteId].branchAnchor!;
+  assert.equal(joinedAnchor.sourceBlockId, firstLineId);
+  assert.equal(joinedAnchor.quote, "main document text.\n\nSecond");
+  assert.equal(joinedBlock.content.slice(joinedAnchor.startOffset!, joinedAnchor.endOffset!), joinedAnchor.quote);
+  assert.equal(latest.conversations[passageId].branchAnchor!.quote, 'main', "The earlier note on the first line keeps its passage.");
+  assert.equal(joinedBlock.content.slice(latest.conversations[passageId].branchAnchor!.startOffset!, latest.conversations[passageId].branchAnchor!.endOffset!), 'main');
+  assert.equal(documentElement(mainId).querySelectorAll(`[data-document-block-id="${firstLineId}"] p`).length, 2, "The editor shows both lines in the joined block.");
+  checks.push('a note across two lines joins them into one block and anchors the whole passage');
 
   const previousIds = new Set(Object.keys(latest.conversations));
   await documentAction(noteId, 'New margin note');

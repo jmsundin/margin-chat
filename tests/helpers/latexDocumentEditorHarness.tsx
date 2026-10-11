@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { DocumentBlock } from "@margin-chat/workspace-contracts";
+import { blockEditor, documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://latex-document.test" });
 browser.document.write("<!doctype html><html><head></head><body></body></html>");
@@ -40,9 +41,9 @@ function Host({ source, readOnly = false }: { source: string; readOnly?: boolean
   replaceSource = (content) => setBlocks((items) => items.map((item) => item.id === "math" ? { ...item, content } : item));
   return createElement(RichDocumentEditor, {
     conversationId: "equations", blocks, readOnlyBlockIds: readOnly ? ["math"] : [],
-    onUpdateBlock(id: string, markdown: string) {
-      updates.push(markdown);
-      setBlocks((items) => items.map((item) => item.id === id ? { ...item, content: markdown } : item));
+    onChangeBlocks(next: DocumentBlock[]) {
+      updates.push(next.map((item) => item.content).join("\n\n"));
+      setBlocks(next);
     },
   });
 }
@@ -66,8 +67,16 @@ function element(selector: string, parent: ParentNode = browser.document as unkn
   const found = parent.querySelector(selector); assert(found, `Missing ${selector}`); return found;
 }
 function block(): any { return element('[data-document-block-id="math"]', container as unknown as Element); }
-function editor(): InstanceType<typeof Editor> { return element(".tiptap", block()).editor; }
-function equation(parent: ParentNode = block()): any { return element('[data-type="inline-math"], [data-type="block-math"]', parent); }
+/** The first block, with positions relative to it. */
+function editor(): any { return blockEditor(container, "math"); }
+/** The one editor that holds every block of the document. */
+function whole(): InstanceType<typeof Editor> { return documentEditor(container); }
+function surface(): any { return element(".rich-document-editor", container as unknown as Element); }
+/** The document as saved: every block's Markdown in order. */
+function documentSource() { return latest.map((item) => item.content).join("\n\n"); }
+/** Every saved line of the document, without the block wrappers or the empty line for typing after it. */
+function documentContent() { const content: unknown[] = []; whole().state.doc.forEach((node) => { if (!node.attrs.id.startsWith("draft:")) content.push(...(node.toJSON().content ?? [])); }); return content; }
+function equation(parent: ParentNode = surface()): any { return element('[data-type="inline-math"], [data-type="block-math"]', parent); }
 function dialog(): any { return element('[role="dialog"]'); }
 function button(label: string, parent: ParentNode = browser.document as unknown as Document): any {
   const found = [...parent.querySelectorAll("button")].find((node) => (node.getAttribute("aria-label") ?? node.textContent?.trim()) === label);
@@ -117,7 +126,7 @@ async function typeText(text: string) {
   });
   await settle();
 }
-function mathNodes(value: InstanceType<typeof Editor>) {
+function mathNodes(value: { state: InstanceType<typeof Editor>["state"] } = whole()) {
   const nodes: Array<{ type: string; latex: string }> = [];
   value.state.doc.descendants((node) => { if (node.type.name === "inlineMath" || node.type.name === "blockMath") nodes.push({ type: node.type.name, latex: node.attrs.latex }); });
   return nodes;
@@ -150,17 +159,19 @@ $$
   assert.equal(block().querySelectorAll(".katex").length, 4, "All four source equations render math, not literal source.");
   assert.equal(updates.length, writesBeforeMount, "Rendering must not rewrite the original source.");
   assert.equal(latest[0].content, source);
-  const formulasBefore = mathNodes(editor());
+  const formulasBefore = mathNodes();
   await act(async () => {
     let boldPosition = -1;
-    editor().state.doc.descendants((node, position) => { if (node.isText && node.text === "bold") boldPosition = position; });
+    whole().state.doc.descendants((node, position) => { if (node.isText && node.text === "bold") boldPosition = position; });
     assert(boldPosition >= 0);
-    editor().commands.setTextSelection({ from: boldPosition, to: boldPosition + 4 });
-    editor().commands.toggleItalic();
+    whole().commands.setTextSelection({ from: boldPosition, to: boldPosition + 4 });
+    whole().commands.toggleItalic();
   });
-  assert.deepEqual(mathNodes(editor()), formulasBefore, "Formatting nearby text preserves equation attributes.");
-  const editedReload = new Editor({ extensions: createRichDocumentExtensions(), content: latest[0].content, contentType: "markdown" });
-  try { assert.deepEqual(editedReload.getJSON(), editor().getJSON()); } finally { editedReload.destroy(); }
+  assert.deepEqual(mathNodes(), formulasBefore, "Formatting nearby text preserves equation attributes.");
+  assert.equal(latest.length, 4, "An edited document saves one block per line.");
+  assert.equal(latest[0].id, "math");
+  const editedReload = new Editor({ extensions: createRichDocumentExtensions(), content: documentSource(), contentType: "markdown" });
+  try { assert.deepEqual(editedReload.getJSON().content, documentContent()); } finally { editedReload.destroy(); }
   checks.push("rendering is lossless and surrounding formatting edits preserve every formula");
 
   await mount([
@@ -168,30 +179,30 @@ $$
     "Inline code: `$x^2$`.",
     "```tex\n$y^2$\n\\[z\\]\n```",
   ].join("\n\n"));
-  assert.equal(mathNodes(editor()).length, 0, "Currency, escaped dollars, and code must not become equations.");
+  assert.equal(mathNodes().length, 0, "Currency, escaped dollars, and code must not become equations.");
   assert(editor().getText().includes("$5 and $10"));
   assert(block().querySelector("code")?.textContent?.includes("$x^2$"));
   checks.push("currency, escaped delimiters, and literal code remain ordinary text");
 
   await mount("");
   await typeText("Energy $E=mc^2$ remains inline.");
-  assert.deepEqual(mathNodes(editor()), [{ type: "inlineMath", latex: "E=mc^2" }]);
+  assert.deepEqual(mathNodes(), [{ type: "inlineMath", latex: "E=mc^2" }]);
   assert(editor().getText().includes("Energy "));
   assert(editor().getText().includes(" remains inline."));
   await mount("");
   await typeText(String.raw`$$\frac{a}{b}$$`);
-  assert.deepEqual(mathNodes(editor()), [{ type: "blockMath", latex: String.raw`\frac{a}{b}` }]);
+  assert.deepEqual(mathNodes(), [{ type: "blockMath", latex: String.raw`\frac{a}{b}` }]);
   assert.equal(editor().state.doc.firstChild?.type.name, "blockMath", "Typing display delimiters replaces the whole paragraph.");
   await mount("");
   await typeText(String.raw`\(\alpha + \beta\)`);
-  assert.deepEqual(mathNodes(editor()), [{ type: "inlineMath", latex: String.raw`\alpha + \beta` }]);
+  assert.deepEqual(mathNodes(), [{ type: "inlineMath", latex: String.raw`\alpha + \beta` }]);
   await mount("");
   await typeText(String.raw`\[\int_0^1 x\,dx\]`);
-  assert.deepEqual(mathNodes(editor()), [{ type: "blockMath", latex: String.raw`\int_0^1 x\,dx` }]);
+  assert.deepEqual(mathNodes(), [{ type: "blockMath", latex: String.raw`\int_0^1 x\,dx` }]);
   await mount("");
   await act(async () => editor().commands.setCodeBlock());
   await typeText("$literal$ and $$code$$");
-  assert.equal(mathNodes(editor()).length, 0, "Typing math-like syntax inside code stays literal.");
+  assert.equal(mathNodes().length, 0, "Typing math-like syntax inside code stays literal.");
   checks.push("typing either delimiter style creates inline/display math while code input stays literal");
 
   await mount("Energy: ");
@@ -208,7 +219,7 @@ $$
   assert(afterInsert.includes("$E = mc^2$"));
   await act(async () => { assert(editor().commands.undo()); });
   assert.equal(latest[0].content.trimEnd(), beforeInsert.trimEnd());
-  assert.equal(mathNodes(editor()).length, 0);
+  assert.equal(mathNodes().length, 0);
   await act(async () => { assert(editor().commands.redo()); });
   assert.equal(latest[0].content, afterInsert);
   assert.equal(equation().getAttribute("data-latex"), "E = mc^2");
@@ -240,13 +251,13 @@ $$
   await click(button("Save equation", dialog()));
   assert.equal(equation().getAttribute("data-type"), "block-math");
   assert.equal(equation().getAttribute("data-latex"), String.raw`\frac{a}{b}`);
-  assert(latest[0].content.includes("$$"));
-  assert(latest[0].content.includes("Energy:"), "Changing layout keeps neighboring prose.");
-  const afterEdit = latest[0].content;
+  assert(documentSource().includes("$$"));
+  assert(documentSource().includes("Energy:"), "Changing layout keeps neighboring prose.");
+  const afterEdit = documentSource();
   await act(async () => { assert(editor().commands.undo()); });
-  assert.equal(latest[0].content, afterInsert, "Saving the equation is one reversible edit.");
+  assert.equal(documentSource(), afterInsert, "Saving the equation is one reversible edit.");
   await act(async () => { assert(editor().commands.redo()); });
-  assert.equal(latest[0].content, afterEdit);
+  assert.equal(documentSource(), afterEdit);
   checks.push("existing equations can change both source and layout in one undoable edit");
 
   await key(equation(), "Enter");
@@ -266,7 +277,7 @@ $$
   await mount(String.raw`A malformed formula $\frac{1}{$ remains editable.
 
 An unsafe link $\href{javascript:alert(1)}{click}$ is not trusted.`);
-  assert.equal(mathNodes(editor()).length, 2, "Invalid LaTeX remains a recoverable equation node.");
+  assert.equal(mathNodes().length, 2, "Invalid LaTeX remains a recoverable equation node.");
   assert.equal(block().querySelector('a[href^="javascript:"]'), null);
   assert.equal(equation().getAttribute("data-latex"), String.raw`\frac{1}{`);
   await click(equation());

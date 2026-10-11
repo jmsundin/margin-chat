@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
+import { documentMarkdown, replaceDocument } from "./blockEditor";
 
 const browser = new Window({ url: "http://note-editor.test" });
 for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "ShadowRoot", "getComputedStyle"]) {
@@ -64,7 +65,7 @@ browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
 function editor(selector: string) {
   const rich = container.querySelector(`${selector} .tiptap`) as any;
-  if (rich?.editor) return { richEditor: rich.editor, state: { doc: { toString: () => rich.editor.getMarkdown() } }, contentDOM: rich.editor.view.dom, focus: () => rich.editor.view.focus() };
+  if (rich?.editor) return { richEditor: rich.editor, state: { doc: { toString: () => documentMarkdown(rich.editor) } }, contentDOM: rich.editor.view.dom, focus: () => rich.editor.view.focus() };
   const element = container.querySelector(`${selector} .cm-editor`);
   assert(element, `Missing actual CodeMirror editor at ${selector}`);
   const view = EditorView.findFromDOM(element as unknown as HTMLElement);
@@ -72,7 +73,7 @@ function editor(selector: string) {
   return view;
 }
 function replace(view: any, content: string) {
-  if (view.richEditor) { view.richEditor.commands.setContent(content, { contentType: "markdown" }); return; }
+  if (view.richEditor) { replaceDocument(view.richEditor, content); return; }
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: content }, userEvent: "input.type" });
 }
 
