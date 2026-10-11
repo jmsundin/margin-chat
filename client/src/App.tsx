@@ -3,6 +3,8 @@ import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
 import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
+import MarketingSite from "./components/MarketingSite";
+import { AUTH_PATHS, resolveSiteRoute, type SiteRoute } from "./lib/siteRoutes";
 import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
   requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession,
@@ -57,6 +59,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
   const [billingOpenRequest, setBillingOpenRequest] = useState(0);
   const [checkoutReturn, setCheckoutReturn] = useState(() => getCheckoutReturn(new URLSearchParams(window.location.search)));
   const [billingPortalReturn, setBillingPortalReturn] = useState(() => new URLSearchParams(window.location.search).get("billing") === "return");
+  const [route, setRoute] = useState<SiteRoute>(() => resolveSiteRoute(window.location, Boolean(extension)));
   const authUserIdRef = useRef(authUser?.id);
   authUserIdRef.current = authUser?.id;
   const billingRefreshSequence = useRef(0);
@@ -95,6 +98,31 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     kind: "error" | "info" | "success";
     message: string;
   } | null>(null);
+
+  const navigate = useCallback((path: string) => {
+    window.history.pushState({}, "", path);
+    setRoute(resolveSiteRoute(window.location, Boolean(extension)));
+  }, [extension]);
+
+  useEffect(() => {
+    const followHistory = () => setRoute(resolveSiteRoute(window.location, Boolean(extension)));
+    window.addEventListener("popstate", followHistory);
+    return () => window.removeEventListener("popstate", followHistory);
+  }, [extension]);
+
+  // A signed-in visitor on /login or /signup belongs in the workspace at the root URL.
+  useEffect(() => {
+    if (authStatus !== "authenticated" || route.kind !== "auth") return;
+    window.history.replaceState({}, "", "/");
+    setRoute(resolveSiteRoute(window.location, Boolean(extension)));
+  }, [authStatus, route.kind, extension]);
+
+  // Signing out from the workspace lands on the sign-in form rather than the marketing home page.
+  function showSignIn() {
+    if (route.kind !== "marketing") return;
+    window.history.replaceState({}, "", AUTH_PATHS.login);
+    setRoute({ kind: "auth", mode: "login" });
+  }
 
   useEffect(() => {
     syncTheme(theme);
@@ -227,6 +255,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     message = "Your session expired. Sign in again to continue.",
   ) {
     forgetOfflineUser();
+    showSignIn();
     setAuthUser(null);
     setAuthStatus("unauthenticated");
     setAuthSubmitting(false);
@@ -328,6 +357,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     } catch (error) {
       console.warn("Unable to clear the server session.", error);
     } finally {
+      showSignIn();
       setAuthUser(null);
       setAuthStatus("unauthenticated");
       setAuthError(null);
@@ -422,6 +452,11 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     );
   }
 
+  const marketingSite = route.kind === "marketing" && (
+    <MarketingSite page={route.page} signedIn={authStatus === "authenticated" && Boolean(authUser)} onNavigate={navigate} />
+  );
+  if (route.kind === "marketing" && route.page !== "home") return marketingSite;
+
   if (authStatus === "checking") {
     return (
       <div className="app-shell">
@@ -449,10 +484,13 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
         <button className="thread-dialog-button is-primary" onClick={extension.onConnect} type="button">Connect Margin Chat</button>
       </div></div></div>
     );
+    if (route.kind === "marketing") return marketingSite;
     return (
       <div className="app-shell">
         <div className="app-chrome auth-chrome">
           <AuthLanding
+            key={route.kind === "auth" ? route.mode : "app"}
+            initialMode={route.kind === "auth" ? route.mode : "signup"}
             errorMessage={authError}
             isSubmitting={authSubmitting}
             onLogin={handleLogin}
