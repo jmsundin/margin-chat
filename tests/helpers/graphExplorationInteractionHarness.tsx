@@ -1349,10 +1349,14 @@ async function checkTemporarySelectionSpacing() {
   await click(element('[aria-label="Dock Dense center in split view"]'));
   const splitter = element('[aria-label="Resize docked chat"]');
   const widthBefore = Number(splitter.getAttribute("aria-valuenow"));
+  assert.equal(widthBefore, canvasWidth / 2, "The side panel opens at half the map's width");
+  assert.equal(element(".conversation-graph-workspace").style.getPropertyValue("--personal-map-dock-width"), "50%");
   await key(splitter, "ArrowLeft");
+  assert.equal(browser.localStorage.getItem("margin-map-dock-size"), String(widthBefore + 24), "A resized panel keeps its size next time");
   assert.equal(Number(splitter.getAttribute("aria-valuenow")), widthBefore + 24, "The desktop reader can be widened with the keyboard");
   await key(splitter, "Home");
   assert.equal(Number(splitter.getAttribute("aria-valuenow")), 280);
+  browser.localStorage.removeItem("margin-map-dock-size");
   await click(element('[aria-label="Collapse docked chat"]'));
   assert.equal(element('[aria-label="Expand docked chat"]').getAttribute("aria-expanded"), "false");
   assert(element('.conversation-graph-dock').classList.contains("is-collapsed"), "The mobile reader can collapse without losing the selected discussion");

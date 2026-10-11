@@ -18,8 +18,8 @@ const CLIENT_DIR = path.resolve(
     ? path.join(process.resourcesPath, "client")
     : fileURLToPath(new URL("../dist/", import.meta.url)),
 );
-// Where "Download update" sends people; override until builds are published elsewhere.
-const DOWNLOAD_URL = process.env.MARGIN_DESKTOP_DOWNLOAD_URL?.trim() || "https://github.com/jmsundin/margin-chat/releases/latest";
+// Where "Download update" sends people: the download page picks this system's installer.
+const DOWNLOAD_URL = process.env.MARGIN_DESKTOP_DOWNLOAD_URL?.trim() || "https://www.marginchat.com/download";
 const PROXIED_PREFIXES = ["/api/", "/_vercel/"];
 // Request headers that describe the margin:// page rather than the backend request.
 const DROPPED_REQUEST_HEADERS = ["host", "origin", "referer", "cookie"];
@@ -191,7 +191,9 @@ function startUpdateChecks() {
   return watchForUpdates({
     readLocal: async () => JSON.parse(await readFile(path.join(CLIENT_DIR, "version.json"), "utf8")),
     fetchRemote: async () => {
-      const response = await net.fetch(new URL("/version.json", API_ORIGIN), { cache: "no-store" });
+      // Compare with the newest published desktop build, not the website, so
+      // the prompt only appears when there is a new installer to download.
+      const response = await net.fetch(new URL("/api/downloads/desktop", API_ORIGIN), { cache: "no-store" });
       if (!response.ok) throw new Error(`Version check failed: ${response.status}`);
       return response.json();
     },
@@ -203,7 +205,7 @@ function startUpdateChecks() {
         defaultId: 0,
         cancelId: 1,
         message: "A new version of Margin Chat is available",
-        detail: `Version ${latest.commit.slice(0, 7)} is out. Download it and replace this app to update. Your vault and account stay as they are.`,
+        detail: `Version ${latest.version ?? latest.commit.slice(0, 7)} is out. Download it and replace this app to update. Your vault and account stay as they are.`,
       };
       const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
       if (response === 0) openExternally(DOWNLOAD_URL);

@@ -3,13 +3,15 @@
   "productName": "Margin Chat",
   "version": "0.1.0",
   "private": true,
-  "description": "Margin Chat for macOS",
+  "description": "Margin Chat for macOS, Windows and Linux",
   "type": "module",
   "main": "main.mjs",
   "scripts": {
     "start": "bun run --cwd .. build && electron .",
     "dev": "MARGIN_DESKTOP_DEV_URL=http://localhost:5173 electron .",
-    "dist:mac": "bun run --cwd .. build && electron-builder --mac"
+    "dist:mac": "bun run --cwd .. build && electron-builder --mac",
+    "dist:win": "bun run --cwd .. build && electron-builder --win",
+    "dist:linux": "bun run --cwd .. build && electron-builder --linux"
   },
   "devDependencies": {
     "electron": "44.7.0",
@@ -18,12 +20,77 @@
   "build": {
     "appId": "com.marginchat.desktop",
     "productName": "Margin Chat",
-    "directories": { "output": "release" },
-    "files": ["main.mjs", "updates.mjs", "package.json", "!node_modules/**/*"],
-    "extraResources": [{ "from": "../dist", "to": "client" }],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.mjs",
+      "updates.mjs",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist",
+        "to": "client"
+      }
+    ],
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg", "zip"]
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ]
+    },
+    "artifactName": "Margin-Chat-${version}-${os}-${arch}.${ext}",
+    "publish": null,
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "Margin-Chat-${version}-win-${arch}-setup.${ext}"
+    },
+    "linux": {
+      "icon": "build/icon.png",
+      "category": "Office",
+      "synopsis": "Notes, maps and AI chat in the margins",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "syncDesktopName": true
     }
-  }
+  },
+  "author": {
+    "name": "Margin Chat",
+    "email": "support@marginchat.com"
+  },
+  "homepage": "https://www.marginchat.com",
+  "desktopName": "margin-chat.desktop"
 }

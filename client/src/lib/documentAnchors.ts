@@ -40,9 +40,9 @@ function detach<T extends DocumentAnchorRange>(anchor: T, blocks: DocumentBlock[
 
 /**
  * Joining a line onto the one above it (Backspace at its start, or a passage
- * selected across lines) removes its block and appends its text to the previous
- * surviving block. Follow the passage there when its quote appears exactly once
- * in the joined part.
+ * selected across lines) appends its text to the previous surviving block and
+ * removes its block, or only its first line. Follow the passage there when its
+ * quote appears exactly once in the joined part.
  */
 function mergedAnchor<T extends DocumentAnchorRange>(anchor: T, oldTarget: DocumentBlock, beforeBlocks: DocumentBlock[], afterBlocks: DocumentBlock[]): T | null {
   const quote = anchor.quote ?? "";
@@ -112,11 +112,27 @@ export function remapDocumentAnchor<T extends DocumentAnchorRange>(anchor: T, be
   // Removing one occurrence of repeated text is ambiguous even when another now
   // happens to occupy the same offsets. Prefer a historical reference to a wrong mark.
   if (oldMatches.length > 1 && candidates.reduce((count, block) => count + occurrenceCount(block.content, quote), 0) < occurrenceCount(before, quote)) return detach(anchor, afterBlocks);
+  // A block split into lines: follow the passage's offset into the line that now holds it, even when its text repeats.
+  if (candidates.length > 1) {
+    const spread = remapDocumentRange(before, candidates.map((block) => block.content).join("\n\n"), beforeFrom ?? anchor.startOffset, beforeTo ?? anchor.endOffset);
+    let start = 0;
+    for (const block of spread ? candidates : []) {
+      const from = spread!.from - start, to = spread!.to - start;
+      if (from >= 0 && to <= block.content.length && (!quote || block.content.slice(from, to) === quote)) {
+        if (block.id === anchor.sourceBlockId) return from === anchor.startOffset && to === anchor.endOffset ? anchor : { ...anchor, startOffset: from, endOffset: to };
+        return { ...anchor, sourceBlockId: block.id, sourceMessageId: block.sourceMessageId ?? `document:${block.id}`, startOffset: from, endOffset: to };
+      }
+      start += block.content.length + 2;
+    }
+  }
   const range = remapDocumentRange(before, after, beforeFrom ?? anchor.startOffset, beforeTo ?? anchor.endOffset);
   if (range && (!quote || after.slice(range.from, range.to) === quote)) {
     return range.from === anchor.startOffset && range.to === anchor.endOffset ? anchor : { ...anchor, startOffset: range.from, endOffset: range.to };
   }
-  if (!quote || oldMatches.length !== 1 || matches.length !== 1) return detach(anchor, afterBlocks);
+  if (!quote || oldMatches.length !== 1 || matches.length !== 1) {
+    // Its line may have been joined onto the line above.
+    return (quote && !matches.length ? mergedAnchor(anchor, oldTarget, beforeBlocks, afterBlocks) : null) ?? detach(anchor, afterBlocks);
+  }
   const match = matches[0];
   return { ...anchor, sourceBlockId: match.block.id,
     sourceMessageId: match.block.sourceMessageId ?? `document:${match.block.id}`,

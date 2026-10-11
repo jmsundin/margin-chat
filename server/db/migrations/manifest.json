@@ -75,6 +75,11 @@
       "id": "0015_vault_passages",
       "file": "0015_vault_passages.sql",
       "transaction": true
+    },
+    {
+      "id": "0016_desktop_downloads",
+      "file": "0016_desktop_downloads.sql",
+      "transaction": true
     }
   ]
 }

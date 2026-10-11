@@ -9,9 +9,10 @@ import TaskItem from "@tiptap/extension-task-item";
 import Highlight from "@tiptap/extension-highlight";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import { common, createLowlight } from "lowlight";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView, type NodeView, type ViewMutationRecord } from "@tiptap/pm/view";
+import { Mapping } from "@tiptap/pm/transform";
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { getDocumentBlockAuthorship, type DocumentBlock, type Message } from "@margin-chat/workspace-contracts";
@@ -245,7 +246,8 @@ function createBlockNodes(registry: SlotRegistry) {
   return [
     Document.extend({ content: `(${BLOCK} | ${RAW})+` }),
     TiptapNode.create({
-      name: BLOCK, content: "block+", defining: true,
+      // Isolating: the editor's own joins never merge two blocks; Backspace and Delete at a line's edge join lines.
+      name: BLOCK, content: "block+", defining: true, isolating: true,
       addAttributes: () => ({ id: { default: null, rendered: false }, splitFrom: { default: null, rendered: false } }),
       parseHTML: () => [{ tag: "div[data-document-block]" }],
       renderHTML: () => ["div", { "data-document-block": "" }, 0],
@@ -416,9 +418,41 @@ function createDocumentExtension(control: EditorControl) {
           // Each line becomes its own block. A block keeps several lines only
           // while a saved passage spans them; lists, tables and code are one node.
           appendTransaction(transactions, oldState, newState) {
-            if (!transactions.some((tr) => tr.docChanged) || transactions.every((tr) => tr.getMeta(EXTERNAL))) return null;
+            // Saved content, and whatever other plugins append to it (such as autolinks), is never an edit.
+            const external = (tr: Transaction) => Boolean(tr.getMeta(EXTERNAL) || (tr.getMeta("appendedTransaction") as Transaction | undefined)?.getMeta(EXTERNAL));
+            if (!transactions.some((tr) => tr.docChanged) || transactions.every(external)) return null;
             const previous = new Map<string, ProseMirrorNode>();
             oldState.doc.forEach((node) => { if (node.attrs.id) previous.set(node.attrs.id, node); });
+            const present = new Set<string>();
+            newState.doc.forEach((node) => { if (node.attrs.id) present.add(node.attrs.id); });
+            // Where each line that existed before the edit now starts, and the block it was in.
+            let origins: Map<number, string> | null = null;
+            const originAt = (position: number) => {
+              if (!origins) {
+                const found = new Map<number, string>();
+                const mapping = new Mapping();
+                transactions.forEach((tr) => mapping.appendMapping(tr.mapping));
+                oldState.doc.forEach((block, start) => {
+                  if (block.type.name !== BLOCK || !block.attrs.id) return;
+                  let offset = start + 1;
+                  block.forEach((child) => {
+                    const mapped = mapping.mapResult(offset, 1);
+                    if (!mapped.deleted && !found.has(mapped.pos)) found.set(mapped.pos, block.attrs.id);
+                    offset += child.nodeSize;
+                  });
+                });
+                origins = found;
+              }
+              return origins.get(position);
+            };
+            const isBlankLine = (lines: ProseMirrorNode[]) => lines.length === 1 && lines[0].type.name === "paragraph" && !lines[0].content.size;
+            // A new line holds its block's text when it was split off it (Enter), not when it was pasted or typed.
+            const holdsTextOf = (id: string | null, lines: ProseMirrorNode[]) => {
+              const source = id ? control.markdownOf(id) : undefined;
+              const text = source ? serializeBlock(editor, { content: lines.map((line) => line.toJSON()) }).trim() : "";
+              return Boolean(text) && source!.includes(text);
+            };
+            const reused = new Set<string>();
             const locked = control.locked();
             const anchors = annotationKey.getState(newState)?.find(undefined, undefined, (spec) => spec.anchor) ?? [];
             const tr = newState.tr.setMeta("addToHistory", transactions.every((item) => item.getMeta("addToHistory") !== false));
@@ -433,10 +467,29 @@ function createDocumentExtension(control: EditorControl) {
               let offset = pos + 1;
               node.forEach((child) => { children.push({ from: offset, to: offset + child.nodeSize }); offset += child.nodeSize; });
               const groups = blockChildGroups(children, anchors.filter((decoration) => decoration.from < pos + node.nodeSize && decoration.to > pos));
-              const origin = node.attrs.id ?? null;
-              for (let group = groups.length - 1; group >= 1; group -= 1) {
-                tr.split(children[groups[group][0]].from, 1, [{ type: newState.schema.nodes[BLOCK], attrs: { id: freshDocumentBlockId(), splitFrom: origin } }]);
+              if (groups.length < 2) continue;
+              const id = (node.attrs.id as string | null) ?? null;
+              const linesOf = (group: number[]) => group.map((child) => node.child(child));
+              const attrs: Array<{ id: string; splitFrom: string | null }> = [];
+              for (let group = 1; group < groups.length; group += 1) {
+                const lines = linesOf(groups[group]);
+                if (isBlankLine(lines)) { attrs[group] = { id: freshDocumentBlockId(), splitFrom: null }; continue; }
+                const came = originAt(children[groups[group][0]].from);
+                // A block whose first line was joined onto the line above keeps its identity on its next line.
+                if (came && came !== id && !present.has(came) && !reused.has(came) && !isDraftBlockId(came)) {
+                  reused.add(came);
+                  attrs[group] = { id: came, splitFrom: null };
+                  continue;
+                }
+                attrs[group] = { id: freshDocumentBlockId(), splitFrom: came ?? (holdsTextOf(id, lines) ? id : null) };
               }
+              // Enter at the start of a line moves the line down: it keeps its identity and the blank line above is new.
+              const pushedDown = Boolean(id) && isBlankLine(linesOf(groups[0])) && attrs[1].splitFrom === id;
+              if (pushedDown) attrs[1] = { id: id!, splitFrom: null };
+              for (let group = groups.length - 1; group >= 1; group -= 1) {
+                tr.split(children[groups[group][0]].from, 1, [{ type: newState.schema.nodes[BLOCK], attrs: attrs[group] }]);
+              }
+              if (pushedDown) tr.setNodeMarkup(pos, undefined, { ...node.attrs, id: freshDocumentBlockId(), splitFrom: null });
             }
             const seen = new Set<string>();
             tr.doc.forEach((node, pos) => {
@@ -470,6 +523,12 @@ function createDocumentExtension(control: EditorControl) {
   });
 }
 
+/** Whether a position is in a table cell, or another node that keeps its text to itself, inside its block. */
+function inIsolatingNode($pos: ResolvedPos) {
+  for (let depth = 2; depth < $pos.depth; depth += 1) if ($pos.node(depth).type.spec.isolating) return true;
+  return false;
+}
+
 /** Join the line at the caret onto the end of the previous block (Backspace at its start). */
 function joinBackward(state: EditorState, locked: Set<string>, dispatch: (tr: Transaction) => void) {
   const { $from, empty } = state.selection;
@@ -490,44 +549,58 @@ function joinBackward(state: EditorState, locked: Set<string>, dispatch: (tr: Tr
   if (previous.type.name === RAW) { dispatch(state.tr.setSelection(NodeSelection.create(state.doc, previousStart))); return true; }
   const end = Selection.near(state.doc.resolve(previousStart + previous.nodeSize - 1), -1);
   if (!end.$head.parent.isTextblock) return false;
+  // A line never joins into a table: the caret moves into its last cell instead.
+  if (inIsolatingNode(end.$head)) { dispatch(state.tr.setSelection(end).scrollIntoView()); return true; }
   const tr = state.tr.delete(end.$head.pos, $from.pos);
   tr.setSelection(TextSelection.create(tr.doc, end.$head.pos));
   dispatch(tr.scrollIntoView());
   return true;
 }
-/** Join the next block onto the end of this line (Delete at its end). */
+/** Join the next block onto the end of this line (Delete at its end, including the end of a list or quote). */
 function joinForward(state: EditorState, locked: Set<string>, dispatch: (tr: Transaction) => void) {
   const { $from, empty } = state.selection;
-  if (!empty || $from.depth !== 2 || $from.parentOffset !== $from.parent.content.size || $from.index(1) !== $from.node(1).childCount - 1) return false;
+  if (!empty || $from.depth < 2 || !$from.parent.isTextblock || $from.pos !== Selection.near(state.doc.resolve($from.after(1) - 1), -1).from) return false;
+  // A table cell keeps its text to itself.
+  if (inIsolatingNode($from)) return false;
   const index = $from.index(0);
   if (index >= state.doc.childCount - 1) return false;
   const current = $from.node(1);
   const next = state.doc.child(index + 1);
   const nextStart = $from.after(1);
   if (locked.has(current.attrs.id) || locked.has(next.attrs.id)) return true;
-  if (next.type.name === RAW) {
+  const start = next.type.name === RAW ? null : Selection.near(state.doc.resolve(nextStart + 1), 1);
+  // Media and tables stay whole: Delete only removes an empty line before them.
+  if (!start || !start.$head.parent.isTextblock || inIsolatingNode(start.$head)) {
     if (isEmptyLine(current)) dispatch(state.tr.delete($from.before(1), nextStart).scrollIntoView());
     return true;
   }
-  const start = Selection.near(state.doc.resolve(nextStart + 1), 1);
-  if (!start.$head.parent.isTextblock) return true;
   const tr = state.tr.delete($from.pos, start.$head.pos);
   tr.setSelection(TextSelection.create(tr.doc, $from.pos));
   dispatch(tr.scrollIntoView());
   return true;
 }
 
-/** A selection inside one block, as offsets in its Markdown. Cross-block selections have none. */
+/** The first (side 1) or last (side -1) place the caret can go in a block. */
+function lineEdge(doc: ProseMirrorNode, block: { node: ProseMirrorNode; pos: number }, side: 1 | -1) {
+  if (block.node.type.name === RAW) return side > 0 ? block.pos : block.pos + block.node.nodeSize;
+  return Selection.near(doc.resolve(side > 0 ? block.pos + 1 : block.pos + block.node.nodeSize - 1), side).from;
+}
+
 /**
  * The selection as Markdown offsets in one block. A selection across several
  * lines is reported, when asked for, in those lines joined as one block would
  * save them, with the lines to join.
  */
 function blockSelection(editor: Editor, markdownOf: (id: string) => string | undefined, acrossLines?: { locked: Set<string> }) {
-  const { doc, selection: { from, to, empty } } = editor.state;
-  const first = blockAt(doc, from);
-  const last = first && blockAt(doc, to);
-  if (!first || !last) return null;
+  const { doc } = editor.state;
+  let { from, to } = editor.state.selection;
+  let head = blockAt(doc, from);
+  let tail = head && blockAt(doc, to);
+  if (!head || !tail) return null;
+  // A selection that only reaches the start of the next line, or starts at the end of a line, leaves that line out.
+  if (tail.pos > head.pos && to <= lineEdge(doc, tail, 1)) { tail = blockAt(doc, tail.pos - 1)!; to = Math.max(from, lineEdge(doc, tail, -1)); }
+  if (tail.pos > head.pos && from >= lineEdge(doc, head, -1)) { head = blockAt(doc, head.pos + head.node.nodeSize)!; from = Math.min(to, lineEdge(doc, head, 1)); }
+  const first = head, last = tail;
   const id = first.node.attrs.id as string;
   const markdown = markdownOf(id);
   if (markdown === undefined) return null;
@@ -535,7 +608,7 @@ function blockSelection(editor: Editor, markdownOf: (id: string) => string | und
   const endAt = (block: typeof first, source: string) => offsetInBlock(editor, block.node, block.pos, source, to, -1);
   if (last.pos === first.pos) {
     const start = startAt(first, markdown);
-    return { id, node: first.node, pos: first.pos, markdown, from: start, to: empty ? start : Math.max(start, endAt(first, markdown)) };
+    return { id, node: first.node, pos: first.pos, markdown, from: start, to: from === to ? start : Math.max(start, endAt(first, markdown)) };
   }
   if (!acrossLines) return null;
   const lines: Array<{ node: ProseMirrorNode; pos: number }> = [];
@@ -762,16 +835,24 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
     const nodes = visibleBlocks.map((block) => blockNode(editor, block));
     const target = editor.schema.topNodeType.create(null, nodes);
     const current = editor.state.doc;
-    const start = current.content.findDiffStart(target.content);
+    let start = current.content.findDiffStart(target.content);
     if (start !== null) {
       const end = current.content.findDiffEnd(target.content)!;
       const overlap = start - Math.min(end.a, end.b);
-      const oldEnd = overlap > 0 ? end.a + overlap : end.a;
-      const newEnd = overlap > 0 ? end.b + overlap : end.b;
+      let oldEnd = overlap > 0 ? end.a + overlap : end.a;
+      let newEnd = overlap > 0 ? end.b + overlap : end.b;
+      // A change across blocks replaces them whole: a block never merges into another, so a
+      // replacement that starts or ends inside one would leave it in place beside its copy.
+      const $start = current.resolve(start), $oldEnd = current.resolve(oldEnd), $newEnd = target.resolve(newEnd);
+      if (!$start.depth || !$oldEnd.depth || !$newEnd.depth || $start.index(0) !== $oldEnd.index(0) || $start.index(0) !== $newEnd.index(0)) {
+        if ($start.depth) start = $start.before(1);
+        if ($oldEnd.depth) oldEnd = $oldEnd.after(1);
+        if ($newEnd.depth) newEnd = $newEnd.after(1);
+      }
       externalUpdate.current = true;
       try {
         editor.view.dispatch(editor.state.tr.replace(start, oldEnd, target.slice(start, newEnd))
-          .setMeta(EXTERNAL, true).setMeta("addToHistory", false).setMeta("preventUpdate", true));
+          .setMeta(EXTERNAL, true).setMeta("addToHistory", false).setMeta("preventUpdate", true).setMeta("preventAutolink", true));
       } finally { externalUpdate.current = false; }
     }
     const live = new Set(visibleBlocks.map((block) => block.id));

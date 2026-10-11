@@ -40,7 +40,7 @@ export function blockChildGroups(children: Span[], ranges: Span[]): number[][] {
 
 export interface EditorBlockState {
   id: string;
-  /** The block this one was split from, when an edit created it. */
+  /** For a line an edit created: the block whose text it holds (split off it), if any. */
   splitFrom?: string | null;
   markdown: string;
   changed: boolean;
@@ -52,6 +52,11 @@ export interface EditorBlockState {
  */
 export function reconcileDocumentBlocks(previous: DocumentBlock[], editorBlocks: EditorBlockState[], sourceMessages?: ReadonlyArray<Pick<Message, "id" | "role">>, now = new Date().toISOString()): DocumentBlock[] {
   const byId = new Map(previous.map((block) => [block.id, block]));
+  // Text that is still whole lines of what a block held keeps its authorship; anything rewritten is mixed.
+  const authorshipOf = (source: DocumentBlock, markdown: string) => {
+    const authorship = getDocumentBlockAuthorship(source, sourceMessages);
+    return authorship === "user" || markdown && `\n\n${source.content}\n\n`.includes(`\n\n${markdown}\n\n`) ? authorship : "mixed";
+  };
   const next: DocumentBlock[] = [];
   for (const item of editorBlocks) {
     if (isDraftBlockId(item.id)) {
@@ -60,15 +65,15 @@ export function reconcileDocumentBlocks(previous: DocumentBlock[], editorBlocks:
     const existing = byId.get(item.id);
     if (existing) {
       next.push(!item.changed || existing.content === item.markdown ? existing : { ...existing, content: item.markdown, updatedAt: now,
-        authorship: getDocumentBlockAuthorship(existing, sourceMessages) === "user" ? "user" : "mixed" });
+        authorship: authorshipOf(existing, item.markdown) });
       continue;
     }
+    // The editor names an origin only for a line holding text that was in that block before.
     const origin = item.splitFrom ? byId.get(item.splitFrom) : undefined;
-    const originAuthorship = origin ? getDocumentBlockAuthorship(origin, sourceMessages) : "user";
     next.push({ id: isDraftBlockId(item.id) ? freshDocumentBlockId() : item.id, kind: "markdown", content: item.markdown, createdAt: now, updatedAt: now,
       ...(origin?.sourceMessageId ? { sourceMessageId: origin.sourceMessageId } : {}),
       ...(origin?.generationId ? { generationId: origin.generationId } : {}),
-      authorship: item.markdown && origin ? originAuthorship : "user" });
+      authorship: item.markdown && origin ? authorshipOf(origin, item.markdown) : "user" });
   }
   return next;
 }
