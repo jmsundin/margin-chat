@@ -12,6 +12,7 @@ import {
   getLocalWorkspaceFileName,
   readConnectedDirectoryCompanions,
   syncConnectedDirectoryCompanions,
+  localDirectorySignature,
 } from "../client/src/lib/workspaceStorage";
 import { createMarkdownWorkspace, discoverMarkdownWorkspace, parseMarkdownWorkspace } from "../client/src/lib/workspaceMarkdown";
 import { ApiError } from "../client/src/lib/api";
@@ -229,6 +230,23 @@ describe("connected folder safety", () => {
     expect([...folder.files.keys()].some((path) => path.endsWith(".md"))).toBe(true);
     const after = await readDirectoryWorkspace(folder.handle, "user");
     expect(areWorkspaceStatesEqual(parseMarkdownWorkspace(after.workspace.manifest, after.workspace.files)!, legacy.state)).toBe(true);
+  });
+});
+
+describe("watching the connected folder", () => {
+  test("a new or edited Markdown file changes the folder signature; attachments and hidden files do not", async () => {
+    const folder = memoryDirectory({ "One.md": "First.", "Notes/Two.md": "Second." });
+    const before = await localDirectorySignature(folder.handle);
+    folder.files.set("Attachments/picture.png", new Uint8Array([1, 2, 3]));
+    folder.files.set(".obsidian/workspace.json", "{}");
+    folder.files.set("_conflicts/One.md", "Old.");
+    expect(await localDirectorySignature(folder.handle)).toBe(before);
+    folder.files.set("Three.md", "Added in another app.");
+    const added = await localDirectorySignature(folder.handle);
+    expect(added).not.toBe(before);
+    expect(added).toContain("Three.md");
+    folder.files.set("Notes/Two.md", "Second, edited elsewhere.");
+    expect(await localDirectorySignature(folder.handle)).not.toBe(added);
   });
 });
 

@@ -25,6 +25,8 @@ async function setup() {
     listStaleTopicSources: (args: any) => topics.listStaleTopicSources(client, args),
     saveTopicEmbeddings: (args: any) => topics.saveTopicEmbeddings(client, args),
     readTopicEmbeddings: (args: any) => topics.readTopicEmbeddings(client, args),
+    readTopicPlacements: (args: any) => topics.readTopicPlacements(client, args),
+    writeTopicPlacement: (args: any) => topics.writeTopicPlacement(client, args),
   };
   return { client, database };
 }
@@ -104,6 +106,18 @@ describe("topic embeddings", () => {
     await writeState(client, "u1", normalizeAppState(smaller));
     const result = await service.sync({ userId: "u1", context: { allowHosted: true, apiKeys: {} }, since: null });
     expect(result.embeddings.map((entry: any) => entry.id)).toEqual(["angular"]);
+  });
+
+  test("remembers documents the user moved to another cluster, and forgets them on request", async () => {
+    const { client, database } = await setup();
+    await writeState(client, "u1", normalizeAppState(state()));
+    const service = createTopicEmbeddingService({ database, env: {}, embed: async () => [] });
+    const context = { allowHosted: false, apiKeys: {} };
+    await service.place({ userId: "u1", id: "viewchild", anchorId: "angular" });
+    expect((await service.sync({ userId: "u1", context, since: null })).placements).toEqual([{ id: "viewchild", anchorId: "angular" }]);
+    await expect(service.place({ userId: "u1", id: "viewchild", anchorId: "viewchild" })).rejects.toThrow();
+    await service.place({ userId: "u1", id: "viewchild", anchorId: null });
+    expect((await service.sync({ userId: "u1", context, since: null })).placements).toEqual([]);
   });
 
   test("quantizing keeps the direction of a vector", () => {

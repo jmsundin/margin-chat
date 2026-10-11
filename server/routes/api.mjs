@@ -627,6 +627,15 @@ export function createApiHandler({
           await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
         }
+        if (route?.id === "vaultTopicPlacement") {
+          if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+              !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+            throw new HttpError(403, "Move documents from Margin Chat.");
+          }
+          const body = await readJsonBody(request, 4 * 1024);
+          sendJson(response, 200, await topicEmbeddings.place({ userId, id: body?.id, anchorId: body?.anchorId ?? null }), { "Cache-Control": "private, no-store" });
+          return;
+        }
         if (route?.id === "vaultTopics") {
           if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
               !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {

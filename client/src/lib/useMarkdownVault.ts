@@ -15,6 +15,7 @@ import { WORKING_SET_IDLE_MS, claimWorkingSetCheck, loadOpenedDocuments, recordO
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import {
   canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, requestLocalDirectoryPermission, clearLocalDirectory, getLocalDirectoryStatus,
+  listLocalDirectories, reconnectLocalDirectory, watchLocalDirectory, type RememberedLocalDirectory,
   getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectoryWorkspace,
   readLocalDirectoryCompanions, syncLocalDirectoryCompanions,
   type LocalDirectoryStatus,
@@ -57,6 +58,7 @@ export function useMarkdownVault(args: {
   const [localDirectoryStatus, setDirectoryStatus] = useState<LocalDirectoryStatus>({
     directoryName: null, fileName: getLocalWorkspaceFileName(storageUserId), permission: "unselected", supported: false,
   });
+  const [localDirectories, setLocalDirectories] = useState<RememberedLocalDirectory[]>([]);
   const projectionPending = useRef(false);
   const [vaultIndex, setVaultIndex] = useState<VaultIndex | null>(null);
   const vaultIndexRef = useRef<VaultIndex | null>(null);
@@ -87,6 +89,7 @@ export function useMarkdownVault(args: {
   const queue = useRef(Promise.resolve());
   const localInFlight = useRef<Promise<VaultSnapshot> | null>(null);
   const automaticRefreshPending = useRef(false);
+  const refreshAgain = useRef(false);
   const initialized = useRef(false);
   const hasVaultContent = useRef(false);
   const writing = useRef(false);
@@ -200,9 +203,16 @@ export function useMarkdownVault(args: {
     return snapshot;
   }
 
+  async function showDirectoryStatus(status: LocalDirectoryStatus) {
+    const directories = await listLocalDirectories(storageUserId).catch(() => []);
+    if (!mounted.current) return;
+    setDirectoryStatus(status);
+    setLocalDirectories(directories);
+  }
+
   async function readFolder() {
     const status = await getLocalDirectoryStatus(storageUserId);
-    if (mounted.current) setDirectoryStatus(status);
+    await showDirectoryStatus(status);
     if (status.permission !== "granted" || !status.directoryId) {
       folderId.current = null; folder.current = null; folderCompanions.current = {};
       return;
@@ -478,15 +488,22 @@ export function useMarkdownVault(args: {
     }
   }
 
-  function scheduleAutomaticRefresh() {
+  function scheduleAutomaticRefresh(again = false) {
     if (isAppUpdateLocked()) return;
     // A slow/offline request must not accumulate one queued sync per keystroke,
     // focus event, or interval. Local saves remain independent of this queue.
-    if (automaticRefreshPending.current) return;
+    if (automaticRefreshPending.current) {
+      // A folder change seen mid-refresh may have been read too early; look once more after it.
+      if (again) refreshAgain.current = true;
+      return;
+    }
     automaticRefreshPending.current = true;
     void enqueue(() => saveAndRefresh(true))
       .catch(() => undefined)
-      .finally(() => { automaticRefreshPending.current = false; });
+      .finally(() => {
+        automaticRefreshPending.current = false;
+        if (refreshAgain.current && mounted.current) { refreshAgain.current = false; scheduleAutomaticRefresh(); }
+      });
   }
 
   useEffect(() => {
@@ -574,6 +591,13 @@ export function useMarkdownVault(args: {
     };
   }, [ready, enabled]);
 
+  // Files another app adds to or changes in the connected folder appear within seconds.
+  const watchedDirectoryId = localDirectoryStatus.permission === "granted" ? localDirectoryStatus.directoryId : undefined;
+  useEffect(() => {
+    if (!ready || !watchedDirectoryId) return;
+    return watchLocalDirectory(storageUserId, watchedDirectoryId, () => scheduleAutomaticRefresh(true));
+  }, [ready, storageUserId, watchedDirectoryId]);
+
   const cloudDocuments = useMemo(() => !vaultIndex || !deferredPaths.size ? []
     : recentVaultEntries(vaultIndex.entries.filter((entry) => deferredPaths.has(entry.path))), [vaultIndex, deferredPaths]);
   const openingTitle = openingPath ? vaultIndex?.entries.find((entry) => entry.path === openingPath)?.title : null;
@@ -582,6 +606,16 @@ export function useMarkdownVault(args: {
     : openingPath ? { label: `Opening “${openingTitle ?? "document"}”…` }
     : downloadProgress ? { label: "Syncing documents…" }
     : null;
+
+  async function connectDirectory(handle: FileSystemDirectoryHandle) {
+    await enqueue(async () => {
+      await hydrateEverything();
+      const status = await connectLocalDirectory(storageUserId, handle);
+      await showDirectoryStatus(status);
+      folderId.current = null; folder.current = null; folderCompanions.current = {};
+      if (status.permission === "granted") await saveAndRefresh(false);
+    });
+  }
 
   const folderAccessMessage = localDirectoryStatus.directoryName && localDirectoryStatus.permission !== "granted"
     ? `Allow access to “${localDirectoryStatus.directoryName}” again so Margin Chat can see the files you add or change there.`
@@ -646,27 +680,29 @@ export function useMarkdownVault(args: {
       }
     }, matchesCloud, message: localSaveError ?? message, conflicts, saving, localSaveError, localDirectoryStatus,
     async flushLocal() { await saveAppState(); },
+    localDirectories,
     async chooseDirectory() {
       // The chooser must run directly in the user gesture, before asynchronous queue work.
       const handle = await pickLocalDirectory();
       if (!handle) return;
-      await enqueue(async () => {
-        await hydrateEverything();
-        const status = await connectLocalDirectory(storageUserId, handle);
-        setDirectoryStatus(status);
-        folderId.current = null; folder.current = null; folderCompanions.current = {};
-        if (status.permission === "granted") await saveAndRefresh(false);
-      });
+      await connectDirectory(handle);
+    },
+    /** Connect a folder used before on this device again. Call from a click. */
+    async switchDirectory(directoryId: string) {
+      // The access prompt needs the user's click, so it runs before queued folder work.
+      const handle = await reconnectLocalDirectory(storageUserId, directoryId);
+      if (!handle) throw new Error("Margin Chat needs access to that folder to open it.");
+      await connectDirectory(handle);
     },
     /** Allow a remembered folder again after the browser forgot its access. */
     async allowDirectoryAccess() {
       // The permission prompt needs the user's click, so it runs before queued folder work.
       const status = await requestLocalDirectoryPermission(storageUserId);
-      if (mounted.current) setDirectoryStatus(status);
+      await showDirectoryStatus(status);
       if (status.permission === "granted") await enqueue(() => saveAndRefresh(true));
     },
     async clearDirectory() {
-      await enqueue(async () => { await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; setDirectoryStatus(await getLocalDirectoryStatus(storageUserId)); });
+      await enqueue(async () => { await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; await showDirectoryStatus(await getLocalDirectoryStatus(storageUserId)); });
     },
     async syncNow(onProgress?: (progress: StateUploadProgress) => void) {
       onProgress?.({ uploadedBytes: 0, totalBytes: 1 });
