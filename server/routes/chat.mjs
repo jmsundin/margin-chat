@@ -52,6 +52,12 @@ export async function handleChatRequest({ request, response, user, executeChatRe
         onStep({ step, spentMicros }) {
           writeChatStreamEvent(response, { step, ...(spentMicros === undefined ? {} : { spentMicros }), type: "step" });
         },
+        onThinking(delta) {
+          writeChatStreamEvent(response, { delta, type: "thinking" });
+        },
+        onActivity(activity) {
+          writeChatStreamEvent(response, { activity, type: "activity" });
+        },
       },
     });
     writeChatStreamEvent(response, { metadata: result.metadata, type: "done" });

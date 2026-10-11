@@ -1,5 +1,5 @@
 import { HttpError } from "../../lib/errors.mjs";
-import { anthropicBody, extractOpenAIReply, requestAnthropicMessage, requestProviderJson } from "../providers.mjs";
+import { anthropicBody, extractOpenAIReply, requestAnthropicMessage, requestResponsesApiStream } from "../providers.mjs";
 import { extractConversationMessages } from "../systemPrompt.mjs";
 
 /** Providers whose APIs can call tools. Gemini and Hugging Face answer without them. */
@@ -19,14 +19,34 @@ function parseArguments(text, provider) {
 
 const withExtra = (instruction, extra) => extra ? `${instruction}\n\n${extra}` : instruction;
 
-/** OpenAI and xAI share the Responses API: function_call items in, function_call_output items back. */
+/** Models that refused a reasoning summary request in this process, so later calls don't ask again.
+ * Only OpenAI is asked, since xAI may reject the setting; reasoning text xAI does return is still shown. */
+const summaryRefused = new Set();
+const refusesSummary = (error) => [400, 403].includes(error?.statusCode) && /summar/iu.test(error?.message ?? "");
+
+/** Joins reasoning text pieces as paragraphs. */
+const paragraphs = (pieces) => pieces.map((piece) => piece.trim()).filter(Boolean).join("\n\n");
+
+/** A Responses reasoning item's readable text: its summary, or reasoning text where a model shares it. */
+function reasoningText(output) {
+  return paragraphs(output.filter((item) => item?.type === "reasoning").flatMap((item) => [
+    ...(Array.isArray(item.summary) ? item.summary : []), ...(Array.isArray(item.content) ? item.content : []),
+  ]).filter((part) => ["summary_text", "reasoning_text"].includes(part?.type) && typeof part.text === "string").map((part) => part.text));
+}
+
+/**
+ * OpenAI and xAI share the Responses API: function_call items in, function_call_output items back.
+ * Each call streams so the model's reasoning summary, or any reasoning text it shares, reaches
+ * `live.thinking` as it is written.
+ */
 function createResponsesAdapter(provider, args, tools) {
   const messages = extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content }));
   const input = provider === "openai" ? messages : [{ role: "system", content: args.systemInstruction }, ...messages];
   const definitions = tools.map((tool) => ({ type: "function", strict: true, ...tool }));
+  const summaryKey = `${provider}:${args.model}`;
   return {
     get size() { return JSON.stringify({ input, instructions: args.systemInstruction }).length; },
-    async call({ allowTools, extraInstruction }) {
+    async call({ allowTools, extraInstruction, live = {} }) {
       if (provider === "xai") input[0] = { role: "system", content: withExtra(args.systemInstruction, extraInstruction) };
       const body = {
         model: args.model,
@@ -36,12 +56,39 @@ function createResponsesAdapter(provider, args, tools) {
         tools: definitions,
         tool_choice: allowTools ? "auto" : "none",
       };
-      const payload = await requestProviderJson({ apiKey: args.apiKey, body, provider, url: RESPONSES_URLS[provider], signal: args.signal, usageMeter: args.usageMeter });
+      let thinking = false;
+      let writing = false;
+      const onEvent = async (event) => {
+        if (["response.reasoning_summary_text.delta", "response.reasoning_text.delta"].includes(event.type) && typeof event.delta === "string") {
+          await live.thinking?.(event.delta);
+          thinking = true;
+        } else if (event.type === "response.reasoning_summary_part.added" && thinking) {
+          await live.thinking?.("\n\n");
+        } else if (event.type === "response.output_text.delta" && !writing) {
+          writing = true;
+          await live.writing?.();
+        }
+      };
+      const request = (withSummary) => requestResponsesApiStream({
+        apiKey: args.apiKey, body: withSummary ? { ...body, reasoning: { summary: "auto" } } : body, url: RESPONSES_URLS[provider],
+        signal: args.signal, usageMeter: args.usageMeter, onEvent, acceptIncomplete: true, fallbackError: `${provider} request failed.`,
+      });
+      let result;
+      try {
+        result = await request(provider === "openai" && !summaryRefused.has(summaryKey));
+      } catch (error) {
+        // Some models or accounts can't return reasoning summaries; answer without them.
+        if (provider !== "openai" || summaryRefused.has(summaryKey) || !refusesSummary(error)) throw error;
+        summaryRefused.add(summaryKey);
+        result = await request(false);
+      }
+      const payload = result.completedPayload;
       const output = Array.isArray(payload?.output) ? payload.output : [];
       input.push(...output);
       return {
         model: typeof payload?.model === "string" && payload.model.trim() ? payload.model : args.model,
         text: extractOpenAIReply(payload),
+        thinking: reasoningText(output),
         toolCalls: output.filter((item) => item?.type === "function_call")
           .map((item) => ({ id: item.call_id, name: item.name, arguments: parseArguments(item.arguments, provider) })),
       };
@@ -53,22 +100,38 @@ function createResponsesAdapter(provider, args, tools) {
 }
 
 /** Claude's Messages API: tool_use blocks in, tool_result blocks back in the next user turn. The
- * assistant content is replayed unchanged so thinking blocks stay attached to their tool calls. */
+ * assistant content is replayed unchanged so thinking blocks stay attached to their tool calls.
+ * Claude 5 models hide thinking unless asked, so the agent asks for the summarized form and
+ * streams it to `live.thinking`. */
 function createAnthropicAdapter(args, tools) {
-  const base = anthropicBody(args);
+  const base = { ...anthropicBody(args), thinking: { type: "adaptive", display: "summarized" } };
   const messages = [...base.messages];
   const definitions = tools.map(({ name, description, parameters }) => ({ name, description, input_schema: parameters }));
   return {
     get size() { return JSON.stringify({ messages, system: args.systemInstruction }).length; },
-    async call({ allowTools, extraInstruction }) {
+    async call({ allowTools, extraInstruction, live = {} }) {
       const body = { ...base, system: withExtra(args.systemInstruction, extraInstruction), messages: [...messages],
         tools: definitions, tool_choice: { type: allowTools ? "auto" : "none" } };
-      const message = await requestAnthropicMessage({ apiKey: args.apiKey, body, signal: args.signal, usageMeter: args.usageMeter });
+      let thinking = false;
+      let writing = false;
+      const onEvent = async (event) => {
+        if (event.type === "content_block_start" && event.content_block?.type === "thinking" && thinking) {
+          await live.thinking?.("\n\n");
+        } else if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta" && event.delta.thinking) {
+          await live.thinking?.(event.delta.thinking);
+          thinking = true;
+        } else if (event.type === "content_block_start" && event.content_block?.type === "text" && !writing) {
+          writing = true;
+          await live.writing?.();
+        }
+      };
+      const message = await requestAnthropicMessage({ apiKey: args.apiKey, body, signal: args.signal, usageMeter: args.usageMeter, onEvent });
       const content = Array.isArray(message?.content) ? message.content : [];
       messages.push({ role: "assistant", content });
       return {
         model: typeof message?.model === "string" && message.model.trim() ? message.model : args.model,
         text: content.filter((block) => block.type === "text" && typeof block.text === "string").map((block) => block.text).join("").trim(),
+        thinking: paragraphs(content.filter((block) => block.type === "thinking" && typeof block.thinking === "string").map((block) => block.thinking)),
         toolCalls: content.filter((block) => block.type === "tool_use")
           .map((block) => ({ id: block.id, name: block.name, arguments: block.input && typeof block.input === "object" ? block.input : {} })),
       };

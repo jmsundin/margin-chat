@@ -65,12 +65,20 @@ export function normalizeAIExecution(input) {
 
 const micros = (value) => Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 
-/** One line of an agent's run log. Labels are written by the server, never tool output. */
+/** Characters kept from one model call's thinking in a saved run log. */
+export const AGENT_THINKING_CHARACTERS = 4_000;
+
+/**
+ * One line of an agent's run log. Labels are written by the server, never tool
+ * output; a thinking step's label is the model's own summary of its reasoning.
+ */
 export function normalizeAgentStep(input) {
-  if (!record(input) || !["tool", "note"].includes(input.kind) || !text(input.label, 300).trim()) return undefined;
+  if (!record(input) || !["tool", "note", "thinking"].includes(input.kind)) return undefined;
+  const limit = input.kind === "thinking" ? AGENT_THINKING_CHARACTERS : 300;
+  if (!text(input.label, limit).trim()) return undefined;
   return {
     kind: input.kind,
-    label: text(input.label, 300),
+    label: text(input.label, limit),
     ...(input.kind === "tool" && text(input.tool, 80) ? { tool: text(input.tool, 80) } : {}),
     ...(text(input.detail, 200) ? { detail: text(input.detail, 200) } : {}),
     ok: input.ok !== false,
@@ -83,8 +91,9 @@ function normalizeAgentRun(input) {
   const budgetMicros = micros(input.budgetMicros);
   const modelCalls = micros(input.modelCalls);
   return {
-    steps: (Array.isArray(input.steps) ? input.steps : []).map(normalizeAgentStep).filter(Boolean).slice(0, 40),
+    steps: (Array.isArray(input.steps) ? input.steps : []).map(normalizeAgentStep).filter(Boolean).slice(0, 60),
     stopReason: agentStopReasons.has(input.stopReason) ? input.stopReason : "answered",
+    ...(["shared", "not-shared"].includes(input.reasoning) ? { reasoning: input.reasoning } : {}),
     ...(modelCalls !== undefined ? { modelCalls } : {}),
     ...(spentMicros !== undefined ? { spentMicros } : {}),
     ...(budgetMicros !== undefined ? { budgetMicros } : {}),
