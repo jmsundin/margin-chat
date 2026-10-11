@@ -255,4 +255,145 @@ describe("readable Markdown transport", () => {
     expect(encodeReadableMarkdown(ordinary)).toBe(ordinary);
     expect(decodeReadableMarkdown(ordinary)).toBe(ordinary);
   });
+
+  describe("one wrapper per run of lines", () => {
+    const ai = { sourceMessageId: "answer", generationId: "generation" };
+    function lines(blocks: Array<{ id: string; content: string; [key: string]: unknown }>) {
+      const state = createEmptyState();
+      const conversation = state.conversations[state.rootId];
+      conversation.title = "Readable document";
+      conversation.document = { schemaVersion: 1, blocks: blocks.map((block) => ({ kind: "markdown" as const, createdAt: now, updatedAt: now, ...block })), prompts: [], generations: [] };
+      conversation.messages = [{ id: "answer", role: "assistant", content: "Answer.", createdAt: now }];
+      return decodeReadableMarkdown(Object.values(createMarkdownWorkspace(state).files)[0]);
+    }
+    const document = () => lines([
+      { id: "title", content: "# Title" },
+      { id: "mine", content: "My line.", authorship: "user" },
+      { id: "first", content: "First AI line.", ...ai },
+      { id: "list", content: "- one\n- two", ...ai },
+      { id: "edited", content: "Edited AI line.", ...ai, authorship: "mixed" },
+      { id: "last", content: "Last AI line.", ...ai },
+    ]);
+    const body = (source: string) => source.slice(source.indexOf("## Document"), source.indexOf("<!-- margin-chat-document-end -->"));
+    const contents = (source: string) => parsed(source).document!.blocks.map((block) => [block.id, block.content, block.authorship ?? null]);
+
+    test("consecutive lines by one author share a wrapper and round-trip exactly", () => {
+      const legacy = document();
+      const source = encodeReadableMarkdown(legacy);
+      expect(source).toContain("# <!-- margin-chat-metadata: frontmatter format 6 -->");
+      expect(body(source)).toBe("## Document\n\n<user id=\"title\">\n\n# Title\n\nMy line.\n\n</user>\n\n<ai id=\"first\">\n\nFirst AI line.\n\n- one\n- two\n\n</ai>\n\n"
+        + "<ai id=\"edited\" edited-by=\"user\">\n\nEdited AI line.\n\n</ai>\n\n<ai id=\"last\">\n\nLast AI line.\n\n</ai>\n\n");
+      expect(decodeReadableMarkdown(source)).toBe(legacy);
+      expect(encodeReadableMarkdown(source)).toBe(source);
+      const windows = legacy.replaceAll("\n", "\r\n");
+      expect(decodeReadableMarkdown(encodeReadableMarkdown(windows))).toBe(windows);
+    });
+
+    test("a single line keeps today's format", () => {
+      const source = encodeReadableMarkdown(fixture());
+      expect(source).toContain("# <!-- margin-chat-metadata: frontmatter format 5 -->");
+      expect(source).not.toContain('"runs"');
+    });
+
+    test("lines something points at carry Obsidian block IDs that never reach the content", () => {
+      const legacy = lines([{ id: "first", content: "A paragraph.", ...ai }, { id: "list", content: "- one\n- two", ...ai }, { id: "plain", content: "Not referenced.", ...ai }]);
+      const source = encodeReadableMarkdown(legacy, { referencedBlockIds: new Set(["first", "list", "missing"]) });
+      expect(body(source)).toContain("A paragraph. ^first\n\n- one\n- two\n\n^list\n\nNot referenced.\n\n</ai>");
+      expect(decodeReadableMarkdown(source)).toBe(legacy);
+      expect(contents(source).map(([, content]) => content)).toEqual(["A paragraph.", "- one\n- two", "Not referenced."]);
+      const stripped = source.replace(" ^first", "").replace("\n\n^list", "");
+      expect(contents(stripped).map(([, content, authorship]) => [content, authorship])).toEqual([["A paragraph.", null], ["- one\n- two", null], ["Not referenced.", null]]);
+    });
+
+    test("lines edited, added or removed in another app keep their neighbours' identity", () => {
+      const source = encodeReadableMarkdown(document());
+      const edited = source.replace("- one\n- two", "- one\n- two\n- three");
+      expect(contents(edited).slice(2, 4)).toEqual([["first", "First AI line.", null], ["list", "- one\n- two\n- three", "mixed"]]);
+      const added = source.replace("First AI line.\n\n", "First AI line.\n\nA paragraph added in Obsidian.\n\n");
+      expect(contents(added).slice(2, 4)).toEqual([["first", "First AI line.\n\nA paragraph added in Obsidian.", "mixed"], ["list", "- one\n- two", null]]);
+      const prepended = source.replace("<ai id=\"first\">\n\n", "<ai id=\"first\">\n\nAdded first.\n\n");
+      expect(contents(prepended).slice(2, 4)).toEqual([["first", "Added first.\n\nFirst AI line.", "mixed"], ["list", "- one\n- two", null]]);
+      const removed = source.replace("First AI line.\n\n", "");
+      expect(contents(removed).slice(2, 4)).toEqual([["list", "- one\n- two", null], ["edited", "Edited AI line.", "mixed"]]);
+      const middle = encodeReadableMarkdown(lines([{ id: "a", content: "A.", ...ai }, { id: "b", content: "B.", ...ai }, { id: "c", content: "C.", ...ai }, { id: "d", content: "D.", ...ai }]));
+      expect(contents(middle.replace("B.\n\nC.", "C.\n\nNew.")).map(([id, content]) => [id, content])).toEqual([["a", "A."], ["c", "C.\n\nNew."], ["d", "D."]]);
+      expect(contents(middle.replace("B.\n\nC.", "B, edited.\n\nC, edited.")).map(([id, content]) => [id, content])).toEqual([["a", "A."], ["b", "B, edited."], ["c", "C, edited."], ["d", "D."]]);
+      const both = source.replace("# Title", "# Renamed").replace("My line.", "My line, edited.");
+      expect(contents(both).slice(0, 2)).toEqual([["title", "# Renamed", null], ["mine", "My line, edited.", "user"]]);
+    });
+
+    test("a line keeps its identity by its ^id when edited or moved in another app", () => {
+      const source = encodeReadableMarkdown(document(), { referencedBlockIds: new Set(["first", "list"]) });
+      expect(body(source)).toContain("First AI line. ^first\n\n- one\n- two\n\n^list\n\n</ai>");
+      const edited = source.replace("First AI line. ^first", "First AI line, reworded. ^first");
+      expect(contents(edited).slice(2, 4)).toEqual([["first", "First AI line, reworded.", "mixed"], ["list", "- one\n- two", null]]);
+      const moved = source.replace("First AI line. ^first\n\n- one\n- two\n\n^list", "- one\n- two\n- three\n\n^list\n\nFirst AI line. ^first");
+      expect(contents(moved).slice(2, 4)).toEqual([["list", "- one\n- two\n- three", "mixed"], ["first", "First AI line.", null]]);
+      const paragraphs = encodeReadableMarkdown(lines([{ id: "a", content: "One.\n\nTwo.", ...ai }, { id: "b", content: "- x\n\n- y", ...ai }, { id: "c", content: "C.", ...ai }, { id: "d", content: "", ...ai }]));
+      expect(contents(paragraphs).map(([id, content]) => [id, content])).toEqual([["a", "One.\n\nTwo."], ["b", "- x\n\n- y"], ["c", "C."], ["d", ""]]);
+      expect(contents(paragraphs.replace("C.", "C, edited.")).map(([id, content]) => [id, content])).toEqual([["a", "One.\n\nTwo."], ["b", "- x\n\n- y"], ["c", "C, edited."], ["d", ""]]);
+    });
+
+    test("random edits in another app never lose text or a referenced line", () => {
+      let seed = 7;
+      const random = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+      const pick = <T,>(items: T[]) => items[Math.floor(random() * items.length)];
+      const kinds = [(n: number) => `A sentence ${n}.`, (n: number) => `# Heading ${n}`, (n: number) => `- one ${n}\n- two`, (n: number) => `\`\`\`js\nconst a = ${n};\n\`\`\``, () => "",
+        (n: number) => `One ${n}.\n\nTwo.`, (n: number) => `- x ${n}\n\n- y`, (n: number) => `> Quote ${n}`, (n: number) => `| a |\n| - |\n| b ${n} |`];
+      for (let round = 0; round < 150; round += 1) {
+        const blocks = Array.from({ length: 2 + Math.floor(random() * 5) }, (_, index) => ({ id: `line-${index}`, content: pick(kinds)(index), ...ai }));
+        const referenced = new Set(blocks.filter(() => random() < 0.5).map((block) => block.id));
+        const source = encodeReadableMarkdown(lines(blocks), { referencedBlockIds: referenced });
+        const open = source.indexOf('<ai id="line-0">\n\n') + 18;
+        const close = source.indexOf("\n\n</ai>", open);
+        // A line's own-line ^id travels with the paragraph above it.
+        const paragraphs = source.slice(open, close).split("\n\n").reduce<string[]>((all, paragraph) => {
+          if (/^\^line-/.test(paragraph) && all.length) all[all.length - 1] += `\n\n${paragraph}`;
+          else all.push(paragraph);
+          return all;
+        }, []);
+        const at = Math.floor(random() * paragraphs.length);
+        const action = random();
+        if (action < 0.3) paragraphs.splice(at, 0, "Added in Obsidian.");
+        else if (action < 0.55 && paragraphs.length > 1) paragraphs.splice(at, 1);
+        else if (action < 0.8) paragraphs[at] = paragraphs[at].replace(/^(?!```)/, "Edited ");
+        else paragraphs.splice(Math.floor(random() * paragraphs.length), 0, ...paragraphs.splice(at, 1));
+        const edited = paragraphs.join("\n\n");
+        const decoded = parsed(source.slice(0, open) + edited + source.slice(close)).document!.blocks;
+        const squash = (text: string) => text.replace(/(?: |\n\n|^)\^line-\d+(?=\n|$)/g, "").replace(/\s+/g, "");
+        expect(squash(decoded.map((block) => block.content).join("\n\n"))).toBe(squash(edited));
+        for (const id of referenced) if (new RegExp(`(?: |\\n\\n|^)\\^${id}(?=\\n|$)`).test(edited)) expect(decoded.some((block) => block.id === id)).toBe(true);
+      }
+    });
+
+    test("saving a vault marks the lines notes point at, and keeps a mark once written", () => {
+      const state = createEmptyState();
+      const conversation = state.conversations[state.rootId];
+      conversation.title = "Readable document";
+      const block = (id: string, content: string) => ({ id, kind: "markdown" as const, content, createdAt: now, updatedAt: now });
+      conversation.document = { schemaVersion: 1, blocks: [block("plain", "Plain line."), block("noted", "A noted line.")], prompts: [], generations: [] };
+      const first = createMarkdownWorkspace(state, now);
+      const path = Object.keys(first.files).find((name) => name.endsWith(".md") && first.files[name].includes("A noted line."))!;
+      expect(first.files[path]).not.toContain("^noted");
+      conversation.notes = [{ id: "note", content: "A note.", sourceMessageId: null, sourceBlockId: "noted", startOffset: 2, endOffset: 7, quote: "noted", createdAt: now, updatedAt: now }];
+      const noted = createMarkdownWorkspace(state, now, first);
+      expect(noted.files[path]).toContain("A noted line. ^noted");
+      expect(noted.files[path]).not.toContain("^plain");
+      conversation.notes = [];
+      conversation.document.blocks[0] = block("plain", "Plain line, edited.");
+      const kept = createMarkdownWorkspace(state, now, noted);
+      expect(kept.files[path]).toContain("Plain line, edited.\n\nA noted line. ^noted");
+      // A link from another document marks the line even though its own file did not change.
+      const other = createStandaloneNoteConversation({ id: "other", noteId: "other-body", createdAt: now });
+      const linked = { ...state, conversations: { ...state.conversations, [other.id]: { ...other, relations: [{ type: "cites" as const, targetConversationId: conversation.id, targetBlockId: "plain" }] } } };
+      const relinked = createMarkdownWorkspace(linked, now, kept);
+      expect(relinked.files[path]).toContain("Plain line, edited. ^plain\n\nA noted line. ^noted");
+    });
+
+    test("a run naming unknown or repeated lines is rejected", () => {
+      const source = encodeReadableMarkdown(document());
+      expect(() => decodeReadableMarkdown(source.replace('"first",\n        "list"', '"first",\n        "nowhere"'))).toThrow();
+      expect(() => decodeReadableMarkdown(source.replace('"first",\n        "list"', '"first",\n        "title"'))).toThrow();
+    });
+  });
 });

@@ -42,10 +42,24 @@ describe("lines of a continuous document", () => {
       { id: "draft:lines:1", markdown: "", changed: false },
     ], messages, later);
     expect(next.map((item) => item.id)).toEqual(["answer-block", "fresh", "note"]);
-    expect(next[0]).toEqual({ ...answer, content: "First line", updatedAt: later, authorship: "mixed" });
+    expect(next[0]).toEqual({ ...answer, content: "First line", updatedAt: later, authorship: "ai" });
     expect(next[1]).toEqual({ id: "fresh", kind: "markdown", content: "Second line", createdAt: later, updatedAt: later,
       sourceMessageId: "answer", generationId: "generation", authorship: "ai" });
     expect(next[2]).toBe(note);
+  });
+
+  test("only whole lines of AI text stay AI; rewritten or new text does not", () => {
+    const answer = block("answer-block", "First line\n\nSecond line", { sourceMessageId: "answer", generationId: "generation" });
+    const next = reconcileDocumentBlocks([answer], [
+      { id: "answer-block", markdown: "First line!", changed: true },
+      { id: "split", splitFrom: "answer-block", markdown: "Second", changed: true },
+      { id: "typed", markdown: "My own line", changed: true },
+    ], messages, later);
+    expect(next.map((item) => [item.content, item.generationId, item.authorship])).toEqual([
+      ["First line!", "generation", "mixed"], ["Second", "generation", "mixed"], ["My own line", undefined, "user"]]);
+    const mine = reconcileDocumentBlocks([block("mine", "One\n\nTwo", { authorship: "user" })], [
+      { id: "mine", markdown: "One", changed: true }, { id: "two", splitFrom: "mine", markdown: "Two", changed: true }], messages, later);
+    expect(mine.map((item) => item.authorship)).toEqual(["user", "user"]);
   });
 
   test("typing on the empty last line saves a new user block", () => {
@@ -79,6 +93,28 @@ describe("joining lines for a passage across them", () => {
     expect(joinDocumentBlocks(blocks, "missing", ["two"])).toBeNull();
     expect(joinDocumentBlocks(blocks, "end", ["after"])).toBeNull();
     expect(joinDocumentBlocks(blocks, "one", [])).toBeNull();
+  });
+
+  test("a highlight follows its line when a block splits, even when its text repeats", () => {
+    const answer = { sourceMessageId: "answer", generationId: "generation" };
+    const before = conversation([block("cats", "cat one\n\nthe cat", answer)]);
+    const after = conversation([block("cats", "cat one!", { ...answer, authorship: "mixed" }), block("split", "the cat", answer)]);
+    const second = { id: "second", sourceBlockId: "cats", sourceMessageId: "answer", startOffset: 13, endOffset: 16, quote: "cat" };
+    expect(remapDocumentAnchor(second, before, after)).toMatchObject({ sourceBlockId: "split", startOffset: 4, endOffset: 7 });
+    const first = { id: "first", sourceBlockId: "cats", sourceMessageId: "answer", startOffset: 0, endOffset: 3, quote: "cat" };
+    expect(remapDocumentAnchor(first, before, after)).toEqual(first);
+  });
+
+  test("a highlight on a block's first line follows it when only that line joins the line above", () => {
+    const answer = { sourceMessageId: "answer", generationId: "generation" };
+    const before = conversation([block("intro", "Intro", { authorship: "user" }), block("lines", "P1 text\n\nP2 text\n\nP3 text", answer)]);
+    const after = conversation([block("intro", "IntroP1 text", { authorship: "user" }), block("lines", "P2 text", answer), block("split", "P3 text", answer)]);
+    const moved = remapDocumentAnchor({ id: "one", sourceBlockId: "lines", sourceMessageId: "answer", startOffset: 0, endOffset: 7, quote: "P1 text" }, before, after);
+    expect(moved).toMatchObject({ sourceBlockId: "intro", sourceMessageId: "document:intro", startOffset: 5, endOffset: 12 });
+    expect(remapDocumentAnchor({ id: "two", sourceBlockId: "lines", sourceMessageId: "answer", startOffset: 9, endOffset: 16, quote: "P2 text" }, before, after))
+      .toMatchObject({ sourceBlockId: "lines", startOffset: 0, endOffset: 7 });
+    expect(remapDocumentAnchor({ id: "three", sourceBlockId: "lines", sourceMessageId: "answer", startOffset: 18, endOffset: 25, quote: "P3 text" }, before, after))
+      .toMatchObject({ sourceBlockId: "split", startOffset: 0, endOffset: 7 });
   });
 
   test("a highlight in a joined line moves into the joined block", () => {

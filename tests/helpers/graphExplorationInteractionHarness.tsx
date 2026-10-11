@@ -1349,11 +1349,13 @@ async function checkTemporarySelectionSpacing() {
   await click(element('[aria-label="Dock Dense center in split view"]'));
   const splitter = element('[aria-label="Resize docked chat"]');
   const widthBefore = Number(splitter.getAttribute("aria-valuenow"));
-  assert.equal(widthBefore, canvasWidth / 2, "The side panel opens at half the map's width");
-  assert.equal(element(".conversation-graph-workspace").style.getPropertyValue("--personal-map-dock-width"), "50%");
+  assert.equal(widthBefore, 600, "The side panel opens at 640 px, or 60% of a smaller map");
+  assert.equal(element(".conversation-graph-workspace").style.getPropertyValue("--personal-map-dock-width"), "min(640px, 60%)");
   await key(splitter, "ArrowLeft");
   assert.equal(browser.localStorage.getItem("margin-map-dock-size"), String(widthBefore + 24), "A resized panel keeps its size next time");
   assert.equal(Number(splitter.getAttribute("aria-valuenow")), widthBefore + 24, "The desktop reader can be widened with the keyboard");
+  await key(splitter, "End");
+  assert.equal(Number(splitter.getAttribute("aria-valuenow")), canvasWidth - 120, "The panel can widen until only a strip of map is left");
   await key(splitter, "Home");
   assert.equal(Number(splitter.getAttribute("aria-valuenow")), 280);
   browser.localStorage.removeItem("margin-map-dock-size");

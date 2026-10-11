@@ -145,6 +145,8 @@
 .mk-price { color: var(--mk-ink); font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.1; }
 .mk-price small { color: var(--mk-muted); font-size: 16px; font-weight: 400; }
 .mk-price.is-large { font-size: 56px; line-height: 1; }
+.mk-plan.is-unavailable, .mk-plan-mini.is-unavailable { opacity: 0.55; }
+.mk-plan.is-unavailable .mk-btn { cursor: default; pointer-events: none; }
 .mk-plan { border: 1px solid rgba(224, 236, 230, 0.14); border-radius: 20px; display: flex; flex-direction: column; gap: 24px; padding: 36px; }
 .mk-checks { display: flex; flex-direction: column; gap: 12px; list-style: none; margin: 0; padding: 0; }
 .mk-checks li { color: #dbe6e0; display: flex; gap: 10px; line-height: 1.5; }

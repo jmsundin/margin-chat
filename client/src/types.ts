@@ -7,6 +7,8 @@ export type {
   AgentRunRecord,
   AgentRunStep,
   AIContextSource,
+  AIRetrievalPassage,
+  AIRetrievalRecord,
   Role,
   BackendServiceId,
   Message,

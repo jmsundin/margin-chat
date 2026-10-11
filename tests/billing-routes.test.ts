@@ -33,6 +33,16 @@ function fixture(user: any = { id: "owner", billing: { creditBalanceMicros: 0 } 
 }
 
 describe("billing account routes", () => {
+  test("plans route says whether Cloud is configured, without signing in", async () => {
+    for (const [env, cloud] of [[{}, false], [{ STRIPE_CLOUD_PRICE_ID: "price_cloud" }, true]] as const) {
+      const handler = createApiHandler({ runtimeConfig: { host: "localhost", port: 8787 }, env, authService: { getAuthContext: async () => { throw new Error("no auth needed"); } }, billingService: {} });
+      const res = response();
+      await handler(Object.assign(Readable.from([]), { method: "GET", url: "/api/billing/plans", headers: { host: "localhost" } }), res);
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body)).toEqual({ cloud });
+    }
+  });
+
   test("blocks an old tab from paying for a different signed-in account", async () => {
     const f = fixture();
     for (const [method, path] of [["GET", "dashboard"], ["POST", "checkout"], ["POST", "topup"], ["POST", "upgrade"], ["POST", "checkout/confirm"], ["POST", "portal"]]) {
