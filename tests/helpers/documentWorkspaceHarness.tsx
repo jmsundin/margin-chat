@@ -516,81 +516,39 @@ try {
   }
   const dockPane = (id: string) => element(`[data-dock-document-id="${id}"]`);
   await menuAction(siblingId, "Minimize document");
-  assert.equal(pane(nestedId).querySelector(".document-child-tabs-trigger"), null, "Leaf documents omit the empty children menu.");
-  await click(pane(sideId).querySelector(".document-child-tabs-trigger"));
-  assert.deepEqual([...browser.document.querySelectorAll(".document-child-title")].map((node) => node.textContent), ["Nested research"], "An unpinned child owns its direct children, not its siblings.");
-  await click(browser.document.body);
-  await click(pane(mainId).querySelector(".document-child-tabs-trigger"));
-  const childTabs = [...browser.document.querySelectorAll<HTMLButtonElement>(".document-child-tabs-list > button")];
-  assert.deepEqual(childTabs.map((button) => button.querySelector(".document-child-title")?.textContent), ["Sibling research", "Side research"]);
-  assert(childTabs[0].textContent.includes("Minimized"));
-  const childTabList = browser.document.querySelector<HTMLElement>(".document-child-tabs-list")!;
-  Object.defineProperties(childTabList, {
-    clientHeight: { configurable: true, value: 240 },
-    scrollHeight: { configurable: true, value: 840 },
-  });
-  const canvasBeforeChildScroll = canvas.scrollLeft;
-  const bodyBeforeChildScroll = pane(sideId).querySelector(".document-body").scrollTop;
-  for (const gesture of [
-    { deltaX: 90, deltaY: 0 },
-    { deltaX: 30, deltaY: 90 },
-    { deltaY: 90 },
-    { deltaY: 90, shiftKey: true },
-    { deltaY: 2, deltaMode: 1 },
-    { deltaY: 1, deltaMode: 2 },
-  ]) {
-    childTabList.scrollTop = 0;
-    const wheel = new browser.WheelEvent("wheel", { ...gesture, bubbles: true, cancelable: true });
-    Object.defineProperty(wheel, "shiftKey", { value: "shiftKey" in gesture && gesture.shiftKey });
-    await act(async () => childTabs[0].querySelector("span")!.dispatchEvent(wheel));
-    assert(wheel.defaultPrevented, "The dropdown owns non-zoom wheel gestures.");
-    assert(childTabList.scrollTop > 0, "Wheel gestures scroll the child tabs, including mouse wheels and diagonal swipes.");
-    assert.equal(canvas.scrollLeft, canvasBeforeChildScroll, "Scrolling child tabs never moves the outer canvas.");
-    assert.equal(pane(sideId).querySelector(".document-body").scrollTop, bodyBeforeChildScroll);
-  }
-  for (const [position, delta] of [[0, -90], [600, 90]]) {
-    childTabList.scrollTop = position;
-    const wheel = new browser.WheelEvent("wheel", { deltaX: delta, bubbles: true, cancelable: true });
-    await act(async () => childTabs[0].dispatchEvent(wheel));
-    assert.equal(childTabList.scrollTop, position);
-    assert.equal(canvas.scrollLeft, canvasBeforeChildScroll, "Reaching either edge does not chain to the canvas.");
-    assert(wheel.defaultPrevented);
-  }
-  const pinch = new browser.WheelEvent("wheel", { deltaY: 90, ctrlKey: true, bubbles: true, cancelable: true });
-  Object.defineProperty(pinch, "ctrlKey", { value: true });
-  await act(async () => childTabs[0].dispatchEvent(pinch));
-  assert.equal(pinch.defaultPrevented, false, "Pinch zoom stays native.");
-  Object.defineProperty(childTabList, "scrollHeight", { configurable: true, value: 240 });
-  childTabList.scrollTop = 0;
-  const headerWheel = new browser.WheelEvent("wheel", { deltaY: 90, bubbles: true, cancelable: true });
-  await act(async () => browser.document.querySelector(".document-child-tabs-heading").dispatchEvent(headerWheel));
-  assert(headerWheel.defaultPrevented, "The entire dropdown contains scrolling even when all tabs fit.");
-  assert.equal(childTabList.scrollTop, 0);
-  assert.equal(canvas.scrollLeft, canvasBeforeChildScroll);
-  await click(childTabs[0]);
+  assert.equal(pane(nestedId).querySelector(".document-child-tabs"), null, "Leaf documents omit empty child tabs.");
+  const childTitles = (root: Element) => [...root.querySelectorAll(".document-child-tabs .document-child-title")].map((node) => node.textContent);
+  assert.deepEqual(childTitles(pane(sideId)), ["Nested research"], "An unpinned child owns its direct children, not its siblings.");
+  assert.deepEqual([...pane(sideId).querySelectorAll('.document-sibling-tabs [role="tab"]')].map((tab) => [tab.textContent, tab.getAttribute("aria-selected")]),
+    [["Side research", "true"], ["Sibling research", "false"]], "An opened child shows its siblings as tabs above its header, in creation order.");
+  assert.equal(pane(mainId).querySelector(".document-sibling-tabs"), null, "Top-level documents have no sibling tabs.");
+  assert.equal(pane(sideId).querySelector(".document-sibling-tabs")?.nextElementSibling?.classList.contains("document-header"), true, "Sibling tabs sit directly above the header.");
+  const childTabs = [...pane(mainId).querySelectorAll<HTMLButtonElement>(".document-child-tab")];
+  assert.deepEqual(childTitles(pane(mainId)), ["Side research", "Sibling research"]);
+  assert(childTabs[1].textContent.includes("Minimized"));
+  await click(childTabs[1]);
   assert.equal(latest.activeConversationId, siblingId);
   assert(panes().includes(siblingId));
   assert.equal(centered.at(-1), siblingId);
   assert(panes().includes(mainId), "Opening children keeps their parent open.");
   assert(pane(sideId).querySelector('.document-origin button').textContent.includes("Main research"), "Every child has a named parent link, including children without quoted anchors.");
+  await click(pane(sideId).querySelectorAll('.document-sibling-tabs [role="tab"]')[1]);
+  assert.equal(latest.activeConversationId, siblingId, "A sibling tab switches to that child.");
   await click(pane(sideId).querySelector('.document-origin button'));
   assert.equal(latest.activeConversationId, mainId);
   await menuAction(mainId, "Pin document");
   assert(dockPane(mainId).querySelector('.document-dock-pane-header .document-menu-trigger'));
   assert.equal(dockPane(mainId).querySelector('.document-body .document-menu-trigger'), null);
-  assert(dockPane(mainId).querySelector('.document-dock-pane-header .document-child-tabs-trigger'));
-  await click(dockPane(mainId).querySelector(".document-child-tabs-trigger"));
-  assert.equal(browser.document.querySelectorAll(".document-child-title").length, 2, "Pinned parents retain the same children control.");
-  await click(browser.document.querySelector(".document-child-tabs-list > button"));
+  assert.equal(childTitles(dockPane(mainId)).length, 2, "Pinned parents retain the same child tabs.");
+  await click(dockPane(mainId).querySelector(".document-child-tab"));
   assert(dockPane(mainId), "Child navigation leaves the parent pinned.");
   await click(sidebar("Unrelated project"));
-  await click(dockPane(mainId).querySelector(".document-child-tabs-trigger"));
-  assert.deepEqual([...browser.document.querySelectorAll(".document-child-title")].map((node) => node.textContent), ["Sibling research", "Side research"], "Pinned parents retain their own children while another family is open.");
-  await click(browser.document.querySelector(".document-child-tabs-list > button"));
+  assert.deepEqual(childTitles(dockPane(mainId)), ["Side research", "Sibling research"], "Pinned parents retain their own children while another family is open.");
+  await click(dockPane(mainId).querySelectorAll(".document-child-tab")[1]);
   assert.equal(latest.activeConversationId, siblingId);
   assert(panes().includes(siblingId));
   await menuAction(mainId, "Unpin document");
-  assert(pane(mainId).querySelector(".document-child-tabs-trigger"), "Unpinning retains child navigation.");
+  assert(pane(mainId).querySelector(".document-child-tabs"), "Unpinning retains child navigation.");
   await click(tab(nestedId));
   checks.push("all document headers expose direct children in saved order, restore minimized children and navigate back to named parents");
   pane(nestedId).querySelector(".document-body").scrollTop = 175;
@@ -970,8 +928,7 @@ try {
   assert.equal(container.querySelector(`[data-document-tab-id="${sideId}"]`), null);
   assert.deepEqual(latest.conversations[sideId], savedSide);
   assert(sidebar(savedSide.title));
-  await click(pane(mainId).querySelector('.document-child-tabs-trigger'));
-  await click([...browser.document.querySelectorAll('.document-child-tabs-list > button')].find((button) => button.querySelector('.document-child-title')?.textContent === savedSide.title));
+  await click([...pane(mainId).querySelectorAll('.document-child-tab')].find((button) => button.querySelector('.document-child-title')?.textContent === savedSide.title));
   assert(panes().includes(sideId));
   assert(tab(sideId));
   checks.push('header minimize retains the tab, close removes the tab without deleting, and Children reopens the saved document');
