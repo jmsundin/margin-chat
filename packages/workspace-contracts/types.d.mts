@@ -37,6 +37,42 @@ export interface AIContextSource {
   updatedAt?: string;
   excerpt?: string;
 }
+/** One passage the vault search found for a reply. */
+export interface AIRetrievalPassage {
+  /** How the reply was told to cite it, such as "Vault 1"; absent in Agent mode. */
+  label?: string;
+  /** The document, note or chat; for an uploaded file, the file's own ID. */
+  id: string;
+  kind: "document" | "note" | "chat" | "file";
+  title: string;
+  /** The headings it sits under, or a file's page. */
+  heading?: string;
+  /** Found by the same words, by meaning only, or both. */
+  matched: "both" | "keyword" | "meaning";
+  /** Cosine similarity to the question, when search by meaning ran. */
+  similarity?: number;
+  excerpt?: string;
+  blockId?: string;
+  /** The document or chat to open: the source itself, or the one a file is attached to. */
+  openId?: string;
+  /** The reply cites it. */
+  cited?: boolean;
+}
+/** What the vault search contributed to a reply. */
+export interface AIRetrievalRecord {
+  /** used: passages went into the request; none-found: nothing matched well enough; not-searched: the AI context didn't include the workspace; failed: the search broke. */
+  status: "used" | "none-found" | "not-searched" | "failed";
+  /** Agent mode ran its own searches; `queries` lists them. */
+  agent?: boolean;
+  queries?: string[];
+  /** Search by meaning took part, not only exact words. */
+  meaning: boolean;
+  /** Why search by meaning didn't take part, or why nothing was searched. */
+  note?: string;
+  /** Matches left out because the request already held those documents in full. */
+  alreadyIncluded?: number;
+  passages: AIRetrievalPassage[];
+}
 export interface AIExecutionRecord {
   schemaVersion: 1;
   model: string;
@@ -58,6 +94,7 @@ export interface AIExecutionRecord {
   completedAt?: string;
   status?: "streaming" | "complete" | "stopped" | "failed";
   agent?: AgentRunRecord;
+  retrieval?: AIRetrievalRecord;
 }
 
 export type BackendServiceId =

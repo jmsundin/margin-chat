@@ -60,7 +60,45 @@ export function normalizeAIExecution(input) {
   if (["streaming", "complete", "stopped", "failed"].includes(input.status)) result.status = input.status;
   const agent = normalizeAgentRun(input.agent);
   if (agent) result.agent = agent;
+  const retrieval = normalizeRetrieval(input.retrieval);
+  if (retrieval) result.retrieval = retrieval;
   return result;
+}
+
+const retrievalStatuses = new Set(["used", "none-found", "not-searched", "failed"]);
+const passageKinds = new Set(["document", "note", "chat", "file"]);
+const passageMatches = new Set(["both", "keyword", "meaning"]);
+
+function normalizeRetrievalPassage(input) {
+  if (!record(input) || !text(input.id, 256) || !passageKinds.has(input.kind) || !passageMatches.has(input.matched)) return undefined;
+  const similarity = Number.isFinite(input.similarity) ? Math.round(Math.min(1, Math.max(-1, input.similarity)) * 100) / 100 : undefined;
+  return {
+    ...(text(input.label, 20) ? { label: text(input.label, 20) } : {}),
+    id: text(input.id, 256), kind: input.kind, title: text(input.title, 300),
+    ...(text(input.heading, 300) ? { heading: text(input.heading, 300) } : {}),
+    matched: input.matched,
+    ...(similarity !== undefined ? { similarity } : {}),
+    ...(text(input.excerpt, 240) ? { excerpt: text(input.excerpt, 240) } : {}),
+    ...(text(input.blockId, 256) ? { blockId: text(input.blockId, 256) } : {}),
+    ...(text(input.openId, 256) ? { openId: text(input.openId, 256) } : {}),
+    ...(input.cited === true ? { cited: true } : {}),
+  };
+}
+
+/** What the vault search contributed to a reply: found passages and how they matched, never their full text. */
+function normalizeRetrieval(input) {
+  if (!record(input) || !retrievalStatuses.has(input.status)) return undefined;
+  const alreadyIncluded = micros(input.alreadyIncluded);
+  const queries = (Array.isArray(input.queries) ? input.queries : []).map((query) => text(query, 200)).filter(Boolean).slice(0, 12);
+  return {
+    status: input.status,
+    ...(input.agent === true ? { agent: true } : {}),
+    ...(queries.length ? { queries } : {}),
+    meaning: input.meaning === true,
+    ...(text(input.note, 300) ? { note: text(input.note, 300) } : {}),
+    ...(alreadyIncluded ? { alreadyIncluded } : {}),
+    passages: (Array.isArray(input.passages) ? input.passages : []).map(normalizeRetrievalPassage).filter(Boolean).slice(0, 20),
+  };
 }
 
 const micros = (value) => Number.isSafeInteger(value) && value >= 0 ? value : undefined;

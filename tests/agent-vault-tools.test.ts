@@ -213,4 +213,37 @@ describe("vault tools in the chat service", () => {
     expect(body.tools.map((tool: any) => tool.name)).not.toContain("search_vault");
     expect(body.instructions).toContain("All my saved documents");
   });
+
+  test("records what the agent's vault searches found on the reply's details", async () => {
+    const hit = (id: string, extra: Record<string, unknown> = {}) => ({ id, sourceKind: "conversation", kind: "note", title: id, heading: null,
+      snippet: `About ${id}.`, matched: "meaning", similarity: 0.4, ...extra });
+    const passageService = {
+      available: true,
+      search: async ({ query }: any) => ({ meaning: true, results: query === "pricing"
+        ? [hit("note"), hit("note", { heading: "Weaker" }), hit("hidden"), hit("plan", { matched: "both", kind: "document" })]
+        : [hit("plan"), hit("supplier")] }),
+      readFile: async () => null,
+    };
+    const run = async (ai: Record<string, unknown>, calls: string[]) => {
+      let call = 0;
+      globalThis.fetch = (async () => {
+        const query = calls[call++];
+        return Response.json(query
+          ? { output: [{ type: "function_call", name: "search_vault", call_id: `call_${call}`, arguments: JSON.stringify({ query }) }] }
+          : { output_text: "Done.", output: [] });
+      }) as typeof fetch;
+      const service = createChatService({ autoRouter: async () => null, database: {}, runtimeConfig: { defaultBackendProvider: "openai-api" },
+        env: { OPENAI_API_KEY: "openai-test" }, vaultService: { configured: true, index: async () => ({ entries: [] }) }, passageService });
+      const payload = { ...request({ agent: true, ...ai }), serviceId: "openai-api", modelId: getDefaultModelIdForService("openai-api"),
+        conversation: { ancestorContext: [], branchAnchor: null, id: "current", parentId: null, title: "Current" } };
+      return (await service.requestReply(payload, { userId: "owner" })).metadata.execution.retrieval;
+    };
+    const limited = await run({ agentScope: "selected", selectedConversationIds: ["note", "plan", "supplier"] }, ["pricing", "suppliers"]);
+    expect(limited).toMatchObject({ status: "used", agent: true, meaning: true, queries: ["pricing", "suppliers"] });
+    // Best passage per document, only documents the agent may read, no [Vault N] labels.
+    expect(limited.passages.map((passage: any) => [passage.id, passage.matched, passage.label])).toEqual([
+      ["note", "meaning", undefined], ["plan", "both", undefined], ["supplier", "meaning", undefined]]);
+    expect(await run({}, [])).toMatchObject({ status: "not-searched", agent: true, note: "The agent answered without searching your vault." });
+    expect(await run({ agentScope: "conversation" }, [])).toMatchObject({ status: "not-searched", note: expect.stringContaining("limited to this conversation") });
+  });
 });

@@ -1,5 +1,5 @@
 import { getBackendServiceModel, isBackendServiceId } from "../lib/services";
-import type { AIExecutionRecord } from "../types";
+import type { AIExecutionRecord, AIRetrievalRecord } from "../types";
 import AgentRunLog from "./AgentRunLog";
 import "./AIResponseDetails.css";
 
@@ -18,6 +18,53 @@ function modelLabel(provider: string, model: string) {
   return (isBackendServiceId(provider) ? getBackendServiceModel(provider, model)?.label : undefined) ?? model;
 }
 
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+const matchLabels = { both: "Same words and meaning", keyword: "Same words", meaning: "Meaning only" };
+
+/** One line on what the vault search added to the reply, for the collapsed details row. */
+function vaultBadge(retrieval: AIRetrievalRecord) {
+  if (retrieval.status === "none-found") return "Vault · no close matches";
+  if (retrieval.status !== "used") return null;
+  const cited = retrieval.passages.filter((passage) => passage.cited).length;
+  return `Vault · ${plural(retrieval.passages.length, retrieval.agent ? "document" : "passage")}${cited ? ` · ${cited} cited` : ""}`;
+}
+
+/** What searching the vault contributed: what it found, how, and whether the answer used it. */
+function VaultSearch({ retrieval, onOpenSource, answered }: { retrieval: AIRetrievalRecord; onOpenSource?: (id: string) => void; answered: boolean }) {
+  const { passages } = retrieval;
+  const meaningOnly = passages.filter((passage) => passage.matched === "meaning").length;
+  const cited = passages.filter((passage) => passage.cited).length;
+  const all = (count: number) => count === passages.length;
+  const summary = retrieval.status === "used" ? [
+    retrieval.agent
+      ? `The agent searched your vault ${plural(retrieval.queries?.length ?? 1, "time")} and found ${plural(passages.length, "relevant document")}.`
+      : `Found ${plural(passages.length, "passage")} in your vault and gave ${passages.length === 1 ? "it" : "them"} to the model.`,
+    meaningOnly ? `${all(meaningOnly) ? passages.length === 1 ? "It was" : "All of them were" : `${meaningOnly} ${meaningOnly === 1 ? "was" : "were"}`} found by meaning only, so searching for the same words would have missed ${meaningOnly === 1 ? "it" : "them"}.` : "",
+    answered && !retrieval.agent ? cited ? `The answer cites ${all(cited) ? passages.length === 1 ? "it" : "all of them" : `${cited} of them`}.` : "The answer doesn't cite any of them." : "",
+  ].filter(Boolean).join(" ") : retrieval.status === "none-found" ? "Your vault was searched, but nothing matched closely enough to include." : "";
+  return <div className="ai-vault-search">
+    <strong>Vault search</strong>
+    {summary ? <p className="ai-vault-summary">{summary}</p> : null}
+    {retrieval.queries?.length ? <p className="ai-vault-queries">Searched for {retrieval.queries.map((query) => `“${query}”`).join(", ")}</p> : null}
+    {passages.length ? <ol className="ai-vault-passages">{passages.map((passage, index) => <li key={`${passage.id}:${index}`}>
+      <div className="ai-vault-passage-title">
+        {passage.label ? <span className="ai-vault-label">[{passage.label}]</span> : null}
+        {passage.openId && onOpenSource ? <button type="button" onClick={() => onOpenSource(passage.openId!)}>{passage.title || passage.id}</button> : <span>{passage.title || passage.id}</span>}
+        {passage.heading ? <span className="ai-vault-heading"> › {passage.heading}</span> : null}
+      </div>
+      <div className="ai-vault-tags">
+        <span className={`ai-vault-match ai-vault-match-${passage.matched}`}>{matchLabels[passage.matched]}</span>
+        {passage.similarity !== undefined ? <span title="How close the passage's meaning is to your message, from 0 to 1">similarity {passage.similarity.toFixed(2)}</span> : null}
+        <span>{passage.kind}</span>
+        {passage.cited ? <span className="ai-vault-cited">Cited in the answer</span> : null}
+      </div>
+      {passage.excerpt ? <p>{passage.excerpt}</p> : null}
+    </li>)}</ol> : null}
+    {retrieval.alreadyIncluded ? <p className="ai-detail-note">{plural(retrieval.alreadyIncluded, "more match", "more matches")} {retrieval.alreadyIncluded === 1 ? "was" : "were"} already in the request in full.</p> : null}
+    {retrieval.note ? <p className="ai-detail-note">{retrieval.note}</p> : null}
+  </div>;
+}
+
 export default function AIResponseDetails({ execution, onOpenSource, isStreaming = false }: {
   execution: AIExecutionRecord;
   onOpenSource?: (id: string) => void;
@@ -26,11 +73,17 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
   const method = execution.routing?.method;
   const isPartial = execution.status === "stopped" || execution.status === "failed" || execution.status === "streaming" && !isStreaming;
   const statusLabel = execution.status === "streaming" && isStreaming ? "Responding with" : isPartial ? "Partial response from" : "Answered by";
+  const retrieval = execution.retrieval;
+  const badge = retrieval ? vaultBadge(retrieval) : null;
+  // Vault passages are listed under Vault search, so Context used keeps what was chosen or attached.
+  const vaultIds = new Set(retrieval && !retrieval.agent ? retrieval.passages.map((passage) => passage.id) : []);
+  const sources = execution.sources.filter((source) => !vaultIds.has(source.id));
   return <section className="ai-response-details" aria-label="Model selection">
     <details className="ai-response-more">
     <summary>
       <span className="ai-routing-model">{statusLabel} <strong>{modelLabel(execution.provider, execution.model)}</strong><span> · {providers[execution.provider] ?? execution.provider}</span></span>
       {execution.agent ? <span className="ai-routing-agent-label">Agent · {execution.agent.steps.filter((step) => step.kind === "tool").length} {execution.agent.steps.filter((step) => step.kind === "tool").length === 1 ? "step" : "steps"}</span> : null}
+      {badge ? <span className="ai-routing-vault-label">{badge}</span> : null}
       {execution.fallbacks.length ? <span className="ai-routing-fallback-label">Fallback used</span> : null}
       <span className="ai-routing-trigger">Why this model?<svg aria-hidden="true" viewBox="0 0 16 16" fill="none"><path d="m6 4 4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg></span>
     </summary>
@@ -50,7 +103,8 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
         <AgentRunLog steps={execution.agent.steps} spentMicros={execution.agent.spentMicros} budgetMicros={execution.agent.budgetMicros} stopReason={execution.agent.stopReason}/>
         {!execution.agent.steps.length ? <p className="ai-detail-note">The agent answered without needing any tools.</p> : null}
       </div> : null}
-      {execution.sources.length ? <div className="ai-used-sources"><strong>Context used</strong><ul>{execution.sources.map((source, index) => <li key={`${source.kind}:${source.id}:${index}`}>
+      {retrieval ? <VaultSearch retrieval={retrieval} onOpenSource={onOpenSource} answered={execution.status === "complete"}/> : null}
+      {sources.length ? <div className="ai-used-sources"><strong>Context used</strong><ul>{sources.map((source, index) => <li key={`${source.kind}:${source.id}:${index}`}>
         {source.kind !== "document" && onOpenSource ? <button type="button" onClick={() => onOpenSource(source.id)}>{source.title || source.id}</button> : <span>{source.title || source.id}</span>}
         <small>{source.kind}{source.updatedAt ? ` · version from ${source.updatedAt}` : ""}</small>
         {source.excerpt ? <p>{source.excerpt}</p> : null}
