@@ -25,8 +25,8 @@ const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../", import.meta.url));
 const RELEASE_LOCK_KEY = 70421934;
 
-async function command(program, args, env = process.env) {
-  const { stdout } = await exec(program, args, { cwd: root, env, timeout: 20 * 60_000, maxBuffer: 12 * 1024 * 1024 });
+async function command(program, args, env = process.env, { signal } = {}) {
+  const { stdout } = await exec(program, args, { cwd: root, env, signal, timeout: 20 * 60_000, maxBuffer: 12 * 1024 * 1024 });
   return stdout.trim();
 }
 
@@ -115,8 +115,11 @@ export async function releaseProduction({ config, env = process.env, onProgress 
   } });
   const migrations = await loadMigrations();
   let productionClient, productionUrl, pooledUrl, previous, candidate, branches, backup, productionContext;
-  let clientFailure, stopLockHeartbeat, skipCheckpoint = false;
-  const prefix = `release-rehearsal/${id}/`;
+  let clientFailure, stopLockHeartbeat, skipCheckpoint = false, ciPending, candidateBuild;
+  const candidateBuildAbort = new AbortController();
+  // One rehearsal copy is kept and topped up from each backup (the release lock
+  // keeps rehearsals from overlapping), instead of a full copy per release.
+  const prefix = "release-rehearsal/current/";
   const vercelEnv = { ...env, VERCEL_ORG_ID: config.vercel.orgId, VERCEL_PROJECT_ID: config.vercel.projectId };
   const vercelApi = createVercelApi({ config: config.vercel, token: env.VERCEL_TOKEN });
   const project = () => vercelApi(`/v9/projects/${encodeURIComponent(config.vercel.projectId)}`);
@@ -129,6 +132,19 @@ export async function releaseProduction({ config, env = process.env, onProgress 
     assert.equal(current.dirty, false, "Release files changed during this run. Commit and restart the release.");
     assert.equal(current.sha, plan.sha, "HEAD changed during this run. Restart from the deployed commit.");
     if ((await project()).targets?.production?.id !== previous.id) throw new Error("Production changed outside this release. Start a new run.");
+  }
+  // Uploads and builds this commit as an unpromoted production candidate.
+  async function deployCandidate() {
+    const args = ["--no-env-file", "x", "--no-install", "vercel", "deploy", "--yes", "--prod", "--skip-domain", "--archive=tgz",
+      "--meta", "marginPersistenceProtocol=1", "--meta", `marginReleaseSha=${plan.sha}`,
+      "--build-env", `MARGIN_RELEASE_SHA=${plan.sha}`,
+      // Lets the desktop app tell whether production is newer than its own build.
+      "--build-env", `MARGIN_RELEASE_COMMITTED_AT=${await command("git", ["show", "-s", "--format=%cI", plan.sha])}`];
+    for (const [key, value] of Object.entries({ DATABASE_URL: pooledUrl, BLOB_READ_WRITE_TOKEN: env.BLOB_READ_WRITE_TOKEN,
+      BLOB_STORE_ID: "", VAULT_STORAGE_DIR: "", VAULT_STORAGE_PREFIX: "", DB_SCHEMA_MODE: "verify", MARGIN_RELEASE_SHA: plan.sha })) {
+      args.push("--env", `${key}=${value}`);
+    }
+    return command("bun", args, vercelEnv, { signal: candidateBuildAbort.signal });
   }
   const events = async (report) => {
     latestReport = report;
@@ -160,8 +176,14 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         await assertProductionAlias({ api: vercelApi, productionUrl: config.productionUrl,
           projectId: config.vercel.projectId, deploymentId: target.id });
         // CI already ran the tests and builds on this exact commit; reuse that
-        // result and validate locally only when no CI run vouches for it.
-        const ci = await ciResultForCommit({ sha: plan.sha, repository: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN, onProgress });
+        // result and validate locally only when no CI run vouches for it. While
+        // CI is still running, the backup, rehearsal and candidate build go
+        // ahead; migrate waits for CI before anything in production changes.
+        const ci = await ciResultForCommit({ sha: plan.sha, repository: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN, onProgress, background: !postDeploy });
+        if (ci?.pending) {
+          ciPending = ci.pending;
+          return { sha: plan.sha, previousDeployment: previous.id, checks: ["CI still running on this commit; required to pass before migrate"] };
+        }
         if (ci) return { sha: plan.sha, previousDeployment: previous.id, checks: [`CI passed on this commit (run ${ci.runId})`] };
         // Validation never inherits production credentials or local dotenv files.
         const validationEnv = Object.fromEntries(["PATH", "HOME", "TMPDIR", "CI"].filter((key) => env[key]).map((key) => [key, env[key]]));
@@ -193,6 +215,14 @@ export async function releaseProduction({ config, env = process.env, onProgress 
           .filter(({ status }) => status !== "complete").map(({ id: jobId }) => jobId);
         skipCheckpoint = !pending.length && !pendingJobs.length && config.checkpoint === "when-data-changes";
         if (skipCheckpoint) delete resources.blobInventory;
+        // Build the candidate while the backup and rehearsal run. It is not
+        // reachable from production until promote, and its functions first
+        // start in verifyCandidate, after migrate. A sync applies Vercel
+        // updates first, so it still builds in stage.
+        if (!postDeploy) {
+          candidateBuild = deployCandidate();
+          candidateBuild.catch(() => {}); // Awaited in stage.
+        }
         return { acquired: true, pendingMigrations: pending, pendingJobs, backup: skipCheckpoint ? "skipped" : "required" };
       },
       async checkpoint() {
@@ -249,6 +279,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       },
       async migrate() {
         await assertLock();
+        if (ciPending) await ciPending;
         await assertReleaseInputs();
         const result = await migrateDatabase(productionClient, { migrations });
         productionContext = createAppContext(appEnv(productionUrl, env.BLOB_READ_WRITE_TOKEN));
@@ -266,16 +297,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
       async stage() {
         await assertLock();
         await assertReleaseInputs();
-        const args = ["--no-env-file", "x", "--no-install", "vercel", "deploy", "--yes", "--prod", "--skip-domain", "--archive=tgz",
-          "--meta", "marginPersistenceProtocol=1", "--meta", `marginReleaseSha=${plan.sha}`,
-          "--build-env", `MARGIN_RELEASE_SHA=${plan.sha}`,
-          // Lets the desktop app tell whether production is newer than its own build.
-          "--build-env", `MARGIN_RELEASE_COMMITTED_AT=${await command("git", ["show", "-s", "--format=%cI", plan.sha])}`];
-        for (const [key, value] of Object.entries({ DATABASE_URL: pooledUrl, BLOB_READ_WRITE_TOKEN: env.BLOB_READ_WRITE_TOKEN,
-          BLOB_STORE_ID: "", VAULT_STORAGE_DIR: "", VAULT_STORAGE_PREFIX: "", DB_SCHEMA_MODE: "verify", MARGIN_RELEASE_SHA: plan.sha })) {
-          args.push("--env", `${key}=${value}`);
-        }
-        const output = await command("bun", args, vercelEnv);
+        const output = await (candidateBuild ?? deployCandidate());
         const url = output.split(/\s/u).findLast((entry) => /^https:\/\/[^/]+\.vercel\.app\/?$/u.test(entry));
         if (!url) throw new Error("Vercel did not return a deployment URL; inspect the release in Vercel before retrying.");
         candidate = await vercelApi(`/v13/deployments/${encodeURIComponent(new URL(url).hostname)}`);
@@ -326,6 +348,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
     } });
     return { id, ...report, resources, reportPath };
   } finally {
+    candidateBuildAbort.abort(); // A no-op once the candidate build finished.
     stopLockHeartbeat?.();
     await productionContext?.database.close();
     await productionClient?.end();

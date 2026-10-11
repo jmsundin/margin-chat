@@ -270,9 +270,26 @@ async function listBlobs(sdk, token, prefix) {
   return objects;
 }
 
-async function putVerified(sdk, token, pathname, bytes, contentType) {
+/** Top-level folder names directly under `prefix` (e.g. each release's backup). */
+async function listFolders(sdk, token, prefix) {
+  const folders = new Set();
+  const cursors = new Set();
+  let cursor;
+  do {
+    let result;
+    try { result = await sdk.list({ token, prefix, cursor, limit: 1000, mode: "folded" }); }
+    catch { throw new Error("Blob listing failed; inspect store access and retry."); }
+    for (const folder of result.folders ?? []) if (typeof folder === "string" && folder.startsWith(prefix)) folders.add(folder);
+    cursor = result.hasMore ? result.cursor : undefined;
+    if (result.hasMore && (!cursor || cursors.has(cursor))) throw new Error("Blob listing returned an invalid pagination cursor.");
+    if (cursor) cursors.add(cursor);
+  } while (cursor);
+  return [...folders];
+}
+
+async function putVerified(sdk, token, pathname, bytes, contentType, { overwrite = false } = {}) {
   try {
-    await sdk.put(pathname, bytes, { token, access: "private", addRandomSuffix: false, allowOverwrite: false, contentType, ...(bytes.length > 4 * 1024 * 1024 ? { multipart: true } : {}) });
+    await sdk.put(pathname, bytes, { token, access: "private", addRandomSuffix: false, allowOverwrite: overwrite, contentType, ...(bytes.length > 4 * 1024 * 1024 ? { multipart: true } : {}) });
   } catch {
     // A prior attempt may have completed the immutable upload. Only accept
     // replay when reading it back proves its body and content type are exact.
@@ -285,6 +302,9 @@ async function putVerified(sdk, token, pathname, bytes, contentType) {
 const vaultManifestPath = /^(vaults\/v1\/[^/]+\/)(?:manifest\.json|history\/([a-f0-9]{64})\.json)$/;
 const vaultShardPath = /^vaults\/v1\/[^/]+\/shards\/([a-f0-9]{64})\.json$/;
 const isVaultManifest = (pathname) => vaultManifestPath.test(pathname);
+// The app writes every vault object except the live manifest once, under a
+// content-derived name, so an object at the same pathname is the same object.
+const isImmutableVaultObject = (pathname) => /^vaults\/v1\/[^/]+\/./.test(pathname) && !/^vaults\/v1\/[^/]+\/manifest\.json$/.test(pathname);
 const isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
 
 /** A vault root: a schema 1 manifest listing every file, or a schema 2 root
@@ -377,6 +397,18 @@ function validateVaultReferences(manifestBodies, shardBodies, objects, revisionC
   }
 }
 
+/** Backups share unchanged objects: an inventory may name an object first
+ * copied by an earlier release's backup. Returns that release's ID. */
+function backupObjectRelease(object) {
+  const match = /^releases\/([^/]+)\/objects\/([a-f0-9]{64})\/([a-f0-9]{64})$/.exec(object.backupPathname ?? "");
+  if (!match || match[2] !== sha256(object.pathname) || match[3] !== object.sha256) return null;
+  try { releaseIdentifier(match[1]); } catch { return null; }
+  return match[1];
+}
+
+const validRevisionDigests = (value) => isObject(value) && Object.keys(value).length === 2 && ["utf8", "base64"].every((key) => /^[a-f0-9]{64}$/.test(value[key]));
+const revisionCheck = (object) => object.revisionDigests && { ...object.revisionDigests, contentType: object.contentType, size: object.size };
+
 function validateInventory(inventory, { releaseId, sourceStoreId, backupStoreId } = {}) {
   if (!inventory || inventory.schemaVersion !== 1 || inventory.state !== "complete" || !Array.isArray(inventory.objects)) throw new Error("Invalid Blob backup inventory.");
   if ((releaseId && inventory.releaseId !== releaseId) || (sourceStoreId && inventory.sourceStoreId !== sourceStoreId) || (backupStoreId && inventory.backupStoreId !== backupStoreId)) throw new Error("Blob backup inventory identity mismatch.");
@@ -385,7 +417,7 @@ function validateInventory(inventory, { releaseId, sourceStoreId, backupStoreId 
   for (const object of inventory.objects) {
     if (!object || !safeBlobPathname(object.pathname) || seen.has(object.pathname) ||
         !/^[a-f0-9]{64}$/.test(object.sha256) || !Number.isSafeInteger(object.size) || object.size < 0 || typeof object.contentType !== "string" ||
-        object.backupPathname !== `releases/${inventory.releaseId}/objects/${sha256(object.pathname)}/${object.sha256}`) throw new Error("Invalid object in Blob backup inventory.");
+        !backupObjectRelease(object) || (object.revisionDigests !== undefined && !validRevisionDigests(object.revisionDigests))) throw new Error("Invalid object in Blob backup inventory.");
     strongEtag(object.sourceEtag);
     strongEtag(object.backupEtag);
     seen.add(object.pathname);
@@ -393,7 +425,7 @@ function validateInventory(inventory, { releaseId, sourceStoreId, backupStoreId 
   return inventory;
 }
 
-async function verifyInventoryObjects(sdk, token, inventory, { visit, concurrency = BLOB_CONCURRENCY, onProgress, label = "Blob backup check" } = {}) {
+async function verifyInventoryObjects(sdk, token, inventory, { concurrency = BLOB_CONCURRENCY, onProgress, label = "Blob backup check" } = {}) {
   const manifests = new Map();
   const shards = new Map();
   const revisionChecks = new Map();
@@ -409,10 +441,40 @@ async function verifyInventoryObjects(sdk, token, inventory, { visit, concurrenc
     }
     const check = verifyImmutableRevision(object.pathname, stored);
     if (check) revisionChecks.set(object.pathname, check);
-    if (visit) await visit(object, stored);
     progress();
   });
   validateVaultReferences(manifests, shards, paths, revisionChecks);
+}
+
+const vaultBodyPath = /^vaults\/v1\/[^/]+\/files\/[a-f0-9]{64}\/[a-f0-9]{64}$/;
+
+/** The newest earlier complete backup of the same store, limited to objects
+ * still present in the backup store with their recorded ETag, so a release
+ * reuses unchanged objects instead of reading and copying them again. */
+async function previousBackup(sdk, token, { releaseId, identities, sourcePrefix }) {
+  const releases = (await listFolders(sdk, token, "releases/"))
+    .map((folder) => folder.slice("releases/".length).replace(/\/$/u, ""))
+    .filter((id) => id && id !== releaseId).sort().reverse().slice(0, 5);
+  for (const id of releases) {
+    let inventory;
+    try {
+      const record = await readBlob(sdk, token, `releases/${id}/inventory.json`, { allowMissing: true });
+      if (!record) continue;
+      inventory = validateInventory(JSON.parse(record.bytes.toString("utf8")), { releaseId: id, ...identities });
+    } catch { continue; } // An unusable earlier backup only means copying everything.
+    if (inventory.sourcePrefix !== sourcePrefix) continue;
+    const present = new Map();
+    for (const release of new Set(inventory.objects.map(backupObjectRelease))) {
+      for (const [pathname, entry] of await listBlobs(sdk, token, `releases/${release}/objects/`)) present.set(pathname, entry);
+    }
+    const objects = new Map();
+    for (const object of inventory.objects) {
+      const stored = present.get(object.backupPathname);
+      if (stored?.etag === object.backupEtag && stored.size === object.size) objects.set(object.pathname, object);
+    }
+    return { releaseId: id, objects };
+  }
+  return { releaseId: null, objects: new Map() };
 }
 
 /** Full-object backup, with the private inventory committed only after verification.
@@ -438,7 +500,10 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
     return summarize(inventory, existing.bytes);
   }
   const startedAt = now().toISOString();
-  const listed = await listBlobs(blob, sourceToken, sourcePrefix);
+  const [previous, listed] = await Promise.all([
+    previousBackup(blob, backupToken, { releaseId, identities, sourcePrefix }),
+    listBlobs(blob, sourceToken, sourcePrefix),
+  ]);
   const manifests = new Map();
   const shards = new Map();
   const captured = new Map();
@@ -468,7 +533,20 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
   // before its manifest was captured. Fetch the manifest's full closure directly.
   const pathnames = [...new Set([...listed.keys(), ...references.keys()])].sort();
   const progress = progressReporter(onProgress, "Blob backup", pathnames.length);
+  let reusedCount = 0;
   const objects = await mapLimit(pathnames, concurrency, async (pathname) => {
+    const prior = previous.objects.get(pathname);
+    const source = listed.get(pathname);
+    // Unchanged since the earlier backup (same source ETag): every backup is a
+    // complete inventory, but it points at the copy that backup already verified.
+    if (prior && !captured.has(pathname) && source?.etag === prior.sourceEtag && source.size === prior.size &&
+        (!vaultBodyPath.test(pathname) || prior.revisionDigests)) {
+      const check = revisionCheck(prior);
+      if (check) revisionChecks.set(pathname, check);
+      reusedCount += 1;
+      progress();
+      return { ...prior };
+    }
     const current = captured.get(pathname) ?? await readBlob(blob, sourceToken, pathname, { allowMissing: references.has(pathname) });
     if (!current) throw new Error("Vault backup is missing an immutable revision referenced by a manifest.");
     verifyShard(pathname, current.bytes);
@@ -476,14 +554,21 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
     const check = verifyImmutableRevision(pathname, current, references.get(pathname));
     if (check) revisionChecks.set(pathname, check);
     const digest = sha256(current.bytes);
-    const backupPathname = `${prefix}/objects/${sha256(pathname)}/${digest}`;
-    const copied = await putVerified(blob, backupToken, backupPathname, current.bytes, current.contentType);
+    let backupPathname = `${prefix}/objects/${sha256(pathname)}/${digest}`;
+    let backupEtag;
+    if (prior?.sha256 === digest && prior.contentType === current.contentType) {
+      // Same bytes as the earlier backup's copy (e.g. a re-saved manifest).
+      ({ backupPathname, backupEtag } = prior);
+      reusedCount += 1;
+    } else backupEtag = (await putVerified(blob, backupToken, backupPathname, current.bytes, current.contentType)).etag;
     // Captured bodies are only needed until their copy is verified.
     captured.delete(pathname);
     progress();
-    return { pathname, sourceEtag: current.etag, capturedAt, backupPathname, backupEtag: copied.etag, sha256: digest, size: current.bytes.length, contentType: current.contentType };
+    return { pathname, sourceEtag: current.etag, capturedAt, backupPathname, backupEtag, sha256: digest, size: current.bytes.length, contentType: current.contentType,
+      ...(check ? { revisionDigests: { utf8: check.utf8, base64: check.base64 } } : {}) };
   });
   validateVaultReferences(manifests, shards, new Map(objects.map((object) => [object.pathname, object])), revisionChecks);
+  if (previous.releaseId) onProgress?.(`Blob backup: reused ${reusedCount} unchanged files from backup ${previous.releaseId}`);
   const inventory = { schemaVersion: 1, state: "complete", releaseId, ...identities, sourcePrefix, startedAt, completedAt: now().toISOString(),
     consistency: "Per-user captured manifests with verified immutable revisions; other objects captured individually. No global point-in-time or atomic database/Blob snapshot.", objects };
   const bytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
@@ -492,7 +577,10 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
 }
 
 /** Restore a backup into a mandatory isolated prefix of a third private store.
- * Existing target objects must match exactly; this never overwrites live data.
+ * The prefix may keep an earlier rehearsal's copy: immutable vault objects
+ * already there are kept (their pathname names their content), and everything
+ * else is copied from the verified backup, replacing manifests and other
+ * mutable objects. This never writes to the production or backup store.
  */
 export async function restoreBlobBackup({ inventory, backupToken, targetToken, targetPrefix, sdk, concurrency = BLOB_CONCURRENCY, sleep = delay, onProgress }) {
   validateInventory(inventory);
@@ -500,15 +588,50 @@ export async function restoreBlobBackup({ inventory, backupToken, targetToken, t
   if (backupStoreId !== inventory.backupStoreId || targetStoreId === inventory.sourceStoreId) throw new Error("Blob restore must target an isolated store distinct from production and backup.");
   if (!safeBlobPathname(targetPrefix)) throw new Error("Blob restore requires a safe, nonempty isolated target prefix.");
   const blob = retryingBlobSdk(sdk ?? await import("@vercel/blob"), sleep);
+  const existing = await listBlobs(blob, targetToken, `${targetPrefix}/`);
+  // Manifests and file list shards are always read: they define the
+  // reference graph checked below. Kept bodies use their recorded digests.
+  const graph = (object) => isVaultManifest(object.pathname) || vaultShardPath.test(object.pathname);
+  const kept = (object) => isImmutableVaultObject(object.pathname) && existing.get(`${targetPrefix}/${object.pathname}`)?.size === object.size &&
+    (!vaultBodyPath.test(object.pathname) || !!object.revisionDigests);
+  const manifests = new Map();
+  const shards = new Map();
+  const revisionChecks = new Map();
+  const pending = [];
+  const reads = inventory.objects.filter((object) => {
+    if (!kept(object) || graph(object)) return true;
+    const check = revisionCheck(object);
+    if (check) revisionChecks.set(object.pathname, check);
+    return false;
+  });
+  const copies = reads.filter((object) => !kept(object));
+  const progress = progressReporter(onProgress, "Blob restore", reads.length);
+  const copy = async (object, bytes) => {
+    const pathname = `${targetPrefix}/${object.pathname}`;
+    await putVerified(blob, targetToken, pathname, bytes, object.contentType, { overwrite: existing.has(pathname) && !isImmutableVaultObject(object.pathname) });
+  };
   // One read of each backup object both verifies it and copies it. Manifests
   // are written only after the whole snapshot verified, so no restored manifest
   // can refer to an object that is missing or corrupt in the rehearsal store.
-  const manifests = [];
-  await verifyInventoryObjects(blob, backupToken, inventory, { concurrency, onProgress, label: "Blob restore", visit: async (object, stored) => {
-    if (isVaultManifest(object.pathname)) manifests.push([object, stored.bytes]);
-    else await putVerified(blob, targetToken, `${targetPrefix}/${object.pathname}`, stored.bytes, object.contentType);
-  } });
-  manifests.sort(([a], [b]) => a.pathname.localeCompare(b.pathname));
-  await mapLimit(manifests, concurrency, ([object, bytes]) => putVerified(blob, targetToken, `${targetPrefix}/${object.pathname}`, bytes, object.contentType));
-  return { objectCount: inventory.objects.length, targetStoreId, targetPrefix };
+  await mapLimit(reads, concurrency, async (object) => {
+    const stored = await readBlob(blob, backupToken, object.backupPathname);
+    if (stored.etag !== object.backupEtag || stored.bytes.length !== object.size || sha256(stored.bytes) !== object.sha256 || stored.contentType !== object.contentType) throw new Error("Blob backup integrity verification failed.");
+    if (isVaultManifest(object.pathname)) manifests.set(object.pathname, stored.bytes);
+    if (vaultShardPath.test(object.pathname)) {
+      verifyShard(object.pathname, stored.bytes);
+      shards.set(object.pathname, stored.bytes);
+    }
+    const check = verifyImmutableRevision(object.pathname, stored);
+    if (check) revisionChecks.set(object.pathname, check);
+    if (!kept(object)) {
+      if (isVaultManifest(object.pathname)) pending.push([object, stored.bytes]);
+      else await copy(object, stored.bytes);
+    }
+    progress();
+  });
+  validateVaultReferences(manifests, shards, new Map(inventory.objects.map((object) => [object.pathname, object])), revisionChecks);
+  pending.sort(([a], [b]) => a.pathname.localeCompare(b.pathname));
+  await mapLimit(pending, concurrency, ([object, bytes]) => copy(object, bytes));
+  if (copies.length < inventory.objects.length) onProgress?.(`Blob restore: kept ${inventory.objects.length - copies.length} unchanged files from the last rehearsal`);
+  return { objectCount: inventory.objects.length, copiedCount: copies.length, targetStoreId, targetPrefix };
 }
