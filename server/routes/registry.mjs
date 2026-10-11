@@ -14,6 +14,8 @@ export const API_ROUTES = Object.freeze([
   { id: "extensionWorkspaceSession", methods: ["POST"], path: EXTENSION_WORKSPACE_SESSION_API_PATH },
   { id: "captureCreate", methods: ["POST"], path: CAPTURE_API_PATH },
   { id: "captureConnection", methods: ["GET"], path: CONNECTION_API_PATH },
+  { id: "desktopRelease", methods: ["GET"], path: "/api/downloads/desktop" },
+  { id: "desktopDownload", methods: ["GET"], path: "/api/downloads/desktop/:target", parameters: { target: "mac|windows|linux|linux-deb" } },
   { id: "authSession", methods: ["GET"], path: "/api/auth/session" },
   { id: "authSignup", methods: ["POST"], path: "/api/auth/signup" },
   { id: "authLogin", methods: ["POST"], path: "/api/auth/login" },

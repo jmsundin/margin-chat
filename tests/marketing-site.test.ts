@@ -32,9 +32,9 @@ test("platform detection reads the user agent", () => {
 
 test("the main button offers the Mac download only when a build is published", () => {
   const published = readDownloadLinks({ VITE_MAC_DOWNLOAD_URL: " https://downloads.example/Margin.dmg ", VITE_CHROME_EXTENSION_URL: "" });
-  expect(published).toEqual({ mac: "https://downloads.example/Margin.dmg", chromeExtension: "" });
+  expect(published).toMatchObject({ mac: "https://downloads.example/Margin.dmg", windows: "", chromeExtension: "" });
   expect(primaryDownload("mac", published)).toMatchObject({ kind: "desktop", label: "Download for macOS" });
-  expect(primaryDownload("mac", { mac: "", chromeExtension: "" })).toMatchObject({ kind: "web", label: "Open the web app" });
+  expect(primaryDownload("mac", readDownloadLinks({}))).toMatchObject({ kind: "web", label: "Open the web app" });
   expect(primaryDownload("windows", published).kind).toBe("web");
   expect(primaryDownload("windows", published).note).toContain("Windows app is coming soon");
   expect(primaryDownload("ios", published).note).toContain("Home Screen");

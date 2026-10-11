@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState, type MouseEvent, type Rea
 import { createDemoVault } from "../lib/demoVault";
 import { AUTH_PATHS, MARKETING_PATHS, type MarketingPage } from "../lib/siteRoutes";
 import {
-  detectVisitorPlatform, primaryDownload, readDownloadLinks, PLATFORM_LABELS,
+  detectVisitorPlatform, downloadHref, fetchDesktopRelease, primaryDownload, readDownloadLinks, withDesktopRelease, PLATFORM_LABELS,
   type DownloadLinks, type VisitorPlatform,
 } from "../lib/platform";
 import "./MarketingSite.css";
@@ -29,7 +29,18 @@ interface SiteContext {
 }
 
 export default function MarketingSite({ page, signedIn, onNavigate, downloadLinks, platform }: MarketingSiteProps) {
-  const links = useMemo(() => downloadLinks ?? readDownloadLinks(), [downloadLinks]);
+  const [published, setPublished] = useState<DownloadLinks | null>(null);
+  // Which installers exist comes from the server, so a new desktop release
+  // shows up without rebuilding the site.
+  useEffect(() => {
+    if (downloadLinks) return;
+    let active = true;
+    void fetchDesktopRelease().then((release) => {
+      if (active && release) setPublished(withDesktopRelease(readDownloadLinks(), release));
+    });
+    return () => { active = false; };
+  }, [downloadLinks]);
+  const links = useMemo(() => downloadLinks ?? published ?? readDownloadLinks(), [downloadLinks, published]);
   const [visitorPlatform] = useState<VisitorPlatform>(() => platform ?? detectVisitorPlatform());
   useEffect(() => {
     const target = window.location.hash ? document.getElementById(window.location.hash.slice(1)) : null;
@@ -121,7 +132,7 @@ function PrimaryActions({ site }: { site: SiteContext }) {
     <>
       <div className="mk-actions">
         {primary.kind === "desktop" ? (
-          <a className="mk-btn mk-btn-primary mk-btn-lg" href={site.links.mac}><DownloadIcon />{primary.label}</a>
+          <a className="mk-btn mk-btn-primary mk-btn-lg" href={downloadHref(primary.href ?? "", "hero")}><DownloadIcon />{primary.label}</a>
         ) : (
           <a className="mk-btn mk-btn-primary mk-btn-lg" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Open Margin Chat" : primary.label}</a>
         )}
@@ -319,7 +330,7 @@ function HomePage({ site }: { site: SiteContext }) {
           <h2 className="mk-h2">Wherever you read</h2>
           <p className="mk-body is-intro">One account, the same vault, four ways in.</p>
           <div className="mk-grid4">
-            <a className="mk-panel mk-card mk-card-link" href={MARKETING_PATHS.download} onClick={site.go}><strong>Mac app</strong><span>{site.links.mac ? "Apple Silicon and Intel." : "Coming soon."}</span></a>
+            <a className="mk-panel mk-card mk-card-link" href={MARKETING_PATHS.download} onClick={site.go}><strong>Desktop app</strong><span>{site.links.mac || site.links.windows || site.links.linux ? "macOS, Windows and Linux." : "Coming soon."}</span></a>
             <a className="mk-panel mk-card mk-card-link" href={site.webAppPath} onClick={site.go}><strong>Web</strong><span>Any modern browser, nothing to install.</span></a>
             <a className="mk-panel mk-card mk-card-link" href={MARKETING_PATHS.download} onClick={site.go}><strong>Chrome extension</strong><span>Chat beside any web page in a docked panel.</span></a>
             <a className="mk-panel mk-card mk-card-link" href={site.webAppPath} onClick={site.go}><strong>Phone</strong><span>Swipe for the sidebar, pull down to search.</span></a>
@@ -459,10 +470,28 @@ function DownloadPage({ site }: { site: SiteContext }) {
   let title: string;
   let body: string;
   let actions: ReactNode;
+  // The installers are not code-signed yet, so the system warns on first open.
+  let firstOpen: string | null = null;
+  const version = links.desktopVersion ? ` Version ${links.desktopVersion}.` : "";
+  const installer = (href: string, label: string, tone = "primary") => <a className={`mk-btn mk-btn-${tone} mk-btn-lg`} href={downloadHref(href, "download-page")}><DownloadIcon />{label}</a>;
   if (tab === "mac" && links.mac) {
     title = "Margin Chat for macOS";
-    body = "The desktop app keeps your vault on your Mac and tells you when an update is ready.";
-    actions = <><a className="mk-btn mk-btn-primary mk-btn-lg" href={links.mac}><DownloadIcon />Download for macOS</a>{webApp("Open in your browser", "ghost")}</>;
+    body = `The desktop app keeps your vault on your Mac and tells you when an update is ready. Runs on Apple Silicon and Intel.${version}`;
+    actions = <>{installer(links.mac, "Download for macOS")}{webApp("Open in your browser", "ghost")}</>;
+    firstOpen = "First time you open it, macOS may say it can’t check the app. Open System Settings, then Privacy & Security, and choose Open Anyway.";
+  } else if (tab === "windows" && links.windows) {
+    title = "Margin Chat for Windows";
+    body = `The desktop app keeps your vault on your PC and tells you when an update is ready. For 64-bit Windows 10 and 11.${version}`;
+    actions = <>{installer(links.windows, "Download for Windows")}{webApp("Open in your browser", "ghost")}</>;
+    firstOpen = "If Windows shows “Windows protected your PC”, choose More info, then Run anyway.";
+  } else if (tab === "linux" && (links.linux || links.linuxDeb)) {
+    title = "Margin Chat for Linux";
+    body = `The AppImage runs on most distributions; the .deb installs on Debian, Ubuntu and ChromeOS Linux. For 64-bit Intel and AMD.${version}`;
+    actions = <>
+      {links.linux && installer(links.linux, "Download AppImage")}
+      {links.linuxDeb && installer(links.linuxDeb, "Download .deb", links.linux ? "ghost" : "primary")}
+    </>;
+    firstOpen = "Make the AppImage executable (right-click, Properties, or chmod +x) before you run it.";
   } else if (tab === "ios" || tab === "android") {
     title = `Margin Chat on ${PLATFORM_LABELS[tab]}`;
     body = tab === "ios"
@@ -502,6 +531,7 @@ function DownloadPage({ site }: { site: SiteContext }) {
             <h2 className="mk-h2">{title}</h2>
             <p className="mk-body">{body}</p>
             <div className="mk-actions">{actions}</div>
+            {firstOpen && <p className="mk-muted">{firstOpen}</p>}
           </div>
         </div>
       </section>
@@ -510,7 +540,7 @@ function DownloadPage({ site }: { site: SiteContext }) {
           <h2 className="mk-h2">All ways to use Margin Chat</h2>
           <div className="mk-grid3">
             <PlatformCard title="macOS" detail={links.mac ? "Apple Silicon and Intel" : "Coming soon"}>
-              {links.mac ? <a href={links.mac}>Download (.dmg)</a> : <span className="mk-muted">Use the web app until it’s ready.</span>}
+              {links.mac ? <a href={downloadHref(links.mac, "download-list")}>Download (.dmg)</a> : <span className="mk-muted">Use the web app until it’s ready.</span>}
             </PlatformCard>
             <PlatformCard title="Web app" detail="Chrome, Edge, Safari, Firefox">
               <a href={site.webAppPath} onClick={site.go}>Open marginchat.com</a>
@@ -520,8 +550,14 @@ function DownloadPage({ site }: { site: SiteContext }) {
               {links.chromeExtension ? <a href={links.chromeExtension}>Add to Chrome</a> : null}
               <span className="mk-muted">Chat beside any page in a docked panel.</span>
             </PlatformCard>
-            <PlatformCard title="Windows" detail="Coming soon"><span className="mk-muted">Use the web app today.</span></PlatformCard>
-            <PlatformCard title="Linux" detail="Coming soon"><span className="mk-muted">Use the web app today.</span></PlatformCard>
+            <PlatformCard title="Windows" detail={links.windows ? "Windows 10 and 11, 64-bit" : "Coming soon"}>
+              {links.windows ? <a href={downloadHref(links.windows, "download-list")}>Download (.exe)</a> : <span className="mk-muted">Use the web app today.</span>}
+            </PlatformCard>
+            <PlatformCard title="Linux" detail={links.linux || links.linuxDeb ? "64-bit Intel and AMD" : "Coming soon"}>
+              {links.linux && <a href={downloadHref(links.linux, "download-list")}>Download (AppImage)</a>}
+              {links.linuxDeb && <a href={downloadHref(links.linuxDeb, "download-list")}>Download (.deb)</a>}
+              {!links.linux && !links.linuxDeb && <span className="mk-muted">Use the web app today.</span>}
+            </PlatformCard>
             <PlatformCard title="iPhone and Android" detail="In your phone’s browser">
               <a href={site.webAppPath} onClick={site.go}>Open the web app</a>
               <span className="mk-muted">Add it to your Home Screen for a full-screen app.</span>

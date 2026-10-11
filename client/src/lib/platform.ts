@@ -26,15 +26,60 @@ export function detectVisitorPlatform(): VisitorPlatform {
 }
 
 export interface DownloadLinks {
-  /** Signed .dmg for macOS. Empty until a build is published. */
+  /** macOS .dmg (Apple Silicon and Intel). Empty until a build is published. */
   mac: string;
+  /** Windows installer (.exe). Empty until a build is published. */
+  windows: string;
+  /** Linux AppImage. Empty until a build is published. */
+  linux: string;
+  /** Linux .deb for Debian, Ubuntu and ChromeOS. Empty until a build is published. */
+  linuxDeb: string;
+  /** Version of the published desktop build, when there is one. */
+  desktopVersion: string;
   /** Chrome Web Store listing. Empty until the extension is published. */
   chromeExtension: string;
 }
 
 export function readDownloadLinks(env: Record<string, unknown> = import.meta.env): DownloadLinks {
   const value = (key: string) => (typeof env[key] === "string" ? (env[key] as string).trim() : "");
-  return { mac: value("VITE_MAC_DOWNLOAD_URL"), chromeExtension: value("VITE_CHROME_EXTENSION_URL") };
+  return { mac: value("VITE_MAC_DOWNLOAD_URL"), windows: "", linux: "", linuxDeb: "", desktopVersion: "", chromeExtension: value("VITE_CHROME_EXTENSION_URL") };
+}
+
+/** What GET /api/downloads/desktop answers: the latest published desktop build. */
+export interface DesktopReleaseInfo {
+  version?: string | null;
+  files?: Partial<Record<"mac" | "windows" | "linux" | "linux-deb", { href?: string }>>;
+}
+
+/** Downloads go through the server, which records them and then sends the
+ * installer; `source` says which button was used. */
+export function withDesktopRelease(links: DownloadLinks, release: DesktopReleaseInfo | null | undefined): DownloadLinks {
+  const href = (target: keyof NonNullable<DesktopReleaseInfo["files"]>, fallback: string) => {
+    const path = release?.files?.[target]?.href;
+    return typeof path === "string" && path.startsWith("/api/") ? path : fallback;
+  };
+  return {
+    ...links,
+    mac: href("mac", links.mac),
+    windows: href("windows", links.windows),
+    linux: href("linux", links.linux),
+    linuxDeb: href("linux-deb", links.linuxDeb),
+    desktopVersion: typeof release?.version === "string" ? release.version : links.desktopVersion,
+  };
+}
+
+export async function fetchDesktopRelease(fetchImpl: typeof fetch = fetch): Promise<DesktopReleaseInfo | null> {
+  try {
+    const response = await fetchImpl("/api/downloads/desktop");
+    return response.ok ? await response.json() as DesktopReleaseInfo : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Tags a download link with where on the site it was clicked. */
+export function downloadHref(href: string, source: string): string {
+  return href.startsWith("/api/") ? `${href}?from=${encodeURIComponent(source)}` : href;
 }
 
 export interface PrimaryDownload {
@@ -42,12 +87,15 @@ export interface PrimaryDownload {
   kind: "desktop" | "web";
   label: string;
   note: string;
+  /** The installer to download when kind is "desktop". */
+  href?: string;
 }
 
 export function primaryDownload(platform: VisitorPlatform, links: DownloadLinks): PrimaryDownload {
-  if (platform === "mac" && links.mac) return { kind: "desktop", label: "Download for macOS", note: "Apple Silicon and Intel" };
-  if (platform === "mac") return { kind: "web", label: "Open the web app", note: "The Mac app is coming soon. Margin Chat runs in your browser today." };
+  if (platform === "mac" && links.mac) return { kind: "desktop", label: "Download for macOS", note: "Apple Silicon and Intel", href: links.mac };
+  if (platform === "windows" && links.windows) return { kind: "desktop", label: "Download for Windows", note: "Windows 10 and 11, 64-bit", href: links.windows };
+  if (platform === "linux" && links.linux) return { kind: "desktop", label: "Download for Linux", note: "AppImage for 64-bit Intel and AMD", href: links.linux };
+  if (platform === "mac" || platform === "windows" || platform === "linux") return { kind: "web", label: "Open the web app", note: `The ${PLATFORM_LABELS[platform]} app is coming soon. Margin Chat runs in your browser today.` };
   if (platform === "ios" || platform === "android") return { kind: "web", label: "Open the web app", note: "Runs in your phone's browser. Add it to your Home Screen." };
-  if (platform === "windows" || platform === "linux") return { kind: "web", label: "Open the web app", note: `The ${PLATFORM_LABELS[platform]} app is coming soon. Margin Chat runs in your browser today.` };
   return { kind: "web", label: "Open the web app", note: "Works in any modern browser." };
 }
