@@ -2,7 +2,7 @@ import type { JSONContent } from "@tiptap/core";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import diff from "fast-diff";
 import { marked } from "marked";
-import { latexMarkdownLexer } from "./latex";
+import { findLatexStart, latexMarkdownLexer } from "./latex";
 import { findObsidianCalloutBlocks, findObsidianInlineTokens } from "./obsidianMarkdown";
 
 /** Keep raw slices, including separators, so splitting never rewrites source text. */
@@ -16,11 +16,25 @@ export function splitRichDocumentMarkdown(markdown: string): string[] {
   return chunks.join("") === markdown ? chunks : [markdown];
 }
 
+/**
+ * TipTap escapes every "[" and "]" in text, but "\[ ... \]" reads back as display
+ * math, which turned typed "[1]" and "[[Title]]" into equations. Escaping "[" alone
+ * already stops "[x](y)" from becoming a link, so "]" is escaped only in link text.
+ */
+export function escapeRichDocumentText(text: string, inLink = false): string {
+  const escape = (part: string) => part.replace(inLink ? /([\\`*_[\]~])/g : /([\\`*_[~])/g, "\\$1");
+  // A complete "[[Title]]" in text is written as itself, so it reopens as a wiki link.
+  let escaped = inLink ? escape(text) : text.split(/(!?\[\[[^\]\n]+\]\])/).map((part, index) => index % 2 ? part : escape(part)).join("");
+  // Literal dollars, such as text parsed from "\$x\$", must not reopen as an equation.
+  if (escaped.includes("$") && findLatexStart(escaped) >= 0) escaped = escaped.replace(/\$/g, "\\$");
+  return escaped;
+}
+
 /** These constructs require the existing Markdown renderer and lossless source editing. */
 export function getRichDocumentFallbackReason(markdown: string): string | null {
   if (/^\s*(`{3,}|~{3,})excalidraw\s*\n/i.test(markdown)) return "Drawing";
   const inline = findObsidianInlineTokens(markdown);
-  if (inline.some((token) => token.kind === "wikilink" || token.kind === "embed")) return "Wiki link";
+  // Wiki links and embeds are kept as editable nodes (documentWikiLink.ts).
   if (inline.some((token) => token.kind === "comment")) return "Hidden comment";
   if (findObsidianCalloutBlocks(markdown).length) return "Callout";
   const tokens = latexMarkdownLexer.lexer(markdown, { gfm: true });

@@ -14,7 +14,8 @@ import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, use
 import { getDocumentBlockAuthorship, type DocumentBlock, type Message } from "@margin-chat/workspace-contracts";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { documentAIInput } from "../lib/documentAIInput";
-import { documentPositionAtMarkdownOffset, getRichDocumentFallbackReason, markdownOffsetAtDocumentPosition } from "../lib/richDocumentMarkdown";
+import { documentPositionAtMarkdownOffset, escapeRichDocumentText, getRichDocumentFallbackReason, markdownOffsetAtDocumentPosition } from "../lib/richDocumentMarkdown";
+import { DocumentWikiLink } from "../lib/documentWikiLink";
 import { createDocumentMathExtensions, type EditEquation } from "../lib/documentMath";
 import MathEquationDialog from "./MathEquationDialog";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
@@ -99,15 +100,31 @@ function clearBlockDropIndicators(except?: HTMLElement) {
 }
 
 const lowlight = createLowlight(common);
+type TextEncoder = (text: string, node: JSONContent, parent?: JSONContent) => string;
+/** Swaps TipTap's text escaping for one that saves "[1]" and "$5" without creating math. */
+const DocumentMarkdown = Markdown.extend({
+  onBeforeCreate(event) {
+    this.parent?.(event);
+    const manager = this.editor.markdown as unknown as { encodeTextForMarkdown: TextEncoder; escapeMarkdownSyntax: (text: string) => string } | undefined;
+    if (!manager) return;
+    const encode = manager.encodeTextForMarkdown.bind(manager);
+    let inLink = false;
+    manager.escapeMarkdownSyntax = (text) => escapeRichDocumentText(text, inLink);
+    manager.encodeTextForMarkdown = (text, node, parent) => {
+      inLink = (node.marks ?? []).some((mark) => (typeof mark === "string" ? mark : mark.type) === "link");
+      return encode(text, node, parent);
+    };
+  },
+});
 export function createRichDocumentExtensions(extra: Extension[] = [], options: { undoRedo?: false; onEditEquation?: EditEquation } = {}) {
   const { onEditEquation, ...starterOptions } = options;
   return [
     StarterKit.configure({ link: { openOnClick: false }, underline: false, trailingNode: false, codeBlock: false, ...starterOptions }),
     CodeBlockLowlight.configure({ lowlight }),
     TableKit.configure({ table: false }), DocumentTable.configure({ resizable: false, renderWrapper: true }),
-    TaskList, TaskItem.configure({ nested: true }), Highlight,
+    TaskList, TaskItem.configure({ nested: true }), Highlight, DocumentWikiLink,
     ...createDocumentMathExtensions(onEditEquation),
-    Markdown.configure({ markedOptions: { gfm: true, breaks: false } }), ...extra,
+    DocumentMarkdown.configure({ markedOptions: { gfm: true, breaks: false } }), ...extra,
   ];
 }
 

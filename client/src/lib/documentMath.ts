@@ -1,7 +1,7 @@
 import { InputRule, type NodeViewRenderer } from "@tiptap/core";
 import { BlockMath, InlineMath } from "@tiptap/extension-mathematics";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { findLatexStart, readLatexAtStart, renderLatexToHtml } from "./latex";
+import { findBlockLatexStart, findLatexStart, readBlockLatex, readInlineLatexAtStart, readLatexAtStart, renderLatexToHtml } from "./latex";
 
 export type EditEquation = (node: ProseMirrorNode, position: number) => void;
 
@@ -55,10 +55,15 @@ function tokenizer(display: boolean) {
   return {
     name: display ? "blockMath" : "inlineMath",
     level: display ? "block" as const : "inline" as const,
-    start: (source: string) => findLatexStart(source, display),
+    // Block math must start and end its own line, as in the shared renderer.
+    start: (source: string) => display ? findBlockLatexStart(source) ?? -1 : findLatexStart(source, false),
     tokenize(source: string) {
-      const match = readLatexAtStart(source, display);
-      return match ? { type: display ? "blockMath" : "inlineMath", raw: match.raw, latex: match.latex.trim() } : undefined;
+      if (display) {
+        const match = readBlockLatex(source);
+        return match ? { type: "blockMath", raw: match.indent + match.raw + match.trailing, latex: match.latex.trim() } : undefined;
+      }
+      const match = readInlineLatexAtStart(source, false);
+      return match ? { type: "inlineMath", raw: match.raw, latex: match.latex.trim() } : undefined;
     },
   };
 }
@@ -66,6 +71,11 @@ function tokenizer(display: boolean) {
 function mathInputRule(type: ProseMirrorNode["type"], display: boolean) {
   return new InputRule({
     find(text) {
+      if (display) {
+        // Typing "$$x$$" or "\[x\]" as a whole paragraph makes an equation.
+        const match = readLatexAtStart(text, true);
+        return match && match.raw.length === text.length ? { index: 0, text: match.raw, data: match } : null;
+      }
       for (let offset = 0; offset < text.length;) {
         const start = findLatexStart(text.slice(offset), display);
         if (start < 0) return null;
