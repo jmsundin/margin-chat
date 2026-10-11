@@ -89,6 +89,14 @@ search through the index keeps working. Embeddings are metered like other hosted
 AI use, or use the member's own OpenAI key. A chat that excludes OpenAI searches
 the vault by words only.
 
+Each AI reply records what the index contributed (`execution.retrieval`), shown
+under **Vault search** in its "Why this model?" details, in chats and in a
+document's ✦ prompt pop-up. It lists the passages found with their section,
+whether they matched by the same words, by meaning only or both, the similarity,
+and which ones the answer cites as `[Vault N]`; Agent mode lists its searches and
+the best passage per document they found. A reply that didn't search the vault
+says why. Only short excerpts are stored, never whole passages.
+
 ## Opening a source
 
 Clicking a result opens its document directly, opens an annotation editor when appropriate,

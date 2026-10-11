@@ -32,6 +32,58 @@ const SEMANTIC_CONTEXT_LIMIT = 24;
 /** Vault passages added to a plain reply with "Search my workspace", by AI mode. */
 const VAULT_PASSAGES_BY_MODE = { fast: 4, balanced: 6, thorough: 10 };
 const VAULT_PASSAGE_CHARACTERS = 2_400;
+const VAULT_NOT_SEARCHED = "Your vault wasn't searched for this reply. To use it, set \"Context available to AI\" to \"Search relevant documents, notes, chats and files in my workspace\", or turn on Agent mode.";
+const VAULT_WORDS_ONLY_NO_OPENAI = "This chat doesn't allow OpenAI, so your vault was searched by exact words only.";
+const AGENT_VAULT_OFF = "Agent mode was limited to this conversation, so your vault wasn't searched.";
+const AGENT_DIDNT_SEARCH = "The agent answered without searching your vault.";
+/** Passages from Agent mode's searches kept in a reply's details, in all and from one search. */
+const AGENT_RETRIEVAL_PASSAGES = 12;
+const AGENT_PASSAGES_PER_SEARCH = 6;
+
+/** One found passage as a reply records it: where it is and how it matched, not its full text. */
+function retrievalPassage(passage, label) {
+  return {
+    ...(label ? { label } : {}),
+    id: passage.id, kind: passage.kind, title: passage.title,
+    ...(passage.heading ? { heading: passage.heading } : passage.pageNumber ? { heading: `Page ${passage.pageNumber}` } : {}),
+    matched: passage.matched, ...(Number.isFinite(passage.similarity) ? { similarity: passage.similarity } : {}),
+    excerpt: passage.snippet ?? String(passage.text ?? "").slice(0, 240),
+    ...(passage.blockId ? { blockId: passage.blockId } : {}),
+    ...(passage.sourceKind === "conversation" ? { openId: passage.id } : passage.attachedTo ? { openId: passage.attachedTo } : {}),
+  };
+}
+
+/** Marks the passages a reply cites as [Vault N] (also "[Vault 1, 3]"). */
+export function markCitedPassages(retrieval, reply) {
+  if (!retrieval?.passages?.length || typeof reply !== "string") return retrieval;
+  const cited = new Set();
+  for (const [group] of reply.matchAll(/\[[^\]]*Vault[^\]]*\]/giu)) {
+    for (const [number] of group.matchAll(/\d+/gu)) cited.add(`Vault ${Number(number)}`);
+  }
+  return { ...retrieval, passages: retrieval.passages.map((passage) => passage.label && cited.has(passage.label) ? { ...passage, cited: true } : passage) };
+}
+
+/** What Agent mode's vault searches found: the best passage per document it may read, in the order found. */
+function agentRetrieval(searches, permits, meaningAllowed) {
+  if (!permits) return { status: "not-searched", agent: true, meaning: false, passages: [], note: AGENT_VAULT_OFF };
+  if (!searches.length) return { status: "not-searched", agent: true, meaning: false, passages: [], note: AGENT_DIDNT_SEARCH };
+  const passages = new Map();
+  for (const { found } of searches) {
+    let taken = 0;
+    for (const hit of found.results ?? []) {
+      if (passages.size >= AGENT_RETRIEVAL_PASSAGES || taken >= AGENT_PASSAGES_PER_SEARCH) break;
+      if (!permits(hit.id) || passages.has(hit.id)) continue;
+      passages.set(hit.id, retrievalPassage(hit));
+      taken += 1;
+    }
+  }
+  const meaning = searches.some(({ found }) => found.meaning);
+  const note = meaning ? undefined : !meaningAllowed ? VAULT_WORDS_ONLY_NO_OPENAI : searches.find(({ found }) => found.warning)?.found.warning;
+  return {
+    status: passages.size ? "used" : "none-found", agent: true, queries: [...new Set(searches.map(({ query }) => query))],
+    meaning, ...(note ? { note } : {}), passages: [...passages.values()],
+  };
+}
 const SEMANTIC_EXCERPT_CHARACTERS = 1_200;
 
 function scopedWorkspaceCandidates(chatRequest) {
@@ -122,31 +174,44 @@ export function createChatService({ database, documentService, env, runtimeConfi
    * With "Search my workspace", passages from the rest of the vault that best
    * match the latest message, by keyword and by meaning. Documents the browser
    * already sent whole, and this conversation's own line, are left out.
+   * `retrieval` records what the search found, for the reply's details.
    */
   async function getVaultPassageContext(chatRequest, context) {
     const ai = chatRequest.ai;
-    if (!passageService?.available || !context.userId || ai.contextScope !== "workspace") return null;
+    if (!passageService?.available || !context.userId) return null;
+    if (ai.contextScope !== "workspace") {
+      return { instruction: null, sources: [], warnings: [], retrieval: { status: "not-searched", meaning: false, passages: [], note: VAULT_NOT_SEARCHED } };
+    }
     const latest = [...chatRequest.messages].reverse().find((message) => message.role === "user")?.content ?? "";
     if (!latest.trim()) return null;
     const excluded = new Set([chatRequest.conversation.id, ...(chatRequest.conversation.ancestorContext ?? []).map((item) => item.id),
       ...(chatRequest.workspaceContext ?? []).map((item) => item.id)]);
     const limit = VAULT_PASSAGES_BY_MODE[ai.mode] ?? VAULT_PASSAGES_BY_MODE.balanced;
+    const meaningAllowed = !ai.allowedProviders || ai.allowedProviders.includes("openai");
     let found;
     try {
       found = await passageService.search({
         userId: context.userId, query: latest, limit: limit + excluded.size,
         context: { ...context, allowedProviders: ai.allowedProviders },
-        meaning: !ai.allowedProviders || ai.allowedProviders.includes("openai"),
+        meaning: meaningAllowed,
       });
     } catch (error) {
       if (error?.name === "AbortError") throw error;
       console.error("Vault passage context failed", error);
-      return { instruction: null, sources: [], warnings: ["Your vault couldn't be searched for this reply."] };
+      return { instruction: null, sources: [], warnings: [],
+        retrieval: { status: "failed", meaning: false, passages: [], note: "Your vault couldn't be searched for this reply." } };
     }
-    // A setting the user chose isn't repeated on every reply; a passing failure is.
-    const warnings = found.warningKind === "failed" ? [found.warning] : [];
+    // Why meaning didn't take part goes under Vault search in the reply's details, not in its warnings.
+    const warnings = [];
+    const note = found.meaning ? undefined : !meaningAllowed ? VAULT_WORDS_ONLY_NO_OPENAI : found.warning;
     const passages = found.results.filter((result) => !excluded.has(result.id)).slice(0, limit);
-    if (!passages.length) return { instruction: null, sources: [], warnings };
+    const alreadyIncluded = found.results.slice(0, limit + excluded.size).filter((result) => excluded.has(result.id)).length;
+    const retrieval = {
+      status: passages.length ? "used" : "none-found", meaning: Boolean(found.meaning), ...(note ? { note } : {}),
+      ...(alreadyIncluded ? { alreadyIncluded } : {}),
+      passages: passages.map((passage, index) => retrievalPassage(passage, `Vault ${index + 1}`)),
+    };
+    if (!passages.length) return { instruction: null, sources: [], warnings, retrieval };
     const excerpts = passages.map((passage, index) => {
       const where = [passage.title, passage.heading].filter(Boolean).join(" › ");
       return `[Vault ${index + 1}: ${where}]\n${passage.text.slice(0, VAULT_PASSAGE_CHARACTERS)}`;
@@ -164,6 +229,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         excerpt: passage.text.slice(0, 240),
       })),
       warnings,
+      retrieval,
     };
   }
 
@@ -247,18 +313,26 @@ export function createChatService({ database, documentService, env, runtimeConfi
       ? prepareChatContext(orderedRequest, documentContext, budgetOptions) : initialContext;
     const fallbacks = [];
     const failures = [];
+    const meaningAllowed = !chatRequest.ai.allowedProviders || chatRequest.ai.allowedProviders.includes("openai");
+    // Agent mode's vault searches, for the reply's details; each provider attempt starts afresh.
+    let agentSearches = [];
     const workspace = agentRequested && vaultService?.configured && context.userId ? {
       userId: context.userId, vault: vaultService, database,
       ...(passageService?.available ? { passages: {
-        search: (query, options = {}) => passageService.search({ userId: context.userId, query, ...options,
-          context: { ...context, allowedProviders: chatRequest.ai.allowedProviders },
-          meaning: !chatRequest.ai.allowedProviders || chatRequest.ai.allowedProviders.includes("openai") }),
+        search: async (query, options = {}) => {
+          const found = await passageService.search({ userId: context.userId, query, ...options,
+            context: { ...context, allowedProviders: chatRequest.ai.allowedProviders }, meaning: meaningAllowed });
+          agentSearches.push({ query, found });
+          return found;
+        },
         readFile: (fileId) => passageService.readFile({ userId: context.userId, fileId }),
       } } : {}),
     } : null;
-    const vaultTools = Boolean(vaultToolAccess(prepared.chatRequest, workspace));
+    const agentPermits = vaultToolAccess(prepared.chatRequest, workspace);
+    const vaultTools = Boolean(agentPermits);
     for (const route of routes) {
       context.signal?.throwIfAborted();
+      agentSearches = [];
       const credential = getProviderCredential(route.serviceId, context);
       const agentProvider = agentRequested && AGENT_PROVIDERS.includes(providerName(route.serviceId)) ? providerName(route.serviceId) : null;
       const receipt = {
@@ -272,6 +346,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         routing: route.routing,
         profileVersion: route.profileVersion,
         sources: prepared.sources,
+        ...(vaultContext?.retrieval ? { retrieval: vaultContext.retrieval } : {}),
         truncated: prepared.truncated,
         fallbacks: [...fallbacks],
         warnings: [...prepared.warnings, ...semanticWarnings, ...(chatRequest.serviceId === "backend-services" ? [PROFILE_EVIDENCE.limitation] : []),
@@ -325,6 +400,9 @@ export function createChatService({ database, documentService, env, runtimeConfi
         context.signal?.throwIfAborted();
         if (handlers) await ensureReady();
         const toolTruncated = result.toolTruncated === true;
+        const retrieval = agentProvider && workspace?.passages
+          ? agentRetrieval(agentSearches, agentPermits, meaningAllowed)
+          : markCitedPassages(receipt.retrieval, result.reply);
         return {
           metadata: {
             ...metadata,
@@ -335,6 +413,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
               model: result.model,
               status: "complete",
               ...(result.agent ? { agent: result.agent } : {}),
+              ...(retrieval ? { retrieval } : {}),
               truncated: receipt.truncated || Boolean(toolTruncated),
               warnings: toolTruncated ? [...receipt.warnings, "Workspace tool results were shortened to fit the context budget."] : receipt.warnings,
               completedAt: new Date().toISOString(),

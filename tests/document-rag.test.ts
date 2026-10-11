@@ -140,9 +140,10 @@ describe("document RAG", () => {
       search: async (args: any) => {
         searches.push(args);
         return { meaning: true, results: [
-          { id: "sent", sourceKind: "conversation", kind: "note", title: "Already sent", heading: null, text: "Sent in the snapshot." },
-          { id: "guide", sourceKind: "conversation", kind: "document", title: "Car guide", heading: "Tyres", text: "Rotate the tyres every season.", updatedAt: "2026-10-01T10:00:00.000Z" },
-          { id: "file-1", sourceKind: "attachment", kind: "file", title: "Manual.pdf", heading: "Page 4", text: "Pressure is 2.3 bar." },
+          { id: "sent", sourceKind: "conversation", kind: "note", title: "Already sent", heading: null, text: "Sent in the snapshot.", matched: "both" },
+          { id: "guide", sourceKind: "conversation", kind: "document", title: "Car guide", heading: "Tyres", text: "Rotate the tyres every season.",
+            snippet: "Rotate the tyres every season.", updatedAt: "2026-10-01T10:00:00.000Z", matched: "meaning", similarity: 0.61 },
+          { id: "file-1", sourceKind: "attachment", kind: "file", title: "Manual.pdf", heading: "Page 4", text: "Pressure is 2.3 bar.", matched: "keyword", attachedTo: "chat-9" },
         ] };
       },
     };
@@ -172,15 +173,25 @@ describe("document RAG", () => {
       modelId: "gemini-3.1-pro-preview",
       serviceId: "gemini-api",
     });
-    await chatService.requestReply(payload("workspace"), { userId: "u1" });
+    const answered = await chatService.requestReply(payload("workspace"), { userId: "u1" });
     const system = geminiBody?.system_instruction.parts[0].text as string;
     expect(searches[0]).toMatchObject({ userId: "u1", query: "How often should I rotate my tyres?" });
     expect(system).toContain("[Vault 1: Car guide › Tyres]\nRotate the tyres every season.");
     expect(system).toContain("[Vault 2: Manual.pdf › Page 4]\nPressure is 2.3 bar.");
     expect(system).not.toContain("[Vault 3");
+    // The reply's details record what was found, how, and that the answer cited Vault 1.
+    expect(answered.metadata.execution.retrieval).toEqual({
+      status: "used", meaning: true, alreadyIncluded: 1,
+      passages: [
+        { label: "Vault 1", id: "guide", kind: "document", title: "Car guide", heading: "Tyres", matched: "meaning", similarity: 0.61,
+          excerpt: "Rotate the tyres every season.", openId: "guide", cited: true },
+        { label: "Vault 2", id: "file-1", kind: "file", title: "Manual.pdf", heading: "Page 4", matched: "keyword", excerpt: "Pressure is 2.3 bar.", openId: "chat-9" },
+      ],
+    });
 
-    // Only when the user chose their whole workspace as context.
-    await chatService.requestReply(payload("conversation"), { userId: "u1" });
+    // Only when the user chose their whole workspace as context; the details say so.
+    const unsearched = await chatService.requestReply(payload("conversation"), { userId: "u1" });
     expect(searches).toHaveLength(1);
+    expect(unsearched.metadata.execution.retrieval).toMatchObject({ status: "not-searched", passages: [], note: expect.stringContaining("Context available to AI") });
   });
 });

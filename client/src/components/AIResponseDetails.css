@@ -93,3 +93,79 @@ section.ai-response-details {
   outline-offset: 3px;
   border-radius: 3px;
 }
+
+.ai-routing-vault-label {
+  font-size: 10px;
+}
+
+.ai-vault-search {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.ai-vault-search > p {
+  margin: 0;
+}
+
+.ai-vault-queries {
+  color: var(--muted);
+}
+
+.ai-response-body .ai-vault-passages {
+  display: grid;
+  gap: 10px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-vault-passages li {
+  display: grid;
+  gap: 3px;
+}
+
+.ai-vault-passage-title {
+  min-width: 0;
+}
+
+.ai-vault-passage-title button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 550;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ai-vault-label {
+  margin-right: 6px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ai-vault-heading {
+  color: var(--muted);
+}
+
+.ai-vault-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.ai-vault-match-meaning,
+.ai-vault-cited {
+  color: var(--accent);
+}
+
+.ai-vault-passages p {
+  margin: 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
