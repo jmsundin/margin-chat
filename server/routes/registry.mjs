@@ -23,6 +23,7 @@ export const API_ROUTES = Object.freeze([
   { id: "passwordResetConfirm", methods: ["POST"], path: "/api/auth/password-reset/confirm" },
   { id: "authLogout", methods: ["POST"], path: "/api/auth/logout" },
   { id: "billingCheckout", methods: ["POST"], path: "/api/billing/checkout" },
+  { id: "billingPlans", methods: ["GET"], path: "/api/billing/plans" },
   { id: "billingTopUp", methods: ["POST"], path: "/api/billing/topup" },
   { id: "billingUpgrade", methods: ["POST"], path: "/api/billing/upgrade" },
   { id: "billingDashboard", methods: ["GET"], path: "/api/billing/dashboard" },
