@@ -1,0 +1,36 @@
+/* Frames for the live previews on the landing page. Inside them the app's own styles apply. */
+.mk-live-frame {
+  background: var(--bg, #091015);
+  border: 1px solid var(--mk-line, rgba(224, 236, 230, 0.12));
+  border-radius: 18px;
+  box-shadow: 0 40px 120px rgba(0, 0, 0, 0.45);
+  color: var(--ink, #ecf4ef);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+  margin-top: 40px;
+  overflow: hidden;
+  position: relative;
+  text-align: left;
+}
+.mk-live-map { display: flex; flex-direction: column; height: 620px; }
+.mk-live-map > * { flex: 1 1 auto; min-height: 0; }
+.mk-live-docs { display: grid; gap: 0; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); height: 560px; }
+.mk-live-docs-pane { min-height: 0; min-width: 0; overflow: auto; }
+.mk-live-docs-pane.is-side { border-left: 1px solid var(--line, rgba(224, 236, 230, 0.12)); }
+.mk-live-docs-pane > article { min-height: 100%; }
+.mk-live-hint { align-items: center; color: var(--muted, #97a9a2); display: flex; flex-direction: column; gap: 8px; height: 100%; justify-content: center; padding: 32px; text-align: center; }
+.mk-live-hint strong { color: var(--ink, #ecf4ef); font-size: 18px; }
+.mk-live-hint p { line-height: 1.6; margin: 0; max-width: 34ch; }
+/* The app positions this tooltip fixed and centred on the selection; here it sits inside the frame at a computed left edge. */
+.mk-live-frame .mk-live-composer.selection-tooltip { bottom: auto; max-width: calc(100% - 24px); min-width: 0; position: absolute; right: auto; transform: none; width: 340px; z-index: 5; }
+.mk-live-composer-field { display: flex; flex-direction: column; font-size: 13px; gap: 6px; margin: 10px 0 12px; }
+.mk-live-composer-field span { color: var(--muted, #97a9a2); }
+.mk-live-composer-field input { background: var(--button-surface, rgba(255, 255, 255, 0.05)); border: 1px solid var(--line-strong, rgba(224, 236, 230, 0.22)); border-radius: 10px; min-height: 40px; padding: 0 12px; }
+.mk .mk-live-composer-submit { min-height: 44px; width: 100%; }
+.mk-live-loading { align-items: center; border: 1px solid var(--mk-line, rgba(224, 236, 230, 0.12)); border-radius: 18px; color: var(--mk-muted, #97a9a2); display: flex; height: 560px; justify-content: center; margin-top: 40px; }
+.mk-live-caption { color: var(--mk-muted, #97a9a2); font-size: 14px; margin: 14px 0 0; }
+
+@media (max-width: 900px) {
+  .mk-live-docs { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); height: 720px; }
+  .mk-live-docs-pane.is-side { border-left: 0; border-top: 1px solid var(--line, rgba(224, 236, 230, 0.12)); }
+  .mk-live-map { height: 520px; }
+}
