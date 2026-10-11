@@ -9,6 +9,8 @@ import {
   type MarkdownWorkspace, type MarkdownWorkspaceManifest,
 } from "./workspaceMarkdown";
 import type { VaultFile } from "./vaultTypes";
+import { addVaultFileDocuments, isVaultFileDocumentPath, withoutUntouchedVaultFileDocuments, type VaultFileListing } from "./vaultFileDocuments";
+import { normalizeDocumentDock } from "@margin-chat/workspace-contracts";
 
 /** Check the complete prospective working set before its durable index changes. */
 export function validateVaultWorkspace(files: Record<string, VaultFile>) {
@@ -56,6 +58,7 @@ export function workspaceVaultFiles(workspace: MarkdownWorkspace, stampIdentitie
 }
 
 export function stateToVaultFiles(state: AppState, previous: Record<string, VaultFile>): Record<string, VaultFile> {
+  state = withoutUntouchedVaultFileDocuments(state);
   const workspace = workspaceFromVault(previous);
   const rendered = createMarkdownWorkspace(state, "1970-01-01T00:00:00.000Z", workspace);
   const retained = Object.fromEntries(Object.entries(previous).filter(([path]) => !(path in workspace.files) && path !== "workspace.json"));
@@ -70,6 +73,7 @@ export function createVaultFileRenderer() {
   let emittedFiles: Record<string, VaultFile> | undefined;
   let workspace: MarkdownWorkspace | undefined;
   return (state: AppState, previous: Record<string, VaultFile>) => {
+    state = withoutUntouchedVaultFileDocuments(state);
     if (previous !== emittedFiles || !workspace) workspace = workspaceFromVault(previous);
     const rendered = render(state, "1970-01-01T00:00:00.000Z", workspace);
     const retained = Object.fromEntries(Object.entries(previous).filter(([path]) => !(path in workspace!.files) && path !== "workspace.json"));
@@ -99,12 +103,29 @@ export function normalizeVaultMarkdownIdentities(files: Record<string, VaultFile
   };
 }
 
-export function vaultToState(files: Record<string, VaultFile>, current: AppState, preferredConversationId?: string | null): AppState {
+/** The PDFs and images among vault files, each of which opens as a document. */
+export function vaultFileListings(files: Record<string, VaultFile>, otherPaths: Iterable<string> = [], local: Iterable<VaultFileListing> = []): VaultFileListing[] {
+  const listings = new Map<string, VaultFileListing>();
+  for (const path of [...Object.keys(files), ...otherPaths]) if (isVaultFileDocumentPath(path)) listings.set(path, { path });
+  for (const listing of local) listings.set(listing.path, { ...listings.get(listing.path), ...listing });
+  return [...listings.values()];
+}
+
+export function vaultToState(files: Record<string, VaultFile>, current: AppState, preferredConversationId?: string | null,
+  fileListings: Iterable<VaultFileListing> = vaultFileListings(files)): AppState {
   const workspace = workspaceFromVault(files);
   const empty = !workspace.manifest.files.length;
-  const parsed = empty
+  let parsed = empty
     ? createAppStateFromWorkspaceMetadata(workspace.manifest.workspace, createEmptyState().conversations)
     : parseMarkdownWorkspace(workspace.manifest, workspace.files);
+  if (parsed) {
+    const withFiles = addVaultFileDocuments(parsed, fileListings);
+    if (withFiles !== parsed) {
+      // A file's document can be open side by side before anything is saved for it.
+      const documentDock = normalizeDocumentDock(workspace.manifest.workspace.view.documentDock, withFiles.conversations);
+      parsed = { ...withFiles, ...(documentDock ? { documentDock } : {}) };
+    }
+  }
   const hydrated = parsed && hydratePersistedState(parsed);
   if (!hydrated) throw new Error("A Markdown document could not be opened. Its original content is preserved in your vault.");
   if (empty) {

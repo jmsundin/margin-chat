@@ -11,6 +11,7 @@ import {
 import { createWorkspaceDocument } from "./workspaceModel";
 import { validVaultPath, type VaultFile } from "./vaultTypes";
 import { readFreshBytes, readFreshFile, readFreshText } from "./fileSnapshot";
+import { isSyncableVaultFileSize, isVaultFileDocumentPath, vaultFileContentType, type VaultFileListing } from "./vaultFileDocuments";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
 const DIRECTORY_DATABASE_VERSION = 1;
@@ -224,7 +225,7 @@ export async function reconnectLocalDirectory(userId: string, directoryId: strin
 }
 
 /**
- * Names, sizes and modification times of the folder's Markdown files, without
+ * Names, sizes and modification times of the folder's Markdown files, PDFs and images, without
  * reading their text, so the folder can be checked for new files often.
  */
 export async function localDirectorySignature(handle: FileSystemDirectoryHandle, prefix = ""): Promise<string> {
@@ -235,7 +236,7 @@ export async function localDirectorySignature(handle: FileSystemDirectoryHandle,
     const path = prefix ? `${prefix}/${name}` : name;
     if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
     if (entry.kind === "directory") parts.push(await localDirectorySignature(entry as FileSystemDirectoryHandle, path));
-    else if (isSafeMarkdownPath(path)) {
+    else if (isSafeMarkdownPath(path) || isVaultFileDocumentPath(path)) {
       const file = await (entry as FileSystemFileHandle).getFile();
       parts.push(`${path}\t${file.size}\t${file.lastModified}`);
     }
@@ -253,7 +254,7 @@ const FOLDER_WATCH_MIN_MS = 2_500;
 const FOLDER_WATCH_MAX_MS = 60_000;
 
 /**
- * Calls `onChange` soon after a Markdown file is added, edited, renamed or
+ * Calls `onChange` soon after a Markdown file, PDF or image is added, edited, renamed or
  * removed in the connected folder by another app. Uses the browser's folder
  * observer where there is one, and otherwise compares cheap scans while the
  * page is visible. Returns a function that stops watching.
@@ -470,8 +471,9 @@ function markdownContentFiles(files: Record<string, string>) {
   return Object.fromEntries(Object.entries(files).filter(([path]) => !isCompanionPath(path)));
 }
 
-function isCompanionPath(path: string) {
-  return path === "workspace.json" || /^(?:attachments|_conflicts|\.margin-chat)\/.+/i.test(path);
+/** Files synced byte for byte beside the Markdown: Margin Chat's own folders, and PDFs and images. */
+export function isCompanionPath(path: string) {
+  return path === "workspace.json" || /^(?:attachments|_conflicts|\.margin-chat)\/.+/i.test(path) || isVaultFileDocumentPath(path);
 }
 
 function companionFiles(files: Record<string, VaultFile>) {
@@ -485,10 +487,51 @@ export async function readLocalDirectoryCompanions(
   userId: string,
   knownFiles?: Record<string, VaultFile>,
   directoryId?: string,
+  listing?: VaultFileListing[],
 ): Promise<Record<string, VaultFile> | null> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  return readConnectedDirectoryCompanions(handle, knownFiles);
+  return readConnectedDirectoryCompanions(handle, knownFiles, listing);
+}
+
+/** The PDFs and images in the connected folder, with their sizes and dates. */
+export async function listLocalDirectoryFiles(userId: string, directoryId?: string): Promise<VaultFileListing[] | null> {
+  const handle = await getStoredDirectoryHandle(userId, directoryId);
+  if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
+  return listConnectedDirectoryFiles(handle);
+}
+
+export async function listConnectedDirectoryFiles(handle: FileSystemDirectoryHandle, prefix = ""): Promise<VaultFileListing[]> {
+  const listings: VaultFileListing[] = [];
+  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
+  for await (const [name, entry] of entries.entries()) {
+    if (name.startsWith(".")) continue;
+    const path = prefix ? `${prefix}/${name}` : name;
+    if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
+    if (entry.kind === "directory") listings.push(...await listConnectedDirectoryFiles(entry as FileSystemDirectoryHandle, path));
+    else if (isVaultFileDocumentPath(path) && validVaultPath(path)) {
+      try {
+        const file = await (entry as FileSystemFileHandle).getFile();
+        listings.push({ path, size: file.size, ...(file.lastModified > 0 ? { modifiedAt: new Date(file.lastModified).toISOString() } : {}),
+          ...(isSyncableVaultFileSize(file.size) ? {} : { localOnly: true }) });
+      } catch { /* A file removed mid-scan is picked up by the next one. */ }
+    }
+  }
+  return listings;
+}
+
+/** A file read straight from the connected folder, for one too large to sync. */
+export async function readLocalDirectoryFile(userId: string, path: string, directoryId?: string): Promise<Blob | null> {
+  if (!validVaultPath(path)) return null;
+  const handle = await getStoredDirectoryHandle(userId, directoryId);
+  if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
+  try {
+    const file = await (await getNestedFileHandle(handle, path)).getFile();
+    return new Blob([file], { type: vaultFileContentType(path) });
+  } catch (error) {
+    if (isDomExceptionNamed(error, "NotFoundError")) return null;
+    throw error;
+  }
 }
 
 export function syncLocalDirectoryCompanions(
@@ -510,9 +553,14 @@ export function syncLocalDirectoryCompanions(
 export async function readConnectedDirectoryCompanions(
   handle: FileSystemDirectoryHandle,
   knownFiles?: Record<string, VaultFile>,
+  listing?: VaultFileListing[],
 ): Promise<Record<string, VaultFile>> {
   const known = knownFiles ? companionFiles(knownFiles) : null;
-  const paths: string[] = [...Object.keys(known ?? {}), "workspace.json"];
+  const files = listing ?? await listConnectedDirectoryFiles(handle);
+  // A file too large to sync stays in the folder; it opens from there on this device.
+  const localOnly = new Set(files.filter((file) => file.localOnly).map((file) => file.path));
+  const paths: string[] = [...Object.keys(known ?? {}), "workspace.json", ...files.filter((file) => !file.localOnly).map((file) => file.path)]
+    .filter((path) => !localOnly.has(path));
   const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
   for await (const [name, entry] of entries.entries()) {
     if (entry.kind === "directory" && /^(?:attachments|_conflicts|\.margin-chat)$/i.test(name)) {
@@ -541,18 +589,19 @@ export async function readConnectedDirectoryCompanions(
       }
     } catch { /* Preserve unreadable conflict notes as files; they are not authoritative sync controls. */ }
   }
-  const files: Record<string, VaultFile> = {};
+  const companions: Record<string, VaultFile> = {};
   for (const [path, bytes] of bytesByPath) {
     const metadata = known?.[path];
     const binary = metadata ? metadata.encoding === "base64" : binaryCopies.has(path)
       || /^attachments\//i.test(path) && !/\/metadata\.json$/u.test(path) || !/\.(?:md|markdown|json|txt)$/i.test(path);
-    files[path] = {
+    companions[path] = {
       content: binary ? bytesToBase64(bytes) : new TextDecoder("utf-8", { fatal: true }).decode(bytes),
       ...(binary ? { encoding: "base64" as const } : {}),
-      ...(metadata?.contentType ? { contentType: metadata.contentType } : {}),
+      ...(metadata?.contentType ? { contentType: metadata.contentType }
+        : isVaultFileDocumentPath(path) ? { contentType: vaultFileContentType(path) } : {}),
     };
   }
-  return files;
+  return companions;
 }
 
 /** Reject changed bytes before a batch and again immediately before each mutation. */

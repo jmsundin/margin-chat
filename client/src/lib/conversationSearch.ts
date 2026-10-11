@@ -195,6 +195,7 @@ export function buildThreadSummaries(
         conversationCount: threadConversations.length,
         id: rootConversation.id,
         kind: standaloneNote ? ("note" as const) : ("chat" as const),
+        ...(rootConversation.vaultFile ? { fileKind: rootConversation.vaultFile.kind } : {}),
         preview,
         title: rootConversation.title,
         updatedAt: latestConversation.updatedAt,
@@ -212,7 +213,7 @@ export function buildDocumentSummaries(
     .map((conversation) => {
       const standaloneNote = getStandaloneNote(conversation);
       const preview = conversation.document
-        ? excerpt(getCurrentDocumentText(conversation), 108) || "Empty document"
+        ? excerpt(getCurrentDocumentText(conversation), 108) || (conversation.vaultFile ? conversation.vaultFile.kind === "pdf" ? "PDF" : "Image" : "Empty document")
         : standaloneNote
           ? excerpt(standaloneNote.content, 108) || "Empty note"
           : getThreadPreviewFromConversations([conversation]);
@@ -228,6 +229,7 @@ export function buildDocumentSummaries(
         conversationCount: 1,
         id: conversation.id,
         kind: conversation.kind === "note" ? ("note" as const) : ("chat" as const),
+        ...(conversation.vaultFile ? { fileKind: conversation.vaultFile.kind } : {}),
         preview,
         title: conversation.title,
         createdAt: conversation.createdAt,

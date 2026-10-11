@@ -1,0 +1,42 @@
+.vault-file-viewer { display: flex; flex-direction: column; gap: 8px; margin: 0 0 18px; }
+.vault-file-status { color: var(--muted); font-size: .85rem; margin: 0 0 18px; padding: 22px; border: 1px dashed var(--line); border-radius: 8px; }
+.vault-file-toolbar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 0; background: var(--bg); }
+.vault-file-toolbar button { background: var(--panel-strong); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 3px 10px; font: inherit; font-size: .78rem; cursor: pointer; min-width: 30px; }
+.vault-file-toolbar button:hover:not(:disabled) { border-color: var(--line-strong); }
+.vault-file-toolbar button:disabled { opacity: .45; cursor: default; }
+.vault-file-toolbar button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.vault-file-toolbar-spacer { flex: 1 1 auto; }
+.vault-file-page-count, .vault-file-zoom { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+.vault-file-zoom { min-width: 44px; text-align: center; }
+.vault-file-frame { width: 100%; overflow-x: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+
+.vault-pdf-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .18), 0 0 0 1px rgb(0 0 0 / .06); border-radius: 2px; overflow: hidden; }
+.vault-pdf-page canvas { position: absolute; inset: 0; display: block; }
+.vault-pdf-page-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: #8a8a8a; font-size: .8rem; }
+.vault-file-highlights { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.vault-file-highlight { position: absolute; background: rgb(255 200 0 / .38); border-radius: 2px; mix-blend-mode: multiply; }
+
+/* pdf.js text layer: transparent text over the drawn page, so passages can be selected. */
+.vault-pdf-page .textLayer { position: absolute; inset: 0; z-index: 2; overflow: clip; opacity: 1; line-height: 1; text-align: initial;
+  -webkit-text-size-adjust: none; text-size-adjust: none; forced-color-adjust: none; transform-origin: 0 0; caret-color: CanvasText;
+  --min-font-size: 1; --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size)); --min-font-size-inv: calc(1 / var(--min-font-size)); }
+.vault-pdf-page .textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0% 0%; user-select: text; }
+.vault-pdf-page .textLayer > :not(.markedContent), .vault-pdf-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1; --font-height: 0; font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1; --rotate: 0deg; transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv)); }
+.vault-pdf-page .textLayer .markedContent { display: contents; }
+.vault-pdf-page .textLayer ::selection { background: color-mix(in srgb, AccentColor, transparent 60%); color: transparent; }
+.vault-pdf-page .textLayer br::selection { background: transparent; }
+.vault-pdf-page .textLayer .endOfContent { display: block; position: absolute; inset: 100% 0 0; z-index: 0; cursor: default; user-select: none; }
+.vault-pdf-page .textLayer.selecting .endOfContent { top: 0; }
+
+.vault-image-stage { position: relative; max-width: none; touch-action: pan-x pan-y; }
+.vault-image-stage img { display: block; width: 100%; height: 100%; border-radius: 4px; user-select: none; }
+.vault-image-stage:not([style]) img { width: auto; max-width: 100%; height: auto; }
+.vault-image-stage.is-picking { cursor: crosshair; touch-action: none; }
+.vault-image-stage.is-picking .vault-image-area:not(.is-drawing) { pointer-events: none; }
+.vault-image-area { position: absolute; padding: 0; background: rgb(255 200 0 / .18); border: 2px solid rgb(230 170 0 / .9); border-radius: 3px; cursor: pointer; }
+.vault-image-area:hover, .vault-image-area:focus-visible { background: rgb(255 200 0 / .3); }
+.vault-image-area.is-drawing { background: color-mix(in srgb, var(--accent) 18%, transparent); border: 2px dashed var(--accent); pointer-events: none; }
+
+.vault-file-notes-label { color: var(--muted); font-size: .74rem; letter-spacing: .04em; text-transform: uppercase; margin: 4px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); }

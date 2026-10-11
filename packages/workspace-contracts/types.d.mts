@@ -127,6 +127,12 @@ export interface ConversationDocument {
   status: "processing" | "ready" | "failed";
 }
 
+export interface VaultFileReference {
+  /** The file's path in the vault, such as `Papers/Attention.pdf`. */
+  path: string;
+  kind: "pdf" | "image";
+}
+
 export interface ConversationNote {
   id: string;
   content: string;
@@ -325,6 +331,9 @@ export interface Conversation {
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   documents?: ConversationDocument[];
+  /** A PDF or image in the vault that this document shows. Its notes and AI
+   * conversation live here; the file itself is never changed. */
+  vaultFile?: VaultFileReference;
   document?: EditableDocument;
   /** Saved on the family root, independent of which document is currently focused. */
   documentLayout?: DocumentLayout;

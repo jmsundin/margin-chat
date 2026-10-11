@@ -4,6 +4,7 @@ import {
 } from "../lib/backendModels.mjs";
 import { HttpError } from "../lib/errors.mjs";
 import { AGENT_BUDGET_CHOICES_MICROS, DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
+import { validateVaultFileContext } from "./fileContext.mjs";
 
 const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
 const AI_PROVIDERS = new Set(["openai", "anthropic", "gemini", "huggingface", "xai"]);
@@ -227,6 +228,8 @@ export function validateChatRequest(body) {
     }
   }
 
+  const file = validateVaultFileContext(body.conversation.file);
+
   return {
     ai: validateAIOptions(body.ai),
     workspaceContext: validateWorkspaceContext(body.workspaceContext),
@@ -248,6 +251,7 @@ export function validateChatRequest(body) {
         filename: document.filename.trim(),
         id: document.id.trim(),
       })),
+      ...(file ? { file } : {}),
       id: String(body.conversation.id ?? ""),
       updatedAt: typeof body.conversation.updatedAt === "string" ? body.conversation.updatedAt : undefined,
       parentId:

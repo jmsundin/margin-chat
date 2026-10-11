@@ -14,6 +14,7 @@ export type {
   Message,
   ConversationDocument,
   ConversationNote,
+  VaultFileReference,
   PublicTopicSource,
   DocumentRelation,
   DocumentRelationOrigin,
@@ -137,6 +138,8 @@ export interface ThreadSummary {
   conversationCount: number;
   id: string;
   kind?: "chat" | "note";
+  /** Set when the document shows a PDF or image from the vault. */
+  fileKind?: "pdf" | "image";
   groupId?: string | null;
   preview: string;
   title: string;

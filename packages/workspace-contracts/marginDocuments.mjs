@@ -7,7 +7,9 @@ export function createMarginDocument(parent, note, documentId = note.id, { legac
     startOffset: note.startOffset ?? null, endOffset: note.endOffset ?? null, quote: note.quote ?? null };
   const sourceMessageId = source.sourceMessageId ?? (source.sourceBlockId ? `document:${source.sourceBlockId}` : null);
   const hasSource = sourceMessageId && ((parent.messages ?? []).some((message) => message.id === sourceMessageId)
-    || parent.document?.blocks.some((block) => block.id === source.sourceBlockId && sourceMessageId === `document:${block.id}`));
+    || parent.document?.blocks.some((block) => block.id === source.sourceBlockId && sourceMessageId === `document:${block.id}`)
+    // A passage on a page of a PDF, or an area of an image, the parent shows.
+    || (parent.vaultFile && sourceMessageId.startsWith("file:")));
   const anchored = hasSource && source.quote?.trim() && Number.isSafeInteger(source.startOffset)
     && source.startOffset >= 0 && Number.isSafeInteger(source.endOffset) && source.endOffset > source.startOffset;
   return {
