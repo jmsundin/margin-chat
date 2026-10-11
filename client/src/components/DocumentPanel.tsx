@@ -55,6 +55,8 @@ export interface DocumentPanelProps {
   /** Horizontal tabs of this document and its siblings, above its header. */
   siblingTabs?: ReactNode;
   parentDocument?: Pick<Conversation, "id" | "title">;
+  /** Replaces the "← parent" link with the full path of parents, as in Map View's side panel. */
+  parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
   groupControl?: ReactNode;
   recentModelSelections: RecentBackendServiceSelection[];
@@ -409,11 +411,11 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </svg>
       </button>)}
     </nav> : null}
-      {(props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu) ? <header className="document-header">
+      {(props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.parentBreadcrumbs || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu) ? <header className="document-header">
         <div className="document-header-toolbar">
           {props.headerLeading}
           {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${conversation.title || "Untitled document"}`} title="Minimize document" onClick={props.onMinimize}>−</button> : null}
-          {conversation.parentId ? <div className="document-origin" ref={props.registerBranchOriginRef}>
+          {props.parentBreadcrumbs ? props.parentBreadcrumbs : conversation.parentId ? <div className="document-origin" ref={props.registerBranchOriginRef}>
             <button type="button" title={`Open parent: ${props.parentDocument?.title || "Source document"}`} onClick={() => props.onOpenBranch(conversation.parentId!)}>← {props.parentDocument?.title || "Source document"}</button>
             {!document.marginNote && conversation.branchAnchor ? <span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span> : null}
           </div> : null}
@@ -471,6 +473,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         ? <div className="document-writing-status is-agent" role="status">
           <div className="document-agent-status-head"><strong>Agent is working</strong><button type="button" onClick={props.onStop}>Stop</button></div>
           <AgentRunLog live steps={props.agentProgress?.steps ?? []} spentMicros={props.agentProgress?.spentMicros}
+            thinking={props.agentProgress?.thinking} activity={props.agentProgress?.activity}
             budgetMicros={props.agentMode?.showBudget ? props.agentMode.budgetMicros : undefined}/>
         </div>
         : props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}

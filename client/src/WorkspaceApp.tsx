@@ -73,7 +73,8 @@ import { getDocumentBlockAuthorship, normalizeAISettings, normalizeDocumentDock,
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
-import { saveUrlMapNode } from "./lib/urlMap";
+import { keepExploredItems } from "./lib/keepExplored";
+import type { MapExploration } from "./lib/mapExploration";
 import { connectPublicTopics, findSavedPublicTopic, savePublicTopic, wikipediaConnectionKind } from "./lib/publicTopicWorkspace";
 import { wikidataStatement, type PublicExpansion } from "./lib/publicKnowledge";
 import { wikipediaArticleUrl } from "./lib/wikipedia";
@@ -2126,11 +2127,11 @@ function WorkspaceAppContent({
     window.getSelection()?.removeAllRanges();
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
-      request: async (onDelta, signal, onMetadata, onStep) => requestChatReply({
+      request: async (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
         ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
         conversation: await conversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
-        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, onStep, signal,
+        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, onAgentEvent, signal,
       }),
       onError(error) {
         if (isApiErrorStatus(error,401)) onAuthExpired();
@@ -2303,7 +2304,7 @@ function WorkspaceAppContent({
       conversationId: conversation.id,
       messageId: createId("message"),
       createdAt: new Date().toISOString(),
-      request: async (onDelta, signal, onMetadata, onStep) => requestChatReply({
+      request: async (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
         ...prepareAIContext(state.conversations, conversation, messages),
         ai: withJevConsent(conversation.ai, jevEnabled),
         expectedUserId: user.id,
@@ -2312,7 +2313,7 @@ function WorkspaceAppContent({
         modelId: conversation.modelId,
         onDelta,
         onMetadata,
-        onStep,
+        onAgentEvent,
         serviceId: conversation.serviceId,
         signal,
       }),
@@ -3185,7 +3186,25 @@ function WorkspaceAppContent({
     const existing = findSavedPublicTopic(state.conversations, topic);
     setState((current) => savePublicTopic(current, topic).state);
     mapUndoRef.current = null;
-    setMapEditMessage(existing ? `${existing.title} is already in your map.` : `${topic.label} added to your map. Keep exploring or choose “Show in my map”.`);
+    setMapEditMessage(existing ? `${existing.title} is already in your map.` : `${topic.label} added to your map.`);
+  }
+
+  /** Turns map previews into notes, each connected to what it was explored from. Returns the note each became. */
+  function handleKeepExplored(exploration: MapExploration, ids: string[], detached: string[] = []): Record<string, string> {
+    const identities = new Map<string, { id: string; noteId: string }>();
+    const options = { createdAt: new Date().toISOString(), detached,
+      newNote: (itemId: string) => {
+        if (!identities.has(itemId)) identities.set(itemId, { id: createId("note-conversation"), noteId: createId("note") });
+        return identities.get(itemId)!;
+      } };
+    const { kept } = keepExploredItems(state, exploration, ids, options);
+    const keptIds = Object.keys(kept);
+    if (!keptIds.length) return kept;
+    setState((current) => keepExploredItems(current, exploration, ids, options).state);
+    mapUndoRef.current = null;
+    setMapEditMessage(keptIds.length === 1 ? `${exploration.items[keptIds[0]]?.label ?? "The preview"} is now a note in your map.` : `${keptIds.length} previews are now notes in your map.`);
+    if (keptIds.length === 1) setGraphFocusRequest({ conversationId: kept[keptIds[0]], requestId: ++graphFocusRequestCounterRef.current, preserveMapMode: true });
+    return kept;
   }
 
   /** Adds a page of Wikipedia connections to a note, adopting the matched article as its topic. */
@@ -4150,14 +4169,27 @@ function WorkspaceAppContent({
     return [...children].sort((a, b) => rank(a) - rank(b));
   }
 
-  function renderChildTabs(conversation: Conversation) {
+  function renderChildTabs(conversation: Conversation, dock?: GraphDockControls) {
     const childDocuments = getChildTabDocuments(conversation);
     if (!childDocuments.length || isCompactDocument(conversation)) return null;
     return <DocumentChildTabs parent={conversation} documents={childDocuments}
       currentDocumentId={activeConversation.id}
       openDocumentIds={[...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]}
       minimizedDocumentIds={[...minimizedSideDocumentsByParent.values()].flatMap((documents) => documents.map((document) => document.id))}
-      onSelect={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} />;
+      // In Map View's side panel a child replaces its parent in the panel instead of leaving the map.
+      onSelect={(id) => dock ? dock.onOpenDocument(id) : handleSelectConversation(id, { nextViewMode: "chat" })} />;
+  }
+
+  /** The parents of a document in Map View's side panel; each one opens in the panel. */
+  function renderPanelBreadcrumbs(conversation: Conversation, dock: GraphDockControls) {
+    const parents = getConversationPath(state.conversations, conversation.id).slice(0, -1);
+    if (!parents.length) return null;
+    return <nav className="document-panel-breadcrumbs" aria-label={`Parents of ${conversation.title || "Untitled document"}`}><ol>
+      {parents.map((parent) => <li key={parent.id}>
+        <button type="button" title={`Show ${parent.title || "Untitled document"} in this panel`} onClick={() => dock.onOpenDocument(parent.id)}>{parent.title || "Untitled document"}</button>
+      </li>)}
+      <li aria-current="page"><span>{conversation.title || "Untitled document"}</span></li>
+    </ol></nav>;
   }
 
   function renderSiblingTabs(conversation: Conversation) {
@@ -4185,6 +4217,7 @@ function WorkspaceAppContent({
       onClose={view === "chat" && !dockHeader && !maximized ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
       parentDocument={conversation.parentId ? state.conversations[conversation.parentId] : undefined}
+      parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock) : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
         {maximized ? <button type="button" className="document-restore-size-button" aria-keyshortcuts="Escape"
@@ -4195,7 +4228,7 @@ function WorkspaceAppContent({
           </svg>
         </button> : null}
       </>}
-      childTabs={renderChildTabs(conversation)}
+      childTabs={renderChildTabs(conversation, view === "graph" ? dock : undefined)}
       siblingTabs={view === "chat" ? renderSiblingTabs(conversation) : null}
       documentMenu={dockHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
@@ -4551,7 +4584,6 @@ function WorkspaceAppContent({
                     explorerContainer={graphExplorerContainer}
                     onOpenExplorer={() => { setMapSidebarSection("explore"); setLeftSidebarOpen(true); }}
                     onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
-                    onSaveUrlMapNode={(graph, nodeId) => setState((current) => saveUrlMapNode(current, graph, nodeId))}
                     urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
                     publicMapAccount={{ userId: user.id, canAsk: user.role === "admin" || user.billing.hasAccess, isAdmin: user.role === "admin",
                       aiOptions: { serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai },
@@ -4559,6 +4591,7 @@ function WorkspaceAppContent({
                     onSavePublicTopic={handleSavePublicTopic}
                     onAddTopicConnections={handleAddTopicConnections}
                     onSavePrivateAnswer={handleSavePrivateAnswer}
+                    onKeepExplored={handleKeepExplored}
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}
                     onSetRelation={handleSetMapRelation}

@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
+import { AGENT_THINKING_CHARACTERS, DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
 import { HttpError } from "../../lib/errors.mjs";
 import { createAgentAdapter } from "./adapters.mjs";
 import { agentToolDefinitions, createAgentToolExecutor, describeAgentStep } from "./tools.mjs";
@@ -8,7 +8,9 @@ export const AGENT_MAX_MODEL_CALLS = 12;
 /** Wall-clock time after which a run stops calling tools, leaving room for the answer
  * inside the 300-second function limit in vercel.json. */
 export const AGENT_TIME_LIMIT_MS = 240_000;
-const MAX_STEPS = 40;
+const MAX_STEPS = 60;
+/** Thinking kept on a saved run across all its model calls; the live view shows all of it. */
+const THINKING_SAVED_CHARACTERS = 16_000;
 
 const WRAP_UP = {
   budget: "This run has reached its spending budget. Do not call any more tools. Answer now from what you have already found, and say briefly that you stopped early because of the budget.",
@@ -25,9 +27,14 @@ const clip = (text, maximum) => text.length <= maximum ? text : `${text.slice(0,
  * call, so a run can go over by at most the call that crosses it plus the
  * tool-free answer that follows. `workspace` (`{ userId, vault, database }`) adds
  * the saved-vault tools when the request's AI context allows them.
+ *
+ * While a model call runs, `onThinking` receives its reasoning as the provider
+ * streams it and `onActivity("writing")` marks when it starts writing text. Once
+ * the call ends, that reasoning is recorded as a thinking step before the call's
+ * note and tool steps.
  */
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, onDelta, onStep }) {
+  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, onDelta, onStep, onThinking, onActivity }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
   const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter },
     agentToolDefinitions(chatRequest, workspace));
@@ -39,9 +46,25 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
   const metered = Boolean(usageMeter) && Number.isSafeInteger(budgetMicros) && budgetMicros > 0;
   const steps = [];
   let toolTruncated = false;
+  let thinkingSaved = 0;
+  let reasoningShared = false;
   const record = async (step) => {
     if (steps.length < MAX_STEPS) steps.push(step);
     await onStep?.({ step, ...(usageMeter ? { spentMicros: spent() } : {}) });
+  };
+  const live = {
+    thinking: async (delta) => { await onThinking?.(delta); },
+    writing: async () => { await onActivity?.("writing"); },
+  };
+  const recordThinking = async (text) => {
+    const thought = text?.trim();
+    if (!thought) return;
+    reasoningShared = true;
+    const room = Math.min(AGENT_THINKING_CHARACTERS, THINKING_SAVED_CHARACTERS - thinkingSaved);
+    if (room < 200) return;
+    const label = clip(thought, room);
+    thinkingSaved += label.length;
+    await record({ kind: "thinking", label, ok: true });
   };
 
   for (let call = 1; call <= AGENT_MAX_MODEL_CALLS; call += 1) {
@@ -52,8 +75,9 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     const stopReason = metered && spent() >= budgetMicros ? "budget"
       : now() - startedAt >= timeLimitMs ? "time-limit"
       : call === AGENT_MAX_MODEL_CALLS ? "round-limit" : null;
-    const result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null });
+    const result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null, live });
     signal?.throwIfAborted();
+    await recordThinking(result.thinking);
     if (!result.toolCalls.length || stopReason) {
       if (!result.text.trim()) throw new HttpError(502, `${provider} returned a response without assistant text.`);
       await onDelta?.(result.text);
@@ -63,7 +87,7 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
         steps,
         toolTruncated,
         agent: {
-          steps, stopReason: stopReason ?? "answered", modelCalls: call,
+          steps, stopReason: stopReason ?? "answered", reasoning: reasoningShared ? "shared" : "not-shared", modelCalls: call,
           ...(usageMeter ? { spentMicros: spent() } : {}), ...(metered ? { budgetMicros } : {}),
         },
       };

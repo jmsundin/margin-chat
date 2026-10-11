@@ -195,10 +195,8 @@ try {
 
   await click(aiButton());
   assert.equal(requests.length, 2);
-  await click(button("Public", ".knowledge-map-switcher button"));
   await finish(1, generated("Systems"));
   assert.equal(count(), baselineCount + 4, "A complete response adds the bounded three-note tree atomically");
-  assert.equal(element(".public-knowledge-map").closest(".knowledge-map-panel").hidden, false, "Completion respects a more recent switch to Public");
   assert.deepEqual(state().graphLayouts[parentId], parentLayout, "The public topic keeps its authored map position");
   assert.equal(state().conversations[parentId].notes![0].content, parentBody, "AI expansion preserves the personal parent note");
   const principles = Object.values(state().conversations).find((item) => item.title === "Systems principles")!;
@@ -208,7 +206,6 @@ try {
   assert(principles.notes![0].content.includes("AI-generated exploration"));
   assert.equal(principles.publicTopic, undefined);
   assert.equal(state().activeConversationId, child.id, "Background expansion does not replace the user's active editor");
-  await click(button("My map", ".knowledge-map-switcher button"));
   assert(element(`[data-conversation-id="${parentId}"]`).classList.contains("is-selected"));
   assert(element(`[data-conversation-id="${detail.id}"]`), "The resulting neighborhood exposes low-level descendants");
 

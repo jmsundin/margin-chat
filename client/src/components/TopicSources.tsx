@@ -5,6 +5,7 @@ import { askAboutNote, type PrivateAnswer } from "../lib/publicMapApi";
 import { ApiError } from "../lib/apiError";
 import type { PublicMapAccount } from "./PublicTopicInsights";
 import { groupRelations } from "../lib/publicRelationGroups";
+import "./PublicKnowledgeMap.css";
 import "./TopicSources.css";
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
@@ -74,7 +75,7 @@ export interface MapSourceNote {
  * (free) and AI (subscription or credit). Wikipedia connections and AI
  * related topics become notes in My map, linked as typed relations.
  */
-export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAddConnections, onSaveAnswer, onExplorePublic }: {
+export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAddConnections, onSaveAnswer, onPreviewConnections }: {
   /** Null searches Wikipedia to add a new topic to My map. */
   note: MapSourceNote | null;
   account: PublicMapAccount;
@@ -82,7 +83,8 @@ export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAdd
   onAddTopic(topic: PublicTopic): void;
   onAddConnections(noteId: string, expansion: PublicExpansion): number;
   onSaveAnswer(noteId: string, answer: PrivateAnswer): void;
-  onExplorePublic(topic: PublicTopic): void;
+  /** Shows the note's Wikipedia connections on the map as previews, without adding them. */
+  onPreviewConnections(noteId: string): void;
 }) {
   const [article, setArticle] = useState<{ noteId: string; topic: PublicTopic | null; error?: string } | null>(null);
   const [offset, setOffset] = useState(0);
@@ -172,7 +174,7 @@ export function MapTopicSourcesPanel({ note, account, onClose, onAddTopic, onAdd
               <div className="topic-sources-actions">
                 <button type="button" className="public-map-primary" disabled={expanding || (!!expansion && !expansion.result.hasMore)} onClick={() => void addConnections()}>
                   {expanding ? "Adding connections…" : expansion ? expansion.result.hasMore ? "Add more connections" : "All connections added" : "Add Wikipedia connections"}</button>
-                <button type="button" onClick={() => onExplorePublic(matched.topic!)}>Explore in public map</button>
+                <button type="button" onClick={() => onPreviewConnections(note.id)}>Preview them on the map first</button>
               </div>
               {expandError ? <p className="public-map-error" role="alert">{expandError}</p> : null}
               {expansion ? <>

@@ -1,7 +1,6 @@
 import type { BackendServiceId } from "../types";
 import { ApiError } from "./apiError";
-import { normalizeAIExecution } from "@margin-chat/workspace-contracts";
-import { normalizeAgentStep } from "@margin-chat/workspace-contracts";
+import { normalizeAIExecution, normalizeAgentStep } from "@margin-chat/workspace-contracts";
 import type { AgentRunStep, AIExecutionRecord } from "../types";
 
 export interface ChatReplyResponse {
@@ -16,27 +15,32 @@ export interface ChatReplyResponse {
   reply: string;
 }
 
-/** One live agent step, with the run's settled spend so far when it is metered. */
-export interface AgentStepEvent {
-  step: AgentRunStep;
-  spentMicros?: number;
-}
+/**
+ * Live agent progress: a finished step (with the run's settled spend so far when
+ * it is metered), a piece of the model's thinking as it streams, or the model
+ * starting to write text.
+ */
+export type AgentEvent =
+  | { type: "step"; step: AgentRunStep; spentMicros?: number }
+  | { type: "thinking"; delta: string }
+  | { type: "activity"; activity: "writing" };
 
 interface ChatStreamEvent {
   delta?: string;
   step?: unknown;
   spentMicros?: unknown;
+  activity?: unknown;
   error?: string;
   metadata?: ChatReplyResponse["metadata"];
   statusCode?: number;
-  type?: "metadata" | "delta" | "step" | "done" | "error";
+  type?: "metadata" | "delta" | "step" | "thinking" | "activity" | "done" | "error";
 }
 
 export async function readChatReplyStream(
   body: ReadableStream<Uint8Array>,
   onDelta?: (delta: string) => void,
   onMetadata?: (metadata: ChatReplyResponse["metadata"]) => void,
-  onStep?: (event: AgentStepEvent) => void,
+  onAgentEvent?: (event: AgentEvent) => void,
 ): Promise<ChatReplyResponse> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -77,8 +81,10 @@ export async function readChatReplyStream(
     if (event.type === "step") {
       const step = normalizeAgentStep(event.step);
       const spentMicros = Number.isSafeInteger(event.spentMicros) && (event.spentMicros as number) >= 0 ? event.spentMicros as number : undefined;
-      if (step) onStep?.({ step, ...(spentMicros === undefined ? {} : { spentMicros }) });
+      if (step) onAgentEvent?.({ type: "step", step, ...(spentMicros === undefined ? {} : { spentMicros }) });
     }
+    if (event.type === "thinking" && typeof event.delta === "string" && event.delta) onAgentEvent?.({ type: "thinking", delta: event.delta });
+    if (event.type === "activity" && event.activity === "writing") onAgentEvent?.({ type: "activity", activity: "writing" });
     if (event.type === "done") completed = true;
   };
 

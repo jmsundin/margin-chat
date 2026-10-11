@@ -36,6 +36,12 @@ function claudeSse(blocks: any[], stopReason: string) {
   return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
 }
 
+function responsesSse(events: any[]) {
+  return new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
+}
+
+const answer = (text: string) => ({ type: "message", role: "assistant", content: [{ type: "output_text", text }] });
+
 describe("agent loop across providers", () => {
   test("stops calling tools once its time limit has passed", async () => {
     const bodies: any[] = [];
@@ -55,7 +61,7 @@ describe("agent loop across providers", () => {
     expect(result.agent).toMatchObject({ stopReason: "time-limit", modelCalls: 4 });
   });
 
-  test("Claude: runs tool_use calls and replays thinking with the tool results", async () => {
+  test("Claude: runs tool_use calls, streams its thinking and replays it with the tool results", async () => {
     const bodies: any[] = [];
     globalThis.fetch = (async (_url: any, init: any) => {
       bodies.push(JSON.parse(init.body));
@@ -65,11 +71,18 @@ describe("agent loop across providers", () => {
         : claudeSse([{ type: "text", text: "You chose $20 a month." }], "end_turn");
     }) as typeof fetch;
     const steps: any[] = [];
+    const live: string[] = [];
     const result = await runAgent({ provider: "anthropic", apiKey: "sk-ant", chatRequest, model: "claude-opus-5-5", systemInstruction: "Help.",
-      maxOutputTokens: 1000, usageMeter: null, onStep: async (event: any) => { steps.push(event.step); } });
+      maxOutputTokens: 1000, usageMeter: null, onStep: async (event: any) => { steps.push(event.step); live.push(`step:${event.step.kind}`); },
+      onThinking: async (delta: string) => { live.push(`thinking:${delta}`); }, onActivity: async (activity: string) => { live.push(activity); } });
     expect(result.reply).toBe("You chose $20 a month.");
-    expect(result.agent).toEqual({ steps, stopReason: "answered", modelCalls: 2 });
+    expect(result.agent).toEqual({ steps, stopReason: "answered", reasoning: "shared", modelCalls: 2 });
+    // Thinking streams while the call runs, then is recorded ahead of the call's other steps.
+    expect(live).toEqual(["thinking:Look it up.", "writing", "step:thinking", "step:note", "step:tool", "writing"]);
+    // Claude 5 models hide thinking unless the request asks for the summarized form.
+    expect(bodies[0].thinking).toEqual({ type: "adaptive", display: "summarized" });
     expect(steps).toEqual([
+      { kind: "thinking", label: "Look it up.", ok: true },
       { kind: "note", label: "Checking your notes.", ok: true },
       { kind: "tool", tool: "search_conversations", label: "Searched for “pricing”", detail: "2 matches", ok: true },
     ]);
@@ -82,6 +95,65 @@ describe("agent loop across providers", () => {
     expect(toolResult.role).toBe("user");
     expect(toolResult.content[0]).toMatchObject({ type: "tool_result", tool_use_id: "toolu_1" });
     expect(JSON.parse(toolResult.content[0].content).matches[0].title).toBe("Pricing notes");
+  });
+
+  test("OpenAI: streams the reasoning summary and records it as a thinking step", async () => {
+    const bodies: any[] = [];
+    const reasoning = { type: "reasoning", id: "rs_1", summary: [
+      { type: "summary_text", text: "**Checking notes**\n\nThe user asks about pricing." }, { type: "summary_text", text: "Search first." }] };
+    globalThis.fetch = (async (_url: any, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return bodies.length === 1 ? responsesSse([
+        { type: "response.reasoning_summary_part.added", summary_index: 0 },
+        { type: "response.reasoning_summary_text.delta", delta: "**Checking notes**\n\n" },
+        { type: "response.reasoning_summary_text.delta", delta: "The user asks about pricing." },
+        { type: "response.reasoning_summary_part.added", summary_index: 1 },
+        { type: "response.reasoning_summary_text.delta", delta: "Search first." },
+        { type: "response.completed", response: { model: "gpt", output: [reasoning,
+          { type: "function_call", name: "search_conversations", call_id: "call_1", arguments: "{\"query\":\"pricing\"}" }] } },
+      ]) : responsesSse([
+        { type: "response.output_text.delta", delta: "You chose $20 a month." },
+        { type: "response.completed", response: { model: "gpt", output: [answer("You chose $20 a month.")] } },
+      ]);
+    }) as typeof fetch;
+    const live: string[] = [];
+    const result = await runAgent({ provider: "openai", apiKey: "sk", chatRequest, model: "gpt-summary", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null,
+      onThinking: async (delta: string) => { live.push(delta); }, onActivity: async (activity: string) => { live.push(`[${activity}]`); } });
+    expect(bodies[0]).toMatchObject({ stream: true, reasoning: { summary: "auto" } });
+    expect(live).toEqual(["**Checking notes**\n\n", "The user asks about pricing.", "\n\n", "Search first.", "[writing]"]);
+    expect(result.reply).toBe("You chose $20 a month.");
+    expect(result.agent.reasoning).toBe("shared");
+    expect(result.agent.steps.map((step: any) => step.kind)).toEqual(["thinking", "tool"]);
+    expect(result.agent.steps[0].label).toBe("**Checking notes**\n\nThe user asks about pricing.\n\nSearch first.");
+    // The reasoning item goes back with the tool output so the model keeps its train of thought.
+    expect(bodies[1].input).toContainEqual(reasoning);
+  });
+
+  test("OpenAI: a model or account that can't return reasoning summaries answers without them", async () => {
+    const bodies: any[] = [];
+    globalThis.fetch = (async (_url: any, init: any) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      return body.reasoning
+        ? Response.json({ error: { message: "Your organization must be verified to generate reasoning summaries." } }, { status: 400 })
+        : Response.json({ output: [answer("Hi")] });
+    }) as typeof fetch;
+    const run = () => runAgent({ provider: "openai", apiKey: "sk", chatRequest, model: "gpt-no-summary", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null });
+    const result = await run();
+    expect(result.reply).toBe("Hi");
+    expect(result.agent).toMatchObject({ reasoning: "not-shared", steps: [] });
+    await run();
+    // Asked once; later calls for that model don't ask again.
+    expect(bodies.map((body) => Boolean(body.reasoning))).toEqual([true, false, false]);
+  });
+
+  test("an answer cut short by its output limit is kept, as before streaming", async () => {
+    globalThis.fetch = (async () => responsesSse([
+      { type: "response.output_text.delta", delta: "The first half" },
+      { type: "response.incomplete", response: { model: "gpt", status: "incomplete", output: [answer("The first half")] } },
+    ])) as typeof fetch;
+    const result = await runAgent({ provider: "openai", apiKey: "sk", chatRequest, model: "gpt", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null });
+    expect(result.reply).toBe("The first half");
   });
 
   test("xAI: keeps the instruction as a system message and returns function outputs", async () => {
@@ -98,6 +170,7 @@ describe("agent loop across providers", () => {
     expect(result.agent.steps[0]).toMatchObject({ label: "Read “Pricing notes”", ok: true });
     expect(bodies[0].input[0]).toEqual({ role: "system", content: "Help." });
     expect(bodies[0].instructions).toBeUndefined();
+    expect(bodies[0].reasoning).toBeUndefined();
     expect(bodies[1].input.at(-1)).toMatchObject({ type: "function_call_output", call_id: "call_1" });
   });
 
@@ -146,6 +219,27 @@ describe("agent mode in the chat service", () => {
     expect(events).toEqual(["ready", "step:search_conversations", "delta:You chose $20 a month."]);
     expect(result.metadata.execution.agent).toMatchObject({ stopReason: "answered", modelCalls: 2, steps: [{ tool: "search_conversations" }] });
     expect(normalizeAIExecution(result.metadata.execution)?.agent?.steps).toHaveLength(1);
+  });
+
+  test("streams the model's thinking as it is written, ahead of the step that records it", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls === 1 ? responsesSse([
+        { type: "response.reasoning_summary_text.delta", delta: "Look in the notes." },
+        { type: "response.completed", response: { model: "gpt", output: [{ type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "Look in the notes." }] },
+          { type: "function_call", name: "search_conversations", call_id: "call_1", arguments: "{\"query\":\"pricing\"}" }] } },
+      ]) : responsesSse([{ type: "response.completed", response: { model: "gpt", output: [answer("You chose $20 a month.")] } }]);
+    }) as typeof fetch;
+    const events: string[] = [];
+    const result = await service().requestReplyStream(payload("openai-api", { agent: true }), { userId: "owner" }, {
+      onReady: () => { events.push("ready"); },
+      onThinking: (delta: string) => { events.push(`thinking:${delta}`); },
+      onStep: ({ step }: any) => { events.push(`step:${step.kind}`); },
+      onDelta: (delta: string) => { events.push(`delta:${delta}`); },
+    });
+    expect(events).toEqual(["ready", "thinking:Look in the notes.", "step:thinking", "step:tool", "delta:You chose $20 a month."]);
+    expect(normalizeAIExecution(result.metadata.execution)?.agent).toMatchObject({ reasoning: "shared", steps: [{ kind: "thinking", label: "Look in the notes." }, { kind: "tool" }] });
   });
 
   test("the retired OpenAI Agent service still runs as an agent", async () => {
@@ -197,5 +291,11 @@ describe("agent settings", () => {
       steps: [{ kind: "tool", tool: "x", label: "Read" }, { kind: "evil", label: "x" }, { kind: "note", label: "" }],
     } });
     expect(receipt?.agent).toEqual({ steps: [{ kind: "tool", tool: "x", label: "Read", ok: true }], stopReason: "answered", budgetMicros: 500_000 });
+    const thinking = normalizeAIExecution({ schemaVersion: 1, model: "m", provider: "anthropic-api", agent: {
+      reasoning: "shared", steps: [{ kind: "thinking", label: "x".repeat(5_000) }, { kind: "thinking", label: "  " }],
+    } })?.agent;
+    expect(thinking?.reasoning).toBe("shared");
+    expect(thinking?.steps).toEqual([{ kind: "thinking", label: "x".repeat(4_000), ok: true }]);
+    expect(normalizeAIExecution({ schemaVersion: 1, model: "m", provider: "openai-api", agent: { reasoning: "maybe", steps: [] } })?.agent).not.toHaveProperty("reasoning");
   });
 });
