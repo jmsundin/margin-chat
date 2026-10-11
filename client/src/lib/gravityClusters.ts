@@ -260,6 +260,22 @@ export function applyClusterPlacements(found: FoundCluster[], placements: Readon
   return result;
 }
 
+/**
+ * The document categories Clusters shows, without laying anything out: links
+ * first, then subject (embeddings) when given, then the user's own moves.
+ * Other views (the document sidebar, say) can group by these, and name them
+ * with useClusterLabels, which keys names by each cluster's fingerprint.
+ */
+export function findSubjectClusters(ids: string[], connections: Connection[], options: {
+  topicVector?: (id: string) => Float32Array | undefined;
+  placements?: ReadonlyMap<string, string>;
+} = {}): Array<{ hubId: string | null; memberIds: string[]; fingerprint: string }> {
+  const linkClusters = findGravityClusters(ids, connections).clusters;
+  const byTopic: FoundCluster[] = options.topicVector ? mergeClustersByTopic(linkClusters, options.topicVector) : linkClusters;
+  const found = options.placements ? applyClusterPlacements(byTopic, options.placements) : byTopic;
+  return found.map((cluster) => ({ ...cluster, fingerprint: clusterFingerprint(cluster.memberIds) }));
+}
+
 /** A group of clusters, or of groups; level 1 groups clusters, level 2 groups level 1, and so on. */
 export interface GravityClusterGroup extends GravityCluster {
   level: number;
@@ -304,9 +320,7 @@ export function layoutGravityClusters(
   } = {},
 ): GravityClusterLayout {
   const ids = nodes.map((node) => node.conversationId);
-  const linkClusters = findGravityClusters(ids, connections).clusters;
-  const byTopic: FoundCluster[] = options.topicVector ? mergeClustersByTopic(linkClusters, options.topicVector) : linkClusters;
-  const found = options.placements ? applyClusterPlacements(byTopic, options.placements) : byTopic;
+  const found = findSubjectClusters(ids, connections, options);
   const groups: Array<FoundCluster & { id: string; period?: { start: number; end: number } }> = [];
   for (const group of found) {
     if (group.hubId !== null) { groups.push({ ...group, id: `cluster:${group.hubId}` }); continue; }
