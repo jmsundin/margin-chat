@@ -245,12 +245,21 @@ export interface GraphDockControls {
 type GraphDockSide = "left" | "right" | "top" | "bottom";
 const GRAPH_DOCK_SIDES: GraphDockSide[] = ["left", "right", "top", "bottom"];
 const DOCK_SIDE_STORAGE_KEY = "margin-map-dock-side";
+const DOCK_SIZE_STORAGE_KEY = "margin-map-dock-size";
 
 function readDockSide(): GraphDockSide {
   try {
     const side = localStorage.getItem(DOCK_SIDE_STORAGE_KEY);
     return GRAPH_DOCK_SIDES.includes(side as GraphDockSide) ? side as GraphDockSide : "right";
   } catch { return "right"; }
+}
+
+/** The panel size the user dragged to, or null to open at half the map. */
+function readDockSize(): number | null {
+  try {
+    const size = Number(localStorage.getItem(DOCK_SIZE_STORAGE_KEY));
+    return Number.isFinite(size) && size > 0 ? size : null;
+  } catch { return null; }
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -913,7 +922,7 @@ export default function ConversationGraphView({
   const dockBodyRef = useRef<HTMLDivElement>(null);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const keyboardHintId = useId();
-  const [dockWidth, setDockWidth] = useState(380);
+  const [dockWidth, setDockWidth] = useState<number | null>(readDockSize);
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [dockSide, setDockSide] = useState<GraphDockSide>(readDockSide);
   const dockMoveRef = useRef<{ pointerId: number; clientX: number; clientY: number; moved: boolean } | null>(null);
@@ -2436,10 +2445,22 @@ export default function ConversationGraphView({
     return { top: Math.min(anchor.bottom + 4, window.innerHeight - 120), left: Math.max(8, Math.min(anchor.left, window.innerWidth - 248)) };
   }
 
+  const dockMinimum = dockVertical ? 200 : 280;
+  function dockAvailable() {
+    return (dockVertical ? workspaceRef.current?.clientHeight : workspaceRef.current?.clientWidth) || 1000;
+  }
+  // Until the user resizes it, the panel takes half the map so a document and its children fit.
+  function currentDockSize() {
+    if (dockWidth !== null) return dockWidth;
+    const bounds = dockBodyRef.current?.parentElement?.getBoundingClientRect();
+    return (dockVertical ? bounds?.height : bounds?.width) || Math.round(dockAvailable() / 2);
+  }
+
   function resizeDock(size: number) {
-    const minimum = dockVertical ? 200 : 280;
-    const available = (dockVertical ? workspaceRef.current?.clientHeight : workspaceRef.current?.clientWidth) ?? 1000;
-    setDockWidth(clamp(size, minimum, Math.max(minimum, Math.min(640, available - minimum))));
+    const next = Math.round(clamp(size, dockMinimum, Math.max(dockMinimum, dockAvailable() - dockMinimum)));
+    setDockWidth(next);
+    try { localStorage.setItem(DOCK_SIZE_STORAGE_KEY, String(next)); }
+    catch { /* The size still applies for this visit. */ }
   }
 
   function closeDock() {
@@ -2458,10 +2479,10 @@ export default function ConversationGraphView({
     // The key pointing away from the panel's edge grows it.
     const grow = { right: "ArrowLeft", left: "ArrowRight", bottom: "ArrowUp", top: "ArrowDown" }[dockSide];
     const shrink = { right: "ArrowRight", left: "ArrowLeft", bottom: "ArrowDown", top: "ArrowUp" }[dockSide];
-    if (event.key === grow) resizeDock(dockWidth + 24);
-    else if (event.key === shrink) resizeDock(dockWidth - 24);
+    if (event.key === grow) resizeDock(currentDockSize() + 24);
+    else if (event.key === shrink) resizeDock(currentDockSize() - 24);
     else if (event.key === "Home") resizeDock(0);
-    else if (event.key === "End") resizeDock(640);
+    else if (event.key === "End") resizeDock(Infinity);
     else return;
     event.preventDefault();
   }
@@ -2986,7 +3007,7 @@ export default function ConversationGraphView({
           `conversation-graph-workspace${dockedConversation || inspectedCluster ? " has-docked-chat" : ""}${!dockedConversation || dockSide === "right" ? "" : ` is-dock-${dockSide}`}`
         }
         ref={workspaceRef}
-        style={{ "--personal-map-dock-width": `${dockWidth}px` } as CSSProperties}
+        style={{ "--personal-map-dock-width": dockWidth === null ? "50%" : `${dockWidth}px` } as CSSProperties}
       >
         <div
           className={`conversation-graph-viewport${panelView ? " is-analysis-view" : ""}${isPanning ? " is-panning" : ""}${returningFromDocument ? " is-returning-from-document" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
@@ -3476,7 +3497,7 @@ export default function ConversationGraphView({
         {dockedConversation ? (
           <>
           <div className="conversation-graph-dock-resize" role="separator" tabIndex={0}
-            aria-label="Resize docked chat" aria-orientation={dockVertical ? "horizontal" : "vertical"} aria-valuemin={dockVertical ? 200 : 280} aria-valuemax={640} aria-valuenow={dockWidth}
+            aria-label="Resize docked chat" aria-orientation={dockVertical ? "horizontal" : "vertical"} aria-valuemin={dockMinimum} aria-valuemax={Math.max(dockMinimum, dockAvailable() - dockMinimum)} aria-valuenow={currentDockSize()}
             title={dockVertical ? "Drag to resize; use Up and Down arrow keys" : "Drag to resize; use Left and Right arrow keys"}
             onKeyDown={handleDockResizeKeyDown}
             onPointerDown={(event) => {
@@ -3486,7 +3507,7 @@ export default function ConversationGraphView({
               event.currentTarget.setPointerCapture(event.pointerId);
               const dockBounds = dockBodyRef.current?.parentElement?.getBoundingClientRect();
               dockResizeRef.current = { pointerId: event.pointerId, client: dockVertical ? event.clientY : event.clientX,
-                size: (dockVertical ? dockBounds?.height : dockBounds?.width) || dockWidth };
+                size: (dockVertical ? dockBounds?.height : dockBounds?.width) || currentDockSize() };
             }}
             onPointerMove={(event) => {
               const resize = dockResizeRef.current;
