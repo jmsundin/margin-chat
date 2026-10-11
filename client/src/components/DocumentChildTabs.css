@@ -1,17 +1,29 @@
-.document-child-tabs { position: relative; flex: 0 0 auto; }
-.document-panel .document-child-tabs-trigger, .document-child-tabs-trigger { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--button-surface); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
-.document-child-tabs-trigger:hover, .document-child-tabs.is-open .document-child-tabs-trigger { color: var(--ink); border-color: var(--accent); }
+/* Vertical child tabs: a column beside the document body. */
+.document-child-tabs { display: flex; flex-direction: column; flex: 0 0 clamp(124px, 26cqi, 200px); width: clamp(124px, 26cqi, 200px); min-height: 0; padding: 10px 0 10px 8px; border-right: 1px solid var(--line); }
+.document-child-tabs.is-collapsed { flex-basis: 36px; width: 36px; padding: 10px 4px; align-items: center; }
+.document-panel .document-child-tabs-toggle, .document-child-tabs-toggle { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; margin: 0 8px 8px 0; padding: 5px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; letter-spacing: .02em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+.document-child-tabs.is-collapsed .document-child-tabs-toggle { flex-direction: column; gap: 2px; margin: 0; padding: 6px 4px; border-color: var(--line); }
+.document-child-tabs-toggle:hover { color: var(--ink); background: var(--button-surface); }
+.document-child-tabs-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-child-tabs-chevron { margin-left: auto; font-size: 15px; line-height: 1; text-transform: none; }
+.document-child-tabs.is-collapsed .document-child-tabs-chevron { margin: 0; }
 .document-child-count { color: var(--accent); font-variant-numeric: tabular-nums; }
-.document-child-tabs-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.document-child-tabs-panel { position: fixed; z-index: 220; display: flex; flex-direction: column; box-sizing: border-box; padding: 8px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel); color: var(--ink); box-shadow: 0 8px 24px #0003; }
-.document-child-tabs-heading { flex: 0 0 auto; padding: 4px 6px 10px; color: var(--muted); font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.document-child-tabs-list { display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.document-child-tabs-list > button { flex: 0 0 auto; display: flex; flex-direction: column; gap: 5px; width: 100%; padding: 10px; text-align: left; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
-.document-child-item-heading { display: flex; align-items: baseline; gap: 10px; width: 100%; }
-.document-child-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.document-child-item-heading small { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
-.document-child-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: 12px; line-height: 1.5; color: var(--muted); }
-.document-child-tabs-list > button:hover { background: var(--button-surface); }
-.document-child-tabs-list > button[aria-current="page"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
-.document-child-tabs-list > button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.document-child-empty { margin: 8px 6px 12px; color: var(--muted); font-size: 13px; }
+.document-child-tabs-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+.document-panel .document-child-tab, .document-child-tab { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 7px 10px 7px 9px; text-align: left; border: 1px solid transparent; border-right: 0; border-radius: 8px 0 0 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; }
+.document-child-tab:hover { background: var(--button-surface); color: var(--ink); }
+.document-child-tab.is-open { color: var(--ink); }
+.document-child-tab[aria-current="page"] { margin-right: -1px; background: var(--bg); color: var(--ink); border-color: var(--line); box-shadow: inset 2px 0 var(--accent); }
+.document-child-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-child-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.document-child-tab small { color: var(--muted); font-size: 10px; }
+.document-child-tab.is-minimized small { font-style: italic; }
+
+/* Horizontal sibling tabs above an opened child's header, styled like the workspace tabs. */
+.document-sibling-tabs { display: flex; align-items: stretch; gap: 4px; flex: 0 0 auto; min-width: 0; padding: 6px 10px 0; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--panel); border-radius: 10px 10px 0 0; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; overscroll-behavior-x: contain; }
+.document-panel .document-sibling-tab, .document-sibling-tab { display: flex; align-items: center; flex: 0 1 180px; min-width: 72px; max-width: 200px; min-height: 30px; margin-bottom: -1px; padding: 5px 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--button-surface); color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.document-sibling-tab:hover { background: var(--panel-strong); color: var(--ink); }
+.document-sibling-tab.is-active { background: var(--bg); color: var(--ink); border-color: var(--line); box-shadow: inset 0 2px var(--accent); cursor: default; }
+.document-sibling-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.document-sibling-tab-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.document-sibling-tabs::-webkit-scrollbar { height: 4px; }
+.document-sibling-tabs::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }

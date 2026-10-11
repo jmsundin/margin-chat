@@ -40,6 +40,7 @@ import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } f
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import DocumentTabs from "./components/DocumentTabs";
 import DocumentChildTabs from "./components/DocumentChildTabs";
+import DocumentSiblingTabs from "./components/DocumentSiblingTabs";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
@@ -3563,7 +3564,11 @@ function WorkspaceAppContent({
 
   /** Expand here: like a browser tab, the focused document's place goes to the chosen document. */
   function handleExpandDocumentHere(conversationId: string) {
-    const currentId = activeConversation.id;
+    handleSwitchDocumentInPlace(activeConversation.id, conversationId);
+  }
+
+  /** The target document takes `currentId`'s place, as Expand here does for the focused document. */
+  function handleSwitchDocumentInPlace(currentId: string, conversationId: string) {
     const target = state.conversations[conversationId];
     if (!target || conversationId === currentId) return;
     // Visible documents, compact notes and pinned panes keep their places; focus moves to them.
@@ -4066,14 +4071,8 @@ function WorkspaceAppContent({
 
   function renderDocumentControls(conversation: Conversation, view: "chat" | "graph" = "chat") {
     const noteCount = getMarginDocuments(conversation).length;
-    const childDocuments = documentChildrenByParent.get(conversation.id) ?? [];
-    if (!childDocuments.length && !(view === "chat" && noteCount) && !conversation.document?.marginNote) return null;
+    if (!(view === "chat" && noteCount) && !conversation.document?.marginNote) return null;
     return <>
-      {childDocuments.length ? <DocumentChildTabs parent={conversation} documents={childDocuments}
-        currentDocumentId={activeConversation.id}
-        openDocumentIds={[...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]}
-        minimizedDocumentIds={[...minimizedSideDocumentsByParent.values()].flatMap((documents) => documents.map((document) => document.id))}
-        onSelect={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
       {view === "chat" && noteCount ? <button type="button" className="document-margin-notes-toggle"
         aria-label={`${closedMarginNotes[conversation.id] ? "Show" : "Hide"} margin notes for ${conversation.title}`}
         aria-expanded={!closedMarginNotes[conversation.id]}
@@ -4085,6 +4084,31 @@ function WorkspaceAppContent({
         title={isCompactDocument(conversation) ? "Expand to full document" : "Show as a margin note"}
         onClick={() => handleToggleMarginPresentation(conversation.id)}>{isCompactDocument(conversation) ? "↗" : "↙"}</button> : null}
     </>;
+  }
+
+  /** Tabs keep creation order, so they don't jump when panes are reordered; linked documents follow. */
+  function getChildTabDocuments(parent: Conversation) {
+    const children = documentChildrenByParent.get(parent.id) ?? [];
+    const rank = (document: Conversation) => { const index = parent.childIds.indexOf(document.id); return index < 0 ? Infinity : index; };
+    return [...children].sort((a, b) => rank(a) - rank(b));
+  }
+
+  function renderChildTabs(conversation: Conversation) {
+    const childDocuments = getChildTabDocuments(conversation);
+    if (!childDocuments.length || isCompactDocument(conversation)) return null;
+    return <DocumentChildTabs parent={conversation} documents={childDocuments}
+      currentDocumentId={activeConversation.id}
+      openDocumentIds={[...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]}
+      minimizedDocumentIds={[...minimizedSideDocumentsByParent.values()].flatMap((documents) => documents.map((document) => document.id))}
+      onSelect={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} />;
+  }
+
+  function renderSiblingTabs(conversation: Conversation) {
+    const parent = conversation.parentId ? state.conversations[conversation.parentId] : undefined;
+    const siblings = parent ? getChildTabDocuments(parent) : [];
+    if (!parent || isCompactDocument(conversation) || !siblings.some((document) => document.id === conversation.id)) return null;
+    return <DocumentSiblingTabs parent={parent} documents={siblings} currentDocumentId={conversation.id}
+      onSelect={(id) => handleSwitchDocumentInPlace(conversation.id, id)} />;
   }
 
   /** Map View's menu: only actions that act on the map, with pin and close driving its split pane. */
@@ -4104,6 +4128,8 @@ function WorkspaceAppContent({
       headerLeading={dock?.leading}
       parentDocument={conversation.parentId ? state.conversations[conversation.parentId] : undefined}
       headerControls={dockHeader ? null : renderDocumentControls(conversation, view)}
+      childTabs={renderChildTabs(conversation)}
+      siblingTabs={view === "chat" ? renderSiblingTabs(conversation) : null}
       documentMenu={dockHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}

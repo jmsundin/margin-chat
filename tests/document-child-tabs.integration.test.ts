@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-test("child document tabs require intentional hover and support navigation and dismissal", async () => {
+test("vertical child tabs and horizontal sibling tabs navigate between child documents", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/documentChildTabsHarness.tsx"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
   });

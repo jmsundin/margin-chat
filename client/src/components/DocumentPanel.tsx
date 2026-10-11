@@ -23,6 +23,8 @@ import "./DocumentPanel.css";
 
 type DocumentValue = NonNullable<Conversation["document"]>;
 type Block = DocumentValue["blocks"][number];
+const PROMPT_ICON_SIZE = 28;
+const PROMPT_ICON_GAP = 4;
 
 export interface DocumentPanelProps {
   conversation: Conversation;
@@ -46,6 +48,10 @@ export interface DocumentPanelProps {
   compact?: boolean;
   presentationToggle?: ReactNode;
   childNavigation?: ReactNode;
+  /** Vertical tabs of this document's children, beside its body. */
+  childTabs?: ReactNode;
+  /** Horizontal tabs of this document and its siblings, above its header. */
+  siblingTabs?: ReactNode;
   parentDocument?: Pick<Conversation, "id" | "title">;
   /** @deprecated Group assignment is available in the document menu. */
   groupControl?: ReactNode;
@@ -131,6 +137,36 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   useOutsideDismiss(Boolean(openPromptId), () => setOpenPromptId(null), promptHistoryRef);
   useOutsideDismiss(Boolean(childNodes), () => setChildNodes(null), childNodesRef);
   useEffect(() => { if (invocation && !mobileKeyboard.mobile) promptRef.current?.focus(); }, [invocation, mobileKeyboard.mobile]);
+  const hasPrompts = document.prompts.length > 0;
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !hasPrompts || !editorMounted) return;
+    let frame = 0;
+    // Prompt icons sit in the left margin at the top of their block. Several
+    // prompts on one block, or on short neighboring blocks, stack downward.
+    const layout = () => {
+      const markers = [...body.querySelectorAll<HTMLElement>(".document-prompt-marker")]
+        .filter((marker) => marker.closest(".document-body") === body)
+        .map((marker) => ({ marker, top: marker.parentElement?.getBoundingClientRect().top ?? 0 }))
+        .sort((a, b) => a.top - b.top);
+      let previousBottom = -Infinity;
+      for (const { marker, top } of markers) {
+        const icons = marker.querySelectorAll(":scope > .document-prompt-icon, :scope > .document-child-nodes-icon").length || 1;
+        const placed = Math.max(top, previousBottom + PROMPT_ICON_GAP);
+        const offset = `${Math.round(placed - top)}px`;
+        if (marker.style.getPropertyValue("--prompt-stack-offset") !== offset) marker.style.setProperty("--prompt-stack-offset", offset);
+        previousBottom = placed + icons * PROMPT_ICON_SIZE + (icons - 1) * PROMPT_ICON_GAP;
+      }
+    };
+    const schedule = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(layout); };
+    schedule();
+    const mutations = typeof MutationObserver === "undefined" ? null : new MutationObserver(schedule);
+    mutations?.observe(body, { childList: true, subtree: true, characterData: true });
+    const resizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    resizes?.observe(body);
+    body.querySelectorAll(".rich-document-editor").forEach((editor) => resizes?.observe(editor));
+    return () => { window.cancelAnimationFrame(frame); mutations?.disconnect(); resizes?.disconnect(); };
+  }, [hasPrompts, editorMounted]);
   useEffect(() => {
     if (!invocation || document.blocks.some((block) => block.id === invocation.blockId)) return;
     setInvocation(null);
@@ -380,6 +416,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   }
 
   return <article className={`chat-panel document-panel${props.compact ? " is-compact-document" : ""}${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
+    {props.siblingTabs}
     {minimizedSideDocuments.length ? <nav className="document-side-restores" aria-label="Minimized side documents">
       {minimizedSideDocuments.map((sideDocument) => <button key={sideDocument.id} type="button"
         className="document-side-restore" aria-label={`Open side document: ${sideDocument.title || "Untitled document"}`}
@@ -409,7 +446,9 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {props.onClose ? <button type="button" className="document-window-button document-close-button" aria-label={`Close document: ${conversation.title || "Untitled document"}`} title="Close document" onClick={props.onClose}>×</button> : null}
         </div>
       </header> : null}
-    <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+    <div className={`document-panel-content${props.childTabs ? " has-child-tabs" : ""}`}>
+    {props.childTabs}
+    <div className={`panel-body document-body${hasPrompts ? " has-prompt-markers" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
         onUpdateBlock={updateBlock} onInsertBlock={insertBlock} onSplitBlock={splitBlock}
@@ -456,6 +495,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.error ? <p className="document-error" role="alert">{props.error}</p> : null}
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>
+    </div>
     </div>
     {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}
     <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>
