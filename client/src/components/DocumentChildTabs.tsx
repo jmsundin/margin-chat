@@ -21,7 +21,7 @@ function readCollapsed(): boolean {
   return saved === null ? window.innerWidth < 640 : saved === "1";
 }
 
-/** Vertical tabs beside a document's body: one tab per child, in saved order. */
+/** Vertical tabs on the right of a document's body: one tab per child, in saved order. */
 export default function DocumentChildTabs({ parent, documents, currentDocumentId, minimizedDocumentIds, openDocumentIds = [], onSelect }: Props) {
   const [collapsed, setCollapsed] = useState(readCollapsed);
   if (!documents.length) return null;
@@ -39,7 +39,7 @@ export default function DocumentChildTabs({ parent, documents, currentDocumentId
       title={collapsed ? "Show child documents" : "Hide child documents"} onClick={toggle}>
       {collapsed ? null : <span className="document-child-tabs-label">Children</span>}
       <span className="document-child-count">{documents.length}</span>
-      <span aria-hidden="true" className="document-child-tabs-chevron">{collapsed ? "›" : "‹"}</span>
+      <span aria-hidden="true" className="document-child-tabs-chevron">{collapsed ? "‹" : "›"}</span>
     </button>
     {collapsed ? null : <div className="document-child-tabs-list" onKeyDown={(event) => {
       if (!["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
