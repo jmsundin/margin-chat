@@ -2915,6 +2915,8 @@ export default function ConversationGraphView({
         <span>Documents sit in the groups you made. Zoom into a group to see its documents.</span>
         <button type="button" onClick={() => { closeViewOptions(); showAllGroups(); }}>Show all groups</button>
       </>}
+    </div> : isCanvasMode ? <div className="graph-mode-context" aria-label="Canvas status">
+      <span>Your own board: documents stay where you put them. Drag a card to move it{onCreateNoteAt ? ", double-click empty space to add a note" : ""}{onConnectConversation ? ", drag from a card's edge to link it" : ""}.</span>
     </div> : viewMode === "documents" ? <div className="graph-mode-context" aria-label="All documents status">
       <span>Every document, laid out by its connections. Use Layout at the bottom of the map to change the shape.</span>
       {selectedConversation ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selectedConversation.id, 1, documentLayoutMode); }}>Focus on {selectedConversation.title}</button> : null}
