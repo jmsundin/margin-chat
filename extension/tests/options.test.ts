@@ -17,8 +17,10 @@ beforeAll(async () => {
   optionsHtml = await Bun.file(new URL("../public/options.html", import.meta.url)).text();
 });
 afterEach(async () => { for (const window of windows.splice(0)) await window.happyDOM.close(); });
+const SERVER = "https://www.marginchat.com";
 const response = (userId = "reader", suffix = "A") => ({
-  token: `mc_extension_${suffix.repeat(43)}`,
+  token: `mc_workspace_${suffix.repeat(43)}`,
+  scope: "workspace",
   user: { id: userId, displayName: "Reader", email: `${userId}@example.test` },
   expiresAt: new Date(Date.now() + 86400_000).toISOString(),
 });
@@ -54,9 +56,7 @@ async function createOptions(fetchImpl: typeof fetch, storage: Record<string, an
   const input = (id: string) => element(id) as unknown as HTMLInputElement;
   return {
     storage, requested, removed, element, input, accessLevel: () => accessLevel,
-    async login(email = "reader@example.test", server = "https://margin.example", access = "capture") {
-      (element("access-mode") as unknown as HTMLSelectElement).value = access;
-      input("server-url").value = server;
+    async login(email = "reader@example.test") {
       input("email").value = email;
       input("password").value = " my account password ";
       element("connection-form").dispatchEvent(new window.Event("submit", { cancelable: true }));
@@ -70,29 +70,36 @@ async function createOptions(fetchImpl: typeof fetch, storage: Record<string, an
 }
 
 describe("extension password sign-in", () => {
-  test("workspace access explicitly requests the new session and preserves a pending capture through upgrade", async () => {
-    const existing = { serverUrl: "https://margin.example", token: response().token, connectionId: connectionIdentity("https://margin.example", "reader"), userId: "reader", displayName: "Reader" };
+  test("the form has no website or access choice", async () => {
+    const app = await createOptions((async () => Response.json(response())) as typeof fetch);
+    expect(app.element("server-url")).toBeNull();
+    expect(app.element("access-mode")).toBeNull();
+  });
+
+  test("sign-in upgrades a capture-only session to workspace access and preserves a pending capture", async () => {
+    const existing = { serverUrl: SERVER, token: `mc_extension_${"A".repeat(43)}`, connectionId: connectionIdentity(SERVER, "reader"), userId: "reader", displayName: "Reader" };
     const storage: Record<string, any> = { connection: existing, pendingSave: { connectionId: existing.connectionId, capture: { title: "Keep my pending save" } } };
     const calls: string[] = [];
     const app = await createOptions((async (url, init) => {
       calls.push(`${init?.method} ${url}`);
       if (init?.method === "DELETE") return Response.json({ ok: true });
-      return Response.json({ ...response(), token: `mc_workspace_${"W".repeat(43)}`, scope: "workspace" });
+      return Response.json(response("reader", "W"));
     }) as typeof fetch, storage);
-    await app.login("reader@example.test", "https://margin.example", "workspace");
-    expect(calls).toEqual(["POST https://margin.example/api/v1/extension-workspace-session", "DELETE https://margin.example/api/v1/extension-session"]);
+    expect(app.element("account").textContent).toContain("capture-only access");
+    await app.login();
+    expect(calls).toEqual([`POST ${SERVER}/api/v1/extension-workspace-session`, `DELETE ${SERVER}/api/v1/extension-session`]);
     expect(storage.connection.token).toBe(`mc_workspace_${"W".repeat(43)}`);
     expect(storage.pendingSave.connectionId).toBe(storage.connection.connectionId);
     expect(app.element("status").textContent).toContain("documents, notes, and AI");
     await app.logout();
     expect(storage.connection).toBeUndefined();
-    expect(calls.at(-1)).toBe("DELETE https://margin.example/api/v1/extension-session");
+    expect(calls.at(-1)).toBe(`DELETE ${SERVER}/api/v1/extension-session`);
   });
   test("requests access before sending credentials, stores only a scoped session, and clears the password", async () => {
     let app: Awaited<ReturnType<typeof createOptions>>;
     app = await createOptions((async (url, init) => {
-      expect(app.requested).toEqual(["https://margin.example/*"]);
-      expect(String(url)).toBe("https://margin.example/api/v1/extension-session");
+      expect(app.requested).toEqual([`${SERVER}/*`]);
+      expect(String(url)).toBe(`${SERVER}/api/v1/extension-workspace-session`);
       expect(init?.method).toBe("POST");
       expect(init?.credentials).toBe("omit");
       expect(init?.redirect).toBe("error");
@@ -102,10 +109,11 @@ describe("extension password sign-in", () => {
       return Response.json(response());
     }) as typeof fetch);
     await app.login();
-    expect(app.element("status").textContent).toContain("Signed in with capture-only access.");
+    expect(app.element("status").textContent).toContain("documents, notes, and AI");
+    expect(app.element("account").textContent).toBe("Signed in as reader@example.test");
     expect(app.input("password").value).toBe("");
     expect(app.storage.connection).toMatchObject({ userId: "reader", token: response().token });
-    expect(app.storage.connection.connectionId).toBe(connectionIdentity("https://margin.example", "reader"));
+    expect(app.storage.connection.connectionId).toBe(connectionIdentity(SERVER, "reader"));
     expect(JSON.stringify(app.storage)).not.toContain("password");
     expect(app.accessLevel()).toBe("TRUSTED_CONTEXTS");
   });
@@ -118,7 +126,7 @@ describe("extension password sign-in", () => {
     expect(requests).toBe(0);
     expect(denied.storage.connection).toBeUndefined();
     expect(denied.input("password").value).toBe("");
-    const previous = { serverUrl: "https://margin.example", ...response(), displayName: "Reader" };
+    const previous = { serverUrl: SERVER, ...response(), displayName: "Reader" };
     const app = await createOptions(fetchImpl, { connection: previous });
     await app.login();
     expect(app.storage.connection).toEqual(previous);
@@ -139,7 +147,7 @@ describe("extension password sign-in", () => {
     await app.logout();
     expect(app.storage.connection).toBeUndefined();
     expect(calls[1]).toEqual({ method: "DELETE", token: `Bearer ${response().token}` });
-    expect(app.removed).toEqual(["https://margin.example/*"]);
+    expect(app.removed).toEqual([`${SERVER}/*`]);
     await app.login();
     expect(app.storage.connection.connectionId).toBe(first);
     expect(app.storage.pendingSave.connectionId).toBe(first);
@@ -166,14 +174,14 @@ describe("extension password sign-in", () => {
     const app = await createOptions((async () => Response.json({ token: "bad", user: {} })) as typeof fetch);
     await app.login();
     expect(app.storage.connection).toBeUndefined();
-    expect(app.element("status").textContent).toContain("valid session");
+    expect(app.element("status").textContent).toContain("valid workspace session");
     expect(app.input("password").value).toBe("");
   });
 
   test("migrates a legacy pending draft only when its owner is verified", async () => {
     for (const userId of ["reader", "someone-else", undefined, 42]) {
       const storage = {
-        connection: { serverUrl: "https://margin.example", token: `mc_capture_${"B".repeat(43)}`, connectionId: "legacy-connection", displayName: "Reader" },
+        connection: { serverUrl: SERVER, token: `mc_capture_${"B".repeat(43)}`, connectionId: "legacy-connection", displayName: "Reader" },
         pendingSave: { connectionId: "legacy-connection", capture: { title: "Legacy draft" } },
       };
       const app = await createOptions((async (url) => Response.json(String(url).endsWith("capture-connection") ? { userId, displayName: "Reader", expiresAt: response().expiresAt } : response())) as typeof fetch, storage);

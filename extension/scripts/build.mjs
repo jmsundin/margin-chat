@@ -6,6 +6,7 @@ import { build as buildWorkspace } from "vite";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outdir = resolve(root, "dist");
+const serverUrl = process.env.MARGIN_EXTENSION_SERVER_URL?.trim() ?? "";
 await rm(outdir, { recursive: true, force: true });
 await mkdir(resolve(outdir, "icons"), { recursive: true });
 for (const entry of ["background", "popup", "options", "content", "overlay", "assistant"]) {
@@ -15,6 +16,7 @@ for (const entry of ["background", "popup", "options", "content", "overlay", "as
     target: "browser",
     format: entry === "content" || entry === "overlay" ? "iife" : "esm",
     minify: true,
+    define: { __MARGIN_EXTENSION_SERVER_URL__: JSON.stringify(serverUrl) },
   });
   if (!result.success) throw new Error(result.logs.join("\n"));
 }

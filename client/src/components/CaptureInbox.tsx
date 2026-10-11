@@ -1,4 +1,3 @@
-import { apiServerUrl } from "../lib/apiTransport";
 import { useEffect, useRef, useState } from "react";
 import {
   captureToMarkdown,
@@ -28,16 +27,9 @@ function ExtensionConnection() {
       <p className="eyebrow">Save to Margin · Chrome extension</p>
       <h3>Bring the web into your notes.</h3>
       <p>
-        Open the extension’s Settings and enter this website address.
-        Sign in with the same email and password you use for Margin Chat.
+        Open the extension’s Settings and sign in with the same email and
+        password you use for Margin Chat.
       </p>
-      <label htmlFor="capture-website">Margin Chat website</label>
-      <input
-        id="capture-website"
-        readOnly
-        value={apiServerUrl()}
-        onFocus={(event) => event.target.select()}
-      />
       <p className="capture-muted">
         The extension remembers your session without storing your password.
         You can sign out from its Settings. Resetting your password signs out
