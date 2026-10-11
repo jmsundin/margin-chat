@@ -14,7 +14,7 @@ const documentId = { document_id: { type: "string", description: "Exact document
 export const VAULT_TOOL_DEFINITIONS = [
   {
     name: "search_vault",
-    description: "Search the user's saved documents, notes, chats and uploaded files in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Private margin comments are never searched.",
+    description: "Search the user's saved documents, notes, chats, uploaded files and PDFs in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Private margin comments are never searched.",
     parameters: { type: "object", properties: { query: { type: "string", description: "A few keywords or a short phrase." } }, required: ["query"], additionalProperties: false },
   },
   {
@@ -171,20 +171,31 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
     }
     const messages = item.messages.map((message) => ({ role: message.role, content: clip(message.content, MESSAGE_CHARACTERS) }));
     const truncated = item.messageCount > messages.length || item.messages.some((message) => message.content.length > MESSAGE_CHARACTERS);
-    return { found: true, document: { ...base, messages, message_count: item.messageCount, truncated } };
+    // A PDF's document holds its notes and chat; the PDF's own text is in the vault index.
+    const file = workspace.passages ? await fileText(id).catch(() => null) : null;
+    return { found: true, document: { ...base, messages, message_count: item.messageCount, truncated,
+      ...(file?.text ? { file_text: file.text, file_text_truncated: file.truncated } : {}) } };
   }
 
-  /** An uploaded file, from the text the vault index extracted from it. */
-  async function readFile(id) {
+  /** A file's text as the vault index extracted it, page by page; null when it isn't indexed. */
+  async function fileText(id) {
     const file = await workspace.passages.readFile(id);
-    if (!file) return { document_id: id, found: false };
+    if (!file) return null;
+    const full = file.passages.map((passage) => passage.pageNumber ? `[Page ${passage.pageNumber}]\n${passage.content}` : passage.content).join("\n\n");
+    const text = clip(full, readCharacters);
+    return { file, text, truncated: text.length < full.length };
+  }
+
+  /** An uploaded file or a vault PDF, from the text the vault index extracted from it. */
+  async function readFile(id) {
+    const found = await fileText(id);
+    if (!found) return { document_id: id, found: false };
+    const { file, text, truncated } = found;
     const base = { document_id: id, title: file.title, kind: "file", updated_at: file.updatedAt };
     if (!file.passages.length) {
       return { found: true, document: { ...base, text: "", truncated: false, ...(file.error ? { error: "This file's text couldn't be read." } : {}) } };
     }
-    const full = file.passages.map((passage) => passage.pageNumber ? `[Page ${passage.pageNumber}]\n${passage.content}` : passage.content).join("\n\n");
-    const text = clip(full, readCharacters);
-    return { found: true, document: { ...base, text, truncated: text.length < full.length } };
+    return { found: true, document: { ...base, text, truncated } };
   }
 
   async function typedRelations(entry) {

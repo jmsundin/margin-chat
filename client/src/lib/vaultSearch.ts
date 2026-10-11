@@ -198,9 +198,9 @@ function cloudEvidence(passage: VaultSearchPassage): SearchEvidenceRef {
 const RELATED_KINDS: Record<VaultRelatedPassage["kind"], string> = { document: "Document", note: "Note", chat: "Chat", file: "File" };
 const RELATED_MATCHES: Record<VaultRelatedPassage["matched"], string> = { both: "Same words and meaning", keyword: "Same words", meaning: "Related by meaning" };
 
-/** A search index match as a passage to open; a file opens the chat or document it is attached to. */
+/** A search index match as a passage to open; an uploaded file opens the chat or document it is attached to, a vault PDF its own document. */
 export function relatedPassageHit(passage: VaultRelatedPassage, attachedTitle?: string): VaultSearchPassageHit | null {
-  const conversationId = passage.sourceKind === "conversation" ? passage.id : passage.attachedTo;
+  const conversationId = passage.sourceKind === "attachment" ? passage.attachedTo : passage.id;
   if (!conversationId) return null;
   const evidence: SearchEvidenceRef = passage.sourceKind === "conversation" && passage.kind === "document" && passage.blockId
     ? { conversationId, sourceKind: "document", sourceBlockId: passage.blockId }

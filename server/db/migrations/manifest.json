@@ -80,6 +80,11 @@
       "id": "0016_desktop_downloads",
       "file": "0016_desktop_downloads.sql",
       "transaction": true
+    },
+    {
+      "id": "0017_vault_file_passages",
+      "file": "0017_vault_file_passages.sql",
+      "transaction": true
     }
   ]
 }

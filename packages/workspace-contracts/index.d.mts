@@ -9,3 +9,4 @@ export * from "./workspaceModel.mjs";
 export * from "./markdown.mjs";
 export * from "./frontmatter.mjs";
 export * from "./relations.mjs";
+export * from "./vaultFiles.mjs";

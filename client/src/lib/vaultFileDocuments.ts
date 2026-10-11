@@ -1,5 +1,9 @@
 import type { AppState, Conversation, VaultFileReference } from "../types";
 import { MAX_VAULT_MEDIA_BYTES, mediaContentType } from "./documentMedia";
+import { isVaultFileDocumentPath, vaultFileDocumentId, vaultFileKind, vaultFileTitle } from "@margin-chat/workspace-contracts";
+
+// Shared with the server, which indexes the PDFs' text under the same document IDs.
+export { isVaultFileDocumentPath, vaultFileDocumentId, vaultFileKind, vaultFileTitle };
 
 /**
  * PDFs and images in the vault open as documents, like Obsidian shows them.
@@ -9,9 +13,6 @@ import { MAX_VAULT_MEDIA_BYTES, mediaContentType } from "./documentMedia";
  */
 
 const PDF = /\.pdf$/iu;
-const IMAGE = /\.(?:png|jpe?g|gif|webp|avif|svg|bmp)$/iu;
-/** Margin Chat's own folders: pasted media, upload originals, recovery copies. */
-const MANAGED = /^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/iu;
 
 export type VaultFileKind = VaultFileReference["kind"];
 
@@ -24,15 +25,6 @@ export interface VaultFileListing {
   localOnly?: boolean;
 }
 
-export function vaultFileKind(path: string): VaultFileKind | null {
-  return PDF.test(path) ? "pdf" : IMAGE.test(path) ? "image" : null;
-}
-
-/** A PDF or image outside Margin Chat's own folders and hidden folders. */
-export function isVaultFileDocumentPath(path: string): boolean {
-  return vaultFileKind(path) !== null && !MANAGED.test(path) && !path.split("/").some((segment) => segment.startsWith("."));
-}
-
 /** Whether a vault file can sync to the cloud; larger ones stay in the folder. */
 export function isSyncableVaultFileSize(size: number) {
   return size <= MAX_VAULT_MEDIA_BYTES;
@@ -40,22 +32,6 @@ export function isSyncableVaultFileSize(size: number) {
 
 export function vaultFileContentType(path: string) {
   return PDF.test(path) ? "application/pdf" : mediaContentType(path);
-}
-
-export function vaultFileTitle(path: string) {
-  return path.split("/").at(-1) || path;
-}
-
-/** The same file always opens the same document, on every device. */
-export function vaultFileDocumentId(path: string) {
-  let hash = 0x811c9dc5;
-  for (const character of path.normalize("NFC")) {
-    hash ^= character.codePointAt(0)!;
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  let second = 0;
-  for (const character of path.normalize("NFC").toLowerCase()) second = (Math.imul(second, 31) + character.codePointAt(0)!) >>> 0;
-  return `file-${hash.toString(36)}${second.toString(36)}`;
 }
 
 function referencedIds(state: Pick<AppState, "conversations">) {

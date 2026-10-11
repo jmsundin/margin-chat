@@ -112,9 +112,9 @@ export interface VaultSearchPassage {
 
 /** A passage from the vault's search index, found by keyword, by meaning, or both. */
 export interface VaultRelatedPassage {
-  /** The document, note or chat; for an uploaded file, the file's own ID. */
+  /** The document, note or chat; for an uploaded file, the file's own ID; for a vault PDF, its document's ID. */
   id: string;
-  sourceKind: "conversation" | "attachment";
+  sourceKind: "conversation" | "attachment" | "vault-file";
   kind: "document" | "note" | "chat" | "file";
   title: string;
   /** The headings it sits under, or the page of a file. */

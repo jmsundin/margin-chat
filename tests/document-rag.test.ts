@@ -144,6 +144,7 @@ describe("document RAG", () => {
           { id: "guide", sourceKind: "conversation", kind: "document", title: "Car guide", heading: "Tyres", text: "Rotate the tyres every season.",
             snippet: "Rotate the tyres every season.", updatedAt: "2026-10-01T10:00:00.000Z", matched: "meaning", similarity: 0.61 },
           { id: "file-1", sourceKind: "attachment", kind: "file", title: "Manual.pdf", heading: "Page 4", text: "Pressure is 2.3 bar.", matched: "keyword", attachedTo: "chat-9" },
+          { id: "file-pdf", sourceKind: "vault-file", kind: "file", title: "Tyres.pdf", heading: "Page 2", pageNumber: 2, text: "Tread depth at least 3 mm.", matched: "both" },
         ] };
       },
     };
@@ -178,7 +179,8 @@ describe("document RAG", () => {
     expect(searches[0]).toMatchObject({ userId: "u1", query: "How often should I rotate my tyres?" });
     expect(system).toContain("[Vault 1: Car guide › Tyres]\nRotate the tyres every season.");
     expect(system).toContain("[Vault 2: Manual.pdf › Page 4]\nPressure is 2.3 bar.");
-    expect(system).not.toContain("[Vault 3");
+    expect(system).toContain("[Vault 3: Tyres.pdf › Page 2]\nTread depth at least 3 mm.");
+    expect(system).not.toContain("[Vault 4");
     // The reply's details record what was found, how, and that the answer cited Vault 1.
     expect(answered.metadata.execution.retrieval).toEqual({
       status: "used", meaning: true, alreadyIncluded: 1,
@@ -186,6 +188,8 @@ describe("document RAG", () => {
         { label: "Vault 1", id: "guide", kind: "document", title: "Car guide", heading: "Tyres", matched: "meaning", similarity: 0.61,
           excerpt: "Rotate the tyres every season.", openId: "guide", cited: true },
         { label: "Vault 2", id: "file-1", kind: "file", title: "Manual.pdf", heading: "Page 4", matched: "keyword", excerpt: "Pressure is 2.3 bar.", openId: "chat-9" },
+        // A vault PDF opens its own document.
+        { label: "Vault 3", id: "file-pdf", kind: "file", title: "Tyres.pdf", heading: "Page 2", matched: "both", excerpt: "Tread depth at least 3 mm.", openId: "file-pdf" },
       ],
     });
 
