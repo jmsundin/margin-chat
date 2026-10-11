@@ -105,3 +105,12 @@
 .document-writing-status.is-agent { display:grid; grid-template-columns:minmax(0,1fr); justify-content:stretch; gap:8px; align-items:start; }
 .document-agent-status-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .document-agent-status-head strong { color:var(--ink); }
+/* Map View's side panel: the parents of the document shown, each one opens in the panel. */
+.document-panel-breadcrumbs { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); }
+.document-panel-breadcrumbs ol { display: flex; align-items: center; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; overflow: hidden; }
+.document-panel-breadcrumbs li { display: flex; align-items: center; min-width: 0; flex: 0 1 auto; }
+.document-panel-breadcrumbs li + li::before { content: "›"; padding: 0 4px; color: var(--muted); flex: none; }
+.document-panel-breadcrumbs button, .document-panel-breadcrumbs span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+.document-panel-breadcrumbs button { padding: 3px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
+.document-panel-breadcrumbs button:hover { background: var(--button-active-surface); color: var(--ink); }
+.document-panel-breadcrumbs [aria-current="page"] span { padding: 3px 6px; color: var(--ink); font-weight: 600; }

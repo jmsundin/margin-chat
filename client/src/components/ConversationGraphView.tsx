@@ -240,6 +240,8 @@ export interface GraphDockControls {
   pinned: boolean;
   onTogglePin: () => void;
   onClose: () => void;
+  /** Shows another document in this panel, such as a child or a parent from the breadcrumbs. */
+  onOpenDocument: (conversationId: string) => void;
 }
 
 type GraphDockSide = "left" | "right" | "top" | "bottom";
@@ -2470,6 +2472,12 @@ export default function ConversationGraphView({
     catch { /* The size still applies for this visit. */ }
   }
 
+  function openDocumentInDock(id: string) {
+    if (!conversations[id]) return;
+    if (dockPinned) navigation.setPinnedDockId(id);
+    navigation.navigate({ selectedConversationId: id, dockedConversationId: id, source: null });
+  }
+
   function closeDock() {
     setDockMoveOpen(false);
     navigation.setPinnedDockId(null);
@@ -3569,6 +3577,7 @@ export default function ConversationGraphView({
                 pinned: dockPinned,
                 onTogglePin: () => navigation.setPinnedDockId(dockPinned ? null : dockedConversation.id),
                 onClose: closeDock,
+                onOpenDocument: openDocumentInDock,
               }) ?? (
                 <div className="conversation-graph-dock-fallback">
                   {getPrimaryDocumentSources(dockedConversation).map((item) => (

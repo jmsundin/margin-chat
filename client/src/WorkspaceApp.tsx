@@ -4142,14 +4142,27 @@ function WorkspaceAppContent({
     return [...children].sort((a, b) => rank(a) - rank(b));
   }
 
-  function renderChildTabs(conversation: Conversation) {
+  function renderChildTabs(conversation: Conversation, dock?: GraphDockControls) {
     const childDocuments = getChildTabDocuments(conversation);
     if (!childDocuments.length || isCompactDocument(conversation)) return null;
     return <DocumentChildTabs parent={conversation} documents={childDocuments}
       currentDocumentId={activeConversation.id}
       openDocumentIds={[...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]}
       minimizedDocumentIds={[...minimizedSideDocumentsByParent.values()].flatMap((documents) => documents.map((document) => document.id))}
-      onSelect={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} />;
+      // In Map View's side panel a child replaces its parent in the panel instead of leaving the map.
+      onSelect={(id) => dock ? dock.onOpenDocument(id) : handleSelectConversation(id, { nextViewMode: "chat" })} />;
+  }
+
+  /** The parents of a document in Map View's side panel; each one opens in the panel. */
+  function renderPanelBreadcrumbs(conversation: Conversation, dock: GraphDockControls) {
+    const parents = getConversationPath(state.conversations, conversation.id).slice(0, -1);
+    if (!parents.length) return null;
+    return <nav className="document-panel-breadcrumbs" aria-label={`Parents of ${conversation.title || "Untitled document"}`}><ol>
+      {parents.map((parent) => <li key={parent.id}>
+        <button type="button" title={`Show ${parent.title || "Untitled document"} in this panel`} onClick={() => dock.onOpenDocument(parent.id)}>{parent.title || "Untitled document"}</button>
+      </li>)}
+      <li aria-current="page"><span>{conversation.title || "Untitled document"}</span></li>
+    </ol></nav>;
   }
 
   function renderSiblingTabs(conversation: Conversation) {
@@ -4177,6 +4190,7 @@ function WorkspaceAppContent({
       onClose={view === "chat" && !dockHeader && !maximized ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
       parentDocument={conversation.parentId ? state.conversations[conversation.parentId] : undefined}
+      parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock) : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
         {maximized ? <button type="button" className="document-restore-size-button" aria-keyshortcuts="Escape"
@@ -4187,7 +4201,7 @@ function WorkspaceAppContent({
           </svg>
         </button> : null}
       </>}
-      childTabs={renderChildTabs(conversation)}
+      childTabs={renderChildTabs(conversation, view === "graph" ? dock : undefined)}
       siblingTabs={view === "chat" ? renderSiblingTabs(conversation) : null}
       documentMenu={dockHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
