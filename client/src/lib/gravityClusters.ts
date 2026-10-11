@@ -27,6 +27,8 @@ export interface GravityCluster {
   memberIds: string[];
   /** Fingerprint of the membership; a label only needs regenerating when it changes. */
   fingerprint: string;
+  /** The subject the AI filed this cluster under, when clusters are grouped by meaning and named together. */
+  name?: string;
   center: Point;
   radius: number;
   /** Set on date runs of unlinked documents. */
@@ -191,7 +193,8 @@ function median(values: number[]) {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
-type FoundCluster = { hubId: string | null; memberIds: string[] };
+type FoundCluster = { hubId: string | null; memberIds: string[]; name?: string };
+export type SubjectCluster = FoundCluster & { fingerprint: string };
 
 /**
  * Groups documents by meaning first: documents whose embeddings are alike form
@@ -293,27 +296,71 @@ export function applyClusterPlacements(found: FoundCluster[], placements: Readon
     const memberIds = members[position];
     if (!memberIds.length) return;
     if (cluster.hubId === null) { unlinked.push(...memberIds); return; }
-    result.push({ hubId: memberIds.includes(cluster.hubId) ? cluster.hubId : memberIds[0], memberIds });
+    result.push({ ...cluster, hubId: memberIds.includes(cluster.hubId) ? cluster.hubId : memberIds[0], memberIds });
   });
   if (unlinked.length) result.push({ hubId: null, memberIds: unlinked.sort() });
   return result;
 }
 
 /**
+ * The clusters documents fall into before any naming or moving: by meaning
+ * when embeddings are given (links only settle close calls), by links
+ * otherwise. Their fingerprints key the names the AI gives them.
+ */
+export function groupSubjects(ids: string[], connections: Connection[],
+  topicVector?: (id: string) => Float32Array | undefined): SubjectCluster[] {
+  const found = topicVector ? groupDocumentsByMeaning(ids, connections, topicVector) : findGravityClusters(ids, connections).clusters;
+  return found.map((cluster) => ({ ...cluster, fingerprint: clusterFingerprint(cluster.memberIds) }));
+}
+
+/**
+ * Combines clusters the AI gave the same name, keyed by their fingerprints
+ * from groupSubjects. The biggest part leads, keeping its hub.
+ */
+export function mergeNamedClusters(clusters: SubjectCluster[], names: ReadonlyMap<string, string>): FoundCluster[] {
+  if (!names.size) return clusters;
+  const byName = new Map<string, FoundCluster>();
+  const result: FoundCluster[] = [];
+  for (const cluster of clusters) {
+    const name = cluster.hubId === null ? undefined : names.get(cluster.fingerprint);
+    if (!name) { result.push({ hubId: cluster.hubId, memberIds: cluster.memberIds }); continue; }
+    const key = name.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    const merged = byName.get(key);
+    if (!merged) {
+      const entry = { hubId: cluster.hubId, memberIds: [...cluster.memberIds], name };
+      byName.set(key, entry);
+      result.push(entry);
+    } else merged.memberIds.push(...cluster.memberIds);
+  }
+  // Clusters come in size order, so the first part of each merged cluster is its biggest.
+  result.sort((a, b) => (a.hubId === null ? 1 : 0) - (b.hubId === null ? 1 : 0) || b.memberIds.length - a.memberIds.length
+    || (a.hubId! < b.hubId! ? -1 : 1));
+  return result;
+}
+
+/** Applies the AI's names and the user's moves to clusters from groupSubjects. */
+export function finishSubjectClusters(clusters: SubjectCluster[], options: {
+  names?: ReadonlyMap<string, string>;
+  placements?: ReadonlyMap<string, string>;
+} = {}): SubjectCluster[] {
+  const named = options.names ? mergeNamedClusters(clusters, options.names) : clusters;
+  const found = options.placements ? applyClusterPlacements(named, options.placements) : named;
+  return found.map((cluster) => ({ ...cluster, fingerprint: clusterFingerprint(cluster.memberIds) }));
+}
+
+/**
  * The document categories Clusters shows, without laying anything out: by
- * meaning when embeddings are given (links only settle close calls), by links
- * otherwise, then the user's own moves.
- * Other views (the document sidebar, say) can group by these, and name them
- * with useClusterLabels, which keys names by each cluster's fingerprint.
+ * meaning when embeddings are given, by links otherwise, then merged by the
+ * AI's names and moved by the user. Other views (the document sidebar, say)
+ * can group by these; a cluster's `name` is its category, and unnamed ones can
+ * be named with useClusterLabels, which keys names by fingerprint.
  */
 export function findSubjectClusters(ids: string[], connections: Connection[], options: {
   topicVector?: (id: string) => Float32Array | undefined;
   placements?: ReadonlyMap<string, string>;
-} = {}): Array<{ hubId: string | null; memberIds: string[]; fingerprint: string }> {
-  const byTopic: FoundCluster[] = options.topicVector ? groupDocumentsByMeaning(ids, connections, options.topicVector)
-    : findGravityClusters(ids, connections).clusters;
-  const found = options.placements ? applyClusterPlacements(byTopic, options.placements) : byTopic;
-  return found.map((cluster) => ({ ...cluster, fingerprint: clusterFingerprint(cluster.memberIds) }));
+  names?: ReadonlyMap<string, string>;
+} = {}): SubjectCluster[] {
+  return finishSubjectClusters(groupSubjects(ids, connections, options.topicVector), options);
 }
 
 /** A group of clusters, or of groups; level 1 groups clusters, level 2 groups level 1, and so on. */
@@ -357,10 +404,12 @@ export function layoutGravityClusters(
     topicVector?: (id: string) => Float32Array | undefined;
     /** Documents the user moved by hand, each to the cluster of its anchor document. */
     placements?: ReadonlyMap<string, string>;
+    /** Clusters already found (finishSubjectClusters); when given, documents are not grouped again. */
+    subjects?: SubjectCluster[];
   } = {},
 ): GravityClusterLayout {
   const ids = nodes.map((node) => node.conversationId);
-  const found = findSubjectClusters(ids, connections, options);
+  const found = options.subjects ?? findSubjectClusters(ids, connections, options);
   const groups: Array<FoundCluster & { id: string; period?: { start: number; end: number } }> = [];
   for (const group of found) {
     if (group.hubId !== null) { groups.push({ ...group, id: `cluster:${group.hubId}` }); continue; }
@@ -400,7 +449,7 @@ export function layoutGravityClusters(
   return {
     nodes: placed,
     viewport: fitNetworkMapViewport(placed, canvas),
-    clusters: islands.map((island) => ({ id: island.id, hubId: island.hubId, memberIds: island.memberIds,
+    clusters: islands.map((island) => ({ id: island.id, hubId: island.hubId, memberIds: island.memberIds, ...(island.name ? { name: island.name } : {}),
       fingerprint: island.fingerprint, center: centers.get(island.id)!, radius: island.radius,
       ...(island.period ? { period: island.period } : {}) })),
     clusterByDocumentId,

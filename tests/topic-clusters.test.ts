@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { applyClusterPlacements, findGravityClusters, groupDocumentsByMeaning, layoutGravityClusters, UNLINKED_CLUSTER_ID } from "../client/src/lib/gravityClusters";
+import { applyClusterPlacements, findGravityClusters, finishSubjectClusters, groupDocumentsByMeaning, groupSubjects, layoutGravityClusters, UNLINKED_CLUSTER_ID } from "../client/src/lib/gravityClusters";
+import { buildCategoriesPrompt, carryCategoryNames } from "../client/src/lib/useSubjectCategories";
 import { decodeTopicEmbedding, groupByTopicEmbedding } from "../client/src/lib/topicEmbeddings";
 
 const link = (sourceId: string, targetId: string) => ({ sourceId, targetId });
@@ -151,5 +152,58 @@ describe("regions by meaning", () => {
     expect(pure.length).toBeGreaterThanOrEqual(regions.length - 1);
     expect(pure.length).toBeGreaterThanOrEqual(15);
     expect(regions.some((region) => region.childIds.length === 2)).toBe(true);
+  });
+});
+
+describe("clusters named by the AI", () => {
+  // Three Angular clusters the embeddings left apart, as Jon saw them.
+  const vectors = subjectVectors({ a1: ["angular", "angular-cli", "angular-di"], a2: ["components", "inputs", "lifecycle"],
+    a3: ["viewchild", "viewchildren", "elementref"], react: REACT });
+  const docs = [...vectors.keys()];
+  const base = groupSubjects(docs, [], (id) => vectors.get(id));
+  const fingerprintOf = (id: string) => base.find((cluster) => cluster.memberIds.includes(id))!.fingerprint;
+
+  test("clusters given the same name become one category with that name", () => {
+    expect(base).toHaveLength(4);
+    const names = new Map([[fingerprintOf("angular"), "Angular"], [fingerprintOf("inputs"), "angular"], [fingerprintOf("viewchild"), "Angular"],
+      [fingerprintOf("react"), "React"]]);
+    const finished = finishSubjectClusters(base, { names });
+    expect(finished).toHaveLength(2);
+    const angular = finished.find((cluster) => cluster.memberIds.includes("elementref"))!;
+    expect(angular.name).toBe("Angular");
+    expect(angular.memberIds).toHaveLength(9);
+    expect(finished.find((cluster) => cluster.memberIds.includes("react"))!.name).toBe("React");
+  });
+
+  test("a document moved by hand keeps its new category's name", () => {
+    const names = new Map([[fingerprintOf("angular"), "Angular"], [fingerprintOf("inputs"), "Angular"], [fingerprintOf("react"), "React"]]);
+    const finished = finishSubjectClusters(base, { names, placements: new Map([["react-memo", "inputs"]]) });
+    const angular = finished.find((cluster) => cluster.memberIds.includes("inputs"))!;
+    expect(angular.name).toBe("Angular");
+    expect(angular.memberIds).toContain("react-memo");
+    expect(finished.find((cluster) => cluster.memberIds.includes("viewchild"))!.name).toBeUndefined();
+  });
+
+  test("the map uses the named clusters and labels them", () => {
+    const names = new Map(base.map((cluster) => [cluster.fingerprint, cluster.memberIds.includes("react") ? "React" : "Angular"]));
+    const layout = layoutGravityClusters(docs.map(node), { width: 1200, height: 800 }, [],
+      { topicVector: (id) => vectors.get(id), subjects: finishSubjectClusters(base, { names }) });
+    expect(layout.clusters.map((cluster) => cluster.name).sort()).toEqual(["Angular", "React"]);
+  });
+
+  test("a cluster that changed a little keeps its name; a new one does not", () => {
+    const named = [{ fingerprint: "old", name: "Angular", memberIds: ["angular", "angular-cli", "angular-di", "components", "inputs"] }];
+    const names = carryCategoryNames([
+      { fingerprint: "grown", memberIds: ["angular", "angular-cli", "angular-di", "components", "inputs", "signals"] },
+      { fingerprint: "new", memberIds: ["react", "react-memo"] },
+    ], named);
+    expect(names.get("grown")).toBe("Angular");
+    expect(names.has("new")).toBe(false);
+  });
+
+  test("the prompt lists each cluster's titles and its earlier name", () => {
+    const conversations = Object.fromEntries(["angular", "inputs", "react"].map((id) => [id, { title: `${id} notes` }])) as never;
+    const prompt = buildCategoriesPrompt([{ memberIds: ["angular", "inputs"] }, { memberIds: ["react", "missing"] }], conversations, new Map([[0, "Angular"]]));
+    expect(prompt).toBe("C1 (2 docs): angular notes; inputs notes [was: Angular]\nC2 (2 docs): react notes");
   });
 });

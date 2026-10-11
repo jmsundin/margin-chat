@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Conversation, ThreadSummary } from "../types";
 import { getGraphAnalysisEdges } from "./graphAnalysis";
-import { findSubjectClusters, type GravityCluster } from "./gravityClusters";
+import { finishSubjectClusters, groupSubjects, type GravityCluster, type SubjectCluster } from "./gravityClusters";
 import {
   groupIntoCategories, sortAlphabetically, sortByRecentlyViewed, sortBySimilarity,
   type SidebarDocumentCategory, type SidebarDocumentSort,
 } from "./sidebarDocumentOrder";
 import { useClusterLabels } from "./useClusterLabels";
+import { useSubjectCategories } from "./useSubjectCategories";
 import { useTopicEmbeddings } from "./useTopicEmbeddings";
 import { loadOpenedDocuments } from "./vaultWorkingSet";
 
@@ -67,14 +68,23 @@ export function useSidebarDocumentOrder({ userId, storageUserId, jevEnabled, clo
 
   const ids = useMemo(() => threads.map((thread) => thread.id), [threads]);
   const connections = useMemo(() => sort === "category" ? getGraphAnalysisEdges(conversations) : [], [sort, conversations]);
-  const clusters = useMemo<GravityCluster[]>(() => sort !== "category" || !meaningReady ? []
-    : findSubjectClusters(ids, connections, {
-      topicVector: (id) => topics.vectors.get(id), placements: topics.placements,
-    }).map((cluster) => ({ ...cluster, id: cluster.hubId === null ? "unfiled" : `cluster:${cluster.hubId}`, center: { x: 0, y: 0 }, radius: 0 })),
-  // `topics.revision` changes whenever embeddings or moves arrive.
+  const subjects = useMemo<SubjectCluster[]>(() => sort !== "category" || !meaningReady ? []
+    : groupSubjects(ids, connections, (id) => topics.vectors.get(id)),
+  // `topics.revision` changes whenever embeddings arrive.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   [sort, meaningReady, ids, connections, topics.revision]);
-  const labels = useClusterLabels({ userId, enabled: jevEnabled, active: sort === "category" && ready, clusters, conversations });
+  const categoryNames = useSubjectCategories({ userId, enabled: jevEnabled, active: sort === "category" && ready, clusters: subjects, conversations });
+  const clusters = useMemo<GravityCluster[]>(() => finishSubjectClusters(subjects, { names: categoryNames.names, placements: topics.placements })
+    .map((cluster) => ({ ...cluster, id: cluster.hubId === null ? "unfiled" : `cluster:${cluster.hubId}`, center: { x: 0, y: 0 }, radius: 0 })),
+  // `topics.revision` changes whenever moves arrive.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [subjects, categoryNames.names, topics.revision]);
+  const unnamed = useMemo(() => clusters.filter((cluster) => !cluster.name), [clusters]);
+  const clusterLabels = useClusterLabels({ userId, enabled: jevEnabled, active: sort === "category" && ready, clusters: unnamed, conversations });
+  const labels = useMemo(() => ({ loading: clusterLabels.loading || categoryNames.loading, labels: {
+    ...clusterLabels.labels,
+    ...Object.fromEntries(clusters.flatMap((cluster) => cluster.name ? [[cluster.id, { label: cluster.name, generated: true }]] : [])),
+  } }), [clusterLabels, categoryNames.loading, clusters]);
 
   return useMemo(() => {
     const meaningLoading = wantsMeaning && topics.loading;

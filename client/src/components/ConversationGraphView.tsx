@@ -51,7 +51,8 @@ import { getGraphAnalysisEdges } from "../lib/graphAnalysis";
 import { DOCUMENT_RELATION_TYPES, documentGraphEdgeLabel, getDocumentGraphEdges, getDocumentRelationType, type DocumentGraphEdge } from "../lib/documentRelations";
 import type { DocumentRelationTypeId } from "../types";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
-import { fitGravityCluster, layoutGravityClusters, type GravityCluster, type GravityClusterGroup, type GravityClusterLayout } from "../lib/gravityClusters";
+import { finishSubjectClusters, fitGravityCluster, groupSubjects, layoutGravityClusters, type GravityCluster, type GravityClusterGroup, type GravityClusterLayout, type SubjectCluster } from "../lib/gravityClusters";
+import { useSubjectCategories } from "../lib/useSubjectCategories";
 import { useTopicEmbeddings } from "../lib/useTopicEmbeddings";
 import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
@@ -142,6 +143,7 @@ export function limitGraphCards(placements: ConversationGraphNodePlacement[], bo
 const GRAPH_SPARSE_GROUP_SCALE = 0.35;
 const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
 const EMPTY_CLUSTERS: GravityCluster[] = [];
+const EMPTY_SUBJECTS: SubjectCluster[] = [];
 const EMPTY_PLACEMENTS: ConversationGraphNodePlacement[] = [];
 const EMPTY_TERRITORY_LAYOUT: ReturnType<typeof layoutMapTerritoryOverview> = [];
 
@@ -1148,23 +1150,38 @@ export default function ConversationGraphView({
   }, [isNetworkMode, unfocusedScene.nodes, viewportSize, documentConnections, navigation.state.networkIteration, navigation.state.networkPins]);
   const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && isClustersMode });
   const groupBySubject = !!jev?.enabled && topicEmbeddings.vectors.size > 0;
+  // Clusters by meaning before naming, so the AI can name them all in one pass.
+  const subjectCache = useRef<{ key: string; subjects: SubjectCluster[] } | null>(null);
+  const baseSubjects = useMemo(() => {
+    if (!isClustersMode || !groupBySubject) return EMPTY_SUBJECTS;
+    const ids = unfocusedScene.nodes.map((node) => node.conversationId);
+    const key = JSON.stringify([[...ids].sort(), documentConnections, topicEmbeddings.revision]);
+    if (subjectCache.current?.key !== key) subjectCache.current = { key, subjects: groupSubjects(ids, documentConnections, (id) => topicEmbeddings.vectors.get(id)) };
+    return subjectCache.current.subjects;
+  }, [isClustersMode, groupBySubject, unfocusedScene.nodes, documentConnections, topicEmbeddings.revision]);
+  const subjectCategories = useSubjectCategories({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
+    active: !!jev?.ready && isVisible && isClustersMode && groupBySubject, clusters: baseSubjects, conversations });
   const clusterCache = useRef<{ key: string; layout: GravityClusterLayout } | null>(null);
   const clusterLayout = useMemo(() => {
     if (!isClustersMode) return null;
+    const names = groupBySubject ? subjectCategories.names : null;
     const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections,
-      jev?.enabled ? topicEmbeddings.revision : -1]);
+      jev?.enabled ? topicEmbeddings.revision : -1, names ? [...names].sort() : null]);
+    const placements = jev?.enabled ? topicEmbeddings.placements : undefined;
     if (clusterCache.current?.key !== key) clusterCache.current = { key, layout: layoutGravityClusters(unfocusedScene.nodes,
       viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }, documentConnections,
       { createdAt: (id) => { const time = Date.parse(conversations[id]?.createdAt ?? ""); return Number.isNaN(time) ? undefined : time; },
-        ...(groupBySubject ? { topicVector: (id: string) => topicEmbeddings.vectors.get(id) } : {}),
-        ...(jev?.enabled ? { placements: topicEmbeddings.placements } : {}) }) };
+        ...(groupBySubject ? { topicVector: (id: string) => topicEmbeddings.vectors.get(id),
+          subjects: finishSubjectClusters(baseSubjects, { names: names ?? undefined, placements }) } : {}),
+        ...(placements ? { placements } : {}) }) };
     const positions = new Map(clusterCache.current.layout.nodes.map((node) => [node.conversationId, node]));
     const nodes = unfocusedScene.nodes.map((node) => {
       const placed = positions.get(node.conversationId)!;
       return { ...node, x: placed.x, y: placed.y, width: placed.width, height: placed.height };
     });
     return { ...clusterCache.current.layout, nodes };
-  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, jev?.enabled, topicEmbeddings.revision]);
+  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, jev?.enabled, topicEmbeddings.revision,
+    baseSubjects, subjectCategories.names]);
   const forceLayout = networkLayout ?? clusterLayout;
   const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
@@ -1172,13 +1189,19 @@ export default function ConversationGraphView({
   const labelTargets = useMemo(() => {
     if (!clusterLayout) return EMPTY_CLUSTERS;
     const levels = clusterLayout.levels;
-    return [...(levels.at(-1)?.groups ?? []), ...clusterLayout.clusters, ...levels.slice(0, -1).reverse().flatMap((level) => level.groups)];
+    // Clusters the AI already filed under a subject need no label of their own.
+    return [...(levels.at(-1)?.groups ?? []), ...clusterLayout.clusters.filter((cluster) => !cluster.name),
+      ...levels.slice(0, -1).reverse().flatMap((level) => level.groups)];
   }, [clusterLayout]);
   const generatedClusterLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
     active: !!jev?.ready && isVisible && isClustersMode, clusters: labelTargets, conversations });
-  const clusterLabels = useMemo(() => ({ ...generatedClusterLabels, labels: clusterLayout
-    ? labelClusterGroups(generatedClusterLabels.labels, clusterLayout.clusters, clusterLayout.levels, groupBySubject ? "Unfiled" : "Unlinked") : generatedClusterLabels.labels }),
-  [generatedClusterLabels, clusterLayout, groupBySubject]);
+  const clusterLabels = useMemo(() => {
+    if (!clusterLayout) return generatedClusterLabels;
+    const named = { ...generatedClusterLabels.labels };
+    for (const cluster of clusterLayout.clusters) if (cluster.name) named[cluster.id] = { label: cluster.name, generated: true };
+    return { ...generatedClusterLabels, loading: generatedClusterLabels.loading || subjectCategories.loading,
+      labels: labelClusterGroups(named, clusterLayout.clusters, clusterLayout.levels, groupBySubject ? "Unfiled" : "Unlinked") };
+  }, [generatedClusterLabels, clusterLayout, groupBySubject, subjectCategories.loading]);
   const clusterCircles = useMemo(() => new Map<string, GravityCluster | GravityClusterGroup>(clusterLayout
     ? [...clusterLayout.clusters, ...clusterLayout.levels.flatMap((level) => level.groups)].map((circle) => [circle.id, circle]) : []),
   [clusterLayout]);

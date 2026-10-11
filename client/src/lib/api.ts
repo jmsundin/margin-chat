@@ -222,6 +222,30 @@ export async function requestClusterLabel(args: {
   return requestTitle({ ...rest, kind: "cluster", prompt: content });
 }
 
+/** Names every listed cluster in one request; clusters on one subject come back with the same name. */
+export async function requestClusterCategories(args: {
+  content: string;
+  expectedUserId?: string;
+  signal?: AbortSignal;
+}): Promise<Array<{ cluster: number; name: string }>> {
+  const response = await apiFetch("/api/chat/title", {
+    body: JSON.stringify({ kind: "categories", prompt: args.content }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}),
+    },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { categories?: unknown } | ErrorPayload | null;
+  ensureOk(response, payload, "Naming categories failed.");
+  const categories = payload && typeof payload === "object" && "categories" in payload && Array.isArray(payload.categories) ? payload.categories : [];
+  return categories.filter((entry): entry is { cluster: number; name: string } => !!entry && typeof entry === "object"
+    && Number.isInteger((entry as { cluster?: unknown }).cluster) && typeof (entry as { name?: unknown }).name === "string"
+    && !!(entry as { name: string }).name.trim()).map((entry) => ({ cluster: entry.cluster, name: entry.name.trim() }));
+}
+
 async function requestTitle(args: {
   ai?: AISettings;
   expectedUserId?: string;
