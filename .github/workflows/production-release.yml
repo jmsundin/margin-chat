@@ -15,6 +15,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Reads the CI result for the release commit instead of re-running the tests.
+  actions: read
 
 jobs:
   release:
@@ -44,6 +46,7 @@ jobs:
           REHEARSAL_BLOB_READ_WRITE_TOKEN: ${{ secrets.REHEARSAL_BLOB_READ_WRITE_TOKEN }}
           BACKUP_BLOB_READ_WRITE_TOKEN: ${{ secrets.BACKUP_BLOB_READ_WRITE_TOKEN }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: bun run release:production
       - name: Retain release report
         if: always()

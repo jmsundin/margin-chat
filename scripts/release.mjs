@@ -19,6 +19,7 @@ import { checkReadiness, waitForProductionReadiness, runPersistenceSmoke } from 
 import { promoteVerifiedDeployment } from "./release/promote.mjs";
 import { createNeonReleaseProvider, validateBlobStoreTokens, backupBlobStore, restoreBlobBackup } from "./release/providers.mjs";
 import { keepLockSessionActive } from "./release/lock-session.mjs";
+import { ciResultForCommit } from "./release/ci-check.mjs";
 
 const exec = promisify(execFile);
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -158,6 +159,10 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         }
         await assertProductionAlias({ api: vercelApi, productionUrl: config.productionUrl,
           projectId: config.vercel.projectId, deploymentId: target.id });
+        // CI already ran the tests and builds on this exact commit; reuse that
+        // result and validate locally only when no CI run vouches for it.
+        const ci = await ciResultForCommit({ sha: plan.sha, repository: env.GITHUB_REPOSITORY, token: env.GITHUB_TOKEN, onProgress });
+        if (ci) return { sha: plan.sha, previousDeployment: previous.id, checks: [`CI passed on this commit (run ${ci.runId})`] };
         // Validation never inherits production credentials or local dotenv files.
         const validationEnv = Object.fromEntries(["PATH", "HOME", "TMPDIR", "CI"].filter((key) => env[key]).map((key) => [key, env[key]]));
         await command("bun", ["--no-env-file", "install", "--frozen-lockfile", "--ignore-scripts"], validationEnv);
