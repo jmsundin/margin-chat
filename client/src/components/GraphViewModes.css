@@ -100,6 +100,34 @@
   .semantic-map[data-view-mode="canvas"] .conversation-graph-node-select { cursor: grab; }
   .semantic-map[data-view-mode="canvas"] .is-moving-nodes .conversation-graph-node-select { cursor: grabbing; }
 }
+
+/* View settings in the header menu: the group-by choice and what the view is doing, instead of a row under the toolbar. */
+:is(.graph-map-view-options, .public-map-view-options) > div > .graph-mode-context { display: grid; gap: 7px; padding: 4px 4px 9px; margin: 0 0 4px; border: 0; border-bottom: 1px solid var(--line); background: transparent; line-height: 1.45; }
+:is(.graph-map-view-options, .public-map-view-options) > div > .graph-mode-context:last-child { border-bottom: 0; margin-bottom: 0; padding-bottom: 4px; }
+:is(.semantic-map, .semantic-public-map) :is(.graph-map-view-options, .public-map-view-options) > div > .graph-mode-context button { width: 100%; text-align: center; border: 1px solid var(--line); background: var(--panel-bg); padding: 6px 8px; }
+:is(.graph-map-view-options, .public-map-view-options) .graph-mode-segmented { display: flex; }
+:is(.graph-map-view-options, .public-map-view-options) .graph-mode-segmented > span { flex: 0 0 auto; color: var(--ink); font-weight: 600; }
+:is(.semantic-map, .semantic-public-map) :is(.graph-map-view-options, .public-map-view-options) .graph-mode-segmented button { flex: 1 1 0; width: auto; }
+:is(.semantic-map, .semantic-public-map) :is(.graph-map-view-options, .public-map-view-options) .graph-mode-segmented button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.semantic-map .graph-map-view-options > div, .public-map-view-options > div { width: min(300px, calc(100vw - 24px)); }
+.graph-map-view-options > summary { position: relative; }
+.graph-map-view-options-status { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .graph-map-view-options-status { animation: graph-view-options-busy 1.2s ease-in-out infinite; } }
+@keyframes graph-view-options-busy { 50% { opacity: .3; } }
+
+/* Map tips: a small button at the bottom left that opens the tips on demand. */
+.map-help { position: absolute; left: 14px; bottom: 14px; z-index: 7; pointer-events: auto; }
+.map-help > summary { display: grid; place-items: center; width: 34px; height: 34px; list-style: none; cursor: pointer; border: 1px solid var(--line); border-radius: 50%; background: var(--panel-bg); color: var(--muted); }
+.map-help > summary::-webkit-details-marker { display: none; }
+.map-help > summary:hover, .map-help[open] > summary { color: var(--ink); border-color: var(--accent); }
+.map-help > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.map-help > summary svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.map-help-panel { position: absolute; left: 0; bottom: calc(100% + 8px); width: max-content; max-width: min(320px, calc(100vw - 40px)); padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-strong, var(--panel-bg)); color: var(--ink); box-shadow: 0 8px 24px #0003; font-size: .76rem; line-height: 1.5; }
+.map-help:not([open]) > .map-help-panel { display: none; }
+.map-help-panel > * { display: block; margin: 0; }
+.map-help-panel > * + * { margin-top: 4px; color: var(--muted); }
+.public-map-bottom > .map-help { position: relative; left: auto; bottom: auto; }
+.public-map-bottom > p:empty { display: none; }
 .graph-cluster-move { display: inline-flex; align-items: center; gap: 6px; }
 .graph-cluster-move select { border: 1px solid var(--line); background: var(--panel-bg); color: var(--ink); padding: 3px 6px; border-radius: 6px; font: inherit; max-width: 220px; }
 .graph-cluster-move [role="alert"] { color: var(--danger, #d14343); }
