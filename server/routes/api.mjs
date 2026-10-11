@@ -115,7 +115,7 @@ export function createApiHandler({
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
   const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
-  const vaultPassages = passageService ?? createVaultPassageService({ database, env });
+  const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
   const desktopDownloads = desktopDownloadService ?? createDesktopDownloadService({ database, env });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { cacheVaultCloudSearch, createLocalVaultSearchProvider, createVaultSearchProvider, searchLocalVault, type LocalVaultSearchInput, type VaultCloudSearch, type VaultSearchResults } from "../client/src/lib/vaultSearch";
+import { cacheVaultCloudSearch, createLocalVaultSearchProvider, createVaultSearchProvider, relatedPassageHit, searchLocalVault, type LocalVaultSearchInput, type VaultCloudSearch, type VaultSearchResults } from "../client/src/lib/vaultSearch";
 import type { VaultIndexEntry, VaultSearchEvent } from "../client/src/lib/vaultTypes";
 import type { Conversation } from "../client/src/types";
 
@@ -123,6 +123,14 @@ test("the search index's best matches by meaning come back ranked, and open wher
   createVaultSearchProvider(() => input, searchCloud).search({ query: "cool streets", scope: "notes" }, (results) => notes.push(results));
   await settle();
   expect(notes.at(-1)!.related!.map((hit) => hit.conversationId)).toEqual(["plants"]);
+});
+
+test("a PDF from the vault opens its own document, naming the page", () => {
+  const hit = relatedPassageHit({ id: "file-abc", sourceKind: "vault-file", kind: "file", title: "Canopy study.pdf", heading: "Page 3",
+    snippet: "Canopy cover lowers street temperature", blockId: null, pageNumber: 3, passageIndex: 2, updatedAt: null, matched: "both" });
+  expect(hit).toMatchObject({ conversationId: "file-abc", kindLabel: "File", matchLabel: "Page 3 · Same words and meaning",
+    evidence: { conversationId: "file-abc", sourceKind: "conversation" } });
+  expect(hit).not.toHaveProperty("familyTitle");
 });
 
 test("the family scope, an empty query and a failed server stay on this device", async () => {

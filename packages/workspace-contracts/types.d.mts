@@ -44,7 +44,7 @@ export interface AIContextSource {
 export interface AIRetrievalPassage {
   /** How the reply was told to cite it, such as "Vault 1"; absent in Agent mode. */
   label?: string;
-  /** The document, note or chat; for an uploaded file, the file's own ID. */
+  /** The document, note or chat; for an uploaded file, the file's own ID; for a vault PDF, its document's ID. */
   id: string;
   kind: "document" | "note" | "chat" | "file";
   title: string;

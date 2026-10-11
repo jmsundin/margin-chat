@@ -50,7 +50,8 @@ function retrievalPassage(passage, label) {
     matched: passage.matched, ...(Number.isFinite(passage.similarity) ? { similarity: passage.similarity } : {}),
     excerpt: passage.snippet ?? String(passage.text ?? "").slice(0, 240),
     ...(passage.blockId ? { blockId: passage.blockId } : {}),
-    ...(passage.sourceKind === "conversation" ? { openId: passage.id } : passage.attachedTo ? { openId: passage.attachedTo } : {}),
+    // An uploaded file opens the chat it is attached to; a vault PDF is its own document.
+    ...(passage.sourceKind !== "attachment" ? { openId: passage.id } : passage.attachedTo ? { openId: passage.attachedTo } : {}),
   };
 }
 

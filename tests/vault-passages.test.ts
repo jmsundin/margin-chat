@@ -10,6 +10,7 @@ import * as topics from "../server/db/topicRepository.mjs";
 import { createTopicEmbeddingService, TOPIC_EMBEDDING_DIMENSIONS } from "../server/documents/topics.mjs";
 import { buildSourcePassages, passageEmbeddingInput } from "../server/vault/passages.mjs";
 import { createVaultPassageService, PASSAGE_EMBEDDINGS_OFF } from "../server/vault/passageIndex.mjs";
+import { vaultFileDocumentId } from "@margin-chat/workspace-contracts";
 
 const at = "2026-10-01T10:00:00.000Z";
 const databases: PGlite[] = [];
@@ -265,5 +266,80 @@ describe("vault passage index", () => {
     await indexAll(service);
     const gone = await service.search({ userId: "u1", query: "starter flour", context });
     expect(gone.results.some((result: any) => result.id === "starter")).toBe(false);
+  }, 30_000);
+
+  test("indexes PDFs in the cloud vault page by page under their document's ID, and redoes only what changed", async () => {
+    const { client, database } = await setup();
+    await writeState(client, "u1", normalizeAppState(state()));
+    // A file's bytes name its revision; "pages" are separated by a form feed.
+    const texts: Record<string, string> = {
+      r1: "Proofing times for sourdough.\fGluten develops while the dough rests.",
+      r2: "Proofing times for sourdough.\fA longer cold proof deepens the flavour.",
+      attached: "An upload original, indexed as its upload.",
+      scanned: "",
+    };
+    let manifest: any = { revision: 1, files: {
+      "Papers/Bread science.pdf": { revision: "r1", encoding: "base64" },
+      "Attachments/document-1/Recipes.pdf": { revision: "attached", encoding: "base64" },
+      ".trash/Old.pdf": { revision: "r1", encoding: "base64" },
+      "Scans/Receipt.pdf": { revision: "scanned", encoding: "base64" },
+      "Photos/Loaf.png": { revision: "r1", encoding: "base64" },
+      "Removed.pdf": { revision: "r1", deleted: true },
+    } };
+    const reads: string[] = [];
+    let snapshots = 0;
+    let failNext = false;
+    const vault = {
+      configured: true,
+      revision: async () => manifest.revision,
+      snapshot: async () => { snapshots += 1; return { manifest }; },
+      readFile: async ({ path, revision }: any) => {
+        reads.push(path);
+        if (failNext) { failNext = false; throw new Error("Blob storage timed out"); }
+        return { bytes: Buffer.from(texts[revision]) };
+      },
+    };
+    const extracted: string[] = [];
+    const extract = async ({ buffer, filename, mimeType }: any) => {
+      extracted.push(filename);
+      expect(mimeType).toBe("application/pdf");
+      const pages = buffer.toString("utf8").split("\f").map((content: string, index: number) => ({ content, pageNumber: index + 1 })).filter((page: any) => page.content);
+      if (!pages.length) throw new Error("The uploaded file did not contain extractable text.");
+      return pages;
+    };
+    const service = createVaultPassageService({ database, env: { OPENAI_API_KEY: "test" }, embed: recordingEmbed().embed, vault, extract });
+    await indexAll(service);
+    const bread = vaultFileDocumentId("Papers/Bread science.pdf");
+    expect(reads.sort()).toEqual(["Papers/Bread science.pdf", "Scans/Receipt.pdf"]);
+    const found = await service.search({ userId: "u1", query: "gluten dough", context });
+    expect(found.results[0]).toMatchObject({ id: bread, sourceKind: "vault-file", kind: "file", title: "Bread science.pdf", heading: "Page 2", pageNumber: 2 });
+    expect((await service.readFile({ userId: "u1", fileId: bread }))?.passages.map((passage: any) => passage.pageNumber)).toEqual([1, 2]);
+    // A PDF without text is recorded, so it isn't read again until it changes.
+    expect(await service.readFile({ userId: "u1", fileId: vaultFileDocumentId("Scans/Receipt.pdf") })).toMatchObject({ passages: [], error: expect.stringContaining("extractable text") });
+
+    // An unchanged vault isn't listed again; a new revision is listed, but unchanged PDFs aren't read again.
+    const listed = snapshots;
+    await indexAll(service);
+    expect(snapshots).toBe(listed);
+    manifest = { ...manifest, revision: 2 };
+    await indexAll(service);
+    expect(snapshots).toBe(listed + 1);
+    expect(reads).toHaveLength(2);
+
+    // A new revision is redone; a failed read is tried again at the next check rather than recorded.
+    manifest = { revision: 3, files: { ...manifest.files, "Papers/Bread science.pdf": { revision: "r2", encoding: "base64" } } };
+    failNext = true;
+    await indexAll(service);
+    expect((await service.search({ userId: "u1", query: "flavour", context })).results.some((result: any) => result.id === bread)).toBe(false);
+    await indexAll(service);
+    expect((await service.search({ userId: "u1", query: "flavour", context })).results[0]).toMatchObject({ id: bread, pageNumber: 2 });
+    expect((await service.search({ userId: "u1", query: "gluten", context })).results.some((result: any) => result.id === bread)).toBe(false);
+
+    // A PDF that leaves the vault is forgotten.
+    const { "Papers/Bread science.pdf": _removed, ...rest } = manifest.files;
+    manifest = { revision: 4, files: rest };
+    await indexAll(service);
+    expect(await service.readFile({ userId: "u1", fileId: bread })).toBeNull();
+    expect(extracted.filter((name) => name === "Bread science.pdf")).toHaveLength(2);
   }, 30_000);
 });

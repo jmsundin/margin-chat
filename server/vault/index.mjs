@@ -560,7 +560,7 @@ export function createVaultService({ database, env = process.env, storage = crea
         if (signal?.aborted) return;
         // Snippets only. A passing failure is reported; a setting the user chose is not.
         emit({ type: "related", results: found.results.map(({ text: _text, similarity: _similarity, score: _score, ...result }) => {
-          const openId = result.sourceKind === "conversation" ? result.id : result.attachedTo;
+          const openId = result.sourceKind === "attachment" ? result.attachedTo : result.id;
           return { ...result, ...(openId && built.pathById.has(openId) ? { path: built.pathById.get(openId) } : {}) };
         }), ...(found.warningKind === "failed" ? { warning: found.warning } : {}) });
       } catch (error) {
@@ -707,6 +707,10 @@ export function createVaultService({ database, env = process.env, storage = crea
       }
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new HttpError(400, "Ask for between 1 and 100 search results.");
       await search(userId, query, { limit, signal, emit, related });
+    },
+    /** The current vault revision, without reading the file list. */
+    async revision(userId) {
+      return configured ? (await readRoot(userId)).root.revision : 0;
     },
     async status(userId) {
       if (!configured) return { configured: false, manifest: emptyManifest() };

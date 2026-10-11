@@ -67,17 +67,27 @@ never indexed. The open app keeps the index current: it asks the server to index
 what changed on load and every few minutes (`useVaultPassageIndex`), and each
 request handles a batch, so only edited sources cost anything.
 
+PDFs in the cloud vault (synced from a connected folder, migration
+`0017_vault_file_passages`) are indexed too. The server reads each PDF at its
+current revision, extracts the text page by page with the same extraction as
+uploaded files, and stores its passages under the ID of the PDF's document, so a
+match opens that document and names its page. A PDF is redone only when its
+revision changes, and forgotten when it leaves the vault. PDFs over 4 MB stay on
+the device and aren't indexed, nor is text in scanned pages or images.
+
 Search ranks passages two ways and fuses the lists (reciprocal rank fusion):
 Postgres full-text search for the words, and OpenAI embeddings
 (`text-embedding-3-small` at 512 dimensions, pgvector HNSW) for the meaning. It
 feeds three places:
 
 - **Cmd+K** lists the index's results as **Best matches** under the titles, ahead
-  of the exact-word passages. A file opens the chat or document it is attached to.
+  of the exact-word passages. An uploaded file opens the chat or document it is
+  attached to; a vault PDF opens its own document.
 - **Ask AI** with "Search relevant … in my workspace" gets the best passages as
   `[Vault N]` excerpts, skipping documents the request already includes.
 - **Agent mode**'s `search_vault` adds the index's best passage per document
-  (with its section and a snippet), and `read_document` reads uploaded files.
+  (with its section and a snippet), and `read_document` reads uploaded files and
+  vault PDFs (a PDF's notes and chat come with its text).
 
 A source's first passage is exactly the title and opening that the map's topic
 grouping embeds (`server/documents/topics.mjs`), so the two share one embedding:

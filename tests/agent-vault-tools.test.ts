@@ -168,6 +168,13 @@ describe("agent vault tools", () => {
     expect(found.results[2]).toMatchObject({ title: "Supplier contract.pdf", kind: "file", page: 2, snippet: "Prices are fixed until March." });
     expect((await run({})("read_document", { document_id: "file-1" }) as any).document).toMatchObject({
       kind: "file", text: "[Page 1]\nTerms.\n\n[Page 2]\nPrices are fixed until March.", truncated: false });
+    // A PDF's document that has notes or a chat reads with the PDF's text.
+    const withPdf = createAgentToolExecutor({ chatRequest: request({}), workspace: { userId, vault, database, passages: {
+      ...passages, readFile: async (id: string) => id !== "chat" ? null : { id, title: "Supplier call", updatedAt: at(12), error: null,
+        passages: [{ content: "Prices are fixed until March.", pageNumber: 2 }] } } } });
+    expect((await withPdf("read_document", { document_id: "chat" }) as any).document).toMatchObject({
+      title: "Supplier call", messages: [{ role: "user" }], file_text: "[Page 2]\nPrices are fixed until March.", file_text_truncated: false });
+    expect((await run({})("read_document", { document_id: "chat" }) as any).document).not.toHaveProperty("file_text");
     // A limited agent only sees what the user chose, files included.
     const limited = run({ agentScope: "selected", selectedConversationIds: ["note"] });
     expect((await limited("search_vault", { query: "how long are prices held" }) as any).results.map((hit: any) => hit.document_id)).toEqual(["note"]);

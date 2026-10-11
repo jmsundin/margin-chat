@@ -6,7 +6,7 @@ const REFRESH_MS = 5 * 60_000;
 /** Requests per run; each splits a batch of documents into passages and embeds a batch of passages. */
 const MAX_ROUNDS = 60;
 
-export const VAULT_SEARCH_DISCLOSURE = "Sends the text of your saved documents, notes, chats and uploaded files to OpenAI to make search embeddings, so Ask AI, Agent mode and search find passages by meaning, not only by exact words. Turning it off deletes the stored embeddings; exact-word search keeps working.";
+export const VAULT_SEARCH_DISCLOSURE = "Sends the text of your saved documents, notes, chats, uploaded files and PDFs to OpenAI to make search embeddings, so Ask AI, Agent mode and search find passages by meaning, not only by exact words. Turning it off deletes the stored embeddings; exact-word search keeps working.";
 
 export interface VaultPassageIndex {
   status: VaultPassageIndexStatus | null;
@@ -22,7 +22,7 @@ export interface VaultPassageIndex {
 
 /**
  * Keeps the cloud vault's search index current: every saved document, note,
- * chat and uploaded file is split into passages and, with search by meaning
+ * chat, uploaded file and PDF is split into passages and, with search by meaning
  * on, embedded. The server does a batch per request and only touches what
  * changed, so a run after a few edits costs a request or two.
  */

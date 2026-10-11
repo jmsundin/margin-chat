@@ -1,8 +1,8 @@
 import { fromWorkspaceEntityId, toWorkspaceEntityId } from "./repository.mjs";
 
 // Passages for search by keyword and by meaning (migration 0015). A source is a
-// saved document, note or chat (a conversation row) or an uploaded file (a
-// document row). Its text is what the AI may read, by the same rule as
+// saved document, note or chat (a conversation row), an uploaded file (a
+// document row) or a PDF in the cloud vault (migration 0017). Its text is what the AI may read, by the same rule as
 // searchRepository.mjs: a document's current blocks, a note's body, or a chat's
 // messages. Margin comments never count. The opening (`lead`) is computed
 // exactly as topicRepository.mjs computes a topic embedding's text, so the two
@@ -112,6 +112,27 @@ export async function listStaleFilePassageSources(client, { userId, limit }) {
     })),
     remaining: rows.length ? Number(rows[0].total) : 0,
   };
+}
+
+/** The PDFs from the vault that are indexed, by document ID, with the file revision each was made from. */
+export async function listVaultFilePassageSources(client, { userId }) {
+  const sessionId = await sessionIdFor(client, userId);
+  if (!sessionId) return new Map();
+  const rows = (await client.query(
+    `select source_id, fingerprint from marginchat_vault_passage_sources where session_id = $1 and source_kind = 'vault-file'`,
+    [sessionId],
+  )).rows;
+  return new Map(rows.map((row) => [row.source_id, row.fingerprint]));
+}
+
+/** Forgets the passages of vault PDFs that were deleted, renamed or are no longer synced. */
+export async function deleteVaultFilePassageSources(client, { userId, ids }) {
+  const sessionId = await sessionIdFor(client, userId);
+  if (!sessionId || !ids.length) return;
+  await client.query(
+    `delete from marginchat_vault_passage_sources where session_id = $1 and source_kind = 'vault-file' and source_id = any($2::text[])`,
+    [sessionId, ids],
+  );
 }
 
 /** Forgets passages of documents and files that no longer exist. */
@@ -378,21 +399,22 @@ export async function searchPassages(client, { userId, keywords, embedding, mode
   }));
 }
 
-/** An uploaded file's indexed text, passage by passage, for reading it whole. */
+/** An uploaded file's or a vault PDF's indexed text, passage by passage, for reading it whole. */
 export async function readFilePassages(client, { userId, fileId, limit = 400 }) {
   const sessionId = await sessionIdFor(client, userId);
   if (!sessionId) return null;
   const source = (await client.query(
-    `select title, updated_at, passage_count, error from marginchat_vault_passage_sources
-     where session_id = $1 and source_kind = 'attachment' and source_id = $2`,
+    `select source_kind, title, updated_at, passage_count, error from marginchat_vault_passage_sources
+     where session_id = $1 and source_kind in ('attachment', 'vault-file') and source_id = $2
+     order by source_kind limit 1`,
     [sessionId, fileId],
   )).rows[0];
   if (!source) return null;
   const passages = (await client.query(
     `select content, page_number from marginchat_vault_passages
-     where session_id = $1 and source_kind = 'attachment' and source_id = $2
-     order by passage_index limit $3`,
-    [sessionId, fileId, limit],
+     where session_id = $1 and source_kind = $2 and source_id = $3
+     order by passage_index limit $4`,
+    [sessionId, source.source_kind, fileId, limit],
   )).rows;
   return {
     id: fileId, title: source.title, updatedAt: source.updated_at ? new Date(source.updated_at).toISOString() : null,
