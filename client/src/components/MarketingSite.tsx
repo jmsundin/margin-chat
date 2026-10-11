@@ -1,10 +1,16 @@
-import { useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import { createDemoVault } from "../lib/demoVault";
 import { AUTH_PATHS, MARKETING_PATHS, type MarketingPage } from "../lib/siteRoutes";
 import {
   detectVisitorPlatform, primaryDownload, readDownloadLinks, PLATFORM_LABELS,
   type DownloadLinks, type VisitorPlatform,
 } from "../lib/platform";
 import "./MarketingSite.css";
+
+// The live previews run the real map and document editor, so they load in their own chunk.
+const loadLivePreviews = () => import("./landing/LivePreviews");
+const LiveMapPreview = lazy(() => loadLivePreviews().then((module) => ({ default: module.LiveMapPreview })));
+const LiveSideDocumentPreview = lazy(() => loadLivePreviews().then((module) => ({ default: module.LiveSideDocumentPreview })));
 
 interface MarketingSiteProps {
   page: MarketingPage;
@@ -210,6 +216,8 @@ function Feature({ eyebrow, tone, title, children, visual, reverse }: { eyebrow:
 }
 
 function HomePage({ site }: { site: SiteContext }) {
+  // One sample vault feeds both live previews, so a side document made in one shows up on the map.
+  const [vault, setVault] = useState(createDemoVault);
   return (
     <>
       <section className="mk-hero">
@@ -234,27 +242,19 @@ function HomePage({ site }: { site: SiteContext }) {
         </div>
       </section>
 
-      <div id="features" />
-      <Feature
-        eyebrow="BRANCHES AND NOTES"
-        tone="coral"
-        title="Follow a tangent without losing your place."
-        visual={(
-          <div className="mk-panel mk-branch-card" aria-hidden="true">
-            <div className="mk-crumbs">Reading › The printing press › <strong>Who could read in 1500?</strong></div>
-            <div className="mk-tabs"><span>The printing press</span><span className="is-active">Who could read in 1500?</span><span>Movable type in Korea</span></div>
-            <p className="mk-serif">Signatures on marriage registers suggest that around 1500 perhaps one man in ten in England could sign his name. By 1640 it was closer to one in three…</p>
-            <div className="mk-branch-source">Branched from <span>“the number of people who could check a claim…”</span></div>
+      <section className="mk-section" id="features">
+        <div className="mk-wrap">
+          <p className="mk-eyebrow is-coral">BRANCHES AND NOTES</p>
+          <div className="mk-split is-tight">
+            <h2 className="mk-h2">Follow a tangent without losing your place.</h2>
+            <p className="mk-body">Select any passage and open a side document beside it, linked to the words you highlighted. The original stays exactly where you left it. Try it below: this is the real editor, running on a sample vault in your browser.</p>
           </div>
-        )}
-      >
-        <p className="mk-body">Select any passage, in a chat or in your own writing, and open a branch beside it. Notes and branches open right next to their parent, with tabs and breadcrumbs so you always know where you are.</p>
-        <ul className="mk-list">
-          <li>Ask about a highlight without derailing the main thread</li>
-          <li>Save any answer as a child note in one click</li>
-          <li>Link selected text to another note</li>
-        </ul>
-      </Feature>
+          <Suspense fallback={<div className="mk-live-loading" role="status">Loading the live preview…</div>}>
+            <LiveSideDocumentPreview vault={vault} setVault={setVault} />
+          </Suspense>
+          <p className="mk-live-caption">Nothing here is saved or sent anywhere. Reload the page to start over.</p>
+        </div>
+      </section>
 
       <Feature
         eyebrow="YOUR VAULT"
@@ -291,7 +291,10 @@ function HomePage({ site }: { site: SiteContext }) {
             <h2 className="mk-h2">See how your ideas connect, then grow the map.</h2>
             <p className="mk-body">The map draws every note and link in your vault. Search a topic to pull in its Wikipedia article and related pages, or ask AI to suggest what belongs next to it.</p>
           </div>
-          <MapPreview />
+          <Suspense fallback={<MapPreview />}>
+            <LiveMapPreview vault={vault} setVault={setVault} />
+          </Suspense>
+          <p className="mk-live-caption">This is the real Map view. Drag the canvas, zoom, switch between Canvas, Focus and Clusters, and open a card to read it. Side documents you created above appear here too.</p>
           <div className="mk-grid3 is-compact">
             <div><h3 className="mk-h3">Canvas</h3><p className="mk-body">Place notes where you want them, drag to arrange, and tidy up in one click.</p></div>
             <div><h3 className="mk-h3">Focus</h3><p className="mk-body">Center one note and see only what it links to and from.</p></div>
