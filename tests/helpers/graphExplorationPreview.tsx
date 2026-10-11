@@ -10,6 +10,7 @@ import { createDefaultGraphNodeLayout } from "../../client/src/lib/graphLayout";
 import type { Conversation, ConversationGroup, GraphNodeLayout } from "../../client/src/types";
 import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
 import "../../client/src/styles.css";
+import "../../client/src/components/KnowledgeGraphWorkspace.css";
 
 const createdAt = "2026-09-19T12:00:00.000Z";
 
@@ -151,6 +152,16 @@ function GraphExplorationPreview() {
           return id;
         }}
         onOpenConversation={(id) => { setActiveId(id); setView("chat"); }}
+        onConnectConversation={(sourceId, targetId) => setFixture((current) => ({ ...current, conversations: { ...current.conversations,
+          [sourceId]: { ...current.conversations[sourceId], linkedConversationIds: [...new Set([...(current.conversations[sourceId].linkedConversationIds ?? []), targetId])] } } }))}
+        onCreateNoteAt={(position) => {
+          const id = `preview-note-${Date.now()}`;
+          const conversation = createStandaloneNoteConversation({ id, noteId: `${id}-body`, createdAt });
+          conversation.title = "New note";
+          setFixture((current) => ({ ...current, conversations: { ...current.conversations, [id]: conversation },
+            layouts: { ...current.layouts, [id]: createDefaultGraphNodeLayout({ ...position, positioned: true }) } }));
+          reveal(id);
+        }}
         onToggleGroup={(id) => setFixture((current) => ({ ...current, groups: { ...current.groups, [id]: { ...current.groups[id], collapsed: !current.groups[id].collapsed } } }))}
         onUpdateGraphNodeLayouts={(updates) => setFixture((current) => ({ ...current, layouts: {
           ...current.layouts,

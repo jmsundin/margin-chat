@@ -1107,6 +1107,8 @@ async function checkCanvasCardDrag() {
     "drag-right": createDefaultGraphNodeLayout({ x: 600, y: 0, positioned: true }),
   };
   const layoutWrites: Array<Record<string, Partial<GraphNodeLayout>>> = [];
+  const links: string[][] = [];
+  const notesAt: Array<{ x: number; y: number }> = [];
   await act(async () => {
     root.render(createElement(ConversationGraphView, {
       workspaceKey: "canvas-card-drag", activeConversationId: "drag-left", conversations: cards,
@@ -1114,6 +1116,8 @@ async function checkCanvasCardDrag() {
       onActivateConversation() {}, onAssignGroup() {}, onCreateChildConversation: () => null,
       onOpenConversation() {}, onToggleGroup() {},
       onUpdateGraphNodeLayouts: (updates) => { layoutWrites.push(structuredClone(updates)); },
+      onConnectConversation: (source: string, target: string) => { links.push([source, target]); },
+      onCreateNoteAt: (position: { x: number; y: number }) => { notesAt.push(position); },
     }));
   });
   await flushFrames();
@@ -1135,8 +1139,11 @@ async function checkCanvasCardDrag() {
     });
     await flushFrames();
   }
+  const widthBefore = element('[data-conversation-id="drag-left"]').style.width;
   await press([2], 51);
-  assert(element('[data-conversation-id="drag-left"]').classList.contains("is-selected"), "A press that barely moves still previews the card");
+  assert(element('[data-conversation-id="drag-left"]').classList.contains("is-selected"), "A press that barely moves still selects the card");
+  assert.equal(element('[data-conversation-id="drag-left"]').style.width, widthBefore, "Selecting a Canvas card doesn't grow it");
+  assert(container.querySelector('[aria-label="Docked chat: Drag left"]'), "Selecting a Canvas card opens it in the side panel");
   assert.equal(layoutWrites.length, 0, "A click on a Canvas card never saves a position");
   await click(body());
   assert.equal(container.querySelector(".conversation-graph-node.is-selected"), null);
@@ -1145,7 +1152,39 @@ async function checkCanvasCardDrag() {
   const moved = layoutWrites.at(-1)?.["drag-left"];
   assert(moved && moved.positioned && (moved.x ?? 0) > 0, `Dragging a Canvas card by its body saves its new position: ${JSON.stringify(layoutWrites)}`);
   await click(body());
-  assert(element('[data-conversation-id="drag-left"]').classList.contains("is-selected"), "The next click after a drag previews as usual");
+  assert(element('[data-conversation-id="drag-left"]').classList.contains("is-selected"), "The next click after a drag selects as usual");
+
+  // Drag from a card's edge handle onto another card to link them.
+  const handle = element('[data-conversation-id="drag-left"] .conversation-graph-node-link-handle');
+  handle.setPointerCapture = () => {};
+  const originalElementFromPoint = browser.document.elementFromPoint;
+  browser.document.elementFromPoint = () => element('[data-conversation-id="drag-right"]');
+  try {
+    await act(async () => {
+      handle.dispatchEvent(new browser.PointerEvent("pointerdown", { pointerId: 61, pointerType: "mouse", button: 0, clientX: 200, clientY: 100, bubbles: true }));
+    });
+    await act(async () => {
+      viewport.dispatchEvent(new browser.PointerEvent("pointermove", { pointerId: 61, pointerType: "mouse", clientX: 500, clientY: 100, bubbles: true }));
+    });
+    await flushFrames();
+    assert(container.querySelector(".graph-link-drag"), "Dragging from the edge handle draws a link line");
+    assert.match(element(".graph-link-drag-hint").textContent ?? "", /Drag right/, "The hint names the card under the pointer");
+    await act(async () => {
+      viewport.dispatchEvent(new browser.PointerEvent("pointerup", { pointerId: 61, pointerType: "mouse", button: 0, clientX: 500, clientY: 100, bubbles: true }));
+    });
+    await flushFrames();
+  } finally {
+    browser.document.elementFromPoint = originalElementFromPoint;
+  }
+  assert.deepEqual(links, [["drag-left", "drag-right"]], "Dropping the link on another card connects them");
+  assert.equal(container.querySelector(".graph-link-drag"), null, "The link line goes away after the drop");
+
+  // Double-clicking empty space makes a note there; double-clicking a card doesn't.
+  await act(async () => { body().dispatchEvent(new browser.MouseEvent("dblclick", { clientX: 100, clientY: 100, bubbles: true })); });
+  assert.equal(notesAt.length, 0, "Double-clicking a card doesn't create a note");
+  await act(async () => { viewport.dispatchEvent(new browser.MouseEvent("dblclick", { clientX: 400, clientY: 500, bubbles: true })); });
+  assert.equal(notesAt.length, 1, "Double-clicking empty Canvas space creates a note");
+  assert(Number.isFinite(notesAt[0].x) && Number.isFinite(notesAt[0].y), `The note is placed where you double-clicked: ${JSON.stringify(notesAt)}`);
 }
 
 async function checkTemporarySelectionSpacing() {
