@@ -194,6 +194,120 @@ export async function requestLocalDirectoryPermission(userId: string): Promise<L
   return buildDirectoryStatus(selection.handle, getLocalWorkspaceFileName(userId), selection.id);
 }
 
+export interface RememberedLocalDirectory {
+  id: string;
+  name: string;
+  current: boolean;
+}
+
+/** Folders connected before on this device, the connected one first. */
+export async function listLocalDirectories(userId: string): Promise<RememberedLocalDirectory[]> {
+  const selection = await getStoredDirectorySelection(userId);
+  if (!selection) return [];
+  const directories = selection.directories.length ? selection.directories : [{ id: selection.id, handle: selection.handle }];
+  return directories
+    .map((entry) => ({ id: entry.id, name: entry.handle.name, current: entry.id === selection.id }))
+    .sort((a, b) => Number(b.current) - Number(a.current) || a.name.localeCompare(b.name));
+}
+
+/**
+ * Reconnects a folder connected before, asking the browser for access again.
+ * Call from a click handler. Returns null when the folder is not remembered.
+ */
+export async function reconnectLocalDirectory(userId: string, directoryId: string): Promise<FileSystemDirectoryHandle | null> {
+  const selection = await getStoredDirectorySelection(userId);
+  const entry = selection?.directories.find((candidate) => candidate.id === directoryId);
+  if (!entry) return null;
+  const handle = entry.handle as Partial<PermissionCapableDirectoryHandle>;
+  if (typeof handle.requestPermission === "function" && await handle.requestPermission({ mode: "readwrite" }) !== "granted") return null;
+  return entry.handle;
+}
+
+/**
+ * Names, sizes and modification times of the folder's Markdown files, without
+ * reading their text, so the folder can be checked for new files often.
+ */
+export async function localDirectorySignature(handle: FileSystemDirectoryHandle, prefix = ""): Promise<string> {
+  const parts: string[] = [];
+  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
+  for await (const [name, entry] of entries.entries()) {
+    if (name.startsWith(".")) continue;
+    const path = prefix ? `${prefix}/${name}` : name;
+    if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
+    if (entry.kind === "directory") parts.push(await localDirectorySignature(entry as FileSystemDirectoryHandle, path));
+    else if (isSafeMarkdownPath(path)) {
+      const file = await (entry as FileSystemFileHandle).getFile();
+      parts.push(`${path}\t${file.size}\t${file.lastModified}`);
+    }
+  }
+  return parts.sort().join("\n");
+}
+
+type FileSystemObserverConstructor = new (callback: () => void) => {
+  observe(handle: FileSystemHandle, options?: { recursive?: boolean }): Promise<void>;
+  disconnect(): void;
+};
+
+/** Checks between folder scans; a scan that takes longer spaces the next one out. */
+const FOLDER_WATCH_MIN_MS = 2_500;
+const FOLDER_WATCH_MAX_MS = 60_000;
+
+/**
+ * Calls `onChange` soon after a Markdown file is added, edited, renamed or
+ * removed in the connected folder by another app. Uses the browser's folder
+ * observer where there is one, and otherwise compares cheap scans while the
+ * page is visible. Returns a function that stops watching.
+ */
+export function watchLocalDirectory(userId: string, directoryId: string, onChange: () => void): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let observer: InstanceType<FileSystemObserverConstructor> | null = null;
+  let last: string | null = null;
+  let scanning = false;
+
+  async function scan() {
+    if (stopped || scanning) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") { schedule(FOLDER_WATCH_MIN_MS); return; }
+    scanning = true;
+    const started = Date.now();
+    try {
+      const handle = await getStoredDirectoryHandle(userId, directoryId);
+      if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return;
+      const signature = await localDirectorySignature(handle);
+      if (stopped) return;
+      if (last !== null && signature !== last) onChange();
+      last = signature;
+    } catch {
+      // A folder that moved or lost access is reported by the regular sync.
+    } finally {
+      scanning = false;
+      schedule(Math.min(FOLDER_WATCH_MAX_MS, Math.max(FOLDER_WATCH_MIN_MS, (Date.now() - started) * 20)));
+    }
+  }
+
+  function schedule(delay: number) {
+    if (stopped) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => void scan(), delay);
+  }
+
+  const Observer = (globalThis as { FileSystemObserver?: FileSystemObserverConstructor }).FileSystemObserver;
+  if (Observer) {
+    void getStoredDirectoryHandle(userId, directoryId).then((handle) => {
+      if (!handle || stopped) return;
+      // Changes arrive in bursts while another app saves; one check covers them.
+      observer = new Observer(() => schedule(300));
+      return observer.observe(handle, { recursive: true });
+    }).catch(() => { observer = null; });
+  }
+  void scan();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    observer?.disconnect();
+  };
+}
+
 export async function chooseLocalDirectory(userId: string): Promise<LocalDirectoryStatus> {
   const handle = await pickLocalDirectory();
   return handle ? connectLocalDirectory(userId, handle) : getLocalDirectoryStatus(userId);
