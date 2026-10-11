@@ -348,6 +348,9 @@ try {
   assert.equal(mode(), "clusters");
   await show("lineage");
   assert.deepEqual(bottomMenus(), ["Layout"], "Lineage keeps its tree choices");
+  const lastView = JSON.parse(browser.localStorage.getItem("margin-graph-last-view:arrange-menus")!);
+  assert.equal(lastView.viewMode, "lineage", "The last view is saved for the next session");
+  assert.equal(lastView.dockedConversationId, null);
   checks.push("Arrange shows Tidy up on Canvas, Layout on Focus and Lineage, and nothing on Clusters, Topics or Network");
 
   await fresh("tidy-undo");
