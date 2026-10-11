@@ -178,7 +178,9 @@ describe("agent mode in the chat service", () => {
 
 describe("agent settings", () => {
   test("validation accepts only offered budgets and defaults one when agent mode is on", () => {
-    expect(validateAIOptions({ agent: true })).toMatchObject({ agent: true, agentBudgetMicros: 500_000 });
+    expect(validateAIOptions({ agent: true })).toMatchObject({ agent: true, agentBudgetMicros: 500_000, agentScope: "workspace" });
+    expect(validateAIOptions({ agent: true, agentScope: "selected" }).agentScope).toBe("selected");
+    expect(() => validateAIOptions({ agent: true, agentScope: "everything" })).toThrow("agent search scope");
     expect(validateAIOptions({ agent: true, agentBudgetMicros: 2_000_000 }).agentBudgetMicros).toBe(2_000_000);
     expect(validateAIOptions({ agent: false, agentBudgetMicros: 250_000 }).agent).toBeUndefined();
     expect(() => validateAIOptions({ agent: true, agentBudgetMicros: 123 })).toThrow("offered agent budgets");
@@ -188,6 +190,8 @@ describe("agent settings", () => {
   test("saved settings and receipts keep only well-formed agent fields", () => {
     expect(normalizeAISettings({ agent: true, agentBudgetMicros: 1_000_000 })).toMatchObject({ agent: true, agentBudgetMicros: 1_000_000 });
     expect(normalizeAISettings({ agent: "true", agentBudgetMicros: 7 })).not.toHaveProperty("agent");
+    expect(normalizeAISettings({ agent: true, agentScope: "conversation" }).agentScope).toBe("conversation");
+    expect(normalizeAISettings({ agent: true, agentScope: "everything" })).not.toHaveProperty("agentScope");
     const receipt = normalizeAIExecution({ schemaVersion: 1, model: "m", provider: "openai-api", agent: {
       stopReason: "nope", spentMicros: -1, budgetMicros: 500_000,
       steps: [{ kind: "tool", tool: "x", label: "Read" }, { kind: "evil", label: "x" }, { kind: "note", label: "" }],

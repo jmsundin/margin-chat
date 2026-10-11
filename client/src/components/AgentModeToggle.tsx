@@ -17,7 +17,7 @@ export default function AgentModeToggle({ controls, disabled }: { controls: Agen
   const on = controls.enabled && controls.available;
   return <span className="agent-mode-toggle">
     <button type="button" aria-pressed={on} disabled={disabled || !controls.available}
-      title={controls.available ? "Agent mode: the AI can look through your permitted notes and chats over several steps before writing" : "This model can't use tools. Choose an OpenAI, Claude or xAI model for Agent mode."}
+      title={controls.available ? "Agent mode: the AI can search and read your saved documents over several steps before writing. To limit what it searches, open the model picker and change AI context." : "This model can't use tools. Choose an OpenAI, Claude or xAI model for Agent mode."}
       onClick={() => controls.onChange({ enabled: !on, budgetMicros })}>Agent</button>
     {on && controls.showBudget ? <select aria-label="Agent budget per run" disabled={disabled} value={budgetMicros}
       onChange={(event) => controls.onChange({ enabled: true, budgetMicros: Number(event.target.value) })}>

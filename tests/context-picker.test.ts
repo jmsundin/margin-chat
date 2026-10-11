@@ -10,5 +10,5 @@ test("AI context controls update safely inside the model picker", async () => {
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Context picker regression failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(3);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(4);
 }, 15000);
