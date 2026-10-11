@@ -49,7 +49,7 @@ export interface DocumentPanelProps {
   compact?: boolean;
   presentationToggle?: ReactNode;
   childNavigation?: ReactNode;
-  /** Vertical tabs of this document's children, beside its body. */
+  /** Vertical tabs of this document's children, to the right of its body. */
   childTabs?: ReactNode;
   /** Horizontal tabs of this document and its siblings, above its header. */
   siblingTabs?: ReactNode;
@@ -427,7 +427,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </div>
       </header> : null}
     <div className={`document-panel-content${props.childTabs ? " has-child-tabs" : ""}`}>
-    {props.childTabs}
     <div className={`panel-body document-body${hasPrompts ? " has-prompt-markers" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
@@ -473,6 +472,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>
     </div>
+    {props.childTabs}
     </div>
     {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}
     <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>

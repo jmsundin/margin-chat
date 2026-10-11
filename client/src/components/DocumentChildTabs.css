@@ -1,7 +1,7 @@
-/* Vertical child tabs: a column beside the document body. */
-.document-child-tabs { display: flex; flex-direction: column; flex: 0 0 clamp(124px, 26cqi, 200px); width: clamp(124px, 26cqi, 200px); min-height: 0; padding: 10px 0 10px 8px; border-right: 1px solid var(--line); }
+/* Vertical child tabs: a column on the right of the document body. */
+.document-child-tabs { display: flex; flex-direction: column; flex: 0 0 clamp(124px, 26cqi, 200px); width: clamp(124px, 26cqi, 200px); min-height: 0; padding: 10px 8px 10px 0; border-left: 1px solid var(--line); }
 .document-child-tabs.is-collapsed { flex-basis: 36px; width: 36px; padding: 10px 4px; align-items: center; }
-.document-panel .document-child-tabs-toggle, .document-child-tabs-toggle { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; margin: 0 8px 8px 0; padding: 5px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; letter-spacing: .02em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
+.document-panel .document-child-tabs-toggle, .document-child-tabs-toggle { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; margin: 0 0 8px 8px; padding: 5px 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 11px; letter-spacing: .02em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
 .document-child-tabs.is-collapsed .document-child-tabs-toggle { flex-direction: column; gap: 2px; margin: 0; padding: 6px 4px; border-color: var(--line); }
 .document-child-tabs-toggle:hover { color: var(--ink); background: var(--button-surface); }
 .document-child-tabs-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -9,10 +9,10 @@
 .document-child-tabs.is-collapsed .document-child-tabs-chevron { margin: 0; }
 .document-child-count { color: var(--accent); font-variant-numeric: tabular-nums; }
 .document-child-tabs-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
-.document-panel .document-child-tab, .document-child-tab { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 7px 10px 7px 9px; text-align: left; border: 1px solid transparent; border-right: 0; border-radius: 8px 0 0 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; }
+.document-panel .document-child-tab, .document-child-tab { flex: 0 0 auto; display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 7px 10px 7px 9px; text-align: left; border: 1px solid transparent; border-left: 0; border-radius: 0 8px 8px 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; }
 .document-child-tab:hover { background: var(--button-surface); color: var(--ink); }
 .document-child-tab.is-open { color: var(--ink); }
-.document-child-tab[aria-current="page"] { margin-right: -1px; background: var(--bg); color: var(--ink); border-color: var(--line); box-shadow: inset 2px 0 var(--accent); }
+.document-child-tab[aria-current="page"] { margin-left: -1px; background: var(--bg); color: var(--ink); border-color: var(--line); box-shadow: inset -2px 0 var(--accent); }
 .document-child-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .document-child-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .document-child-tab small { color: var(--muted); font-size: 10px; }

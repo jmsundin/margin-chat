@@ -12,7 +12,7 @@
 .document-dock-pane-body .document-body { --document-right-padding:24px; }
 .document-panel-content { position: relative; display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
 .document-panel-content > .document-body { flex: 1 1 auto; min-width: 0; }
-.document-panel.has-minimized-side-documents > .document-panel-content > .document-body { margin-right: 36px; }
+.document-panel.has-minimized-side-documents > .document-panel-content { margin-right: 36px; }
 .document-side-restores { position: absolute; top: 10px; right: 4px; bottom: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 28px; overflow-y: auto; scrollbar-width: none; }
 .document-side-restores::-webkit-scrollbar { display: none; }
 .document-side-restore { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel-strong); color: var(--accent); }
