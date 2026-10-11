@@ -295,8 +295,25 @@ describe("release Blob providers", () => {
     expect((await restoreBlobBackup(args)).objectCount).toBe(2);
     await expect(restoreBlobBackup({ ...args, targetToken: sourceToken })).rejects.toThrow("isolated store");
     await expect(restoreBlobBackup({ ...args, targetPrefix: "" })).rejects.toThrow("isolated target prefix");
+    // A target object that differs from the backup is replaced, never kept.
     fake.save(targetToken, `rehearsals/restore/${bodyKey}`, "different");
-    await expect(restoreBlobBackup(args)).rejects.toThrow("verification failed");
+    await restoreBlobBackup(args);
+    expect(fake.stores.get(targetToken)!.get(`rehearsals/restore/${bodyKey}`).bytes.toString()).toBe("# Important note\nSaved content");
+  });
+
+  test("restore replaces the index root and projection an earlier rehearsal rewrote", async () => {
+    const fake = blobFake({ pageSize: 1000 });
+    const { root } = seedVault(fake);
+    for (const name of ["index.json", "projection.json"]) fake.save(sourceToken, `${root}/${name}`, `{"production":"${name}"}`, "application/json");
+    const { inventory } = await backupBlobStore({ releaseId: "20261011000000-first", sourceToken, backupToken, sdk: fake.sdk });
+    const args = { inventory, backupToken, targetToken, targetPrefix: "rehearsal/current", sdk: fake.sdk };
+    await restoreBlobBackup(args);
+    // The rehearsal's app rewrites these in place, with different sizes.
+    for (const name of ["index.json", "projection.json"]) fake.save(targetToken, `rehearsal/current/${root}/${name}`, `{"rewritten by the rehearsal app":"${name}"}`, "application/json");
+    await restoreBlobBackup(args);
+    for (const name of ["index.json", "projection.json"]) {
+      expect(fake.stores.get(targetToken)!.get(`rehearsal/current/${root}/${name}`).bytes.toString()).toBe(`{"production":"${name}"}`);
+    }
   });
 
   test("a later backup reuses unchanged files from the earlier one and copies only what changed", async () => {

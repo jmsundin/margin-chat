@@ -10,8 +10,9 @@ const GITHUB_API = "https://api.github.com";
  * so the caller falls back to validating locally; a failed run stops the release.
  *
  * With `background`, a run still in progress returns `{ pending }` at once: a
- * promise for the passed result that rejects if CI fails or stops without
- * passing, so the release can prepare while CI finishes.
+ * promise for the passed result that rejects if CI fails, or resolves null if
+ * the run stops without a result (e.g. cancelled), so the release can prepare
+ * while CI finishes.
  */
 export async function ciResultForCommit({ sha, repository, token, workflow = "ci.yml", fetchImpl = fetch, sleep = delay,
   now = Date.now, timeoutMs = 15 * 60_000, pollMs = 15_000, onProgress = () => {}, background = false }) {
@@ -53,8 +54,7 @@ export async function ciResultForCommit({ sha, repository, token, workflow = "ci
   }
   onProgress("validate: CI is still running on this commit; preparing the release meanwhile, and nothing in production changes until it passes");
   const pending = wait().then((result) => {
-    if (!result) throw new Error("CI stopped on this commit without passing. Start the release again once CI passes.");
-    onProgress(`CI passed on this commit (run ${result.runId})`);
+    onProgress(result ? `CI passed on this commit (run ${result.runId})` : "CI stopped on this commit without a result; validating locally instead");
     return result;
   });
   pending.catch(() => {}); // Observed later by the release; avoid an unhandled rejection meanwhile.

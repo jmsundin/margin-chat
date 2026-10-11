@@ -302,9 +302,11 @@ async function putVerified(sdk, token, pathname, bytes, contentType, { overwrite
 const vaultManifestPath = /^(vaults\/v1\/[^/]+\/)(?:manifest\.json|history\/([a-f0-9]{64})\.json)$/;
 const vaultShardPath = /^vaults\/v1\/[^/]+\/shards\/([a-f0-9]{64})\.json$/;
 const isVaultManifest = (pathname) => vaultManifestPath.test(pathname);
-// The app writes every vault object except the live manifest once, under a
-// content-derived name, so an object at the same pathname is the same object.
-const isImmutableVaultObject = (pathname) => /^vaults\/v1\/[^/]+\/./.test(pathname) && !/^vaults\/v1\/[^/]+\/manifest\.json$/.test(pathname);
+// Vault objects the app writes once, under a name derived from their content,
+// so an object at the same pathname is the same object. Everything else
+// (manifest.json, index.json, projection.json, non-vault files) can change.
+const isImmutableVaultObject = (pathname) =>
+  /^vaults\/v1\/[^/]+\/(?:files\/[a-f0-9]{64}\/[a-f0-9]{64}|(?:history|shards|index)\/[a-f0-9]{64}\.json)$/.test(pathname);
 const isObject = (value) => !!value && typeof value === "object" && !Array.isArray(value);
 
 /** A vault root: a schema 1 manifest listing every file, or a schema 2 root
@@ -577,10 +579,11 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
 }
 
 /** Restore a backup into a mandatory isolated prefix of a third private store.
- * The prefix may keep an earlier rehearsal's copy: immutable vault objects
- * already there are kept (their pathname names their content), and everything
- * else is copied from the verified backup, replacing manifests and other
- * mutable objects. This never writes to the production or backup store.
+ * The prefix may keep an earlier rehearsal's copy: content-addressed vault
+ * objects already there with the right size are kept, and everything else is
+ * copied from the verified backup, replacing what the earlier rehearsal left
+ * (its app rewrites manifests, index roots and projections). This never writes
+ * to the production or backup store.
  */
 export async function restoreBlobBackup({ inventory, backupToken, targetToken, targetPrefix, sdk, concurrency = BLOB_CONCURRENCY, sleep = delay, onProgress }) {
   validateInventory(inventory);
@@ -608,7 +611,9 @@ export async function restoreBlobBackup({ inventory, backupToken, targetToken, t
   const progress = progressReporter(onProgress, "Blob restore", reads.length);
   const copy = async (object, bytes) => {
     const pathname = `${targetPrefix}/${object.pathname}`;
-    await putVerified(blob, targetToken, pathname, bytes, object.contentType, { overwrite: existing.has(pathname) && !isImmutableVaultObject(object.pathname) });
+    // The rehearsal store is scratch space: whatever an earlier rehearsal left
+    // at a pathname that is not kept is replaced by the verified backup copy.
+    await putVerified(blob, targetToken, pathname, bytes, object.contentType, { overwrite: existing.has(pathname) });
   };
   // One read of each backup object both verifies it and copies it. Manifests
   // are written only after the whole snapshot verified, so no restored manifest
