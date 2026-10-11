@@ -1,6 +1,6 @@
 # Public and personal maps
 
-The graph workspace now has **My map** and **Public** modes. Switching modes keeps each mounted map's selection, camera, and reader. Public exploration is also saved for the browser session under the workspace account key.
+The separate **My map** and **Public** modes were retired. Wikipedia topics are now found through the map search and shown as previews on the user's own map; see [map search and previews](map-search-and-previews.md). The old public map's topics move into the explored history once. "Explore and collect" below describes the retired Public mode; "Work in your map" still applies.
 
 ## Explore and collect
 

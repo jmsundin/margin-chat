@@ -73,7 +73,8 @@ import { getDocumentBlockAuthorship, normalizeAISettings, normalizeDocumentDock,
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
-import { saveUrlMapNode } from "./lib/urlMap";
+import { keepExploredItems } from "./lib/keepExplored";
+import type { MapExploration } from "./lib/mapExploration";
 import { connectPublicTopics, findSavedPublicTopic, savePublicTopic, wikipediaConnectionKind } from "./lib/publicTopicWorkspace";
 import { wikidataStatement, type PublicExpansion } from "./lib/publicKnowledge";
 import { wikipediaArticleUrl } from "./lib/wikipedia";
@@ -3162,7 +3163,25 @@ function WorkspaceAppContent({
     const existing = findSavedPublicTopic(state.conversations, topic);
     setState((current) => savePublicTopic(current, topic).state);
     mapUndoRef.current = null;
-    setMapEditMessage(existing ? `${existing.title} is already in your map.` : `${topic.label} added to your map. Keep exploring or choose “Show in my map”.`);
+    setMapEditMessage(existing ? `${existing.title} is already in your map.` : `${topic.label} added to your map.`);
+  }
+
+  /** Turns map previews into notes, each connected to what it was explored from. Returns the note each became. */
+  function handleKeepExplored(exploration: MapExploration, ids: string[], detached: string[] = []): Record<string, string> {
+    const identities = new Map<string, { id: string; noteId: string }>();
+    const options = { createdAt: new Date().toISOString(), detached,
+      newNote: (itemId: string) => {
+        if (!identities.has(itemId)) identities.set(itemId, { id: createId("note-conversation"), noteId: createId("note") });
+        return identities.get(itemId)!;
+      } };
+    const { kept } = keepExploredItems(state, exploration, ids, options);
+    const keptIds = Object.keys(kept);
+    if (!keptIds.length) return kept;
+    setState((current) => keepExploredItems(current, exploration, ids, options).state);
+    mapUndoRef.current = null;
+    setMapEditMessage(keptIds.length === 1 ? `${exploration.items[keptIds[0]]?.label ?? "The preview"} is now a note in your map.` : `${keptIds.length} previews are now notes in your map.`);
+    if (keptIds.length === 1) setGraphFocusRequest({ conversationId: kept[keptIds[0]], requestId: ++graphFocusRequestCounterRef.current, preserveMapMode: true });
+    return kept;
   }
 
   /** Adds a page of Wikipedia connections to a note, adopting the matched article as its topic. */
@@ -4528,7 +4547,6 @@ function WorkspaceAppContent({
                     explorerContainer={graphExplorerContainer}
                     onOpenExplorer={() => { setMapSidebarSection("explore"); setLeftSidebarOpen(true); }}
                     onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
-                    onSaveUrlMapNode={(graph, nodeId) => setState((current) => saveUrlMapNode(current, graph, nodeId))}
                     urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
                     publicMapAccount={{ userId: user.id, canAsk: user.role === "admin" || user.billing.hasAccess, isAdmin: user.role === "admin",
                       aiOptions: { serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai },
@@ -4536,6 +4554,7 @@ function WorkspaceAppContent({
                     onSavePublicTopic={handleSavePublicTopic}
                     onAddTopicConnections={handleAddTopicConnections}
                     onSavePrivateAnswer={handleSavePrivateAnswer}
+                    onKeepExplored={handleKeepExplored}
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}
                     onSetRelation={handleSetMapRelation}
