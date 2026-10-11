@@ -53,7 +53,7 @@ export function clusterDisplayLevel(clusters: GravityCluster[], levels: GravityC
 export function labelClusterGroups(labels: Labels, clusters: GravityCluster[], levels: GravityClusterLevel[], unlinkedLabel = "Unlinked") {
   const result: Labels = { ...labels };
   for (const cluster of clusters) {
-    if (cluster.hubId === null && cluster.period) result[cluster.id] = { label: `${unlinkedLabel} · ${formatClusterPeriod(cluster.period)}`, generated: false };
+    if (cluster.hubId === null) result[cluster.id] = { label: cluster.period ? `${unlinkedLabel} · ${formatClusterPeriod(cluster.period)}` : `${unlinkedLabel} documents`, generated: false };
   }
   const sizes = new Map<string, number>(clusters.map((cluster) => [cluster.id, cluster.memberIds.length]));
   for (const level of levels) for (const group of level.groups) {
