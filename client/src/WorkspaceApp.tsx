@@ -1024,6 +1024,21 @@ function WorkspaceAppContent({
       setMaximizedDocumentId(activeConversation.id);
     } else if (!visibleDocumentIds.has(maximizedDocumentId)) setMaximizedDocumentId(null);
   });
+  // Maximize starts with the side panels tucked away (⌘B and the rail still open them)
+  // and reopens the ones that were open before.
+  const panelsBeforeMaximize = useRef<{ sidebar: boolean; rail: boolean } | null>(null);
+  useEffect(() => {
+    if (maximizedDocumentId && !panelsBeforeMaximize.current) {
+      panelsBeforeMaximize.current = { sidebar: leftSidebarOpen, rail: state.railOpen };
+      setLeftSidebarOpen(false);
+      setState((current) => current.railOpen ? { ...current, railOpen: false } : current);
+    } else if (!maximizedDocumentId && panelsBeforeMaximize.current) {
+      const before = panelsBeforeMaximize.current;
+      panelsBeforeMaximize.current = null;
+      if (before.sidebar) setLeftSidebarOpen(true);
+      if (before.rail) setState((current) => current.railOpen ? current : { ...current, railOpen: true });
+    }
+  }, [maximizedDocumentId]);
   const toggleMaximizedDocument = useEffectEvent((id: string) => {
     setMaximizedDocumentId((current) => current === id ? null : id);
     if (state.activeConversationId !== id) handleFocusVisibleDocument(id);

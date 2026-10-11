@@ -124,18 +124,12 @@
   .document-workspace-actions .branch-drawer-trigger { gap: 4px; padding-inline: 5px; }
 }
 
-/* Maximize document: one document (with its margin notes and child list) fills the window.
-   Everything else stays mounted but hidden, so restoring returns the exact layout. */
-.app-shell.is-document-maximized .workspace-sidebar-pane,
-.app-shell.is-document-maximized .workspace-mobile-backdrop,
-.app-shell.is-document-maximized .document-workspace-toolbar,
-.app-shell.is-document-maximized .document-breadcrumbs,
-.app-shell.is-document-maximized .history-import-welcome,
-.app-shell.is-document-maximized .document-workspace-with-search > :not(.document-workspace-layout),
+/* Maximize document: one document (with its margin notes and child list) fills the document
+   area; other panes and the pinned dock stay mounted but hidden, so restoring is exact. The
+   sidebar, tabs, breadcrumbs and right panels stay available. Like a page in Google Docs, the
+   text keeps a readable width, centered in the full-width pane. */
 .app-shell.is-document-maximized .document-workspace-dock,
 .app-shell.is-document-maximized .document-dock-boundary,
-.app-shell.is-document-maximized .branch-map,
-.app-shell.is-document-maximized .branch-map-backdrop,
 .app-shell.is-document-maximized .conversation-canvas.is-document-workspace > :not(.is-maximized-document) { display: none !important; }
 .app-shell.is-document-maximized .conversation-canvas.is-tree-browser.is-document-workspace { gap: 16px; padding: 0 12px 10px; overflow-x: hidden; }
 .app-shell.is-document-maximized .conversation-canvas.is-tree-browser > .conversation-tree-expanded.is-maximized-document {
@@ -143,6 +137,17 @@
   width: auto;
   min-width: 0;
   max-width: none;
+}
+/* cqi here is the document pane; the body is the pane minus the child list beside it. */
+.is-maximized-document > .document-panel { --maximized-text-width: 720px; --maximized-body-width: 100cqi; }
+.is-maximized-document > .document-panel .document-panel-content.has-child-tabs { --maximized-body-width: calc(100cqi - clamp(124px, 26cqi, 200px)); }
+.is-maximized-document > .document-panel .document-panel-content.has-child-tabs:has(> .document-child-tabs.is-collapsed) { --maximized-body-width: calc(100cqi - 36px); }
+.app-shell.is-document-maximized .is-maximized-document > .document-panel .document-body {
+  --document-left-padding: max(24px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
+  --document-right-padding: max(32px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
+}
+.app-shell.is-document-maximized .is-maximized-document > .document-panel .document-body.has-prompt-markers {
+  --document-left-padding: max(36px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
 }
 .app-shell.is-document-maximized .conversation-tree-expanded.is-maximized-document > .panel-resize-handle { display: none; }
 .document-panel .document-restore-size-button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; margin-top: 10px; padding: 5px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
