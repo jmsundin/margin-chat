@@ -5,6 +5,7 @@ import {
   detectVisitorPlatform, primaryDownload, readDownloadLinks, PLATFORM_LABELS,
   type DownloadLinks, type VisitorPlatform,
 } from "../lib/platform";
+import { apiFetch } from "../lib/apiTransport";
 import "./MarketingSite.css";
 
 // The live previews run the real map and document editor, so they load in their own chunk.
@@ -18,9 +19,13 @@ interface MarketingSiteProps {
   onNavigate(path: string): void;
   downloadLinks?: DownloadLinks;
   platform?: VisitorPlatform;
+  /** Whether the server offers the Cloud plan; fetched when omitted. */
+  cloudPlanAvailable?: boolean;
 }
 
 interface SiteContext {
+  /** null while unknown; false greys the Cloud plan out as "Coming soon". */
+  cloudAvailable: boolean | null;
   signedIn: boolean;
   links: DownloadLinks;
   platform: VisitorPlatform;
@@ -28,7 +33,22 @@ interface SiteContext {
   go(event: MouseEvent<HTMLAnchorElement>): void;
 }
 
-export default function MarketingSite({ page, signedIn, onNavigate, downloadLinks, platform }: MarketingSiteProps) {
+function useCloudPlanAvailable(known?: boolean) {
+  const [available, setAvailable] = useState<boolean | null>(known ?? null);
+  useEffect(() => {
+    if (known !== undefined) return;
+    let cancelled = false;
+    apiFetch("/api/billing/plans")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => { if (!cancelled) setAvailable(payload?.cloud === true); })
+      .catch(() => { if (!cancelled) setAvailable(false); });
+    return () => { cancelled = true; };
+  }, [known]);
+  return available;
+}
+
+export default function MarketingSite({ page, signedIn, onNavigate, downloadLinks, platform, cloudPlanAvailable }: MarketingSiteProps) {
+  const cloudAvailable = useCloudPlanAvailable(cloudPlanAvailable);
   const links = useMemo(() => downloadLinks ?? readDownloadLinks(), [downloadLinks]);
   const [visitorPlatform] = useState<VisitorPlatform>(() => platform ?? detectVisitorPlatform());
   useEffect(() => {
@@ -38,6 +58,7 @@ export default function MarketingSite({ page, signedIn, onNavigate, downloadLink
   }, [page]);
 
   const site: SiteContext = {
+    cloudAvailable,
     signedIn,
     links,
     platform: visitorPlatform,
@@ -336,7 +357,7 @@ function HomePage({ site }: { site: SiteContext }) {
           </div>
           <div className="mk-grid3">
             <div className="mk-plan-mini"><strong>Free</strong><span className="mk-price">$0</span><span>Your own API keys. Local vault.</span></div>
-            <div className="mk-plan-mini"><strong>Cloud</strong><span className="mk-price">$10<small>/mo</small></span><span>Your own API keys. Cloud vault that syncs automatically.</span></div>
+            <div className={`mk-plan-mini${site.cloudAvailable === false ? " is-unavailable" : ""}`}><strong>Cloud{site.cloudAvailable === false ? <small> · Coming soon</small> : null}</strong><span className="mk-price">$10<small>/mo</small></span><span>Your own API keys. Cloud vault that syncs automatically.</span></div>
             <div className="mk-plan-mini is-featured"><strong>Plus</strong><span className="mk-price">$20<small>/mo</small></span><span>Includes $20 of AI credit every month. Cloud vault.</span></div>
           </div>
         </div>
@@ -408,10 +429,12 @@ function PricingPage({ site }: { site: SiteContext }) {
             <a className="mk-btn mk-btn-ghost" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Open Margin Chat" : "Get started"}</a>
             <ul className="mk-checks">{FREE_FEATURES.map((item) => <li key={item}><CheckIcon />{item}</li>)}</ul>
           </div>
-          <div className="mk-plan">
+          <div className={`mk-plan${site.cloudAvailable === false ? " is-unavailable" : ""}`}>
             <div><h2 className="mk-h3">Cloud</h2><p className="mk-muted">Cloud vault and sync, your own keys</p></div>
             <div><span className="mk-price is-large">$10</span><span className="mk-muted"> / month</span></div>
-            <a className="mk-btn mk-btn-ghost" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Choose Cloud in Billing" : "Start with Cloud"}</a>
+            {site.cloudAvailable === false
+              ? <span className="mk-btn mk-btn-ghost" aria-disabled="true">Coming soon</span>
+              : <a className="mk-btn mk-btn-ghost" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Choose Cloud in Billing" : "Start with Cloud"}</a>}
             <ul className="mk-checks">{CLOUD_FEATURES.map((item, index) => <li key={index}><CheckIcon /><span>{item}</span></li>)}</ul>
           </div>
           <div className="mk-plan is-featured">

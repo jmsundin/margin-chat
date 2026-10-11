@@ -187,6 +187,12 @@ export function createApiHandler({
         return;
       }
 
+      // Public: lets /pricing hide Cloud until its Stripe price is configured.
+      if (route?.id === "billingPlans") {
+        sendJson(response, 200, { cloud: Boolean(env.STRIPE_CLOUD_PRICE_ID?.trim()) }, { "Cache-Control": "public, max-age=300" });
+        return;
+      }
+
       if (route?.id === "billingWebhook") {
         const stripeSignature = request.headers["stripe-signature"];
         const signature = Array.isArray(stripeSignature)
