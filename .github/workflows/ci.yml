@@ -32,6 +32,9 @@ jobs:
       - name: Build client
         # Runs the client typecheck (tsc) before bundling.
         run: bun run build
+      - name: Build extension
+        # The production release reuses this run's result instead of rebuilding.
+        run: bun run build:extension
       - name: Test
         # Tests use in-process PGlite and fixtures; no secrets or services needed.
         run: bun --no-env-file test

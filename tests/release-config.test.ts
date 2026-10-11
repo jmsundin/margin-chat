@@ -39,6 +39,11 @@ describe("production release configuration", () => {
     await expect(readFixture({ ...completeConfig(), jobs: [1] })).rejects.toThrow("job IDs");
   });
 
+  test("accepts only the known backup policies", async () => {
+    for (const checkpoint of ["always", "when-data-changes"]) expect((await readFixture({ ...completeConfig(), checkpoint })).checkpoint).toBe(checkpoint);
+    await expect(readFixture({ ...completeConfig(), checkpoint: "never" })).rejects.toThrow("checkpoint must be");
+  });
+
   test("requires compatibility with both old server code and delayed browser clients", async () => {
     for (const field of ["oldApplication", "oldClients"]) {
       const config = completeConfig();

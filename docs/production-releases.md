@@ -123,9 +123,9 @@ Protected Neon recovery branches require a plan supporting that feature and are 
 
 | Stage | Behavior |
 | --- | --- |
-| Validate | Verify project/branch/store identities and current production alias; install from the frozen Bun lockfile; run all tests and client/extension builds; require a clean checkout. |
+| Validate | Verify project/branch/store identities and current production alias; require a passed CI run on the exact release commit (waiting while it runs); only when no CI run covers the commit, install from the frozen Bun lockfile and run all tests and client/extension builds; require a clean checkout. |
 | Lock | Hold a direct Postgres session advisory lock across the release. GitHub additionally serializes all production refs without canceling a running release. |
-| Checkpoint | Create a protected recovery branch and an isolated rehearsal branch at the same production LSN. Copy private Blob objects and verify a backup inventory. Record resource identities as they are created. |
+| Checkpoint | Skipped, together with Rehearse, when `checkpoint` in `release.config.json` is `"when-data-changes"` and the production database has no pending migrations or data jobs (checked under the release lock): such a release changes only app code. Otherwise create a protected recovery branch and an isolated rehearsal branch at the same production LSN. Copy private Blob objects and verify a backup inventory. Record resource identities as they are created. |
 | Rehearse | Restore Blob into a unique prefix in the separate rehearsal store, verifying each backup object as it is copied and writing manifests only after the whole backup verified. Migrate the isolated database; check account identity, money, captures, and encrypted-key invariants; run jobs; recheck invariants; exercise the real API. |
 | Migrate | Apply pending checksummed SQL migrations once. Production startup verifies the migration ledger rather than executing DDL. |
 | Stage | Upload source as a compressed archive with `--archive=tgz`, excluding local build output and the knowledge graph. Create a Vercel production candidate with `--prod --skip-domain`; verify its project, readiness, and commit metadata. |

@@ -214,7 +214,9 @@ function retryingBlobSdk(sdk, sleep) {
       try { return await sdk[method](...args.slice(0, -1), options); }
       catch (error) {
         if (attempt >= BLOB_RATE_LIMIT_ATTEMPTS || !isRateLimited(error)) throw error;
-        await sleep(error.retryAfter > 0 ? error.retryAfter * 1000 : Math.min(30_000, 250 * 2 ** attempt + Math.floor(Math.random() * 250)));
+        // A long Retry-After (e.g. a used-up monthly quota) fails the release
+        // within minutes instead of stalling it.
+        await sleep(Math.min(30_000, error.retryAfter > 0 ? error.retryAfter * 1000 : 250 * 2 ** attempt + Math.floor(Math.random() * 250)));
       }
     }
   };
