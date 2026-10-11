@@ -1315,6 +1315,7 @@ create table if not exists marginchat_vault_index_settings (
   cloud_embeddings boolean not null default true,
   updated_at timestamptz not null default now()
 );
+
 -- One row per desktop installer download from marginchat.com/download. The
 -- location columns come from Vercel's edge headers and are approximate.
 create table if not exists marginchat_desktop_downloads (
