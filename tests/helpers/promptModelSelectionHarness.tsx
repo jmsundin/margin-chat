@@ -3,6 +3,7 @@ import { mock } from "bun:test";
 import { Window } from "happy-dom";
 import type { AppState, Conversation } from "../../client/src/types";
 import { billingUser } from "./billingFixture";
+import { blockEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://document-links.test" });
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
@@ -74,7 +75,7 @@ const props = {
   theme: "light" as const, user: billingUser,
 };
 function element(selector: string): any { const found = browser.document.querySelector(selector); assert(found, `Missing ${selector}`); return found; }
-function editor(id: string): any { return element(`[data-document-block-id="${id}"] .tiptap`).editor; }
+function editor(id: string): any { return blockEditor(browser.document, id); }
 function button(text: string, scope: any = browser.document): any {
   const found = [...scope.querySelectorAll("button")].find((item: any) => item.textContent?.trim().startsWith(text));
   assert(found, `Missing button ${text}`); return found;

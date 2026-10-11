@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { Conversation } from "../../client/src/types";
+import { documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://map-viewport-content.test/" });
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
@@ -89,7 +90,8 @@ function element(selector: string): any {
   return found;
 }
 function card(index: number): any { return element(`[data-conversation-id="viewport-document-${index}"]`); }
-function editor(index: number): any { return card(index).querySelector(`[data-document-block-id="message:answer-${index}"] .tiptap`)?.editor; }
+/** The document editor once the card has loaded its real content. */
+function editor(index: number): any { return card(index).querySelector(`[data-document-block-id="message:answer-${index}"]`) ? documentEditor(card(index)) : undefined; }
 function camera() {
   const transform = element(".conversation-graph-stage").style.transform;
   const match = transform.match(/translate\(([-.\d]+)px, ([-.\d]+)px\) scale\(([-.\d]+)\)/);

@@ -1,6 +1,9 @@
 .rich-document-editor { color: var(--ink); min-width: 0; padding: 8px 4px 28px; }
+/* One editor holds every block; each block shows its own focus. */
+.rich-document-surface { outline: none; }
 .rich-document-block { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 2px; min-width: 0; position: relative; scroll-margin-block: 84px 24px; }
 .rich-document-block > :last-child:not(.rich-document-block-main):not(.rich-document-block-gutter) { grid-column: 2; }
+.rich-document-block-after:empty { display: none; }
 .rich-document-block-main { border-radius: 7px; min-width: 0; padding: 4px 8px 8px; transition: background .12s ease; }
 .rich-document-block.is-focused .rich-document-block-main { background: color-mix(in srgb, var(--ink) 2%, transparent); }
 .rich-document-block.is-dragging { opacity: .5; }
@@ -24,7 +27,7 @@
 .rich-document-content { caret-color: var(--sage); font-size: .96rem; line-height: 1.8; min-height: 32px; outline: none; overflow-wrap: anywhere; white-space: pre-wrap; }
 .rich-document-content > :first-child { margin-top: 0; }
 .rich-document-content > :last-child { margin-bottom: 0; }
-.rich-document-content:not(:focus) > .rich-document-trailing-space { display: none; }
+.rich-document-block:not(.is-focused) .rich-document-content > .rich-document-trailing-space { display: none; }
 .rich-document-content p { margin: 0 0 12px; }
 .rich-document-content p:only-child { min-height: 1.8em; }
 .rich-document-content:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before { content: attr(data-placeholder); color: var(--muted); float: left; height: 0; pointer-events: none; }

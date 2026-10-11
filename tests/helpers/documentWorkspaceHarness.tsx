@@ -3,6 +3,7 @@ import { mock } from "bun:test";
 import { Window } from "happy-dom";
 import type { AppState } from "../../client/src/types";
 import { billingUser } from "./billingFixture";
+import { documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://document-workspace.test" });
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
@@ -106,7 +107,7 @@ function restoreButton(parentId: string, title: string): any {
   assert.equal(button.title, `Open side document: ${title}`);
   return button;
 }
-function editor(id: string): any { return element(`[data-document-id="${id}"], [data-dock-document-id="${id}"]`).querySelector(".tiptap").editor; }
+function editor(id: string): any { return documentEditor(element(`[data-document-id="${id}"], [data-dock-document-id="${id}"]`)); }
 async function settle() {
   for (let iteration = 0; frames.size && iteration < 30; iteration++) {
     const callbacks = [...frames.values()]; frames.clear();
@@ -458,7 +459,7 @@ try {
     clientHeight: { configurable: true, value: 100 }, scrollHeight: { configurable: true, value: 100 },
   });
   readingBlock.append(codeSurface);
-  await act(async () => readingBlock.querySelector(".tiptap").focus());
+  await act(async () => readingBlock.closest(".tiptap").focus());
   const blockCanvasX = canvas.scrollLeft;
   const blockBodyY = readingBody.scrollTop;
   assert((await readingWheel(codeText, 100, 10)).defaultPrevented);
@@ -768,7 +769,8 @@ try {
   }
   checks.push("both edges honor independent Home and End limits and double-click resets only the target document");
 
-  const formattedTransfer = "## Transferred heading\n\n**Formatted transfer** with a [source link](https://example.com/source).\n\n- First item\n- Second item";
+  // A list is one block, so the whole list moves together.
+  const formattedTransfer = "- **Formatted transfer** with a [source link](https://example.com/source).\n- Second item";
   await act(async () => editor(mainId).commands.setContent(formattedTransfer, { contentType: "markdown" }));
   await settle();
   const sourceBlock = structuredClone(latest.conversations[mainId].document!.blocks[0]);
@@ -803,10 +805,9 @@ try {
   assert.deepEqual(relationships(latest), relationshipsBeforeMove, "Moving content preserves document edges and saved tab positions.");
   const transferredBlock = pane("unrelated").querySelector(`[data-document-block-id="${transferredBlocks[0].id}"]`);
   assert.equal(browser.document.activeElement, transferredBlock.querySelector(".rich-document-grip"), "Keyboard focus follows the moved block into the destination document.");
-  assert.equal(transferredBlock.querySelector("h2")?.textContent, "Transferred heading");
   assert.equal(transferredBlock.querySelector("strong")?.textContent, "Formatted transfer");
   assert.equal(transferredBlock.querySelector("a")?.getAttribute("href"), "https://example.com/source");
-  assert.deepEqual([...transferredBlock.querySelectorAll("li")].map((item: any) => item.textContent), ["First item", "Second item"]);
+  assert.deepEqual([...transferredBlock.querySelectorAll("li")].map((item: any) => item.textContent), ["Formatted transfer with a source link.", "Second item"]);
   checks.push("block action transfer opens hidden destinations with formatting intact and atomically removes the source copy without changing graph or tab order");
 
   await click(sidebar("Main research"));

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
+import { blockEditor } from "./blockEditor";
 import type { DocumentAIRequest } from "../../client/src/lib/documentAI";
 
 const browser = new Window({ url: "http://mobile-keyboard.test" });
@@ -73,7 +74,7 @@ async function resize(height: number, top: number) {
 try {
   await act(async () => root.render(createElement(Host)));
   await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
-  const editor = element(`[data-document-block-id="${blockId}"] .tiptap`).editor;
+  const editor = blockEditor(browser.document, blockId);
   assert.equal(editor.view.dom.getAttribute("inputmode"), "none", "Mobile selection must not request the software keyboard.");
   await act(async () => { editor.view.dom.focus(); editor.commands.setTextSelection({ from: 1, to: 12 }); });
   const quote = browser.getSelection()!.toString();

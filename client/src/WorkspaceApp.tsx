@@ -53,6 +53,7 @@ import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
 import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
 import { getDocumentBackTarget, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
+import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
@@ -891,12 +892,18 @@ function WorkspaceAppContent({
     const request = pendingMovedBlockFocus.current;
     if (!request) return;
     pendingMovedBlockFocus.current = null;
-    const panel = panelRefs.current[request.conversationId];
-    const block = [...(panel?.querySelectorAll<HTMLElement>("[data-document-block-id]") ?? [])]
-      .find((element) => element.dataset.documentBlockId === request.blockId);
-    const focusTarget = block?.querySelector<HTMLElement>(".rich-document-content, .rich-document-grip");
-    focusTarget?.focus({ preventScroll: true });
-    block?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    let attempts = 0;
+    const focusMovedBlock = () => {
+      const panel = panelRefs.current[request.conversationId];
+      const block = [...(panel?.querySelectorAll<HTMLElement>("[data-document-block-id]") ?? [])]
+        .find((element) => element.dataset.documentBlockId === request.blockId);
+      const grip = block?.querySelector<HTMLElement>(".rich-document-grip");
+      // A block's controls mount a frame after the editor shows the block.
+      if (!grip && attempts++ < 10) { requestAnimationFrame(focusMovedBlock); return; }
+      grip?.focus({ preventScroll: true });
+      block?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    };
+    focusMovedBlock();
   }, [state]);
   const selectionSyncFrameRef = useRef(0);
   const panelResizeStateRef = useRef<{
@@ -2809,8 +2816,33 @@ function WorkspaceAppContent({
     });
   }
 
+  /**
+   * A passage selected across lines is saved in one block, so those lines join
+   * before anything points at it. Returns null when the lines changed meanwhile.
+   */
+  function joinSelectedLines(draft: SelectionDraft): SelectionDraft | null {
+    const { sourceBlockId, joinBlockIds } = draft;
+    if (!sourceBlockId || !joinBlockIds?.length) return draft;
+    const now = new Date().toISOString();
+    const join = (current: AppState) => {
+      const conversation = current.conversations[draft.conversationId];
+      const document = conversation && getEditableDocument(conversation);
+      const blocks = document && joinDocumentBlocks(document.blocks, sourceBlockId, joinBlockIds, conversation.messages, now);
+      return blocks ? replaceDocumentConversation(current, { ...conversation, updatedAt: now, document: { ...document, blocks } }) : null;
+    };
+    const joined = join(currentStateRef.current);
+    if (!joined || joined.conversations[draft.conversationId].document?.blocks.find((block) => block.id === sourceBlockId)?.content !== draft.sourceContent) {
+      setDocumentErrors((current) => ({ ...current, [draft.conversationId]: "The passage changed. Select it again." }));
+      setSelectionDraft(null);
+      return null;
+    }
+    currentStateRef.current = joined;
+    setState((current) => join(current) ?? current);
+    return { ...draft, joinBlockIds: undefined };
+  }
+
   function handleCreateBranch(promptOverride?: string) {
-    const draft = selectionDraft;
+    const draft = selectionDraft && joinSelectedLines(selectionDraft);
 
     if (!draft) {
       return;
@@ -2893,8 +2925,9 @@ function WorkspaceAppContent({
   }
 
   function handleSelectionQuickAction(prompt: string) {
-    const draft = selectionDraft;
-    if (!draft || pendingConversationIds[draft.conversationId]) return;
+    if (!selectionDraft || pendingConversationIds[selectionDraft.conversationId]) return;
+    const draft = joinSelectedLines(selectionDraft);
+    if (!draft) return;
     // Quick actions generate a reviewable side document, regardless of options
     // left over from an earlier custom request. The selected source stays intact.
     if (draft.sourceBlockId) {
@@ -2915,10 +2948,11 @@ function WorkspaceAppContent({
   }
 
   function handleCreateDocumentLink(target: { conversationId: string; blockId?: string }) {
-    if (!selectionDraft) return;
-    const source = state.conversations[selectionDraft.conversationId];
-    const destination = state.conversations[target.conversationId];
-    const link = source && createDocumentLink(source, destination, selectionDraft, target.blockId);
+    const draft = selectionDraft && joinSelectedLines(selectionDraft);
+    if (!draft) return;
+    const source = currentStateRef.current.conversations[draft.conversationId];
+    const destination = currentStateRef.current.conversations[target.conversationId];
+    const link = source && createDocumentLink(source, destination, draft, target.blockId);
     if (!link || !destination) {
       setSelectionLinkError("This passage or destination has changed. Select the text again and choose a current destination.");
       return;
@@ -3025,16 +3059,18 @@ function WorkspaceAppContent({
 
   function handleCreateSelectionNote() {
     if (!selectionDraft?.prompt.trim()) return;
+    const draft = joinSelectedLines(selectionDraft);
+    if (!draft) return;
     handleCreateNote({
-      content: selectionDraft.prompt,
-      conversationId: selectionDraft.conversationId,
+      content: draft.prompt,
+      conversationId: draft.conversationId,
       kind: "comment",
-      sourceMessageId: selectionDraft.messageId,
-      startOffset: selectionDraft.startOffset,
-      endOffset: selectionDraft.endOffset,
-      quote: selectionDraft.quote,
-      sourceStandaloneNoteId: selectionDraft.sourceNoteId,
-      sourceBlockId: selectionDraft.sourceBlockId,
+      sourceMessageId: draft.messageId,
+      startOffset: draft.startOffset,
+      endOffset: draft.endOffset,
+      quote: draft.quote,
+      sourceStandaloneNoteId: draft.sourceNoteId,
+      sourceBlockId: draft.sourceBlockId,
     });
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();

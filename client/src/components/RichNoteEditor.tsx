@@ -46,10 +46,7 @@ export default function RichNoteEditor(props: RichNoteEditorProps) {
   return <div className={`rich-note-editor ${props.className ?? ""}`} ref={container} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) props.onBlur?.(); }}>
     {!props.value.trim() && props.placeholder ? <p className="rich-note-placeholder">{props.placeholder}</p> : null}
     <RichDocumentEditor conversationId={identity.current} blocks={blocks} ariaLabel={props.ariaLabel}
-      onUpdateBlock={(id, content) => save(latest.current.map((block) => block.id === id ? { ...block, content } : block))}
-      onSplitBlock={(id, before, after) => { const next = noteBlock(after); save(latest.current.flatMap((block) => block.id === id ? [{ ...block, content: before }, next] : [block])); return next.id; }}
-      onInsertBlock={(afterId, content) => { const next = noteBlock(content); const blocks = [...latest.current]; const index = blocks.findIndex((block) => block.id === afterId); blocks.splice(index < 0 ? blocks.length : index + 1, 0, next); save(blocks); return next.id; }}
-      onDeleteBlock={(id) => save(latest.current.filter((block) => block.id !== id))}
+      onChangeBlocks={save}
       onReorderBlock={(id, beforeId) => { const block = latest.current.find((block) => block.id === id); if (!block || id === beforeId) return; const blocks = latest.current.filter((block) => block.id !== id); const index = blocks.findIndex((block) => block.id === beforeId); blocks.splice(index < 0 ? blocks.length : index, 0, block); save(blocks); }} />
   </div>;
 }

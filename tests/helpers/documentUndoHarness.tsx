@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { Conversation } from "../../client/src/types";
+import { blockEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://document-undo.test" });
 for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
@@ -54,7 +55,7 @@ browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
 function element(selector: string): any { const found = container.querySelector(selector); assert(found, `Missing ${selector}`); return found; }
 function block(id: string): any { return element(`[data-document-block-id="${id}"]`); }
-function editor(id: string): any { const found = block(id).querySelector(".tiptap"); assert(found, `Missing editor ${id}`); return found.editor; }
+function editor(id: string): any { return blockEditor(container, id); }
 function contents(id: string) { return latest[id].document!.blocks.map((value) => value.content); }
 function ids(id: string) { return latest[id].document!.blocks.map((value) => value.id); }
 async function settle() { await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); }); }
@@ -141,11 +142,12 @@ try {
   assert.deepEqual(contents("continuation"), ["Existing paragraph", "ab"]);
   await undo(materializedId);
   assert.deepEqual(contents("continuation"), ["Existing paragraph"], "Undo removes the newly materialized continuation block.");
-  const restoredDraft = browser.document.activeElement as any;
-  assert(restoredDraft?.classList.contains("tiptap"), "Undoing first draft input keeps focus in an editor.");
-  assert.equal(restoredDraft.editor.getText(), "");
-  assert.equal(restoredDraft.editor.state.selection.from, 1);
-  await key(restoredDraft, "z", { metaKey: true, shiftKey: true });
+  const restoredSections = element('[data-test-document="continuation"] .rich-document-editor').querySelectorAll("[data-document-block-id]");
+  const restoredDraft = editor(restoredSections[restoredSections.length - 1].getAttribute("data-document-block-id"));
+  assert(restoredDraft.isFocused, "Undoing first draft input keeps the caret in the blank last line.");
+  assert.equal(restoredDraft.getText(), "");
+  assert.equal(restoredDraft.state.selection.from, 1);
+  await key(restoredDraft.view.dom, "z", { metaKey: true, shiftKey: true });
   assert.deepEqual(contents("continuation"), ["Existing paragraph", "ab"]);
   assert(browser.document.activeElement === editor(materializedId).view.dom, "Redoing draft input restores focus in the materialized editor.");
   assert.equal(editor(materializedId).state.selection.from, 3);

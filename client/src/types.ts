@@ -151,6 +151,8 @@ export interface SelectionDraft {
   sourceNoteId?: string;
   sourceBlockId?: string;
   sourceContent?: string;
+  /** Lines after sourceBlockId that the passage continues into; they join it before the passage is saved. */
+  joinBlockIds?: string[];
 }
 
 export interface ConnectionLine {

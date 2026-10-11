@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { Window } from "happy-dom";
+import { blockEditor } from "./blockEditor";
 import type { DocumentBlock } from "@margin-chat/workspace-contracts";
 
 const browser = new Window({ url: "http://block-transfer-editor.test" });
@@ -35,8 +36,7 @@ function Host() {
   return createElement("div", null, ["a", "b", "blank", "note"].map((id) => createElement(RichDocumentEditor, {
     key: id, conversationId: id, blocks: documents[id], readOnlyBlockIds: ["stream"],
     moveTargets: [{ id: "a", title: "Source document" }, { id: "b", title: "Target document" }, { id: "blank", title: "Empty document" }, { id: "hidden", title: "Closed document" }], onMoveBlock: id === "note" ? undefined : move,
-    onUpdateBlock(blockId, content) { setDocuments((current) => ({ ...current, [id]: current[id].map((item) => item.id === blockId ? { ...item, content } : item) })); },
-    onInsertBlock() { return "unused-draft"; },
+    onChangeBlocks(blocks: DocumentBlock[]) { setDocuments((current) => ({ ...current, [id]: blocks })); },
     onReorderBlock(blockId, before) {
       reorders.push({ documentId: id, blockId, before });
       setDocuments((current) => {
@@ -55,7 +55,7 @@ const checks: string[] = [];
 function element(selector: string): any { const found = container.querySelector(selector); assert(found, `Missing ${selector}`); return found; }
 function surface(id: string) { return element(`[data-block-editor-conversation-id="${id}"]`); }
 function shell(id: string) { return element(`[data-document-block-id="${id}"]`); }
-function editor(id: string): any { return shell(id).querySelector(".tiptap").editor; }
+function editor(id: string): any { return blockEditor(browser.document, id); }
 function grip(id: string) { return shell(id).querySelector(".rich-document-grip"); }
 async function click(target: any) { await act(async () => target.click()); }
 function geometry() {
@@ -126,9 +126,9 @@ try {
   assert.equal(grip("stream").disabled, true);
   assert.equal((await drag(grip("stream"), "dragstart")).defaultPrevented, true);
   await drag(grip("last"), "dragstart");
-  await drag(continuation.querySelector(".tiptap"), "dragover", 100, 280);
+  await drag(continuation, "dragover", 100, 280);
   assert(surface("a").querySelector(".rich-document-drop-end"));
-  await drag(continuation.querySelector(".tiptap"), "drop", 100, 280);
+  await drag(continuation, "drop", 100, 280);
   assert.deepEqual(moves.at(-1), { source: "b", blockId: "last", target: "a", before: null });
   assert.deepEqual(latest.a.map((item) => item.id), ["stream", "last"]);
   geometry();
