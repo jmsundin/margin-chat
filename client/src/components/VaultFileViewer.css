@@ -40,3 +40,13 @@
 .vault-image-area.is-drawing { background: color-mix(in srgb, var(--accent) 18%, transparent); border: 2px dashed var(--accent); pointer-events: none; }
 
 .vault-file-notes-label { color: var(--muted); font-size: .74rem; letter-spacing: .04em; text-transform: uppercase; margin: 4px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+
+/* In the document header, beside its other controls. */
+.document-file-controls { display: flex; align-items: center; min-width: 0; margin-left: auto; }
+.document-file-controls:empty { display: none; }
+.document-file-controls + .document-header-actions { margin-left: 0; }
+.vault-file-toolbar.is-in-header { position: static; flex-wrap: nowrap; padding: 0; background: none; gap: 4px; }
+.vault-file-toolbar.is-in-header .vault-file-toolbar-spacer { flex: 0 0 6px; }
+.vault-file-toolbar.is-in-header .vault-file-page-count { white-space: nowrap; }
+.document-header .vault-file-toolbar.is-in-header button { height: 28px; padding: 0 9px; white-space: nowrap; font-size: .78rem; line-height: 1; }
+@media (max-width: 640px) { .vault-file-toolbar.is-in-header .vault-file-page-count { display: none; } }
