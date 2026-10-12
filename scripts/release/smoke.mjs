@@ -18,24 +18,33 @@ export async function checkReadiness({ baseUrl, expectedSha, fetchImpl = fetch, 
   return { database: "ready", vault: "configured", release: payload.release };
 }
 
-/** Promotion can finish before the public origin stops serving the old release. */
+/** Promotion can finish before the public origin stops serving the old release,
+ * and for a few seconds edge locations can alternate between the two. Wait
+ * until `settledChecks` responses in a row serve the promoted release; a
+ * response from the previous release in between starts the count again. */
 export async function waitForProductionReadiness({ expectedSha, previousSha, previousUnidentified = false, assertLock = async () => {},
-  sleep = delay, now = Date.now, timeoutMs = 180_000, pollMs = 1_000, ...options }) {
-  if (!expectedSha || !(timeoutMs > 0) || !(pollMs > 0)) throw new Error("Invalid production readiness polling options.");
+  sleep = delay, now = Date.now, timeoutMs = 180_000, pollMs = 1_000, settledChecks = 10, ...options }) {
+  if (!expectedSha || !(timeoutMs > 0) || !(pollMs > 0) || !(settledChecks >= 1)) throw new Error("Invalid production readiness polling options.");
   const deadline = now() + timeoutMs;
+  let settled = 0;
   while (now() < deadline) {
     await assertLock();
     const remaining = deadline - now();
     if (remaining <= 0) break;
     const result = await checkReadiness({ ...options, requestTimeoutMs: Math.min(60_000, remaining) });
     if (now() >= deadline) break;
-    if (result.release === expectedSha) return result;
-    // Only the known previous release is a propagation delay. Missing identity,
-    // an unrelated release, and unhealthy storage must still fail immediately,
-    // except that a previous deployment made outside the release runner (e.g.
-    // `vercel --prod`) reports no identity, so that is its known signature.
-    const isPrevious = previousSha ? result.release === previousSha : previousUnidentified && result.release == null;
-    if (!isPrevious) throw new Error("The production URL is serving an unexpected release after promotion.");
+    if (result.release === expectedSha) {
+      settled += 1;
+      if (settled >= settledChecks) return result;
+    } else {
+      // Only the known previous release is a propagation delay. Missing identity,
+      // an unrelated release, and unhealthy storage must still fail immediately,
+      // except that a previous deployment made outside the release runner (e.g.
+      // `vercel --prod`) reports no identity, so that is its known signature.
+      const isPrevious = previousSha ? result.release === previousSha : previousUnidentified && result.release == null;
+      if (!isPrevious) throw new Error("The production URL is serving an unexpected release after promotion.");
+      settled = 0;
+    }
     await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
   }
   throw new Error("Timed out waiting for the production URL to serve the promoted release.");
