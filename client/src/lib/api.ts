@@ -937,3 +937,41 @@ export async function requestCreateBillingPortalSession(expectedUserId?: string)
 
   return payload.url;
 }
+
+/** A personal token an outside AI agent uses to reach the vault over MCP. */
+export interface AgentToken {
+  id: string;
+  name: string;
+  scope: "read" | "write";
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+}
+
+const AGENT_SETTINGS_HEADERS = { "Content-Type": "application/json", "X-Margin-Agent-Settings": "1" };
+
+export async function requestAgentTokens(): Promise<{ tokens: AgentToken[]; canConnect: boolean }> {
+  const response = await apiFetch("/api/settings/mcp-tokens", { credentials: "same-origin", cache: "no-store" });
+  const payload = await readJson<{ tokens: AgentToken[]; canConnect: boolean } | ErrorPayload>(response);
+  ensureOk(response, payload, "Couldn't load your agent tokens.");
+  if (!payload || !("tokens" in payload) || !Array.isArray(payload.tokens)) throw new Error("Backend returned invalid agent tokens.");
+  return payload;
+}
+
+/** The token is returned only here, once. */
+export async function requestCreateAgentToken(name: string): Promise<{ token: string; summary: AgentToken }> {
+  const response = await apiFetch("/api/settings/mcp-tokens", {
+    body: JSON.stringify({ name }), credentials: "same-origin", headers: AGENT_SETTINGS_HEADERS, method: "POST",
+  });
+  const payload = await readJson<{ token: string; summary: AgentToken } | ErrorPayload>(response);
+  ensureOk(response, payload, "Couldn't make an agent token.");
+  if (!payload || !("token" in payload) || typeof payload.token !== "string") throw new Error("Backend returned an invalid agent token.");
+  return payload;
+}
+
+export async function requestRevokeAgentToken(id: string): Promise<void> {
+  const response = await apiFetch(`/api/settings/mcp-tokens/${encodeURIComponent(id)}`, {
+    credentials: "same-origin", headers: AGENT_SETTINGS_HEADERS, method: "DELETE",
+  });
+  ensureOk(response, await readJson(response), "Couldn't revoke that agent token.");
+}

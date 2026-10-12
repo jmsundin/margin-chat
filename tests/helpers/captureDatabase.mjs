@@ -3,6 +3,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite-pgvector";
 import * as captures from "../../server/db/captureRepository.mjs";
 import * as auth from "../../server/db/authRepository.mjs";
+import * as mcpTokens from "../../server/db/mcpTokenRepository.mjs";
 import { readWorkspace, writeState } from "../../server/db/repository.mjs";
 import { normalizeAppState } from "../../server/db/validation.mjs";
 import { loadMigrations, migrateDatabase } from "../../server/db/migrations.mjs";
@@ -28,7 +29,7 @@ export async function createCaptureTestDatabase() {
   await migrateDatabase(client, { migrations: await loadMigrations() });
   const database = {
     ...Object.fromEntries(
-      Object.entries({ ...captures, ...auth }).map(([name, operation]) => [
+      Object.entries({ ...captures, ...auth, ...mcpTokens }).filter(([, operation]) => typeof operation === "function").map(([name, operation]) => [
         name,
         (args) => operation(client, args),
       ]),

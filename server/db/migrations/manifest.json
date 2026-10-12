@@ -85,6 +85,11 @@
       "id": "0017_vault_file_passages",
       "file": "0017_vault_file_passages.sql",
       "transaction": true
+    },
+    {
+      "id": "0018_mcp_tokens",
+      "file": "0018_mcp_tokens.sql",
+      "transaction": true
     }
   ]
 }
