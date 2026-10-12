@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from "react";
 import type { Conversation } from "../types";
-import "./DocumentChildTabs.css";
+import "./DocumentChildren.css";
 
 interface Props {
   parent: Conversation;

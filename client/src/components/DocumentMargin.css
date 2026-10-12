@@ -1,0 +1,22 @@
+/* The document's right margin: notes sit level with their passage and scroll with the text.
+   It is part of the document frame, which grows by its width so the text keeps its own. */
+.document-margin { position: relative; flex: 0 0 auto; min-height: 0; overflow: clip; border-left: 1px dashed var(--line); }
+.document-margin-track { position: absolute; inset: 0 0 auto 0; will-change: transform; }
+.document-margin-item { position: absolute; right: 10px; display: flex; flex-direction: column; gap: 8px; }
+.document-margin-item > .margin-document-family { min-width: 0; }
+.document-margin-links { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.document-margin-links path { fill: none; stroke: var(--note-accent, #b8913f); stroke-width: 1; stroke-dasharray: 3 3; opacity: .55; }
+.document-margin-links path.is-linked { stroke-dasharray: none; stroke-width: 1.5; opacity: 1; }
+:root[data-theme="light"] .document-margin-links path { stroke: #947029; }
+.document-panel-content { --margin-linked-passage: rgb(208 166 78 / .32); --margin-linked-line: #d0a64e; }
+:root[data-theme="light"] .document-panel-content { --margin-linked-passage: rgb(184 137 40 / .22); --margin-linked-line: #947029; }
+/* An absolutely placed marker lets the text scroll far enough to reach the last note. */
+.document-margin-spacer { position: absolute; left: 0; width: 1px; height: 1px; pointer-events: none; visibility: hidden; }
+/* A note in the margin is as tall as its text, up to its saved height; then it scrolls. */
+.document-margin .margin-document-frame.is-fit-content { display: flex; flex-direction: column; }
+.document-margin .margin-document-frame.is-fit-content > .document-panel { flex: 0 1 auto; height: auto; min-height: 0; }
+.document-margin .is-compact-document .document-body { padding-bottom: 10px; }
+.document-margin .rich-document-block.is-empty .rich-document-content { min-height: 0; }
+.document-margin-label { color: var(--muted); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: -4px; }
+/* The empty line after a note's text only shows while you write in that note. */
+.document-margin .rich-document-block.is-continuation.is-empty:not(:focus-within, .is-focused) { display: none; }

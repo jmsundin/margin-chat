@@ -157,14 +157,16 @@ try {
   assert.deepEqual(panes(), [mainId, 'full-side']);
   assert.deepEqual(latest.conversations[mainId].notes, []);
   assert(latest.conversations[mainId].childIds.includes(noteId));
-  assert.equal(pane(mainId).nextElementSibling.getAttribute('data-margin-notes-for'), mainId);
+  // The note sits in the document's own margin, and the frame grows by the margin's width.
+  assert.equal(pane(mainId).querySelector('.document-panel-content > .document-margin').getAttribute('data-margin-notes-for'), mainId);
+  assert(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"] [data-document-id="${noteId}"]`));
   assert(notePane(noteId).querySelector('.document-panel.is-compact-document .rich-document-editor'));
   assert(sidebar('Keep this beside the main document.'));
   assert(tab(noteId));
   assert.equal(notePane(noteId).querySelector('[aria-label="Document title"]'), null);
   assert.equal(notePane(noteId).querySelector('.document-margin-source'), null);
-  assert.equal(notePane(noteId).querySelector('.document-child-tabs-trigger'), null);
-  assert.equal(pane('full-side').querySelector('.document-child-tabs-trigger'), null);
+  assert.equal(notePane(noteId).querySelector('.document-children-trigger'), null);
+  assert.equal(pane('full-side').querySelector('.document-children-trigger'), null);
   assert(notePane(noteId).querySelector('.document-margin-actions .document-presentation-toggle'));
   assert(notePane(noteId).querySelector('.document-margin-actions .document-menu-trigger'));
   checks.push('legacy notes become child documents in the sidebar, tabs and parent margin');
@@ -177,7 +179,7 @@ try {
   const edited = structuredClone(latest.conversations[noteId].document!.blocks);
   assert(edited.some((block) => block.content.includes('Edited mini document')));
   assert(latest.conversations[noteId].branchAnchor?.sourceBlockId);
-  await click(element('[aria-label="Close margin notes for Main research"]'));
+  await click(element('[aria-label="Hide margin notes for Main research"]'));
   assert.equal(container.querySelector(`[data-document-id="${noteId}"]`), null);
   await click(tab(noteId));
   assert.equal(latest.activeConversationId, noteId);
@@ -195,7 +197,8 @@ try {
   await settle();
   assert.deepEqual(latest.conversations[noteId].document!.marginNote!.size, { width: 300, height: 460 });
   assert.equal(notePane(noteId).style.width, '300px');
-  assert.equal(notePane(noteId).style.height, '460px');
+  // In the margin a note is as tall as its text, up to its saved height.
+  assert.equal(notePane(noteId).style.maxHeight, '460px');
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   checks.push('compact notes resize both dimensions and save their size without changing their content');
 
@@ -208,7 +211,8 @@ try {
   assert(!panes().includes(noteId));
   assert.equal(latest.conversations[noteId].document!.marginNote!.display, 'compact');
   assert.equal(notePane(noteId).style.width, '300px');
-  assert.equal(notePane(noteId).style.height, '460px');
+  // In the margin a note is as tall as its text, up to its saved height.
+  assert.equal(notePane(noteId).style.maxHeight, '460px');
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   checks.push('expansion and compact view preserve document identity, content and passage association');
 
@@ -306,7 +310,7 @@ try {
   await click(tab(mainId));
   await documentAction(mainId, 'Pin document');
   assert(element(`[data-dock-document-id="${mainId}"]`).querySelector(`[data-document-id="${noteId}"]`));
-  await click(element('[aria-label="Close margin notes for Main research"]'));
+  await click(element('[aria-label="Hide margin notes for Main research"]'));
   await click(tab(nestedId));
   assert(notePane(nestedId));
   checks.push('pinned parents retain notes, and nested navigation restores the ancestor columns');

@@ -91,14 +91,16 @@ try {
   assert.equal(dock()?.getAttribute("aria-label"), "Docked chat: Main research", "Clicking a document opens it in the side panel");
   assert.equal(dock()!.querySelector(".document-panel-breadcrumbs"), null, "A top-level document has no parents to show");
 
-  const childButton = [...dock()!.querySelectorAll(".document-child-tabs button")].find((item: any) => item.textContent?.includes("Child notes"));
+  await click(dock()!.querySelector(".document-children-trigger"));
+  const childButton = [...dock()!.querySelectorAll(".document-children-list button")].find((item: any) => item.textContent?.includes("Child notes"));
   await click(childButton);
   assert.equal(dock()?.getAttribute("aria-label"), "Docked chat: Child notes", "Clicking a child shows it in the same side panel");
   assert(!mapView()?.hasAttribute("inert") && !mapView()?.hidden, "Map View stays open");
   assert.deepEqual([...dock()!.querySelectorAll(".document-panel-breadcrumbs li")].map((item: any) => item.textContent), ["Main research", "Child notes"]);
   checks.push("a child opens in the side panel with its parent as a breadcrumb");
 
-  await click([...dock()!.querySelectorAll(".document-child-tabs button")].find((item: any) => item.textContent?.includes("Grandchild detail")));
+  await click(dock()!.querySelector(".document-children-trigger"));
+  await click([...dock()!.querySelectorAll(".document-children-list button")].find((item: any) => item.textContent?.includes("Grandchild detail")));
   assert.deepEqual([...dock()!.querySelectorAll(".document-panel-breadcrumbs li")].map((item: any) => item.textContent), ["Main research", "Child notes", "Grandchild detail"]);
   await click([...dock()!.querySelectorAll(".document-panel-breadcrumbs button")].find((item: any) => item.textContent === "Main research"));
   assert.equal(dock()?.getAttribute("aria-label"), "Docked chat: Main research", "A breadcrumb shows that parent in the side panel");

@@ -18,9 +18,11 @@ type Props = Omit<HTMLAttributes<HTMLDivElement>, "onResize"> & {
   label?: string;
   onResize: (size: MarginDocumentSize) => void;
   onResizePreview?: (size: MarginDocumentSize | null) => void;
+  /** Grow with the note's content, up to its saved height (in a document's margin). */
+  fitContent?: boolean;
 };
 
-export default function MarginDocumentFrame({ size, label = "margin note", onResize, onResizePreview, className = "", style, children, ...props }: Props) {
+export default function MarginDocumentFrame({ size, label = "margin note", onResize, onResizePreview, fitContent = false, className = "", style, children, ...props }: Props) {
   const instructionsId = useId();
   const [preview, setPreview] = useState<MarginDocumentSize | null>(null);
   const renderedSize = preview ?? getMarginDocumentSize(size);
@@ -69,7 +71,8 @@ export default function MarginDocumentFrame({ size, label = "margin note", onRes
     };
   }, []);
 
-  return <div {...props} className={`margin-document margin-document-frame${preview ? " is-resizing" : ""}${className ? ` ${className}` : ""}`} style={{ ...style, width: renderedSize.width, height: renderedSize.height, maxHeight: "none" }}>
+  return <div {...props} className={`margin-document margin-document-frame${preview ? " is-resizing" : ""}${fitContent ? " is-fit-content" : ""}${className ? ` ${className}` : ""}`}
+    style={{ ...style, width: renderedSize.width, ...(fitContent && !preview ? { height: "auto", maxHeight: renderedSize.height } : { height: renderedSize.height, maxHeight: "none" }) }}>
     {children}
     <button type="button" className="margin-document-resize" aria-label={`Resize ${label}`} aria-describedby={instructionsId}
       title="Drag to resize. Use arrow keys for width and height, Shift for larger steps. Double-click to reset."
@@ -79,10 +82,13 @@ export default function MarginDocumentFrame({ size, label = "margin note", onRes
         event.stopPropagation();
         event.currentTarget.focus({ preventScroll: true });
         event.currentTarget.setPointerCapture?.(event.pointerId);
-        drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, start: renderedSize, next: renderedSize, element: event.currentTarget, cursor: document.body.style.cursor, userSelect: document.body.style.userSelect };
+        // A note that fits its content starts the drag from the height it shows.
+        const shown = event.currentTarget.parentElement?.offsetHeight;
+        const start = fitContent && shown ? getMarginDocumentSize({ ...renderedSize, height: Math.min(renderedSize.height, shown) }) : renderedSize;
+        drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, start, next: start, element: event.currentTarget, cursor: document.body.style.cursor, userSelect: document.body.style.userSelect };
         document.body.style.cursor = "nwse-resize";
         document.body.style.userSelect = "none";
-        setPreview(renderedSize);
+        setPreview(start);
       }}
       onKeyDown={(event) => {
         if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;

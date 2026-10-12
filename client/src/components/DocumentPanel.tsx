@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
@@ -19,6 +19,7 @@ import AIResponseDetails from "./AIResponseDetails";
 import MobileAIComposer from "./MobileAIComposer";
 import AgentModeToggle, { type AgentModeControls } from "./AgentModeToggle";
 import AgentRunLog from "./AgentRunLog";
+import DocumentMargin, { type DocumentMarginItem } from "./DocumentMargin";
 import type { AgentProgress } from "../lib/useChatStreams";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
 import "./DocumentPanel.css";
@@ -49,9 +50,12 @@ export interface DocumentPanelProps {
   marginNotesToggle?: ReactNode;
   compact?: boolean;
   presentationToggle?: ReactNode;
+  /** The Children menu in the header. */
   childNavigation?: ReactNode;
-  /** Vertical tabs of this document's children, to the right of its body. */
-  childTabs?: ReactNode;
+  /** Margin notes shown in the document's right margin, each beside its passage. */
+  marginNotes?: DocumentMarginItem[];
+  marginWidth?: number;
+  activeMarginNoteId?: string;
   /** Horizontal tabs of this document and its siblings, above its header. */
   siblingTabs?: ReactNode;
   parentDocument?: Pick<Conversation, "id" | "title">;
@@ -103,6 +107,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const latestDocument = useRef(document);
   latestDocument.current = document;
   const bodyRef = useRef<HTMLDivElement>(null);
+  const [marginHeight, setMarginHeight] = useState(0);
   // The PDF or image viewer puts its page count and zoom here, in the header.
   const [fileControls, setFileControls] = useState<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -432,7 +437,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {props.onClose ? <button type="button" className="document-window-button document-close-button" aria-label={`Close document: ${conversation.title || "Untitled document"}`} title="Close document" onClick={props.onClose}>×</button> : null}
         </div>
       </header> : null}
-    <div className={`document-panel-content${props.childTabs ? " has-child-tabs" : ""}`}>
+    <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
+      style={props.marginNotes?.length ? { "--document-margin-width": `${props.marginWidth ?? 300}px` } as CSSProperties : undefined}>
     <div className={`panel-body document-body${hasPrompts ? " has-prompt-markers" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
@@ -483,8 +489,11 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.error ? <p className="document-error" role="alert">{props.error}</p> : null}
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>
+      {props.marginNotes?.length && marginHeight ? <div className="document-margin-spacer" aria-hidden="true" style={{ top: marginHeight }}/> : null}
     </div>
-    {props.childTabs}
+    {props.marginNotes?.length ? <DocumentMargin bodyRef={bodyRef} documentId={conversation.id} items={props.marginNotes}
+      label={`Notes for ${conversation.title || "Untitled document"}`} width={props.marginWidth ?? 300}
+      activeId={props.activeMarginNoteId} onHeightChange={setMarginHeight}/> : null}
     </div>
     {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}
     <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>
