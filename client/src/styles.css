@@ -6864,6 +6864,14 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.agent-token-write {
+  align-items: center;
+  display: flex;
+  font-size: 0.84rem;
+  gap: 8px;
+  grid-column: 1 / -1;
+}
+
 .agent-token-form .thread-dialog-button {
   min-height: 44px;
 }

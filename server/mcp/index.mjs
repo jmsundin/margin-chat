@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { VAULT_TOOL_DEFINITIONS, createVaultTools } from "../chat/agent/vaultTools.mjs";
 import { HttpError } from "../lib/errors.mjs";
+import { WRITE_TOOL_DEFINITIONS, createWriteTools } from "./writeTools.mjs";
 
 /**
  * Margin Chat as an MCP server: outside agents (Claude Code, Cursor, ChatGPT and
  * other MCP clients) search and read the member's cloud vault with the same
- * tools Agent mode uses. Streamable HTTP without sessions: every POST carries one
+ * tools Agent mode uses and, with a write token, add documents to it. Streamable HTTP without sessions: every POST carries one
  * JSON-RPC message and gets one JSON answer, which suits serverless functions.
  */
 
@@ -20,9 +21,11 @@ const SERVER_INFO = { name: "margin-chat", title: "Margin Chat", version: "1.0.0
 const INSTRUCTIONS = [
   "Margin Chat holds the user's documents, notes, chats, PDFs and the map of how they connect.",
   "Use search_vault to find material by words or meaning, read_document to read one by its document_id,",
-  "and list_related to see its parent, children, typed relations and links. Access is read-only.",
+  "and list_related to see its parent, children, typed relations and links.",
   "Private margin comments are never included.",
 ].join(" ");
+const READ_ONLY_NOTE = "This connection is read-only.";
+const WRITE_NOTE = "With create_document and append_to_document you can add to the vault; existing text is never changed or deleted. Search before creating, so you don't duplicate a document that already exists.";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -59,6 +62,12 @@ export const MCP_TOOLS = [
   ...CHATGPT_TOOLS,
 ];
 const TOOL_NAMES = new Set(MCP_TOOLS.map((tool) => tool.name));
+const WRITE_TOOL_NAMES = new Set(WRITE_TOOL_DEFINITIONS.map((tool) => tool.name));
+
+/** The tools a token may use: everyone reads; a write token can also add. */
+export function mcpToolsFor(scope) {
+  return scope === "write" ? [...MCP_TOOLS, ...WRITE_TOOL_DEFINITIONS] : MCP_TOOLS;
+}
 
 class RpcError extends Error {
   constructor(code, message) {
@@ -88,9 +97,13 @@ export function createMcpService({ database, vaultService, passageService, creat
   }
 
   async function callTool(user, name, args, signal) {
-    if (!TOOL_NAMES.has(name)) throw new RpcError(-32602, `Unknown tool: ${name}`);
+    const writing = WRITE_TOOL_NAMES.has(name);
+    if (!TOOL_NAMES.has(name) && !(writing && user.token?.scope === "write")) {
+      throw new RpcError(-32602, writing ? `${name} needs an agent token that can add documents. Make one in Margin Chat: Settings, Agents.` : `Unknown tool: ${name}`);
+    }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new RpcError(-32602, "Tool arguments must be an object.");
     if (!vaultService?.configured) return { ok: false, error: "This Margin Chat server has no cloud vault storage configured." };
+    if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name }).run(name, args);
     // The agent reaches the whole vault: the member chose that by making the token.
     const tools = createVaultTools({
       chatRequest: { ai: { agentScope: "workspace" }, conversation: { id: "", ancestorContext: [] } },
@@ -130,12 +143,12 @@ export function createMcpService({ database, vaultService, passageService, creat
           protocolVersion: MCP_PROTOCOL_VERSIONS.includes(requested) ? requested : MCP_PROTOCOL_VERSIONS[0],
           capabilities: { tools: { listChanged: false } },
           serverInfo: SERVER_INFO,
-          instructions: INSTRUCTIONS,
+          instructions: `${INSTRUCTIONS} ${user.token?.scope === "write" ? WRITE_NOTE : READ_ONLY_NOTE}`,
         };
       } else if (method === "ping") {
         result = {};
       } else if (method === "tools/list") {
-        result = { tools: MCP_TOOLS };
+        result = { tools: mcpToolsFor(user.token?.scope) };
       } else if (method === "tools/call") {
         const output = await callTool(user, params.name, params.arguments ?? {}, signal);
         const failed = output?.ok === false;
@@ -174,9 +187,11 @@ export function createMcpService({ database, vaultService, passageService, creat
       if (!canUseMcp(user)) throw new HttpError(403, "Connecting agents to your vault comes with the Plus and Cloud plans.");
       const name = typeof input?.name === "string" ? input.name.trim().replace(/\s+/gu, " ") : "";
       if (!name || name.length > NAME_LIMIT) throw new HttpError(400, `Name the token in 1 to ${NAME_LIMIT} characters, such as "Claude Code on my laptop".`);
+      const scope = input?.scope ?? "read";
+      if (scope !== "read" && scope !== "write") throw new HttpError(400, "A token's access is read or write.");
       const token = `mc_mcp_${randomBytes(32).toString("base64url")}`;
       const summary = await database.createMcpToken({
-        userId: user.id, name, tokenHash: hash(token), scope: "read", expiresAt: new Date(Date.now() + MCP_TOKEN_TTL_MS),
+        userId: user.id, name, tokenHash: hash(token), scope, expiresAt: new Date(Date.now() + MCP_TOKEN_TTL_MS),
       });
       return { token, summary };
     },

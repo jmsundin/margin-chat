@@ -959,9 +959,9 @@ export async function requestAgentTokens(): Promise<{ tokens: AgentToken[]; canC
 }
 
 /** The token is returned only here, once. */
-export async function requestCreateAgentToken(name: string): Promise<{ token: string; summary: AgentToken }> {
+export async function requestCreateAgentToken(name: string, scope: AgentToken["scope"] = "read"): Promise<{ token: string; summary: AgentToken }> {
   const response = await apiFetch("/api/settings/mcp-tokens", {
-    body: JSON.stringify({ name }), credentials: "same-origin", headers: AGENT_SETTINGS_HEADERS, method: "POST",
+    body: JSON.stringify({ name, scope }), credentials: "same-origin", headers: AGENT_SETTINGS_HEADERS, method: "POST",
   });
   const payload = await readJson<{ token: string; summary: AgentToken } | ErrorPayload>(response);
   ensureOk(response, payload, "Couldn't make an agent token.");
