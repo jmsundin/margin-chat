@@ -6532,7 +6532,7 @@ button {
   display: grid;
   flex: 0 0 auto;
   gap: 4px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   padding: 4px;
 }
 
@@ -6857,6 +6857,78 @@ button {
   align-self: flex-end;
 }
 
+.agent-token-form {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.agent-token-form .thread-dialog-button {
+  min-height: 44px;
+}
+
+.agent-token-reveal {
+  background: color-mix(in srgb, var(--panel-active-border) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-active-border) 40%, transparent);
+  border-radius: 16px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.agent-token-reveal > .thread-dialog-button {
+  justify-self: end;
+}
+
+.agent-token-code {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.agent-token-code code,
+.agent-token-code pre {
+  background: var(--button-surface);
+  border: 1px solid var(--button-border);
+  border-radius: 10px;
+  font-size: 0.78rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
+.agent-token-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-token-row {
+  align-items: center;
+  border: 1px solid var(--button-border);
+  border-radius: 14px;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+
+.agent-token-row > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agent-token-row span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .profile-dialog-error {
   background: var(--danger-soft);
   border: 1px solid var(--danger-border);
@@ -6907,6 +6979,15 @@ button {
 @media (max-width: 620px) {
   .profile-dialog {
     max-height: calc(100dvh - 72px);
+  }
+
+  .profile-dialog-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .agent-token-form,
+  .agent-token-code {
+    grid-template-columns: 1fr;
   }
 
   .profile-dialog-tabs button {

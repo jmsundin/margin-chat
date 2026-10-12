@@ -69,6 +69,10 @@ export const API_ROUTES = Object.freeze([
   { id: "jevStatus", methods: ["GET"], path: "/api/jev/status" },
   { id: "jevWorkspace", methods: ["POST"], path: "/api/jev/workspace" },
   { id: "jevSearch", methods: ["POST"], path: "/api/jev/search" },
+  // Outside AI agents reach the vault here with an agent token (server/mcp).
+  { id: "mcp", methods: ["GET", "POST", "DELETE"], path: "/api/mcp" },
+  { id: "mcpTokens", methods: ["GET", "POST"], path: "/api/settings/mcp-tokens" },
+  { id: "mcpTokenDelete", methods: ["DELETE"], path: "/api/settings/mcp-tokens/:id", parameters: { id: "[0-9a-f-]{36}" } },
 ].map((route) => Object.freeze({ ...route, methods: Object.freeze(route.methods) })));
 
 const compiledRoutes = API_ROUTES.map((route) => {

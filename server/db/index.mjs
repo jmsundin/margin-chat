@@ -46,6 +46,7 @@ import { readState, readVaultProjectionCheckpoint, readWorkspace, writeState } f
 import { readAgentConversation, searchAgentPassages, searchVaultPassages } from "./searchRepository.mjs";
 import { normalizeAppState } from "./validation.mjs";
 import * as captures from "./captureRepository.mjs";
+import * as mcpTokens from "./mcpTokenRepository.mjs";
 import * as publicMap from "./publicMapRepository.mjs";
 import * as topics from "./topicRepository.mjs";
 import * as passages from "./passageRepository.mjs";
@@ -357,7 +358,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
 
   return {
     checkHealth,
-    ...Object.fromEntries(Object.entries(captures).map(([name, operation]) => [
+    ...Object.fromEntries(Object.entries({ ...captures, ...mcpTokens }).filter(([, operation]) => typeof operation === "function").map(([name, operation]) => [
       name, (args) => withClient((client) => operation(client, args)),
     ])),
     chargeHostedRequest: chargeHostedRequestRecord,

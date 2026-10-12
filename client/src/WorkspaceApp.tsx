@@ -393,7 +393,7 @@ interface WorkspaceAppProps {
   onBrowserCaptureHandled?: (id: string) => void;
   browserThreadRequests?: readonly BrowserThreadRequest[] | null;
   onBrowserThreadHandled?: (request: BrowserThreadRequest) => void;
-  onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys") => void;
+  onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys" | "agents") => void;
   billingDashboard: import("./types").BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
@@ -739,11 +739,11 @@ function WorkspaceAppContent({
   const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
   const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
-  const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
+  const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
-  const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage" | "billing" | "api-keys">(() => {
+  const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage" | "billing" | "api-keys" | "agents">(() => {
     const tab = new URLSearchParams(window.location.search).get("settings");
-    return tab === "billing" || tab === "api-keys" ? tab : "account";
+    return tab === "billing" || tab === "api-keys" || tab === "agents" ? tab : "account";
   });
   const previousPendingChats = useRef(pendingConversationIds);
   const refreshBillingAfterChat = useEffectEvent(() => { void onRefreshBilling(); });

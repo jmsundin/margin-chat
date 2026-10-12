@@ -23,6 +23,7 @@ import { createWebSearchService } from "../webSearch/index.mjs";
 import { createDictationService, MAX_DICTATION_AUDIO_BYTES } from "../dictation/index.mjs";
 import { createDesktopDownloadService, describeDownloadRequest } from "../downloads/index.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
+import { MCP_BODY_LIMIT, createMcpService } from "../mcp/index.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
   createAppStateFromWorkspaceDocument,
@@ -108,6 +109,7 @@ export function createApiHandler({
   passageService,
   desktopDownloadService,
   dictationService,
+  mcpService,
   env = process.env,
   rateLimits,
 }) {
@@ -122,6 +124,9 @@ export function createApiHandler({
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
   const dictation = dictationService ?? createDictationService({ env });
   const desktopDownloads = desktopDownloadService ?? createDesktopDownloadService({ database, env });
+  const mcp = mcpService ?? createMcpService({
+    database, vaultService, passageService: vaultPassages, createUsageContext: executeChatReply.createUsageContext,
+  });
 
   const limits = { ...DEFAULT_AUTH_RATE_LIMITS, ...rateLimits };
   const loginByAddress = createRateLimiter(limits.loginFailuresByAddress);
@@ -238,6 +243,42 @@ export function createApiHandler({
           const capture = await captureService.save(user.id, await readJsonBody(request, 1_500_000));
           sendJson(response, 201, { capture }, { "Cache-Control": "no-store" });
         }
+        return;
+      }
+
+      // MCP clients send only their agent token, never the website's cookie.
+      if (route?.id === "mcp") {
+        response.setHeader("Cache-Control", "no-store");
+        if (request.method !== "POST") {
+          // Stateless: no server-sent stream to open and no session to end.
+          sendJson(response, 405, { error: "Send MCP messages with POST." }, { Allow: "POST" });
+          return;
+        }
+        let user;
+        try {
+          user = await mcp.authenticate(request);
+        } catch (error) {
+          if (error?.statusCode === 401) error.headers = { "WWW-Authenticate": 'Bearer realm="Margin Chat", error="invalid_token"' };
+          throw error;
+        }
+        const raw = await readRawBody(request, MCP_BODY_LIMIT);
+        let message;
+        try {
+          message = JSON.parse(raw.toString("utf8"));
+        } catch {
+          sendJson(response, 400, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "The request body isn't valid JSON." } });
+          return;
+        }
+        const scope = createRequestAbortScope(request, response);
+        try {
+          const answer = await mcp.respond(message, user, { signal: scope.signal });
+          if (!answer) {
+            response.writeHead(202, { ...jsonHeaders });
+            response.end();
+          } else {
+            sendJson(response, 200, answer);
+          }
+        } finally { scope.dispose(); }
         return;
       }
 
@@ -516,6 +557,26 @@ export function createApiHandler({
           }
           return;
         }
+      }
+
+      if (route?.id === "mcpTokens" || route?.id === "mcpTokenDelete") {
+        response.setHeader("Cache-Control", "no-store");
+        const userId = authContext.user.id;
+        if (request.method === "GET") {
+          sendJson(response, 200, { tokens: await mcp.list(userId), canConnect: canUseCloudWorkspaceStorage(authContext.user) });
+          return;
+        }
+        // A non-simple header plus same-origin fetch metadata prevents form-based CSRF.
+        if (request.headers["x-margin-agent-settings"] !== "1" || request.headers["sec-fetch-site"] === "cross-site") {
+          throw new HttpError(403, "Manage agent tokens in Margin Chat's settings.");
+        }
+        if (route.id === "mcpTokens") {
+          sendJson(response, 201, await mcp.issue(authContext.user, await readJsonBody(request, 4096)));
+        } else {
+          await mcp.revoke(userId, route.params.id);
+          sendJson(response, 200, { revoked: true });
+        }
+        return;
       }
 
       if (route?.id === "captureList") {

@@ -369,7 +369,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
     }
   }
 
-  function openWebsiteSettings(tab: "account" | "billing" | "api-keys") {
+  function openWebsiteSettings(tab: "account" | "billing" | "api-keys" | "agents") {
     if (!extension) return;
     const url = new URL(extension.serverUrl);
     url.searchParams.set("settings", tab);

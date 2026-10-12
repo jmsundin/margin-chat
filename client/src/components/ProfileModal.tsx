@@ -1,4 +1,5 @@
 import VaultPanel from "./VaultPanel";
+import AgentConnectionsPanel from "./AgentConnectionsPanel";
 import BillingDashboard from "./BillingDashboard";
 import PasswordChangeForm from "./PasswordChangeForm";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
@@ -18,8 +19,8 @@ import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import type { StateUploadProgress } from "../lib/api";
 
 interface ProfileModalProps {
-  initialTab?: "account" | "storage" | "billing" | "api-keys";
-  onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys") => void;
+  initialTab?: "account" | "storage" | "billing" | "api-keys" | "agents";
+  onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys" | "agents") => void;
   billingDashboard: BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
@@ -167,7 +168,7 @@ export default function ProfileModal({
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<
-    "account" | "api-keys" | "storage" | "billing"
+    "account" | "api-keys" | "storage" | "billing" | "agents"
   >(initialTab);
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
@@ -391,6 +392,7 @@ export default function ProfileModal({
             ["account", "Account"],
             ["billing", "Billing"],
             ["api-keys", "API keys"],
+            ["agents", "Agents"],
             ["storage", "Markdown vault"],
           ] as const).map(([tabId, label]) => (
             <button
@@ -641,6 +643,21 @@ export default function ProfileModal({
                 {apiKeySaving ? "Saving keys..." : "Save API keys"}
               </button>
               </>}
+            </section>
+          ) : null}
+
+          {activeTab === "agents" ? (
+            <section
+              aria-labelledby="profile-tab-agents"
+              className="profile-api-key-section profile-dialog-panel"
+              id="profile-panel-agents"
+              role="tabpanel"
+            >
+              {onOpenWebsiteSettings ? <>
+                <h3>Connect AI agents</h3>
+                <p className="thread-dialog-copy">Make tokens for Claude Code, Cursor and other MCP agents on the Margin Chat website.</p>
+                <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("agents")}>Manage agents on website</button>
+              </> : <AgentConnectionsPanel />}
             </section>
           ) : null}
 
