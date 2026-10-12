@@ -40,7 +40,8 @@ import DocumentPanel from "./components/DocumentPanel";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import DocumentTabs from "./components/DocumentTabs";
-import DocumentChildTabs from "./components/DocumentChildTabs";
+import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
+import { DOCUMENT_MARGIN_GUTTER, type DocumentMarginItem } from "./components/DocumentMargin";
 import DocumentSiblingTabs from "./components/DocumentSiblingTabs";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
@@ -1773,6 +1774,8 @@ function WorkspaceAppContent({
             if (!childConversation?.branchAnchor) {
               continue;
             }
+            // A note in its parent's margin sits beside its passage with its own short link.
+            if (isCompactDocument(childConversation) && showsMarginInPanel(parentConversation)) continue;
 
             const connection = buildDocumentConnector({
               id: `tree-${childConversation.id}`,
@@ -4113,8 +4116,9 @@ function WorkspaceAppContent({
     // Leading space belongs to the first document group. Changing editor focus
     // must not move a note's controls between pointerdown and click.
     "--document-focus-width": `${getRenderedPanelWidth(scrollingDocuments[0]?.id ?? activeConversation.id)}px`,
-    "--document-notes-space": scrollingDocuments[0] && !closedMarginNotes[scrollingDocuments[0].id]
-      && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
+    "--document-notes-space": !scrollingDocuments[0] ? "0px"
+      : showsMarginInPanel(scrollingDocuments[0]) ? `${getDocumentMarginSpace(scrollingDocuments[0], false)}px`
+      : !closedMarginNotes[scrollingDocuments[0].id] && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
   } as CSSProperties;
 
   function renderDocumentBreadcrumbs() {
@@ -4169,11 +4173,12 @@ function WorkspaceAppContent({
     return [...children].sort((a, b) => rank(a) - rank(b));
   }
 
-  function renderChildTabs(conversation: Conversation, dock?: GraphDockControls) {
+  function renderChildrenMenu(conversation: Conversation, view: "chat" | "graph", dock?: GraphDockControls) {
     const childDocuments = getChildTabDocuments(conversation);
     if (!childDocuments.length || isCompactDocument(conversation)) return null;
-    return <DocumentChildTabs parent={conversation} documents={childDocuments}
+    return <DocumentChildrenMenu parent={conversation} documents={childDocuments}
       currentDocumentId={activeConversation.id}
+      marginNoteIds={showsMarginInPanel(conversation, view) ? getMarginDocuments(conversation).map((note) => note.id) : []}
       openDocumentIds={[...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]}
       minimizedDocumentIds={[...minimizedSideDocumentsByParent.values()].flatMap((documents) => documents.map((document) => document.id))}
       // In Map View's side panel a child replaces its parent in the panel instead of leaving the map.
@@ -4228,7 +4233,9 @@ function WorkspaceAppContent({
           </svg>
         </button> : null}
       </>}
-      childTabs={renderChildTabs(conversation, view === "graph" ? dock : undefined)}
+      childNavigation={renderChildrenMenu(conversation, view, view === "graph" ? dock : undefined)}
+      marginNotes={getMarginItems(conversation, view)} marginWidth={getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
+      activeMarginNoteId={activeConversation.id}
       siblingTabs={view === "chat" ? renderSiblingTabs(conversation) : null}
       documentMenu={dockHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
@@ -4275,9 +4282,39 @@ function WorkspaceAppContent({
     )));
   }
 
+  /**
+   * On wider screens a document's margin notes live inside its frame, each beside its passage,
+   * and the frame grows by the margin so the text keeps its width. Phones keep the notes column.
+   */
+  function showsMarginInPanel(conversation: Conversation, view: "chat" | "graph" = "chat") {
+    return view === "chat" && !isMobileViewport && !isCompactDocument(conversation)
+      && !closedMarginNotes[conversation.id] && getMarginDocuments(conversation).length > 0;
+  }
+  /** Extra frame width the margin adds, so the text column keeps its width. */
+  function getDocumentMarginSpace(conversation: Conversation, includePreview = true) {
+    return showsMarginInPanel(conversation) ? getMarginColumnWidth(conversation, includePreview) + DOCUMENT_MARGIN_GUTTER + 10 : 0;
+  }
+  function renderMarginFamily(note: Conversation, view: "chat" | "graph", fitContent = false) {
+    return <div className="margin-document-family">
+      <MarginDocumentFrame data-document-id={note.id} size={note.document?.marginNote?.size} fitContent={fitContent}
+        onResize={(size) => handleResizeMarginDocument(note.id, size)}
+        onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
+        onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
+        onFocusCapture={() => handleFocusVisibleDocument(note.id)}>
+        {renderConversationChatPanel(note, view)}
+      </MarginDocumentFrame>
+      {renderDocumentMarginNotes(note, view)}
+    </div>;
+  }
+  function getMarginItems(conversation: Conversation, view: "chat" | "graph"): DocumentMarginItem[] | undefined {
+    if (!showsMarginInPanel(conversation, view)) return undefined;
+    return getMarginDocuments(conversation).map((note) => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true) }));
+  }
+
+  /** The column of notes beside a document on phones, and beside a margin note for its own notes. */
   function renderDocumentMarginNotes(conversation: Conversation, view: "chat" | "graph" = "chat"): React.ReactNode {
     const notes = getMarginDocuments(conversation);
-    if (!notes.length || closedMarginNotes[conversation.id]) return null;
+    if (!notes.length || closedMarginNotes[conversation.id] || showsMarginInPanel(conversation, view)) return null;
     return <aside className={`document-margin-notes${maximizedDocument?.id === conversation.id ? " is-maximized-document" : ""}`}
       aria-label={`Notes for ${conversation.title}`} data-margin-notes-for={conversation.id}
       style={{ "--margin-column-width": `${getMarginColumnWidth(conversation)}px` } as CSSProperties}>
@@ -4293,16 +4330,7 @@ function WorkspaceAppContent({
           }}>×</button>
       </header>
       <div className="document-margin-notes-list">
-        {notes.map((note) => <div className="margin-document-family" key={note.id}>
-          <MarginDocumentFrame data-document-id={note.id} size={note.document?.marginNote?.size}
-            onResize={(size) => handleResizeMarginDocument(note.id, size)}
-            onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
-            onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
-            onFocusCapture={() => handleFocusVisibleDocument(note.id)}>
-            {renderConversationChatPanel(note, view)}
-          </MarginDocumentFrame>
-          {renderDocumentMarginNotes(note, view)}
-        </div>)}
+        {notes.map((note) => <Fragment key={note.id}>{renderMarginFamily(note, view)}</Fragment>)}
       </div>
     </aside>;
   }
@@ -4331,7 +4359,7 @@ function WorkspaceAppContent({
         onPointerDownCapture={() => handleFocusVisibleDocument(conversation.id)}
         onFocusCapture={() => handleFocusVisibleDocument(conversation.id)}
         key={conversation.id}
-        style={{ "--chat-panel-width": `${resizeInfo.width}px` } as CSSProperties}
+        style={{ "--chat-panel-width": `${resizeInfo.width + getDocumentMarginSpace(conversation)}px` } as CSSProperties}
       >
         {renderConversationChatPanel(conversation)}
         {(["left", "right"] as const).map((edge) => <div

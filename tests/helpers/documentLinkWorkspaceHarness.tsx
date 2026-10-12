@@ -308,11 +308,22 @@ try {
   assert.equal(browser.document.querySelector(".document-link-picker"), null);
   assert.deepEqual(ancestry(latest), originalAncestry);
   checks.push("real rich selection creates a durable block link and source highlight without creating or reparenting documents");
-  const childEntries = [...element('nav[aria-label="Child documents of Source research"]').querySelectorAll<HTMLButtonElement>(".document-child-tab")];
+  async function childEntriesOf(title: string) {
+    const trigger = element(`.document-children-trigger[aria-label^="Children of ${title} ("]`);
+    if (trigger.getAttribute("aria-expanded") !== "true") await click(trigger);
+    const entries = [...element(`[aria-label="Child documents of ${title}"]`).querySelectorAll(".document-child-item")] as HTMLButtonElement[];
+    return entries;
+  }
+  async function childCount(title: string) {
+    const count = (await childEntriesOf(title)).length;
+    await click(element(`.document-children-trigger[aria-label^="Children of ${title} ("]`));
+    return count;
+  }
+  const childEntries = await childEntriesOf("Source research");
   assert.equal(childEntries.length, 2, "The existing branch and linked document share the Children list.");
   assert(childEntries.some((button) => button.textContent?.includes("Destination research")));
   await click(childEntries.find((button) => button.textContent?.includes("Destination research")));
-  assert.equal(latest.activeConversationId, "target", "Linked children open from the same child tabs.");
+  assert.equal(latest.activeConversationId, "target", "Linked children open from the same Children menu.");
   await click(element('.thread-item-main[title="Source research"]'));
 
   const popup = await openPreview();
@@ -339,7 +350,7 @@ try {
 
   await click(button("Remove link", await openPreview()));
   assert.deepEqual(latest.conversations.source.document!.links, []);
-  assert.equal(element('nav[aria-label="Child documents of Source research"]').querySelectorAll(".document-child-tab").length, 1, "Removing the link immediately updates the child tabs.");
+  assert.equal(await childCount("Source research"), 1, "Removing the link immediately updates the Children menu.");
   assert.equal(browser.document.querySelector('[data-document-block-id="source-block"] [data-annotation-branches]'), null);
   assert.equal(editor("source-block").getMarkdown(), "New Alpha selected passage omega.");
   assert.deepEqual(ancestry(latest), originalAncestry);
@@ -348,7 +359,7 @@ try {
   await selectPassage();
   await click(element('[aria-label="Connect to document Destination research"]'));
   const documentLink = latest.conversations.source.document!.links![0];
-  assert.equal(element('nav[aria-label="Child documents of Source research"]').querySelectorAll(".document-child-tab").length, 2, "Document links count as children just like block links.");
+  assert.equal(await childCount("Source research"), 2, "Document links count as children just like block links.");
   assert.equal(documentLink.targetConversationId, "target");
   assert.equal(documentLink.targetBlockId, undefined);
   const documentPopup = await openPreview();

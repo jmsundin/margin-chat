@@ -138,10 +138,9 @@
   min-width: 0;
   max-width: none;
 }
-/* cqi here is the document pane; the body is the pane minus the child list beside it. */
+/* cqi here is the document pane; the body is the pane minus the margin beside it. */
 .is-maximized-document > .document-panel { --maximized-text-width: 720px; --maximized-body-width: 100cqi; }
-.is-maximized-document > .document-panel .document-panel-content.has-child-tabs { --maximized-body-width: calc(100cqi - clamp(124px, 26cqi, 200px)); }
-.is-maximized-document > .document-panel .document-panel-content.has-child-tabs:has(> .document-child-tabs.is-collapsed) { --maximized-body-width: calc(100cqi - 36px); }
+.is-maximized-document > .document-panel .document-panel-content.has-margin-notes { --maximized-body-width: calc(100cqi - var(--document-margin-width, 0px)); }
 .app-shell.is-document-maximized .is-maximized-document > .document-panel .document-body {
   --document-left-padding: max(24px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
   --document-right-padding: max(32px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
