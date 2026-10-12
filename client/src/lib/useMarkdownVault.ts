@@ -5,6 +5,7 @@ import type { AppState, AuthenticatedUser } from "../types";
 import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
+import { FolderChangingError } from "./fileSnapshot";
 import { bytesToBase64, createBrowserVaultStore, exportVault, importVault, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
@@ -114,6 +115,8 @@ export function useMarkdownVault(args: {
 
   function report(error: unknown) {
     if (!mounted.current) return;
+    // A busy connected folder says nothing about the vault or cloud sync.
+    if (error instanceof FolderChangingError) { setMessage(error.message); return; }
     setStorageMode(enabledRef.current ? "fallback" : "local");
     setMatchesCloud(false);
     const detail = error instanceof Error ? error.message : "Your vault could not be synchronized.";
@@ -466,7 +469,8 @@ export function useMarkdownVault(args: {
     if (mounted.current) setSaving(true);
     try {
       await saveAppState();
-      await readFolder();
+      // Cloud sync still runs when the connected folder could not be read; the folder is retried next time.
+      const folderError = await readFolder().then(() => null, (error: unknown) => error);
       if (sync && enabledRef.current) {
         await refreshIndex(await engine.sync());
         if (await hydrateIncompleteFamilies()) await engine.sync();
@@ -477,6 +481,8 @@ export function useMarkdownVault(args: {
             : null);
         }
       }
+      // Do not write to a folder whose current contents were not read.
+      if (folderError) throw folderError;
       // Free accounts also retain originals on this device after an online upload.
       if (sync && !enabledRef.current) await cacheAttachments();
       // Capture typing that occurred while a network request or directory read was pending.
@@ -526,7 +532,8 @@ export function useMarkdownVault(args: {
           publish(await engine.edit(legacy, {}));
         }
         initialized.current = true;
-        await readFolder();
+        // A folder that cannot be read right now must not keep the vault from opening or syncing.
+        await readFolder().catch(report);
         // Display durable local files immediately, including when cloud storage is unavailable.
         publish(await engine.read());
         if (mounted.current) { setReady(true); setStorageMode(enabledRef.current ? "fallback" : "local"); }
