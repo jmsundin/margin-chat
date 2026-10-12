@@ -88,127 +88,129 @@ export default function AppSettingsModal({
           </div>
         </div>
 
-        <div className="app-settings-section">
-          <div className="app-settings-copy">
-            <span className="app-settings-label">Theme</span>
-            <p className="app-settings-description">
-              Choose the workspace theme, or use the quick toggle in the
-              sidebar footer.
-            </p>
+        <div className="app-settings-body">
+          <div className="app-settings-section">
+            <div className="app-settings-copy">
+              <span className="app-settings-label">Theme</span>
+              <p className="app-settings-description">
+                Choose the workspace theme, or use the quick toggle in the
+                sidebar footer.
+              </p>
+            </div>
+
+            <div aria-label="Theme" className="app-settings-option-group" role="group">
+              <button
+                aria-pressed={theme === "dark"}
+                className={
+                  theme === "dark"
+                    ? "app-settings-option is-active"
+                    : "app-settings-option"
+                }
+                onClick={() => onSetTheme("dark")}
+                type="button"
+              >
+                Dark
+              </button>
+              <button
+                aria-pressed={theme === "light"}
+                className={
+                  theme === "light"
+                    ? "app-settings-option is-active"
+                    : "app-settings-option"
+                }
+                onClick={() => onSetTheme("light")}
+                type="button"
+              >
+                Light
+              </button>
+            </div>
           </div>
 
-          <div aria-label="Theme" className="app-settings-option-group" role="group">
-            <button
-              aria-pressed={theme === "dark"}
-              className={
-                theme === "dark"
-                  ? "app-settings-option is-active"
-                  : "app-settings-option"
-              }
-              onClick={() => onSetTheme("dark")}
-              type="button"
+          <div className="app-settings-section">
+            <div className="app-settings-copy">
+              <span className="app-settings-label">Main chat view</span>
+              <p className="app-settings-description">
+                Pick whether the main workspace opens in focused chat panels, a
+                thread gallery, or the full graph canvas.
+              </p>
+            </div>
+
+            <div
+              aria-label="Main chat view"
+              className="app-settings-option-group"
+              role="group"
             >
-              Dark
-            </button>
-            <button
-              aria-pressed={theme === "light"}
-              className={
-                theme === "light"
-                  ? "app-settings-option is-active"
-                  : "app-settings-option"
-              }
-              onClick={() => onSetTheme("light")}
-              type="button"
-            >
-              Light
-            </button>
+              <button
+                aria-pressed={mainViewMode === "chat"}
+                className={
+                  mainViewMode === "chat"
+                    ? "app-settings-option is-active"
+                    : "app-settings-option"
+                }
+                onClick={() => onSetMainViewMode("chat")}
+                type="button"
+              >
+                Chat
+              </button>
+              <button
+                aria-pressed={mainViewMode === "tiles"}
+                className={
+                  mainViewMode === "tiles"
+                    ? "app-settings-option is-active"
+                    : "app-settings-option"
+                }
+                onClick={() => onSetMainViewMode("tiles")}
+                type="button"
+              >
+                Tiles
+              </button>
+              <button
+                aria-pressed={mainViewMode === "graph"}
+                className={
+                  mainViewMode === "graph"
+                    ? "app-settings-option is-active"
+                    : "app-settings-option"
+                }
+                onClick={() => onSetMainViewMode("graph")}
+                type="button"
+              >
+                Graph
+              </button>
+            </div>
           </div>
+
+          {onSetJevEnabled ? <div className="app-settings-section jev-settings-section">
+            <div className="app-settings-copy">
+              <label className="app-settings-label" htmlFor="jev-assistance">Jev assistance</label>
+              <p className="app-settings-description" id="jev-assistance-disclosure">{JEV_DISCLOSURE}</p>
+              <p className="app-settings-description">Improves topic categories, related items, chat context selection, and Auto routing. Saved for this account on this device.</p>
+              {jevEnabled && (jevStatus === "unconfigured" || jevStatus === "unavailable") ? <p className="app-settings-description" role="status">{jevStatus === "unconfigured" ? "Jev is not configured on this server." : "Jev is temporarily unavailable."} The usual chat and categories remain available.</p> : null}
+            </div>
+            <input id="jev-assistance" type="checkbox" role="switch" aria-describedby="jev-assistance-disclosure" checked={jevEnabled} onChange={(event) => onSetJevEnabled(event.target.checked)} />
+          </div> : null}
+
+          {dictationSupported() ? <div className="app-settings-section app-settings-switch-section">
+            <div className="app-settings-copy">
+              <label className="app-settings-label" htmlFor="dictation-button">Voice typing button</label>
+              <p className="app-settings-description" id="dictation-button-disclosure">
+                Shows a mic on the text field you&apos;re in. Press {dictationShortcutLabel()} to start and again to stop, or hold it while you talk; Esc cancels. Recordings are sent to OpenAI to transcribe, using your OpenAI key when you&apos;ve added one, otherwise your Plus credit.
+              </p>
+            </div>
+            <input id="dictation-button" type="checkbox" role="switch" aria-describedby="dictation-button-disclosure"
+              checked={showDictationButton} onChange={(event) => saveDictationButtonPreference(event.target.checked)} />
+          </div> : null}
+
+          {vaultIndex ? <div className="app-settings-section app-settings-switch-section">
+            <div className="app-settings-copy">
+              <label className="app-settings-label" htmlFor="vault-search-meaning">Search by meaning</label>
+              <p className="app-settings-description" id="vault-search-meaning-disclosure">{VAULT_SEARCH_DISCLOSURE}</p>
+              {vaultIndexSummary(vaultIndex) ? <p className="app-settings-description" role="status">{vaultIndexSummary(vaultIndex)}</p> : null}
+            </div>
+            <input id="vault-search-meaning" type="checkbox" role="switch" aria-describedby="vault-search-meaning-disclosure"
+              checked={vaultIndex.status?.cloudEmbeddings ?? true} disabled={vaultIndex.saving || vaultIndex.status?.available === false}
+              onChange={(event) => void vaultIndex.setCloudEmbeddings(event.target.checked)} />
+          </div> : null}
         </div>
-
-        <div className="app-settings-section">
-          <div className="app-settings-copy">
-            <span className="app-settings-label">Main chat view</span>
-            <p className="app-settings-description">
-              Pick whether the main workspace opens in focused chat panels, a
-              thread gallery, or the full graph canvas.
-            </p>
-          </div>
-
-          <div
-            aria-label="Main chat view"
-            className="app-settings-option-group"
-            role="group"
-          >
-            <button
-              aria-pressed={mainViewMode === "chat"}
-              className={
-                mainViewMode === "chat"
-                  ? "app-settings-option is-active"
-                  : "app-settings-option"
-              }
-              onClick={() => onSetMainViewMode("chat")}
-              type="button"
-            >
-              Chat
-            </button>
-            <button
-              aria-pressed={mainViewMode === "tiles"}
-              className={
-                mainViewMode === "tiles"
-                  ? "app-settings-option is-active"
-                  : "app-settings-option"
-              }
-              onClick={() => onSetMainViewMode("tiles")}
-              type="button"
-            >
-              Tiles
-            </button>
-            <button
-              aria-pressed={mainViewMode === "graph"}
-              className={
-                mainViewMode === "graph"
-                  ? "app-settings-option is-active"
-                  : "app-settings-option"
-              }
-              onClick={() => onSetMainViewMode("graph")}
-              type="button"
-            >
-              Graph
-            </button>
-          </div>
-        </div>
-
-        {onSetJevEnabled ? <div className="app-settings-section jev-settings-section">
-          <div className="app-settings-copy">
-            <label className="app-settings-label" htmlFor="jev-assistance">Jev assistance</label>
-            <p className="app-settings-description" id="jev-assistance-disclosure">{JEV_DISCLOSURE}</p>
-            <p className="app-settings-description">Improves topic categories, related items, chat context selection, and Auto routing. Saved for this account on this device.</p>
-            {jevEnabled && (jevStatus === "unconfigured" || jevStatus === "unavailable") ? <p className="app-settings-description" role="status">{jevStatus === "unconfigured" ? "Jev is not configured on this server." : "Jev is temporarily unavailable."} The usual chat and categories remain available.</p> : null}
-          </div>
-          <input id="jev-assistance" type="checkbox" role="switch" aria-describedby="jev-assistance-disclosure" checked={jevEnabled} onChange={(event) => onSetJevEnabled(event.target.checked)} />
-        </div> : null}
-
-        {dictationSupported() ? <div className="app-settings-section app-settings-switch-section">
-          <div className="app-settings-copy">
-            <label className="app-settings-label" htmlFor="dictation-button">Voice typing button</label>
-            <p className="app-settings-description" id="dictation-button-disclosure">
-              Shows a mic on the text field you&apos;re in. Press {dictationShortcutLabel()} to start and again to stop, or hold it while you talk; Esc cancels. Recordings are sent to OpenAI to transcribe, using your OpenAI key when you&apos;ve added one, otherwise your Plus credit.
-            </p>
-          </div>
-          <input id="dictation-button" type="checkbox" role="switch" aria-describedby="dictation-button-disclosure"
-            checked={showDictationButton} onChange={(event) => saveDictationButtonPreference(event.target.checked)} />
-        </div> : null}
-
-        {vaultIndex ? <div className="app-settings-section app-settings-switch-section">
-          <div className="app-settings-copy">
-            <label className="app-settings-label" htmlFor="vault-search-meaning">Search by meaning</label>
-            <p className="app-settings-description" id="vault-search-meaning-disclosure">{VAULT_SEARCH_DISCLOSURE}</p>
-            {vaultIndexSummary(vaultIndex) ? <p className="app-settings-description" role="status">{vaultIndexSummary(vaultIndex)}</p> : null}
-          </div>
-          <input id="vault-search-meaning" type="checkbox" role="switch" aria-describedby="vault-search-meaning-disclosure"
-            checked={vaultIndex.status?.cloudEmbeddings ?? true} disabled={vaultIndex.saving || vaultIndex.status?.available === false}
-            onChange={(event) => void vaultIndex.setCloudEmbeddings(event.target.checked)} />
-        </div> : null}
 
         <div className="thread-dialog-actions">
           <button
