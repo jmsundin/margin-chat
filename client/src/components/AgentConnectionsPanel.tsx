@@ -30,6 +30,7 @@ export default function AgentConnectionsPanel() {
   const [tokens, setTokens] = useState<AgentToken[] | null>(null);
   const [canConnect, setCanConnect] = useState(true);
   const [name, setName] = useState("");
+  const [canWrite, setCanWrite] = useState(false);
   const [created, setCreated] = useState<{ token: string; name: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,10 +52,11 @@ export default function AgentConnectionsPanel() {
     setBusy(true);
     setError(null);
     try {
-      const result = await requestCreateAgentToken(name.trim());
+      const result = await requestCreateAgentToken(name.trim(), canWrite ? "write" : "read");
       setCreated({ token: result.token, name: result.summary.name });
       setTokens((current) => [result.summary, ...(current ?? [])]);
       setName("");
+      setCanWrite(false);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Couldn't make an agent token.");
     } finally {
@@ -89,12 +91,13 @@ export default function AgentConnectionsPanel() {
           <p className="eyebrow">MCP</p>
           <strong>Connect AI agents to your vault</strong>
         </div>
-        <span>Read-only</span>
+        <span>You choose access</span>
       </div>
 
       <p className="thread-dialog-copy">
         Claude Code, Cursor and other agents that support MCP can search and read your documents, notes, chats
-        and PDFs in your cloud vault. They can't change anything and never see private margin comments. Each
+        and PDFs in your cloud vault. If you allow it, they can also create documents and add to the end of
+        existing ones, but never change or delete what's there. Agents never see private margin comments. Each
         token works until you revoke it, for up to a year.
       </p>
 
@@ -123,6 +126,10 @@ export default function AgentConnectionsPanel() {
           <button className="thread-dialog-button is-primary" disabled={busy || !name.trim()} type="submit">
             Make token
           </button>
+          <label className="agent-token-write">
+            <input checked={canWrite} disabled={busy} onChange={(event) => setCanWrite(event.target.checked)} type="checkbox" />
+            Can create documents and add to them
+          </label>
         </form>
       )}
 
@@ -156,6 +163,8 @@ export default function AgentConnectionsPanel() {
               <div>
                 <strong>{token.name}</strong>
                 <span>
+                  {token.scope === "write" ? "Reads and adds" : "Read-only"}
+                  {" · "}
                   Made {formatDate(token.createdAt)}
                   {" · "}
                   {token.lastUsedAt ? `Last used ${formatDate(token.lastUsedAt)}` : "Not used yet"}

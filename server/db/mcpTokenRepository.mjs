@@ -56,7 +56,7 @@ export async function authenticateMcpToken(client, tokenHash) {
      returning u.id, u.email, u.display_name, u.role, u.billing_status,
        u.stripe_customer_id, u.billing_price_id, u.billing_current_period_end,
        u.billing_cancel_at_period_end, u.trial_api_calls_used,
-       u.trial_api_calls_limit, u.hosted_credit_balance_micros, t.id as token_id, t.scope`,
+       u.trial_api_calls_limit, u.hosted_credit_balance_micros, t.id as token_id, t.name as token_name, t.scope`,
     [tokenHash],
   );
   const row = result.rows[0];
@@ -66,6 +66,6 @@ export async function authenticateMcpToken(client, tokenHash) {
     displayName: row.display_name,
     role: row.role,
     billing: mapBillingRow(row),
-    token: { id: row.token_id, scope: row.scope },
+    token: { id: row.token_id, name: row.token_name, scope: row.scope },
   } : null;
 }

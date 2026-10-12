@@ -3,7 +3,7 @@
 Margin Chat is an [MCP](https://modelcontextprotocol.io) server at
 `https://www.marginchat.com/api/mcp`. With it, agents like Claude Code, Cursor
 and VS Code can search and read a member's cloud vault using the same tools
-Agent mode uses.
+Agent mode uses. With a write token, they can also add documents.
 
 ## Who can connect
 
@@ -18,7 +18,7 @@ Agent mode uses.
 - If a member's subscription lapses, their tokens stay but stop working (403)
   until they subscribe again.
 
-## Tools (read-only)
+## Reading tools (every token)
 
 | Tool | What it does |
 | --- | --- |
@@ -26,6 +26,24 @@ Agent mode uses.
 | `read_document` | Reads one item by `document_id`. Long text is cut at 60,000 characters. |
 | `list_related` | Lists the item's parent, children, typed relations and links in both directions. |
 | `search` / `fetch` | The same search and read in the shapes ChatGPT's connectors and deep research expect. |
+
+## Writing tools (tokens that can add documents)
+
+When a member makes a token, they choose whether it **Can create documents and
+add to them**. That choice is the token's `write` scope. Agents only add: nothing
+is ever replaced or deleted.
+
+| Tool | What it does |
+| --- | --- |
+| `create_document` | Writes a new plain Markdown file at the vault root, named after the title (`Title.md`, then `Title 2.md` and so on). Its frontmatter holds `margin-chat-id: mcp-<uuid>`, `title`, `created`, `updated` and `created-by` (the token's name). Optional `relations` add typed links such as `part-of: ["[[Launch plan]]"]`, which show on the map. |
+| `append_to_document` | Adds Markdown at the end of a document, as a new paragraph block after its last block, or at the end of a note or plain file. Chats are refused. |
+
+Both tools save with the vault's normal commit (`server/mcp/writeTools.mjs`).
+An append is based on the file's current revision, so if another device edited
+the file at the same moment, the append is refused and the agent is told to read
+again. Before saving, each new or changed file is parsed back, and anything that
+wouldn't read as the same item is refused. Open apps pick up changes on their
+next sync, which runs every 15 seconds.
 
 Private margin comments are never searched or returned. Search by meaning embeds
 the query, and that cost goes to the member's own OpenAI key or their Plus
@@ -61,8 +79,5 @@ That comes in a later step.
 
 ## Next steps
 
-1. Writing: `create_document`, `append_to_document`, `add_margin_note` and
-   `capture` tools that save through the vault commit path, using tokens with
-   scope `write`.
-2. OAuth 2.1 (protected-resource metadata, dynamic client registration, PKCE)
+1. OAuth 2.1 (protected-resource metadata, dynamic client registration, PKCE)
    so ChatGPT and claude.ai can connect with a normal sign-in.

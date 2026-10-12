@@ -9,7 +9,8 @@ import { digest } from "../server/vault/storage.mjs";
 import { createApiHandler } from "../server/routes/api.mjs";
 import { createAuthService } from "../server/auth/index.mjs";
 import { createRuntimeConfig } from "../server/config/runtime.mjs";
-import { MCP_TOOLS } from "../server/mcp/index.mjs";
+import { MCP_TOOLS, mcpToolsFor } from "../server/mcp/index.mjs";
+import { appendToSource, documentFileName } from "../server/mcp/writeTools.mjs";
 import { createMarkdownWorkspace } from "@margin-chat/workspace-contracts/markdown";
 import { createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
 
@@ -50,6 +51,7 @@ describe("MCP server", () => {
   let fixture: Awaited<ReturnType<typeof createCaptureTestDatabase>>;
   let server: ReturnType<typeof createServer>;
   let origin: string;
+  let vault: ReturnType<typeof createVaultService>;
 
   beforeAll(async () => {
     fixture = await createCaptureTestDatabase();
@@ -70,7 +72,7 @@ describe("MCP server", () => {
         [id, status, status === "active" ? "price_plus" : null]);
       await database.createAuthSession({ id: `session-${id}`, userId: id, expiresAt: new Date(Date.now() + 600_000) });
     }
-    const vault = createVaultService({ storage: memoryStorage(), database });
+    vault = createVaultService({ storage: memoryStorage(), database });
     await vault.commit("plus", Object.entries(workspace()).map(([path, content]) => ({ path, content, baseRevision: null })));
     const config = createRuntimeConfig({});
     server = createServer(createApiHandler({
@@ -172,10 +174,59 @@ describe("MCP server", () => {
     expect((await broken.json()).error.code).toBe(-32700);
   });
 
+  test("a write token creates documents linked on the map and appends to documents and notes, never chats", async () => {
+    await fixture.client.query("update marginchat_users set billing_status = 'active' where id = 'plus'");
+    const reader = (await (await settings("plus", { method: "POST", body: JSON.stringify({ name: "Reader" }) })).json()).token;
+    const made = await (await settings("plus", { method: "POST", body: JSON.stringify({ name: "Claude Code", scope: "write" }) })).json();
+    expect(made.summary.scope).toBe("write");
+    const writer = made.token;
+    expect((await settings("plus", { method: "POST", body: JSON.stringify({ name: "x", scope: "admin" }) })).status).toBe(400);
+
+    const names = async (token: string) => (await (await rpc(token, "tools/list")).json()).result.tools.map((tool: any) => tool.name);
+    expect(await names(reader)).not.toContain("create_document");
+    expect(await names(writer)).toEqual(["search_vault", "read_document", "list_related", "search", "fetch", "create_document", "append_to_document"]);
+    const refused = await (await rpc(reader, "tools/call", { name: "create_document", arguments: { title: "x", content: "y" } })).json();
+    expect(refused.error).toMatchObject({ code: -32602, message: expect.stringContaining("can add documents") });
+    const init = await (await rpc(writer, "initialize", { protocolVersion: "2025-06-18", capabilities: {} })).json();
+    expect(init.result.instructions).toContain("never changed or deleted");
+
+    const created = (await call(writer, "create_document", { title: "Pricing research: notes/plan", content: "Competitors charge per seat.",
+      relations: [{ type: "part-of", document_id: "plan" }] })).structuredContent;
+    expect(created).toMatchObject({ ok: true, title: "Pricing research: notes/plan", path: "Pricing research notes plan.md" });
+    expect(created.document_id).toMatch(/^mcp-/u);
+    const read = (await call(writer, "read_document", { document_id: created.document_id })).structuredContent;
+    expect(read.document).toMatchObject({ title: "Pricing research: notes/plan", text: "Competitors charge per seat." });
+    const links = (await call(writer, "list_related", { document_id: created.document_id })).structuredContent;
+    expect(links.related.map((item: any) => [item.title, item.relation])).toEqual([["Launch plan", "part-of"]]);
+    const saved = (await vault.readFile({ userId: "plus", path: "Pricing research notes plan.md" })).bytes.toString("utf8");
+    expect(saved).toContain('created-by: "Claude Code"');
+    // The same title again gets its own file.
+    expect((await call(writer, "create_document", { title: "Pricing research: notes/plan", content: "Again." })).structuredContent.path)
+      .toBe("Pricing research notes plan 2.md");
+
+    expect((await call(writer, "append_to_document", { document_id: "plan", content: "Agents found per-seat pricing." })).structuredContent).toMatchObject({ ok: true });
+    const plan = (await call(writer, "read_document", { document_id: "plan" })).structuredContent.document;
+    expect(plan.text).toBe("We agreed the pricing tiers stay simple.\n\nAgents found per-seat pricing.");
+    expect((await call(writer, "append_to_document", { document_id: created.document_id, content: "Second finding." })).structuredContent.ok).toBe(true);
+    expect((await call(writer, "read_document", { document_id: created.document_id })).structuredContent.document.text)
+      .toBe("Competitors charge per seat.\n\nSecond finding.");
+    expect(await call(writer, "append_to_document", { document_id: "chat", content: "x" })).toMatchObject({ isError: true });
+    expect(await call(writer, "append_to_document", { document_id: "missing", content: "x" })).toMatchObject({ isError: true });
+    expect(await call(writer, "create_document", { title: "Linked", content: "x", relations: [{ type: "part-of", document_id: "missing" }] }))
+      .toMatchObject({ isError: true });
+  });
+
+  test("file names and appends keep documents readable", () => {
+    expect(documentFileName("  ../a/b\\c: [[x]] # ^y  ")).toBe("a b c x y");
+    expect(documentFileName("???")).toBe("Untitled");
+    expect(appendToSource("---\ntitle: \"Plain\"\n---\n\nBody.\n\n", "More.")).toBe("---\ntitle: \"Plain\"\n---\n\nBody.\n\nMore.");
+    expect(mcpToolsFor("read")).toBe(MCP_TOOLS);
+  });
+
   test("tool names and schemas match what MCP clients expect", () => {
-    for (const tool of MCP_TOOLS) {
+    for (const tool of mcpToolsFor("write")) {
       expect(tool.name).toMatch(/^[a-z_]{1,64}$/u);
-      expect(tool.inputSchema.required?.length).toBe(1);
+      expect(tool.inputSchema.required?.length).toBeGreaterThan(0);
     }
   });
 });
