@@ -53,7 +53,7 @@ describe("production persistence readiness", () => {
       counts: () => ({ clock, reads, locks }),
       options: {
         baseUrl: "https://release.example.test", expectedSha: "expected-release", previousSha: "previous-release",
-        timeoutMs: 30, pollMs: 10, now: () => clock,
+        timeoutMs: 30, pollMs: 10, settledChecks: 1, now: () => clock,
         sleep: async (ms: number) => { clock += ms; },
         assertLock: async () => { locks++; },
         fetchImpl: async () => Response.json({ ...healthy, release: releases[Math.min(reads++, releases.length - 1)] }),
@@ -68,6 +68,16 @@ describe("production persistence readiness", () => {
     const immediate = propagationFixture(["expected-release"]);
     await waitForProductionReadiness(immediate.options);
     expect(immediate.counts()).toEqual({ clock: 0, reads: 1, locks: 1 });
+  });
+
+  test("waits until the promoted release is served several times in a row, not just once", async () => {
+    // Edge locations can alternate between the two releases right after promotion.
+    const releases = ["expected-release", "previous-release", "expected-release", "expected-release", "expected-release"];
+    const f = propagationFixture(releases);
+    expect((await waitForProductionReadiness({ ...f.options, timeoutMs: 1_000, settledChecks: 3 })).release).toBe("expected-release");
+    expect(f.counts().reads).toBe(5);
+    const flapping = propagationFixture(["expected-release", "previous-release"]);
+    await expect(waitForProductionReadiness({ ...flapping.options, settledChecks: 3 })).rejects.toThrow("Timed out");
   });
 
   test("bounds propagation waiting when the public origin keeps serving the previous release", async () => {
