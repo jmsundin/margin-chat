@@ -1833,6 +1833,19 @@ button {
 
 .app-settings-dialog {
   gap: 20px;
+  max-height: 100%;
+  overflow: hidden;
+}
+
+/* The settings list scrolls between the fixed title and Close button. */
+.app-settings-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .app-settings-section {
