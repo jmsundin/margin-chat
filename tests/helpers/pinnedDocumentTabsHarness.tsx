@@ -94,6 +94,22 @@ try {
   assert.equal(preview(), null, 'Removing a document removes its preview.');
   await act(async () => root.render(createElement(DocumentTabs, props)));
   assert.equal(preview(), null, 'Reopening a document does not restore a stale preview.');
+
+  const closed: string[] = [];
+  const child = { ...createMainConversation({ id: "child", createdAt: date }), title: "Closed child" };
+  const closeProps = { ...props, documents: [pinned, ordinary, child], closedDocumentIds: ["child"], onClose: (id: string) => closed.push(id) };
+  await act(async () => root.render(createElement(DocumentTabs, closeProps)));
+  assert.equal(rootElement.querySelector('.document-tab-close'), null, 'Close buttons are off unless the host asks for them.');
+  await act(async () => root.render(createElement(DocumentTabs, { ...closeProps, showCloseButtons: true })));
+  const closeButton = rootElement.querySelector<HTMLButtonElement>('[data-document-tab-id="ordinary"] .document-tab-close')!;
+  assert(closeButton, 'An open tab has a close button.');
+  assert.equal(closeButton.getAttribute('aria-label'), 'Close Ordinary research');
+  assert(closeButton.previousElementSibling?.classList.contains('document-tab-menu-trigger'), 'Close sits right after the ⋮ menu.');
+  assert.equal(rootElement.querySelector('[data-document-tab-id="pinned"] .document-tab-close'), null, 'Pinned icon tabs stay icon-sized.');
+  assert.equal(rootElement.querySelector('[data-document-tab-id="child"] .document-tab-close'), null, 'A tab that is not open has nothing to close.');
+  await act(async () => closeButton.click());
+  assert.deepEqual(closed, ['ordinary']);
+  assert.deepEqual(selected, [], 'Closing a tab does not also select it.');
   console.log('Pinned preview and context actions verified.');
 } finally {
   await act(async () => root.unmount());

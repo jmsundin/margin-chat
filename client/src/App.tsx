@@ -554,6 +554,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
       browserThreadRequests={browserThreadRequests}
       onBrowserThreadHandled={onBrowserThreadHandled}
       onOpenWebsiteSettings={extension ? openWebsiteSettings : undefined}
+      inExtension={Boolean(extension)}
       storageNamespace={apiStorageNamespace(authUser.id)}
       billingNotice={billingNotice}
       billingDashboard={billingDashboard}

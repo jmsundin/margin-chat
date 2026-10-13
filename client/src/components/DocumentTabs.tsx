@@ -15,6 +15,8 @@ export interface DocumentTabsProps {
   onSelect: (id: string) => void;
   onMinimize: (id: string) => void;
   onClose?: (id: string) => void;
+  /** Adds a close button after each open tab's ⋮ menu (the browser extension asks for one). */
+  showCloseButtons?: boolean;
   onReorder: (draggedId: string, targetId: string) => void;
   canReorder?: (draggedId: string, targetId: string) => boolean;
   onNewSideDocument: () => void;
@@ -27,7 +29,7 @@ export interface DocumentTabsProps {
   onRename?: (id: string, title: string) => void;
 }
 
-export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, closedDocumentIds = [], parentTitles = {}, onSelect, onMinimize, onClose, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename }: DocumentTabsProps) {
+export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, closedDocumentIds = [], parentTitles = {}, onSelect, onMinimize, onClose, showCloseButtons = false, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename }: DocumentTabsProps) {
   const instructionsId = useId();
   const previewId = useId();
   const tabs = useRef(new Map<string, HTMLButtonElement>());
@@ -147,7 +149,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
     suppressPointerClick.current = false;
     if (event.button !== 0 || event.isPrimary === false || pointerDrag.current
       || !event.currentTarget.contains(event.target as Node)
-      || (event.target as Element).closest(".document-menu-trigger")) return;
+      || (event.target as Element).closest(".document-menu-trigger, .document-tab-close")) return;
     const element = event.currentTarget;
     const pointerId = event.pointerId;
     const startX = event.clientX;
@@ -272,7 +274,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
             }
           }}
           onDragStart={(event) => {
-            if ((event.target as Element).closest(".document-menu-trigger")) { event.preventDefault(); return; }
+            if ((event.target as Element).closest(".document-menu-trigger, .document-tab-close")) { event.preventDefault(); return; }
             // Pointer dragging works consistently on buttons and touch screens. Native
             // HTML drag events remain a fallback, but must never run the same gesture twice.
             if (pointerDrag.current) { event.preventDefault(); return; }
@@ -322,6 +324,15 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
             onMinimize={closed ? undefined : onMinimize} onClose={closed ? undefined : onClose} onRestore={onSelect} groups={groups} onAssignGroup={onAssignGroup}
             className="document-tab-menu-trigger"
             onFocusFallback={() => (tabs.current.get(activeDocumentRef.current) ?? tabs.current.values().next().value)?.focus()} />
+          {showCloseButtons && onClose && !closed && !pinned ? <button type="button" className="document-tab-close"
+            aria-label={`Close ${title}`} title="Close document (it stays in your documents)"
+            onClick={() => {
+              onClose(document.id);
+              // Keep keyboard focus in the tab strip once this tab's button goes away.
+              window.requestAnimationFrame(() => tabs.current.get(activeDocumentRef.current)?.focus());
+            }}>
+            <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="m6 6 8 8M14 6l-8 8"/></svg>
+          </button> : null}
         </div>;
       })}
       </div>

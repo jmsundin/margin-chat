@@ -395,6 +395,8 @@ interface WorkspaceAppProps {
   browserThreadRequests?: readonly BrowserThreadRequest[] | null;
   onBrowserThreadHandled?: (request: BrowserThreadRequest) => void;
   onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys" | "agents") => void;
+  /** True inside the browser extension, whose document tabs get their own close buttons. */
+  inExtension?: boolean;
   billingDashboard: import("./types").BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
@@ -632,7 +634,7 @@ export default function WorkspaceApp(props: WorkspaceAppProps) {
 }
 
 function WorkspaceAppContent({
-  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled, onOpenWebsiteSettings,
+  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled, onOpenWebsiteSettings, inExtension = false,
   billingDashboard, billingDashboardLoading, billingDashboardError, billingOpenRequest, onRefreshBilling, onAddMoney,
   billingNotice,
   onDismissBillingNotice,
@@ -4715,6 +4717,7 @@ function WorkspaceAppContent({
                       onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
                       onMinimize={handleMinimizeDocument}
                       onClose={handleCloseDocument}
+                      showCloseButtons={inExtension}
                       onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
                       onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
                     />
