@@ -38,6 +38,13 @@
 .thread-sidebar.is-exploring-map:not(.is-collapsed) .thread-sidebar-actions { display: none; }
 .semantic-map .conversation-graph-node { transform-origin: center; border-radius: 12px; overflow: visible; }
 .semantic-map .conversation-graph-node.is-connection-center { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+/* Families: a parent and its children share a hue, solid on the parent and fading with each level down. */
+.semantic-map .conversation-graph-node[data-family-colored] { --family-color: hsl(var(--map-family-hue) 58% 48%); --family-border: 70%; --family-fill: 15%; background: color-mix(in srgb, var(--family-color) var(--family-fill), var(--graph-node-bg, var(--panel-bg))); }
+.semantic-map .conversation-graph-node[data-family-colored][data-family-depth="1"] { --family-border: 50%; --family-fill: 9%; }
+.semantic-map .conversation-graph-node[data-family-colored][data-family-depth="2"] { --family-border: 34%; --family-fill: 5%; }
+.semantic-map .conversation-graph-node[data-family-colored]:not(:hover, .is-selected, .is-multi-selected, .is-connection-center) { border-color: color-mix(in srgb, var(--family-color) var(--family-border), var(--graph-node-border, var(--line-strong))); }
+.semantic-map .conversation-graph-node[data-family-colored][data-family-depth="0"] { border-width: 2px; }
+.semantic-map .conversation-graph-node[data-family-colored][data-family-depth="0"] .conversation-graph-node-head > strong { color: color-mix(in srgb, var(--family-color) 40%, var(--ink)); font-weight: 700; }
 .semantic-map .conversation-graph-viewport { overflow: clip; }
 .semantic-map .conversation-graph-viewport:focus-visible { outline: 2px solid var(--accent, #5c84cc); outline-offset: -3px; }
 .semantic-map .conversation-graph-viewport:focus-visible > .conversation-graph-pan-hint { display: block; max-width: calc(100% - 32px); bottom: 64px; padding: 8px 12px; border-radius: 8px; background: var(--panel-strong); color: var(--ink); }
