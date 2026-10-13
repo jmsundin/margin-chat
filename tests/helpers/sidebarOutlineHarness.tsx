@@ -109,8 +109,8 @@ try {
   assert(element('[data-testid="workspace-brand-header"]').closest(".thread-sidebar"), "The optional mobile header must render inside the sidebar.");
   const list = element(".thread-list");
   assert.deepEqual([...list.querySelectorAll(".thread-item-main")].map((row) => row.getAttribute("title")), ["Empty document", "Launch planning", "Angular"]);
-  assert.equal(list.querySelector(".thread-sidebar-section"), null);
-  assert.equal(list.querySelector('.thread-item-date[title="Created"]')?.textContent, "2 days ago");
+  assert.equal(list.querySelectorAll(".thread-sidebar-section.is-date .thread-item").length, 3, "Documents are listed under date headings.");
+  assert.equal(list.querySelector(".thread-item-date"), null, "Rows show the title only.");
   list.scrollTop = 215;
   await click('[aria-label="Show groups"]');
   assert(visible('[aria-label="Pinned documents"]'));

@@ -3,8 +3,8 @@ import type { Conversation, ThreadSummary } from "../types";
 import { getGraphAnalysisEdges } from "./graphAnalysis";
 import { finishSubjectClusters, groupSubjects, type GravityCluster, type SubjectCluster } from "./gravityClusters";
 import {
-  groupIntoCategories, sortAlphabetically, sortByRecentlyViewed, sortBySimilarity,
-  type SidebarDocumentCategory, type SidebarDocumentSort,
+  groupByDate, groupIntoCategories, recentlyViewedAt, sortAlphabetically, sortByRecentlyViewed, sortBySimilarity,
+  type SidebarDateSection, type SidebarDocumentCategory, type SidebarDocumentSort,
 } from "./sidebarDocumentOrder";
 import { useClusterLabels } from "./useClusterLabels";
 import { useSubjectCategories } from "./useSubjectCategories";
@@ -16,6 +16,8 @@ export interface SidebarDocumentOrder {
   threads: ThreadSummary[];
   /** Set for the category sort once subjects are known. */
   categories: SidebarDocumentCategory[] | null;
+  /** Set when the list is in recently viewed order: the same documents under Today, Yesterday and so on. */
+  dateSections?: SidebarDateSection[] | null;
   /** Why the meaning-based sorts can't be used right now, or null when they can. */
   meaningUnavailable: string | null;
   /** Embeddings or category names are still arriving. */
@@ -101,7 +103,8 @@ export function useSidebarDocumentOrder({ userId, storageUserId, jevEnabled, clo
       return { threads: categories.flatMap((category) => category.threads), categories, meaningUnavailable,
         meaningLoading: meaningLoading || labels.loading, note: null };
     }
-    return { threads: recent, categories: null, meaningUnavailable, meaningLoading, note: fallbackNote };
+    const dateSections = groupByDate(recent, (thread) => recentlyViewedAt(thread, openedAt));
+    return { threads: recent, categories: null, dateSections, meaningUnavailable, meaningLoading, note: fallbackNote };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sort, threads, recent, activeId, meaningReady, meaningUnavailable, clusters, labels, topics.loading, topics.revision, wantsMeaning]);
+  }, [sort, threads, recent, openedAt, activeId, meaningReady, meaningUnavailable, clusters, labels, topics.loading, topics.revision, wantsMeaning]);
 }
