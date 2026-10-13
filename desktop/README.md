@@ -48,8 +48,25 @@ download link. The repository is private, so the server needs
 `DESKTOP_RELEASES_TOKEN`: a fine-grained token with read-only Contents access.
 Without it the page keeps offering the web app.
 
-The app's update check compares itself with that same latest release, so it
-only offers an update when a newer installer exists.
+The app offers that installer only when its version number is higher than
+its own, which matters only for changes to the desktop shell itself.
+
+## Updates
+
+The desktop app updates itself. Every 15 minutes, and when its window comes
+back into focus, it compares its client's `version.json` with the website's.
+When the website runs a newer build it downloads that build, using the file
+list and SHA-256 checksums in `desktop-bundle.json` (written by
+`client/build/desktop-bundle.mjs`), into `client-bundles/<commit>` in the
+app's data folder. Files that did not change are copied from the client it
+already has. Once every file checks out, the app serves the new client and
+tells the page, which reloads at a quiet moment (minimized, or just opened)
+after saving edits, or when the person clicks Restart now. A failed or
+tampered download leaves the current client in place. The previous client is
+kept so an open page can still load its chunks, and a newer installer always
+wins over an older download.
+
+So every Production release reaches desktop users without a new installer.
 
 ## Not done yet
 
@@ -59,10 +76,8 @@ only offers an update when a newer installer exists.
   Run anyway. Signing needs an Apple Developer ID certificate with
   notarization credentials, and a Windows code-signing certificate, passed to
   electron-builder in the Desktop release workflow.
-- Installing updates: the web app's service worker update flow does not run
-  under `margin://`. Instead the app compares its bundled `version.json` with
-  the latest desktop release every hour and, when that is newer (by commit time),
-  shows an "Update available" dialog. "Download update" opens
-  `MARGIN_DESKTOP_DOWNLOAD_URL` (default: marginchat.com/download).
-  `electron-updater` would make updating one click, but it needs signed builds
-  and a public update feed.
+- Shell updates: the app updates its client by itself (see "Updates" above),
+  but a change to the desktop shell (Electron, `main.mjs`) still needs a new
+  installer. The app offers it once per launch when a Desktop release has a
+  higher version number. Installing that automatically needs signed builds
+  (an Apple Developer ID on macOS) and `electron-updater`.

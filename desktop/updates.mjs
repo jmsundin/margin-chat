@@ -1,6 +1,5 @@
-// Desktop builds bundle their own client, so the web app's service worker
-// updates never reach them. Instead the app compares its bundled version.json
-// with production's and tells the person when production is newer.
+// Update checks for the desktop app. The client updates itself
+// (clientBundles.mjs); these helpers decide when a newer release exists.
 export const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000;
 
 function parseVersion(value) {
@@ -20,12 +19,25 @@ export function newerRelease(local, remote) {
   return latest;
 }
 
-export function watchForUpdates({ readLocal, fetchRemote, notify, interval = UPDATE_CHECK_INTERVAL, setTimer = setInterval, clearTimer = clearInterval }) {
+const semver = (value) => (typeof value === "string" && /^\d+\.\d+\.\d+$/u.test(value) ? value.split(".").map(Number) : null);
+
+/** A published installer whose version number is higher than this app's. */
+export function newerShell(local, remote) {
+  const own = semver(local?.version);
+  const latest = semver(remote?.version);
+  if (!own || !latest) return null;
+  for (let index = 0; index < 3; index += 1) {
+    if (latest[index] !== own[index]) return latest[index] > own[index] ? { ...remote, commit: remote.commit ?? remote.version } : null;
+  }
+  return null;
+}
+
+export function watchForUpdates({ readLocal, fetchRemote, notify, compare = newerRelease, interval = UPDATE_CHECK_INTERVAL, setTimer = setInterval, clearTimer = clearInterval }) {
   const offered = new Set();
   let running = null;
   const run = async () => {
     try {
-      const latest = newerRelease(await readLocal(), await fetchRemote());
+      const latest = compare(await readLocal(), await fetchRemote());
       // "Later" means later: each release is offered once per launch.
       if (latest && !offered.has(latest.commit)) {
         offered.add(latest.commit);

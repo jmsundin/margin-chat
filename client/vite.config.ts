@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import { excalidrawAssetsPlugin } from "./build/excalidraw-assets.mjs";
 import { offlineAppShellPlugin } from "./build/offline-service-worker.mjs";
 import { appVersionFilePlugin, resolveAppCommit, resolveAppCommitTime } from "./build/app-version.mjs";
+import { desktopBundlePlugin } from "./build/desktop-bundle.mjs";
 
 function apiProxy(target: string): ProxyOptions {
   return {
@@ -46,7 +47,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     envDir: "..",
-    plugins: [react(), excalidrawAssetsPlugin(), appVersionFilePlugin({ commit, committedAt }), offlineAppShellPlugin()],
+    plugins: [react(), excalidrawAssetsPlugin(), appVersionFilePlugin({ commit, committedAt }), offlineAppShellPlugin(), desktopBundlePlugin({ commit, committedAt })],
     define: {
       "process.env.IS_PREACT": "false",
       "import.meta.env.VITE_APP_COMMIT": JSON.stringify(commit),

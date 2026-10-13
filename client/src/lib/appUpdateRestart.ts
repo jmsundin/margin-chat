@@ -1,4 +1,40 @@
-import { canReloadAfterAppUpdate, flushForAppUpdate, lockForAppUpdate } from "./appUpdateSafety";
+import { canReloadAfterAppUpdate, flushForAppUpdate, hasAppUpdateGuards, lockForAppUpdate } from "./appUpdateSafety";
+
+export const DESKTOP_UPDATE_EVENT = "margin:desktop-update-ready";
+
+/** The desktop app downloads a newer client in the background and announces it
+ * with this event; reloading the page then loads the new version. */
+export function listenForDesktopUpdate(onReady: (commit: string) => void): () => void {
+  const ready = (event: Event) => {
+    const commit = (event as CustomEvent<{ commit?: unknown }>).detail?.commit;
+    if (typeof commit === "string") onReady(commit);
+  };
+  window.addEventListener(DESKTOP_UPDATE_EVENT, ready);
+  return () => window.removeEventListener(DESKTOP_UPDATE_EVENT, ready);
+}
+
+/** Saves edits the same way a web restart does, then reloads into the new client. */
+export async function reloadForDesktopUpdate(onStatus: (message: string | null) => void, { auto = false } = {}): Promise<void> {
+  // Sign-in and the marketing pages hold no edits, so they reload straight away.
+  if (!hasAppUpdateGuards()) {
+    window.location.reload();
+    return;
+  }
+  const unlock = lockForAppUpdate();
+  try {
+    onStatus(auto ? "Updating to the latest version…" : "Waiting for active work and saving edits…");
+    // Let blur handlers and the existing note debounce publish their edits.
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await flushForAppUpdate();
+    if (!canReloadAfterAppUpdate()) throw new Error("New work arrived while restarting. Finish it, then try Restart now again.");
+    onStatus("Restarting…");
+    window.location.reload();
+  } catch (error) {
+    unlock();
+    onStatus(null);
+    throw error;
+  }
+}
 
 // auto: only proceeds while every other tab is hidden, and is retried silently.
 export function requestAppRestart(worker: ServiceWorker, { auto = false } = {}): Promise<void> {

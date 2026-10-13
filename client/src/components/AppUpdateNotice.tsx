@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import NotificationToast from "./NotificationToast";
 import { acknowledgeVersion, onQuietMoment, readAcknowledgedVersion, trackFreshStart, watchAppUpdates } from "../lib/appUpdates";
-import { listenForAppRestart, requestAppRestart } from "../lib/appUpdateRestart";
+import { listenForAppRestart, listenForDesktopUpdate, reloadForDesktopUpdate, requestAppRestart } from "../lib/appUpdateRestart";
 
 export default function AppUpdateNotice({ commit }: { commit: string }) {
   const [previous] = useState(readAcknowledgedVersion);
   const [showLoadedVersion, setShowLoadedVersion] = useState(previous !== commit);
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
+  // The desktop app has downloaded a newer client and only needs a reload.
+  const [desktopReady, setDesktopReady] = useState(false);
   const [restarting, setRestarting] = useState(false);
   const [restartStatus, setRestartStatus] = useState<string | null>(null);
   const [restartError, setRestartError] = useState<string | null>(null);
@@ -19,6 +21,7 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
 
   useEffect(() => watchAppUpdates(setWaiting), []);
   useEffect(() => listenForAppRestart(setRestartStatus, setRestartError), []);
+  useEffect(() => listenForDesktopUpdate(() => setDesktopReady(true)), []);
   useEffect(() => {
     const tracker = trackFreshStart(Date.now, startedAt);
     freshStart.current = tracker;
@@ -53,13 +56,16 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
   }, []);
 
   const restart = async (auto = false) => {
-    if (!waiting || busy.current) return;
+    if ((!waiting && !desktopReady) || busy.current) return;
     busy.current = true;
     if (!auto) {
       setRestarting(true);
       setRestartError(null);
     }
-    try { await requestAppRestart(waiting, { auto }); }
+    try {
+      if (waiting) await requestAppRestart(waiting, { auto });
+      else await reloadForDesktopUpdate(setRestartStatus, { auto });
+    }
     catch (error) {
       // A declined automatic update stays quiet; the toast and the next quiet moment remain.
       if (!auto) setRestartError(error instanceof Error ? error.message : "Please try again.");
@@ -71,7 +77,8 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
   };
   const latestRestart = useRef(restart);
   latestRestart.current = restart;
-  useEffect(() => waiting ? onQuietMoment(() => freshStart.current?.isFresh() ?? false, () => void latestRestart.current(true)) : undefined, [waiting]);
+  const updateReady = Boolean(waiting) || desktopReady;
+  useEffect(() => updateReady ? onQuietMoment(() => freshStart.current?.isFresh() ?? false, () => void latestRestart.current(true)) : undefined, [updateReady]);
 
   if (!notificationHost) return null;
   return createPortal(
@@ -81,7 +88,7 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
         kind="success"
         onDismiss={() => setShowLoadedVersion(false)}
       />}
-      {waiting && <NotificationToast
+      {updateReady && <NotificationToast
         message={restartError ?? restartStatus ?? `Update ready · currently loaded version ${version}`}
         kind={restartError ? "error" : "info"}
         action={!restartError && !restartStatus ? {
