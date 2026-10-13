@@ -1700,6 +1700,17 @@ button {
   z-index: 23;
 }
 
+/* Opening the workspace saved on this device is usually instant; only show the notice if it is not. */
+.thread-dialog.is-delayed-status,
+.auth-loading-card.is-delayed-status {
+  animation: delayed-status-in 0.2s ease 0.5s both;
+}
+
+@keyframes delayed-status-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .thread-dialog {
   backdrop-filter: blur(24px);
   background: var(--tooltip-bg);

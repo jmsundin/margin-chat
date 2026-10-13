@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { CAPTURE_LIMITS, normalizeCapture, type Capture, type CaptureKind } from "@margin-chat/capture-contracts";
-import App from "../../client/src/App";
+import App, { preloadWorkspace } from "../../client/src/App";
 import type { BrowserThreadRequest } from "../../client/src/lib/browserWorkspace";
 import { setApiTransport } from "../../client/src/lib/apiTransport";
 import { getSettings, isThreadsKey, trustedStorage, type ConnectionSettings } from "./storage";
@@ -71,7 +71,8 @@ function BrowserWorkspace() {
     setPageState(state);
     if (restore) {
       const saved = state.page.draft;
-      setThought(saved?.comment ?? ""); setQuestion(saved?.question ?? "");
+      // The workspace is usable before this page's saved draft arrives; never replace what was typed meanwhile.
+      setThought((typed) => typed || (saved?.comment ?? "")); setQuestion((typed) => typed || (saved?.question ?? ""));
       setMode(saved?.mode === "ask" ? "ask" : "note");
       if (saved && !(next.kind === "selection" && next.content)) {
         const restored = { ...next, title: saved.title, kind: saved.kind, content: saved.content, anchor: saved.anchor };
@@ -134,6 +135,8 @@ function BrowserWorkspace() {
         connectionRef.current = settings;
         setApiTransport({ serverUrl: settings.serverUrl, fetch: createWorkspaceFetch({ connection: settings, getSettings, fetch: window.fetch.bind(window), signal: controller.current!.signal }) });
         setConnection(settings);
+        // Open the workspace saved on this device now; the page's source details fill in when they arrive.
+        setChecking(false);
         const current = await message("context", { kind: "current" }) as PageContext;
         if (disposed || sequence !== bootSequence.current) return;
         await applyPage(current, true);
@@ -184,7 +187,8 @@ function BrowserWorkspace() {
   }, [connection, message, applyPage, busy]);
 
   useEffect(() => {
-    if (!connection || !context || checking || busy) return;
+    // Wait for the page's saved draft before writing one, so an early empty draft never replaces it.
+    if (!connection || !context || !pageState || checking || busy) return;
     const draft: OverlayDraft = { title: context.title, kind: context.kind, content: context.content, comment: thought, question, mode: mode === "ask" ? "ask" : "annotate", ...(context.anchor ? { anchor: context.anchor } : {}) };
     const serialized = JSON.stringify([connection.connectionId, context.sourceUrl, draft]);
     if (serialized === persistedDraft.current) return;
@@ -200,7 +204,7 @@ function BrowserWorkspace() {
       });
     }, 250);
     return () => clearTimeout(timer);
-  }, [context, connection, thought, question, mode, checking, busy, message]);
+  }, [context, connection, pageState, thought, question, mode, checking, busy, message]);
 
   async function read(kind: CaptureKind) {
     const sequence = bootSequence.current;
@@ -267,7 +271,7 @@ function BrowserWorkspace() {
   const onHandled = (id: string) => { setCaptureRequest((current) => current?.id === id ? null : current); setNotice(""); };
   const settings = () => { void chrome.runtime.openOptionsPage(); };
 
-  if (checking) return <div className="extension-connect" role="status">Opening your Margin Chat workspace…</div>;
+  if (checking) return <div className="extension-connect is-opening" role="status">Opening your Margin Chat workspace…</div>;
   if (!connection) return <div className="extension-connect"><p className="eyebrow">Margin Chat</p><h1>Your workspace, above the page.</h1><p>{error}</p>{connectedFrame && <button className="primary-button" onClick={settings}>Connect Workspace + AI</button>}{captureOnly && <p><button onClick={() => void message("pending").catch((failure) => setError(describe(failure)))}>Open capture-only clipper</button></p>}</div>;
   return <div className="browser-workspace">
     <section className={`browser-source${headerCollapsed ? " is-collapsed" : ""}`} aria-label="Web page context">
@@ -287,6 +291,8 @@ function BrowserWorkspace() {
   </div>;
 }
 
+// Load the workspace code while the frame connects, so it is ready when the account is.
+preloadWorkspace();
 // Paint the app's theme before sign-in too, and tell page shells when it changes.
 syncExtensionPageTheme(document);
 mirrorAppTheme(document);

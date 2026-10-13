@@ -4419,7 +4419,7 @@ function WorkspaceAppContent({
   }
 
   if (!vault.ready) {
-    return <div className="auth-shell"><section className="thread-dialog" role="status">
+    return <div className="auth-shell"><section className={`thread-dialog${vault.message ? "" : " is-delayed-status"}`} role="status">
       <h2>Opening your Markdown vault</h2>
       <p>{vault.message ?? "Reading the files saved on this device…"}</p>
       {vault.message ? <button className="thread-dialog-button" onClick={() => window.location.reload()}>Try again</button> : null}

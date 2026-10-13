@@ -19,3 +19,6 @@ html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; }
 .extension-connect { max-width: 540px; padding: 30px 24px; font: 14px/1.6 system-ui, sans-serif; margin: auto; }.extension-connect h1 { font-size: 25px; line-height: 1.25; }
 .browser-source details { margin-top: 10px; font-size: 11px; }.browser-source summary { cursor: pointer; }.browser-annotation { border-top: 1px solid var(--line-strong); padding: 9px 0; }.browser-annotation blockquote { margin: 0; max-height: 100px; overflow: auto; white-space: pre-wrap; }.browser-annotation p { white-space: pre-wrap; }
 .browser-source.is-collapsed { padding: 0 14px; border-bottom: 0; }.browser-source.is-collapsed > .browser-notice { margin: 6px 0; }
+/* Opening usually takes a moment; only say so if it takes longer than that. */
+.extension-connect.is-opening { animation: extension-opening-in 0.2s ease 0.5s both; }
+@keyframes extension-opening-in { from { opacity: 0; } to { opacity: 1; } }

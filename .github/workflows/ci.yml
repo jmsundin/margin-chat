@@ -38,4 +38,6 @@ jobs:
         run: bun run build:extension
       - name: Test
         # Tests use in-process PGlite and fixtures; no secrets or services needed.
-        run: bun --no-env-file test
+        # Database-backed files run a few per process so their PGlite heaps can't
+        # exhaust one process's memory (scripts/test-ci.mjs).
+        run: bun --no-env-file scripts/test-ci.mjs
