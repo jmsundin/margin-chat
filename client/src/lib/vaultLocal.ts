@@ -125,6 +125,34 @@ export function startFreshVaultCopy(userId: string): boolean {
   catch { return false; }
 }
 
+const recoveryKey = (userId: string) => `margin-chat-vault-recovery:${userId}`;
+
+/**
+ * Switch to a fresh copy once per browser tab session, so a fresh copy that also fails to open
+ * stops on its error instead of reloading forever. Returns false when it should not or cannot switch.
+ */
+export function recoverWithFreshVaultCopy(userId: string, step: string): boolean {
+  try {
+    if (sessionStorage.getItem(recoveryKey(userId))) return false;
+    sessionStorage.setItem(recoveryKey(userId), JSON.stringify({ step, at: new Date().toISOString(), pending: true }));
+  } catch { return false; }
+  return startFreshVaultCopy(userId);
+}
+
+/** After a recovery reload: what happened, once, for a notice. */
+export function takeVaultRecoveryNotice(userId: string): string | null {
+  try {
+    const raw = sessionStorage.getItem(recoveryKey(userId));
+    const recovery = raw ? JSON.parse(raw) as { step?: string; pending?: boolean } : null;
+    if (!recovery?.pending) return null;
+    // Keep the key so this tab does not recover twice, but report it only once.
+    sessionStorage.setItem(recoveryKey(userId), JSON.stringify({ ...recovery, pending: false }));
+    return "Chrome couldn't open the copy of your vault saved on this device"
+      + (recovery.step ? ` (while ${recovery.step})` : "")
+      + ", so Margin Chat started a fresh copy and is downloading your vault from the cloud. The old copy was kept.";
+  } catch { return null; }
+}
+
 /** The browser refused an operation on this device's copy of the vault for a reason no retry fixed. */
 export class LocalVaultUnavailableError extends Error {
   constructor(readonly step: string, cause: DOMException) {

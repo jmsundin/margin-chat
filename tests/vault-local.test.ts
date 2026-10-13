@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { createBrowserVaultStore, startFreshVaultCopy } from "../client/src/lib/vaultLocal";
+import { createBrowserVaultStore, recoverWithFreshVaultCopy, startFreshVaultCopy, takeVaultRecoveryNotice } from "../client/src/lib/vaultLocal";
 import { emptyVault, type VaultSnapshot } from "../client/src/lib/vaultTypes";
 import { workspaceFromVault } from "../client/src/lib/vaultWorkspace";
 
@@ -177,6 +177,31 @@ describe("durable OPFS Markdown storage", () => {
       else delete (globalThis as any).localStorage;
     }
   }));
+
+  test("recovers with a fresh copy once per tab and reports it once", () => {
+    const stores = ["localStorage", "sessionStorage"].map((name) => {
+      const values = new Map<string, string>();
+      const original = Object.getOwnPropertyDescriptor(globalThis, name);
+      Object.defineProperty(globalThis, name, { configurable: true, value: {
+        getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); },
+      } });
+      return { name, values, original };
+    });
+    try {
+      expect(takeVaultRecoveryNotice("alice")).toBeNull();
+      expect(recoverWithFreshVaultCopy("alice", "opening margin-chat-vaults/alice")).toBe(true);
+      expect(stores[0].values.get("margin-chat-vault-fresh-copy:alice")).toMatch(/^[a-z0-9]+$/);
+      // The fresh copy failing too must not reload again in this tab.
+      expect(recoverWithFreshVaultCopy("alice", "opening margin-chat-vaults-x/alice")).toBe(false);
+      expect(takeVaultRecoveryNotice("alice")).toContain("(while opening margin-chat-vaults/alice)");
+      expect(takeVaultRecoveryNotice("alice")).toBeNull();
+    } finally {
+      for (const { name, original } of stores) {
+        if (original) Object.defineProperty(globalThis, name, original);
+        else delete (globalThis as any)[name];
+      }
+    }
+  });
 
   test("a file whose snapshots never become readable is read directly in a worker", async () => withOpfs(async (opfs) => {
     const saved = snapshot("Unreadable through snapshots");
