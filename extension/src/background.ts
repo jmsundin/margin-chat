@@ -18,7 +18,7 @@ import {
   type PendingSave,
   type SelectionDraft,
 } from "./storage";
-import type { OverlayAnnotation, OverlayDraft, OverlayState, TextQuoteAnchor } from "./overlay-types";
+import { isLayout, type OverlayAnnotation, type OverlayDraft, type OverlayState, type TextQuoteAnchor } from "./overlay-types";
 import { captureRequest, errorText } from "./network";
 import { assertThreadCapacity, pageNotes, normalizeThread, upsertThread } from "./page-ai";
 import { normalizeAnchor, record, textValue } from "./validate";
@@ -223,7 +223,13 @@ async function overlayMessage(message: Record<string, unknown>, sourceUrl: strin
     const theme = (await chrome.storage.local.get(THEME_MIRROR_KEY))[THEME_MIRROR_KEY];
     const dockWidth = (await chrome.storage.local.get("dockWidth")).dockWidth;
     const headerCollapsed = (await chrome.storage.local.get("headerCollapsed")).headerCollapsed;
-    return { theme: isTheme(theme) ? theme : null, dockWidth: typeof dockWidth === "number" ? dockWidth : null, headerCollapsed: headerCollapsed === true };
+    const layout = (await chrome.storage.local.get("layout")).layout;
+    return { theme: isTheme(theme) ? theme : null, dockWidth: typeof dockWidth === "number" ? dockWidth : null, headerCollapsed: headerCollapsed === true, layout: isLayout(layout) ? layout : null };
+  }
+  if (message.type === "overlay:layout") {
+    if (!isLayout(message.layout)) throw new Error("Invalid layout.");
+    await chrome.storage.local.set({ layout: message.layout });
+    return { ok: true };
   }
   if (message.type === "overlay:header-collapsed") {
     if (typeof message.collapsed !== "boolean") throw new Error("Invalid header state.");

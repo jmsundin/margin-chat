@@ -1,5 +1,9 @@
 import type { CaptureInput, CaptureKind, CaptureReceipt } from "@margin-chat/capture-contracts";
 
+/** How the workspace sits on the page; "split" narrows the page to make room. */
+export type Layout = "docked" | "split" | "floating" | "expanded";
+export const isLayout = (value: unknown): value is Layout => value === "docked" || value === "split" || value === "floating" || value === "expanded";
+
 export interface TextQuoteAnchor {
   exact: string;
   prefix: string;
