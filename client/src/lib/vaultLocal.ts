@@ -153,6 +153,15 @@ export function takeVaultRecoveryNotice(userId: string): string | null {
   } catch { return null; }
 }
 
+/** Whether this tab may still switch to a fresh copy; once it has, a copy that still fails is not the copy's fault. */
+export function canRecoverWithFreshVaultCopy(userId: string): boolean {
+  try { return !sessionStorage.getItem(recoveryKey(userId)); } catch { return false; }
+}
+
+export const IN_MEMORY_VAULT_NOTICE = "Chrome won't open this site's storage on this device, so your vault was loaded from the cloud"
+  + " and is kept in this tab only. Your changes still save to the cloud. To fix it, quit Chrome completely (⌘Q on a Mac) and reopen it."
+  + " If that doesn't help, open DevTools > Application > Storage, click Clear site data, then reload and sign in again.";
+
 /** The browser refused an operation on this device's copy of the vault for a reason no retry fixed. */
 export class LocalVaultUnavailableError extends Error {
   constructor(readonly step: string, cause: DOMException) {
@@ -551,6 +560,42 @@ function view(snapshot: VaultSnapshot): VaultSnapshot {
     ...(snapshot.deferred ? { deferred: { ...snapshot.deferred } } : {}),
     ...(snapshot.dismissedRecoveryIds ? { dismissedRecoveryIds: [...snapshot.dismissedRecoveryIds] } : {}),
     ...(snapshot.directoryBaselines ? { directoryBaselines: { ...snapshot.directoryBaselines } } : {}) };
+}
+
+/** A vault kept only in this tab's memory. The cloud fills it, and it is gone when the tab closes. */
+export function createMemoryVaultStore(): VaultStore {
+  let current: VaultSnapshot | null = null;
+  let tail = Promise.resolve();
+  return {
+    lock<T>(operation: () => Promise<T>): Promise<T> {
+      const result = tail.then(operation);
+      tail = result.then(() => undefined, () => undefined);
+      return result;
+    },
+    async read() { return current ? view(current) : null; },
+    async write(snapshot) { current = view(snapshot); },
+  };
+}
+
+/**
+ * This device's saved copy of the vault, unless the browser refuses to open it at all and
+ * `fallBack` agrees: then an empty copy in memory, which the cloud fills, for the rest of the session.
+ */
+export function createVaultStoreWithMemoryFallback(saved: VaultStore, fallBack: (error: LocalVaultUnavailableError) => boolean): VaultStore & { inMemory(): boolean } {
+  let memory: VaultStore | null = null;
+  return {
+    inMemory: () => memory !== null,
+    lock(operation) { return (memory ?? saved).lock(operation); },
+    async read() {
+      if (memory) return memory.read();
+      try { return await saved.read(); } catch (error) {
+        if (!(error instanceof LocalVaultUnavailableError) || !fallBack(error)) throw error;
+        memory = createMemoryVaultStore();
+        return null;
+      }
+    },
+    write(snapshot) { return (memory ?? saved).write(snapshot); },
+  };
 }
 
 export function exportVault(snapshot: VaultSnapshot): Uint8Array {

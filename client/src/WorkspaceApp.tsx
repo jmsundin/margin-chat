@@ -4474,7 +4474,7 @@ function WorkspaceAppContent({
               setProfileInitialTab("storage"); setProfileModalOpen(true);
             }) }}
           />
-          <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={20000} />
+          <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={120000} />
           <NotificationToast
             message={vault.message}
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
