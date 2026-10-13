@@ -39,6 +39,8 @@ export async function startLiveTranscription(options: {
   stream: MediaStream;
   clientSecret: string;
   onText: (text: string) => void;
+  /** The connection broke or OpenAI reported an error before `finish`; the words so far may be incomplete. */
+  onDrop?: () => void;
   fetch?: typeof fetch;
 }): Promise<LiveTranscription> {
   const connection = new RTCPeerConnection();
@@ -46,6 +48,11 @@ export async function startLiveTranscription(options: {
   let failed = false;
   let closed = false;
   let settle: (() => void) | null = null;
+  let finishing = false;
+  const drop = () => {
+    failed = true;
+    if (!closed && !finishing) options.onDrop?.();
+  };
   options.stream.getAudioTracks().forEach((track) => connection.addTrack(track, options.stream));
   const channel = connection.createDataChannel("oai-events");
   channel.addEventListener("message", (message) => {
@@ -54,7 +61,7 @@ export async function startLiveTranscription(options: {
     if (event.type === "error") {
       // Committing an empty buffer is expected when nothing was said.
       const code = (event.error as { code?: string } | undefined)?.code;
-      if (code !== "input_audio_buffer_commit_empty") failed = true;
+      if (code !== "input_audio_buffer_commit_empty") drop();
       settle?.();
       return;
     }
@@ -80,6 +87,11 @@ export async function startLiveTranscription(options: {
     close();
     throw error;
   }
+  // Sessions end on their own after a long time, or when the network drops.
+  channel.addEventListener("close", () => { if (!closed) drop(); });
+  connection.addEventListener?.("connectionstatechange", () => {
+    if (connection.connectionState === "failed" || connection.connectionState === "closed") drop();
+  });
   const opened = channel.readyState === "open"
     ? Promise.resolve(true)
     : new Promise<boolean>((resolve) => {
@@ -90,6 +102,7 @@ export async function startLiveTranscription(options: {
   return {
     async finish({ timeoutMs = 4000, tailMs = 300 } = {}) {
       if (closed) return null;
+      finishing = true;
       const deadline = new Promise<void>((resolve) => setTimeout(resolve, timeoutMs));
       if (await Promise.race([opened, deadline.then(() => false)])) {
         // The last words are still on their way; commit once they've arrived.

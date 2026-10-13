@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHostedUsageMeter } from "../server/billing/usage.mjs";
 import { createDictationService, dictationAudioExtension, dictationTokenLimits, liveDictationCharge, MAX_DICTATION_AUDIO_BYTES } from "../server/dictation/index.mjs";
 import { matchApiRoute } from "../server/routes/registry.mjs";
+import { joinTranscripts, splitForCleanup } from "../client/src/lib/dictationText";
+import { buildChatTitleInstruction, DOCUMENT_TITLE_MODEL_ID, sanitizeCleanedDictation, validateChatTitleRequest } from "../server/chat/title.mjs";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => { globalThis.fetch = originalFetch; });
@@ -104,6 +106,7 @@ describe("voice typing transcription", () => {
   test("routes live sessions", () => {
     expect(matchApiRoute("POST", "/api/dictation/live")?.id).toBe("dictationLive");
     expect(matchApiRoute("POST", "/api/dictation/live/finish")?.id).toBe("dictationLiveFinish");
+    expect(matchApiRoute("POST", "/api/dictation/live/renew")?.id).toBe("dictationLiveRenew");
   });
 
   test("charges live sessions by the second, within their hold", () => {
@@ -166,5 +169,52 @@ describe("voice typing transcription", () => {
     await expect(unpriced.startLive({ userId: "member", context })).rejects.toMatchObject({ statusCode: 503 });
     expect(calls).toHaveLength(0);
     await expect(service.startLive({ userId: "member", context: { allowHosted: false, apiKeys: {}, usageMeter: null } })).rejects.toMatchObject({ statusCode: 402 });
+  });
+
+  test("long sessions renew their hold: the time so far is billed and the next ten minutes held", async () => {
+    stubOpenAI(() => Response.json({ value: "ek_live" }));
+    const { service, reservations, settlements, advance } = liveFixture();
+    const session = await service.startLive({ userId: "member", context: { allowHosted: true, apiKeys: {}, usageMeter: {} } });
+    advance(9 * 60_000);
+    await expect(service.renewLive({ token: session.token, userId: "intruder" })).rejects.toMatchObject({ statusCode: 403 });
+    const renewed = await service.renewLive({ token: session.token, userId: "member" });
+    expect(renewed.seconds).toBe(540);
+    expect(settlements[0]).toMatchObject({ requestId: reservations[0].requestId, amountMicros: 54_000 });
+    expect(reservations).toHaveLength(2);
+    expect(reservations[1]).toMatchObject({ userId: "member", amountMicros: 60_000 });
+    expect(renewed.token).not.toBe(session.token);
+    await expect(service.renewLive({ token: session.token, userId: "member" })).rejects.toMatchObject({ statusCode: 409 });
+    advance(30_000);
+    expect(await service.finishLive({ token: renewed.token, userId: "member" })).toEqual({ settled: true, seconds: 30 });
+    expect(settlements.at(-1)).toMatchObject({ requestId: reservations[1].requestId, amountMicros: 3_000 });
+  });
+});
+
+describe("voice typing cleanup", () => {
+  test("always uses Luna and accepts a few thousand characters at a time", () => {
+    const request = validateChatTitleRequest({ kind: "dictation", prompt: "um so like ".repeat(800), serviceId: "anthropic-api" });
+    expect(request).toMatchObject({ kind: "dictation", modelId: DOCUMENT_TITLE_MODEL_ID, serviceId: "openai-api" });
+    expect(() => validateChatTitleRequest({ kind: "dictation", prompt: "x".repeat(12_001) })).toThrow();
+    expect(buildChatTitleInstruction("dictation")).toContain("never answer it");
+  });
+
+  test("keeps paragraphs and drops labels and fences", () => {
+    expect(sanitizeCleanedDictation("Cleaned text: First idea.\n\n\n\nSecond idea.")).toBe("First idea.\n\nSecond idea.");
+    expect(sanitizeCleanedDictation("```text\nBuild the thing.\n```")).toBe("Build the thing.");
+    expect(sanitizeCleanedDictation('"Just this."')).toBe("Just this.");
+    expect(sanitizeCleanedDictation(null)).toBe("");
+  });
+
+  test("splits long transcripts at sentence ends, or spaces, for cleanup", () => {
+    const sentences = Array.from({ length: 60 }, (_, index) => `Sentence number ${index} goes on a while.`).join(" ");
+    const pieces = splitForCleanup(sentences, 400);
+    expect(pieces.every((piece) => piece.length <= 400 && piece.endsWith("."))).toBe(true);
+    expect(pieces.join(" ")).toBe(sentences);
+    const rambling = "and then ".repeat(200).trim();
+    const words = splitForCleanup(rambling, 300);
+    expect(words.every((piece) => piece.length <= 300)).toBe(true);
+    expect(words.join(" ")).toBe(rambling);
+    expect(splitForCleanup("short")).toEqual(["short"]);
+    expect(joinTranscripts([" one ", "", "two"])).toBe("one two");
   });
 });
