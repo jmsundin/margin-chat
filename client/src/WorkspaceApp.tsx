@@ -54,7 +54,7 @@ import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
 import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
-import { getDocumentBackTarget, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
+import { getDocumentBackTarget, getWorkspaceTabs, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
@@ -954,6 +954,9 @@ function WorkspaceAppContent({
     ...visiblePinnedDocumentIds.filter((id) => !familyDocumentIds.has(id)).map((id) => state.conversations[id]),
     ...documentWorkspace.openDocuments,
   ];
+  // Children of open documents get tabs too, so the tab strip shows the whole workspace.
+  const workspaceTabs = getWorkspaceTabs(state.conversations, tabDocuments, documentWorkspace.closedIds);
+  const workspaceTabParents = new Map(workspaceTabs.map((tab) => [tab.document.id, tab.parentId]));
   useEffect(() => {
     if (!pinnedDocumentIds.includes(activeConversation.id)) setScrollingDocumentId(activeConversation.id);
   }, [activeConversation.id, pinnedDocumentIds.join("|")]);
@@ -4690,7 +4693,10 @@ function WorkspaceAppContent({
                       onClick={handleToggleLeftSidebar}
                       type="button"
                     ><SidebarPanelIcon /></button>}
-                    <DocumentTabs documents={tabDocuments}
+                    <DocumentTabs documents={workspaceTabs.map((tab) => tab.document)}
+                      closedDocumentIds={workspaceTabs.filter((tab) => tab.closed).map((tab) => tab.document.id)}
+                      parentTitles={Object.fromEntries(workspaceTabs.flatMap((tab) => tab.parentId && state.conversations[tab.parentId]
+                        ? [[tab.document.id, state.conversations[tab.parentId].title || "Untitled document"]] : []))}
                       groups={state.groups}
                       onAssignGroup={handleAssignConversationGroup}
                       onRename={handleRenameThread}
@@ -4700,7 +4706,9 @@ function WorkspaceAppContent({
                       familyPinnedDocumentIds={familyPinnedDocumentIds}
                       onTogglePin={handleToggleDocumentPin}
                       onTogglePinScope={handleToggleDocumentPinScope}
-                      canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
+                      canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)
+                        && !documentWorkspace.closedIds.includes(draggedId) && !documentWorkspace.closedIds.includes(targetId)
+                        && workspaceTabParents.get(draggedId) === workspaceTabParents.get(targetId)}
                       onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
                       onMinimize={handleMinimizeDocument}
                       onClose={handleCloseDocument}

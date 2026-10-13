@@ -8,6 +8,10 @@ export interface DocumentTabsProps {
   documents: Conversation[];
   activeDocumentId: string;
   minimizedDocumentIds: string[];
+  /** Children of open documents that are not open; their tabs open them. */
+  closedDocumentIds?: string[];
+  /** Parent titles for child tabs (margin notes and branches), keyed by the child's id. */
+  parentTitles?: Record<string, string>;
   onSelect: (id: string) => void;
   onMinimize: (id: string) => void;
   onClose?: (id: string) => void;
@@ -23,7 +27,7 @@ export interface DocumentTabsProps {
   onRename?: (id: string, title: string) => void;
 }
 
-export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, onSelect, onMinimize, onClose, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename }: DocumentTabsProps) {
+export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, closedDocumentIds = [], parentTitles = {}, onSelect, onMinimize, onClose, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename }: DocumentTabsProps) {
   const instructionsId = useId();
   const previewId = useId();
   const tabs = useRef(new Map<string, HTMLButtonElement>());
@@ -42,6 +46,9 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
   activeDocumentRef.current = activeDocumentId;
   const tabStopId = documents.some((document) => document.id === focusedId)
     ? focusedId : documents.find((document) => document.id === activeDocumentId)?.id ?? documents[0]?.id;
+  // New side documents are peers, so + follows the focused tab and the children listed after it.
+  let createButtonIndex = Math.max(0, documents.findIndex((document) => document.id === activeDocumentId));
+  while (parentTitles[documents[createButtonIndex + 1]?.id]) createButtonIndex += 1;
   const previewDocument = preview && pinnedDocumentIds.includes(preview.documentId)
     ? documents.find((document) => document.id === preview.documentId) : undefined;
 
@@ -224,7 +231,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
 
   return <div className="document-tabs-container">
     <p id={instructionsId} className="document-tabs-instructions">
-      Select a tab to focus or restore its document. Pin documents from their menu to keep them in the fixed pane area.
+      Select a tab to focus or restore its document. Margin notes and branches are listed after their parent; select one that is not open to open it. Pin documents from their menu to keep them in the fixed pane area.
       Use Left and Right arrows to move between tabs, Enter to select, and Alt plus Left or Right to reorder.
       Drag tabs to change document positions. Minimize hides a side document without deleting it.
       Hover or focus pinned tabs to preview them. Right-click or press Shift plus F10 for document options.
@@ -236,10 +243,12 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
         const minimized = minimizedDocumentIds.includes(document.id);
         const active = document.id === activeDocumentId;
         const pinned = pinnedDocumentIds.includes(document.id);
+        const closed = closedDocumentIds.includes(document.id);
+        const parentTitle = parentTitles[document.id];
         return <div key={document.id} role="presentation" draggable
           style={{ order: index * 2 }}
           data-document-tab-id={document.id}
-          className={`document-tab${active ? " is-active" : ""}${pinned ? " is-pinned" : ""}${minimized ? " is-minimized" : ""}${draggingId === document.id ? " is-dragging" : ""}${dropTargetId === document.id ? " is-drop-target" : ""}${dropTargetId === document.id && documents.findIndex((item) => item.id === draggingId) < documents.indexOf(document) ? " is-drop-after" : ""}`}
+          className={`document-tab${active ? " is-active" : ""}${pinned ? " is-pinned" : ""}${minimized ? " is-minimized" : ""}${closed ? " is-closed" : ""}${parentTitle ? " is-child" : ""}${draggingId === document.id ? " is-dragging" : ""}${dropTargetId === document.id ? " is-drop-target" : ""}${dropTargetId === document.id && documents.findIndex((item) => item.id === draggingId) < documents.indexOf(document) ? " is-drop-after" : ""}`}
           onPointerDown={(event) => startPointerDrag(event, document.id)}
           onPointerEnter={(event) => showPreview(document.id, event.currentTarget)}
           onPointerLeave={() => { dismissedPreviewId.current = null; schedulePreviewClose(); }}
@@ -292,29 +301,32 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
           onDragEnd={() => { if (!pointerDrag.current) endDrag(); }}>
           <button type="button" role="tab" className="document-tab-select"
             ref={(element) => { if (element) tabs.current.set(document.id, element); else tabs.current.delete(document.id); }}
-            aria-selected={active} aria-label={`${title}${pinned ? ", pinned" : ""}${minimized ? ", minimized. Restore document" : ""}`}
+            aria-selected={active} aria-label={`${title}${parentTitle ? `, child of ${parentTitle}` : ""}${pinned ? ", pinned" : ""}${minimized ? ", minimized. Restore document" : ""}${closed ? ", not open. Open document" : ""}`}
             aria-describedby={`${instructionsId}${previewDocument?.id === document.id ? ` ${previewId}` : ""}`} tabIndex={tabStopId === document.id ? 0 : -1}
-            title={pinned ? undefined : `${title}${minimized ? " — minimized; click to restore" : ""}`}
+            title={pinned ? undefined : `${title}${parentTitle ? ` — child of ${parentTitle}` : ""}${minimized ? " — minimized; click to restore" : ""}${closed ? " — not open; click to open" : ""}`}
             onFocus={(event) => { dismissedPreviewId.current = null; setFocusedId(document.id); showPreview(document.id, event.currentTarget.parentElement!); }}
             onKeyDown={(event) => handleKeyDown(event, document.id)}
             onClick={() => onSelect(document.id)}>
-            <svg className="document-tab-icon" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
+            {parentTitle ? <svg className="document-tab-icon document-tab-child-icon" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M5 3.5v7a3 3 0 0 0 3 3h8M13 10.5l3 3-3 3"/>
+            </svg> : <svg className="document-tab-icon" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4">
               <path d="M11.5 2.5H5A1.5 1.5 0 0 0 3.5 4v12A1.5 1.5 0 0 0 5 17.5h10a1.5 1.5 0 0 0 1.5-1.5V7.5Z"/><path d="M11.5 2.5v5h5M7 11h6M7 14h4"/>
-            </svg>
+            </svg>}
             <span className="document-tab-title">{title}</span>
             {pinned ? <svg className="document-tab-pin" viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m7 2 6 0-1 5 3 3v2H5v-2l3-3-1-5ZM10 12v6"/></svg> : null}
             {minimized ? <span className="document-tab-minimized-label" aria-hidden="true">Minimized</span> : null}
+            {closed ? <span className="document-tab-minimized-label" aria-hidden="true">Not open</span> : null}
           </button>
           <DocumentMenu conversation={document} onRename={onRename} pinned={pinned} familyPinned={familyPinnedDocumentIds.includes(document.id)}
-            minimized={minimized} onTogglePin={onTogglePin} onTogglePinScope={onTogglePinScope}
-            onMinimize={onMinimize} onClose={onClose} onRestore={onSelect} groups={groups} onAssignGroup={onAssignGroup}
+            minimized={minimized} closed={closed} onTogglePin={onTogglePin} onTogglePinScope={onTogglePinScope}
+            onMinimize={closed ? undefined : onMinimize} onClose={closed ? undefined : onClose} onRestore={onSelect} groups={groups} onAssignGroup={onAssignGroup}
             className="document-tab-menu-trigger"
             onFocusFallback={() => (tabs.current.get(activeDocumentRef.current) ?? tabs.current.values().next().value)?.focus()} />
         </div>;
       })}
       </div>
       <button type="button" className="document-tab-create" onClick={onNewSideDocument}
-        style={{ order: Math.max(0, documents.findIndex((document) => document.id === activeDocumentId)) * 2 + 1 }}
+        style={{ order: createButtonIndex * 2 + 1 }}
         aria-label="New side document" title="Create a side document linked to the focused document">
         <span aria-hidden="true">+</span>
       </button>
