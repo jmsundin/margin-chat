@@ -138,6 +138,17 @@ describe("protected extension workspace frame", () => {
     expect(view.browser.document.body.textContent).not.toContain("Community");
   });
 
+  test("collapsing the panel header hides the page row, and expanding brings it back", async () => {
+    const view = await frame(); await view.ready();
+    const row = () => view.browser.document.querySelector(".browser-source-row");
+    expect(row()).not.toBeNull();
+    await view.changeStorage({ headerCollapsed: { newValue: true } });
+    expect(row()).toBeNull();
+    expect(view.browser.document.querySelector('[data-testid="shared-app"]')).not.toBeNull();
+    await view.changeStorage({ headerCollapsed: { newValue: false } });
+    expect(row()).not.toBeNull();
+  });
+
   test("the authorized frame renders the current shared App using the isolated API transport", async () => {
     const view = await frame(); await view.ready();
     const props = view.probe().props;

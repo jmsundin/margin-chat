@@ -14,9 +14,10 @@ function harness() {
   prototype.attachShadow = function(options) { const shadow = attach.call(this, options); if (this.hasAttribute("data-margin-overlay")) root = shadow as unknown as ShadowRoot; return shadow; };
   const messages: Record<string, any>[] = [];
   const dockResizes: number[] = [];
+  const collapses: boolean[] = [];
   let overlay!: ReturnType<typeof createWorkspaceFrameHost>;
   try {
-    overlay = createWorkspaceFrameHost(doc, async (message) => { messages.push(structuredClone(message)); return message.type === "overlay:frame" ? { tabId: 12, session: "source-session" } : { ok: true }; }, "chrome-extension://test/workspace.html", { onDockResize: (width) => dockResizes.push(width) });
+    overlay = createWorkspaceFrameHost(doc, async (message) => { messages.push(structuredClone(message)); return message.type === "overlay:frame" ? { tabId: 12, session: "source-session" } : { ok: true }; }, "chrome-extension://test/workspace.html", { onDockResize: (width) => dockResizes.push(width), onHeaderCollapse: (collapsed) => collapses.push(collapsed) });
   } finally { prototype.attachShadow = attach; }
   cleanup.push(() => { overlay.destroy(); win.happyDOM.abort(); });
   const element = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
@@ -24,7 +25,7 @@ function harness() {
   const chooseLayout = (layout: string) => { click(".more"); click(`.menu button[data-layout=${layout}]`); };
   const press = (selector: string, key: string) => { const event = new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }); element(selector).dispatchEvent(event as unknown as Event); return event; };
   const select = (node: Node, from = 0, to = node.textContent!.length) => { const range = doc.createRange(); range.setStart(node, from); range.setEnd(node, to); const selection = doc.getSelection()!; selection.removeAllRanges(); selection.addRange(range); doc.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true }) as unknown as Event); };
-  return { win, doc, root, overlay, dockResizes, element, click, chooseLayout, press, select, messages, context: (kind = "current") => overlay.handleMessage({ type: "margin:page-context", session: "source-session", kind }) };
+  return { win, doc, root, overlay, dockResizes, collapses, element, click, chooseLayout, press, select, messages, context: (kind = "current") => overlay.handleMessage({ type: "margin:page-context", session: "source-session", kind }) };
 }
 
 describe("protected workspace frame host", () => {
@@ -44,6 +45,19 @@ describe("protected workspace frame host", () => {
     expect(panel.style.width).not.toBe(`${h.win.innerWidth - 24 + 400}px`); expect(h.dockResizes).toHaveLength(2);
     h.chooseLayout("docked"); grip.dispatchEvent(new h.win.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
     expect(panel.style.width).toBe("520px"); expect(h.dockResizes.at(-1)).toBe(520);
+  });
+  test("the header collapses to a thin strip and reports the state to remember", async () => {
+    const h = harness(); await h.overlay.open();
+    const panel = h.element(".panel");
+    expect(panel.classList.contains("collapsed")).toBe(false);
+    h.click(".more"); h.click(".collapse");
+    expect(panel.classList.contains("collapsed")).toBe(true); expect(h.element(".menu").hidden).toBe(true);
+    expect(h.root.activeElement).toBe(h.element(".expand")); expect(h.collapses).toEqual([true]);
+    h.chooseLayout("floating"); expect(panel.classList.contains("collapsed")).toBe(true);
+    h.click(".expand");
+    expect(panel.classList.contains("collapsed")).toBe(false); expect(h.root.activeElement).toBe(h.element(".collapse")); expect(h.collapses).toEqual([true, false]);
+    h.overlay.setHeaderCollapsed(true);
+    expect(panel.classList.contains("collapsed")).toBe(true); expect(h.collapses).toHaveLength(2);
   });
   test("the shell follows the app's theme, falling back to the system setting", async () => {
     const h = harness(); await h.overlay.open();
@@ -70,9 +84,9 @@ describe("protected workspace frame host", () => {
     h.click(".close"); await h.overlay.open(); expect(h.element("iframe")).toBe(frame); expect(frame.src).toBe(url.href);
     expect(h.doc.body.innerHTML).not.toContain("source-session");
   });
-  test("keeps the header to a title, a view-options button, and close", async () => {
+  test("keeps the header to a title, collapse, a view-options button, and close", async () => {
     const h = harness(); await h.overlay.open();
-    expect([...h.element("header").children].map((child) => child.className || child.tagName.toLowerCase())).toEqual(["strong", "icon more", "menu", "icon close"]);
+    expect([...h.element("header").children].map((child) => child.className || child.tagName.toLowerCase())).toEqual(["strong", "icon collapse", "expand", "icon more", "menu", "icon close"]);
     expect([...h.root.querySelectorAll("header > button")].some((button) => button.hasAttribute("data-layout"))).toBe(false); // layouts live only in the menu
     expect(h.root.textContent).not.toContain("Community");
     expect(h.element(".more").getAttribute("aria-label")).toBe("View options");
