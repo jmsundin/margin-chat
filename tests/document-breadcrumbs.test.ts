@@ -3,7 +3,7 @@ import { createMarginDocument } from "@margin-chat/workspace-contracts";
 import { createEmptyState, createMainConversation, createSideConversation } from "../client/src/initialState";
 import { addChildConversation, addRootConversation } from "../client/src/lib/workspaceCommands";
 import { closeDocument, focusDocument, getDocumentWorkspace, minimizeDocument, openDocumentBeside, replaceDocument, showDocument } from "../client/src/lib/documentWorkspace";
-import { getDocumentBackTarget, getDocumentBreadcrumbs, getDocumentKind, getPresentedParentId, isPeerDocument, recordDocumentNavigation, takeDocumentBack } from "../client/src/lib/documentBreadcrumbs";
+import { getDocumentBackTarget, getDocumentBreadcrumbs, getDocumentKind, getPresentedParentId, getWorkspaceTabs, isPeerDocument, recordDocumentNavigation, takeDocumentBack } from "../client/src/lib/documentBreadcrumbs";
 import type { AppState, Conversation } from "../client/src/types";
 
 function branch(child: Conversation): Conversation {
@@ -130,5 +130,37 @@ describe("expand here, open beside and back", () => {
     expect(getDocumentBackTarget({ field: [mainId, "deleted"] }, "field", conversations)).toBe(mainId);
     expect(takeDocumentBack({ field: [mainId, "deleted"] }, "field", conversations, true)).toEqual({});
     expect(getDocumentBackTarget({}, "field", conversations)).toBeNull();
+  });
+});
+
+describe("workspace tabs", () => {
+  const tabs = (state: AppState, id: string) => {
+    const workspace = getDocumentWorkspace(state.conversations, id);
+    return getWorkspaceTabs(state.conversations, workspace.openDocuments, workspace.closedIds)
+      .map((tab) => `${tab.document.id}${tab.parentId ? `<${tab.parentId}` : ""}${tab.closed ? " closed" : ""}`);
+  };
+
+  test("children follow their parent's tab; side documents keep their own place", () => {
+    const { state, mainId } = fixture();
+    expect(tabs(state, mainId)).toEqual([
+      mainId, `check<${mainId}`, `roofs<${mainId}`, `roofs-notes<${mainId}`, "interviews", `followup<interviews`, "field",
+    ]);
+  });
+
+  test("a closed child keeps a tab after its open siblings; opening it makes it a normal child tab", () => {
+    const { state, mainId } = fixture();
+    const closed = closeDocument(state, "roofs");
+    expect(tabs(closed, mainId)).toEqual([
+      mainId, `check<${mainId}`, `roofs-notes<${mainId}`, `roofs<${mainId} closed`, "interviews", `followup<interviews`, "field",
+    ]);
+    expect(tabs(showDocument(closed, "roofs"), mainId)).toContain(`roofs<${mainId}`);
+  });
+
+  test("children of a closed document and closed side documents have no tab", () => {
+    const { state, mainId } = fixture();
+    const closed = closeDocument(closeDocument(state, "followup"), "interviews");
+    expect(tabs(closed, mainId)).not.toContain("interviews");
+    expect(tabs(closed, mainId).some((tab) => tab.startsWith("followup"))).toBe(false);
+    expect(tabs(closeDocument(state, "field"), mainId).some((tab) => tab.startsWith("field"))).toBe(false);
   });
 });

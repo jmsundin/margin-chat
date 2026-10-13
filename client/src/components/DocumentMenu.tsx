@@ -12,6 +12,8 @@ export interface DocumentMenuProps {
   pinned?: boolean;
   familyPinned?: boolean;
   minimized?: boolean;
+  /** Not open in the workspace; Open replaces Restore. */
+  closed?: boolean;
   onTogglePin?: (id: string) => void;
   onTogglePinScope?: (id: string) => void;
   onMinimize?: (id: string) => void;
@@ -28,7 +30,7 @@ export interface DocumentMenuProps {
 }
 
 /** The same document actions are available from its tab and its reading pane. */
-export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false,
+export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
   onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
@@ -189,6 +191,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       {!minimized && onMinimize
         ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
       {minimized && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Restore document</button> : null}
+      {closed && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Open document</button> : null}
       {onClose ? <button type="button" role="menuitem" aria-label="Close document" onClick={() => action(onClose)}><span aria-hidden="true">×</span> Close document</button> : null}
       {onAssignGroup ? <button type="button" role="menuitem" className="document-menu-group-setting"
         aria-label={`Group for ${title}: ${groupName}`} aria-haspopup="dialog"
