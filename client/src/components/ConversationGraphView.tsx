@@ -56,7 +56,8 @@ import { useSubjectCategories } from "../lib/useSubjectCategories";
 import { useTopicEmbeddings } from "../lib/useTopicEmbeddings";
 import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
-import GraphClusterLayer, { CLUSTER_DOT_SCALE, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
+import GraphClusterLayer, { CLUSTER_DOT_SCALE, clusterHues, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
+import { getMapFamilyStyles, type MapFamilyStyle } from "../lib/graphFamilies";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
 import { GraphViewModeSelects, GraphViewModeTabs } from "./GraphViewModeControls";
 import { MORE_GRAPH_VIEW_MODES } from "../lib/graphViewModes";
@@ -543,6 +544,13 @@ function GraphNodeSkeleton() {
   </div>;
 }
 
+/** A card's family look; Clusters swaps in the hue of the cluster it sits in. */
+function familyStyle(styles: Map<string, MapFamilyStyle>, clusterHueById: Map<string, number | null> | null, id: string): MapFamilyStyle | undefined {
+  const style = styles.get(id);
+  if (!style || !clusterHueById?.has(id)) return style;
+  return { ...style, hue: clusterHueById.get(id)! };
+}
+
 function GraphNode({
   zoomScale,
   screenFootprint,
@@ -554,6 +562,7 @@ function GraphNode({
   activeConversationId,
   categoryLabel,
   conversation,
+  family,
   detailLevel,
   group,
   groups,
@@ -591,6 +600,8 @@ function GraphNode({
   activeConversationId: string;
   categoryLabel?: string;
   conversation: Conversation;
+  /** Parents draw larger than children, and a family shares a hue. */
+  family?: MapFamilyStyle;
   detailLevel: ConversationGraphDetail;
   group: ConversationGroup | null;
   groups: Record<string, ConversationGroup>;
@@ -642,7 +653,9 @@ function GraphNode({
     left: `${placement.x + (placement.width - (screenFootprint?.width ?? placement.width)) / 2}px`,
     top: `${placement.y + (placement.height - (screenFootprint?.height ?? placement.height)) / 2}px`,
     width: `${screenFootprint?.width ?? placement.width}px`,
-    transform: `scale(${screenFootprint ? 1 / zoomScale : readableNodeSize(zoomScale, isPreview || isReader)})`,
+    // Opened previews and readers keep full size; overview cards size by family depth.
+    transform: `scale(${(screenFootprint ? 1 / zoomScale : readableNodeSize(zoomScale, isPreview || isReader)) * (isPreview || isReader ? 1 : family?.size ?? 1)})`,
+    "--map-family-hue": family?.hue ?? undefined,
     "--map-card-title-size": screenFootprint?.titleFontSize ? `${screenFootprint.titleFontSize}px` : undefined,
     "--map-card-title-lines": screenFootprint?.titleLines,
     "--zoom-through-progress": zoomThroughProgress,
@@ -673,6 +686,8 @@ function GraphNode({
         .filter(Boolean)
         .join(" ")}
       data-conversation-id={conversation.id}
+      data-family-depth={family ? Math.min(family.depth, 2) : undefined}
+      data-family-colored={family?.hue != null || undefined}
       data-network-pinned={isPinned || undefined}
       data-graph-detail={detailLevel}
       data-graph-content={isPreview || isReader ? contentReady ? "ready" : "loading" : undefined}
@@ -1185,6 +1200,14 @@ export default function ConversationGraphView({
   const forceLayout = networkLayout ?? clusterLayout;
   const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
+  // Parents are drawn larger than their children, and each family shares a hue
+  // (in Clusters, the hue of the cluster the card sits in, matching its circle).
+  const familyStyles = useMemo(() => getMapFamilyStyles(conversations), [conversations]);
+  const cardHues = useMemo(() => {
+    if (!clusterLayout) return null;
+    const hues = clusterHues(clusterLayout.clusters);
+    return new Map([...clusterLayout.clusterByDocumentId].map(([id, clusterId]) => [id, hues.get(clusterId) ?? null]));
+  }, [clusterLayout]);
   // The widest groups are named first, since they are what a zoomed-out map shows.
   const labelTargets = useMemo(() => {
     if (!clusterLayout) return EMPTY_CLUSTERS;
@@ -3366,6 +3389,7 @@ export default function ConversationGraphView({
                   activeConversationId={activeConversationId}
                   categoryLabel={categoryLabels.get(getConversationRootId(conversations, conversation.id) ?? conversation.id)}
                   conversation={conversation}
+                  family={familyStyle(familyStyles, cardHues, conversation.id)}
                   detailLevel={nodeDetail}
                   group={group}
                   groups={groups}

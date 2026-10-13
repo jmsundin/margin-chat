@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 import type { Conversation, ConversationGroup, GraphNodeLayout } from "../../client/src/types";
 import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
+import { mapFamilySize } from "../../client/src/lib/graphFamilies";
 
 const browser = new Window({ url: "http://graph-exploration.test/" });
 startMapsInGroupedView(browser.localStorage as unknown as Storage);
@@ -189,7 +190,9 @@ function assertDocumentCards(ids: string[], requireInside = false) {
   const cards = ids.map((id) => element(`.conversation-graph-node[data-conversation-id="${id}"]`));
   const boxes = cards.map(screenRect);
   boxes.forEach((box, index) => {
-    assert(Math.abs(box.width - 180 * camera.scale) < 1e-6 && Math.abs(box.height - 96 * camera.scale) < 1e-6,
+    // Children draw smaller than their parent; see graphFamilies.ts.
+    const size = mapFamilySize(Number(cards[index].dataset.familyDepth ?? 0));
+    assert(Math.abs(box.width - 180 * camera.scale * size) < 1e-6 && Math.abs(box.height - 96 * camera.scale * size) < 1e-6,
       "Document cards scale with the camera instead of retaining an overlapping readable-size floor");
     assert.equal(cards[index].classList.contains('is-title-hidden'), camera.scale < 0.4,
       "Document labels remain until their projected font is smaller than 8px");

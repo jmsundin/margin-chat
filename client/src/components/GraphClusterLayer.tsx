@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ConversationGraphNodePlacement } from "../lib/conversationGraph";
 import type { GraphViewport } from "../lib/graphInteractions";
+import { rankedHues } from "../lib/graphFamilies";
 import { formatClusterPeriod, type GravityCluster, type GravityClusterGroup, type GravityClusterLevel } from "../lib/gravityClusters";
 
 /** Below this zoom the Clusters view shows topic labels and dots instead of document cards. */
@@ -19,10 +20,10 @@ type Circle = GravityCluster | GravityClusterGroup;
 
 const isUnlinked = (cluster: Circle) => cluster.hubId === null && !("level" in cluster);
 
-/** Golden-angle hues by size rank keep neighboring clusters visibly distinct. */
-function hueMap(circles: Circle[]) {
-  const ranked = [...circles].sort((a, b) => b.memberIds.length - a.memberIds.length || (a.id < b.id ? -1 : 1));
-  return new Map(ranked.map((circle, rank) => [circle.id, isUnlinked(circle) ? null : Math.round((210 + rank * 137.508) % 360)]));
+/** Each cluster's hue, ranked by size; unlinked documents stay neutral. Map cards in Clusters reuse these. */
+export function clusterHues(circles: Circle[]) {
+  const hues = rankedHues(circles.map((circle) => ({ id: circle.id, size: circle.memberIds.length })));
+  return new Map(circles.map((circle) => [circle.id, isUnlinked(circle) ? null : hues.get(circle.id)!]));
 }
 
 function overlaps(a: Rect, b: Rect) {
@@ -109,7 +110,7 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
   const level = showDots ? clusterDisplayLevel(clusters, levels, scale) : 0;
   const shownCircles: Circle[] = level === 0 ? clusters : levels[level - 1].groups;
   const innerCircles: Circle[] = level <= 1 ? (level === 1 ? clusters : []) : levels[level - 2].groups;
-  const hues = useMemo(() => hueMap(shownCircles), [shownCircles]);
+  const hues = useMemo(() => clusterHues(shownCircles), [shownCircles]);
   const parentHue = useMemo(() => {
     if (!level) return new Map<string, number | null>();
     const result = new Map<string, number | null>();
