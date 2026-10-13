@@ -6,7 +6,8 @@ import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
-import { bytesToBase64, createBrowserVaultStore, exportVault, importVault, startFreshVaultCopy, vaultFileBytes } from "./vaultLocal";
+import { LocalVaultUnavailableError, bytesToBase64, createBrowserVaultStore, exportVault, importVault, recoverWithFreshVaultCopy,
+  startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
@@ -54,6 +55,7 @@ export function useMarkdownVault(args: {
   const [storageMode, setStorageMode] = useState<StorageMode>("loading");
   const [matchesCloud, setMatchesCloud] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [conflicts, setConflicts] = useState<VaultConflict[]>([]);
   const [saving, setSaving] = useState(false);
   const [localSaveError, setLocalSaveError] = useState<string | null>(null);
@@ -536,7 +538,10 @@ export function useMarkdownVault(args: {
         await readFolder().catch(report);
         // Display durable local files immediately, including when cloud storage is unavailable.
         publish(await engine.read());
-        if (mounted.current) { setReady(true); setStorageMode(enabledRef.current ? "fallback" : "local"); }
+        if (mounted.current) {
+          setReady(true); setStorageMode(enabledRef.current ? "fallback" : "local");
+          setRecoveryNotice(takeVaultRecoveryNotice(storageUserId));
+        }
         void navigator.storage.persist?.().catch(() => false);
         // The old workspace snapshot is migration input only. Future content comes from Markdown.
         localStorage.removeItem(getStateStorageKey(storageUserId));
@@ -546,6 +551,12 @@ export function useMarkdownVault(args: {
         await saveAndRefresh(true);
         if (await hydrateWorkspaceReferences()) await saveAndRefresh(true);
       } catch (error) {
+        // This device's copy can't be opened and the cloud has the vault: start a fresh copy and reload once.
+        if (!initialized.current && enabledRef.current && error instanceof LocalVaultUnavailableError
+          && recoverWithFreshVaultCopy(storageUserId, error.step)) {
+          window.location.reload();
+          return;
+        }
         report(error);
         if (initialized.current && mounted.current) setReady(true);
       }
@@ -673,6 +684,8 @@ export function useMarkdownVault(args: {
   return {
     /** When this device's copy cannot be opened, start a new one for the cloud vault to fill. The old copy is kept. */
     startFreshCopy: enabled && !ready ? () => { if (startFreshVaultCopy(storageUserId)) window.location.reload(); } : undefined,
+    /** Shown once after the vault moved to a fresh copy on its own. */
+    recoveryNotice, dismissRecoveryNotice: () => setRecoveryNotice(null),
     ready, storageMode, media, folderAccessMessage, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
     /** Search the whole cloud vault: matching titles first, then passages as the server finds them. */
     searchCloud: engine.transport.search
