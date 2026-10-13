@@ -56,6 +56,7 @@ import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "
 import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
 import { getDocumentBackTarget, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
 import { joinDocumentBlocks } from "./lib/continuousDocument";
+import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
@@ -4248,7 +4249,7 @@ function WorkspaceAppContent({
       onChange={(document) => handleDocumentChange(conversation.id, document)}
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
-      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionLinkError(null); setSelectionResponseDestination("side"); setSelectionReplaceText(false); }}
+      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionLinkError(null); setSelectionResponseDestination(defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(false); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
       onClearSelection={() => { if (!isReselectingSelection()) setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current); }}
       onOpenBranch={(id) => handleOpenDocumentReference(conversation.id, id)}
