@@ -169,6 +169,7 @@ import {
 } from "./lib/tree";
 import { buildEditableDocumentOutline } from "./lib/chatOutline";
 import { getConversationSelectionViewMode } from "./lib/conversationNavigation";
+import { lockPageZoom } from "./lib/pageZoomLock";
 import {
   getStandaloneNoteContextMessageId,
   upsertStandaloneNoteContextMessage,
@@ -1234,6 +1235,17 @@ function WorkspaceAppContent({
       graphLayouts: normalizedGraphLayouts,
     }));
   }, [state.conversations, state.graphLayouts]);
+
+  useEffect(() => lockPageZoom(), []);
+
+  // On phones the sidebar sits above everything, so a window opened from it
+  // (profile, settings, inbox, import) would open hidden behind it.
+  const sidebarModalOpen = profileModalOpen || appSettingsOpen || captureInboxOpen || historyImportOpen;
+  useEffect(() => {
+    if (!isMobileViewport || !sidebarModalOpen) return;
+    setLeftSidebarOpen(false);
+    setState((current) => current.railOpen ? { ...current, railOpen: false } : current);
+  }, [isMobileViewport, sidebarModalOpen]);
 
   useEffect(() => {
     try {
