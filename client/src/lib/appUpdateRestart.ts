@@ -2,22 +2,33 @@ import { canReloadAfterAppUpdate, flushForAppUpdate, hasAppUpdateGuards, lockFor
 
 export const DESKTOP_UPDATE_EVENT = "margin:desktop-update-ready";
 
-/** The desktop app downloads a newer client in the background and announces it
- * with this event; reloading the page then loads the new version. */
-export function listenForDesktopUpdate(onReady: (commit: string) => void): () => void {
+/** "client": a newer web client is downloaded and a reload loads it.
+ * "app": a new version of the desktop app is downloaded and installs on restart. */
+export type DesktopUpdateKind = "client" | "app";
+// The desktop app installs its update and restarts when the page opens this path.
+export const DESKTOP_INSTALL_UPDATE_PATH = "/__margin/install-update";
+
+/** The desktop app downloads updates in the background and announces each one
+ * with this event. */
+export function listenForDesktopUpdate(onReady: (kind: DesktopUpdateKind) => void): () => void {
   const ready = (event: Event) => {
-    const commit = (event as CustomEvent<{ commit?: unknown }>).detail?.commit;
-    if (typeof commit === "string") onReady(commit);
+    const kind = (event as CustomEvent<{ kind?: unknown }>).detail?.kind;
+    onReady(kind === "app" ? "app" : "client");
   };
   window.addEventListener(DESKTOP_UPDATE_EVENT, ready);
   return () => window.removeEventListener(DESKTOP_UPDATE_EVENT, ready);
 }
 
-/** Saves edits the same way a web restart does, then reloads into the new client. */
-export async function reloadForDesktopUpdate(onStatus: (message: string | null) => void, { auto = false } = {}): Promise<void> {
-  // Sign-in and the marketing pages hold no edits, so they reload straight away.
+/** Saves edits the same way a web restart does, then reloads into the new
+ * client, or hands over to the desktop app to install its new version. */
+export async function reloadForDesktopUpdate(onStatus: (message: string | null) => void, { auto = false, kind = "client" as DesktopUpdateKind } = {}): Promise<void> {
+  const restart = () => {
+    if (kind === "app") window.location.assign(DESKTOP_INSTALL_UPDATE_PATH);
+    else window.location.reload();
+  };
+  // Sign-in and the marketing pages hold no edits, so they restart straight away.
   if (!hasAppUpdateGuards()) {
-    window.location.reload();
+    restart();
     return;
   }
   const unlock = lockForAppUpdate();
@@ -28,7 +39,7 @@ export async function reloadForDesktopUpdate(onStatus: (message: string | null) 
     await flushForAppUpdate();
     if (!canReloadAfterAppUpdate()) throw new Error("New work arrived while restarting. Finish it, then try Restart now again.");
     onStatus("Restarting…");
-    window.location.reload();
+    restart();
   } catch (error) {
     unlock();
     onStatus(null);

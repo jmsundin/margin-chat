@@ -34,9 +34,11 @@ compatible with whatever production runs.
 
 Run Actions > Desktop release > Run workflow with a version number (and the
 commit production runs). It builds the client once, packages a universal macOS
-.dmg, a 64-bit Windows installer and a Linux AppImage and .deb on their own
-runners, and publishes them as the GitHub release `desktop-v<version>` together
-with the client's `version.json`.
+.dmg and .zip, a 64-bit Windows installer and a Linux AppImage and .deb on
+their own runners, and publishes them as the GitHub release
+`desktop-v<version>` together with the client's `version.json` and
+`desktop-update.json` (each installer's size and SHA-512, written by
+`scripts/desktop-update-manifest.mjs`).
 
 marginchat.com/download reads the latest release from
 `GET /api/downloads/desktop` and offers the visitor's system. Each button goes
@@ -44,12 +46,9 @@ to `/api/downloads/desktop/<mac|windows|linux|linux-deb>`, which saves a row in
 `marginchat_desktop_downloads` (IP address, user agent, system, language,
 referrer, which button, the signed-in account if any, and Vercel's approximate
 country, region, city and coordinates) and then redirects to a signed GitHub
-download link. The repository is private, so the server needs
-`DESKTOP_RELEASES_TOKEN`: a fine-grained token with read-only Contents access.
-Without it the page keeps offering the web app.
-
-The app offers that installer only when its version number is higher than
-its own, which matters only for changes to the desktop shell itself.
+download link. The repository is public, so no token is needed;
+`DESKTOP_RELEASES_TOKEN` (read-only Contents access) is only for a private
+repository. Without a release the page keeps offering the web app.
 
 ## Updates
 
@@ -68,6 +67,25 @@ wins over an older download.
 
 So every Production release reaches desktop users without a new installer.
 
+The app itself (Electron, `main.mjs`) updates from the latest Desktop release
+(`desktop/shellUpdater.mjs`). Thirty seconds after launch and every four
+hours it reads `desktop-update.json` from
+`github.com/jmsundin/margin-chat/releases/latest/download/`
+(`MARGIN_DESKTOP_UPDATE_FEED` overrides it). When the release's version is
+higher, it downloads the file for its system into `app-updates/` in its data
+folder and checks its size and SHA-512. The update installs when the person
+quits, or when the page restarts into it at a quiet moment or on Restart now
+(after saving edits), which reopens the app:
+
+- Windows runs the new installer silently.
+- macOS swaps the new .app bundle in place (no Squirrel, so it works
+  unsigned) and puts the old one back if the move fails.
+- Linux replaces the AppImage.
+
+A .deb install, a Mac app opened straight from the disk image, or an app in a
+folder it can't write to can't replace itself; it shows a "download the new
+version" prompt once per version instead.
+
 ## Not done yet
 
 - Signing and notarization: the installers are unsigned. macOS blocks the app
@@ -76,8 +94,5 @@ So every Production release reaches desktop users without a new installer.
   Run anyway. Signing needs an Apple Developer ID certificate with
   notarization credentials, and a Windows code-signing certificate, passed to
   electron-builder in the Desktop release workflow.
-- Shell updates: the app updates its client by itself (see "Updates" above),
-  but a change to the desktop shell (Electron, `main.mjs`) still needs a new
-  installer. The app offers it once per launch when a Desktop release has a
-  higher version number. Installing that automatically needs signed builds
-  (an Apple Developer ID on macOS) and `electron-updater`.
+- Copies built before this updater can't update themselves; install a
+  release made after it once by hand.

@@ -3,7 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createClientBundles } from "./clientBundles.mjs";
-import { newerShell, watchForUpdates } from "./updates.mjs";
+import { createShellUpdater, DEFAULT_FEED } from "./shellUpdater.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
 // /api to the hosted backend, so the client keeps its same-origin relative fetches.
@@ -27,6 +27,16 @@ const clientBundles = createClientBundles({
   fetchImpl: (url, init) => net.fetch(String(url), init),
 });
 const CLIENT_UPDATE_INTERVAL = 15 * 60 * 1000;
+// New versions of the app itself come from the latest Desktop release on GitHub.
+const shellUpdater = createShellUpdater({
+  currentVersion: app.getVersion(),
+  feedUrl: process.env.MARGIN_DESKTOP_UPDATE_FEED?.trim() || DEFAULT_FEED,
+  downloadsDir: path.join(app.getPath("userData"), "app-updates"),
+  fetchImpl: (url, init) => net.fetch(String(url), init),
+});
+const SHELL_UPDATE_INTERVAL = 4 * 60 * 60 * 1000;
+// The page opens this path once it has saved its edits for an app update.
+const INSTALL_UPDATE_PATH = "/__margin/install-update";
 // Where "Download update" sends people: the download page picks this system's installer.
 const DOWNLOAD_URL = process.env.MARGIN_DESKTOP_DOWNLOAD_URL?.trim() || "https://www.marginchat.com/download";
 const PROXIED_PREFIXES = ["/api/", "/_vercel/"];
@@ -106,6 +116,7 @@ async function serveClientFile(url) {
 
 function handleAppRequest(request) {
   const url = new URL(request.url);
+  if (url.pathname === INSTALL_UPDATE_PATH) return installShellUpdateNow();
   return isProxiedPath(url.pathname) ? forwardToBackend(request, url) : serveClientFile(url);
 }
 
@@ -201,15 +212,16 @@ function buildAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-// The page restarts into a downloaded client by itself at a quiet moment,
-// after saving edits (client/src/components/DesktopUpdateNotice.tsx).
-function announceClientUpdate(version) {
+// The page restarts into the update by itself at a quiet moment, after saving
+// edits (client/src/components/AppUpdateNotice.tsx).
+function announceUpdate(detail) {
   for (const window of BrowserWindow.getAllWindows()) {
     void window.webContents.executeJavaScript(
-      `window.dispatchEvent(new CustomEvent("margin:desktop-update-ready", { detail: ${JSON.stringify({ commit: version.commit })} }))`,
+      `window.dispatchEvent(new CustomEvent("margin:desktop-update-ready", { detail: ${JSON.stringify(detail)} }))`,
     ).catch(() => {});
   }
 }
+const announceClientUpdate = (version) => announceUpdate({ kind: "client", commit: version.commit });
 
 function startClientUpdates() {
   let running = null;
@@ -223,18 +235,29 @@ function startClientUpdates() {
   app.on("browser-window-focus", () => { void check(); });
 }
 
-// Only a change to the desktop shell itself (Electron, main.mjs) needs a new
-// installer. That is rare, so it is offered once per launch.
-function startShellUpdateChecks() {
-  return watchForUpdates({
-    readLocal: async () => ({ version: app.getVersion() }),
-    fetchRemote: async () => {
-      const response = await net.fetch(new URL("/api/downloads/desktop", API_ORIGIN), { cache: "no-store" });
-      if (!response.ok) throw new Error(`Version check failed: ${response.status}`);
-      return response.json();
-    },
-    compare: newerShell,
-    notify: async (latest) => {
+let quittingForUpdate = false;
+function installShellUpdateNow() {
+  if (!shellUpdater.install({ relaunch: true })) return new Response("No update is ready.", { status: 409 });
+  quittingForUpdate = true;
+  setImmediate(() => app.quit());
+  return new Response("Installing the update…", { headers: { "Content-Type": "text/plain; charset=utf-8" } });
+}
+
+// New versions of the app itself download in the background and install when
+// the page restarts at a quiet moment, or when the person quits.
+function startShellUpdates() {
+  let offeredManual = null;
+  let running = null;
+  const check = () => (running ??= shellUpdater.check()
+    .then(async (update) => {
+      if (!update) return;
+      if (!update.manual) {
+        announceUpdate({ kind: "app", version: update.version });
+        return;
+      }
+      // A .deb install or an app run from the disk image can't replace itself.
+      if (offeredManual === update.version) return;
+      offeredManual = update.version;
       const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
       const options = {
         type: "info",
@@ -242,11 +265,20 @@ function startShellUpdateChecks() {
         defaultId: 0,
         cancelId: 1,
         message: "A new desktop app is available",
-        detail: `Margin Chat ${latest.version} changes the desktop app itself, so it needs a one-time install. Everyday updates keep arriving on their own. Your vault and account stay as they are.`,
+        detail: process.platform === "darwin"
+          ? `Margin Chat ${update.version} is out. Move Margin Chat to your Applications folder and it will install updates by itself from then on.`
+          : `Margin Chat ${update.version} is out. This copy was installed in a way it can't update by itself, so download the new version once.`,
       };
       const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
       if (response === 0) openExternally(DOWNLOAD_URL);
-    },
+    })
+    .catch((error) => console.warn("App update check failed; trying again later.", error))
+    .finally(() => { running = null; }));
+  setTimeout(check, 30 * 1000);
+  setInterval(check, SHELL_UPDATE_INTERVAL);
+  // Quitting installs a downloaded update, so the next launch is the new version.
+  app.on("before-quit", () => {
+    if (!quittingForUpdate) shellUpdater.install({ relaunch: false });
   });
 }
 
@@ -279,7 +311,7 @@ if (!app.requestSingleInstanceLock()) {
     // The dev server is always current, so only bundled builds check.
     if (!DEV_URL) {
       startClientUpdates();
-      startShellUpdateChecks();
+      startShellUpdates();
     }
 
     app.on("activate", () => {
