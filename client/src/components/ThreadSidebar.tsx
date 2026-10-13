@@ -9,7 +9,7 @@ import {
   sortDocumentsByCreation,
 } from "../lib/sidebarThreads";
 import type { ConversationGroup, MainViewMode, ThreadSummary } from "../types";
-import { SIDEBAR_DOCUMENT_SORTS, type SidebarDocumentSort } from "../lib/sidebarDocumentOrder";
+import { SIDEBAR_DOCUMENT_SORTS, groupByDate, type SidebarDateSection, type SidebarDocumentSort } from "../lib/sidebarDocumentOrder";
 import type { SidebarDocumentOrder } from "../lib/useSidebarDocumentOrder";
 import "./ThreadSidebar.css";
 
@@ -714,6 +714,27 @@ export default function ThreadSidebar({
 
   function renderDocumentList() {
     const categories = documentOrder?.categories;
+    const dateSections: SidebarDateSection[] | null = categories ? null : documentOrder
+      ? documentOrder.dateSections ?? null
+      : groupByDate(createdThreads, (thread) => Date.parse(thread.createdAt ?? thread.updatedAt) || 0);
+    if (dateSections) {
+      // Headings page with the list: a section shows the documents within the first `shown`.
+      let offset = 0;
+      return <>
+        {dateSections.map((section) => {
+          const start = offset;
+          offset += section.threads.length;
+          if (start >= documentPages.shown) return null;
+          return (
+            <section aria-label={section.label} className="thread-sidebar-section is-date" key={section.id}>
+              <h3 className="thread-date-heading">{section.label}</h3>
+              {section.threads.slice(0, documentPages.shown - start).map(renderThreadItem)}
+            </section>
+          );
+        })}
+        {documentPages.more ? <div aria-hidden="true" className="thread-list-more" ref={documentPages.sentinel} /> : null}
+      </>;
+    }
     if (!categories) {
       return <>
         {listedThreads.slice(0, documentPages.shown).map(renderThreadItem)}
@@ -826,15 +847,14 @@ export default function ThreadSidebar({
             {thread.fileKind ? <span className="thread-item-file-kind" title={thread.fileKind === "pdf" ? "PDF" : "Image"}>{thread.fileKind === "pdf" ? "PDF" : "IMG"}</span> : null}
             <span>{thread.title}</span>
           </span>
-          <span className="thread-item-meta">
-            {isStreaming ? (
+          {isStreaming ? (
+            <span className="thread-item-meta">
               <span className="thread-streaming-status" role="status" title="Response streaming">
                 <span aria-hidden="true" className="thread-streaming-dot" />
                 <span className="thread-streaming-label">Streaming</span>
               </span>
-            ) : null}
-            <span className="thread-item-date" title={sidebarContent === "groups" ? "Last updated" : "Created"}>{sidebarContent === "groups" ? thread.updatedLabel : thread.createdLabel ?? thread.updatedLabel}</span>
-          </span>
+            </span>
+          ) : null}
         </button>
 
         <button
@@ -883,18 +903,6 @@ export default function ThreadSidebar({
       </div> : null}
 
       <div className="thread-sidebar-actions">
-        <div className="sidebar-create-row">
-          <button
-            aria-label="New document"
-            className="sidebar-action is-primary"
-            onClick={onNewChat}
-            title="New document"
-            type="button"
-          >
-            <PlusIcon />
-            <span>New document</span>
-          </button>
-        </div>
         <div className="sidebar-secondary-row">
           <button
             aria-label="Search documents"
@@ -905,7 +913,16 @@ export default function ThreadSidebar({
             type="button"
           >
             <SearchIcon />
-            <span>Search documents</span>
+            <span>Search</span>
+          </button>
+          <button
+            aria-label="New document"
+            className="sidebar-new-button"
+            onClick={onNewChat}
+            title="New document"
+            type="button"
+          >
+            <PlusIcon />
           </button>
           <button
             aria-controls={workspaceActionsOpen ? "sidebar-workspace-actions" : undefined}
@@ -923,7 +940,6 @@ export default function ThreadSidebar({
             type="button"
           >
             <MoreIcon />
-            <span>More</span>
           </button>
           {workspaceActionsOpen ? (
             <div

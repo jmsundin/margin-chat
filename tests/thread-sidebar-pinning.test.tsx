@@ -102,7 +102,7 @@ describe("thread sidebar pinning", () => {
     expect(markup).not.toContain('aria-label="Open tile view"');
     expect(markup).not.toContain('aria-label="Open map view"');
     expect(markup).toContain('aria-label="New document"');
-    expect(markup).toContain("<span>Search documents</span>");
+    expect(markup).toContain('aria-label="Search documents"');
     expect(markup).toContain('aria-label="More workspace actions"');
     expect(markup).not.toContain('aria-label="New group"');
     expect(markup).not.toContain("<span>New note</span>");

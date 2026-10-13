@@ -8,32 +8,36 @@
   overflow: hidden;
 }
 
+/* Documents, Groups and Outline as one quiet segmented control. */
 .sidebar-content-switcher {
-  border-bottom: 1px solid var(--line);
+  background: var(--button-active-surface);
+  border-radius: 8px;
   display: flex;
   flex: 0 0 auto;
-  gap: 4px;
+  gap: 2px;
+  padding: 2px;
 }
 
 .sidebar-content-switcher button {
   background: transparent;
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: 6px;
   color: var(--muted);
   flex: 1;
   font: inherit;
-  font-size: .76rem;
+  font-size: .74rem;
   font-weight: 550;
-  min-height: 36px;
-  padding: 6px 8px;
+  min-height: 28px;
+  padding: 3px 6px;
 }
 
 .sidebar-content-switcher button[aria-pressed="true"] {
-  border-bottom-color: var(--accent);
+  background: var(--rail-body-bg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
   color: var(--ink);
 }
 
-.sidebar-content-switcher button:hover { background: var(--button-active-surface); color: var(--ink); }
+.sidebar-content-switcher button:hover { color: var(--ink); }
 .sidebar-content-switcher button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .sidebar-document-browser > .thread-list { padding-top: 0; }
 .sidebar-document-browser > [hidden] { display: none; }
@@ -72,13 +76,14 @@
 .thread-sidebar.is-simplified .thread-sidebar-actions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sidebar-create-row,
 .sidebar-secondary-row {
+  align-items: center;
   display: flex;
-  gap: 6px;
+  gap: 4px;
   position: relative;
 }
 
@@ -102,10 +107,29 @@
 
 .sidebar-secondary-row .sidebar-search-button {
   flex: 1;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   gap: 6px;
+  min-height: 34px;
   min-width: 0;
+  padding: 6px 10px;
 }
+
+/* Search, new document and more actions share one row. */
+.sidebar-new-button {
+  align-items: center;
+  background: var(--button-surface);
+  border: 1px solid var(--button-border);
+  border-radius: 8px;
+  color: var(--ink);
+  display: inline-flex;
+  flex: 0 0 34px;
+  height: 34px;
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar-new-button:hover { background: var(--button-active-surface); }
+.sidebar-new-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 .thread-sidebar.is-simplified.is-collapsed .sidebar-create-row,
 .thread-sidebar.is-simplified.is-collapsed .sidebar-secondary-row {
@@ -113,6 +137,7 @@
 }
 
 .thread-sidebar.is-simplified.is-collapsed .sidebar-create-row .sidebar-action,
+.thread-sidebar.is-simplified.is-collapsed .sidebar-new-button,
 .thread-sidebar.is-simplified.is-collapsed .sidebar-search-button,
 .thread-sidebar.is-simplified.is-collapsed .sidebar-more-button {
   flex: 0 0 auto;
@@ -143,9 +168,10 @@
 }
 
 .sidebar-more-button {
-  flex: 0 0 auto;
-  gap: 4px;
-  padding: 8px;
+  flex: 0 0 34px;
+  justify-content: center;
+  min-height: 34px;
+  padding: 0;
 }
 
 .sidebar-more-button .thread-item-menu-icon {
@@ -208,27 +234,46 @@
   width: 0;
 }
 
+/* One line per document: the title, with dates in the headings above. */
 .thread-sidebar.is-simplified .thread-item-main {
-  align-items: stretch;
-  flex-direction: column;
-  gap: 3px;
-  min-height: 53px;
-  padding: 9px 10px 8px 25px;
+  align-items: center;
+  flex-direction: row;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 10px;
 }
 
 .thread-sidebar.is-simplified .thread-item-title {
-  width: 100%;
+  flex: 1 1 auto;
+  font-size: .86rem;
+  font-weight: 500;
+  min-width: 0;
 }
 
+.thread-sidebar.is-simplified .thread-item.is-active .thread-item-title { font-weight: 650; }
+
+/* Rows still drag onto Pinned or a group; the dots only cluttered the list. */
+.thread-sidebar.is-simplified .thread-item-drag-handle { display: none; }
+
+.thread-date-heading {
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 650;
+  letter-spacing: .06em;
+  margin: 0;
+  padding: 12px 10px 4px;
+  text-transform: uppercase;
+}
+
+.thread-sidebar-section.is-date:first-child .thread-date-heading { padding-top: 2px; }
+.thread-sidebar-section.is-date { display: flex; flex-direction: column; gap: 2px; }
+.thread-sidebar-section.is-date > .thread-item { contain-intrinsic-size: auto 32px; content-visibility: auto; }
+
 .thread-sidebar.is-simplified .thread-item-meta {
+  flex: 0 0 auto;
   font-size: 0.67rem;
   line-height: 1.2;
   margin-left: 0;
-}
-
-.thread-sidebar.is-simplified .thread-item:hover .thread-item-date,
-.thread-sidebar.is-simplified .thread-item:focus-within .thread-item-date {
-  display: inline;
 }
 
 .thread-sidebar.is-simplified .thread-item:hover .thread-item-main,
@@ -321,3 +366,11 @@
 .thread-sidebar:not(.is-collapsed) .thread-sidebar-footer.has-vault-switcher { align-items: center; gap: 4px; }
 .thread-sidebar:not(.is-collapsed) .thread-sidebar-footer.has-vault-switcher .vault-switcher-trigger { padding: 0 6px 0 10px; }
 .thread-sidebar:not(.is-collapsed) .thread-sidebar-footer.has-vault-switcher .sidebar-utility-button { width: 36px; }
+/* Plain icons in the footer, like the row above the list. */
+.thread-sidebar:not(.is-collapsed) .thread-sidebar-footer .sidebar-utility-button { background: transparent; border-color: transparent; box-shadow: none; height: 34px; }
+.thread-sidebar:not(.is-collapsed) .thread-sidebar-footer .sidebar-utility-button:hover { background: var(--button-active-surface); transform: none; }
+@media (pointer: coarse) {
+  .sidebar-new-button,
+  .sidebar-more-button { flex-basis: 44px; height: 44px; min-height: 44px; }
+  .sidebar-secondary-row .sidebar-search-button { min-height: 44px; }
+}

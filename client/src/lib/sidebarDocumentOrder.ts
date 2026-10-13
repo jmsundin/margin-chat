@@ -34,9 +34,12 @@ function time(value: string | undefined) {
  * file in the vault folder, say) counts from when it was made, so it starts
  * at the top even before it is opened.
  */
+export function recentlyViewedAt(thread: ThreadSummary, openedAt: ReadonlyMap<string, number>) {
+  return Math.max(openedAt.get(thread.id) ?? 0, time(thread.createdAt ?? thread.updatedAt));
+}
+
 export function sortByRecentlyViewed(threads: ThreadSummary[], openedAt: ReadonlyMap<string, number>) {
-  const recency = new Map(threads.map((thread) => [thread.id,
-    Math.max(openedAt.get(thread.id) ?? 0, time(thread.createdAt ?? thread.updatedAt))]));
+  const recency = new Map(threads.map((thread) => [thread.id, recentlyViewedAt(thread, openedAt)]));
   return [...threads].sort((a, b) => recency.get(b.id)! - recency.get(a.id)! || time(b.updatedAt) - time(a.updatedAt)
     || (a.id < b.id ? -1 : 1));
 }
@@ -102,4 +105,40 @@ export function groupIntoCategories(ordered: ThreadSummary[],
     .sort((a, b) => b.threads.length - a.threads.length || collator.compare(a.label, b.label));
   if (unfiled.length) categories.push({ id: "unfiled", label: "Unfiled", threads: unfiled });
   return categories;
+}
+
+export interface SidebarDateSection {
+  id: "today" | "yesterday" | "week" | "month" | "older";
+  label: string;
+  threads: ThreadSummary[];
+}
+
+const DATE_SECTIONS: ReadonlyArray<Pick<SidebarDateSection, "id" | "label">> = [
+  { id: "today", label: "Today" },
+  { id: "yesterday", label: "Yesterday" },
+  { id: "week", label: "This week" },
+  { id: "month", label: "This month" },
+  { id: "older", label: "Older" },
+];
+
+/**
+ * Splits a newest-first list under Today, Yesterday, This week, This month and
+ * Older, counted in local calendar days. Keeps the list's order; empty
+ * sections are left out.
+ */
+export function groupByDate(threads: ThreadSummary[], timeOf: (thread: ThreadSummary) => number, now = Date.now()): SidebarDateSection[] {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const dayStart = (daysAgo: number) => {
+    const day = new Date(today);
+    day.setDate(day.getDate() - daysAgo);
+    return day.getTime();
+  };
+  const starts = [dayStart(0), dayStart(1), dayStart(6), dayStart(29), -Infinity];
+  const sections = DATE_SECTIONS.map((section) => ({ ...section, threads: [] as ThreadSummary[] }));
+  for (const thread of threads) {
+    const at = timeOf(thread);
+    sections[starts.findIndex((start) => at >= start)].threads.push(thread);
+  }
+  return sections.filter((section) => section.threads.length);
 }

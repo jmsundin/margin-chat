@@ -28,7 +28,7 @@ const threads = Array.from({ length: 500 }, (_, index) => ({
   updatedAt: "2026-09-19T00:00:00.000Z", updatedLabel: "now",
 }));
 const noop = () => {};
-const rows = () => container.querySelectorAll("#sidebar-document-list > .thread-item").length;
+const rows = () => container.querySelectorAll("#sidebar-document-list .thread-item").length;
 
 async function render(activeThreadId: string) {
   await act(async () => {
