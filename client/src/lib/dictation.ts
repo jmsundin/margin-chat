@@ -1,12 +1,17 @@
+import { isolateHistory } from "@codemirror/commands";
 import { Transaction as CodeMirrorTransaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { closeHistory } from "@tiptap/pm/history";
 import { TextSelection, type Transaction } from "@tiptap/pm/state";
 import { isApplePlatform } from "./workspaceViewShortcuts";
 
-/** Recordings stop on their own before they outgrow the server's 4 MB limit. */
-export const MAX_RECORDING_MS = 10 * 60 * 1000;
-export const MAX_RECORDING_BYTES = 3_800_000;
+/**
+ * Recordings have no length limit. They're kept as pieces of a few minutes
+ * each, so every piece stays under the server's 4 MB upload limit.
+ */
+export const SEGMENT_MS = 4 * 60 * 1000;
+export const MAX_SEGMENT_BYTES = 3_500_000;
 const RECORDING_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
 const TEXT_INPUT_TYPES = new Set(["text", "search", "url"]);
 
@@ -60,8 +65,11 @@ function findTiptap(target: HTMLElement): TiptapLike | null {
 interface TextSurface {
   caret(): number;
   read(from: number, to: number): string;
-  /** Replaces text and puts the cursor after it. Without `history`, undo never sees it. */
-  replace(from: number, to: number, text: string, history: boolean): void;
+  /**
+   * Replaces text and puts the cursor after it, returning the text as the
+   * field stored it. Without `history`, undo never sees it.
+   */
+  replace(from: number, to: number, text: string, history: boolean): string;
   focus(): void;
 }
 
@@ -85,7 +93,10 @@ function surfaceFor(target: HTMLElement): TextSurface | null {
         else tr.delete(from, to);
         tr.setSelection(TextSelection.create(tr.doc, from + plain.length));
         tr.setMeta("addToHistory", history);
+        // Its own undo step, even right after typing or another dictation edit.
+        if (history) closeHistory(tr);
         tiptap.view.dispatch(tr.scrollIntoView());
+        return plain;
       },
       focus: () => tiptap.view.focus(),
     };
@@ -99,8 +110,9 @@ function surfaceFor(target: HTMLElement): TextSurface | null {
       replace(from, to, text, history) {
         codeMirror.dispatch({
           changes: { from, to, insert: text }, selection: { anchor: from + text.length }, scrollIntoView: true,
-          ...(history ? {} : { annotations: CodeMirrorTransaction.addToHistory.of(false) }),
+          annotations: history ? isolateHistory.of("full") : CodeMirrorTransaction.addToHistory.of(false),
         });
+        return text;
       },
       focus: () => codeMirror.focus(),
     };
@@ -109,12 +121,15 @@ function surfaceFor(target: HTMLElement): TextSurface | null {
     return {
       caret: () => target.selectionEnd ?? target.value.length,
       read: (from, to) => target.value.slice(from, to),
-      replace(from, to, text, history) {
+      replace(from, to, value, history) {
+        // One-line fields can't hold line breaks.
+        const text = target instanceof HTMLInputElement ? value.replace(/\s+/gu, " ") : value;
         target.focus();
         target.setSelectionRange(from, to);
         // insertText keeps the browser's undo stack; previews skip it.
-        if (history && text && document.execCommand?.("insertText", false, text)) return;
+        if (history && text && document.execCommand?.("insertText", false, text)) return text;
         setNativeValue(target, target.value.slice(0, from) + text + target.value.slice(to), from + text.length, text);
+        return text;
       },
       focus: () => target.focus(),
     };
@@ -122,35 +137,59 @@ function surfaceFor(target: HTMLElement): TextSurface | null {
   return null;
 }
 
+/** Typed dictation that can be swapped for another version of itself. */
+export interface DictationInsertion {
+  /** Whether the typed text is still where it was put, unchanged. */
+  intact(): boolean;
+  /** Replaces the typed text as one undoable edit. False when it was edited or the field closed. */
+  swap(text: string): boolean;
+}
+
+function trackInsertion(target: HTMLElement, surface: TextSurface, at: number, before: string, typed: string): DictationInsertion {
+  let shown = typed;
+  const intact = () => target.isConnected && surface.read(at, at + shown.length) === shown;
+  return {
+    intact,
+    swap(text) {
+      if (!intact()) return false;
+      shown = surface.replace(at, at + shown.length, joinDictation(before, text), true);
+      surface.focus();
+      return true;
+    },
+  };
+}
+
 /**
  * Types the transcript where the cursor is, through the editor that owns the
  * field so its undo history and change handlers see an ordinary edit. Returns
- * false when the field is gone, so the caller can offer the text another way.
+ * null when the field is gone, so the caller can offer the text another way.
  */
-export function insertDictation(target: HTMLElement, text: string): boolean {
-  if (!target.isConnected) return false;
+export function insertDictation(target: HTMLElement, text: string): DictationInsertion | null {
+  if (!target.isConnected) return null;
   const surface = surfaceFor(target);
   if (surface) {
     const at = surface.caret();
-    const insert = joinDictation(surface.read(Math.max(0, at - 1), at), text);
-    if (insert) surface.replace(at, at, insert, true);
+    const before = surface.read(Math.max(0, at - 1), at);
+    const insert = joinDictation(before, text);
+    const typed = insert ? surface.replace(at, at, insert, true) : "";
     surface.focus();
-    return true;
+    return trackInsertion(target, surface, at, before, typed);
   }
   target.focus();
   const selection = window.getSelection();
   const node = selection?.anchorNode;
   const before = node?.nodeType === Node.TEXT_NODE && selection ? (node.textContent ?? "").slice(Math.max(0, selection.anchorOffset - 1), selection.anchorOffset) : "";
   const insert = joinDictation(before, text);
-  if (insert && !document.execCommand?.("insertText", false, insert)) return false;
-  return true;
+  if (insert && !document.execCommand?.("insertText", false, insert)) return null;
+  // Plain editable elements can't be tracked, so their text can't be swapped.
+  return { intact: () => false, swap: () => false };
 }
 
 /** Words shown in the field while the person is still talking. */
 export interface DictationPreview {
   update(text: string): void;
   /** Swaps the preview for the final transcript as one undoable edit. */
-  commit(text: string): boolean;
+  commit(text: string): DictationInsertion | null;
   discard(): void;
 }
 
@@ -173,18 +212,17 @@ export function startDictationPreview(target: HTMLElement): DictationPreview | n
       if (!intact()) { lost = true; return; }
       const next = joinDictation(before, text);
       if (next === shown) return;
-      surface.replace(at, at + shown.length, next, false);
-      shown = next;
+      shown = surface.replace(at, at + shown.length, next, false);
     },
     commit(text) {
-      if (!target.isConnected) return false;
+      if (!target.isConnected) return null;
       if (!intact()) return insertDictation(target, text);
       if (shown) surface.replace(at, at + shown.length, "", false);
       shown = "";
       const insert = joinDictation(before, text);
-      if (insert) surface.replace(at, at, insert, true);
+      const typed = insert ? surface.replace(at, at, insert, true) : "";
       surface.focus();
-      return true;
+      return trackInsertion(target, surface, at, before, typed);
     },
     discard() {
       if (shown && intact()) surface.replace(at, at + shown.length, "", false);
@@ -197,7 +235,7 @@ export function startDictationPreview(target: HTMLElement): DictationPreview | n
 export interface DictationRecording {
   /** The microphone, for streaming it while it records. */
   stream: MediaStream;
-  /** Ends the recording and resolves with its audio. */
+  /** Ends the recording and resolves with its last piece of audio, after every earlier piece went to `onSegment`. */
   stop(): Promise<Blob>;
   /** Ends the recording and throws its audio away. */
   cancel(): void;
@@ -208,30 +246,57 @@ function pickRecordingType(): string | undefined {
 }
 
 /**
- * Records the microphone. `onLevel` gets a 0–1 loudness for the meter, and
- * `onLimit` fires when the recording reaches its length or size limit.
+ * Records the microphone for as long as the person talks. `onLevel` gets a
+ * 0–1 loudness for the meter. Every few minutes the recording starts a new
+ * piece, each a complete audio file, and hands the finished one to `onSegment`.
  */
-export async function startDictationRecording(options: { onLevel?: (level: number) => void; onLimit?: () => void } = {}): Promise<DictationRecording> {
+export async function startDictationRecording(options: {
+  onLevel?: (level: number) => void;
+  onSegment?: (audio: Blob) => void;
+  segmentMs?: number;
+} = {}): Promise<DictationRecording> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   const mimeType = pickRecordingType();
-  let recorder: MediaRecorder;
+  let cancelled = false;
+
+  // One piece of the recording: its own recorder, so its audio plays on its own.
+  const record = () => {
+    const recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 32_000 });
+    const chunks: Blob[] = [];
+    let size = 0;
+    recorder.addEventListener("dataavailable", (event) => {
+      if (!event.data.size) return;
+      chunks.push(event.data);
+      size += event.data.size;
+      if (size >= MAX_SEGMENT_BYTES && current?.recorder === recorder) rotate();
+    });
+    const finished = new Promise<Blob>((resolve, reject) => {
+      recorder.addEventListener("stop", () => resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" })), { once: true });
+      recorder.addEventListener("error", () => reject(new Error("The recording stopped unexpectedly.")), { once: true });
+    });
+    recorder.start(1000);
+    return { recorder, finished };
+  };
+  let current: ReturnType<typeof record> | null = null;
+  // Earlier pieces reach `onSegment` in order, before `stop` resolves.
+  let delivered: Promise<void> = Promise.resolve();
+  const rotate = () => {
+    const previous = current;
+    // The next piece starts before the last one stops, so no words fall between them.
+    current = record();
+    if (!previous) return;
+    delivered = delivered.then(() => previous.finished).then((audio) => {
+      if (!cancelled && audio.size) options.onSegment?.(audio);
+    }, () => undefined);
+    if (previous.recorder.state !== "inactive") previous.recorder.stop();
+  };
   try {
-    recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 32_000 });
+    rotate();
   } catch (error) {
     stream.getTracks().forEach((track) => track.stop());
     throw error;
   }
-  const chunks: Blob[] = [];
-  let size = 0;
-  let limited = false;
-  const reachLimit = () => { if (!limited) { limited = true; options.onLimit?.(); } };
-  recorder.addEventListener("dataavailable", (event) => {
-    if (!event.data.size) return;
-    chunks.push(event.data);
-    size += event.data.size;
-    if (size >= MAX_RECORDING_BYTES) reachLimit();
-  });
-  const timer = window.setTimeout(reachLimit, MAX_RECORDING_MS);
+  const timer = window.setInterval(rotate, options.segmentMs ?? SEGMENT_MS);
 
   let audioContext: AudioContext | null = null;
   let frame = 0;
@@ -254,26 +319,29 @@ export async function startDictationRecording(options: { onLevel?: (level: numbe
   }
 
   const release = () => {
-    window.clearTimeout(timer);
+    window.clearInterval(timer);
     cancelAnimationFrame(frame);
     void audioContext?.close().catch(() => undefined);
     stream.getTracks().forEach((track) => track.stop());
   };
-  recorder.start(1000);
 
   return {
     stream,
-    stop: () => new Promise<Blob>((resolve, reject) => {
-      if (recorder.state === "inactive") { release(); resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" })); return; }
-      recorder.addEventListener("stop", () => {
+    async stop() {
+      window.clearInterval(timer);
+      const last = current!;
+      if (last.recorder.state !== "inactive") last.recorder.stop();
+      try {
+        const audio = await last.finished;
+        await delivered;
+        return audio;
+      } finally {
         release();
-        resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
-      }, { once: true });
-      recorder.addEventListener("error", () => { release(); reject(new Error("The recording stopped unexpectedly.")); }, { once: true });
-      recorder.stop();
-    }),
-    cancel: () => {
-      if (recorder.state !== "inactive") recorder.stop();
+      }
+    },
+    cancel() {
+      cancelled = true;
+      if (current && current.recorder.state !== "inactive") current.recorder.stop();
       release();
     },
   };

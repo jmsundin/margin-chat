@@ -492,7 +492,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -932,6 +932,12 @@ export function createApiHandler({
       if (route?.id === "dictationLiveFinish") {
         const body = await readJsonBody(request, 8 * 1024);
         sendJson(response, 200, await dictation.finishLive({ token: body?.token, userId: authContext.user.id }), { "Cache-Control": "private, no-store" });
+        return;
+      }
+
+      if (route?.id === "dictationLiveRenew") {
+        const body = await readJsonBody(request, 8 * 1024);
+        sendJson(response, 200, await dictation.renewLive({ token: body?.token, userId: authContext.user.id }), { "Cache-Control": "private, no-store" });
         return;
       }
 

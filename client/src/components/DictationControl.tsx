@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { finishLiveDictationSession, requestDictationTranscript, requestLiveDictationSession } from "../lib/api";
+import {
+  finishLiveDictationSession,
+  renewLiveDictationSession,
+  requestDictationCleanup,
+  requestDictationTranscript,
+  requestLiveDictationSession,
+} from "../lib/api";
+import { joinTranscripts } from "../lib/dictationText";
 import { startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
 import {
   dictationShortcutLabel,
@@ -12,17 +19,22 @@ import {
   startDictationPreview,
   startDictationRecording,
   subscribeDictationButtonPreference,
+  type DictationInsertion,
   type DictationPreview,
   type DictationRecording,
 } from "../lib/dictation";
 import "./DictationControl.css";
 
+type Version = "raw" | "clean";
+
 type Phase =
   | { kind: "idle" }
   | { kind: "starting"; target: HTMLElement }
   | { kind: "recording"; target: HTMLElement; startedAt: number }
-  | { kind: "transcribing"; target: HTMLElement }
-  | { kind: "notice"; target: HTMLElement | null; message: string };
+  | { kind: "transcribing"; target: HTMLElement; done?: number; total?: number }
+  | { kind: "notice"; target: HTMLElement | null; message: string; retry?: () => void }
+  // The raw transcript is typed; the cleaned-up one is offered as a swap.
+  | { kind: "versions"; target: HTMLElement; raw: string; clean: string | null; cleanError: string | null; showing: Version; insertion: DictationInsertion };
 
 /** Distances from the viewport's right and bottom edges, so wider or taller states grow away from the corner. */
 interface Anchor { right: number; bottom: number }
@@ -32,6 +44,10 @@ const INSET = 6;
 // Holding the shortcut longer than this makes it push-to-talk: letting go stops.
 const HOLD_MS = 450;
 const SHORTEST_RECORDING_MS = 300;
+// A hosted live session holds ten minutes of credit; renew it before that runs out.
+const LIVE_RENEW_MS = 9 * 60 * 1000;
+// Pieces of a long recording transcribed at once.
+const TRANSCRIBE_CONCURRENCY = 2;
 
 /** Bottom-right corner of the part of the field that is on screen. */
 function anchorFor(target: HTMLElement): Anchor | null {
@@ -63,18 +79,39 @@ interface LiveRun {
   preview: DictationPreview | null;
   token: string | null;
   ended: boolean;
+  renewTimer: number;
+}
+
+/**
+ * The recording's audio, a few minutes per piece. While live transcription
+ * runs, the pieces are only kept; if it isn't available or drops, every piece
+ * is transcribed on its own, a couple at a time.
+ */
+interface Pieces {
+  audio: Blob[];
+  texts: (Promise<string> | undefined)[];
+  /** True once the pieces, not the live session, are the transcript. */
+  batch: boolean;
+  done: Set<number>;
+  /** Stops every piece's request when voice typing is cancelled. */
+  controller: AbortController;
 }
 
 function formatElapsed(ms: number) {
   const seconds = Math.floor(ms / 1000);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const clock = `${String(seconds % 60).padStart(2, "0")}`;
+  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${clock}` : `${minutes}:${clock}`;
 }
 
 /**
  * Voice typing for every text field in the app: a mic button on the focused
  * field and a shortcut that records, transcribes and types at the cursor.
+ * Recordings run as long as the person talks. The word-for-word transcript
+ * is typed, and a cleaned-up version is offered as a one-click swap.
  */
-export default function DictationControl({ userId }: { userId?: string }) {
+export default function DictationControl({ userId, segmentMs }: { userId?: string; segmentMs?: number }) {
   const supported = dictationSupported();
   const showButton = useSyncExternalStore(subscribeDictationButtonPreference, readDictationButtonPreference, () => true);
   const [focused, setFocused] = useState<HTMLElement | null>(null);
@@ -86,32 +123,75 @@ export default function DictationControl({ userId }: { userId?: string }) {
   // Live words for fields that can't show them in place.
   const [liveText, setLiveText] = useState("");
   const liveRef = useRef<LiveRun | null>(null);
+  const piecesRef = useRef<Pieces | null>(null);
   // Read by async steps and key handlers, so it changes with each update, not each render.
   const phaseRef = useRef<Phase>(phase);
   const setPhase = useCallback((next: Phase) => { phaseRef.current = next; setPhaseState(next); }, []);
   const recordingRef = useRef<DictationRecording | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const cleanupRef = useRef<AbortController | null>(null);
   const keyPressRef = useRef<number | null>(null);
   const noticeTimer = useRef(0);
   const coarsePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
 
-  const showNotice = useCallback((target: HTMLElement | null, message: string) => {
+  const showNotice = useCallback((target: HTMLElement | null, message: string, retry?: () => void) => {
     window.clearTimeout(noticeTimer.current);
-    setPhase({ kind: "notice", target, message });
+    setPhase({ kind: "notice", target, message, retry });
+    // A notice that can retry keeps the recording, so it stays until it's used or dismissed.
+    if (retry) return;
     noticeTimer.current = window.setTimeout(() => {
       if (phaseRef.current.kind === "notice") setPhase({ kind: "idle" });
     }, 6000);
   }, []);
 
+  const dismissVersions = useCallback(() => {
+    cleanupRef.current?.abort();
+    cleanupRef.current = null;
+    if (phaseRef.current.kind === "versions") setPhase({ kind: "idle" });
+  }, []);
+
   // Stops a hosted session's charge; the server bills the time it ran.
   const endCharge = useCallback((run: LiveRun) => {
+    window.clearInterval(run.renewTimer);
     if (run.token) void finishLiveDictationSession(run.token, userId);
     run.token = null;
   }, [userId]);
 
+  /** Starts transcribing a piece of the recording, unless it already is. */
+  const transcribePiece = useCallback((pieces: Pieces, index: number): Promise<string> => {
+    const existing = pieces.texts[index];
+    if (existing) return existing;
+    // Wait for an earlier piece's slot, so a long recording doesn't flood the server.
+    const ahead = pieces.texts[index - TRANSCRIBE_CONCURRENCY] ?? Promise.resolve("");
+    const text = ahead.catch(() => "").then(() => requestDictationTranscript(pieces.audio[index], { expectedUserId: userId, signal: pieces.controller.signal }));
+    pieces.texts[index] = text;
+    text.then(() => { pieces.done.add(index); }, () => {
+      // A failed piece is tried again on the next attempt.
+      if (pieces.texts[index] === text) pieces.texts[index] = undefined;
+    });
+    return text;
+  }, [userId]);
+
+  /** From now on the pieces are the transcript: transcribe the ones so far, and each new one as it ends. */
+  const switchToPieces = useCallback((pieces: Pieces) => {
+    if (pieces.batch) return;
+    pieces.batch = true;
+    pieces.audio.forEach((_, index) => { void transcribePiece(pieces, index).catch(() => undefined); });
+  }, [transcribePiece]);
+
+  /** Live transcription stopped working mid-recording; the recording's pieces take over. */
+  const dropLive = useCallback((run: LiveRun) => {
+    if (run.ended) return;
+    run.ended = true;
+    run.transcription?.close();
+    run.transcription = null;
+    endCharge(run);
+    if (piecesRef.current) switchToPieces(piecesRef.current);
+  }, [endCharge, switchToPieces]);
+
   const beginLive = useCallback((stream: MediaStream, target: HTMLElement): LiveRun => {
-    const run: LiveRun = { transcription: null, preview: startDictationPreview(target), token: null, ended: false };
-    if (typeof RTCPeerConnection === "undefined") return run;
+    const run: LiveRun = { transcription: null, preview: startDictationPreview(target), token: null, ended: false, renewTimer: 0 };
+    if (typeof RTCPeerConnection === "undefined") { run.ended = true; return run; }
     void (async () => {
       try {
         const session = await requestLiveDictationSession({ expectedUserId: userId });
@@ -124,22 +204,103 @@ export default function DictationControl({ userId }: { userId?: string }) {
             if (run.preview) run.preview.update(text);
             else setLiveText(text);
           },
+          onDrop: () => dropLive(run),
         });
         if (run.ended) { transcription.close(); endCharge(run); return; }
         run.transcription = transcription;
+        if (run.token) {
+          // Long sessions keep going: bill the time so far and hold the next stretch.
+          run.renewTimer = window.setInterval(() => {
+            const token = run.token;
+            if (!token || run.ended) return;
+            renewLiveDictationSession(token, userId).then(
+              (next) => { if (run.token === token) run.token = next; },
+              // Finishing still settles the old hold, whatever the renewal got to.
+              () => dropLive(run),
+            );
+          }, LIVE_RENEW_MS);
+        }
       } catch {
-        // Without a live session the recording is transcribed when it stops.
+        // Without a live session, the recording's pieces are transcribed instead.
         endCharge(run);
+        run.ended = true;
+        if (piecesRef.current) switchToPieces(piecesRef.current);
       }
     })();
     return run;
-  }, [endCharge, userId]);
+  }, [dropLive, endCharge, switchToPieces, userId]);
+
+  /** Types the raw transcript and starts cleaning it up for the swap. */
+  const deliver = useCallback((target: HTMLElement, raw: string, preview: DictationPreview | null) => {
+    const insertion = preview ? preview.commit(raw) : insertDictation(target, raw);
+    if (!insertion) {
+      void navigator.clipboard?.writeText(raw).catch(() => undefined);
+      showNotice(null, "That field closed, so the transcript was copied instead.");
+      return;
+    }
+    setPhase({ kind: "versions", target, raw, clean: null, cleanError: null, showing: "raw", insertion });
+    const controller = new AbortController();
+    cleanupRef.current?.abort();
+    cleanupRef.current = controller;
+    const update = (patch: Partial<Extract<Phase, { kind: "versions" }>>) => {
+      const current = phaseRef.current;
+      if (controller.signal.aborted || current.kind !== "versions" || current.insertion !== insertion) return;
+      setPhase({ ...current, ...patch });
+    };
+    requestDictationCleanup(raw, { expectedUserId: userId, signal: controller.signal }).then(
+      (clean) => update({ clean: clean.trim() || raw }),
+      (error) => update({ cleanError: describeError(error) }),
+    );
+  }, [showNotice, userId]);
+
+  /** Puts the raw or clean version in the field. */
+  const showVersion = useCallback((version: Version) => {
+    const current = phaseRef.current;
+    if (current.kind !== "versions" || current.showing === version) return;
+    const text = version === "raw" ? current.raw : current.clean;
+    if (text === null) return;
+    if (current.insertion.swap(text)) { setPhase({ ...current, showing: version }); return; }
+    void navigator.clipboard?.writeText(text).catch(() => undefined);
+    showNotice(current.target, `The text was edited, so the ${version} version was copied instead.`);
+  }, [showNotice]);
+
+  /** Turns the recording's pieces into one transcript and types it. Failures keep the audio for another try. */
+  const transcribePieces = useCallback(async (target: HTMLElement, pieces: Pieces, preview: DictationPreview | null) => {
+    const { controller } = pieces;
+    abortRef.current = controller;
+    const total = pieces.audio.length;
+    setPhase({ kind: "transcribing", target, done: pieces.done.size, total });
+    const progress = window.setInterval(() => {
+      if (phaseRef.current.kind === "transcribing" && total > 1) setPhase({ kind: "transcribing", target, done: pieces.done.size, total });
+    }, 500);
+    try {
+      const texts = await Promise.all(pieces.audio.map((_, index) => transcribePiece(pieces, index)));
+      if (controller.signal.aborted) return;
+      const raw = joinTranscripts(texts);
+      if (!raw) {
+        preview?.discard();
+        showNotice(target, "Didn't catch anything. Try again a little closer to the mic.");
+        return;
+      }
+      deliver(target, raw, preview);
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      preview?.discard();
+      const retry = () => { void transcribePieces(target, pieces, null); };
+      showNotice(target, `${describeError(error)} Your recording is kept, so you can try again.`, retry);
+    } finally {
+      window.clearInterval(progress);
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+  }, [deliver, showNotice, transcribePiece]);
 
   const finish = useCallback(async () => {
     const current = phaseRef.current;
     const recording = recordingRef.current;
-    if (current.kind !== "recording" || !recording) return;
+    const pieces = piecesRef.current;
+    if (current.kind !== "recording" || !recording || !pieces) return;
     recordingRef.current = null;
+    piecesRef.current = null;
     keyPressRef.current = null;
     const live = liveRef.current;
     liveRef.current = null;
@@ -151,39 +312,41 @@ export default function DictationControl({ userId }: { userId?: string }) {
     }
     const { target } = current;
     setPhase({ kind: "transcribing", target });
-    const controller = new AbortController();
-    abortRef.current = controller;
     try {
-      // The live session's final text, when it ran; otherwise the recording is transcribed.
+      // The live session's final text, when it ran start to finish; otherwise the pieces are transcribed.
       let text: string | null = null;
+      const transcription = live && !live.ended ? live.transcription : null;
       if (live) {
         live.ended = true;
-        text = live.transcription ? await live.transcription.finish() : null;
+        window.clearInterval(live.renewTimer);
+        text = transcription ? await transcription.finish() : null;
         endCharge(live);
       }
-      const audio = await recording.stop();
+      const last = await recording.stop();
+      if (last.size) pieces.audio.push(last);
       setLiveText("");
-      if (controller.signal.aborted) return;
-      if (text === null) {
-        live?.preview?.discard();
-        text = await requestDictationTranscript(audio, { expectedUserId: userId, signal: controller.signal });
+      if ((phaseRef.current as Phase).kind !== "transcribing") { live?.preview?.discard(); return; }
+      if (text !== null) {
+        if (!text.trim()) {
+          live?.preview?.discard();
+          showNotice(target, "Didn't catch anything. Try again a little closer to the mic.");
+          return;
+        }
+        deliver(target, text, live?.preview ?? null);
+        return;
       }
-      if (controller.signal.aborted) return;
-      if (!text.trim()) {
+      if (!pieces.audio.length) {
         live?.preview?.discard();
         showNotice(target, "Didn't catch anything. Try again a little closer to the mic.");
         return;
       }
-      if (live?.preview ? live.preview.commit(text) : insertDictation(target, text)) { setPhase({ kind: "idle" }); return; }
-      await navigator.clipboard?.writeText(text).catch(() => undefined);
-      showNotice(null, "That field closed, so the transcript was copied instead.");
+      await transcribePieces(target, pieces, live?.preview ?? null);
     } catch (error) {
-      if (controller.signal.aborted) return;
+      if ((phaseRef.current as Phase).kind !== "transcribing") return;
+      live?.preview?.discard();
       showNotice(target, describeError(error));
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [endCharge, showNotice, userId]);
+  }, [deliver, endCharge, showNotice, transcribePieces]);
 
   const cancel = useCallback(() => {
     const live = liveRef.current;
@@ -197,6 +360,8 @@ export default function DictationControl({ userId }: { userId?: string }) {
     setLiveText("");
     recordingRef.current?.cancel();
     recordingRef.current = null;
+    piecesRef.current?.controller.abort();
+    piecesRef.current = null;
     abortRef.current?.abort();
     abortRef.current = null;
     keyPressRef.current = null;
@@ -205,22 +370,31 @@ export default function DictationControl({ userId }: { userId?: string }) {
 
   const start = useCallback(async (target: HTMLElement) => {
     if (phaseRef.current.kind === "starting" || phaseRef.current.kind === "recording" || phaseRef.current.kind === "transcribing") return;
+    dismissVersions();
     setPhase({ kind: "starting", target });
     try {
+      const pieces: Pieces = { audio: [], texts: [], batch: false, done: new Set(), controller: new AbortController() };
       const recording = await startDictationRecording({
         onLevel: setLevel,
-        onLimit: () => { void finish(); },
+        segmentMs,
+        onSegment: (audio) => {
+          pieces.audio.push(audio);
+          if (pieces.batch) void transcribePiece(pieces, pieces.audio.length - 1).catch(() => undefined);
+        },
       });
       // Esc or a second press while the microphone was opening.
       if ((phaseRef.current as Phase).kind !== "starting") { recording.cancel(); return; }
       recordingRef.current = recording;
-      liveRef.current = beginLive(recording.stream, target);
+      piecesRef.current = pieces;
+      const live = beginLive(recording.stream, target);
+      liveRef.current = live;
+      if (live.ended) switchToPieces(pieces);
       setPhase({ kind: "recording", target, startedAt: Date.now() });
     } catch (error) {
       keyPressRef.current = null;
       showNotice(target, describeError(error));
     }
-  }, [beginLive, finish, showNotice]);
+  }, [beginLive, dismissVersions, segmentMs, showNotice, switchToPieces, transcribePiece]);
 
   const toggle = useCallback((target: HTMLElement | null) => {
     const current = phaseRef.current;
@@ -284,6 +458,29 @@ export default function DictationControl({ userId }: { userId?: string }) {
       window.removeEventListener("keyup", onKeyUp, true);
     };
   }, [cancel, finish, supported, toggle]);
+
+  // The swap stays on offer until the typed text is edited over or focus moves to another field.
+  const versionsInsertion = phase.kind === "versions" ? phase.insertion : null;
+  const versionsTarget = phase.kind === "versions" ? phase.target : null;
+  useEffect(() => {
+    if (!versionsInsertion || !versionsTarget) return undefined;
+    const tracked = versionsInsertion.intact();
+    let timer = 0;
+    const onInput = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { if (tracked && !versionsInsertion.intact()) dismissVersions(); }, 0);
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Node && !versionsTarget.contains(event.target)) dismissVersions();
+    };
+    document.addEventListener("input", onInput, true);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("input", onInput, true);
+      document.removeEventListener("focusin", onFocusIn);
+    };
+  }, [dismissVersions, versionsInsertion, versionsTarget]);
 
   useEffect(() => {
     // Leaving the page mid-recording still ends a hosted session's charge.
@@ -359,12 +556,40 @@ export default function DictationControl({ userId }: { userId?: string }) {
       {phase.kind === "notice" ? (
         <>
           <span className="dictation-pill-message">{phase.message}</span>
+          {phase.retry ? <button className="dictation-pill-action" onClick={phase.retry} type="button">Try again</button> : null}
           <button aria-label="Dismiss" className="dictation-pill-button" onClick={() => setPhase({ kind: "idle" })} type="button">×</button>
         </>
       ) : phase.kind === "transcribing" ? (
         <>
           <span className="dictation-spinner" aria-hidden="true" />
-          <span>Transcribing…</span>
+          <span>{phase.total && phase.total > 1 ? `Transcribing ${Math.min(phase.done ?? 0, phase.total)} of ${phase.total}…` : "Transcribing…"}</span>
+        </>
+      ) : phase.kind === "versions" ? (
+        <>
+          <div aria-label="Which version to keep" className="dictation-versions" role="group">
+            <button
+              aria-pressed={phase.showing === "raw"}
+              className="dictation-version"
+              onClick={() => showVersion("raw")}
+              title="Everything you said, word for word"
+              type="button"
+            >
+              Raw
+            </button>
+            <button
+              aria-pressed={phase.showing === "clean"}
+              className="dictation-version"
+              disabled={phase.clean === null}
+              onClick={() => showVersion("clean")}
+              title={phase.cleanError ?? (phase.clean === null ? "Cleaning up…" : "Tidied by AI: fillers, false starts and repeats removed")}
+              type="button"
+            >
+              {phase.clean === null && !phase.cleanError ? <span className="dictation-spinner is-small" aria-hidden="true" /> : null}
+              Clean
+            </button>
+          </div>
+          {phase.cleanError ? <span className="dictation-pill-hint">Clean version unavailable</span> : null}
+          <button aria-label="Done" className="dictation-pill-button" onClick={dismissVersions} title="Done" type="button">×</button>
         </>
       ) : (
         <>

@@ -34,6 +34,9 @@ Object.defineProperty(browser.navigator, "mediaDevices", { configurable: true, v
   getUserMedia: async () => { const track = { stop: () => tracksStopped.push("audio") }; return { getTracks: () => [track], getAudioTracks: () => [track] }; },
 } });
 const requests: { url: string; contentType: string | null; size: number }[] = [];
+const cleanups: { kind: string; prompt: string }[] = [];
+let cleanupReply: (prompt: string) => Response = (prompt) => Response.json({ title: prompt.replace(/^\w/u, (letter) => letter.toUpperCase()).replace(/ (\w+)$/u, ", $1.") });
+let transcribeReply: () => Response = () => Response.json({ text: transcript });
 const liveRequests: { url: string; body: string; authorization: string | null }[] = [];
 let transcript = "hello world";
 let liveAvailable = true;
@@ -48,8 +51,13 @@ globalThis.fetch = (async (url: string, init: RequestInit) => {
     if (String(url) === "/api/dictation/live/finish") return Response.json({ settled: true, seconds: 2 });
     return new Response("answer-sdp", { headers: { "Content-Type": "application/sdp" } });
   }
+  if (String(url) === "/api/chat/title") {
+    const body = JSON.parse(String(init.body));
+    cleanups.push(body);
+    return cleanupReply(body.prompt);
+  }
   requests.push({ url: String(url), contentType: new Headers(init.headers).get("Content-Type"), size: (init.body as Blob).size });
-  return Response.json({ text: transcript });
+  return transcribeReply();
 }) as typeof fetch;
 
 const { act, createElement, useState } = await import("react");
@@ -90,7 +98,7 @@ checks.push("skips passwords and opted-out fields");
 const cmParent = document.createElement("div");
 document.body.append(cmParent);
 const codeMirror = new EditorView({ parent: cmParent, state: EditorState.create({ doc: "Start end", selection: { anchor: 5 } }) });
-assert.equal(insertDictation(codeMirror.contentDOM, "middle"), true);
+assert.ok(insertDictation(codeMirror.contentDOM, "middle"));
 assert.equal(codeMirror.state.doc.toString(), "Start middle end");
 codeMirror.destroy();
 checks.push("types into CodeMirror at the cursor");
@@ -100,12 +108,17 @@ const tiptapParent = document.createElement("div");
 document.body.append(tiptapParent);
 const tiptap = new Editor({ element: tiptapParent, extensions: [StarterKit], content: "<p>Notes</p>" });
 tiptap.commands.setTextSelection(6);
-assert.equal(insertDictation(tiptap.view.dom as HTMLElement, "from my voice"), true);
+const typed = insertDictation(tiptap.view.dom as HTMLElement, "from my voice")!;
+assert.equal(tiptap.getText(), "Notes from my voice");
+// The clean version swaps in as its own undo step; paragraphs flatten in one block.
+assert.equal(typed.swap("From my voice.\n\nSecond thought."), true);
+assert.equal(tiptap.getText(), "Notes From my voice. Second thought.");
+tiptap.commands.undo();
 assert.equal(tiptap.getText(), "Notes from my voice");
 tiptap.commands.undo();
 assert.equal(tiptap.getText(), "Notes");
 tiptap.destroy();
-checks.push("types into the rich editor with undo");
+checks.push("types into the rich editor with undo, and swaps versions");
 
 // Live previews stay out of undo; the final text is one undoable edit.
 const previewParent = document.createElement("div");
@@ -116,7 +129,7 @@ const rich = startDictationPreview(richPreview.view.dom as HTMLElement)!;
 rich.update("one");
 rich.update("one two");
 assert.equal(richPreview.getText(), "Notes one two");
-assert.equal(rich.commit("One, two."), true);
+assert.ok(rich.commit("One, two."));
 assert.equal(richPreview.getText(), "Notes One, two.");
 richPreview.commands.undo();
 assert.equal(richPreview.getText(), "Notes");
@@ -140,12 +153,13 @@ checks.push("previews live words outside undo in both editors");
 
 // A React-controlled textarea sees the change, by shortcut, end to end.
 let latest = "";
+let pieceMs: number | undefined;
 function Host() {
   const [value, setValue] = useState("Ask");
   latest = value;
   return createElement("div", null,
     createElement("textarea", { id: "composer", value, onChange: (event: any) => setValue(event.target.value) }),
-    createElement(DictationControl, { userId: "user-1" }));
+    createElement(DictationControl, { userId: "user-1", segmentMs: pieceMs }));
 }
 const container = document.createElement("div");
 document.body.append(container);
@@ -166,8 +180,23 @@ assert.equal(requests[0].contentType, "audio/webm;codecs=opus");
 assert.equal(requests[0].size, 2048);
 assert.equal(latest, "Ask hello world");
 assert.equal(tracksStopped.length, 1, "microphone released");
-assert.equal(document.querySelector(".dictation-pill"), null);
 checks.push("records, transcribes and types into a React textarea");
+
+// The raw transcript is typed; the clean one is a click away, and so is going back.
+const version = (name: string) => [...document.querySelectorAll<HTMLButtonElement>(".dictation-version")].find((button) => button.textContent?.trim() === name)!;
+assert.ok(document.querySelector(".dictation-pill.is-versions"), "versions pill shows");
+assert.equal(version("Raw").getAttribute("aria-pressed"), "true");
+await act(async () => { await pause(20); });
+assert.deepEqual(cleanups, [{ kind: "dictation", prompt: "hello world" }]);
+assert.equal(version("Clean").disabled, false);
+await act(async () => { version("Clean").click(); });
+assert.equal(latest, "Ask Hello, world.");
+assert.equal(version("Clean").getAttribute("aria-pressed"), "true");
+await act(async () => { version("Raw").click(); });
+assert.equal(latest, "Ask hello world");
+await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pill.is-versions .dictation-pill-button")!.click(); });
+assert.equal(document.querySelector(".dictation-pill"), null);
+checks.push("swaps between the raw and clean versions");
 
 // Esc cancels without sending anything.
 await act(async () => { window.dispatchEvent(shortcut()); await pause(20); });
@@ -244,7 +273,8 @@ assert.deepEqual(sent.map((message) => JSON.parse(message).type), ["input_audio_
 assert.equal(requests.length, transcribeCalls, "no second transcription of the recording");
 assert.ok(liveRequests.some((request) => request.url === "/api/dictation/live/finish" && JSON.parse(request.body).token === "hold-token"), "hosted hold settled");
 assert.equal(peersClosed, 1);
-assert.equal(document.querySelector(".dictation-pill"), null);
+assert.ok(document.querySelector(".dictation-pill.is-versions"));
+assert.equal(cleanups.at(-1)?.prompt, "Hello there, live world.");
 checks.push("shows live words and swaps in the final text");
 
 // Esc mid-sentence takes the live words back out.
@@ -265,6 +295,67 @@ await pause(350);
 await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
 assert.equal(latest, "Ask hello world Hello there, live world. from the recording");
 checks.push("falls back to transcribing the recording");
+
+// Long recordings go up a piece at a time while the person is still talking, and come back in order.
+pieceMs = 100;
+await act(async () => root.render(createElement(Host)));
+let piece = 0;
+transcribeReply = () => Response.json({ text: `part ${++piece}` });
+const before = requests.length;
+await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
+await act(async () => { await pause(360); });
+const sentWhileTalking = requests.length - before;
+assert.ok(sentWhileTalking >= 2, `pieces sent while talking: ${sentWhileTalking}`);
+await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
+const pieces = requests.length - before;
+assert.ok(pieces > sentWhileTalking, "the last piece is sent on stop");
+assert.ok(requests.slice(before).every((request) => request.size === 2048));
+assert.equal(latest, `Ask hello world Hello there, live world. from the recording ${Array.from({ length: pieces }, (_, index) => `part ${index + 1}`).join(" ")}`);
+checks.push("records without a time limit, in pieces");
+
+// A failed piece keeps the recording so it can be tried again.
+pieceMs = undefined;
+await act(async () => root.render(createElement(Host)));
+const typedBefore = latest;
+let failures = 1;
+transcribeReply = () => failures-- > 0 ? Response.json({ error: "OpenAI is busy." }, { status: 503 }) : Response.json({ text: "second try" });
+await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
+await pause(350);
+await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
+assert.match(document.querySelector(".dictation-pill.is-notice")?.textContent ?? "", /recording is kept/u);
+assert.equal(latest, typedBefore);
+await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pill-action")!.click(); await pause(80); });
+assert.equal(latest, `${typedBefore} second try`);
+checks.push("keeps the recording when transcription fails");
+
+// When cleanup isn't available, the raw text stays and says so.
+cleanupReply = () => Response.json({ error: "Your prepaid balance is too low." }, { status: 402 });
+transcribeReply = () => Response.json({ text: "no credit left" });
+await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
+await pause(350);
+await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
+assert.equal(latest, `${typedBefore} second try no credit left`);
+assert.match(document.querySelector(".dictation-pill.is-versions")?.textContent ?? "", /Clean version unavailable/u);
+assert.equal(version("Clean").disabled, true);
+checks.push("keeps the raw text when cleanup fails");
+
+// A live session that drops partway hands over to the recording, which is transcribed in full.
+liveAvailable = true;
+channel = null;
+transcribeReply = () => Response.json({ text: "said before and after the drop" });
+const typedBeforeDrop = latest;
+const finishesBefore = liveRequests.filter((request) => request.url === "/api/dictation/live/finish").length;
+await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
+await act(async () => {
+  channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-3", delta: "said before" });
+  channel!.emit({ type: "error", error: { code: "session_expired", message: "Session expired." } });
+  await pause(10);
+});
+assert.equal(liveRequests.filter((request) => request.url === "/api/dictation/live/finish").length, finishesBefore + 1, "dropped session's charge ends");
+await pause(350);
+await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
+assert.equal(latest, `${typedBeforeDrop} said before and after the drop`);
+checks.push("switches to the recording when live words drop");
 
 await act(async () => root.unmount());
 console.log(JSON.stringify({ checks }));

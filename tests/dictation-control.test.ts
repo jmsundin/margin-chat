@@ -12,5 +12,5 @@ test("voice typing records, transcribes and types into every kind of text field"
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Voice typing regression failed:\n${stdout}\n${stderr}`);
   const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
-  expect(result.checks).toHaveLength(12);
+  expect(result.checks).toHaveLength(17);
 }, 20000);

@@ -4,6 +4,7 @@ import { readChatReplyStream, type AgentEvent, type ChatReplyResponse } from "./
 import type { ConversationContext } from "./chatContext";
 import type { WorkspaceContextItem } from "./aiContext";
 import type { AISettings } from "../types";
+import { splitForCleanup } from "./dictationText";
 import type {
   AppState,
   ApiKeyProvider,
@@ -249,7 +250,7 @@ export async function requestClusterCategories(args: {
 async function requestTitle(args: {
   ai?: AISettings;
   expectedUserId?: string;
-  kind?: "document" | "cluster";
+  kind?: "document" | "cluster" | "dictation";
   signal?: AbortSignal;
   modelId?: string;
   prompt: string;
@@ -454,6 +455,40 @@ export async function requestLiveDictationSession(args: { expectedUserId?: strin
     throw new Error("Backend returned an invalid live voice typing session.");
   }
   return payload as LiveDictationSession;
+}
+
+/** Bills a long live session's time so far and holds the next ten minutes; returns the new token. */
+export async function renewLiveDictationSession(token: string, expectedUserId?: string): Promise<string> {
+  const response = await apiFetch("/api/dictation/live/renew", {
+    body: JSON.stringify({ token }),
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...(expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {}) },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { token?: unknown } | ErrorPayload | null;
+  ensureOk(response, payload, "Live voice typing could not keep going.");
+  if (!payload || typeof payload !== "object" || !("token" in payload) || typeof payload.token !== "string") {
+    throw new Error("Backend returned an invalid live voice typing session.");
+  }
+  return payload.token;
+}
+
+/**
+ * The cleaned-up version of a transcript: fillers, false starts and repeats
+ * removed, punctuation fixed. Long transcripts are cleaned a piece at a time.
+ */
+export async function requestDictationCleanup(text: string, args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<string> {
+  const pieces = splitForCleanup(text);
+  const cleaned: string[] = new Array(pieces.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < pieces.length) {
+      const index = next++;
+      cleaned[index] = await requestTitle({ ...args, kind: "dictation", prompt: pieces[index] });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, pieces.length) }, worker));
+  return cleaned.join("\n\n");
 }
 
 /** Ends a hosted live session's charge. Keeps going while the page unloads. */

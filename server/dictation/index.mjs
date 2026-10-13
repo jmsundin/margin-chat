@@ -7,10 +7,11 @@ import { decryptSecret, encryptSecret } from "../apiKeys/crypto.mjs";
 export const TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
 // Streams words while the person is still talking. OpenAI bills it by the minute.
 export const LIVE_TRANSCRIPTION_MODEL = "gpt-live-transcribe";
-// The app stops a recording at 10 minutes; a live session's hold covers that.
+// Each hosted hold covers ten minutes; the app renews it before then, so a
+// session runs as long as the person keeps talking and has credit.
 export const MAX_LIVE_SECONDS = 10 * 60;
 const LIVE_TOKEN_PREFIX = "dictation-live:";
-// Under Vercel's 4.5 MB request limit; the app records about 10 minutes in this.
+// Under Vercel's 4.5 MB request limit. The app sends long recordings a few minutes at a time.
 export const MAX_DICTATION_AUDIO_BYTES = 4 * 1024 * 1024;
 
 const AUDIO_EXTENSIONS = new Map([
@@ -60,7 +61,7 @@ export function createDictationService({ env = process.env, billingService = nul
     const extension = dictationAudioExtension(contentType);
     if (!extension) throw new HttpError(415, "Voice typing needs WebM, Ogg, MP4, MP3 or WAV audio.");
     if (!bytes?.length) throw new HttpError(400, "No audio was recorded.");
-    if (bytes.length > MAX_DICTATION_AUDIO_BYTES) throw new HttpError(413, "That recording is too long. Keep voice typing under about 10 minutes.");
+    if (bytes.length > MAX_DICTATION_AUDIO_BYTES) throw new HttpError(413, "That piece of the recording is too large to transcribe.");
     if (language !== null && !/^[a-z]{2,3}$/u.test(language)) throw new HttpError(400, "Choose a two-letter language code.");
     const key = getTranscriptionKey(context, env);
     if (!key) throw new HttpError(402, "Voice typing needs an OpenAI API key in Settings, or the Plus plan.");
@@ -94,6 +95,37 @@ export function createDictationService({ env = process.env, billingService = nul
     });
   }
 
+  /** Holds ten minutes of live transcription and returns the token that settles it. */
+  async function reserveLiveHold({ userId, model, microsPerMinute }) {
+    const reservedMicros = Math.ceil((MAX_LIVE_SECONDS * microsPerMinute) / 60);
+    const requestId = `dictation-live:${randomUUID()}`;
+    // Encrypt before reserving, so a missing server secret never strands a hold.
+    const startedAt = now();
+    const token = LIVE_TOKEN_PREFIX + encryptSecret(JSON.stringify({ requestId, userId, startedAt, microsPerMinute, reservedMicros, model }), env);
+    await billingService.reserveHostedRequest({ requestId, userId, amountMicros: reservedMicros, metadata: {
+      operation: "dictation", kind: "transcription", provider: "openai", model, microsPerMinute, maxSeconds: MAX_LIVE_SECONDS,
+    } });
+    return { requestId, token, reservedMicros };
+  }
+
+  function readLiveToken(token, userId) {
+    if (typeof token !== "string" || !token.startsWith(LIVE_TOKEN_PREFIX)) throw new HttpError(400, "That live voice typing session is not valid.");
+    let session;
+    try { session = JSON.parse(decryptSecret(token.slice(LIVE_TOKEN_PREFIX.length), env)); }
+    catch { throw new HttpError(400, "That live voice typing session is not valid."); }
+    if (session?.userId !== userId) throw new HttpError(403, "That live voice typing session belongs to another account.");
+    if (!billingService) throw new HttpError(503, "Billing is not configured.");
+    return session;
+  }
+
+  async function settleLive(session, userId) {
+    const { seconds, amountMicros } = liveDictationCharge({ ...session, endedAt: now() });
+    const result = await billingService.settleHostedRequest({ requestId: session.requestId, userId, amountMicros, metadata: {
+      outcome: "completed", usageSource: "server-clock", seconds, amountMicros, reservedMicros: session.reservedMicros,
+    } });
+    return { settled: result?.settled !== false, seconds };
+  }
+
   /**
    * Opens a live transcription session. The browser streams the microphone to
    * OpenAI with the short-lived secret and shows words as they arrive. Hosted
@@ -105,19 +137,7 @@ export function createDictationService({ env = process.env, billingService = nul
     if (!key) throw new HttpError(402, "Voice typing needs an OpenAI API key in Settings, or the Plus plan.");
     const model = LIVE_TRANSCRIPTION_MODEL;
     const billed = key.hosted && context.usageMeter && billingService;
-    let hold = null;
-    if (billed) {
-      const microsPerMinute = getHostedPerMinutePrice(env, "openai", model);
-      const reservedMicros = Math.ceil((MAX_LIVE_SECONDS * microsPerMinute) / 60);
-      const requestId = `dictation-live:${randomUUID()}`;
-      // Encrypt before reserving, so a missing server secret never strands a hold.
-      const startedAt = now();
-      const token = LIVE_TOKEN_PREFIX + encryptSecret(JSON.stringify({ requestId, userId, startedAt, microsPerMinute, reservedMicros, model }), env);
-      await billingService.reserveHostedRequest({ requestId, userId, amountMicros: reservedMicros, metadata: {
-        operation: "dictation", kind: "transcription", provider: "openai", model, microsPerMinute, maxSeconds: MAX_LIVE_SECONDS,
-      } });
-      hold = { requestId, token, reservedMicros };
-    }
+    const hold = billed ? await reserveLiveHold({ userId, model, microsPerMinute: getHostedPerMinutePrice(env, "openai", model) }) : null;
     try {
       context.signal?.throwIfAborted();
       const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
@@ -144,18 +164,20 @@ export function createDictationService({ env = process.env, billingService = nul
 
   /** Settles a hosted live session at the time it ran. Repeats are harmless. */
   async function finishLive({ token, userId }) {
-    if (typeof token !== "string" || !token.startsWith(LIVE_TOKEN_PREFIX)) throw new HttpError(400, "That live voice typing session is not valid.");
-    let session;
-    try { session = JSON.parse(decryptSecret(token.slice(LIVE_TOKEN_PREFIX.length), env)); }
-    catch { throw new HttpError(400, "That live voice typing session is not valid."); }
-    if (session?.userId !== userId) throw new HttpError(403, "That live voice typing session belongs to another account.");
-    if (!billingService) throw new HttpError(503, "Billing is not configured.");
-    const { seconds, amountMicros } = liveDictationCharge({ ...session, endedAt: now() });
-    const result = await billingService.settleHostedRequest({ requestId: session.requestId, userId, amountMicros, metadata: {
-      outcome: "completed", usageSource: "server-clock", seconds, amountMicros, reservedMicros: session.reservedMicros,
-    } });
-    return { settled: result?.settled !== false, seconds };
+    return settleLive(readLiveToken(token, userId), userId);
   }
 
-  return { transcribe, startLive, finishLive };
+  /**
+   * Keeps a long session going: bills the time so far and holds the next ten
+   * minutes. A session that already ended can't be renewed.
+   */
+  async function renewLive({ token, userId }) {
+    const session = readLiveToken(token, userId);
+    const { settled, seconds } = await settleLive(session, userId);
+    if (!settled) throw new HttpError(409, "That live voice typing session already ended.");
+    const hold = await reserveLiveHold({ userId, model: session.model, microsPerMinute: session.microsPerMinute });
+    return { token: hold.token, seconds };
+  }
+
+  return { transcribe, startLive, finishLive, renewLive };
 }
