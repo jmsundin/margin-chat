@@ -262,17 +262,19 @@ const overlayDraft = () => ({
 });
 
 describe("on-page Margin broker", () => {
-  test("page shells read the theme and remember the docked width and collapsed header without account data", async () => {
+  test("page shells read the theme and remember the layout, docked width and collapsed header without account data", async () => {
     const storage: Record<string, any> = { connection: connection() };
     const worker = createWorker(storage, fetch);
-    expect(await worker.dispatch({ type: "overlay:preferences" }, pageSender())).toEqual({ theme: null, dockWidth: null, headerCollapsed: false });
+    expect(await worker.dispatch({ type: "overlay:preferences" }, pageSender())).toEqual({ theme: null, dockWidth: null, headerCollapsed: false, layout: null });
     expect(await worker.dispatch({ type: "overlay:header-collapsed", collapsed: true }, pageSender())).toEqual({ ok: true });
     expect((await worker.dispatch({ type: "overlay:header-collapsed", collapsed: "yes" }, pageSender())).error).toBeString();
     expect(await worker.dispatch({ type: "overlay:dock-width", width: 701.6 }, pageSender())).toEqual({ ok: true });
     expect((await worker.dispatch({ type: "overlay:dock-width", width: "wide" }, pageSender())).error).toBeString();
+    expect(await worker.dispatch({ type: "overlay:layout", layout: "split" }, pageSender())).toEqual({ ok: true });
+    expect((await worker.dispatch({ type: "overlay:layout", layout: "sideways" }, pageSender())).error).toBeString();
     storage.theme = "light";
     const prefs = await worker.dispatch({ type: "overlay:preferences" }, pageSender());
-    expect(prefs).toEqual({ theme: "light", dockWidth: 702, headerCollapsed: true });
+    expect(prefs).toEqual({ theme: "light", dockWidth: 702, headerCollapsed: true, layout: "split" });
     expect(JSON.stringify(prefs)).not.toContain("connection-a");
   });
   test("a theme change repaints the shells in every tab", async () => {
