@@ -20,6 +20,8 @@ export const DOCK_WIDTH = { default: 520, min: 320, step: 24 };
 export interface WorkspaceHostOptions {
   /** Called once a drag or key press settles on a new docked width. */
   onDockResize?(width: number): void;
+  /** Called when the header is collapsed to a thin strip or expanded again. */
+  onHeaderCollapse?(collapsed: boolean): void;
 }
 
 /** Only this non-private shell and page-derived text enter the host document. */
@@ -45,10 +47,14 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     .grip{position:absolute;z-index:2;left:0;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;display:grid;place-items:center;outline:none}.panel:not([data-layout=docked]) .grip{display:none}
     .grip::after{content:"";width:4px;height:44px;border-radius:4px;background:var(--mc-line-strong);transition:background .15s,height .15s}.grip:hover::after,.grip:focus-visible::after,.resizing .grip::after{background:var(--mc-sage);height:64px}.grip:focus-visible{box-shadow:inset 3px 0 0 var(--mc-sage)}
     .reveal,.return{position:fixed;pointer-events:auto;box-shadow:0 3px 20px var(--mc-shadow)}.reveal{left:12px;top:50%;writing-mode:vertical-rl;padding:15px 10px}.return{right:18px;bottom:18px;padding:13px 18px}.dragging iframe,.resizing iframe{pointer-events:none}.resizing{user-select:none}
+    .expand{display:none}.collapsed header{justify-content:center;height:12px;padding:0}.collapsed header>*{display:none!important}
+    .collapsed header>.expand{display:grid!important;place-items:center;width:56px;height:12px;padding:0;border:0;border-radius:0 0 7px 7px;background:transparent;color:var(--mc-muted);font-size:10px;line-height:1}.collapsed header>.expand:hover,.collapsed header>.expand:focus-visible{background:var(--mc-hover)}
     @media(max-width:650px){strong{font-size:12px}}
   </style><section class="panel" data-layout="docked" role="complementary" aria-label="Margin Chat workspace" hidden>
     <div class="grip" role="separator" aria-orientation="vertical" aria-label="Resize Margin Chat" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <header><strong>Margin Chat</strong>
+      <button class="icon collapse" type="button" title="Hide header" aria-label="Hide header for more room">⌃</button>
+      <button class="expand" type="button" title="Show header" aria-label="Show Margin Chat header">⌄</button>
       <button class="icon more" type="button" title="View options" aria-label="View options" aria-haspopup="menu" aria-expanded="false">⋮</button>
       <div class="menu" role="menu" aria-label="View options" hidden>
         <button type="button" role="menuitemradio" data-layout="docked" aria-checked="true">Docked</button>
@@ -69,6 +75,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   const grip = root.querySelector<HTMLElement>(".grip")!;
   const theme = followPageTheme(win, [host]);
   let layout: Layout = "docked";
+  let headerCollapsed = false;
   let active = false;
   let peeking = false;
   let session = "";
@@ -100,6 +107,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     reveal.hidden = !active || peeking || layout !== "expanded";
     returnButton.hidden = !active || !peeking;
     panel.dataset.layout = layout;
+    panel.classList.toggle("collapsed", headerCollapsed);
     root.querySelectorAll<HTMLButtonElement>("button[data-layout]").forEach((button) => button.setAttribute("aria-checked", String(button.dataset.layout === layout)));
     if (layout === "floating") {
       Object.assign(panel.style, { left: `${Math.max(6, Math.min(win.innerWidth - 326, floating.left))}px`, top: `${Math.max(6, Math.min(win.innerHeight - 100, floating.top))}px`, right: "auto", width: `${floating.width}px`, height: `${floating.height}px` });
@@ -118,6 +126,12 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     if (!Number.isFinite(width)) return;
     dockWidth = clampDock(width); render();
     if (persist) options.onDockResize?.(dockWidth);
+  }
+  /** A collapsed header leaves a thin strip so the document gets the room. */
+  function setHeaderCollapsed(collapsed: boolean, persist = false) {
+    if (collapsed) closeMenu(false);
+    headerCollapsed = collapsed; render();
+    if (persist) options.onHeaderCollapse?.(collapsed);
   }
   function setLayout(next: Layout) {
     if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width || floating.width, height: rect.height || floating.height }; }
@@ -224,6 +238,10 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   root.addEventListener("pointerdown", outsideMenu);
   doc.addEventListener("pointerdown", outsideMenu, true);
   root.querySelector<HTMLButtonElement>(".close")!.onclick = close;
+  const collapseButton = root.querySelector<HTMLButtonElement>(".collapse")!;
+  const expandButton = root.querySelector<HTMLButtonElement>(".expand")!;
+  collapseButton.onclick = () => { setHeaderCollapsed(true, true); expandButton.focus(); };
+  expandButton.onclick = () => { setHeaderCollapsed(false, true); collapseButton.focus(); };
   returnButton.onclick = () => { peeking = false; render(); };
   header.addEventListener("pointerdown", (event) => {
     if (layout !== "floating" || event.button !== 0 || (event.target as Element).closest("button,.menu")) return;
@@ -257,7 +275,8 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   const resized = () => { if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; } render(); };
   win.addEventListener("resize", resized);
   const navigationCheck = win.setInterval(() => { void changedPage().catch(() => undefined); }, 500);
-  return { open, close, register, toggle: () => active ? close() : void open(), handleMessage, setDockWidth: (width: number) => setDockWidth(width), setTheme: theme.set,
+  return { open, close, register, toggle: () => active ? close() : void open(), handleMessage, setDockWidth: (width: number) => setDockWidth(width),
+    setHeaderCollapsed: (collapsed: boolean) => setHeaderCollapsed(collapsed), setTheme: theme.set,
     destroy() { theme.destroy(); win.clearInterval(navigationCheck); doc.removeEventListener("pointerdown", outsideMenu, true); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },
   };
 }

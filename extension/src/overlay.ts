@@ -9,6 +9,7 @@ if (!isolated.marginOverlay) {
   const send = (message: Record<string, unknown>) => chrome.runtime.sendMessage(message);
   const overlay = createWorkspaceFrameHost(document, send, chrome.runtime.getURL("workspace.html"), {
     onDockResize: (width) => { void send({ type: "overlay:dock-width", width }).catch(() => undefined); },
+    onHeaderCollapse: (collapsed) => { void send({ type: "overlay:header-collapsed", collapsed }).catch(() => undefined); },
   });
   isolated.marginOverlay = overlay;
   // Injecting the script arms the page: selecting text offers Explain and Ask,
@@ -19,11 +20,12 @@ if (!isolated.marginOverlay) {
     openWorkspace: () => overlay.open(),
   });
   assistant.arm();
-  // Theme and dock width are display preferences; the page never sees account data.
+  // Theme, dock width and the collapsed header are display preferences; the page never sees account data.
   const applyTheme = (theme: unknown) => { overlay.setTheme(theme); assistant.setTheme(theme); };
   void send({ type: "overlay:preferences" }).then((prefs) => {
     applyTheme(prefs?.theme);
     if (typeof prefs?.dockWidth === "number") overlay.setDockWidth(prefs.dockWidth);
+    if (prefs?.headerCollapsed === true) overlay.setHeaderCollapsed(true);
   }).catch(() => undefined);
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || typeof message?.type !== "string" || !message.type.startsWith("margin:page-")) return;
