@@ -75,6 +75,14 @@ export const API_ROUTES = Object.freeze([
   { id: "mcp", methods: ["GET", "POST", "DELETE"], path: "/api/mcp" },
   { id: "mcpTokens", methods: ["GET", "POST"], path: "/api/settings/mcp-tokens" },
   { id: "mcpTokenDelete", methods: ["DELETE"], path: "/api/settings/mcp-tokens/:id", parameters: { id: "[0-9a-f-]{36}" } },
+  // OAuth for MCP connectors (server/mcp/oauth.mjs). /.well-known/* is rewritten to /api/well-known/*.
+  { id: "oauthProtectedResource", methods: ["GET"], path: "/api/well-known/oauth-protected-resource" },
+  { id: "oauthProtectedResource", methods: ["GET"], path: "/api/well-known/oauth-protected-resource/api/mcp" },
+  { id: "oauthServerMetadata", methods: ["GET"], path: "/api/well-known/oauth-authorization-server" },
+  { id: "oauthRegister", methods: ["POST"], path: "/api/oauth/register" },
+  { id: "oauthAuthorization", methods: ["GET", "POST"], path: "/api/oauth/authorization" },
+  { id: "oauthToken", methods: ["POST"], path: "/api/oauth/token" },
+  { id: "oauthRevoke", methods: ["POST"], path: "/api/oauth/revoke" },
 ].map((route) => Object.freeze({ ...route, methods: Object.freeze(route.methods) })));
 
 const compiledRoutes = API_ROUTES.map((route) => {

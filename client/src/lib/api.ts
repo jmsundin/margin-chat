@@ -982,6 +982,8 @@ export interface AgentToken {
   createdAt: string;
   expiresAt: string;
   lastUsedAt: string | null;
+  /** Signed in with OAuth (ChatGPT, claude.ai) rather than a pasted token. */
+  connector?: boolean;
 }
 
 const AGENT_SETTINGS_HEADERS = { "Content-Type": "application/json", "X-Margin-Agent-Settings": "1" };

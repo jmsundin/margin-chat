@@ -4,6 +4,8 @@ export type AuthPageMode = "login" | "signup";
 export type SiteRoute =
   | { kind: "marketing"; page: MarketingPage }
   | { kind: "auth"; mode: AuthPageMode }
+  // An MCP connector (ChatGPT, claude.ai) asking the member to approve it.
+  | { kind: "oauth" }
   | { kind: "app" };
 
 export const MARKETING_PATHS: Record<MarketingPage, string> = { home: "/", pricing: "/pricing", download: "/download" };
@@ -19,6 +21,7 @@ export function resolveSiteRoute(location: RouteLocation, embedded = false): Sit
   if (path === "/download") return { kind: "marketing", page: "download" };
   if (path === "/login") return { kind: "auth", mode: "login" };
   if (path === "/signup") return { kind: "auth", mode: "signup" };
+  if (path === "/oauth/authorize") return { kind: "oauth" };
   // Query strings carry reset tokens, Stripe returns and capture handoffs, which all need the app.
   if (path === "/" && !location.search) return { kind: "marketing", page: "home" };
   return { kind: "app" };

@@ -24,6 +24,13 @@ import { createDictationService, MAX_DICTATION_AUDIO_BYTES } from "../dictation/
 import { createDesktopDownloadService, describeDownloadRequest } from "../downloads/index.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { MCP_BODY_LIMIT, createMcpService } from "../mcp/index.mjs";
+import {
+  OAuthError,
+  authorizationServerMetadata,
+  createOAuthService,
+  protectedResourceMetadata,
+  publicOrigin,
+} from "../mcp/oauth.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import {
   createAppStateFromWorkspaceDocument,
@@ -124,6 +131,21 @@ export function createApiHandler({
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
   const dictation = dictationService ?? createDictationService({ env, billingService });
   const desktopDownloads = desktopDownloadService ?? createDesktopDownloadService({ database, env });
+  const oauth = createOAuthService({ database });
+  // Anyone can register an OAuth client, so registrations are budgeted per address.
+  const oauthRegistrationsByAddress = createRateLimiter({ max: 30, windowMs: 60 * 60 * 1000 });
+  /** An OAuth endpoint's form fields; JSON bodies are accepted too. */
+  async function readOAuthForm(request) {
+    const raw = (await readRawBody(request, 16_384)).toString("utf8");
+    if (!String(request.headers["content-type"] ?? "").includes("application/json")) return new URLSearchParams(raw);
+    let body;
+    try { body = JSON.parse(raw); } catch { throw new OAuthError("invalid_request", "The request body isn't valid JSON."); }
+    return new URLSearchParams(Object.entries(body ?? {}).filter(([, value]) => typeof value === "string"));
+  }
+  function sendOAuthError(error) {
+    if (!(error instanceof OAuthError)) throw error;
+    return { status: error.statusCode, body: error.oauth };
+  }
   const mcp = mcpService ?? createMcpService({
     database, vaultService, passageService: vaultPassages, createUsageContext: executeChatReply.createUsageContext,
   });
@@ -176,7 +198,8 @@ export function createApiHandler({
         `http://${request.headers.host ?? fallbackHost}`,
       );
 
-      const route = matchApiRoute(request.method, url.pathname);
+      // Vercel rewrites /.well-known/* to /api/well-known/*; the local server receives it as is.
+      const route = matchApiRoute(request.method, url.pathname.replace(/^\/\.well-known\//u, "/api/well-known/"));
 
       if (route?.id === "health") {
         try {
@@ -246,6 +269,48 @@ export function createApiHandler({
         return;
       }
 
+      if (route?.id === "oauthProtectedResource" || route?.id === "oauthServerMetadata") {
+        const origin = publicOrigin(request, env);
+        sendJson(response, 200, route.id === "oauthProtectedResource" ? protectedResourceMetadata(origin) : authorizationServerMetadata(origin),
+          { "Cache-Control": "public, max-age=3600" });
+        return;
+      }
+
+      if (route?.id === "oauthRegister" || route?.id === "oauthToken" || route?.id === "oauthRevoke") {
+        response.setHeader("Cache-Control", "no-store");
+        try {
+          if (route.id === "oauthRegister") {
+            const address = clientAddress(request);
+            oauthRegistrationsByAddress.check(address);
+            oauthRegistrationsByAddress.record(address);
+            let body;
+            try { body = await readJsonBody(request, 16_384); } catch { throw new OAuthError("invalid_client_metadata", "Send client metadata as JSON."); }
+            sendJson(response, 201, await oauth.register(body));
+          } else if (route.id === "oauthToken") {
+            sendJson(response, 200, await oauth.token(await readOAuthForm(request)), { Pragma: "no-cache" });
+          } else {
+            await oauth.revoke(await readOAuthForm(request));
+            sendJson(response, 200, {});
+          }
+        } catch (error) {
+          const failed = sendOAuthError(error);
+          sendJson(response, failed.status, failed.body);
+        }
+        return;
+      }
+
+      // The consent page asks what an authorization request is for before the member signs in.
+      if (route?.id === "oauthAuthorization" && request.method === "GET") {
+        response.setHeader("Cache-Control", "no-store");
+        try {
+          sendJson(response, 200, await oauth.describe(Object.fromEntries(url.searchParams), publicOrigin(request, env)));
+        } catch (error) {
+          const failed = sendOAuthError(error);
+          sendJson(response, failed.status, failed.body);
+        }
+        return;
+      }
+
       // MCP clients send only their agent token, never the website's cookie.
       if (route?.id === "mcp") {
         response.setHeader("Cache-Control", "no-store");
@@ -258,7 +323,11 @@ export function createApiHandler({
         try {
           user = await mcp.authenticate(request);
         } catch (error) {
-          if (error?.statusCode === 401) error.headers = { "WWW-Authenticate": 'Bearer realm="Margin Chat", error="invalid_token"' };
+          if (error?.statusCode === 401) {
+            // Points connectors at the OAuth metadata so they can sign in.
+            const metadata = `${publicOrigin(request, env)}/.well-known/oauth-protected-resource`;
+            error.headers = { "WWW-Authenticate": `Bearer resource_metadata="${metadata}"${request.headers.authorization ? ', error="invalid_token"' : ""}` };
+          }
           throw error;
         }
         const raw = await readRawBody(request, MCP_BODY_LIMIT);
@@ -557,6 +626,23 @@ export function createApiHandler({
           }
           return;
         }
+      }
+
+      if (route?.id === "oauthAuthorization") {
+        response.setHeader("Cache-Control", "no-store");
+        // Same CSRF guard as token settings: a cross-site form can't approve a connector.
+        if (request.headers["x-margin-agent-settings"] !== "1" || request.headers["sec-fetch-site"] === "cross-site") {
+          throw new HttpError(403, "Approve connectors on Margin Chat's own page.");
+        }
+        const body = await readJsonBody(request, 16_384);
+        const params = body?.request && typeof body.request === "object" ? body.request : {};
+        try {
+          sendJson(response, 200, await oauth.decide(authContext.user, params, publicOrigin(request, env), { allow: body.allow === true, write: body.write === true }));
+        } catch (error) {
+          const failed = sendOAuthError(error);
+          sendJson(response, failed.status, failed.body);
+        }
+        return;
       }
 
       if (route?.id === "mcpTokens" || route?.id === "mcpTokenDelete") {

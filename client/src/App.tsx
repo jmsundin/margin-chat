@@ -3,6 +3,7 @@ import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
 import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
+import OAuthConsent from "./components/OAuthConsent";
 import MarketingSite from "./components/MarketingSite";
 import { AUTH_PATHS, resolveSiteRoute, type SiteRoute } from "./lib/siteRoutes";
 import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
@@ -518,7 +519,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
         <div className="app-chrome auth-chrome">
           <AuthLanding
             key={route.kind === "auth" ? route.mode : "app"}
-            initialMode={route.kind === "auth" ? route.mode : "signup"}
+            initialMode={route.kind === "auth" ? route.mode : route.kind === "oauth" ? "login" : "signup"}
             errorMessage={authError}
             isSubmitting={authSubmitting}
             onLogin={handleLogin}
@@ -528,6 +529,16 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
             onToggleTheme={() => setTheme((current) => getNextTheme(current))}
             theme={theme}
           />
+        </div>
+      </div>
+    );
+  }
+
+  if (route.kind === "oauth") {
+    return (
+      <div className="app-shell">
+        <div className="app-chrome auth-chrome">
+          <OAuthConsent user={authUser} />
         </div>
       </div>
     );

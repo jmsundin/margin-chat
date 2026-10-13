@@ -10,6 +10,8 @@ import { createApiHandler } from "../server/routes/api.mjs";
 import { createAuthService } from "../server/auth/index.mjs";
 import { createRuntimeConfig } from "../server/config/runtime.mjs";
 import { MCP_TOOLS, mcpToolsFor } from "../server/mcp/index.mjs";
+import { isAllowedRedirectUri } from "../server/mcp/oauth.mjs";
+import { createHash } from "node:crypto";
 import { appendToSource, documentFileName } from "../server/mcp/writeTools.mjs";
 import { createMarkdownWorkspace } from "@margin-chat/workspace-contracts/markdown";
 import { createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
@@ -221,6 +223,77 @@ describe("MCP server", () => {
     expect(documentFileName("???")).toBe("Untitled");
     expect(appendToSource("---\ntitle: \"Plain\"\n---\n\nBody.\n\n", "More.")).toBe("---\ntitle: \"Plain\"\n---\n\nBody.\n\nMore.");
     expect(mcpToolsFor("read")).toBe(MCP_TOOLS);
+  });
+
+  test("a connector registers, the member approves it, and its OAuth tokens reach the vault until revoked", async () => {
+    await fixture.client.query("update marginchat_users set billing_status = 'active' where id = 'plus'");
+    const resource = await (await fetch(`${origin}/.well-known/oauth-protected-resource/api/mcp`)).json();
+    expect(resource).toMatchObject({ resource: `${origin}/api/mcp`, authorization_servers: [origin] });
+    const metadata = await (await fetch(`${origin}/.well-known/oauth-authorization-server`)).json();
+    expect(metadata).toMatchObject({ issuer: origin, authorization_endpoint: `${origin}/oauth/authorize`,
+      token_endpoint: `${origin}/api/oauth/token`, registration_endpoint: `${origin}/api/oauth/register`, code_challenge_methods_supported: ["S256"] });
+    const challengeless = await rpc(null, "initialize");
+    expect(challengeless.status).toBe(401);
+    expect(challengeless.headers.get("www-authenticate")).toBe(`Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource"`);
+
+    const register = (body: unknown) => fetch(`${origin}/api/oauth/register`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    expect((await (await register({ redirect_uris: ["http://evil.example/cb"] })).json()).error).toBe("invalid_redirect_uri");
+    const redirectUri = "https://claude.ai/api/mcp/auth_callback";
+    const registered = await register({ client_name: "Claude", redirect_uris: [redirectUri], token_endpoint_auth_method: "none" });
+    expect(registered.status).toBe(201);
+    const { client_id: clientId } = await registered.json();
+
+    const verifier = "v".repeat(64);
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const request = { response_type: "code", client_id: clientId, redirect_uri: redirectUri, code_challenge: challenge,
+      code_challenge_method: "S256", state: "s1", scope: "vault:read vault:write", resource: `${origin}/api/mcp` };
+    const described = await (await fetch(`${origin}/api/oauth/authorization?${new URLSearchParams(request)}`)).json();
+    expect(described).toEqual({ clientName: "Claude", redirectHost: "claude.ai", scope: "write" });
+    expect((await (await fetch(`${origin}/api/oauth/authorization?${new URLSearchParams({ ...request, redirect_uri: "https://evil.example/" })}`)).json()).error)
+      .toBe("invalid_request");
+
+    const decide = (body: unknown, user = "plus", headers: Record<string, string> = {}) => fetch(`${origin}/api/oauth/authorization`, { method: "POST",
+      headers: { Cookie: `margin_chat_session=session-${user}`, "Content-Type": "application/json", "X-Margin-Agent-Settings": "1", ...headers }, body: JSON.stringify(body) });
+    expect((await decide({ request, allow: true }, "plus", { "X-Margin-Agent-Settings": "" })).status).toBe(403);
+    expect((await decide({ request, allow: true }, "free")).status).toBe(403);
+    const denied = new URL((await (await decide({ request, allow: false })).json()).redirectTo);
+    expect([denied.origin + denied.pathname, denied.searchParams.get("error"), denied.searchParams.get("state")]).toEqual([redirectUri, "access_denied", "s1"]);
+    const approve = async () => new URL((await (await decide({ request, allow: true, write: true })).json()).redirectTo).searchParams.get("code")!;
+
+    const token = (fields: Record<string, string>) => fetch(`${origin}/api/oauth/token`, { method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields) });
+    const firstCode = await approve();
+    const wrong = await token({ grant_type: "authorization_code", code: firstCode, redirect_uri: redirectUri, client_id: clientId, code_verifier: "w".repeat(64) });
+    expect([wrong.status, (await wrong.json()).error]).toEqual([400, "invalid_grant"]);
+    // A code is spent by its first use, right or wrong.
+    expect((await token({ grant_type: "authorization_code", code: firstCode, redirect_uri: redirectUri, client_id: clientId, code_verifier: verifier })).status).toBe(400);
+    const granted = await (await token({ grant_type: "authorization_code", code: await approve(), redirect_uri: redirectUri, client_id: clientId, code_verifier: verifier })).json();
+    expect(granted).toMatchObject({ token_type: "Bearer", expires_in: 3600, scope: "vault:read vault:write" });
+    expect((await (await rpc(granted.access_token, "tools/list")).json()).result.tools.map((tool: any) => tool.name)).toContain("create_document");
+
+    const listed = (await (await settings("plus")).json()).tokens.filter((item: any) => item.connector);
+    expect(listed).toMatchObject([{ name: "Claude", scope: "write", connector: true }]);
+
+    const refreshed = await (await token({ grant_type: "refresh_token", refresh_token: granted.refresh_token, client_id: clientId })).json();
+    expect(refreshed.access_token).not.toBe(granted.access_token);
+    expect((await rpc(granted.access_token, "tools/list")).status).toBe(401);
+    expect((await rpc(refreshed.access_token, "tools/list")).status).toBe(200);
+    expect((await token({ grant_type: "refresh_token", refresh_token: granted.refresh_token, client_id: clientId })).status).toBe(400);
+    // Reconnecting the same app replaces its earlier connection.
+    await (await token({ grant_type: "authorization_code", code: await approve(), redirect_uri: redirectUri, client_id: clientId, code_verifier: verifier })).json();
+    expect((await (await settings("plus")).json()).tokens.filter((item: any) => item.connector)).toHaveLength(1);
+    expect((await rpc(refreshed.access_token, "tools/list")).status).toBe(401);
+
+    const last = await (await token({ grant_type: "authorization_code", code: await approve(), redirect_uri: redirectUri, client_id: clientId, code_verifier: verifier })).json();
+    await fetch(`${origin}/api/oauth/revoke`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ token: last.refresh_token, client_id: clientId }) });
+    expect((await rpc(last.access_token, "tools/list")).status).toBe(401);
+    expect((await token({ grant_type: "password", client_id: clientId })).status).toBe(400);
+    expect((await token({ grant_type: "refresh_token", refresh_token: "x", client_id: "unknown" })).status).toBe(401);
+  });
+
+  test("connectors may return to HTTPS addresses or this computer only", () => {
+    expect(["https://chatgpt.com/connector_platform_oauth_redirect", "http://localhost:3334/cb", "http://127.0.0.1/cb"].every(isAllowedRedirectUri)).toBe(true);
+    expect(["http://example.com/cb", "javascript:alert(1)", "https://a.example/#x", "https://u:p@a.example/"].some(isAllowedRedirectUri)).toBe(false);
   });
 
   test("tool names and schemas match what MCP clients expect", () => {
