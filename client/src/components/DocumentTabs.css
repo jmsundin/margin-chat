@@ -95,6 +95,14 @@
 .document-tab-minimized-label { flex: 0 0 auto; color: var(--muted); font-size: 10px; }
 .document-tab-select:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
 .document-tab-menu-trigger { margin-right: 4px; }
+.document-tab-close {
+  display: grid; place-items: center; flex: 0 0 24px; width: 24px; height: 24px; margin: 0 4px 0 -2px; padding: 4px;
+  border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer;
+}
+.document-tab-close svg { width: 14px; height: 14px; }
+.document-tab-close:hover { background: var(--button-active-surface); color: var(--ink); }
+.document-tab-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-tab:has(.document-tab-close) .document-tab-menu-trigger { margin-right: 0; }
 .document-tabs .document-tab.is-pinned { position: relative; flex: 0 0 40px; width: 40px; min-width: 40px; max-width: 40px; }
 .document-tab.is-pinned .document-tab-select { justify-content: center; padding: 8px; }
 .document-tab.is-pinned :is(.document-tab-title, .document-tab-pin, .document-tab-minimized-label) { display: none; }
