@@ -107,6 +107,32 @@ type Memo = {
   journalBytes: number;
 };
 
+const freshCopyKey = (userId: string) => `margin-chat-vault-fresh-copy:${userId}`;
+
+/** The folder in the browser's private storage that holds this device's copy of the vault. */
+function vaultCopyFolder(userId: string): [string, string] {
+  let fresh: string | null = null;
+  try { fresh = globalThis.localStorage?.getItem(freshCopyKey(userId)) ?? null; } catch { /* Storage may be unavailable. */ }
+  return fresh && /^[a-z0-9]+$/u.test(fresh) ? [`margin-chat-vaults-${fresh}`, encodeURIComponent(userId)] : ["margin-chat-vaults", encodeURIComponent(userId)];
+}
+
+/**
+ * Keep a copy the browser can no longer read where it is and start a new, empty one, which the
+ * cloud vault then fills. Nothing is deleted. Returns false when the browser cannot remember the choice.
+ */
+export function startFreshVaultCopy(userId: string): boolean {
+  try { localStorage.setItem(freshCopyKey(userId), Date.now().toString(36)); return true; }
+  catch { return false; }
+}
+
+/** The browser refused an operation on this device's copy of the vault for a reason no retry fixed. */
+export class LocalVaultUnavailableError extends Error {
+  constructor(readonly step: string, cause: DOMException) {
+    super(`This browser could not open the vault saved on this device while ${step} (${cause.name}: ${cause.message})`, { cause });
+    this.name = "LocalVaultUnavailableError";
+  }
+}
+
 /**
  * Content is stored as immutable Markdown/binary files named by their hash. The
  * index of references is a checkpoint plus a journal of small saves, so a
@@ -117,6 +143,8 @@ type Memo = {
 export function createBrowserVaultStore(userId: string): VaultStore {
   let directoryPromise: Promise<FileSystemDirectoryHandle> | null = null;
   let memo: Memo | null = null;
+  /** What the last read was doing, so a browser error says which step failed. */
+  let step = "opening it";
   /** Decoded text whose bytes carried a BOM does not round-trip; it is rehashed when saved. */
   const lossy = new WeakSet<VaultFile>();
   /** What reading this file back from disk returns: TextDecoder drops a leading BOM. */
@@ -127,16 +155,23 @@ export function createBrowserVaultStore(userId: string): VaultStore {
     return decoded;
   }
   function directory() {
-    directoryPromise ??= (async () => {
+    if (directoryPromise) return directoryPromise;
+    const opening = directoryPromise = (async () => {
       if (!navigator.storage?.getDirectory) throw new Error("This browser cannot save a local Markdown vault. Use a current version of Safari, Chrome, Edge, or Firefox.");
+      const [vaultsName, userName] = vaultCopyFolder(userId);
+      step = "opening the browser's private storage";
       const root = await navigator.storage.getDirectory();
-      const vaults = await root.getDirectoryHandle("margin-chat-vaults", { create: true });
-      return vaults.getDirectoryHandle(encodeURIComponent(userId), { create: true });
+      step = `opening ${vaultsName}/${userName}`;
+      const vaults = await root.getDirectoryHandle(vaultsName, { create: true });
+      return vaults.getDirectoryHandle(userName, { create: true });
     })();
-    return directoryPromise;
+    // A failed open is retried on the next read instead of being remembered.
+    opening.catch(() => { if (directoryPromise === opening) directoryPromise = null; });
+    return opening;
   }
 
   async function readHead(root: FileSystemDirectoryHandle): Promise<JournalHead | null> {
+    step = `reading ${HEAD}`;
     const text = await readText(root, HEAD);
     if (text === null) return null;
     const head = JSON.parse(text) as JournalHead;
@@ -153,6 +188,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       const key = refKey(ref);
       const existing = known.get(key);
       if (existing) return existing;
+      step = `reading history/${ref.object}`;
       const bytes = await readFreshBytes(() => history.getFileHandle(ref.object));
       if (await hashBytes(bytes) !== ref.object.slice(0, 64)) {
         throw new Error("A local vault history file is incomplete or damaged. Its index and other Markdown files have been preserved.");
@@ -247,6 +283,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
   }
 
   async function readChange(journal: FileSystemDirectoryHandle, generation: number) {
+    step = `reading journal/${generation}.json`;
     const text = await readText(journal, `${generation}.json`);
     if (text === null) throw unreadable();
     return { change: JSON.parse(text) as StoredChange, bytes: text.length };
@@ -256,9 +293,11 @@ export function createBrowserVaultStore(userId: string): VaultStore {
   async function load(): Promise<Memo | null> {
     const root = await directory();
     const head = await readHead(root);
+    step = "opening history";
     const history = await root.getDirectoryHandle("history", { create: true });
     if (!head) {
       // A vault saved before the journal existed: one index of every reference.
+      step = `reading ${LEGACY_INDEX}`;
       const legacy = await readText(root, LEGACY_INDEX);
       memo = null;
       if (legacy === null) return null;
@@ -272,6 +311,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       return memo = loaded;
     }
     if (memo && memo.checkpoint === head.checkpoint && memo.generation === head.generation) return memo;
+    step = "opening journal";
     const journal = await root.getDirectoryHandle("journal", { create: true });
     if (memo && memo.checkpoint === head.checkpoint && memo.generation >= head.from && memo.generation < head.generation) {
       // Another tab saved since this one last looked. Apply only those saves.
@@ -285,6 +325,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       next.generation = head.generation;
       return memo = next;
     }
+    step = `reading ${head.checkpoint}`;
     const text = await readText(root, head.checkpoint);
     if (text === null) throw unreadable();
     const stored = JSON.parse(text) as StoredSnapshot;
@@ -313,8 +354,12 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       } catch (error) {
         memo = null;
         // readFreshFile already retried and read the file directly; it is unreadable here.
-        if (!(error instanceof UnreadableFileError)) throw error;
-        throw new Error(`This browser could not read “${error.fileName}” from the vault saved on this device (${error.detail}).`, { cause: error });
+        if (error instanceof UnreadableFileError) {
+          throw new Error(`This browser could not read “${error.fileName}” from the vault saved on this device (${error.detail}).`, { cause: error });
+        }
+        // Name the step instead of showing the browser's bare message.
+        if (error instanceof DOMException && error.name !== "NotFoundError") throw new LocalVaultUnavailableError(step, error);
+        throw error;
       }
     },
     async write(snapshot) {

@@ -4418,6 +4418,9 @@ function WorkspaceAppContent({
       <h2>Opening your Markdown vault</h2>
       <p>{vault.message ?? "Reading the files saved on this device…"}</p>
       {vault.message ? <button className="thread-dialog-button" onClick={() => window.location.reload()}>Try again</button> : null}
+      {vault.message && vault.startFreshCopy ? <button className="thread-dialog-button" onClick={() => {
+        if (window.confirm("Download your vault from the cloud into a new copy on this device? The copy that can't be opened is kept, but edits in it that never reached the cloud won't appear.")) vault.startFreshCopy?.();
+      }}>Download a fresh copy from the cloud</button> : null}
     </section></div>;
   }
 
