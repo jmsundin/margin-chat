@@ -10,7 +10,7 @@ import {
 } from "./workspaceMarkdown";
 import { createWorkspaceDocument } from "./workspaceModel";
 import { validVaultPath, type VaultFile } from "./vaultTypes";
-import { readFreshBytes, readFreshFile, readFreshText } from "./fileSnapshot";
+import { readFreshBytes, readFreshFile, readFreshText, scanWhileFolderSettles } from "./fileSnapshot";
 import { isSyncableVaultFileSize, isVaultFileDocumentPath, vaultFileContentType, type VaultFileListing } from "./vaultFileDocuments";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
@@ -341,7 +341,8 @@ export async function readLocalDirectoryWorkspace(
 ): Promise<LocalDirectoryWorkspace | null> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  const snapshot = await readDirectoryWorkspace(handle, userId, fallbackManifest ?? observedDirectoryWorkspaces.get(userId)?.manifest, previousFiles ?? observedDirectoryWorkspaces.get(userId)?.files);
+  const snapshot = await scanWhileFolderSettles(handle.name, () => readDirectoryWorkspace(handle, userId,
+    fallbackManifest ?? observedDirectoryWorkspaces.get(userId)?.manifest, previousFiles ?? observedDirectoryWorkspaces.get(userId)?.files));
   observedDirectoryWorkspaces.set(userId, snapshot.workspace);
   return snapshot;
 }
@@ -431,7 +432,7 @@ export async function writeConnectedDirectoryWorkspace(
   }
   const manifestName = getLocalWorkspaceFileName(userId);
   const manifestBefore = await readDirectoryFileOrNull(handle, manifestName);
-  const actual = await readDirectoryWorkspace(handle, userId, expectedWorkspace?.manifest, expectedWorkspace?.files);
+  const actual = await scanWhileFolderSettles(handle.name, () => readDirectoryWorkspace(handle, userId, expectedWorkspace?.manifest, expectedWorkspace?.files));
   const expectedFiles = markdownContentFiles(expectedWorkspace?.files ?? {});
   const desiredFiles = markdownContentFiles(workspace.files);
   const conflicts = changedFilePaths(expectedFiles, actual.workspace.files);
@@ -439,7 +440,7 @@ export async function writeConnectedDirectoryWorkspace(
     conflicts.push(manifestName);
   }
   if (conflicts.length) throw new LocalDirectoryConflictError(conflicts);
-  const diskFiles = (await scanMarkdownDirectory(handle)).files;
+  const diskFiles = (await scanWhileFolderSettles(handle.name, () => scanMarkdownDirectory(handle))).files;
   // A legacy JSON-only workspace has synthetic Markdown in its read snapshot.
   const legacyOnly = manifestBefore !== null && Object.keys(diskFiles).length === 0
     && parseLocalWorkspaceRecord(JSON.parse(manifestBefore)) !== null;
@@ -491,14 +492,14 @@ export async function readLocalDirectoryCompanions(
 ): Promise<Record<string, VaultFile> | null> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  return readConnectedDirectoryCompanions(handle, knownFiles, listing);
+  return scanWhileFolderSettles(handle.name, () => readConnectedDirectoryCompanions(handle, knownFiles, listing));
 }
 
 /** The PDFs and images in the connected folder, with their sizes and dates. */
 export async function listLocalDirectoryFiles(userId: string, directoryId?: string): Promise<VaultFileListing[] | null> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  return listConnectedDirectoryFiles(handle);
+  return scanWhileFolderSettles(handle.name, () => listConnectedDirectoryFiles(handle));
 }
 
 export async function listConnectedDirectoryFiles(handle: FileSystemDirectoryHandle, prefix = ""): Promise<VaultFileListing[]> {

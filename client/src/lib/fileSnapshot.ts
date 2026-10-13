@@ -83,3 +83,30 @@ function readWithoutSnapshot(handle: FileSystemFileHandle): Promise<Uint8Array> 
     worker.postMessage(handle);
   }).finally(() => { worker.terminate(); URL.revokeObjectURL(url); });
 }
+
+/**
+ * Chromium also refuses to keep listing a connected folder whose contents change mid-scan
+ * (InvalidStateError while iterating). The scan only reads, so it is safe to run again.
+ */
+export class FolderChangingError extends Error {
+  constructor(readonly folderName: string, cause: unknown) {
+    const detail = cause instanceof Error ? cause.name : String(cause);
+    super(`Margin Chat could not finish reading the folder “${folderName}” because it kept changing while being read (${detail}). `
+      + "Nothing was changed; it will read the folder again on the next sync.", { cause });
+    this.name = "FolderChangingError";
+  }
+}
+
+const FOLDER_SCAN_ATTEMPTS = 5;
+
+export async function scanWhileFolderSettles<T>(folderName: string, scan: () => Promise<T>, wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await scan();
+    } catch (error) {
+      if (!isStaleFileSnapshot(error)) throw error;
+      if (attempt >= FOLDER_SCAN_ATTEMPTS) throw new FolderChangingError(folderName, error);
+      await wait(100 * 2 ** (attempt - 1));
+    }
+  }
+}
