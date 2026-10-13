@@ -6,7 +6,7 @@ import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
-import { bytesToBase64, createBrowserVaultStore, exportVault, importVault, vaultFileBytes } from "./vaultLocal";
+import { bytesToBase64, createBrowserVaultStore, exportVault, importVault, startFreshVaultCopy, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
@@ -671,6 +671,8 @@ export function useMarkdownVault(args: {
   }), [engine]);
 
   return {
+    /** When this device's copy cannot be opened, start a new one for the cloud vault to fill. The old copy is kept. */
+    startFreshCopy: enabled && !ready ? () => { if (startFreshVaultCopy(storageUserId)) window.location.reload(); } : undefined,
     ready, storageMode, media, folderAccessMessage, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
     /** Search the whole cloud vault: matching titles first, then passages as the server finds them. */
     searchCloud: engine.transport.search

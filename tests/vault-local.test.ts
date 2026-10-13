@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { createBrowserVaultStore } from "../client/src/lib/vaultLocal";
+import { createBrowserVaultStore, startFreshVaultCopy } from "../client/src/lib/vaultLocal";
 import { emptyVault, type VaultSnapshot } from "../client/src/lib/vaultTypes";
 import { workspaceFromVault } from "../client/src/lib/vaultWorkspace";
 
@@ -13,6 +13,7 @@ function simulatedOpfs() {
   let failure: { stage: "write" | "close"; matches: (path: string) => boolean } | null = null;
   let failRemovals = false;
   let stale: { remaining: number; matches: (path: string) => boolean } | null = null;
+  let brokenDirectory: string | null = null;
   const missing = () => new DOMException("Missing file", "NotFoundError");
   const toBytes = (contents: string | ArrayBuffer) => typeof contents === "string" ? new TextEncoder().encode(contents) : new Uint8Array(contents).slice();
   function maybeFail(stage: "write" | "close", path: string) {
@@ -26,6 +27,7 @@ function simulatedOpfs() {
       kind: "directory", name: prefix.split("/").at(-2) || "root",
       async getDirectoryHandle(name: string, options?: { create?: boolean }) {
         const path = `${prefix}${name}/`;
+        if (path === brokenDirectory) throw new DOMException("An operation that depends on state cached in an interface object was made but the state had changed since it was read from disk.", "InvalidStateError");
         if (!directories.has(path) && !options?.create) throw missing();
         directories.add(path);
         return directory(path);
@@ -72,6 +74,7 @@ function simulatedOpfs() {
     failOnce(stage: "write" | "close", matches: (path: string) => boolean) { failure = { stage, matches }; },
     preventCleanup(value: boolean) { failRemovals = value; },
     staleReads(remaining: number, matches: (path: string) => boolean) { stale = { remaining, matches }; },
+    breakDirectory(path: string | null) { brokenDirectory = path; },
     navigator: {
       storage: { getDirectory: async () => directory() },
       locks: { request(name: string, operation: () => Promise<unknown>) {
@@ -148,6 +151,31 @@ describe("durable OPFS Markdown storage", () => {
     expect(await createBrowserVaultStore("alice").read()).toEqual(saved);
     opfs.staleReads(Infinity, (path) => path === HEAD);
     await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("could not read “vault-journal.json” from the vault saved on this device (InvalidStateError");
+  }));
+
+  test("a browser error opening the saved copy names the step, and a fresh copy starts beside it", async () => withOpfs(async (opfs) => {
+    const saved = snapshot("Saved on this device");
+    await createBrowserVaultStore("alice").write(saved);
+    opfs.breakDirectory("margin-chat-vaults/alice/");
+    const error = await createBrowserVaultStore("alice").read().catch((caught) => caught);
+    expect(error.message).toContain("while opening margin-chat-vaults/alice (InvalidStateError");
+    const storage = new Map<string, string>();
+    const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+      getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => { storage.set(key, value); },
+    } });
+    try {
+      expect(startFreshVaultCopy("alice")).toBe(true);
+      const fresh = createBrowserVaultStore("alice");
+      expect(await fresh.read()).toBeNull();
+      await fresh.write(snapshot("Downloaded again"));
+      expect([...opfs.files.keys()].some((path) => /^margin-chat-vaults-[a-z0-9]+\/alice\/vault-journal\.json$/.test(path))).toBe(true);
+      // The copy that could not be opened is left exactly as it was.
+      expect(opfs.files.get(HEAD)).toBeDefined();
+    } finally {
+      if (original) Object.defineProperty(globalThis, "localStorage", original);
+      else delete (globalThis as any).localStorage;
+    }
   }));
 
   test("a file whose snapshots never become readable is read directly in a worker", async () => withOpfs(async (opfs) => {
