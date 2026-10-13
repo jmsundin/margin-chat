@@ -23,6 +23,12 @@ interface ImportRequest { id: string; capture: Capture; prompt?: string }
 const params = new URLSearchParams(location.search);
 const tabId = Number(params.get("tab"));
 const session = params.get("session") ?? "";
+/** Opened in Chrome's side panel (Side by side) rather than in a frame drawn on the page. */
+const sidePanel = params.get("panel") === "1";
+/** Start the side panel over: it asks the page for a fresh session, as on first open. */
+function reconnectSidePanel() {
+  const next = new URL(location.href); next.searchParams.delete("session"); location.replace(next.href);
+}
 const describe = (error: unknown) => error instanceof Error ? error.message : "Margin could not complete that action.";
 
 function BrowserWorkspace() {
@@ -120,6 +126,12 @@ function BrowserWorkspace() {
       setBusy(false); setNotice(""); setDetailsOpen(false); setMode("note");
       contextRef.current = null; setContext(null); setApiTransport(null);
       try {
+        if (sidePanel && !session && Number.isInteger(tabId) && tabId >= 0) {
+          const granted = await chrome.runtime.sendMessage({ type: "workspace:panel-session", tabId });
+          if (typeof granted?.session !== "string") throw new Error(granted?.error || "Click the Margin Chat button in Chrome's toolbar to connect this page.");
+          const next = new URL(location.href); next.searchParams.set("session", granted.session); location.replace(next.href);
+          return;
+        }
         if (!Number.isInteger(tabId) || tabId < 0 || !session) throw new Error("Open Margin Chat from its toolbar button on a web page.");
         const frame = await message("connect");
         if (disposed || sequence !== bootSequence.current) return;
@@ -154,6 +166,17 @@ function BrowserWorkspace() {
     chrome.storage.onChanged.addListener(changed);
     return () => { disposed = true; bootSequence.current++; controller.current?.abort(); setApiTransport(null); chrome.storage.onChanged.removeListener(changed); };
   }, [message, applyPage, loadThreads]);
+
+  // In the side panel, a new page in the tab needs a new session; a toolbar click grants one.
+  const errorRef = useRef("");
+  errorRef.current = error;
+  useEffect(() => {
+    if (!sidePanel) return;
+    const navigated = (updated: number, change: chrome.tabs.OnUpdatedInfo) => { if (updated === tabId && change.status === "loading" && session) reconnectSidePanel(); };
+    const reconnect = (incoming: { type?: string; tabId?: number }) => { if (incoming?.type === "margin:panel-reconnect" && incoming.tabId === tabId && (!session || errorRef.current)) reconnectSidePanel(); };
+    chrome.tabs.onUpdated.addListener(navigated); chrome.runtime.onMessage.addListener(reconnect);
+    return () => { chrome.tabs.onUpdated.removeListener(navigated); chrome.runtime.onMessage.removeListener(reconnect); };
+  }, []);
 
   useEffect(() => {
     if (!connection) return;
@@ -272,10 +295,10 @@ function BrowserWorkspace() {
   const settings = () => { void chrome.runtime.openOptionsPage(); };
 
   if (checking) return <div className="extension-connect is-opening" role="status">Opening your Margin Chat workspace…</div>;
-  if (!connection) return <div className="extension-connect"><p className="eyebrow">Margin Chat</p><h1>Your workspace, above the page.</h1><p>{error}</p>{connectedFrame && <button className="primary-button" onClick={settings}>Connect Workspace + AI</button>}{captureOnly && <p><button onClick={() => void message("pending").catch((failure) => setError(describe(failure)))}>Open capture-only clipper</button></p>}</div>;
+  if (!connection) return <div className="extension-connect"><p className="eyebrow">Margin Chat</p><h1>{sidePanel ? "Your workspace, beside the page." : "Your workspace, above the page."}</h1><p>{error}</p>{connectedFrame && <button className="primary-button" onClick={settings}>Connect Workspace + AI</button>}{captureOnly && <p><button onClick={() => void message("pending").catch((failure) => setError(describe(failure)))}>Open capture-only clipper</button></p>}</div>;
   return <div className="browser-workspace">
     <section className={`browser-source${headerCollapsed ? " is-collapsed" : ""}`} aria-label="Web page context">
-      {!headerCollapsed && <><div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button></div>
+      {!headerCollapsed && <><div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button>{sidePanel && <button title="Close the side panel and open Margin Chat over the page" onClick={() => void message("float").catch((failure) => setError(describe(failure)))}>Show on page</button>}</div>
       {detailsOpen && <div className="browser-source-details">
         <div className="browser-context-actions" role="group" aria-label="Choose source context"><button onClick={() => void read("selection")} disabled={busy} aria-pressed={context?.kind === "selection"}>Selected passage</button><button onClick={() => void read("article")} disabled={busy} aria-pressed={context?.kind === "article"}>Readable page</button><button onClick={() => void read("bookmark")} disabled={busy} aria-pressed={context?.kind === "bookmark"}>Link only</button></div>
         {context?.kind === "bookmark" ? <p className="browser-source-hint">Only the page title and link are included. Choose Readable page or select a passage to give AI its content.</p> : <textarea className="browser-source-preview" aria-label="Source content preview" readOnly value={context?.content ?? ""} />}

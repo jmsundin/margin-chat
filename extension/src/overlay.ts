@@ -11,6 +11,8 @@ if (!isolated.marginOverlay) {
     onDockResize: (width) => { void send({ type: "overlay:dock-width", width }).catch(() => undefined); },
     onHeaderCollapse: (collapsed) => { void send({ type: "overlay:header-collapsed", collapsed }).catch(() => undefined); },
     onLayoutChange: (layout) => { void send({ type: "overlay:layout", layout }).catch(() => undefined); },
+    // If Chrome refuses its side panel here, bring the page panel back rather than leave nothing open.
+    onSidePanel: () => { void send({ type: "overlay:side-panel" }).then((result) => { if (result?.error) void overlay.open(); }, () => void overlay.open()); },
   });
   isolated.marginOverlay = overlay;
   // Injecting the script arms the page: selecting text offers Explain and Ask,

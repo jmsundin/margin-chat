@@ -81,7 +81,24 @@ async function showOverlay(tab: chrome.tabs.Tab, selection?: SelectionDraft) {
   }
 }
 
-chrome.action.onClicked.addListener((tab) => { void showOverlay(tab); });
+// Side by side is Chrome's own side panel, which narrows the page so every site reflows.
+// Chrome only opens it during the click that asked for it, so open first and await nothing before.
+const sidePanelPath = (tabId: number) => `workspace.html?panel=1&tab=${tabId}`;
+function openSidePanel(tabId: number) {
+  void chrome.sidePanel.setOptions({ tabId, path: sidePanelPath(tabId), enabled: true }).catch(() => undefined);
+  return chrome.sidePanel.open({ tabId });
+}
+// Read synchronously on a toolbar click; a click that wakes the worker checks storage instead.
+let layoutPreference: unknown;
+const layoutLoaded = chrome.storage.local.get("layout").then((stored) => { layoutPreference ??= stored.layout; }).catch(() => undefined);
+chrome.action.onClicked.addListener((tab) => {
+  if (typeof tab.id !== "number") { void showOverlay(tab); return; }
+  const tabId = tab.id;
+  const reconnect = () => { void chrome.runtime.sendMessage({ type: "margin:panel-reconnect", tabId }).catch(() => undefined); };
+  if (layoutPreference === "split") { void openSidePanel(tabId).then(reconnect, () => showOverlay(tab)); return; }
+  if (layoutPreference !== undefined) { void showOverlay(tab); return; }
+  void layoutLoaded.then(() => layoutPreference === "split" ? openSidePanel(tabId).then(reconnect) : showOverlay(tab)).catch(() => showOverlay(tab));
+});
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== "save-selection" || !tab) return;
   const selection: SelectionDraft = {
@@ -351,15 +368,48 @@ async function validateFrame(message: Record<string, unknown>, sender: chrome.ru
   const tabId = message.tabId as number;
   // A nonce copied into a different tab (or an extension popup) cannot claim the
   // source page. No window.postMessage channel can request private account data.
-  if (sender.tab?.id !== tabId || sender.frameId === 0 || url.searchParams.get("tab") !== String(tabId) || url.searchParams.get("session") !== message.session) throw new Error("This workspace does not belong to this page.");
+  // The side panel is our own extension page with no tab; the nonce still has to match the page.
+  const sidePanel = url.searchParams.get("panel") === "1";
+  if ((sidePanel ? sender.tab !== undefined : sender.tab?.id !== tabId || sender.frameId === 0) || url.searchParams.get("tab") !== String(tabId) || url.searchParams.get("session") !== message.session) throw new Error("This workspace does not belong to this page.");
   const frame = await storedFrame(tabId);
   if (!frame || frame.session !== message.session) throw new Error("This workspace session has expired. Reopen Margin Chat.");
   const tab = await chrome.tabs.get(tabId);
   if (pageUrl(tab.url) !== frame.sourceUrl) throw new Error("The page changed. Wait a moment, then try again.");
   return frame;
 }
+/** The side panel asks the page for a session nonce the same way the in-page panel does. */
+async function panelSession(message: Record<string, unknown>, sender: chrome.runtime.MessageSender) {
+  const url = workspaceSender(sender);
+  const tabId = Number(url?.searchParams.get("tab"));
+  if (!url || url.searchParams.get("panel") !== "1" || sender.tab !== undefined || !Number.isSafeInteger(tabId) || message.tabId !== tabId)
+    throw new Error("Open Margin Chat using the extension toolbar.");
+  try {
+    pageUrl((await chrome.tabs.get(tabId)).url);
+    const target = { tabId, frameIds: [0] };
+    await chrome.scripting.executeScript({ target, world: "ISOLATED", files: ["overlay.js"] });
+    const [injected] = await chrome.scripting.executeScript({
+      target, world: "ISOLATED",
+      func: () => (globalThis as unknown as { marginOverlay: { register(): Promise<{ session: string }> } }).marginOverlay.register().then((frame) => frame.session),
+    });
+    if (typeof injected?.result !== "string") throw new Error("No session.");
+    return { session: injected.result };
+  } catch {
+    throw new Error("Click the Margin Chat button in Chrome's toolbar to connect this page.");
+  }
+}
 async function workspaceMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender) {
+  if (message.type === "workspace:panel-session") return panelSession(message, sender);
   const frame = await validateFrame(message, sender);
+  if (message.type === "workspace:float") {
+    // Back to the panel drawn on the page: close Chrome's side panel for this tab and open the page one.
+    await chrome.storage.local.set({ layout: "docked" });
+    await chrome.sidePanel.setOptions({ tabId: frame.tabId, enabled: false });
+    await chrome.scripting.executeScript({
+      target: { tabId: frame.tabId, frameIds: [0] }, world: "ISOLATED",
+      func: () => { (globalThis as unknown as { marginOverlay?: { open(): void } }).marginOverlay?.open(); },
+    }).catch(() => undefined);
+    return { ok: true };
+  }
   if (message.type !== "workspace:connect" && message.type !== "workspace:context" &&
       ((message.sourceUrl !== undefined && message.sourceUrl !== frame.sourceUrl) || (message.type === "workspace:draft" && message.sourceUrl === undefined)))
     throw new Error("The page changed. Capture it again before continuing.");
@@ -479,6 +529,7 @@ async function assistantMessage(message: Record<string, unknown>, sender: chrome
 
 // A theme chosen in the workspace or settings repaints every open page shell.
 chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.layout) layoutPreference = changes.layout.newValue;
   if (area !== "local" || !isTheme(changes[THEME_MIRROR_KEY]?.newValue)) return;
   const theme = changes[THEME_MIRROR_KEY].newValue;
   void chrome.tabs.query({}).then((tabs) => {
@@ -504,6 +555,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (typeof sender.tab?.id !== "number" || sender.frameId !== 0) return;
     let sourceUrl: string;
     try { sourceUrl = pageUrl(sender.url); } catch { return; }
+    if (message.type === "overlay:side-panel") {
+      const opened = openSidePanel(sender.tab!.id!);
+      layoutPreference = "split";
+      void opened.then(() => chrome.storage.local.set({ layout: "split" })).then(() => ({ ok: true }))
+        .then(sendResponse).catch((error) => sendResponse({ error: errorText(error, "Chrome could not open its side panel here.") }));
+      return true;
+    }
     const operation = message.type === "overlay:frame" ? registerFrame(sender, sourceUrl)
       : message.type === "overlay:page" ? updateFramePage(message, sender, sourceUrl)
       : overlayMessage(message, sourceUrl);

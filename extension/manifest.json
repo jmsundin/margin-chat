@@ -3,7 +3,7 @@
   "name": "Margin Chat",
   "description": "Your thinking space above the web: highlight, comment, save sources, and take page context into AI conversations.",
   "minimum_chrome_version": "127",
-  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "permissions": ["activeTab", "scripting", "storage", "contextMenus", "sidePanel"],
   "optional_host_permissions": [
     "https://*/*",
     "http://localhost/*",
