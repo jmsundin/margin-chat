@@ -85,3 +85,45 @@ export function takeDocumentBack(history: DocumentHistory, currentId: string, co
   const { [previousId]: _previous, ...others } = rest;
   return stack.length ? { ...others, [previousId]: stack } : others;
 }
+
+export interface WorkspaceTab {
+  document: Conversation;
+  /** The document this tab is listed under, for margin notes and branches; null for main and side documents. */
+  parentId: string | null;
+  /** A child of an open document that is not open itself; selecting the tab opens it. */
+  closed: boolean;
+}
+
+/**
+ * The tab strip is the workspace. Open documents keep their pane order, except that each child (a margin
+ * note or branch) is listed right after its parent, with the parent's children that are not open after
+ * the open ones.
+ */
+export function getWorkspaceTabs(conversations: Record<string, Conversation>, openDocuments: Conversation[], closedIds: readonly string[]): WorkspaceTab[] {
+  const openIds = new Set(openDocuments.map((document) => document.id));
+  const closed = new Set(closedIds);
+  const childrenOf = new Map<string, Conversation[]>();
+  const topLevel: Conversation[] = [];
+  for (const document of openDocuments) {
+    const parentId = getPresentedParentId(conversations, document.id);
+    if (parentId && openIds.has(parentId)) childrenOf.set(parentId, [...childrenOf.get(parentId) ?? [], document]);
+    else topLevel.push(document);
+  }
+  const tabs: WorkspaceTab[] = [];
+  const added = new Set<string>();
+  function add(document: Conversation, parentId: string | null, isClosed: boolean) {
+    if (added.has(document.id)) return;
+    added.add(document.id);
+    tabs.push({ document, parentId, closed: isClosed });
+    if (isClosed) return;
+    for (const child of childrenOf.get(document.id) ?? []) add(child, document.id, false);
+    for (const id of document.childIds) {
+      const child = conversations[id];
+      if (child && closed.has(id) && !openIds.has(id) && getPresentedParentId(conversations, id) === document.id) add(child, document.id, true);
+    }
+  }
+  for (const document of topLevel) add(document, getPresentedParentId(conversations, document.id), false);
+  // A cycle in saved parents must not hide an open document.
+  for (const document of openDocuments) add(document, getPresentedParentId(conversations, document.id), false);
+  return tabs;
+}

@@ -222,7 +222,13 @@ async function overlayMessage(message: Record<string, unknown>, sourceUrl: strin
   if (message.type === "overlay:preferences") {
     const theme = (await chrome.storage.local.get(THEME_MIRROR_KEY))[THEME_MIRROR_KEY];
     const dockWidth = (await chrome.storage.local.get("dockWidth")).dockWidth;
-    return { theme: isTheme(theme) ? theme : null, dockWidth: typeof dockWidth === "number" ? dockWidth : null };
+    const headerCollapsed = (await chrome.storage.local.get("headerCollapsed")).headerCollapsed;
+    return { theme: isTheme(theme) ? theme : null, dockWidth: typeof dockWidth === "number" ? dockWidth : null, headerCollapsed: headerCollapsed === true };
+  }
+  if (message.type === "overlay:header-collapsed") {
+    if (typeof message.collapsed !== "boolean") throw new Error("Invalid header state.");
+    await chrome.storage.local.set({ headerCollapsed: message.collapsed });
+    return { ok: true };
   }
   if (message.type === "overlay:dock-width") {
     const width = Number(message.width);

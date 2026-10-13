@@ -327,7 +327,8 @@ try {
   assert(tab(passageId).getAttribute('aria-label').includes('minimized'));
   await click(tab(passageId));
   await click(notePane(passageId).querySelector('.document-close-button'));
-  assert.equal(container.querySelector(`[data-document-tab-id="${passageId}"]`), null);
+  // A closed note keeps a dimmed tab after its open parent, so it can be reopened from the tab strip.
+  assert(tab(passageId).getAttribute('aria-label').includes('not open'));
   assert.equal(container.querySelector(`[data-document-id="${passageId}"]`), null);
   assert.deepEqual(latest.conversations[passageId], savedNote);
   await click(sidebar(savedNote.title));

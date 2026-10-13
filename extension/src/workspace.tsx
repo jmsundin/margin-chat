@@ -37,6 +37,7 @@ function BrowserWorkspace() {
   const contextRef = useRef<PageContext | null>(null);
   const [pageState, setPageState] = useState<OverlayState | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
   const [mode, setMode] = useState<"note" | "ask">("note");
   const [thought, setThought] = useState("");
   const [question, setQuestion] = useState("");
@@ -144,8 +145,11 @@ function BrowserWorkspace() {
       finally { if (!disposed && sequence === bootSequence.current) setChecking(false); }
     }
     void boot();
+    // The panel's header control hides the page row too, so the document gets the room.
+    void chrome.storage.local.get("headerCollapsed").then((stored) => { if (!disposed) setHeaderCollapsed(stored.headerCollapsed === true); }).catch(() => undefined);
     const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
       if (area === "local" && changes.connection) void boot();
+      if (area === "local" && changes.headerCollapsed) setHeaderCollapsed(changes.headerCollapsed.newValue === true);
     };
     chrome.storage.onChanged.addListener(changed);
     return () => { disposed = true; bootSequence.current++; controller.current?.abort(); setApiTransport(null); chrome.storage.onChanged.removeListener(changed); };
@@ -270,15 +274,15 @@ function BrowserWorkspace() {
   if (checking) return <div className="extension-connect is-opening" role="status">Opening your Margin Chat workspace…</div>;
   if (!connection) return <div className="extension-connect"><p className="eyebrow">Margin Chat</p><h1>Your workspace, above the page.</h1><p>{error}</p>{connectedFrame && <button className="primary-button" onClick={settings}>Connect Workspace + AI</button>}{captureOnly && <p><button onClick={() => void message("pending").catch((failure) => setError(describe(failure)))}>Open capture-only clipper</button></p>}</div>;
   return <div className="browser-workspace">
-    <section className="browser-source" aria-label="Web page context">
-      <div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button></div>
+    <section className={`browser-source${headerCollapsed ? " is-collapsed" : ""}`} aria-label="Web page context">
+      {!headerCollapsed && <><div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button></div>
       {detailsOpen && <div className="browser-source-details">
         <div className="browser-context-actions" role="group" aria-label="Choose source context"><button onClick={() => void read("selection")} disabled={busy} aria-pressed={context?.kind === "selection"}>Selected passage</button><button onClick={() => void read("article")} disabled={busy} aria-pressed={context?.kind === "article"}>Readable page</button><button onClick={() => void read("bookmark")} disabled={busy} aria-pressed={context?.kind === "bookmark"}>Link only</button></div>
         {context?.kind === "bookmark" ? <p className="browser-source-hint">Only the page title and link are included. Choose Readable page or select a passage to give AI its content.</p> : <textarea className="browser-source-preview" aria-label="Source content preview" readOnly value={context?.content ?? ""} />}
         <div className="browser-context-actions"><button onClick={() => setMode("note")} aria-pressed={mode === "note"}>Annotate / save</button><button onClick={() => setMode("ask")} aria-pressed={mode === "ask"}>Ask AI</button></div>
         <form onSubmit={(event) => { event.preventDefault(); void save(); }}><label htmlFor="source-thought">{mode === "ask" ? "Question for AI" : "Your thought (optional)"}</label><textarea id="source-thought" maxLength={CAPTURE_LIMITS.comment} value={mode === "ask" ? question : thought} onChange={(event) => mode === "ask" ? setQuestion(event.target.value) : setThought(event.target.value)} required={mode === "ask"} disabled={busy} placeholder={mode === "ask" ? "What would you like to explore about this source?" : "What stands out to you?"} /><button className="primary-button" disabled={busy || !context || !!pageState?.hasOtherPending || !!(pageState?.pending && !pageState.pending.receipt)}>{busy ? "Saving…" : mode === "ask" ? "Save source & ask AI" : "Save & open document"}</button></form>
         {!!pageState?.page.annotations.length && <details><summary>Saved on this page · {pageState.page.annotations.length}</summary>{pageState.page.annotations.map((annotation) => <div className="browser-annotation" key={annotation.id}><blockquote>{annotation.anchor?.exact || annotation.excerpt || annotation.title}</blockquote><p>{annotation.comment}</p>{annotation.anchor && <button onClick={() => void message("locate", { anchor: annotation.anchor }).then((result) => { if (!result.located) setError("This passage has changed. Its saved source is still in your workspace."); }).catch((failure) => setError(describe(failure)))}>Find on page</button>}</div>)}</details>}
-      </div>}
+      </div>}</>}
       {pageState?.hasOtherPending && <div className="browser-notice">Another page has a pending capture. <button onClick={() => void message("pending").catch((failure) => setError(describe(failure)))}>Review pending capture</button></div>}
       {pageState?.pending && !pageState.pending.receipt && <div className="browser-notice">Your previous capture is kept for retry. <button disabled={busy} onClick={() => void save(true)}>Retry save</button><button disabled={busy} onClick={() => void message("dismiss").then(() => message("state")).then(setPageState).catch((failure) => setError(describe(failure)))}>Dismiss</button></div>}
       {(error || notice) && <p className={`browser-notice${error ? " is-error" : ""}`} role="status">{error || notice}</p>}
