@@ -47,6 +47,9 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploaded, setUploaded] = useState<string | null>(null);
+  const uploadRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const { name, where, folder } = describeVault(vault, cloudSync);
@@ -70,8 +73,22 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
     return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", key); };
   }, [open]);
 
+  async function upload(files: File[]) {
+    setBusy(true); setUploading(true); setError(null); setUploaded(null);
+    try {
+      // The menu stays open to say what was added.
+      setUploaded((await vault.uploadFiles(files)).summary);
+      setOpen(true);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Those files couldn’t be added. Try again.");
+      setOpen(true);
+    } finally {
+      setBusy(false); setUploading(false);
+    }
+  }
+
   async function run(action: () => Promise<unknown>) {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setUploaded(null);
     try {
       await action();
       setOpen(false);
@@ -89,7 +106,7 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
       <button ref={triggerRef} type="button" className={`vault-switcher-trigger${vault.folderAccessMessage ? " needs-access" : ""}`}
         aria-haspopup="menu" aria-expanded={open} aria-controls={open ? "vault-switcher-menu" : undefined}
         aria-label={`Vault: ${name}. ${where}. Switch vault`} title={`${name} · ${where}`}
-        onClick={() => { setError(null); setOpen((value) => !value); }}>
+        onClick={() => { setError(null); setUploaded(null); setOpen((value) => !value); }}>
         <FolderIcon />
         <span className="vault-switcher-name">{name}</span>
         {vault.folderAccessMessage ? <span className="vault-switcher-dot" aria-hidden="true" /> : null}
@@ -114,12 +131,16 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
               <FolderIcon /><span>{directory.name}</span>
             </button>
           ))}
+          <button type="button" role="menuitem" className="vault-switcher-item" disabled={busy}
+            onClick={() => uploadRef.current?.click()}>
+            {uploading ? "Adding files…" : "Upload files…"}
+          </button>
           <button type="button" role="menuitem" className="vault-switcher-item" disabled={busy || !supported}
             onClick={() => void run(vault.chooseDirectory)}>
             {folder ? "Open another folder…" : "Open folder as vault…"}
           </button>
           {!supported ? <p className="vault-switcher-note" role="none">
-            This browser can’t open folders. Use Chrome, Edge or the desktop app to keep your vault in a folder.
+            This browser can’t open folders. Upload files adds notes, PDFs, photos or a zipped vault folder instead.
           </p> : null}
           {cloudSync ? (
             <button type="button" role="menuitem" className="vault-switcher-item" disabled={busy} onClick={() => void run(() => vault.syncNow())}>
@@ -134,9 +155,16 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
           <button type="button" role="menuitem" className="vault-switcher-item" onClick={() => { setOpen(false); onOpenSettings(); }}>
             Vault settings…
           </button>
+          {uploaded ? <p className="vault-switcher-note" role="status">{uploaded}</p> : null}
           {error ? <p className="vault-switcher-error" role="alert">{error}</p> : null}
         </div>
       ) : null}
+      {/* No accept list: phones grey out .md files they don't recognise. Unsupported files are named afterwards. */}
+      <input ref={uploadRef} hidden multiple type="file" data-vault-upload
+        onChange={(event) => {
+          const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = "";
+          if (files.length) void upload(files);
+        }} />
     </div>
   );
 }

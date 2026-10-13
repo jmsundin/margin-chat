@@ -248,7 +248,7 @@ export function resolveVaultMediaPath(target: string, paths: Iterable<string>): 
     .sort((a, b) => attached(a) - attached(b) || a.length - b.length || a.localeCompare(b))[0] ?? null;
 }
 
-function safeName(name: string) {
+export function safeName(name: string) {
   return name.normalize("NFC").replace(/[\\/\u0000-\u001f\u007f#^[\]|:*?"<>%]/gu, " ").replace(/\s+/gu, " ").trim().slice(0, 150);
 }
 

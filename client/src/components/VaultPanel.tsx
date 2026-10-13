@@ -5,8 +5,10 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const [uploaded, setUploaded] = useState<string | null>(null);
   async function run(action: () => Promise<unknown>) {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setUploaded(null);
     try { await action(); } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to complete this action."); }
     finally { setBusy(false); }
   }
@@ -18,11 +20,17 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
       <div className="profile-storage-status"><span>Other devices</span><strong>{!cloudSyncEnabled ? "Local only" : vault.matchesCloud ? "Up to date" : vault.storageMode === "server" ? "Changes waiting to sync" : "Waiting to sync"}</strong>
         <small>{cloudSyncEnabled ? "Open Margin Chat on another device to receive changes." : "Cloud sync requires a paid plan or admin access."}</small></div>
     </div>
+    {uploaded ? <p className="thread-dialog-copy" role="status">{uploaded}</p> : null}
     {(error || vault.message) ? <p className="profile-dialog-error" role="alert">{error ?? vault.message}</p> : null}
     <div className="profile-storage-directory-actions">
       <button className="thread-dialog-button is-primary" disabled={busy || !cloudSyncEnabled} onClick={() => void run(() => vault.syncNow())}>{busy ? "Working…" : "Sync now"}</button>
       <button className="thread-dialog-button" disabled={busy} onClick={() => void run(vault.download)}>Download vault</button>
+      <button className="thread-dialog-button" disabled={busy} onClick={() => uploadInput.current?.click()}>Upload files</button>
       <button className="thread-dialog-button" disabled={busy} onClick={() => input.current?.click()}>Import vault</button>
+      <input ref={uploadInput} hidden multiple type="file" onChange={(event) => {
+        const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = "";
+        if (files.length) void run(async () => setUploaded((await vault.uploadFiles(files)).summary));
+      }} />
       <input ref={input} hidden type="file" accept=".zip,application/zip" onChange={(event) => {
         const file = event.currentTarget.files?.[0]; event.currentTarget.value = "";
         if (file) void run(() => vault.importArchive(file));
@@ -36,7 +44,7 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
           ? "This folder also holds Markdown files you can open in other apps. Folder edits are checked before saving and when Margin Chat resumes."
           : vault.localDirectoryStatus.supported
             ? "Choose a folder to also keep your Markdown files somewhere you can open in other apps. Saving in this browser works without a connected folder."
-            : "Folder connections aren’t available in this browser. Files still save in its private storage. Use Download vault to get a copy you can open in other apps."}</small></div>
+            : "Folder connections aren’t available in this browser. Files still save in its private storage. Use Upload files to add notes, PDFs, photos or a zipped vault folder, and Download vault to get a copy you can open in other apps."}</small></div>
       <div className="profile-storage-directory-actions">
         {vault.folderAccessMessage ? <button className="thread-dialog-button is-primary" disabled={busy} onClick={() => void run(vault.allowDirectoryAccess)}>Allow access</button> : null}
         <button className="thread-dialog-button" disabled={busy || !vault.localDirectoryStatus.supported} onClick={() => void run(vault.chooseDirectory)}>Choose folder</button>

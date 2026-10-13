@@ -565,10 +565,12 @@ export function exportVault(snapshot: VaultSnapshot): Uint8Array {
   return zipSync(files, { level: 6 });
 }
 
-export function importVault(bytes: Uint8Array): Record<string, VaultFile> {
+/** `include` leaves out entries such as a Mac's `__MACOSX` copies before they are read. */
+export function importVault(bytes: Uint8Array, include: (path: string) => boolean = () => true): Record<string, VaultFile> {
   if (bytes.length > 100_000_000) throw new Error("Please import a vault smaller than 100 MB.");
   let total = 0;
   const archive = unzipSync(bytes, { filter: (entry) => {
+    if (!include(entry.name)) return false;
     total += entry.originalSize;
     if (total > 200_000_000 || entry.originalSize > 20_000_000) throw new Error("The expanded vault is too large to import.");
     if (!entry.name.endsWith("/") && !validVaultPath(entry.name)) throw new Error("The archive contains an invalid file path.");

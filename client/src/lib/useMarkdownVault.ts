@@ -16,6 +16,7 @@ import { planVaultEviction, preserveDeferredWorkspaceReferences, recentVaultEntr
 import { WORKING_SET_IDLE_MS, claimWorkingSetCheck, loadOpenedDocuments, recordOpenedDocuments, workspaceReferenceIds } from "./vaultWorkingSet";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultFileListings, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
 import { vaultFileContentType, withoutUntouchedVaultFileDocuments, type VaultFileListing } from "./vaultFileDocuments";
+import { describeVaultUpload, planVaultUpload } from "./vaultUpload";
 import {
   canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, requestLocalDirectoryPermission, clearLocalDirectory, getLocalDirectoryStatus,
   listLocalDirectories, reconnectLocalDirectory, watchLocalDirectory, type RememberedLocalDirectory,
@@ -766,6 +767,26 @@ export function useMarkdownVault(args: {
         await engine.import(files);
         await persistAndPublish();
         await saveAndRefresh(true);
+      });
+    },
+    /** Adds files picked on this device, such as notes, PDFs and photos from a phone, then syncs them. */
+    async uploadFiles(picked: File[]) {
+      const uploads = await Promise.all(picked.map(async (file) => ({
+        name: file.name, lastModified: file.lastModified, bytes: new Uint8Array(await file.arrayBuffer()),
+      })));
+      return enqueue(async () => {
+        const snapshot = await engine.read();
+        const plan = planVaultUpload(uploads, [...Object.keys(snapshot.files), ...Object.keys(snapshot.deferred ?? {})]);
+        if (Object.keys(plan.files).length) {
+          const files = normalizeVaultMarkdownIdentities(plan.files, plan.createdAtByPath);
+          // Validate content before touching the local vault.
+          workspaceFromVault(files);
+          await saveAppState();
+          await engine.import(files);
+          await persistAndPublish();
+          await saveAndRefresh(true);
+        }
+        return { added: plan.added, skipped: plan.skipped, summary: describeVaultUpload(plan) };
       });
     },
     async importChatHistory(chats: HistoryChat[]) {

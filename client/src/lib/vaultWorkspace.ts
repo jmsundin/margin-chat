@@ -95,8 +95,8 @@ export function hasSameAuthoredState(left: AppState, right: AppState) {
     && left.defaultModelId === right.defaultModelId && left.defaultServiceId === right.defaultServiceId;
 }
 
-export function normalizeVaultMarkdownIdentities(files: Record<string, VaultFile>): Record<string, VaultFile> {
-  const workspace = assignMarkdownFileIdentities(workspaceFromVault(files));
+export function normalizeVaultMarkdownIdentities(files: Record<string, VaultFile>, createdAtByPath?: Record<string, string>): Record<string, VaultFile> {
+  const workspace = assignMarkdownFileIdentities(workspaceFromVault(files), createdAtByPath);
   return {
     ...files,
     ...Object.fromEntries(Object.entries(workspace.files).map(([path, content]) => [path, { ...files[path], content }])),
