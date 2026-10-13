@@ -25,6 +25,7 @@
     },
     "files": [
       "main.mjs",
+      "clientBundles.mjs",
       "updates.mjs",
       "package.json",
       "!node_modules/**/*"

@@ -2,7 +2,8 @@ import { app, BrowserWindow, dialog, Menu, net, protocol, session, shell } from 
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { watchForUpdates } from "./updates.mjs";
+import { createClientBundles } from "./clientBundles.mjs";
+import { newerShell, watchForUpdates } from "./updates.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
 // /api to the hosted backend, so the client keeps its same-origin relative fetches.
@@ -13,11 +14,19 @@ const API_ORIGIN = new URL(
 ).origin;
 // Development loads the Vite dev server, which already proxies /api to the local server.
 const DEV_URL = process.env.MARGIN_DESKTOP_DEV_URL?.trim() || null;
-const CLIENT_DIR = path.resolve(
+const BUNDLED_CLIENT_DIR = path.resolve(
   app.isPackaged
     ? path.join(process.resourcesPath, "client")
     : fileURLToPath(new URL("../dist/", import.meta.url)),
 );
+// Newer clients downloaded from the website live beside the app's own data.
+const clientBundles = createClientBundles({
+  root: path.join(app.getPath("userData"), "client-bundles"),
+  bundledDir: BUNDLED_CLIENT_DIR,
+  origin: API_ORIGIN,
+  fetchImpl: (url, init) => net.fetch(String(url), init),
+});
+const CLIENT_UPDATE_INTERVAL = 15 * 60 * 1000;
 // Where "Download update" sends people: the download page picks this system's installer.
 const DOWNLOAD_URL = process.env.MARGIN_DESKTOP_DOWNLOAD_URL?.trim() || "https://www.marginchat.com/download";
 const PROXIED_PREFIXES = ["/api/", "/_vercel/"];
@@ -81,13 +90,18 @@ async function serveClientFile(url) {
     return new Response("Bad request", { status: 400 });
   }
 
-  const filePath = path.join(CLIENT_DIR, pathname);
-  if (filePath.startsWith(CLIENT_DIR + path.sep) && (await isFile(filePath))) {
-    return net.fetch(pathToFileURL(filePath).toString());
+  // The newest client first; older ones still serve chunks a page loaded before
+  // an update asks for.
+  const dirs = clientBundles.dirs();
+  for (const dir of dirs) {
+    const filePath = path.join(dir, pathname);
+    if (filePath.startsWith(dir + path.sep) && (await isFile(filePath))) {
+      return net.fetch(pathToFileURL(filePath).toString());
+    }
   }
 
   // Mirror the Vercel rewrite: unknown paths are client routes.
-  return net.fetch(pathToFileURL(path.join(CLIENT_DIR, "index.html")).toString());
+  return net.fetch(pathToFileURL(path.join(dirs[0], "index.html")).toString());
 }
 
 function handleAppRequest(request) {
@@ -187,25 +201,48 @@ function buildAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function startUpdateChecks() {
+// The page restarts into a downloaded client by itself at a quiet moment,
+// after saving edits (client/src/components/DesktopUpdateNotice.tsx).
+function announceClientUpdate(version) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    void window.webContents.executeJavaScript(
+      `window.dispatchEvent(new CustomEvent("margin:desktop-update-ready", { detail: ${JSON.stringify({ commit: version.commit })} }))`,
+    ).catch(() => {});
+  }
+}
+
+function startClientUpdates() {
+  let running = null;
+  const check = () => (running ??= clientBundles.update()
+    .then((version) => { if (version) announceClientUpdate(version); })
+    .catch((error) => console.warn("Client update failed; trying again later.", error))
+    .finally(() => { running = null; }));
+  void check();
+  setInterval(check, CLIENT_UPDATE_INTERVAL);
+  // A window coming back into view is a good moment to look again.
+  app.on("browser-window-focus", () => { void check(); });
+}
+
+// Only a change to the desktop shell itself (Electron, main.mjs) needs a new
+// installer. That is rare, so it is offered once per launch.
+function startShellUpdateChecks() {
   return watchForUpdates({
-    readLocal: async () => JSON.parse(await readFile(path.join(CLIENT_DIR, "version.json"), "utf8")),
+    readLocal: async () => ({ version: app.getVersion() }),
     fetchRemote: async () => {
-      // Compare with the newest published desktop build, not the website, so
-      // the prompt only appears when there is a new installer to download.
       const response = await net.fetch(new URL("/api/downloads/desktop", API_ORIGIN), { cache: "no-store" });
       if (!response.ok) throw new Error(`Version check failed: ${response.status}`);
       return response.json();
     },
+    compare: newerShell,
     notify: async (latest) => {
       const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
       const options = {
         type: "info",
-        buttons: ["Download update", "Later"],
+        buttons: ["Download", "Later"],
         defaultId: 0,
         cancelId: 1,
-        message: "A new version of Margin Chat is available",
-        detail: `Version ${latest.version ?? latest.commit.slice(0, 7)} is out. Download it and replace this app to update. Your vault and account stay as they are.`,
+        message: "A new desktop app is available",
+        detail: `Margin Chat ${latest.version} changes the desktop app itself, so it needs a one-time install. Everyday updates keep arriving on their own. Your vault and account stay as they are.`,
       };
       const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
       if (response === 0) openExternally(DOWNLOAD_URL);
@@ -224,7 +261,9 @@ if (!app.requestSingleInstanceLock()) {
     window.focus();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    // Serve the newest client already on disk; a broken download falls back to the installed one.
+    if (!DEV_URL) await clientBundles.load().catch((error) => console.warn("Using the installed client.", error));
     protocol.handle(SCHEME, handleAppRequest);
 
     // Grant only what the vault, editor and voice typing use, and only to the app itself.
@@ -238,7 +277,10 @@ if (!app.requestSingleInstanceLock()) {
     buildAppMenu();
     createWindow();
     // The dev server is always current, so only bundled builds check.
-    if (!DEV_URL) startUpdateChecks();
+    if (!DEV_URL) {
+      startClientUpdates();
+      startShellUpdateChecks();
+    }
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

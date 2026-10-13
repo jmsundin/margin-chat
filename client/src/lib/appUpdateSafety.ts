@@ -5,6 +5,7 @@ const guards = new Map<symbol, { name: string; guard: Guard }>();
 let locked = false;
 
 export const isAppUpdateLocked = () => locked;
+export const hasAppUpdateGuards = () => guards.size > 0;
 export const hasAppUpdateGuard = (name: string) => [...guards.values()].some((entry) => entry.name === name);
 export const canReloadAfterAppUpdate = () => guards.size > 0 && [...guards.values()].every(({ guard }) => !guard.check() && (guard.canReload?.() ?? true));
 
