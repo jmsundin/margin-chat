@@ -250,6 +250,10 @@ async function testMobileSelectionActions() {
   await click(element('[aria-label="Choose AI model and provider"]'));
   await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
   assert.equal(element(".mobile-ai-composer"), composer, "Escape from the model picker keeps the selected passage composer.");
+  const sideDestination = [...composer.querySelectorAll("button")].find((item) => item.textContent === "Side document ↗")!;
+  const inlineDestination = [...composer.querySelectorAll("button")].find((item) => item.textContent === "In this document")!;
+  assert.equal(inlineDestination.getAttribute("aria-pressed"), "true", "A passage in a one-line document defaults to answering in it.");
+  await click(sideDestination);
   await act(async () => {
     prompt.focus();
     Object.getOwnPropertyDescriptor(browser.HTMLTextAreaElement.prototype, "value")!.set!.call(prompt, "Compare this with the rest of my notes.");

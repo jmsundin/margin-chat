@@ -179,7 +179,8 @@ try {
   const selectedBlock = element('[data-document-block-id="message:answer"]');
   await click(selectedBlock.querySelector(".rich-document-grip"));
   await click(selectedBlock.querySelector(".rich-document-ask"));
-  assert.equal(button("Side document ↗").getAttribute("aria-pressed"), "true", "Selected-passage prompts default to a side document.");
+  assert.equal(button("In this document").getAttribute("aria-pressed"), "true", "A passage in a nearly empty document defaults to answering in it.");
+  await click(button("Side document ↗"));
   await fill("AI prompt", "Explain this selection.");
   await click(button("Generate ↑"));
   assert.equal(submissions.at(-1).destination, "side");

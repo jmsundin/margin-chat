@@ -22,6 +22,7 @@ import AgentRunLog from "./AgentRunLog";
 import DocumentMargin, { type DocumentMarginItem } from "./DocumentMargin";
 import type { AgentProgress } from "../lib/useChatStreams";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
+import { defaultSelectionDestination } from "../lib/selectionDestination";
 import "./DocumentPanel.css";
 
 type DocumentValue = NonNullable<Conversation["document"]>;
@@ -451,7 +452,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         onHistory={historyAction}
         onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks}, { beforeFocus: { blockId: id, from: 0, to: 0 }, afterFocus: { blockId: id, from: 0, to: 0 } });}}
         onInvokeAI={(next) => {
-          const open = () => { props.onClearSelection?.(); setInvocation(next); setDestination(next.selection ? "side" : "inline"); setReplaceSelection(false); setOpenPromptId(null); };
+          const open = () => { props.onClearSelection?.(); setInvocation(next); setDestination(next.selection ? defaultSelectionDestination(latestDocument.current.blocks, { sourceBlockId: next.blockId, quote: next.selection.quote }) : "inline"); setReplaceSelection(false); setOpenPromptId(null); };
           if (mobileKeyboard.mobile && next.typing) {
             // Keep a keyboard shortcut in its active input session. Tapping
             // Ask AI leaves the document readable until the prompt is tapped.
