@@ -124,3 +124,25 @@
   .conversation-tree-lane.has-expanded-chat .conversation-tree-lane-list { padding-top: 0; }
   .workspace-menu-button { min-height: 44px; min-width: 44px; }
 }
+
+/* Pinch zooms only the Map View canvas (it has touch-action: none and moves its
+   own camera); everywhere else a pinch no longer zooms the whole app. */
+html.is-page-zoom-locked,
+html.is-page-zoom-locked body { touch-action: pan-x pan-y; }
+
+@media (max-width: 900px) {
+  /* Toasts at the top of a phone sat over the sidebar button for seconds at a
+     time (the version notice after every release), so they rise from the bottom. */
+  .workspace-notifications,
+  .app-version-toast-host { top: auto; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); flex-direction: column-reverse; }
+}
+
+/* iOS (26 and later) draws a progressive blur over the top edge of the page,
+   under the status bar. Keep a plain strip there so the header row and its
+   sidebar button sit below the blur instead of inside it. */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 900px) and (pointer: coarse) {
+    .app-chrome { box-sizing: border-box; padding-top: max(14px, env(safe-area-inset-top, 0px)); }
+    .thread-sidebar { padding-top: calc(22px + env(safe-area-inset-top, 0px)); }
+  }
+}
