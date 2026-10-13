@@ -155,6 +155,26 @@ describe("protected extension workspace frame", () => {
     expect(view.messages.every((request) => request.tabId === 7 && request.session === "valid-frame")).toBe(true);
   });
 
+  test("the workspace opens without waiting for the page, and the page's saved draft never replaces new typing", async () => {
+    const context = deferred<Page>();
+    const pageState = deferred<any>();
+    const view = await frame({ respond(request, normal) {
+      if (request.type === "workspace:context" && request.kind === "current") return context.promise;
+      if (request.type === "workspace:state") return pageState.promise;
+      return normal();
+    } });
+    await view.ready();
+    expect(view.browser.document.body.textContent).not.toContain("Opening your Margin Chat workspace");
+    context.resolve(firstPage());
+    await until(() => view.browser.document.querySelector(".browser-source-name strong")?.textContent === firstPage().title);
+    await view.click("Page context"); await view.fill("Typed while the page loaded");
+    await Bun.sleep(300);
+    expect(view.messages.some((request) => request.type === "workspace:draft")).toBe(false);
+    pageState.resolve(state({ title: "Old", kind: "selection", content: "Old passage", comment: "Saved earlier", question: "", mode: "annotate" }));
+    await Bun.sleep(20);
+    expect((view.browser.document.getElementById("source-thought") as any).value).toBe("Typed while the page loaded");
+  });
+
   test("saving page context hands the confirmed Capture and personal comment to the existing workspace", async () => {
     const view = await frame(); await view.ready();
     await view.click("Page context"); await view.fill("My private annotation"); await view.submit();

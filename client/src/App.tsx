@@ -19,10 +19,17 @@ import DictationControl from "./components/DictationControl";
 import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData, BillingPlan } from "./types";
 
 // Documents open in the block editor, so fetch its chunk alongside the workspace rather than after it renders.
-const WorkspaceApp = lazy(() => {
-  void loadRichDocumentEditor();
-  return import("./WorkspaceApp");
-});
+let workspaceModule: Promise<typeof import("./WorkspaceApp")> | null = null;
+function loadWorkspaceApp() {
+  if (!workspaceModule) {
+    void loadRichDocumentEditor();
+    workspaceModule = import("./WorkspaceApp");
+  }
+  return workspaceModule;
+}
+const WorkspaceApp = lazy(loadWorkspaceApp);
+/** Start loading the workspace code early, e.g. while the extension connects to its page. */
+export function preloadWorkspace() { void loadWorkspaceApp(); }
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 const INITIAL_THEME = loadInitialTheme();
 syncTheme(INITIAL_THEME);
@@ -49,8 +56,14 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
   // Removing a used reset token must not restart session hydration and race a new login.
   const [hasPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).has("reset_token"));
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
-  const [authStatus, setAuthStatus] = useState<AuthStatus>("checking");
-  const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(null);
+  // The extension already knows its signed-in account, so it opens the workspace saved on this
+  // device straight away and confirms the session in the background instead of behind a spinner.
+  const [savedExtensionUser] = useState(() => {
+    const saved = extension?.userId ? loadOfflineUser() : null;
+    return saved?.id === extension?.userId ? saved : null;
+  });
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(savedExtensionUser ? "authenticated" : "checking");
+  const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(savedExtensionUser);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
@@ -545,7 +558,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
   }
 
   return (
-    <Suspense fallback={<div className="app-shell"><div className="auth-loading-card" role="status">Opening your workspace…</div></div>}>
+    <Suspense fallback={<div className="app-shell"><div className="auth-loading-card is-delayed-status" role="status">Opening your workspace…</div></div>}>
     {/* The extension's frame sits inside other sites, which must not get to grant or hold a microphone. */}
     {extension ? null : <DictationControl userId={authUser.id} />}
     <WorkspaceApp

@@ -8,6 +8,7 @@
         import React from "react";
         import { apiFetch } from ${JSON.stringify(new URL("../../../client/src/lib/apiTransport.ts", import.meta.url).pathname)};
         globalThis.__frameProbe = { props: null, renders: [], apiFetch };
+        export function preloadWorkspace() {}
         export default function App(props) {
           globalThis.__frameProbe.props = props;
           globalThis.__frameProbe.renders.push(props);
