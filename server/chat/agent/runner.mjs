@@ -34,11 +34,15 @@ const clip = (text, maximum) => text.length <= maximum ? text : `${text.slice(0,
  * note and tool steps.
  */
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, onDelta, onStep, onThinking, onActivity }) {
+  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, onDelta, onStep, onThinking, onActivity }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
   const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter },
     agentToolDefinitions(chatRequest, workspace));
-  const executeTool = createAgentToolExecutor({ chatRequest, workspace });
+  // Tool results of the round in progress; they join the adapter's history once the round ends.
+  let outputs = [];
+  const room = () => Number.isSafeInteger(maxInputCharacters)
+    ? maxInputCharacters - adapter.size - JSON.stringify(outputs).length : Number.POSITIVE_INFINITY;
+  const executeTool = createAgentToolExecutor({ chatRequest, workspace, signal, room, readPage });
   const startedAt = now();
   // The meter may already carry this request's routing call; count only the run.
   const startingSpend = usageMeter?.summary().amountMicros ?? 0;
@@ -94,7 +98,7 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     }
     // Text written alongside tool calls is the model narrating its plan, not the answer.
     if (result.text.trim()) await record({ kind: "note", label: clip(result.text.trim().replace(/\s+/g, " "), 300), ok: true });
-    const outputs = [];
+    outputs = [];
     for (const toolCall of result.toolCalls) {
       signal?.throwIfAborted();
       const output = await executeTool(toolCall.name, toolCall.arguments);
