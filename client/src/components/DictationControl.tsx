@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
-import { requestDictationTranscript } from "../lib/api";
+import { finishLiveDictationSession, requestDictationTranscript, requestLiveDictationSession } from "../lib/api";
+import { startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
 import {
   dictationShortcutLabel,
   dictationSupported,
@@ -8,8 +9,10 @@ import {
   insertDictation,
   isDictationShortcut,
   readDictationButtonPreference,
+  startDictationPreview,
   startDictationRecording,
   subscribeDictationButtonPreference,
+  type DictationPreview,
   type DictationRecording,
 } from "../lib/dictation";
 import "./DictationControl.css";
@@ -54,6 +57,14 @@ function describeError(error: unknown): string {
   return error instanceof Error && error.message ? error.message : "Voice typing didn't work. Try again.";
 }
 
+/** One recording's live transcription: words shown while talking, then the final text. */
+interface LiveRun {
+  transcription: LiveTranscription | null;
+  preview: DictationPreview | null;
+  token: string | null;
+  ended: boolean;
+}
+
 function formatElapsed(ms: number) {
   const seconds = Math.floor(ms / 1000);
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -72,6 +83,9 @@ export default function DictationControl({ userId }: { userId?: string }) {
   const [level, setLevel] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [typing, setTyping] = useState(false);
+  // Live words for fields that can't show them in place.
+  const [liveText, setLiveText] = useState("");
+  const liveRef = useRef<LiveRun | null>(null);
   // Read by async steps and key handlers, so it changes with each update, not each render.
   const phaseRef = useRef<Phase>(phase);
   const setPhase = useCallback((next: Phase) => { phaseRef.current = next; setPhaseState(next); }, []);
@@ -89,13 +103,48 @@ export default function DictationControl({ userId }: { userId?: string }) {
     }, 6000);
   }, []);
 
+  // Stops a hosted session's charge; the server bills the time it ran.
+  const endCharge = useCallback((run: LiveRun) => {
+    if (run.token) void finishLiveDictationSession(run.token, userId);
+    run.token = null;
+  }, [userId]);
+
+  const beginLive = useCallback((stream: MediaStream, target: HTMLElement): LiveRun => {
+    const run: LiveRun = { transcription: null, preview: startDictationPreview(target), token: null, ended: false };
+    if (typeof RTCPeerConnection === "undefined") return run;
+    void (async () => {
+      try {
+        const session = await requestLiveDictationSession({ expectedUserId: userId });
+        run.token = session.token;
+        if (run.ended) { endCharge(run); return; }
+        const transcription = await startLiveTranscription({
+          stream, clientSecret: session.clientSecret,
+          onText: (text) => {
+            if (run.ended) return;
+            if (run.preview) run.preview.update(text);
+            else setLiveText(text);
+          },
+        });
+        if (run.ended) { transcription.close(); endCharge(run); return; }
+        run.transcription = transcription;
+      } catch {
+        // Without a live session the recording is transcribed when it stops.
+        endCharge(run);
+      }
+    })();
+    return run;
+  }, [endCharge, userId]);
+
   const finish = useCallback(async () => {
     const current = phaseRef.current;
     const recording = recordingRef.current;
     if (current.kind !== "recording" || !recording) return;
     recordingRef.current = null;
     keyPressRef.current = null;
+    const live = liveRef.current;
+    liveRef.current = null;
     if (Date.now() - current.startedAt < SHORTEST_RECORDING_MS) {
+      if (live) { live.ended = true; live.transcription?.close(); live.preview?.discard(); endCharge(live); }
       recording.cancel();
       setPhase({ kind: "idle" });
       return;
@@ -105,11 +154,27 @@ export default function DictationControl({ userId }: { userId?: string }) {
     const controller = new AbortController();
     abortRef.current = controller;
     try {
+      // The live session's final text, when it ran; otherwise the recording is transcribed.
+      let text: string | null = null;
+      if (live) {
+        live.ended = true;
+        text = live.transcription ? await live.transcription.finish() : null;
+        endCharge(live);
+      }
       const audio = await recording.stop();
-      const text = await requestDictationTranscript(audio, { expectedUserId: userId, signal: controller.signal });
+      setLiveText("");
       if (controller.signal.aborted) return;
-      if (!text.trim()) { showNotice(target, "Didn't catch anything. Try again a little closer to the mic."); return; }
-      if (insertDictation(target, text)) { setPhase({ kind: "idle" }); return; }
+      if (text === null) {
+        live?.preview?.discard();
+        text = await requestDictationTranscript(audio, { expectedUserId: userId, signal: controller.signal });
+      }
+      if (controller.signal.aborted) return;
+      if (!text.trim()) {
+        live?.preview?.discard();
+        showNotice(target, "Didn't catch anything. Try again a little closer to the mic.");
+        return;
+      }
+      if (live?.preview ? live.preview.commit(text) : insertDictation(target, text)) { setPhase({ kind: "idle" }); return; }
       await navigator.clipboard?.writeText(text).catch(() => undefined);
       showNotice(null, "That field closed, so the transcript was copied instead.");
     } catch (error) {
@@ -118,16 +183,25 @@ export default function DictationControl({ userId }: { userId?: string }) {
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [showNotice, userId]);
+  }, [endCharge, showNotice, userId]);
 
   const cancel = useCallback(() => {
+    const live = liveRef.current;
+    liveRef.current = null;
+    if (live) {
+      live.ended = true;
+      live.transcription?.close();
+      live.preview?.discard();
+      endCharge(live);
+    }
+    setLiveText("");
     recordingRef.current?.cancel();
     recordingRef.current = null;
     abortRef.current?.abort();
     abortRef.current = null;
     keyPressRef.current = null;
     setPhase({ kind: "idle" });
-  }, []);
+  }, [endCharge]);
 
   const start = useCallback(async (target: HTMLElement) => {
     if (phaseRef.current.kind === "starting" || phaseRef.current.kind === "recording" || phaseRef.current.kind === "transcribing") return;
@@ -140,12 +214,13 @@ export default function DictationControl({ userId }: { userId?: string }) {
       // Esc or a second press while the microphone was opening.
       if ((phaseRef.current as Phase).kind !== "starting") { recording.cancel(); return; }
       recordingRef.current = recording;
+      liveRef.current = beginLive(recording.stream, target);
       setPhase({ kind: "recording", target, startedAt: Date.now() });
     } catch (error) {
       keyPressRef.current = null;
       showNotice(target, describeError(error));
     }
-  }, [finish, showNotice]);
+  }, [beginLive, finish, showNotice]);
 
   const toggle = useCallback((target: HTMLElement | null) => {
     const current = phaseRef.current;
@@ -210,7 +285,14 @@ export default function DictationControl({ userId }: { userId?: string }) {
     };
   }, [cancel, finish, supported, toggle]);
 
-  useEffect(() => () => cancel(), [cancel]);
+  useEffect(() => {
+    // Leaving the page mid-recording still ends a hosted session's charge.
+    window.addEventListener("pagehide", cancel);
+    return () => {
+      window.removeEventListener("pagehide", cancel);
+      cancel();
+    };
+  }, [cancel]);
 
   const activeTarget = phase.kind === "idle" ? null : phase.target;
   const buttonTarget = showButton && !coarsePointer && !typing ? focused : null;
@@ -291,6 +373,7 @@ export default function DictationControl({ userId }: { userId?: string }) {
             <span className="dictation-stop-square" aria-hidden="true" />
           </button>
           <span className="dictation-elapsed">{phase.kind === "recording" ? formatElapsed(Math.max(0, now - phase.startedAt)) : "Starting…"}</span>
+          {liveText ? <span className="dictation-live-text">{liveText.length > 80 ? `…${liveText.slice(-80)}` : liveText}</span> : null}
           <button aria-label="Cancel voice typing" className="dictation-pill-button" onClick={cancel} title="Cancel (Esc)" type="button">×</button>
         </>
       )}

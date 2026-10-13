@@ -95,6 +95,14 @@
   background: #fff;
 }
 
+.dictation-live-text {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--muted, #97a9a2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .dictation-elapsed {
   font-variant-numeric: tabular-nums;
 }

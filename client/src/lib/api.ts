@@ -431,6 +431,42 @@ export async function requestDictationTranscript(audio: Blob, args: { expectedUs
   return payload.text;
 }
 
+export interface LiveDictationSession {
+  clientSecret: string;
+  model: string;
+  maxSeconds: number;
+  /** Present when Plus credit pays; send it back when the session ends. */
+  token: string | null;
+}
+
+/** Opens a live voice typing session that streams words while the person talks. */
+export async function requestLiveDictationSession(args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<LiveDictationSession> {
+  const response = await apiFetch("/api/dictation/live", {
+    body: "{}",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
+    method: "POST",
+    signal: args.signal,
+  });
+  const payload = (await readJson(response)) as Partial<LiveDictationSession> | ErrorPayload | null;
+  ensureOk(response, payload, "Live voice typing could not start.");
+  if (!payload || typeof payload !== "object" || !("clientSecret" in payload) || typeof payload.clientSecret !== "string") {
+    throw new Error("Backend returned an invalid live voice typing session.");
+  }
+  return payload as LiveDictationSession;
+}
+
+/** Ends a hosted live session's charge. Keeps going while the page unloads. */
+export function finishLiveDictationSession(token: string, expectedUserId?: string): Promise<void> {
+  return apiFetch("/api/dictation/live/finish", {
+    body: JSON.stringify({ token }),
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...(expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {}) },
+    keepalive: true,
+    method: "POST",
+  }).then(() => undefined, () => undefined);
+}
+
 export async function requestDeleteDocument(documentId: string, expectedUserId?: string): Promise<void> {
   const response = await apiFetch(
     `/api/documents/${encodeURIComponent(documentId)}`,

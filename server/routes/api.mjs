@@ -122,7 +122,7 @@ export function createApiHandler({
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
-  const dictation = dictationService ?? createDictationService({ env });
+  const dictation = dictationService ?? createDictationService({ env, billingService });
   const desktopDownloads = desktopDownloadService ?? createDesktopDownloadService({ database, env });
   const mcp = mcpService ?? createMcpService({
     database, vaultService, passageService: vaultPassages, createUsageContext: executeChatReply.createUsageContext,
@@ -423,7 +423,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "dictationTranscribe", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -827,6 +827,25 @@ export function createApiHandler({
           revision: storedWorkspace.revision,
           workspace: createWorkspaceDocument(storedWorkspace.state),
         });
+        return;
+      }
+
+      if (route?.id === "dictationLive") {
+        const body = await readJsonBody(request, 1024);
+        const language = typeof body?.language === "string" && body.language ? body.language : null;
+        const scope = createRequestAbortScope(request, response);
+        try {
+          const context = await executeChatReply.createUsageContext({ user: authContext.user, signal: scope.signal, operation: "dictation" });
+          sendJson(response, 200, await dictation.startLive({ language, context, userId: authContext.user.id }), { "Cache-Control": "private, no-store" });
+        } finally {
+          scope.dispose();
+        }
+        return;
+      }
+
+      if (route?.id === "dictationLiveFinish") {
+        const body = await readJsonBody(request, 8 * 1024);
+        sendJson(response, 200, await dictation.finishLive({ token: body?.token, userId: authContext.user.id }), { "Cache-Control": "private, no-store" });
         return;
       }
 
