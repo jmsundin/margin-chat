@@ -14,6 +14,8 @@ export interface PageContext {
   selectionText?: string;
   anchor?: TextAnchor;
 }
+/** Layouts drawn inside the page; side by side lives in Chrome's own side panel. */
+type PageLayout = Exclude<Layout, "split">;
 type Send = (message: Record<string, unknown>) => Promise<any>;
 
 export const DOCK_WIDTH = { default: 520, min: 320, step: 24 };
@@ -24,6 +26,8 @@ export interface WorkspaceHostOptions {
   onHeaderCollapse?(collapsed: boolean): void;
   /** Called when the reader picks a layout from the view options menu. */
   onLayoutChange?(layout: Layout): void;
+  /** Called when the reader picks Side by side: Chrome's side panel narrows the page itself. */
+  onSidePanel?(): void;
 }
 
 /** Only this non-private shell and page-derived text enter the host document. */
@@ -42,12 +46,11 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     .icon{display:grid;place-items:center;width:28px;height:28px;padding:0;border-color:transparent;background:transparent;font-size:18px;line-height:1;border-radius:8px}.icon:hover,.icon[aria-expanded=true]{background:var(--mc-hover);border-color:transparent}.close{font-size:20px}
     .menu{position:absolute;z-index:1;top:calc(100% - 2px);right:36px;min-width:176px;padding:4px;display:grid;gap:1px;background:var(--mc-raised);border:1px solid var(--mc-line-strong);border-radius:10px;box-shadow:0 10px 30px var(--mc-shadow)}
     .menu button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border-color:transparent;background:transparent;padding:7px 10px 7px 8px;border-radius:7px}.menu button:hover,.menu button:focus-visible{background:var(--mc-hover);border-color:transparent}
-    .menu [aria-checked]::before{content:"";width:12px;flex:none;text-align:center;font-size:12px}.menu [aria-checked=true]::before{content:"✓"}.menu .peek::before{content:"";width:12px;flex:none}
+    .menu [aria-checked]::before{content:"";width:12px;flex:none;text-align:center;font-size:12px}.menu [aria-checked=true]::before{content:"✓"}.menu .peek::before,.menu .side::before{content:"";width:12px;flex:none}
     .menu hr{margin:3px 4px;border:0;border-top:1px solid var(--mc-line)}
     .panel[data-layout=floating]{resize:both;min-width:320px;min-height:280px;max-width:calc(100vw - 12px);max-height:calc(100vh - 12px)}.panel[data-layout=floating] header{cursor:move}
     iframe{border:0;display:block;width:100%;flex:1;min-height:0;background:var(--mc-bg)}.status{padding:24px;font-size:14px;line-height:1.6}.status button{margin-top:12px;display:block}
-    .grip{position:absolute;z-index:2;left:0;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;display:grid;place-items:center;outline:none}.panel:not([data-layout=docked]):not([data-layout=split]) .grip{display:none}
-    .panel[data-layout=split]{border-radius:0;border-width:0 0 0 1px;box-shadow:none}
+    .grip{position:absolute;z-index:2;left:0;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;display:grid;place-items:center;outline:none}.panel:not([data-layout=docked]) .grip{display:none}
     .grip::after{content:"";width:4px;height:44px;border-radius:4px;background:var(--mc-line-strong);transition:background .15s,height .15s}.grip:hover::after,.grip:focus-visible::after,.resizing .grip::after{background:var(--mc-sage);height:64px}.grip:focus-visible{box-shadow:inset 3px 0 0 var(--mc-sage)}
     .reveal,.return{position:fixed;pointer-events:auto;box-shadow:0 3px 20px var(--mc-shadow)}.reveal{left:12px;top:50%;writing-mode:vertical-rl;padding:15px 10px}.return{right:18px;bottom:18px;padding:13px 18px}.dragging iframe,.resizing iframe{pointer-events:none}.resizing{user-select:none}
     .expand{display:none}.collapsed header{justify-content:center;height:12px;padding:0}.collapsed header>*{display:none!important}
@@ -61,7 +64,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
       <button class="icon more" type="button" title="View options" aria-label="View options" aria-haspopup="menu" aria-expanded="false">⋮</button>
       <div class="menu" role="menu" aria-label="View options" hidden>
         <button type="button" role="menuitemradio" data-layout="docked" aria-checked="true">Docked</button>
-        <button type="button" role="menuitemradio" data-layout="split" aria-checked="false">Side by side</button>
+        <button type="button" role="menuitem" class="side" title="Open in Chrome's side panel so the page narrows beside it">Side by side</button>
         <button type="button" role="menuitemradio" data-layout="floating" aria-checked="false">Floating</button>
         <button type="button" role="menuitemradio" data-layout="expanded" aria-checked="false">Expanded</button>
         <hr role="separator"><button type="button" role="menuitem" class="peek">Peek at page</button>
@@ -78,7 +81,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   const header = root.querySelector<HTMLElement>("header")!;
   const grip = root.querySelector<HTMLElement>(".grip")!;
   const theme = followPageTheme(win, [host]);
-  let layout: Layout = "docked";
+  let layout: PageLayout = "docked";
   let headerCollapsed = false;
   let active = false;
   let peeking = false;
@@ -106,16 +109,6 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     context = bookmark(); anchors = []; paintHighlights();
     if (session) await send({ type: "overlay:page", session });
   }
-  // Side by side makes room by narrowing the page itself, so nothing sits on top of it.
-  let pageStyle: HTMLStyleElement | undefined;
-  function shrinkPage(width: number | undefined) {
-    if (width === undefined) { pageStyle?.remove(); pageStyle = undefined; return; }
-    if (!pageStyle) { pageStyle = doc.createElement("style"); pageStyle.dataset.marginSplit = "true"; }
-    if (!pageStyle.isConnected) doc.documentElement.append(pageStyle);
-    pageStyle.textContent = `html{margin-right:${width}px!important;width:auto!important;max-width:none!important;min-width:0!important}`;
-  }
-  /** The page's own scrollbar stays at the window edge, to the right of the pane. */
-  const scrollbarWidth = () => Math.max(0, win.innerWidth - (doc.documentElement.clientWidth || win.innerWidth));
   function render() {
     panel.hidden = !active || peeking;
     reveal.hidden = !active || peeking || layout !== "expanded";
@@ -127,15 +120,10 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
       Object.assign(panel.style, { left: `${Math.max(6, Math.min(win.innerWidth - 326, floating.left))}px`, top: `${Math.max(6, Math.min(win.innerHeight - 100, floating.top))}px`, right: "auto", width: `${floating.width}px`, height: `${floating.height}px` });
     } else if (layout === "expanded") {
       Object.assign(panel.style, { left: `${Math.min(88, Math.max(46, win.innerWidth * 0.075))}px`, right: "12px", top: "12px", width: "auto", height: "calc(100vh - 24px)" });
-    } else if (layout === "split") {
-      Object.assign(panel.style, { left: "auto", right: `${scrollbarWidth()}px`, top: "0px", width: `${shownDockWidth()}px`, height: "100vh" });
     } else {
       Object.assign(panel.style, { left: "auto", right: "12px", top: "12px", width: `${shownDockWidth()}px`, height: "calc(100vh - 24px)" });
-    }
-    if (layout === "docked" || layout === "split") {
       grip.setAttribute("aria-valuemin", String(DOCK_WIDTH.min)); grip.setAttribute("aria-valuemax", String(maxDockWidth())); grip.setAttribute("aria-valuenow", String(shownDockWidth()));
     }
-    shrinkPage(active && !peeking && layout === "split" ? shownDockWidth() : undefined);
   }
   const maxDockWidth = () => Math.max(DOCK_WIDTH.min, win.innerWidth - 24);
   const clampDock = (width: number) => Math.round(Math.max(DOCK_WIDTH.min, Math.min(maxDockWidth(), width)));
@@ -152,8 +140,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     headerCollapsed = collapsed; render();
     if (persist) options.onHeaderCollapse?.(collapsed);
   }
-  function setLayout(next: Layout, persist = false) {
-    if (!isLayout(next)) return;
+  function setLayout(next: PageLayout, persist = false) {
     if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width || floating.width, height: rect.height || floating.height }; }
     layout = next; peeking = false; render();
     if (persist) options.onLayoutChange?.(next);
@@ -246,7 +233,9 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeMenu(); }
     else if (event.key === "Tab") closeMenu(false);
   });
-  menu.querySelectorAll<HTMLButtonElement>("button[data-layout]").forEach((button) => button.onclick = () => { setLayout(button.dataset.layout as Layout, true); closeMenu(); });
+  menu.querySelectorAll<HTMLButtonElement>("button[data-layout]").forEach((button) => button.onclick = () => { setLayout(button.dataset.layout as PageLayout, true); closeMenu(); });
+  // The click is the user gesture Chrome needs to open its side panel, so hand off right away.
+  root.querySelector<HTMLButtonElement>(".side")!.onclick = () => { close(); options.onSidePanel?.(); };
   const peek = () => { closeMenu(false); peeking = true; render(); returnButton.focus(); };
   root.querySelector<HTMLButtonElement>(".peek")!.onclick = peek;
   reveal.onclick = peek;
@@ -257,7 +246,11 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     if (!path.includes(menu) && !path.includes(more)) closeMenu(false);
   };
   root.addEventListener("pointerdown", outsideMenu);
-  doc.addEventListener("pointerdown", outsideMenu, true);
+  // Seen from the page, the closed shadow hides the menu from the event path, so a press on a
+  // menu item would look like a press outside and hide the menu before its click lands.
+  // Presses inside the shell are left to the listener above.
+  const pagePress = (event: Event) => { if (!event.composedPath().includes(host)) closeMenu(false); };
+  doc.addEventListener("pointerdown", pagePress, true);
   root.querySelector<HTMLButtonElement>(".close")!.onclick = close;
   const collapseButton = root.querySelector<HTMLButtonElement>(".collapse")!;
   const expandButton = root.querySelector<HTMLButtonElement>(".expand")!;
@@ -276,7 +269,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   for (const event of ["pointerup", "pointercancel", "lostpointercapture"]) header.addEventListener(event, () => { drag = undefined; panel.classList.remove("dragging"); });
   // The docked panel's left edge is a resize handle; the chosen width is remembered.
   grip.addEventListener("pointerdown", (event) => {
-    if ((layout !== "docked" && layout !== "split") || event.button !== 0) return;
+    if (layout !== "docked" || event.button !== 0) return;
     resize = { x: event.clientX, width: panel.getBoundingClientRect().width || shownDockWidth() };
     grip.setPointerCapture?.(event.pointerId); panel.classList.add("resizing"); event.preventDefault();
   });
@@ -297,7 +290,8 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   win.addEventListener("resize", resized);
   const navigationCheck = win.setInterval(() => { void changedPage().catch(() => undefined); }, 500);
   return { open, close, register, toggle: () => active ? close() : void open(), handleMessage, setDockWidth: (width: number) => setDockWidth(width),
-    setHeaderCollapsed: (collapsed: boolean) => setHeaderCollapsed(collapsed), setLayout: (next: unknown) => { if (isLayout(next)) setLayout(next); }, setTheme: theme.set,
-    destroy() { theme.destroy(); win.clearInterval(navigationCheck); doc.removeEventListener("pointerdown", outsideMenu, true); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); shrinkPage(undefined); host.remove(); },
+    setHeaderCollapsed: (collapsed: boolean) => setHeaderCollapsed(collapsed),
+    setLayout: (next: unknown) => { if (isLayout(next) && next !== "split") setLayout(next); }, setTheme: theme.set,
+    destroy() { theme.destroy(); win.clearInterval(navigationCheck); doc.removeEventListener("pointerdown", pagePress, true); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },
   };
 }

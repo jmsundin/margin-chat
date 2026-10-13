@@ -31,6 +31,8 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
   const tabMessages: Array<{ tabId: number; message: any; options: unknown }> = [];
   const injections: any[] = [];
   const openedTabs: string[] = [];
+  const sidePanel: any[] = [];
+  const broadcasts: any[] = [];
   let optionsOpened = 0;
   let accessLevel: string | null = null;
   const url = "chrome-extension://test-extension/popup.html";
@@ -40,6 +42,7 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
       getURL: (path: string) => `chrome-extension://test-extension/${path}`,
       onInstalled: { addListener() {} },
       async openOptionsPage() { optionsOpened++; },
+      async sendMessage(message: unknown) { broadcasts.push(message); },
       onMessage: {
         addListener(callback: typeof listener) {
           listener = callback;
@@ -54,9 +57,14 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
     tabs: {
       async create(tab: { url: string }) { openedTabs.push(tab.url); },
       async query() { return [{ id: 12 }, { id: 13 }, {}]; },
+      async get(tabId: number) { return { id: tabId, url: "https://example.com/article" }; },
       async sendMessage(tabId: number, message: unknown, options: unknown) { tabMessages.push({ tabId, message, options }); return { ok: true }; },
     },
-    scripting: { async executeScript(options: unknown) { injections.push(options); return []; } },
+    scripting: { async executeScript(options: any) { injections.push(options); return options.func && !options.args ? [{ result: "page-session" }] : []; } },
+    sidePanel: {
+      async setOptions(options: unknown) { sidePanel.push(["setOptions", options]); },
+      async open(options: unknown) { sidePanel.push(["open", options]); },
+    },
     storage: {
       local: {
         async get(key: string) {
@@ -88,6 +96,8 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
   return {
     accessLevel: () => accessLevel,
     injections,
+    sidePanel,
+    broadcasts,
     openedTabs,
     optionsOpened: () => optionsOpened,
     tabMessages,
@@ -437,6 +447,37 @@ describe("on-page Margin broker", () => {
     expect(worker.openedTabs).toHaveLength(2);
   });
 
+  test("Side by side opens Chrome's side panel for that tab and the toolbar keeps using it", async () => {
+    const storage: Record<string, any> = { connection: connection() };
+    const worker = createWorker(storage, fetch);
+    expect(await worker.dispatch({ type: "overlay:side-panel" }, pageSender())).toEqual({ ok: true });
+    expect(worker.sidePanel).toEqual([["setOptions", { tabId: 12, path: "workspace.html?panel=1&tab=12", enabled: true }], ["open", { tabId: 12 }]]);
+    expect(storage.layout).toBe("split");
+    const tab = { id: 12, url: "https://example.com/article", title: "Article", windowId: 1 };
+    await worker.clickAction(tab);
+    expect(worker.sidePanel.at(-1)).toEqual(["open", { tabId: 12 }]);
+    expect(worker.injections).toHaveLength(0); // no panel drawn on the page
+    expect(worker.broadcasts).toEqual([{ type: "margin:panel-reconnect", tabId: 12 }]);
+    worker.changeStorage({ layout: { newValue: "docked" } });
+    await worker.clickAction(tab);
+    expect(worker.injections).toHaveLength(2); expect(worker.sidePanel).toHaveLength(4);
+  });
+  test("a toolbar click that wakes the worker still honours a remembered Side by side", async () => {
+    const worker = createWorker({ connection: connection(), layout: "split" }, fetch);
+    await worker.clickAction({ id: 12, url: "https://example.com/article" });
+    expect(worker.sidePanel).toEqual([["setOptions", { tabId: 12, path: "workspace.html?panel=1&tab=12", enabled: true }], ["open", { tabId: 12 }]]);
+    expect(worker.injections).toHaveLength(0);
+  });
+  test("only the side panel for a tab can ask that page for a session", async () => {
+    const worker = createWorker({ connection: connection() }, fetch);
+    const panel = (query: string, extra: Record<string, unknown> = {}) => ({ id: "test-extension", url: `chrome-extension://test-extension/workspace.html?${query}`, frameId: 0, ...extra });
+    expect(await worker.dispatch({ type: "workspace:panel-session", tabId: 12 }, panel("panel=1&tab=12"))).toEqual({ session: "page-session" });
+    expect(worker.injections[0]).toMatchObject({ target: { tabId: 12, frameIds: [0] }, world: "ISOLATED", files: ["overlay.js"] });
+    expect((await worker.dispatch({ type: "workspace:panel-session", tabId: 13 }, panel("panel=1&tab=12"))).error).toBeString();
+    expect((await worker.dispatch({ type: "workspace:panel-session", tabId: 12 }, panel("tab=12"))).error).toBeString();
+    expect((await worker.dispatch({ type: "workspace:panel-session", tabId: 12 }, panel("panel=1&tab=12", { tab: { id: 12 } }))).error).toBeString();
+    expect(worker.injections).toHaveLength(2);
+  });
   test("settings and pending review stay in trusted extension pages", async () => {
     const worker = createWorker({}, fetch);
     expect((await worker.dispatch({ type: "overlay:settings" }, pageSender())).ok).toBe(true);

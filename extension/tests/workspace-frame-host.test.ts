@@ -16,9 +16,10 @@ function harness() {
   const dockResizes: number[] = [];
   const collapses: boolean[] = [];
   const layouts: string[] = [];
+  let sidePanels = 0;
   let overlay!: ReturnType<typeof createWorkspaceFrameHost>;
   try {
-    overlay = createWorkspaceFrameHost(doc, async (message) => { messages.push(structuredClone(message)); return message.type === "overlay:frame" ? { tabId: 12, session: "source-session" } : { ok: true }; }, "chrome-extension://test/workspace.html", { onDockResize: (width) => dockResizes.push(width), onHeaderCollapse: (collapsed) => collapses.push(collapsed), onLayoutChange: (layout) => layouts.push(layout) });
+    overlay = createWorkspaceFrameHost(doc, async (message) => { messages.push(structuredClone(message)); return message.type === "overlay:frame" ? { tabId: 12, session: "source-session" } : { ok: true }; }, "chrome-extension://test/workspace.html", { onDockResize: (width) => dockResizes.push(width), onHeaderCollapse: (collapsed) => collapses.push(collapsed), onLayoutChange: (layout) => layouts.push(layout), onSidePanel: () => { sidePanels++; } });
   } finally { prototype.attachShadow = attach; }
   cleanup.push(() => { overlay.destroy(); win.happyDOM.abort(); });
   const element = <T extends HTMLElement = HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
@@ -26,7 +27,7 @@ function harness() {
   const chooseLayout = (layout: string) => { click(".more"); click(`.menu button[data-layout=${layout}]`); };
   const press = (selector: string, key: string) => { const event = new win.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }); element(selector).dispatchEvent(event as unknown as Event); return event; };
   const select = (node: Node, from = 0, to = node.textContent!.length) => { const range = doc.createRange(); range.setStart(node, from); range.setEnd(node, to); const selection = doc.getSelection()!; selection.removeAllRanges(); selection.addRange(range); doc.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true }) as unknown as Event); };
-  return { win, doc, root, overlay, dockResizes, collapses, layouts, element, click, chooseLayout, press, select, messages, context: (kind = "current") => overlay.handleMessage({ type: "margin:page-context", session: "source-session", kind }) };
+  return { win, doc, root, overlay, dockResizes, collapses, layouts, get sidePanels() { return sidePanels; }, element, click, chooseLayout, press, select, messages, context: (kind = "current") => overlay.handleMessage({ type: "margin:page-context", session: "source-session", kind }) };
 }
 
 describe("protected workspace frame host", () => {
@@ -47,33 +48,14 @@ describe("protected workspace frame host", () => {
     h.chooseLayout("docked"); grip.dispatchEvent(new h.win.MouseEvent("dblclick", { bubbles: true }) as unknown as Event);
     expect(panel.style.width).toBe("520px"); expect(h.dockResizes.at(-1)).toBe(520);
   });
-  test("side by side narrows the page to make room and resizes the page with the pane", async () => {
+  test("Side by side hands off to Chrome's side panel and closes the page panel", async () => {
     const h = harness(); await h.overlay.open();
-    const pageStyle = () => h.doc.querySelector<HTMLStyleElement>("style[data-margin-split]");
-    expect(pageStyle()).toBeNull();
-    h.chooseLayout("split");
-    const panel = h.element(".panel");
-    expect(panel.dataset.layout).toBe("split"); expect(h.layouts).toEqual(["split"]);
-    expect(panel.style.top).toBe("0px"); expect(panel.style.height).toBe("100vh"); expect(panel.style.width).toBe("520px");
-    expect(pageStyle()!.textContent).toContain("html{margin-right:520px!important");
-    const grip = h.element(".grip");
-    const pointer = (type: string, clientX: number) => grip.dispatchEvent(new h.win.PointerEvent(type, { clientX, button: 0, pointerId: 1, bubbles: true }) as unknown as Event);
-    pointer("pointerdown", 500); pointer("pointermove", 440); pointer("pointerup", 440);
-    expect(panel.style.width).toBe("580px"); expect(pageStyle()!.textContent).toContain("margin-right:580px"); expect(h.dockResizes).toEqual([580]);
-    h.click(".more"); h.click(".menu .peek"); expect(pageStyle()).toBeNull();
-    h.click(".return"); expect(pageStyle()!.textContent).toContain("margin-right:580px");
-    h.click(".close"); expect(pageStyle()).toBeNull();
-    await h.overlay.open(); expect(pageStyle()).not.toBeNull();
-    h.chooseLayout("docked"); expect(pageStyle()).toBeNull(); expect(h.layouts).toEqual(["split", "docked"]);
-  });
-  test("a remembered layout is applied without being reported again", async () => {
-    const h = harness();
-    h.overlay.setLayout("split"); h.overlay.setLayout("sideways");
-    expect(h.doc.querySelector("style[data-margin-split]")).toBeNull(); // nothing shrinks until the pane opens
-    await h.overlay.open();
-    expect(h.element(".panel").dataset.layout).toBe("split"); expect(h.doc.querySelector("style[data-margin-split]")).not.toBeNull();
-    expect(h.layouts).toEqual([]);
-    h.overlay.destroy(); expect(h.doc.querySelector("style[data-margin-split]")).toBeNull();
+    h.click(".more"); h.click(".menu .side");
+    expect(h.sidePanels).toBe(1); expect(h.element(".panel").hidden).toBe(true); expect(h.element(".menu").hidden).toBe(true);
+    expect(h.doc.querySelector("style[data-margin-split]")).toBeNull(); // the page itself is never restyled
+    h.chooseLayout("floating"); expect(h.layouts).toEqual(["floating"]);
+    h.overlay.setLayout("split"); h.overlay.setLayout("sideways"); h.overlay.setLayout("expanded");
+    expect(h.element(".panel").dataset.layout).toBe("expanded"); expect(h.layouts).toEqual(["floating"]);
   });
   test("the header collapses to a thin strip and reports the state to remember", async () => {
     const h = harness(); await h.overlay.open();
@@ -128,7 +110,7 @@ describe("protected workspace frame host", () => {
       h.click(".more");
       expect(h.element(".menu").hidden).toBe(false); expect(h.element(".more").getAttribute("aria-expanded")).toBe("true");
       const entries = [...h.root.querySelectorAll(".menu button")].map((item) => [item.textContent, item.getAttribute("role"), item.getAttribute("aria-checked")]);
-      expect(entries).toEqual([["Docked", "menuitemradio", "true"], ["Side by side", "menuitemradio", "false"], ["Floating", "menuitemradio", "false"], ["Expanded", "menuitemradio", "false"], ["Peek at page", "menuitem", null]]);
+      expect(entries).toEqual([["Docked", "menuitemradio", "true"], ["Side by side", "menuitem", null], ["Floating", "menuitemradio", "false"], ["Expanded", "menuitemradio", "false"], ["Peek at page", "menuitem", null]]);
       h.click(".menu button[data-layout=expanded]");
       expect(h.element(".panel").dataset.layout).toBe("expanded");
       expect(h.element(".menu").hidden).toBe(true); expect(h.element(".more").getAttribute("aria-expanded")).toBe("false");
@@ -150,7 +132,7 @@ describe("protected workspace frame host", () => {
       expect(h.element(".menu").hidden).toBe(false);
       expect(h.root.activeElement).toBe(h.element(".menu button[data-layout=docked]"));
       const key = (name: string) => { const event = new h.win.KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }); h.root.activeElement!.dispatchEvent(event as unknown as Event); return event; };
-      key("ArrowDown"); expect(h.root.activeElement).toBe(h.element(".menu button[data-layout=split]"));
+      key("ArrowDown"); expect(h.root.activeElement).toBe(h.element(".menu .side"));
       key("End"); expect(h.root.activeElement).toBe(h.element(".menu .peek"));
       key("ArrowDown"); expect(h.root.activeElement).toBe(h.element(".menu button[data-layout=docked]")); // wraps
       key("ArrowUp"); expect(h.root.activeElement).toBe(h.element(".menu .peek"));
@@ -172,6 +154,18 @@ describe("protected workspace frame host", () => {
       h.click(".more"); expect(h.element(".menu").hidden).toBe(true); // the button toggles
       h.click(".more"); h.click(".close");
       expect(h.element(".menu").hidden).toBe(true); expect(h.element(".more").getAttribute("aria-expanded")).toBe("false");
+    });
+    test("a press on a menu item keeps the menu open even though the page cannot see inside the shell", async () => {
+      const h = harness(); await h.overlay.open();
+      h.click(".more");
+      const item = h.element(".menu button[data-layout=floating]");
+      const event = new h.win.Event("pointerdown", { bubbles: true, composed: true }) as unknown as Event;
+      const full = () => [item, h.element(".menu"), h.root, h.root.host, h.doc.documentElement, h.doc, h.win];
+      // Like Chrome, hide the closed shadow's nodes from listeners outside it.
+      Object.defineProperty(event, "composedPath", { value: () => event.currentTarget === h.doc ? full().slice(3) : full() });
+      item.dispatchEvent(event);
+      expect(h.element(".menu").hidden).toBe(false);
+      item.click(); expect(h.element(".panel").dataset.layout).toBe("floating");
     });
     test("does not start a floating drag from the menu", async () => {
       const h = harness(); await h.overlay.open(); h.chooseLayout("floating");
