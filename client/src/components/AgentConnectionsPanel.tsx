@@ -163,6 +163,7 @@ export default function AgentConnectionsPanel() {
               <div>
                 <strong>{token.name}</strong>
                 <span>
+                  {token.connector ? "Signed-in app · " : ""}
                   {token.scope === "write" ? "Reads and adds" : "Read-only"}
                   {" · "}
                   Made {formatDate(token.createdAt)}
@@ -183,8 +184,8 @@ export default function AgentConnectionsPanel() {
       ) : null}
 
       <p className="thread-dialog-copy">
-        Server address: <code>{endpoint}</code>. ChatGPT and Claude.ai connectors need a sign-in step that isn't
-        available yet.
+        Server address: <code>{endpoint}</code>. To connect ChatGPT or Claude.ai, add a custom connector with this
+        address. You'll be asked to sign in and approve it here, with no token to copy.
       </p>
     </>
   );

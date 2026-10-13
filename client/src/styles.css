@@ -6876,6 +6876,27 @@ button {
   min-height: 44px;
 }
 
+.oauth-consent {
+  display: grid;
+  gap: 14px;
+  margin: 10vh auto 0;
+  max-width: 520px;
+  padding: 28px;
+}
+
+.oauth-consent h1 {
+  font-size: 1.6rem;
+  line-height: 1.2;
+  margin: 0;
+  max-width: none;
+}
+
+.oauth-consent-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .agent-token-reveal {
   background: color-mix(in srgb, var(--panel-active-border) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--panel-active-border) 40%, transparent);

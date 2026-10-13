@@ -90,6 +90,11 @@
       "id": "0018_mcp_tokens",
       "file": "0018_mcp_tokens.sql",
       "transaction": true
+    },
+    {
+      "id": "0019_mcp_oauth",
+      "file": "0019_mcp_oauth.sql",
+      "transaction": true
     }
   ]
 }

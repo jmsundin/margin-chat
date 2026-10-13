@@ -17,6 +17,10 @@
       "destination": "/api/handler?__margin_api_path=:__margin_api_path"
     },
     {
+      "source": "/.well-known/:__margin_api_path*",
+      "destination": "/api/handler?__margin_api_path=well-known/:__margin_api_path"
+    },
+    {
       "source": "/:path((?!api/).*)",
       "destination": "/index.html"
     }

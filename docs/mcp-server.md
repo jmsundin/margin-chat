@@ -56,7 +56,8 @@ carries one JSON-RPC message and gets back one JSON answer, or `202` for a
 notification. `GET` and `DELETE` return `405` because no server stream or
 session is ever opened. Supported protocol versions are 2025-11-25, 2025-06-18,
 2025-03-26 and 2024-11-05. Requests without a valid token get `401` with
-`WWW-Authenticate: Bearer`.
+`WWW-Authenticate: Bearer resource_metadata="…/.well-known/oauth-protected-resource"`,
+which is how connectors find the sign-in described below.
 
 ## Connecting a client
 
@@ -74,10 +75,39 @@ Other clients (`.cursor/mcp.json`, `.vscode/mcp.json` and similar):
   "headers": { "Authorization": "Bearer mc_mcp_…" } } } }
 ```
 
-ChatGPT and claude.ai connectors sign in with OAuth instead of a pasted token.
-That comes in a later step.
+## Signing in from ChatGPT and claude.ai (OAuth)
 
-## Next steps
+ChatGPT and claude.ai add Margin Chat as a custom connector with the address
+`https://www.marginchat.com/api/mcp`. They don't need a token; they use OAuth 2.1
+as the MCP authorization spec describes (`server/mcp/oauth.mjs`):
 
-1. OAuth 2.1 (protected-resource metadata, dynamic client registration, PKCE)
-   so ChatGPT and claude.ai can connect with a normal sign-in.
+1. The first request gets `401`, whose header points to
+   `/.well-known/oauth-protected-resource` (RFC 9728). That names this site as
+   the authorization server, and `/.well-known/oauth-authorization-server`
+   (RFC 8414) lists the endpoints below. On Vercel both paths are rewritten to
+   the API handler (`vercel.json`).
+2. The connector registers itself at `POST /api/oauth/register` (RFC 7591).
+   Clients are public (`token_endpoint_auth_method: none`), and redirect URIs
+   must be HTTPS, or plain HTTP to localhost for desktop agents.
+3. It sends the member to `/oauth/authorize`, the app's consent page
+   (`client/src/components/OAuthConsent.tsx`). The member signs in if needed and
+   sees "Connect {app} to your vault?". When the connector asks for
+   `vault:write`, a checkbox lets the member also allow adding documents. It
+   starts checked and can be turned off. The page's answer goes to
+   `POST /api/oauth/authorization`, which only the app itself can call.
+4. The connector swaps the code at `POST /api/oauth/token` with PKCE (S256
+   only). Codes last 10 minutes and work once. It gets a 1-hour access token
+   (`mc_mcp_…`) and a refresh token (`mc_mcpr_…`). Each refresh replaces both
+   tokens. A connection left unused for 90 days has to sign in again.
+5. `POST /api/oauth/revoke` (RFC 7009) ends a connection.
+
+A connection is stored as a row in `marginchat_mcp_tokens` with its
+`client_id`. Only hashes are kept (migration `0019_mcp_oauth`, which also adds
+`marginchat_oauth_clients` and `marginchat_oauth_codes`). Connecting the same app
+again replaces its earlier connection. Connections appear in **Settings →
+Agents** as "Signed-in app" and can be revoked there like tokens, and they count
+toward the 20 per account. The same plan rule applies: only Plus, Cloud and
+admin accounts can approve a connection.
+
+Scopes are `vault:read` (the reading tools) and `vault:write` (the writing tools
+as well).
