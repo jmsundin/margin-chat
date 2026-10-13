@@ -56,7 +56,9 @@ Configuration writes persist if a later deployment or verification fails. Inspec
 
 ## Release before the code goes live
 
-Ask the agent to prepare the feature and its persistence migrations in one reviewed commit, then release that commit. Alternatively, run **Production release** in GitHub Actions (Actions → Production release → Run workflow). Leave the commit empty to release the head of the selected branch, or paste a full 40-character Git SHA. A release needs no SQL-console work or per-account rebuild requests.
+Every commit that lands on `main` releases itself: when CI passes on that commit, **Production release** starts on its own. Only `main`'s newest commit is released; an automatic run for a commit that `main` has already moved past ends without doing anything, because the newer commit's own run releases it. Releases never overlap, and while one runs, GitHub keeps only the newest waiting run. A failed CI run releases nothing. Each automatic release with migrations needs two free Neon branch slots (below); without them it stops at Checkpoint, before anything in production changes.
+
+To release by hand, ask the agent to prepare the feature and its persistence migrations in one reviewed commit, then release that commit. Alternatively, run **Production release** in GitHub Actions (Actions → Production release → Run workflow). Leave the commit empty to release the head of the selected branch, or paste a full 40-character Git SHA. A release needs no SQL-console work or per-account rebuild requests.
 
 From an exact clean release checkout with credentials already exported:
 
@@ -70,7 +72,7 @@ bun --no-env-file run release:status
 
 Retry a failed release after fixing its reported issue. A retry creates a fresh rehearsal/recovery checkpoint, while already committed SQL migrations and completed data jobs are skipped after checksum verification. New kinds of data transformation need code and verification written alongside the feature; the runner does not infer the intended transformation from a schema diff.
 
-Each fresh release needs two free Neon branch slots, one for recovery and one for rehearsal. `BRANCHES_LIMIT_EXCEEDED` (HTTP 422 during checkpoint creation) means retained branches have exhausted the project's capacity. Review the saved release reports and Neon branches, remove only branches that are no longer needed, or increase the project branch limit before retrying. Preserve recovery checkpoints required by your retention policy and branches used by an active release. The runner never deletes branches automatically; if creation of the rehearsal failed, the recovery branch may already exist and is recorded in the report.
+Each fresh release with pending migrations or data jobs needs two free Neon branch slots, one for recovery and one for rehearsal. `BRANCHES_LIMIT_EXCEEDED` (HTTP 422 during checkpoint creation) means retained branches have exhausted the project's capacity. Review the saved release reports and Neon branches, remove only branches that are no longer needed, or increase the project branch limit before retrying. Preserve recovery checkpoints required by your retention policy and branches used by an active release. The runner never deletes branches automatically; if creation of the rehearsal failed, the recovery branch may already exist and is recorded in the report.
 
 ## One-time setup
 
