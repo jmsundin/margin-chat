@@ -49,7 +49,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     .menu [aria-checked]::before{content:"";width:12px;flex:none;text-align:center;font-size:12px}.menu [aria-checked=true]::before{content:"✓"}.menu .peek::before,.menu .side::before{content:"";width:12px;flex:none}
     .menu hr{margin:3px 4px;border:0;border-top:1px solid var(--mc-line)}
     .panel[data-layout=floating]{resize:both;min-width:320px;min-height:280px;max-width:calc(100vw - 12px);max-height:calc(100vh - 12px)}.panel[data-layout=floating] header{cursor:move}
-    iframe{border:0;display:block;width:100%;flex:1;min-height:0;background:var(--mc-bg)}.status{padding:24px;font-size:14px;line-height:1.6}.status button{margin-top:12px;display:block}
+    iframe{border:0;display:block;width:100%;flex:1;min-height:0;background:var(--mc-bg)}.status{padding:24px;font-size:14px;line-height:1.6}.notice{margin:0;padding:8px 12px;font-size:12px;line-height:1.45;background:var(--mc-hover);border-bottom:1px solid var(--mc-line)}.status button{margin-top:12px;display:block}
     .grip{position:absolute;z-index:2;left:0;top:0;bottom:0;width:10px;cursor:ew-resize;touch-action:none;display:grid;place-items:center;outline:none}.panel:not([data-layout=docked]) .grip{display:none}
     .grip::after{content:"";width:4px;height:44px;border-radius:4px;background:var(--mc-line-strong);transition:background .15s,height .15s}.grip:hover::after,.grip:focus-visible::after,.resizing .grip::after{background:var(--mc-sage);height:64px}.grip:focus-visible{box-shadow:inset 3px 0 0 var(--mc-sage)}
     .reveal,.return{position:fixed;pointer-events:auto;box-shadow:0 3px 20px var(--mc-shadow)}.reveal{left:12px;top:50%;writing-mode:vertical-rl;padding:15px 10px}.return{right:18px;bottom:18px;padding:13px 18px}.dragging iframe,.resizing iframe{pointer-events:none}.resizing{user-select:none}
@@ -70,12 +70,13 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
         <hr role="separator"><button type="button" role="menuitem" class="peek">Peek at page</button>
       </div>
       <button class="icon close" type="button" aria-label="Close Margin Chat">×</button></header>
-    <div class="status" role="status">Opening your workspace…</div><iframe title="Private Margin Chat workspace" referrerpolicy="no-referrer" hidden></iframe>
+    <div class="status" role="status">Opening your workspace…</div><p class="notice" role="status" hidden></p><iframe title="Private Margin Chat workspace" referrerpolicy="no-referrer" hidden></iframe>
   </section><button class="reveal" hidden>Uncover page</button><button class="return" hidden>Return to Margin</button>`;
   doc.documentElement.append(host);
   const panel = root.querySelector<HTMLElement>(".panel")!;
   const frame = root.querySelector<HTMLIFrameElement>("iframe")!;
   const status = root.querySelector<HTMLElement>(".status")!;
+  const notice = root.querySelector<HTMLElement>(".notice")!;
   const reveal = root.querySelector<HTMLButtonElement>(".reveal")!;
   const returnButton = root.querySelector<HTMLButtonElement>(".return")!;
   const header = root.querySelector<HTMLElement>("header")!;
@@ -169,7 +170,9 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
     }).finally(() => { starting = undefined; });
     await starting;
   }
-  function close() { closeMenu(false); active = false; peeking = false; render(); }
+  function close() { closeMenu(false); notice.hidden = true; active = false; peeking = false; render(); }
+  /** A one-line note above the workspace, cleared when the panel closes. */
+  function notify(text: string) { notice.textContent = text; notice.hidden = false; }
   function paintHighlights(focus?: Range) {
     const css = (win as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS;
     const Highlight = (win as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
@@ -193,6 +196,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
       if (kind === "bookmark") { context = bookmark(); return context; }
       throw new Error("Unsupported page context.");
     }
+    if (message.type === "margin:page-close") { close(); return { ok: true }; }
     if (message.type === "margin:page-highlights") { anchors = message.anchors as TextAnchor[]; paintHighlights(); return { ok: true }; }
     if (message.type === "margin:page-locate") {
       const range = resolveTextAnchor(doc, message.anchor as TextAnchor);
@@ -289,7 +293,7 @@ export function createWorkspaceFrameHost(doc: Document, send: Send, frameUrl: st
   const resized = () => { if (layout === "floating") { const rect = panel.getBoundingClientRect(); floating = { left: rect.left, top: rect.top, width: rect.width, height: rect.height }; } render(); };
   win.addEventListener("resize", resized);
   const navigationCheck = win.setInterval(() => { void changedPage().catch(() => undefined); }, 500);
-  return { open, close, register, toggle: () => active ? close() : void open(), handleMessage, setDockWidth: (width: number) => setDockWidth(width),
+  return { open, close, notify, register, toggle: () => active ? close() : void open(), handleMessage, setDockWidth: (width: number) => setDockWidth(width),
     setHeaderCollapsed: (collapsed: boolean) => setHeaderCollapsed(collapsed),
     setLayout: (next: unknown) => { if (isLayout(next) && next !== "split") setLayout(next); }, setTheme: theme.set,
     destroy() { theme.destroy(); win.clearInterval(navigationCheck); doc.removeEventListener("pointerdown", pagePress, true); doc.removeEventListener("mouseup", selectionChanged); doc.removeEventListener("keyup", selectionChanged); win.removeEventListener("resize", resized); host.remove(); },

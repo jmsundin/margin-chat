@@ -12,7 +12,11 @@ if (!isolated.marginOverlay) {
     onHeaderCollapse: (collapsed) => { void send({ type: "overlay:header-collapsed", collapsed }).catch(() => undefined); },
     onLayoutChange: (layout) => { void send({ type: "overlay:layout", layout }).catch(() => undefined); },
     // If Chrome refuses its side panel here, bring the page panel back rather than leave nothing open.
-    onSidePanel: () => { void send({ type: "overlay:side-panel" }).then((result) => { if (result?.error) void overlay.open(); }, () => void overlay.open()); },
+    // Some extensions (1Password among them) swallow the click Chrome needs, so point to the button inside the workspace.
+    onSidePanel: () => {
+      const refused = () => { void overlay.open().then(() => overlay.notify("Chrome didn't open its side panel from this menu. Click Side by side at the top of the workspace instead.")); };
+      void send({ type: "overlay:side-panel" }).then((result) => { if (result?.error) refused(); }, refused);
+    },
   });
   isolated.marginOverlay = overlay;
   // Injecting the script arms the page: selecting text offers Explain and Ask,

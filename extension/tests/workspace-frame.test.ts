@@ -38,6 +38,7 @@ async function frame(options: {
   let credentialReads = 0;
   let accessChanges = 0;
   const messages: any[] = [];
+  const sidePanel: any[] = [];
   const network: { url: string; init?: RequestInit }[] = [];
   const storageListeners = new Set<(changes: any, area: string) => void>();
   const intervals = new Map<number, () => Promise<void>>();
@@ -59,8 +60,13 @@ async function frame(options: {
         return options.respond ? await options.respond(request, normal) : normal();
       },
       async openOptionsPage() {},
+      onMessage: { addListener() {}, removeListener() {} },
     },
-    tabs: { async create() {} },
+    tabs: { async create() {}, onUpdated: { addListener() {}, removeListener() {} } },
+    sidePanel: {
+      async setOptions(options: unknown) { sidePanel.push(["setOptions", options]); },
+      async open(options: unknown) { sidePanel.push(["open", options]); },
+    },
     storage: {
       local: {
         async setAccessLevel() { accessChanges++; },
@@ -91,7 +97,7 @@ async function frame(options: {
     return item;
   };
   return {
-    browser, messages, network,
+    browser, messages, network, sidePanel,
     reads: () => credentialReads, accessChanges: () => accessChanges, probe: () => globals.__frameProbe,
     async ready() { await until(() => !!browser.document.querySelector('[data-testid="shared-app"]')); },
     async click(label: string) { button(label).click(); await Bun.sleep(5); },
@@ -134,8 +140,23 @@ describe("protected extension workspace frame", () => {
   test("the source toolbar offers page context and Ask page, and no Community control", async () => {
     const view = await frame(); await view.ready();
     const labels = [...view.browser.document.querySelectorAll(".browser-source-row > button")].map((button) => button.textContent);
-    expect(labels).toEqual(["Page context", "Ask page"]);
+    expect(labels).toEqual(["Page context", "Ask page", "Side by side"]);
     expect(view.browser.document.body.textContent).not.toContain("Community");
+  });
+
+  test("Side by side opens Chrome's side panel from the workspace frame, then closes the page copy", async () => {
+    const view = await frame(); await view.ready();
+    await view.click("Side by side");
+    expect(view.sidePanel).toEqual([["setOptions", { tabId: 7, path: "workspace.html?panel=1&tab=7", enabled: true }], ["open", { tabId: 7 }]]);
+    expect(view.messages.at(-1)).toMatchObject({ type: "workspace:side-panel", tabId: 7, session: "valid-frame" });
+  });
+
+  test("in the side panel the page row offers Show on page instead", async () => {
+    const view = await frame({ search: "?panel=1&tab=7&session=valid-frame" }); await view.ready();
+    const labels = [...view.browser.document.querySelectorAll(".browser-source-row > button")].map((button) => button.textContent);
+    expect(labels).toEqual(["Page context", "Ask page", "Show on page"]);
+    await view.click("Show on page");
+    expect(view.messages.at(-1)).toMatchObject({ type: "workspace:float", tabId: 7 });
   });
 
   test("collapsing the panel header hides the page row, and expanding brings it back", async () => {

@@ -400,6 +400,13 @@ async function panelSession(message: Record<string, unknown>, sender: chrome.run
 async function workspaceMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender) {
   if (message.type === "workspace:panel-session") return panelSession(message, sender);
   const frame = await validateFrame(message, sender);
+  if (message.type === "workspace:side-panel") {
+    // The workspace frame opened Chrome's side panel itself; close the copy drawn on the page.
+    layoutPreference = "split";
+    await chrome.storage.local.set({ layout: "split" });
+    await chrome.tabs.sendMessage(frame.tabId, { type: "margin:page-close", session: frame.session }, { frameId: 0 }).catch(() => undefined);
+    return { ok: true };
+  }
   if (message.type === "workspace:float") {
     // Back to the panel drawn on the page: close Chrome's side panel for this tab and open the page one.
     await chrome.storage.local.set({ layout: "docked" });
