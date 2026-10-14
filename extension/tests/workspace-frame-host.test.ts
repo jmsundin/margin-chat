@@ -57,6 +57,14 @@ describe("protected workspace frame host", () => {
     h.overlay.setLayout("split"); h.overlay.setLayout("sideways"); h.overlay.setLayout("expanded");
     expect(h.element(".panel").dataset.layout).toBe("expanded"); expect(h.layouts).toEqual(["floating"]);
   });
+  test("the workspace can close the page panel once its side panel opens, and a refusal note clears on close", async () => {
+    const h = harness(); await h.overlay.open();
+    h.overlay.notify("Chrome didn't open its side panel from this menu.");
+    expect(h.element(".notice").hidden).toBe(false);
+    expect(await h.overlay.handleMessage({ type: "margin:page-close", session: "source-session" })).toEqual({ ok: true });
+    expect(h.element(".panel").hidden).toBe(true); expect(h.element(".notice").hidden).toBe(true);
+    await expect(h.overlay.handleMessage({ type: "margin:page-close", session: "other" })).rejects.toThrow("expired");
+  });
   test("the header collapses to a thin strip and reports the state to remember", async () => {
     const h = harness(); await h.overlay.open();
     const panel = h.element(".panel");
