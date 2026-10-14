@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { createBrowserVaultStore, recoverWithFreshVaultCopy, startFreshVaultCopy, takeVaultRecoveryNotice } from "../client/src/lib/vaultLocal";
+import { LocalVaultUnavailableError, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, recoverWithFreshVaultCopy,
+  startFreshVaultCopy, takeVaultRecoveryNotice } from "../client/src/lib/vaultLocal";
 import { emptyVault, type VaultSnapshot } from "../client/src/lib/vaultTypes";
 import { workspaceFromVault } from "../client/src/lib/vaultWorkspace";
 
@@ -189,7 +190,9 @@ describe("durable OPFS Markdown storage", () => {
     });
     try {
       expect(takeVaultRecoveryNotice("alice")).toBeNull();
+      expect(canRecoverWithFreshVaultCopy("alice")).toBe(true);
       expect(recoverWithFreshVaultCopy("alice", "opening margin-chat-vaults/alice")).toBe(true);
+      expect(canRecoverWithFreshVaultCopy("alice")).toBe(false);
       expect(stores[0].values.get("margin-chat-vault-fresh-copy:alice")).toMatch(/^[a-z0-9]+$/);
       // The fresh copy failing too must not reload again in this tab.
       expect(recoverWithFreshVaultCopy("alice", "opening margin-chat-vaults-x/alice")).toBe(false);
@@ -201,6 +204,37 @@ describe("durable OPFS Markdown storage", () => {
         else delete (globalThis as any)[name];
       }
     }
+  });
+
+  test("when the browser refuses its storage altogether, the vault opens in memory for the session", async () => withOpfs(async (opfs) => {
+    await createBrowserVaultStore("alice").write(snapshot("Saved on this device"));
+    opfs.breakDirectory("margin-chat-vaults/alice/");
+    const refused: LocalVaultUnavailableError[] = [];
+    let allowed = false;
+    const store = createVaultStoreWithMemoryFallback(createBrowserVaultStore("alice"), (error) => { refused.push(error); return allowed; });
+    // Not yet allowed (a fresh copy can still be tried): the error stands.
+    await expect(store.read()).rejects.toBeInstanceOf(LocalVaultUnavailableError);
+    expect(store.inMemory()).toBe(false);
+    allowed = true;
+    expect(await store.read()).toBeNull();
+    expect(store.inMemory()).toBe(true);
+    expect(refused.map((error) => error.step)).toEqual(["opening margin-chat-vaults/alice", "opening margin-chat-vaults/alice"]);
+    const downloaded = snapshot("Downloaded from the cloud");
+    await store.lock(() => store.write(downloaded));
+    expect(await store.lock(() => store.read())).toEqual(downloaded);
+    // Nothing is written to, or removed from, the copy Chrome would not open.
+    expect([...opfs.files.keys()].some((path) => path.includes("Downloaded"))).toBe(false);
+    expect(opfs.files.get(HEAD)).toBeDefined();
+  }));
+
+  test("other storage errors never switch to memory", async () => {
+    const store = createVaultStoreWithMemoryFallback({
+      read: async () => { throw new Error("A local vault history file is incomplete or damaged."); },
+      write: async () => undefined,
+      lock: (operation) => operation(),
+    }, () => true);
+    await expect(store.read()).rejects.toThrow("incomplete or damaged");
+    expect(store.inMemory()).toBe(false);
   });
 
   test("a file whose snapshots never become readable is read directly in a worker", async () => withOpfs(async (opfs) => {

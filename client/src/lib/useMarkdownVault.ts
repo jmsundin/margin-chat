@@ -6,7 +6,7 @@ import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
-import { LocalVaultUnavailableError, bytesToBase64, createBrowserVaultStore, exportVault, importVault, recoverWithFreshVaultCopy,
+import { IN_MEMORY_VAULT_NOTICE, LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
@@ -75,7 +75,11 @@ export function useMarkdownVault(args: {
   const [arrivingIds, setArrivingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [openingPath, setOpeningPath] = useState<string | null>(null);
   const engineRef = useRef<VaultSync | null>(null);
-  if (!engineRef.current) engineRef.current = new VaultSync(createBrowserVaultStore(storageUserId), createVaultTransport(user.id, (status) => {
+  const storeRef = useRef<ReturnType<typeof createVaultStoreWithMemoryFallback> | null>(null);
+  // When Chrome refuses this site's storage even after a fresh copy, open the cloud vault in memory for this session.
+  if (!storeRef.current) storeRef.current = createVaultStoreWithMemoryFallback(createBrowserVaultStore(storageUserId),
+    () => !initialized.current && enabledRef.current && !canRecoverWithFreshVaultCopy(storageUserId));
+  if (!engineRef.current) engineRef.current = new VaultSync(storeRef.current, createVaultTransport(user.id, (status) => {
     projectionPending.current = status === "pending";
   }));
   const engine = engineRef.current;
@@ -541,7 +545,8 @@ export function useMarkdownVault(args: {
         publish(await engine.read());
         if (mounted.current) {
           setReady(true); setStorageMode(enabledRef.current ? "fallback" : "local");
-          setRecoveryNotice(takeVaultRecoveryNotice(storageUserId));
+          const recovered = takeVaultRecoveryNotice(storageUserId);
+          setRecoveryNotice(storeRef.current?.inMemory() ? IN_MEMORY_VAULT_NOTICE : recovered);
         }
         void navigator.storage.persist?.().catch(() => false);
         // The old workspace snapshot is migration input only. Future content comes from Markdown.
