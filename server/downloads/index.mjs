@@ -1,9 +1,10 @@
 import { createRateLimiter } from "../http/rateLimit.mjs";
 
 // Desktop installers are published as GitHub releases by
-// .github/workflows/desktop-release.yml. The repository is private, so the
-// server reads the latest release with a token and sends each visitor to a
-// short-lived signed download URL after recording who asked for it.
+// .github/workflows/desktop-release.yml. The server reads the latest release,
+// records who asked for an installer, and sends them to its public download
+// URL. A private repository needs DESKTOP_RELEASES_TOKEN, and then the
+// visitor gets a short-lived signed URL instead.
 export const DESKTOP_TARGETS = Object.freeze({
   mac: { platform: "mac", label: "macOS", match: (name) => /\.dmg$/iu.test(name) },
   windows: { platform: "windows", label: "Windows", match: (name) => /\.exe$/iu.test(name) },
@@ -21,7 +22,7 @@ export function parseDesktopRelease(release, version = null) {
   const files = {};
   for (const [target, { match }] of Object.entries(DESKTOP_TARGETS)) {
     const asset = release.assets.find((item) => typeof item?.name === "string" && match(item.name));
-    if (asset) files[target] = { id: asset.id, name: asset.name, size: Number(asset.size) || 0 };
+    if (asset) files[target] = { id: asset.id, name: asset.name, size: Number(asset.size) || 0, url: typeof asset.browser_download_url === "string" ? asset.browser_download_url : null };
   }
   return {
     tag: release.tag_name,
@@ -103,7 +104,8 @@ export function createDesktopDownloadService({ database, env = process.env, fetc
 
   // GitHub answers an asset request with a redirect to a signed URL that
   // works for a few minutes without credentials.
-  async function signedAssetUrl(assetId) {
+  async function signedAssetUrl(assetId, publicUrl = null) {
+    if (!token && publicUrl) return publicUrl;
     const response = await github(`/releases/assets/${assetId}`, { headers: { Accept: "application/octet-stream" }, redirect: "manual" });
     const location = response.headers.get("location");
     if (response.status >= 300 && response.status < 400 && location) return location;
@@ -120,7 +122,7 @@ export function createDesktopDownloadService({ database, env = process.env, fetc
     let version = null;
     if (versionAsset) {
       try {
-        const file = await fetchImpl(await signedAssetUrl(versionAsset.id));
+        const file = await fetchImpl(await signedAssetUrl(versionAsset.id, versionAsset.browser_download_url));
         if (file.ok) version = await file.json();
       } catch { /* The installers still download without it. */ }
     }
@@ -128,7 +130,6 @@ export function createDesktopDownloadService({ database, env = process.env, fetc
   }
 
   async function latest() {
-    if (!token) return null;
     if (cached && cached.expiresAt > now()) return cached.value;
     try {
       const value = await loadLatest();
@@ -164,7 +165,7 @@ export function createDesktopDownloadService({ database, env = process.env, fetc
     const release = await latest();
     const file = release?.files[target];
     if (!file) return null;
-    const location = await signedAssetUrl(file.id);
+    const location = await signedAssetUrl(file.id, file.url);
     const key = details.ipAddress ?? "unknown";
     try {
       recordsByAddress.check(key);
@@ -178,5 +179,5 @@ export function createDesktopDownloadService({ database, env = process.env, fetc
     return location;
   }
 
-  return { configured: Boolean(token), describe, download };
+  return { describe, download };
 }

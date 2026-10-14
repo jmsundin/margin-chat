@@ -21,11 +21,11 @@ const release = {
 };
 const version = { commit: "a".repeat(40), committedAt: "2026-10-11T19:00:00.000Z" };
 
-function fakeGitHub(calls: string[] = [], { latest = release }: { latest?: unknown } = {}) {
+function fakeGitHub(calls: string[] = [], { latest = release, token = "token" }: { latest?: unknown; token?: string | null } = {}) {
   return (async (url: string, init: any = {}) => {
     calls.push(url);
     if (url.startsWith("https://signed.example/")) return Response.json(version);
-    expect(init.headers.Authorization).toBe("Bearer token");
+    expect(init.headers.Authorization).toBe(token ? `Bearer ${token}` : undefined);
     if (url.endsWith("/releases/latest")) return latest ? Response.json(latest) : new Response("", { status: 404 });
     const asset = /\/releases\/assets\/(\d+)$/u.exec(url);
     if (asset) {
@@ -60,12 +60,26 @@ test("download details read location only from a trusted proxy", () => {
   expect(describeDownloadRequest(request, { address: "203.0.113.9", url })).toMatchObject({ country: null, city: null, latitude: null });
 });
 
-test("without a token or a release nothing is offered", async () => {
-  const none = createDesktopDownloadService({ database: {}, env: {}, fetchImpl: fakeGitHub() });
-  expect(await none.describe()).toEqual({ available: false, version: null, files: {} });
+test("without a release nothing is offered", async () => {
   const empty = createDesktopDownloadService({ database: {}, env: { DESKTOP_RELEASES_TOKEN: "token" }, fetchImpl: fakeGitHub([], { latest: null }) });
   expect((await empty.describe()).available).toBe(false);
   expect(await empty.download({ target: "mac", details: {} })).toBeNull();
+});
+
+test("a public repository needs no token and sends visitors to the public file", async () => {
+  const saved: any[] = [];
+  const publicRelease = { ...release, assets: release.assets.map((asset) => ({ ...asset, browser_download_url: `https://github.com/jmsundin/margin-chat/releases/download/desktop-v0.2.0/${asset.name}` })) };
+  const service = createDesktopDownloadService({
+    database: { recordDesktopDownload: async (row: any) => { saved.push(row); } },
+    env: {},
+    fetchImpl: (async (url: string, init: any = {}) => {
+      if (url.endsWith("/version.json")) return Response.json(version);
+      return fakeGitHub([], { latest: publicRelease, token: null })(url, init);
+    }) as unknown as typeof fetch,
+  });
+  expect(await service.describe()).toMatchObject({ available: true, commit: version.commit });
+  expect(await service.download({ target: "windows", details: {} })).toBe("https://github.com/jmsundin/margin-chat/releases/download/desktop-v0.2.0/Margin-Chat-0.2.0-win-x64-setup.exe");
+  expect(saved).toHaveLength(1);
 });
 
 test("the release is cached and recording stops per address after the limit", async () => {

@@ -26,6 +26,7 @@
     "files": [
       "main.mjs",
       "clientBundles.mjs",
+      "shellUpdater.mjs",
       "updates.mjs",
       "package.json",
       "!node_modules/**/*"
@@ -45,6 +46,12 @@
       "target": [
         {
           "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
           "arch": [
             "universal"
           ]

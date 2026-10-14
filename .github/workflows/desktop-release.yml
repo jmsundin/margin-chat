@@ -99,6 +99,7 @@ jobs:
           name: installers-${{ runner.os }}
           path: |
             desktop/release/*.dmg
+            desktop/release/*.zip
             desktop/release/*.exe
             desktop/release/*.AppImage
             desktop/release/*.deb
@@ -112,11 +113,21 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.commit || github.sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v6
         with:
           pattern: "{installers-*,version-json}"
           path: assets
           merge-multiple: true
+      - name: Write the update manifest
+        # Installed apps read this from the latest release to update themselves.
+        env:
+          VERSION: ${{ inputs.version }}
+          COMMIT: ${{ inputs.commit || github.sha }}
+        run: node scripts/desktop-update-manifest.mjs assets "$VERSION" "$COMMIT"
       - name: Publish the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
