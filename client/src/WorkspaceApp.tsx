@@ -129,6 +129,7 @@ import { getConversationRequestPayload } from "./lib/chatContext";
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
+import { addImportedWebDocuments } from "./lib/webImportDocuments";
 import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument } from "./lib/workspaceCommands";
 import { buildDocumentSummaries, buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
@@ -2154,7 +2155,16 @@ function WorkspaceAppContent({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
         ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
         conversation: await conversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
-        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, onAgentEvent, signal,
+        modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, signal, acceptsDocuments: true,
+        // Pages agent mode imports become documents beside the one the user asked from.
+        onAgentEvent: (event) => {
+          if (event.type !== "documents") { onAgentEvent(event); return; }
+          setState((current) => {
+            const next = addImportedWebDocuments(current, source.id, event.documents, { createId }).state;
+            currentStateRef.current = next;
+            return next;
+          });
+        },
       }),
       onError(error) {
         if (isApiErrorStatus(error,401)) onAuthExpired();

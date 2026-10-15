@@ -1,5 +1,5 @@
 import { VAULT_TOOL_DEFINITIONS, createVaultTools, vaultToolAccess } from "./vaultTools.mjs";
-import { WEB_TOOL_DEFINITION, createWebTools, describeWebStep, pastedWebAddresses } from "./webTools.mjs";
+import { IMPORT_TOOL_DEFINITION, WEB_TOOL_DEFINITION, createWebTools, describeImportStep, describeWebStep, pastedWebAddresses } from "./webTools.mjs";
 
 function clipText(value, maximum = 220) {
   const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -68,28 +68,32 @@ export const AGENT_TOOL_DEFINITIONS = [
 ];
 
 /** The tools offered to this request: the snapshot tools, the vault tools when the user's AI context allows
- * them, and read_webpage when the user pasted a web address. */
-export function agentToolDefinitions(chatRequest, workspace = null) {
+ * them, and read_webpage when the user pasted a web address, with import_webpage when the caller can
+ * receive new documents. */
+export function agentToolDefinitions(chatRequest, workspace = null, { documents = false } = {}) {
+  const pasted = pastedWebAddresses(chatRequest).length > 0;
   return [
     ...AGENT_TOOL_DEFINITIONS,
     ...(vaultToolAccess(chatRequest, workspace) ? VAULT_TOOL_DEFINITIONS : []),
-    ...(pastedWebAddresses(chatRequest).length ? [WEB_TOOL_DEFINITION] : []),
+    ...(pasted ? [WEB_TOOL_DEFINITION] : []),
+    ...(pasted && documents ? [IMPORT_TOOL_DEFINITION] : []),
   ];
 }
 
 /**
  * `workspace` is `{ userId, vault, database }` for a signed-in request, or null.
  * `room()` is how many more characters the request can take; webpages, which have
- * their own allowance, never read past it.
+ * their own allowance, never read past it. `onDocuments(documents)` receives pages
+ * import_webpage saves.
  */
-export function createAgentToolExecutor({ chatRequest, workspace = null, signal, room, readPage }) {
+export function createAgentToolExecutor({ chatRequest, workspace = null, signal, room, readPage, importSection, onDocuments = null }) {
   const snapshots = permittedSnapshots(chatRequest);
   let remainingCharacters = chatRequest.ai?.mode === "fast" ? 6_000 : chatRequest.ai?.mode === "thorough" ? 24_000 : 12_000;
   const vaultTools = createVaultTools({ chatRequest, workspace, snapshots, readCharacters: Math.floor(remainingCharacters / 3) });
-  const webTools = createWebTools({ chatRequest, signal, room, ...(readPage ? { readPage } : {}) });
+  const webTools = createWebTools({ chatRequest, signal, room, onDocuments, ...(readPage ? { readPage } : {}), ...(importSection ? { importSection } : {}) });
 
   return async function executeTool(name, args = {}) {
-    if (webTools?.has(name)) return webTools.run(args);
+    if (webTools?.has(name)) return webTools.run(name, args);
     let result;
     if (name === "search_conversations") {
       const query = String(args.query ?? "").trim().toLowerCase();
@@ -146,8 +150,8 @@ function describeVaultStep(name, args, output, exhausted) {
 
 /** A short, human-readable line for the run log. Never includes tool output text. */
 export function describeAgentStep(name, args = {}, output = {}) {
-  if (name === WEB_TOOL_DEFINITION.name) {
-    const step = describeWebStep(args, output);
+  if (name === WEB_TOOL_DEFINITION.name || name === IMPORT_TOOL_DEFINITION.name) {
+    const step = (name === IMPORT_TOOL_DEFINITION.name ? describeImportStep : describeWebStep)(args, output);
     return { kind: "tool", tool: name, label: step.label, ...(step.detail ? { detail: step.detail } : {}), ok: step.ok };
   }
   const exhausted = output?.ok === false && output?.truncated;

@@ -58,6 +58,9 @@ export async function handleChatRequest({ request, response, user, executeChatRe
         onActivity(activity) {
           writeChatStreamEvent(response, { activity, type: "activity" });
         },
+        onDocuments(documents) {
+          writeChatStreamEvent(response, { documents, type: "documents" });
+        },
       },
     });
     writeChatStreamEvent(response, { metadata: result.metadata, type: "done" });

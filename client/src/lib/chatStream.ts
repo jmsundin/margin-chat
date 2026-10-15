@@ -22,10 +22,32 @@ export interface ChatReplyResponse {
  */
 export type AgentEvent =
   | { type: "step"; step: AgentRunStep; spentMicros?: number }
+  | { type: "documents"; documents: ImportedWebDocument[] }
   | { type: "thinking"; delta: string }
   | { type: "activity"; activity: "writing" };
 
+/** A page the agent saved with import_webpage, for the browser to create as a document. */
+export interface ImportedWebDocument {
+  url: string;
+  /** The saved page that links to this one; null for the page the user pasted. */
+  parentUrl: string | null;
+  title: string;
+  markdown: string;
+}
+
+function importedWebDocuments(input: unknown): ImportedWebDocument[] {
+  if (!Array.isArray(input)) return [];
+  return input.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const { url, parentUrl, title, markdown } = item as Record<string, unknown>;
+    if (typeof url !== "string" || !/^https?:\/\//u.test(url) || typeof markdown !== "string") return [];
+    return [{ url, parentUrl: typeof parentUrl === "string" ? parentUrl : null,
+      title: typeof title === "string" && title.trim() ? title.trim().slice(0, 240) : url, markdown }];
+  });
+}
+
 interface ChatStreamEvent {
+  documents?: unknown;
   delta?: string;
   step?: unknown;
   spentMicros?: unknown;
@@ -33,7 +55,7 @@ interface ChatStreamEvent {
   error?: string;
   metadata?: ChatReplyResponse["metadata"];
   statusCode?: number;
-  type?: "metadata" | "delta" | "step" | "thinking" | "activity" | "done" | "error";
+  type?: "metadata" | "delta" | "step" | "thinking" | "activity" | "documents" | "done" | "error";
 }
 
 export async function readChatReplyStream(
@@ -85,6 +107,10 @@ export async function readChatReplyStream(
     }
     if (event.type === "thinking" && typeof event.delta === "string" && event.delta) onAgentEvent?.({ type: "thinking", delta: event.delta });
     if (event.type === "activity" && event.activity === "writing") onAgentEvent?.({ type: "activity", activity: "writing" });
+    if (event.type === "documents") {
+      const documents = importedWebDocuments(event.documents);
+      if (documents.length) onAgentEvent?.({ type: "documents", documents });
+    }
     if (event.type === "done") completed = true;
   };
 

@@ -161,7 +161,7 @@ export function htmlToMarkdown(root, baseUrl, { links = true } = {}) {
   return render(root, 0).split("\n").map((line) => line.trimEnd()).join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
 
-export function extractPage(html, url, contentType = "text/html", { markdown = false, markdownLinks = true, textLimit = PAGE_TEXT_LIMIT } = {}) {
+export function extractPage(html, url, contentType = "text/html", { markdown = false, markdownLinks = true, textLimit = PAGE_TEXT_LIMIT, linkLimit = 24 } = {}) {
   let text = html, title = new URL(url).hostname, byline = null;
   const links = [];
   if (!contentType.startsWith("text/plain")) {
@@ -184,7 +184,7 @@ export function extractPage(html, url, contentType = "text/html", { markdown = f
         const target = normalizePublicPageUrl(new URL(link.getAttribute("href"), url).href).href;
         const label = clean(link.textContent).slice(0, 120);
         if (label && !seen.has(target)) { links.push({ url: target, label }); seen.add(target); }
-        if (links.length === 24) break;
+        if (links.length === linkLimit) break;
       } catch { /* Skip non-web and local links. */ }
     }
   }
@@ -209,10 +209,10 @@ async function extractPdfPage(buffer, url, textLimit) {
 }
 
 /**
- * Download a public page and return its readable text. `markdown` keeps headings,
- * lists and links as Markdown (link addresses only with `markdownLinks`); `pdf` also accepts PDF files.
+ * Download a public page, following redirects only to other public addresses, and
+ * return its body: `html` for HTML and plain text, `buffer` for a PDF when `pdf` is set.
  */
-export async function readPublicPage(input, { signal, lookupImpl = lookup, downloadImpl = download, markdown = false, markdownLinks = true, pdf = false, textLimit = PAGE_TEXT_LIMIT, userAgent } = {}) {
+export async function fetchPublicPage(input, { signal, lookupImpl = lookup, downloadImpl = download, pdf = false, userAgent } = {}) {
   const timeout = AbortSignal.timeout(20_000);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let url = normalizePublicPageUrl(input);
@@ -224,8 +224,7 @@ export async function readPublicPage(input, { signal, lookupImpl = lookup, downl
       const result = await downloadImpl(url, address, combined, { pdf, ...(userAgent ? { userAgent } : {}) });
       combined.throwIfAborted();
       if (result.location) { url = normalizePublicPageUrl(new URL(result.location, url).href); continue; }
-      if (result.buffer) return await extractPdfPage(result.buffer, url.href, textLimit);
-      return extractPage(result.html, url.href, result.contentType, { markdown, markdownLinks, textLimit });
+      return { ...result, url: url.href };
     }
     throw new HttpError(422, "This page redirects too many times. Try its final article address.");
   } catch (error) {
@@ -234,4 +233,14 @@ export async function readPublicPage(input, { signal, lookupImpl = lookup, downl
     if (error instanceof HttpError) throw error;
     throw new HttpError(422, "The webpage could not be reached. Check the address or try another public page.");
   }
+}
+
+/**
+ * Download a public page and return its readable text. `markdown` keeps headings,
+ * lists and links as Markdown (link addresses only with `markdownLinks`); `pdf` also accepts PDF files.
+ */
+export async function readPublicPage(input, { markdown = false, markdownLinks = true, textLimit = PAGE_TEXT_LIMIT, linkLimit, ...options } = {}) {
+  const result = await fetchPublicPage(input, options);
+  if (result.buffer) return extractPdfPage(result.buffer, result.url, textLimit);
+  return extractPage(result.html, result.url, result.contentType, { markdown, markdownLinks, textLimit, ...(linkLimit ? { linkLimit } : {}) });
 }

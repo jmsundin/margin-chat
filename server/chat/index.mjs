@@ -394,7 +394,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
         model: route.model,
         signal: context.signal,
         systemInstruction: [instructionOverride ?? (agentProvider
-          ? buildAgentInstruction(prepared.chatRequest, { vaultTools, canWidenScope: Boolean(workspace) && !vaultTools })
+          ? buildAgentInstruction(prepared.chatRequest, { vaultTools, canWidenScope: Boolean(workspace) && !vaultTools,
+            documents: Boolean(chatRequest.acceptsDocuments && handlers?.onDocuments) })
           : buildSystemInstruction(prepared.chatRequest)), blindToImage ? cannotSeeImageInstruction(file) : ""].filter(Boolean).join("\n\n"),
         image: sendsImage ? file.image : null,
         userId: context.userId,
@@ -419,6 +420,9 @@ export function createChatService({ database, documentService, env, runtimeConfi
             onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); },
             onThinking: async (delta) => { await ensureReady(); await handlers.onThinking?.(delta); },
             onActivity: async (activity) => { await ensureReady(); await handlers.onActivity?.(activity); },
+            ...(chatRequest.acceptsDocuments && handlers.onDocuments ? {
+              onDocuments: async (documents) => { await ensureReady(); await handlers.onDocuments(documents); },
+            } : {}),
           } : {}),
         }) : handlers ? await provider.stream({ ...args, onDelta }) : await provider.reply(args);
         context.signal?.throwIfAborted();

@@ -141,6 +141,8 @@ export async function requestChatReply(args: {
   onDelta?: (delta: string) => void;
   onMetadata?: (metadata: ChatReplyResponse["metadata"]) => void;
   onAgentEvent?: (event: AgentEvent) => void;
+  /** The caller creates the documents agent mode's import_webpage sends. */
+  acceptsDocuments?: boolean;
   serviceId: BackendServiceId;
   signal?: AbortSignal;
 }): Promise<ChatReplyResponse> {
