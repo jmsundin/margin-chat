@@ -43,8 +43,9 @@
   .notification-toast { padding-right: 52px; }
   .notification-toast .notification-toast-close { height: 40px; right: 4px; top: 4px; width: 40px; }
 }
-.folder-deletion-prompt { padding-right: 16px; }
-.folder-deletion-prompt .notification-toast-content p + p { margin-top: 6px; }
-.folder-deletion-prompt .folder-deletion-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.folder-deletion-prompt, .only-copy-prompt { padding-right: 16px; }
+.folder-deletion-prompt .notification-toast-content p + p, .only-copy-prompt .notification-toast-content p + p { margin-top: 6px; }
+.folder-deletion-prompt .folder-deletion-actions, .only-copy-prompt .folder-deletion-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; }
 .folder-deletion-prompt .notification-toast-action.is-danger { color: var(--danger, var(--ink)); }
-.folder-deletion-prompt .notification-toast-action:disabled { cursor: default; opacity: .55; }
+.only-copy-prompt .notification-toast-action.is-quiet { color: var(--muted); }
+.folder-deletion-prompt .notification-toast-action:disabled, .only-copy-prompt .notification-toast-action:disabled { cursor: default; opacity: .55; }

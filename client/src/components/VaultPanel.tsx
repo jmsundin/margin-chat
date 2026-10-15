@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { carriesFiles, describeDroppedFolders, droppedFiles } from "../lib/fileDrop";
 import RecentlyDeleted from "./RecentlyDeleted";
+import { formatRelativeTime } from "../lib/conversationSearch";
 
 export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnType<typeof useMarkdownVault>; cloudSyncEnabled: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -27,6 +28,11 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
       <div className="profile-storage-status"><span>Browser storage · this device</span><strong>{vault.localSaveError ? "Save needs attention" : vault.saving ? "Saving in this browser…" : "Saved in this browser"}</strong><small>Markdown files are stored in space reserved for Margin Chat on this device. These files aren’t visible in Finder or Files.</small></div>
       <div className="profile-storage-status"><span>Other devices</span><strong>{!cloudSyncEnabled ? "Local only" : vault.matchesCloud ? "Up to date" : vault.storageMode === "server" ? "Changes waiting to sync" : "Waiting to sync"}</strong>
         <small>{cloudSyncEnabled ? "Open Margin Chat on another device to receive changes." : "Cloud sync requires a paid plan or admin access."}</small></div>
+      {!cloudSyncEnabled ? <div className="profile-storage-status"><span>Copy outside this browser</span>
+        <strong>{vault.localDirectoryStatus.directoryName ? `Folder “${vault.localDirectoryStatus.directoryName}”`
+          : vault.lastDownloadedAt ? `Downloaded ${formatRelativeTime(new Date(vault.lastDownloadedAt).toISOString())}` : "None yet"}</strong>
+        <small>{vault.localDirectoryStatus.directoryName ? "Margin Chat keeps this folder up to date with your vault."
+          : "If this browser’s site data is cleared, only a downloaded copy or a connected folder is left. Use Download vault or Choose folder below."}</small></div> : null}
     </div>
     {uploaded ? <p className="thread-dialog-copy" role="status">{uploaded}</p> : null}
     {(error || vault.message) ? <p className="profile-dialog-error" role="alert">{error ?? vault.message}</p> : null}

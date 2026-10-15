@@ -8,6 +8,7 @@ import { createVaultTransport } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
 import { listTrash, type TrashEntry } from "./vaultTrash";
 import { FolderDeletionHeldError, folderDeletionsToHold, type HeldFolderDeletion } from "./folderDeletionGuard";
+import { BACKUP_REMIND_MS, loadVaultBackup, onlyCopyReminder, saveVaultBackup, vaultFingerprint, type OnlyCopyReminder } from "./vaultBackupReminder";
 import { IN_MEMORY_VAULT_NOTICE, LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, MAX_VAULT_MEDIA_LABEL, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
@@ -72,6 +73,10 @@ export function useMarkdownVault(args: {
   const folderDeletionChoice = useRef<{ key: string; choice: "restore" | "delete" } | null>(null);
   /** Documents deleted in the last 30 days, newest first. */
   const [recentlyDeleted, setRecentlyDeleted] = useState<TrashEntry[]>([]);
+  /** Set while this browser holds the only copy of the vault. */
+  const [onlyCopy, setOnlyCopy] = useState<OnlyCopyReminder | null>(null);
+  const [lastDownloadedAt, setLastDownloadedAt] = useState(() => loadVaultBackup(storageUserId).downloadedAt ?? null);
+  const [backupChecks, setBackupChecks] = useState(0);
   const projectionPending = useRef(false);
   const [vaultIndex, setVaultIndex] = useState<VaultIndex | null>(null);
   const vaultIndexRef = useRef<VaultIndex | null>(null);
@@ -676,6 +681,26 @@ export function useMarkdownVault(args: {
     return watchLocalDirectory(storageUserId, watchedDirectoryId, () => scheduleAutomaticRefresh(true));
   }, [ready, storageUserId, watchedDirectoryId]);
 
+  // Without cloud sync or a folder, the browser's copy is the only one: say so until the vault is downloaded.
+  const folderChosen = Boolean(localDirectoryStatus.directoryName);
+  useEffect(() => {
+    if (!ready) return;
+    const check = () => {
+      const stored = loadVaultBackup(storageUserId);
+      const { reminder, record } = onlyCopyReminder({
+        cloudSync: enabled, folderChosen, hasDocuments: hasVaultContent.current, record: stored, files: () => displayedFiles.current,
+      });
+      if (record !== stored) saveVaultBackup(storageUserId, record);
+      if (!mounted.current) return;
+      // An unchanged reminder keeps its object, so the prompt doesn't re-render.
+      setOnlyCopy((current) => current?.downloadedAt === reminder?.downloadedAt ? current : reminder);
+    };
+    check();
+    const timer = window.setInterval(check, 10 * 60_000);
+    document.addEventListener("visibilitychange", check);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", check); };
+  }, [ready, enabled, folderChosen, storageUserId, backupChecks]);
+
   const cloudDocuments = useMemo(() => !vaultIndex || !deferredPaths.size ? []
     : recentVaultEntries(vaultIndex.entries.filter((entry) => deferredPaths.has(entry.path))), [vaultIndex, deferredPaths]);
   const openingTitle = openingPath ? vaultIndex?.entries.find((entry) => entry.path === openingPath)?.title : null;
@@ -742,6 +767,15 @@ export function useMarkdownVault(args: {
     ready, storageMode, media, folderAccessMessage, cloudDocuments,
     /** Documents deleted in the last 30 days, in the app or in a connected folder. */
     recentlyDeleted,
+    /** Set while this browser holds the only copy: no cloud sync, no folder, and no recent download. */
+    onlyCopyReminder: onlyCopy,
+    /** When the vault was last downloaded from this browser. */
+    lastDownloadedAt,
+    /** "Later": hide the only-copy reminder for a week. */
+    snoozeOnlyCopyReminder() {
+      saveVaultBackup(storageUserId, { ...loadVaultBackup(storageUserId), snoozedUntil: Date.now() + BACKUP_REMIND_MS });
+      setOnlyCopy(null);
+    },
     /** Put a recently deleted document back, with its margin notes when they were deleted together. */
     async restoreDeleted(key: string) {
       return enqueue(async () => {
@@ -829,6 +863,12 @@ export function useMarkdownVault(args: {
         link.href = url; link.download = `margin-chat-vault-${new Date().toISOString().slice(0, 10)}.zip`;
         link.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        // A fresh download also ends any "Later".
+        const record = loadVaultBackup(storageUserId);
+        delete record.snoozedUntil;
+        const downloadedAt = Date.now();
+        saveVaultBackup(storageUserId, { ...record, downloadedAt, fingerprint: vaultFingerprint(snapshot.files) });
+        if (mounted.current) { setLastDownloadedAt(downloadedAt); setBackupChecks((count) => count + 1); }
       });
     },
     async importArchive(file: File) {
