@@ -1005,10 +1005,24 @@ async function checkDesktopGate() {
   assert.equal(await cloudDeletions(), 0, "Choosing a folder deleted something in the cloud.");
   checks.push("an empty folder receives the whole vault and nothing is deleted");
 
-  await reopen(() => writeText(first.handle, "Docs/added.md", "# Added while closed\n\nWritten by another app while Margin Chat was closed.\n"));
-  await until(() => Object.values(current.state.conversations).some((conversation: any) => conversation.title === "Added while closed"),
-    "A file added to the folder while the app was closed did not appear.");
+  // The workspace opens from this device's copy; the folder's files are read once it shows. Hold that read.
+  const folderRead = deferred();
+  let heldReads = 0;
+  const addedWhileClosed = () => Object.values(current.state.conversations).some((conversation: any) => conversation.title === "Added while closed");
+  await reopen(async () => {
+    await writeText(first.handle, "Docs/added.md", "# Added while closed\n\nWritten by another app while Margin Chat was closed.\n");
+    const added = await nested(first.handle, "Docs/added.md");
+    const getFile = added.getFile;
+    added.getFile = async () => { heldReads++; await folderRead.promise; return getFile(); };
+  });
   assert.equal(current.vault.vaultFolderPrompt, null, "A remembered folder that is still allowed asked again.");
+  await until(() => heldReads > 0, "The folder was not read after the workspace opened.");
+  assert.equal(current.vault.fetchStatus?.label, "Reading “Margin Chat”…", "Reading the folder at launch was not shown.");
+  assert(!addedWhileClosed(), "The held folder read finished anyway.");
+  checks.push("the workspace opens before the folder is read, and says it is reading it");
+  folderRead.resolve();
+  await until(addedWhileClosed, "A file added to the folder while the app was closed did not appear.");
+  await until(() => current.vault.fetchStatus?.label !== "Reading “Margin Chat”…", "The reading notice stayed up.");
   assert.equal(first.requests, 0, "Opening a remembered folder asked for access again.");
   checks.push("a remembered folder opens at launch without asking, with files added while closed");
 
@@ -1054,8 +1068,9 @@ async function checkDesktopGate() {
     second.handle.getFileHandle = async () => gone();
     second.handle.getDirectoryHandle = async () => gone();
   });
-  assert.equal(current.vault.vaultFolderPrompt, "missing", "A missing folder was not reported.");
+  assert.equal(current.vault.vaultFolderPrompt, "missing", "A missing folder did not show the launch screen.");
   assert.equal(current.vault.folderUnavailable, true);
+  assert.equal(current.vault.fetchStatus, null, "A missing folder was read at launch.");
   assert.equal(current.vault.message, null, "A missing folder showed a generic error.");
   await act(async () => { await current.vault.syncNow().catch(() => undefined); });
   assert.equal(second.writes.length, writesBeforeMissing, "Margin Chat wrote to a missing folder.");

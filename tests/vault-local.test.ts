@@ -273,6 +273,41 @@ describe("durable OPFS Markdown storage", () => {
     expect(index.directoryBaselines["directory-identity"].files["Note.md"].object).toMatch(/\.md$/);
   }));
 
+  test("folder file sizes and dates reopen with their baseline, change with it, and are dropped when malformed", async () => withOpfs(async (opfs) => {
+    const original = snapshot("Folder note");
+    original.directoryBaselines = { "directory-identity": {
+      manifest: workspaceFromVault(original.files).manifest,
+      files: { ...original.files, "Papers/Paper.pdf": { content: "JVBERi0=", encoding: "base64", contentType: "application/pdf" } },
+      stats: { "Note.md": [11, 1_760_000_000_000], "Papers/Paper.pdf": [5, 1_760_000_001_000] },
+    } };
+    const store = createBrowserVaultStore("alice");
+    await store.write(original);
+    expect(await createBrowserVaultStore("alice").read()).toEqual(original);
+
+    // A save that changes only a file's stats is journaled like any other change.
+    await store.lock(async () => {
+      const current = (await store.read())!;
+      const baseline = current.directoryBaselines!["directory-identity"];
+      current.directoryBaselines = { "directory-identity": { ...baseline, stats: { ...baseline.stats, "Note.md": [12, 1_760_000_002_000] } } };
+      await store.write(current);
+    });
+    expect(storedIndex(opfs).directoryBaselines["directory-identity"].stats["Note.md"]).toEqual([12, 1_760_000_002_000]);
+    const reopened = (await createBrowserVaultStore("alice").read())!;
+    expect(reopened.directoryBaselines!["directory-identity"].stats).toEqual({ "Note.md": [12, 1_760_000_002_000], "Papers/Paper.pdf": [5, 1_760_000_001_000] });
+
+    // Stats that don't make sense are never trusted: that file is simply read again.
+    await store.lock(async () => {
+      const current = (await store.read())!;
+      const baseline = current.directoryBaselines!["directory-identity"];
+      current.directoryBaselines = { "directory-identity": { ...baseline, stats: {
+        "Note.md": [12, 0], "../Outside.md": [1, 1_760_000_000_000], "Papers/Paper.pdf": [-5, 1_760_000_001_000],
+        "Other.md": "12" as unknown as [number, number], "Kept.md": [3, 1_760_000_003_000],
+      } } };
+      await store.write(current);
+    });
+    expect((await createBrowserVaultStore("alice").read())!.directoryBaselines!["directory-identity"].stats).toEqual({ "Kept.md": [3, 1_760_000_003_000] });
+  }));
+
   test("decoded text with a consumed BOM cannot alias a different immutable object's bytes", async () => withOpfs(async (opfs) => {
     const store = createBrowserVaultStore("alice");
     const original = emptyVault();

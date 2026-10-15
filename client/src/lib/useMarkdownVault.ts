@@ -14,7 +14,7 @@ import { IN_MEMORY_VAULT_NOTICE, LocalVaultUnavailableError, bytesToBase64, canR
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, MAX_VAULT_MEDIA_LABEL, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
-import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSearchEvent, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
+import { type DirectoryStats, type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSearchEvent, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
 import { planVaultEviction, preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
 import { WORKING_SET_IDLE_MS, claimWorkingSetCheck, loadOpenedDocuments, recordOpenedDocuments, workspaceReferenceIds } from "./vaultWorkingSet";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultFileListings, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
@@ -23,9 +23,9 @@ import { describeVaultUpload, planVaultUpload } from "./vaultUpload";
 import {
   canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, requestLocalDirectoryPermission, clearLocalDirectory, getLocalDirectoryStatus,
   listLocalDirectories, reconnectLocalDirectory, watchLocalDirectory, type RememberedLocalDirectory,
-  getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectoryWorkspace,
-  readLocalDirectoryCompanions, syncLocalDirectoryCompanions, listLocalDirectoryFiles, readLocalDirectoryFile, isCompanionPath,
-  localDirectoryAvailability, FolderUnavailableError, type LocalDirectoryStatus,
+  getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectory,
+  readLocalDirectoryCompanions, listLocalDirectoryFiles, readLocalDirectoryFile, isCompanionPath,
+  localDirectoryAvailability, FolderUnavailableError, LocalDirectoryConflictError, type LocalDirectoryStatus,
 } from "./workspaceStorage";
 import { isDesktopApp } from "./platform";
 import { createVaultFolder, isVaultFolderPromptSnoozed, saveVaultFolderPromptSnooze, vaultFolderPrompt } from "./desktopVault";
@@ -92,6 +92,10 @@ export function useMarkdownVault(args: {
   const [streamingPaths, setStreamingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const [arrivingIds, setArrivingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [openingPath, setOpeningPath] = useState<string | null>(null);
+  /** The vault folder being read in the background just after the workspace opened. */
+  const [readingFolder, setReadingFolder] = useState<string | null>(null);
+  /** Counts syncs that uploaded changes, so search can index them soon. */
+  const [uploads, setUploads] = useState(0);
   const engineRef = useRef<VaultSync | null>(null);
   const storeRef = useRef<ReturnType<typeof createVaultStoreWithMemoryFallback> | null>(null);
   // When Chrome refuses this site's storage even after a fresh copy, open the cloud vault in memory for this session.
@@ -104,6 +108,9 @@ export function useMarkdownVault(args: {
   engine.onDownload = (progress) => {
     if (mounted.current) setDownloadProgress(progress.total ? progress : null);
   };
+  engine.onUpload = () => {
+    if (mounted.current) setUploads((count) => count + 1);
+  };
   const displayedFiles = useRef<Record<string, VaultFile>>({});
   const displayedState = useRef(args.state);
   const [initialFocus] = useState(() => loadLastFocusedDocument(storageUserId));
@@ -112,6 +119,8 @@ export function useMarkdownVault(args: {
   const folder = useRef<MarkdownWorkspace | null>(null);
   const folderId = useRef<string | null>(null);
   const folderCompanions = useRef<Record<string, VaultFile>>({});
+  /** The size and date each file in `folder` and `folderCompanions` was read at; a file still the same isn't read again. */
+  const folderStats = useRef<DirectoryStats>({});
   /** PDFs and images in the connected folder, including ones too large to sync. */
   const localFiles = useRef<VaultFileListing[]>([]);
   const mounted = useRef(true);
@@ -266,19 +275,33 @@ export function useMarkdownVault(args: {
     if (mounted.current) setFolderUnavailable(unavailable);
   }
 
-  async function readFolder() {
+  function forgetFolder() {
+    folderId.current = null; folder.current = null; folderCompanions.current = {}; folderStats.current = {}; localFiles.current = [];
+  }
+
+  /**
+   * Whether the connected folder can be read now: one is chosen, access is allowed, and the folder itself opens.
+   * Reads no files, so it can run before the workspace shows. Returns the folder's status when it can be read.
+   */
+  async function checkFolderAccess() {
     const status = await getLocalDirectoryStatus(storageUserId);
     await showDirectoryStatus(status);
     if (status.permission !== "granted" || !status.directoryId) {
-      folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
+      forgetFolder();
       showFolderUnavailable(false);
       forgetHeldFolderDeletion();
-      return;
+      return null;
     }
     // A folder that can't be opened is not an empty folder: nothing is imported, deleted or written until it is back.
     const availability = await localDirectoryAvailability(storageUserId, status.directoryId);
     showFolderUnavailable(availability !== "available");
     if (availability !== "available") throw new FolderUnavailableError(status.directoryName ?? "your vault folder", availability);
+    return { ...status, directoryId: status.directoryId };
+  }
+
+  async function readFolder() {
+    const status = await checkFolderAccess();
+    if (!status) return;
     if (folderId.current !== status.directoryId) {
       forgetHeldFolderDeletion();
       const baseline = (await engine.read()).directoryBaselines?.[status.directoryId];
@@ -290,14 +313,18 @@ export function useMarkdownVault(args: {
       } : null;
       folderCompanions.current = baseline ? Object.fromEntries(Object.entries(baseline.files)
         .filter(([path]) => isCompanionPath(path))) : {};
+      folderStats.current = baseline?.stats ?? {};
       folderId.current = status.directoryId;
     }
-    const incoming = await readLocalDirectoryWorkspace(storageUserId, folder.current?.manifest, folder.current?.files, status.directoryId);
+    // Files still the size and date they were read at keep the text read then; the rest are read now.
+    const incoming = await readLocalDirectoryWorkspace(storageUserId, folder.current?.manifest, folder.current?.files, status.directoryId, folderStats.current);
     if (!incoming) return;
     const listing = await listLocalDirectoryFiles(storageUserId, status.directoryId);
     if (!listing) return;
-    const companions = await readLocalDirectoryCompanions(storageUserId, folderCompanions.current, status.directoryId, listing);
-    if (!companions) return;
+    const read = await readLocalDirectoryCompanions(storageUserId, folderCompanions.current, status.directoryId, listing, folderStats.current);
+    if (!read) return;
+    const companions = read.files;
+    const stats = { ...incoming.stats, ...read.stats };
     localFiles.current = listing;
     // Settings are parsed/canonicalized with Markdown; preserve raw companion bytes for disk checks.
     const withoutSettings = (files: Record<string, VaultFile>) => Object.fromEntries(Object.entries(files).filter(([path]) => path !== "workspace.json"));
@@ -306,7 +333,7 @@ export function useMarkdownVault(args: {
     const dates = incoming.modifiedAt;
     const next = { ...workspaceVaultFiles(incoming.workspace, true, dates), ...withoutSettings(companions) };
     const expected = { ...(folder.current ? workspaceVaultFiles(folder.current, true, dates) : {}), ...withoutSettings(folderCompanions.current) };
-    const baseline = folderBaseline(incoming.workspace, companions);
+    const baseline = folderBaseline(incoming.workspace, companions, stats);
     const directory = { id: status.directoryId, baseline };
     // An empty newly chosen directory is an output destination, not deletion of the vault.
     if (folder.current) {
@@ -336,28 +363,42 @@ export function useMarkdownVault(args: {
     else await engine.rememberDirectory(directory.id, baseline);
     folder.current = incoming.workspace;
     folderCompanions.current = companions;
+    folderStats.current = stats;
   }
 
-  function folderBaseline(workspace: MarkdownWorkspace, companions: Record<string, VaultFile>) {
-    return { manifest: workspace.manifest, files: {
+  function folderBaseline(workspace: MarkdownWorkspace, companions: Record<string, VaultFile>, stats: DirectoryStats) {
+    const files = {
       ...Object.fromEntries(Object.entries(workspace.files)
         .filter(([path]) => !/^(?:attachments|_conflicts|\.margin-chat)\//i.test(path))
         .map(([path, content]) => [path, { content, contentType: "text/markdown; charset=utf-8" }])),
       ...companions,
-    } };
+    };
+    // Stats only ever describe the bytes saved beside them.
+    return { manifest: workspace.manifest, files, stats: Object.fromEntries(Object.entries(stats).filter(([path]) => files[path])) };
   }
 
   async function writeFolder(snapshot: VaultSnapshot) {
     if (!folder.current || !folderId.current) return;
+    const directoryId = folderId.current;
     const workspace = workspaceFromVault(snapshot.files, folder.current);
-    const status = await writeLocalDirectoryWorkspace(storageUserId, workspace, folder.current, folderId.current);
-    if (status.permission !== "granted") return;
-    const companions = await syncLocalDirectoryCompanions(storageUserId, snapshot.files, folderCompanions.current, folderId.current);
-    if (!companions) return;
-    await engine.rememberDirectory(folderId.current, folderBaseline(workspace, companions));
+    let written: Awaited<ReturnType<typeof writeLocalDirectory>>;
+    try {
+      written = await writeLocalDirectory(storageUserId, { workspace, expectedWorkspace: folder.current,
+        files: snapshot.files, expectedFiles: folderCompanions.current, stats: folderStats.current }, directoryId);
+    } catch (error) {
+      // A file that changed under the write is read again next time, whatever its size and date.
+      if (error instanceof LocalDirectoryConflictError) {
+        const changed = new Set(error.paths);
+        folderStats.current = Object.fromEntries(Object.entries(folderStats.current).filter(([path]) => !changed.has(path)));
+      }
+      throw error;
+    }
+    if (!written) return;
+    await engine.rememberDirectory(directoryId, folderBaseline(workspace, written.companions, written.stats));
     folder.current = workspace;
-    folderCompanions.current = companions;
-    if (mounted.current) setDirectoryStatus(status);
+    folderCompanions.current = written.companions;
+    folderStats.current = written.stats;
+    if (mounted.current) setDirectoryStatus(written.status);
   }
 
   async function cacheAttachments() {
@@ -612,8 +653,10 @@ export function useMarkdownVault(args: {
           publish(await engine.edit(legacy, {}));
         }
         initialized.current = true;
-        // A folder that cannot be read right now must not keep the vault from opening or syncing.
-        await readFolder().catch(report);
+        // Whether the vault folder can be opened is known before the workspace shows, so a missing folder still gets
+        // the launch screen. Its files are read once the workspace is open. A folder that cannot be read right now
+        // must not keep the vault from opening or syncing.
+        const launchFolder = await checkFolderAccess().catch((error: unknown) => { report(error); return null; });
         // Display durable local files immediately, including when cloud storage is unavailable.
         publish(await engine.read());
         if (mounted.current) {
@@ -625,6 +668,19 @@ export function useMarkdownVault(args: {
         // The old workspace snapshot is migration input only. Future content comes from Markdown.
         localStorage.removeItem(getStateStorageKey(storageUserId));
         localStorage.removeItem(getStateSavedAtStorageKey(storageUserId));
+        // What changed in the folder while the app was closed shows as soon as it is read, before cloud sync.
+        if (launchFolder) {
+          if (mounted.current) setReadingFolder(launchFolder.directoryName ?? "your vault folder");
+          try {
+            await saveAppState();
+            await readFolder();
+            await persistAndPublish();
+          } catch (error) {
+            report(error);
+          } finally {
+            if (mounted.current) setReadingFolder(null);
+          }
+        }
         const stream = !exists && !args.legacyHasState && enabledRef.current ? await prepareFreshDevice() : null;
         if (stream) await streamRecentDocuments(stream);
         await saveAndRefresh(true);
@@ -729,6 +785,7 @@ export function useMarkdownVault(args: {
   const fetchStatus: VaultFetchStatus | null = preparing ? { label: "Finding your recent documents…" }
     : streamingPaths.size ? { label: "Bringing in your recent documents…" }
     : openingPath ? { label: `Opening “${openingTitle ?? "document"}”…` }
+    : readingFolder ? { label: `Reading “${readingFolder}”…` }
     : downloadProgress ? { label: "Syncing documents…" }
     : null;
 
@@ -738,7 +795,7 @@ export function useMarkdownVault(args: {
       const status = await connectLocalDirectory(storageUserId, handle);
       showFolderUnavailable(false);
       await showDirectoryStatus(status);
-      folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
+      forgetFolder();
       forgetHeldFolderDeletion();
       if (status.permission === "granted") await saveAndRefresh(false);
     });
@@ -807,6 +864,8 @@ export function useMarkdownVault(args: {
     folderUnavailable,
     /** Cloud documents downloading right now, such as before a folder receives the whole vault. */
     downloadProgress,
+    /** Counts syncs that uploaded changes since the workspace opened; search indexes them soon after. */
+    uploads,
     /** Documents deleted in the last 30 days, in the app or in a connected folder. */
     recentlyDeleted,
     /** Set while this browser holds the only copy: no cloud sync, no folder, and no recent download. */
@@ -907,7 +966,7 @@ export function useMarkdownVault(args: {
     },
     async clearDirectory() {
       await enqueue(async () => {
-        await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; forgetHeldFolderDeletion();
+        await clearLocalDirectory(storageUserId); forgetFolder(); forgetHeldFolderDeletion();
         showFolderUnavailable(false);
         // Disconnecting on purpose doesn't bring the desktop folder prompt straight back; the next launch asks.
         saveVaultFolderPromptSnooze(storageUserId);

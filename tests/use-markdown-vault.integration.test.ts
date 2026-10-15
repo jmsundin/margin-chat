@@ -122,7 +122,7 @@ test("a vault kept only in this browser is warned about until it is downloaded o
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(6);
 }, 15000);
 
-test("the desktop app asks for a vault folder, opens a remembered one at launch, and never writes to a folder it can't open", async () => {
+test("the desktop app asks for a vault folder, opens a remembered one at launch and reads it in the background, and never writes to a folder it can't open", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--desktop-gate"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
   });
@@ -132,5 +132,5 @@ test("the desktop app asks for a vault folder, opens a remembered one at launch,
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Desktop vault folder integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(8);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(9);
 }, 15000);

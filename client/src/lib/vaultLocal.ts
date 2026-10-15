@@ -1,6 +1,6 @@
 import { zipSync, unzipSync, strToU8 } from "fflate";
 import { UnreadableFileError, readFreshBytes, readFreshText } from "./fileSnapshot";
-import { emptyVault, validVaultPath, type VaultDeferredEntry, type VaultFile, type VaultSnapshot, type VaultStore } from "./vaultTypes";
+import { emptyVault, validDirectoryStats, validVaultPath, type DirectoryStats, type VaultDeferredEntry, type VaultFile, type VaultSnapshot, type VaultStore } from "./vaultTypes";
 
 // Native base64 (where the browser has it) avoids copying a large file through a binary string.
 type NativeBase64 = { toBase64?: (this: Uint8Array) => string };
@@ -40,7 +40,9 @@ type StoredBase = { revision: string; file: FileRef | null };
 type StoredConflict = Omit<VaultSnapshot["conflicts"][number], "local" | "remote" | "base" | "result"> & {
   local: FileRef | null; remote: FileRef | null; base?: FileRef | null; result?: FileRef | null;
 };
-type StoredBaselines = Record<string, { manifest: NonNullable<VaultSnapshot["directoryBaselines"]>[string]["manifest"]; files: Record<string, FileRef> }>;
+type StoredBaselines = Record<string, {
+  manifest: NonNullable<VaultSnapshot["directoryBaselines"]>[string]["manifest"]; files: Record<string, FileRef>; stats?: DirectoryStats;
+}>;
 type StoredSnapshot = Omit<VaultSnapshot, "files" | "base" | "conflicts" | "directoryBaselines"> & {
   files: Record<string, FileRef>;
   base: Record<string, StoredBase>;
@@ -309,7 +311,8 @@ export function createBrowserVaultStore(userId: string): VaultStore {
             if (!validVaultPath(path)) throw new Error("Invalid path in local folder history.");
             files[path] = (await decode(ref))!;
           }
-          snapshot.directoryBaselines[id] = { manifest: baseline.manifest, files };
+          const stats = validDirectoryStats(baseline.stats);
+          snapshot.directoryBaselines[id] = { manifest: baseline.manifest, files, ...(stats ? { stats } : {}) };
         }
       }
     }
@@ -509,9 +512,11 @@ export function createBrowserVaultStore(userId: string): VaultStore {
             if (!validVaultPath(path)) throw new Error("Invalid path in local folder history.");
             files[path] = await storeFile(file, path, prior?.directoryBaselines?.[id]?.files[path], priorStored?.directoryBaselines?.[id]?.files[path]);
           }
-          next.stored.directoryBaselines[id] = { manifest: baseline.manifest, files };
+          const stats = validDirectoryStats(baseline.stats);
+          next.stored.directoryBaselines[id] = { manifest: baseline.manifest, files, ...(stats ? { stats } : {}) };
           next.snapshot.directoryBaselines[id] = { manifest: structuredClone(baseline.manifest),
-            files: Object.fromEntries(Object.entries(baseline.files).map(([path, file]) => [path, asRead(file)])) };
+            files: Object.fromEntries(Object.entries(baseline.files).map(([path, file]) => [path, asRead(file)])),
+            ...(stats ? { stats: structuredClone(stats) } : {}) };
         }
       }
       if (JSON.stringify(next.stored.directoryBaselines ?? null) !== JSON.stringify(priorStored?.directoryBaselines ?? null)) {

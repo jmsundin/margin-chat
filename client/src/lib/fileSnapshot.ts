@@ -38,7 +38,8 @@ export async function readFreshFile<T>(handle: () => Promise<FileSystemFileHandl
       }
       if (!fileHandle) throw error;
       const bytes = await readWithoutSnapshot(fileHandle).catch(() => null);
-      if (bytes) return read(new File([bytes], fileHandle.name));
+      // The file's date on disk isn't known here; 0 says so, rather than the time of this read.
+      if (bytes) return read(new File([bytes], fileHandle.name, { lastModified: 0 }));
       console.error(`Margin Chat could not read ${fileHandle.name}`, error);
       throw new UnreadableFileError(fileHandle.name, error);
     }
