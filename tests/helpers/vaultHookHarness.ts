@@ -131,12 +131,13 @@ const focusScenario = process.argv.includes("--document-focus");
 const projectionScenario = process.argv.includes("--projection-pending");
 const partialScenario = process.argv.includes("--partial-load");
 const workingSetScenario = process.argv.includes("--working-set");
+const folderDeletionScenario = process.argv.includes("--folder-mass-delete");
 let projectionPending = projectionScenario;
 let commitRequests = 0;
 function vaultResponse(result: any) {
   return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest?.revision ?? result.revision } } : result);
 }
-if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario && !folderDeletionScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -787,8 +788,61 @@ async function checkWorkingSet() {
   assert(!files["Docs/idle.md"].deleted && !files["Docs/current.md"].deleted, "Returning a document changed the cloud.");
   console.log(JSON.stringify({ checks: ["arrivals kept", "idle document returned", "typing during return kept", "current kept", "identity kept", "opens on demand", "opened kept", "cloud unchanged"] }));
 }
+async function checkFolderMassDeletion() {
+  const documents = Array.from({ length: 12 }, (_, index) => {
+    const id = `kept-${String(index + 1).padStart(2, "0")}`;
+    return { path: `Docs/${id}.md`, baseRevision: null,
+      content: `---\nmargin-chat-id: "${id}"\ntitle: "${id}"\nupdated: "2026-10-01T00:00:00.000Z"\n---\n# ${id}\n\nBody of ${id}.\n` };
+  });
+  await remote.commit(user.id, documents);
+  networkReleased = true;
+  initialNetwork.resolve();
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready && current.vault.matchesCloud && Object.keys(current.state.conversations).length >= 12,
+    "The vault did not open with its documents.");
+  await act(async () => { await current.vault.chooseDirectory(); });
+  const docs = await connectedFolder.getDirectoryHandle("Docs");
+  const onDisk = async () => { const names: string[] = []; for await (const [name] of docs.entries()) names.push(name); return names.sort(); };
+  assert.equal((await onDisk()).length, 12, "The connected folder did not receive the vault.");
+
+  const emptyFolder = async () => { for (const name of await onDisk()) await docs.removeEntry(name); };
+  const cloudDeletions = async () => Object.values((await remote.snapshot(user.id)).manifest.files).filter((entry: any) => entry.deleted).length;
+  await emptyFolder();
+  await act(async () => { await current.vault.syncNow().catch(() => undefined); });
+  assert.equal(current.vault.heldFolderDeletion?.paths.length, 12, "Emptying the folder was not held for an answer.");
+  assert.equal(Object.keys((await local.read())!.files).filter((path) => path.startsWith("Docs/")).length, 12, "Held deletions reached the vault.");
+  assert.equal(await cloudDeletions(), 0, "Held deletions reached the cloud.");
+  // Later scans while waiting keep holding the same files, and app edits still save.
+  await act(async () => { await current.vault.syncNow().catch(() => undefined); });
+  assert.equal(current.vault.heldFolderDeletion?.paths.length, 12);
+  assert.equal(await cloudDeletions(), 0, "A second scan deleted the held files.");
+
+  await act(async () => { await current.vault.resolveHeldFolderDeletion("restore"); });
+  assert.equal(current.vault.heldFolderDeletion, null, "Putting the files back left the prompt up.");
+  assert.equal((await onDisk()).length, 12, "Putting the files back did not restore them in the folder.");
+  assert.equal(await cloudDeletions(), 0, "Putting the files back deleted them in the cloud.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(current.vault.heldFolderDeletion, null, "Restored files were held again.");
+
+  // A few files removed by hand are deleted without asking.
+  await docs.removeEntry("kept-01.md");
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(current.vault.heldFolderDeletion, null, "Deleting one file by hand asked for confirmation.");
+  assert.equal(await cloudDeletions(), 1, "Deleting one file by hand did not reach the cloud.");
+
+  await emptyFolder();
+  await act(async () => { await current.vault.syncNow().catch(() => undefined); });
+  assert.equal(current.vault.heldFolderDeletion?.paths.length, 11);
+  await act(async () => { await current.vault.resolveHeldFolderDeletion("delete"); });
+  assert.equal(current.vault.heldFolderDeletion, null, "Confirming the deletion left the prompt up.");
+  assert.equal(Object.keys((await local.read())!.files).filter((path) => path.startsWith("Docs/")).length, 0, "Confirmed deletions stayed in the vault.");
+  assert.equal(await cloudDeletions(), 12, "Confirmed deletions did not reach the cloud.");
+  console.log(JSON.stringify({ checks: ["emptied folder held", "vault and cloud untouched while held", "held across scans", "put back restores files",
+    "single deletion not held", "confirmed deletion applies everywhere"] }));
+}
 try {
-  if (partialScenario) await checkPartialLoad();
+  if (folderDeletionScenario) await checkFolderMassDeletion();
+  else if (partialScenario) await checkPartialLoad();
   else if (workingSetScenario) await checkWorkingSet();
   else if (projectionScenario) await checkProjectionPending();
   else if (focusScenario) await checkDocumentFocus();

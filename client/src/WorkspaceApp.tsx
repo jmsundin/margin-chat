@@ -64,6 +64,7 @@ import { remapDocumentAnchor } from "./lib/documentAnchors";
 import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
 import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
+import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import AIControls from "./components/AIControls";
 import JevRelatedItems from "./components/JevRelatedItems";
 import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
@@ -4476,6 +4477,7 @@ function WorkspaceAppContent({
             }) }}
           />
           <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={120000} />
+          <FolderDeletionPrompt held={vault.heldFolderDeletion} onResolve={vault.resolveHeldFolderDeletion} />
           <VaultFileDrop vault={vault} />
           <NotificationToast
             message={vault.message}
