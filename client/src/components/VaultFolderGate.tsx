@@ -180,6 +180,7 @@ export default function VaultFolderGate({ vault, onBusyChange }: { vault: VaultF
     content = <>
       <Heading title="Where should your vault live?" />
       <p className="thread-dialog-copy">Margin Chat keeps your notes as Markdown files in a folder on this computer, so other apps can open them too. Open a folder you already use, or make a new one.</p>
+      <p className="thread-dialog-copy">Notes without one get a short header with a Margin Chat ID, so each note stays the same note when it’s renamed or synced.</p>
       {errorLine}
       <div className="vault-folder-gate-actions">
         <button type="button" className="thread-dialog-button is-primary" disabled={busy} onClick={openFolder}>Open a folder…</button>

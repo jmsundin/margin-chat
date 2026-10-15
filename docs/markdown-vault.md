@@ -113,7 +113,7 @@ A remembered folder that can't be opened at all (moved, renamed, deleted, on a d
 
 The desktop app is local first: the vault is a folder on the computer, as in Obsidian. At launch it opens the folder chosen before and reads what changed there while the app was closed; the app answers Chromium's permission check for its own pages (`desktop/permissions.mjs`), so a remembered folder stays readable without a click. Until a folder is chosen, the app asks for one before showing the workspace:
 
-- **Open a folder…** picks an existing folder. The app first counts its notes, other files and total size without reading any file, and asks before opening a folder with more than 5,000 files or 2 GB, which is more likely a whole drive or home folder chosen by mistake.
+- **Open a folder…** picks an existing folder. The app first counts its notes, other files and total size without reading any file, and asks before opening a folder with more than 5,000 files or 2 GB, which is more likely a whole drive or home folder chosen by mistake. As in the browser, plain notes without a Margin Chat header get one (`margin-chat-id` and `created`) when the folder is first read, so the screen says so.
 - **Create a new vault…** asks for a name (“Margin Chat” by default) and a location, and makes that folder. A folder with that name that already holds files is never used as a new vault; the app offers to open it instead.
 - Folders used before on this computer, when there are any.
 - **Not now** keeps the vault in the app's own storage until the app is opened again. Disconnecting the folder in Vault settings also waits for the next launch to ask.
