@@ -81,6 +81,7 @@ function createWorker(storage: Record<string, any>, fetchImpl: typeof fetch) {
         },
       },
       session: {
+        async get(key: string) { return { [key]: structuredClone(storage[key]) }; },
         async set(value: Record<string, unknown>) { Object.assign(storage, structuredClone(value)); },
       },
       onChanged: { addListener(callback: typeof storageListener) { storageListener = callback; } },
@@ -477,6 +478,18 @@ describe("on-page Margin broker", () => {
     expect((await worker.dispatch({ type: "workspace:panel-session", tabId: 12 }, panel("tab=12"))).error).toBeString();
     expect((await worker.dispatch({ type: "workspace:panel-session", tabId: 12 }, panel("panel=1&tab=12", { tab: { id: 12 } }))).error).toBeString();
     expect(worker.injections).toHaveLength(2);
+  });
+  test("the side panel can switch back to any layout drawn on the page", async () => {
+    const storage: Record<string, any> = { connection: connection(), layout: "split", "workspaceFrame:12": { tabId: 12, session: "page-session", sourceUrl: "https://example.com/article" } };
+    const worker = createWorker(storage, fetch);
+    const panel = { id: "test-extension", url: "chrome-extension://test-extension/workspace.html?panel=1&tab=12&session=page-session", frameId: 0 };
+    expect(await worker.dispatch({ type: "workspace:float", tabId: 12, session: "page-session", layout: "floating" }, panel)).toEqual({ ok: true });
+    expect(storage.layout).toBe("floating");
+    expect(worker.sidePanel.at(-1)).toEqual(["setOptions", { tabId: 12, enabled: false }]);
+    expect(worker.injections.at(-1)).toMatchObject({ target: { tabId: 12, frameIds: [0] }, world: "ISOLATED", args: ["floating"] });
+    await worker.dispatch({ type: "workspace:float", tabId: 12, session: "page-session", layout: "split" }, panel);
+    expect(storage.layout).toBe("docked");
+    expect(worker.injections.at(-1).args).toEqual(["docked"]);
   });
   test("settings and pending review stay in trusted extension pages", async () => {
     const worker = createWorker({}, fetch);

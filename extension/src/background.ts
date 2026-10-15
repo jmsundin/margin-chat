@@ -408,12 +408,18 @@ async function workspaceMessage(message: Record<string, unknown>, sender: chrome
     return { ok: true };
   }
   if (message.type === "workspace:float") {
-    // Back to the panel drawn on the page: close Chrome's side panel for this tab and open the page one.
-    await chrome.storage.local.set({ layout: "docked" });
+    // Back to the panel drawn on the page, in the layout picked: close Chrome's side panel for this tab and open the page one.
+    const layout = isLayout(message.layout) && message.layout !== "split" ? message.layout : "docked";
+    layoutPreference = layout;
+    await chrome.storage.local.set({ layout });
     await chrome.sidePanel.setOptions({ tabId: frame.tabId, enabled: false });
     await chrome.scripting.executeScript({
-      target: { tabId: frame.tabId, frameIds: [0] }, world: "ISOLATED",
-      func: () => { (globalThis as unknown as { marginOverlay?: { open(): void } }).marginOverlay?.open(); },
+      target: { tabId: frame.tabId, frameIds: [0] }, world: "ISOLATED", args: [layout],
+      func: (next: string) => {
+        const overlay = (globalThis as unknown as { marginOverlay?: { setLayout(layout: string): void; open(): void } }).marginOverlay;
+        overlay?.setLayout(next);
+        overlay?.open();
+      },
     }).catch(() => undefined);
     return { ok: true };
   }
