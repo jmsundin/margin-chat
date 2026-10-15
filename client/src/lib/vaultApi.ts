@@ -1,9 +1,14 @@
-import { apiFetch } from "./apiTransport";
+import { apiFetch, apiServerUrl } from "./apiTransport";
 import { ApiError } from "./apiError";
 import { validVaultPath, type VaultCommitReceipt, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultSearchEvent, type VaultSearchPassage, type VaultTransport } from "./vaultTypes";
 import { bytesToBase64, defaultVaultContentType as defaultContentType, vaultFileBytes, vaultFileRevision } from "./vaultLocal";
 
 const revisionPattern = /^[a-f0-9]{64}$/u;
+/** Files above this go straight between the browser and cloud storage: a
+ * function on Vercel can't take or return a body over 4.5 MB. */
+const DIRECT_TRANSFER_BYTES = 3 * 1024 * 1024;
+/** Above this the upload goes in parts, each retried on its own. */
+const MULTIPART_BYTES = 64 * 1024 * 1024;
 const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
 function readManifest(value: unknown): VaultManifest {
@@ -127,6 +132,29 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
     ...init,
     headers: { ...Object.fromEntries(new Headers(init?.headers)), ...(userId ? { "X-Margin-Vault-User": userId } : {}) },
   });
+  /** Sends a large file straight to cloud storage, then has the server check it
+   * and publish it. Null when this server stores files itself (development). */
+  async function uploadDirect(path: string, baseRevision: string | null, bytes: Uint8Array, contentType: string) {
+    const upload = { path, revision: await vaultFileRevision(bytes, "base64", contentType), size: bytes.length, contentType };
+    const headers = { "Content-Type": "application/json", "X-Margin-Vault-Write": "1" };
+    const plan = await (await accountRequest("/api/vault/upload", { method: "POST", headers, body: JSON.stringify(upload) })).json();
+    if (plan?.mode === "server") return null;
+    if (plan?.mode === "direct" && typeof plan.pathname === "string") {
+      const { uploadPresigned } = await import("@vercel/blob/client");
+      await uploadPresigned(plan.pathname, new Blob([new Uint8Array(bytes)], { type: contentType }), {
+        access: "private", contentType, multipart: bytes.length > MULTIPART_BYTES,
+        handleUploadUrl: `${apiServerUrl()}/api/vault/upload`,
+        clientPayload: JSON.stringify(upload),
+        headers: { "X-Margin-Vault-Write": "1", ...(userId ? { "X-Margin-Vault-User": userId } : {}) },
+      });
+    } else if (plan?.mode !== "stored") {
+      throw new Error("The server returned an invalid upload plan.");
+    }
+    // The server reads the whole file back to check it, so a large one takes a while.
+    return (await accountRequest("/api/vault/upload/commit?acknowledge=changes", {
+      method: "POST", headers, body: JSON.stringify({ ...upload, baseRevision }), signal: AbortSignal.timeout(300_000),
+    })).json();
+  }
   const reportProjection = (projection: unknown) => {
     if (isRecord(projection) && (projection.status === "pending" || projection.status === "ready")) onProjectionStatus?.(projection.status);
   };
@@ -194,7 +222,15 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
       }
     },
     async read(path: string, entry: VaultEntry): Promise<VaultFile> {
-      const response = await accountRequest(`/api/vault/file?${new URLSearchParams({ path, revision: entry.revision })}`);
+      // A large file's answer is a short-lived link to download it from storage instead of its bytes.
+      const binary = entry.encoding === "base64";
+      let response = await accountRequest(`/api/vault/file?${new URLSearchParams({ path, revision: entry.revision, ...(binary ? { direct: "1" } : {}) })}`);
+      if (binary && response.headers.get("X-Margin-Vault-Download") === "direct") {
+        const { url } = await response.json();
+        if (typeof url !== "string" || !/^https:\/\//u.test(url)) throw new Error("The server returned an invalid download link.");
+        response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(30 * 60_000) });
+        if (!response.ok) throw new ApiError(response.status, "A large vault file couldn't be downloaded from cloud storage. Sync will retry.");
+      }
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (await vaultFileRevision(bytes, entry.encoding === "base64" ? "base64" : undefined, entry.contentType ?? defaultContentType(path)) !== entry.revision) {
         throw new Error("A downloaded vault file does not match its saved revision. Your local files are preserved; retry cloud sync.");
@@ -211,10 +247,12 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
       let previousRevision: unknown;
       if (changes.length === 1 && changes[0].encoding === "base64" && changes[0].content !== null) {
         const change = changes[0];
-        const payload = await (await accountRequest(`/api/vault/file?${new URLSearchParams({ path: change.path, baseRevision: change.baseRevision ?? "", acknowledge: "changes" })}`, {
-          method: "PUT", headers: { "Content-Type": change.contentType ?? "application/octet-stream", "X-Margin-Vault-Write": "1" },
-          body: new Uint8Array(vaultFileBytes({ content: change.content!, encoding: "base64" })).buffer,
-        })).json();
+        const bytes = vaultFileBytes({ content: change.content!, encoding: "base64" });
+        const payload = (bytes.length > DIRECT_TRANSFER_BYTES ? await uploadDirect(change.path, change.baseRevision, bytes, change.contentType ?? "application/octet-stream") : null)
+          ?? await (await accountRequest(`/api/vault/file?${new URLSearchParams({ path: change.path, baseRevision: change.baseRevision ?? "", acknowledge: "changes" })}`, {
+            method: "PUT", headers: { "Content-Type": change.contentType ?? "application/octet-stream", "X-Margin-Vault-Write": "1" },
+            body: new Uint8Array(bytes).buffer, signal: AbortSignal.timeout(bytes.length > DIRECT_TRANSFER_BYTES ? 30 * 60_000 : 30_000),
+          })).json();
         manifest = readManifest(payload?.manifest);
         projection = payload?.projection;
         previousRevision = payload?.previousRevision;

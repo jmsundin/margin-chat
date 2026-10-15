@@ -283,6 +283,7 @@ describe("vault passage index", () => {
       "Attachments/document-1/Recipes.pdf": { revision: "attached", encoding: "base64" },
       ".trash/Old.pdf": { revision: "r1", encoding: "base64" },
       "Scans/Receipt.pdf": { revision: "scanned", encoding: "base64" },
+      "Books/Huge.pdf": { revision: "huge", encoding: "base64", size: 200 * 1024 * 1024 },
       "Photos/Loaf.png": { revision: "r1", encoding: "base64" },
       "Removed.pdf": { revision: "r1", deleted: true },
     } };
@@ -316,6 +317,8 @@ describe("vault passage index", () => {
     expect((await service.readFile({ userId: "u1", fileId: bread }))?.passages.map((passage: any) => passage.pageNumber)).toEqual([1, 2]);
     // A PDF without text is recorded, so it isn't read again until it changes.
     expect(await service.readFile({ userId: "u1", fileId: vaultFileDocumentId("Scans/Receipt.pdf") })).toMatchObject({ passages: [], error: expect.stringContaining("extractable text") });
+    // A PDF too large to read in one request is recorded without being downloaded.
+    expect(await service.readFile({ userId: "u1", fileId: vaultFileDocumentId("Books/Huge.pdf") })).toMatchObject({ passages: [], error: expect.stringContaining("too large") });
 
     // An unchanged vault isn't listed again; a new revision is listed, but unchanged PDFs aren't read again.
     const listed = snapshots;

@@ -141,7 +141,9 @@ function nextVaultBatch(snapshot: VaultSnapshot): VaultChange[] {
       group.push(byPath.get(path)!);
       paths.push(...neighbors.get(path) ?? []);
     }
-    const size = group.reduce((total, item) => total + new TextEncoder().encode(JSON.stringify(item)).length, 0);
+    // A large file's base64 is ASCII, so its length is its size; encoding it again would copy hundreds of MB.
+    const size = group.reduce((total, item) => total + (item.encoding === "base64" && item.content !== null
+      ? item.content.length + item.path.length + 200 : new TextEncoder().encode(JSON.stringify(item)).length), 0);
     if (batch.length && (bytes + size > 3_000_000 || batch.length + group.length > 40)) break;
     // A binary singleton may use the larger raw-upload endpoint. A connected
     // Markdown rename must fit one JSON commit; splitting it corrupts identity.

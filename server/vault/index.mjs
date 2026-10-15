@@ -4,6 +4,12 @@ import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearc
 
 const MAX_FILES = 5_000_000;
 const MAX_COMMIT_BYTES = 3 * 1024 * 1024;
+/** The largest single file (a PDF, image or video) a vault syncs. Files over a
+ * few MB travel straight between the browser and the store, never through a function. */
+export const MAX_VAULT_FILE_BYTES = 300 * 1024 * 1024;
+/** Above this a file's bytes skip the function (Vercel caps bodies at 4.5 MB). */
+export const DIRECT_TRANSFER_BYTES = 3 * 1024 * 1024;
+const CONTENT_TYPE = /^[\w.+-]+\/[\w.+-]+(?:; ?charset=[\w-]+)?$/iu;
 // The file list is split into 256 shards by path hash. A save rewrites the
 // shards it touches plus a small root, never the whole list.
 const MAX_SHARD_BYTES = 16 * 1024 * 1024;
@@ -22,6 +28,19 @@ export function validateVaultPath(path) {
     throw new HttpError(400, "Vault paths must be safe relative file paths.");
   }
   return path;
+}
+
+const tooLarge = `A vault file must be at most ${MAX_VAULT_FILE_BYTES / 1024 / 1024} MB.`;
+
+function validUpload(upload) {
+  const path = validateVaultPath(upload?.path);
+  const { revision, size, contentType } = upload;
+  if (!REVISION.test(revision ?? "")) throw new HttpError(400, "Invalid file revision.");
+  if (!Number.isSafeInteger(size) || size < 0) throw new HttpError(400, "Give the file's size in bytes.");
+  if (size > MAX_VAULT_FILE_BYTES) throw new HttpError(413, tooLarge);
+  if (typeof contentType !== "string" || contentType.length > 160 || !CONTENT_TYPE.test(contentType)) throw new HttpError(400, "Invalid file content type.");
+  if (upload.baseRevision != null && !REVISION.test(upload.baseRevision)) throw new HttpError(400, "Each change needs its actual base revision or null for a new file.");
+  return { path, revision, size, contentType };
 }
 
 export class VaultConflictError extends HttpError {
@@ -83,6 +102,11 @@ function prepareChanges(changes, trusted = false) {
     if (paths.has(path)) throw new HttpError(400, "A commit cannot change a file twice.");
     paths.add(path);
     if (change.baseRevision !== null && !REVISION.test(change.baseRevision ?? "")) throw new HttpError(400, "Each change needs its actual base revision or null for a new file.");
+    // A body the browser already uploaded and the server verified under its revision.
+    if (trusted && change.uploaded) {
+      const { revision, size, contentType } = change.uploaded;
+      return { path, baseRevision: change.baseRevision, bytes: null, entry: { revision, deleted: false, encoding: "base64", contentType, size } };
+    }
     if (change.content !== null && typeof change.content !== "string") throw new HttpError(400, "A file needs text content, or null to delete it.");
     if (change.encoding !== undefined && change.encoding !== "base64" && change.encoding !== "utf8") throw new HttpError(400, "Unsupported file encoding.");
     const deleted = change.content === null;
@@ -92,7 +116,7 @@ function prepareChanges(changes, trusted = false) {
     if (!deleted && encoding === "base64" && (change.content.length % 4 !== 0 ||
         !/^[A-Za-z0-9+/]*={0,2}$/u.test(change.content))) throw new HttpError(400, "Invalid base64 attachment.");
     const contentType = change.contentType ?? (/\.md$/iu.test(path) ? "text/markdown; charset=utf-8" : path.endsWith(".json") ? "application/json" : "application/octet-stream");
-    if (typeof contentType !== "string" || contentType.length > 160 || !/^[\w.+-]+\/[\w.+-]+(?:; ?charset=[\w-]+)?$/iu.test(contentType)) throw new HttpError(400, "Invalid file content type.");
+    if (typeof contentType !== "string" || contentType.length > 160 || !CONTENT_TYPE.test(contentType)) throw new HttpError(400, "Invalid file content type.");
     const bytes = deleted ? null : Buffer.from(change.content, encoding);
     size += bytes?.length ?? 0;
     if (!trusted && size > MAX_COMMIT_BYTES) throw new HttpError(413, "Sync smaller batches of files (at most 3 MiB per commit).");
@@ -731,9 +755,56 @@ export function createVaultService({ database, env = process.env, storage = crea
       return saved(userId, await applyCommit(userId, changes), acknowledge);
     },
     async commitBinary(userId, { path, baseRevision, bytes, contentType }, { acknowledge = false } = {}) {
-      if (bytes.length > 4 * 1024 * 1024) throw new HttpError(413, "An attachment must be at most 4 MiB.");
+      if (bytes.length > MAX_VAULT_FILE_BYTES) throw new HttpError(413, tooLarge);
       await migrateLegacy(userId);
       return saved(userId, await applyCommit(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true }), acknowledge);
+    },
+    /** Where a browser sends a large file: straight to the store (`direct`), nowhere
+     * because the store already holds that revision (`stored`), or through this
+     * server (`server`, for development storage on disk). */
+    async prepareUpload(userId, upload) {
+      if (!storage) throw missingConfiguration();
+      const { path, revision } = validUpload(upload);
+      if (!storage.direct) return { mode: "server" };
+      const key = bodyKey(userId, path, revision);
+      return await storage.direct.size(key) !== null ? { mode: "stored" } : { mode: "direct", pathname: storage.direct.pathname(key) };
+    },
+    /** Presigned upload parameters for the key `prepareUpload` named, and no other. */
+    async uploadPayload(userId, { pathname, clientPayload }) {
+      if (!storage?.direct) throw new HttpError(400, "This server stores vault files itself; upload them to /api/vault/file.");
+      let upload;
+      try { upload = JSON.parse(String(clientPayload)); } catch { throw new HttpError(400, "Describe the file being uploaded."); }
+      const { path, revision, size } = validUpload(upload);
+      const key = bodyKey(userId, path, revision);
+      if (pathname !== storage.direct.pathname(key)) throw new HttpError(400, "That upload doesn't match the file it describes.");
+      return storage.direct.uploadPayload(key, size);
+    },
+    /** Publishes a file the browser uploaded straight to the store, once its bytes match its revision. */
+    async commitUploaded(userId, upload, { acknowledge = false } = {}) {
+      if (!storage?.direct) throw new HttpError(400, "This server stores vault files itself; upload them to /api/vault/file.");
+      const { path, revision, size, contentType } = validUpload(upload);
+      const baseRevision = upload.baseRevision ?? null;
+      const key = bodyKey(userId, path, revision);
+      const stored = await storage.direct.digest(key, Buffer.from(`base64\n${contentType}\n`));
+      if (!stored) throw new HttpError(409, "The uploaded file hasn't arrived in cloud storage. Sync will upload it again.");
+      if (stored.digest !== revision || stored.size !== size) {
+        await storage.direct.remove(key).catch(() => undefined);
+        throw new HttpError(422, "The uploaded file didn't arrive intact. Sync will upload it again.");
+      }
+      await migrateLegacy(userId);
+      return saved(userId, await applyCommit(userId, [{ path, baseRevision, uploaded: { revision, size, contentType } }], { trusted: true }), acknowledge);
+    },
+    /** A short-lived link the browser downloads one file revision from when it is
+     * too large to pass through a function; null when the server can send it itself. */
+    async readFileUrl({ userId, path, revision }) {
+      if (!storage) throw missingConfiguration();
+      validateVaultPath(path);
+      if (!REVISION.test(revision ?? "")) throw new HttpError(400, "Invalid file revision.");
+      if (!storage.direct) return null;
+      const key = bodyKey(userId, path, revision);
+      const size = await storage.direct.size(key);
+      if (size === null) throw new HttpError(404, "Vault file revision not found.");
+      return size > DIRECT_TRANSFER_BYTES ? storage.direct.downloadUrl(key) : null;
     },
     async rebuild(userId) {
       const manifest = await assemble(userId, await migrateLegacy(userId));

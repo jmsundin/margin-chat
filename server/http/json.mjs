@@ -4,7 +4,7 @@ export const jsonHeaders = Object.freeze({
   "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Margin-Capture-Settings,X-Margin-Vault-Write,X-Margin-Vault-User,X-Margin-Billing-User,X-Margin-Agent-Settings,Mcp-Protocol-Version,Mcp-Session-Id",
   "Access-Control-Allow-Methods": "DELETE,GET,POST,PUT,OPTIONS",
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Expose-Headers": "ETag,WWW-Authenticate",
+  "Access-Control-Expose-Headers": "ETag,WWW-Authenticate,X-Margin-Vault-Download",
   "Content-Type": "application/json; charset=utf-8",
 });
 

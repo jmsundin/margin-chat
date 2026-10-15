@@ -21,14 +21,14 @@ describe("planVaultUpload", () => {
     const plan = planVaultUpload([
       upload("Paper.pdf", text("%PDF-1.7")),
       upload("IMG_0001.JPG", new Uint8Array([1, 2, 3])),
-      upload("Huge.pdf", new Uint8Array(4 * 1024 * 1024 + 1)),
+      upload("Huge.pdf", { length: 300 * 1024 * 1024 + 1 } as Uint8Array),
       upload("Song.mp3", new Uint8Array([1])),
       upload("Broken.md", new Uint8Array([0xff, 0xfe, 0xfd])),
     ], []);
     expect(plan.files["Paper.pdf"]).toMatchObject({ encoding: "base64", contentType: "application/pdf" });
     expect(plan.files["IMG_0001.jpg"]).toMatchObject({ encoding: "base64", contentType: "image/jpeg" });
     expect(plan.skipped.map((item) => item.name)).toEqual(["Huge.pdf", "Song.mp3", "Broken.md"]);
-    expect(describeVaultUpload(plan)).toBe("Added 2 files to your vault. Not added: “Huge.pdf” is larger than 4 MB, the most a vault file can sync; "
+    expect(describeVaultUpload(plan)).toBe("Added 2 files to your vault. Not added: “Huge.pdf” is larger than 300 MB, the most a vault file can sync; "
       + "“Song.mp3” isn’t a note, PDF, image or zip; “Broken.md” isn’t readable text.");
   });
 

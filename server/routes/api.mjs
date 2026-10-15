@@ -11,6 +11,7 @@ import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
+import { MAX_VAULT_FILE_BYTES } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
@@ -90,7 +91,7 @@ const PUBLIC_MAP_ROUTES = ["publicMapStateRead", "publicMapStateWrite", "publicM
 // and billing mutations still require the website's cookie session.
 const EXTENSION_WORKSPACE_ROUTES = new Set([
   "authSession", "captureList", "captureGet", "stateRead",
-  "vaultStatus", "vaultIndex", "vaultSearch", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultCommit", "vaultRebuild",
+  "vaultStatus", "vaultIndex", "vaultSearch", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultUpload", "vaultUploadCommit", "vaultCommit", "vaultRebuild",
   "chat", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
   "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
   ...PUBLIC_MAP_ROUTES,
@@ -790,6 +791,14 @@ export function createApiHandler({
           return;
         }
         if (route?.id === "vaultFileRead") {
+          // A large file downloads from the store itself: a function's response can't exceed 4.5 MB on Vercel.
+          if (url.searchParams.get("direct") === "1") {
+            const downloadUrl = await vaultService.readFileUrl({ userId, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
+            if (downloadUrl) {
+              sendJson(response, 200, { url: downloadUrl }, { "Cache-Control": "private, no-store", "X-Margin-Vault-Download": "direct" });
+              return;
+            }
+          }
           const file = await vaultService.readFile({ userId, path: url.searchParams.get("path"), revision: url.searchParams.get("revision") });
           response.writeHead(200, {
             ...jsonHeaders,
@@ -811,9 +820,26 @@ export function createApiHandler({
             path: url.searchParams.get("path"),
             baseRevision: url.searchParams.get("baseRevision") || null,
             contentType: String(request.headers["content-type"] ?? "application/octet-stream"),
-            bytes: await readRawBody(request, 4 * 1024 * 1024),
+            bytes: await readRawBody(request, MAX_VAULT_FILE_BYTES),
           }, { acknowledge: acknowledgesChanges(url) });
           await sendStreamingJson(response, 200, acknowledgeVaultCommit(result, [url.searchParams.get("path")], url), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (route?.id === "vaultUpload" || route?.id === "vaultUploadCommit") {
+          if (request.headers["x-margin-vault-write"] !== "1" || (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site")) {
+            throw new HttpError(403, "Upload vault files from Margin Chat.");
+          }
+          const body = await readJsonBody(request, 64 * 1024);
+          if (route.id === "vaultUploadCommit") {
+            const result = await vaultService.commitUploaded(userId, body, { acknowledge: acknowledgesChanges(url) });
+            await sendStreamingJson(response, 200, acknowledgeVaultCommit(result, [body?.path], url), { "Cache-Control": "private, no-store" });
+          } else if (body?.type === "blob.generate-presigned-url") {
+            // The Blob SDK in the browser asks here for the signed upload it then performs.
+            const presignedUrlPayload = await vaultService.uploadPayload(userId, body.payload ?? {});
+            sendJson(response, 200, { type: body.type, presignedUrlPayload }, { "Cache-Control": "private, no-store" });
+          } else {
+            sendJson(response, 200, await vaultService.prepareUpload(userId, body), { "Cache-Control": "private, no-store" });
+          }
           return;
         }
         if (route?.id === "vaultCommit" || route?.id === "vaultRebuild") {

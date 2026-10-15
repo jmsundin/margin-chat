@@ -27,7 +27,9 @@ const IMAGE = /\.(?:png|jpe?g|gif|webp|avif|svg|bmp|ico)$/iu;
 const VIDEO = /\.(?:mp4|m4v|webm|ogv|mov|mkv)$/iu;
 const AUDIO = /\.(?:mp3|m4a|wav|ogg|oga|flac|aac|opus)$/iu;
 
-export const MAX_VAULT_MEDIA_BYTES = 4 * 1024 * 1024;
+/** The largest file a vault syncs; the server allows the same (MAX_VAULT_FILE_BYTES). */
+export const MAX_VAULT_MEDIA_BYTES = 300 * 1024 * 1024;
+export const MAX_VAULT_MEDIA_LABEL = "300 MB";
 
 export const MEDIA_CONTENT_TYPES: Record<string, string> = {
   png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", avif: "image/avif",

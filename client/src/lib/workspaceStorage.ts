@@ -569,8 +569,18 @@ export async function readConnectedDirectoryCompanions(
     }
   }
   const bytesByPath = new Map<string, Uint8Array>();
+  const listed = new Map(files.map((file) => [file.path, file]));
+  const reused: Record<string, VaultFile> = {};
   for (const path of new Set(paths)) {
     if (!validVaultPath(path) || !isCompanionPath(path)) throw new Error(`Invalid vault companion path: ${path}`);
+    // A large PDF or image unchanged on disk since the last scan isn't read again.
+    const cached = largeFileCache.get(path);
+    const listing = listed.get(path);
+    if (cached && listing?.modifiedAt && cached.size === listing.size && cached.modifiedAt === listing.modifiedAt
+      && (!known?.[path] || known[path].content === cached.file.content)) {
+      reused[path] = cached.file;
+      continue;
+    }
     const bytes = await readDirectoryBytesOrNull(handle, path);
     if (bytes !== null) bytesByPath.set(path, bytes);
   }
@@ -590,7 +600,7 @@ export async function readConnectedDirectoryCompanions(
       }
     } catch { /* Preserve unreadable conflict notes as files; they are not authoritative sync controls. */ }
   }
-  const companions: Record<string, VaultFile> = {};
+  const companions: Record<string, VaultFile> = { ...reused };
   for (const [path, bytes] of bytesByPath) {
     const metadata = known?.[path];
     const binary = metadata ? metadata.encoding === "base64" : binaryCopies.has(path)
@@ -601,9 +611,21 @@ export async function readConnectedDirectoryCompanions(
       ...(metadata?.contentType ? { contentType: metadata.contentType }
         : isVaultFileDocumentPath(path) ? { contentType: vaultFileContentType(path) } : {}),
     };
+    const listing = listed.get(path);
+    if (listing?.modifiedAt && bytes.length > LARGE_FILE_BYTES) {
+      largeFileCache.set(path, { size: bytes.length, modifiedAt: listing.modifiedAt, file: companions[path] });
+    } else largeFileCache.delete(path);
   }
+  for (const path of largeFileCache.keys()) if (!companions[path]) largeFileCache.delete(path);
   return companions;
 }
+
+/** Large folder files as last read, by path, so a rescan skips the unchanged ones. */
+const LARGE_FILE_BYTES = 1024 * 1024;
+const largeFileCache = new Map<string, { size?: number; modifiedAt: string; file: VaultFile }>();
+
+const sameCompanion = (a: VaultFile | undefined, b: VaultFile | undefined) =>
+  !!a && !!b && a.content === b.content && (a.encoding ?? "utf8") === (b.encoding ?? "utf8");
 
 /** Reject changed bytes before a batch and again immediately before each mutation. */
 export async function syncConnectedDirectoryCompanions(
@@ -613,7 +635,16 @@ export async function syncConnectedDirectoryCompanions(
 ): Promise<Record<string, VaultFile>> {
   const next = companionFiles(nextFiles);
   const expected = companionFiles(expectedFiles);
-  const paths = [...new Set([...Object.keys(next), ...Object.keys(expected)])];
+  const all = [...new Set([...Object.keys(next), ...Object.keys(expected)])];
+  // A large file this write leaves alone, still the size and date it had when last read, isn't read and compared again.
+  const unchangedOnDisk = new Set<string>();
+  for (const path of all) {
+    const cached = largeFileCache.get(path);
+    if (!cached || !sameCompanion(next[path], expected[path]) || cached.file.content !== expected[path].content) continue;
+    const file = await directoryFileInfoOrNull(handle, path);
+    if (file && file.size === cached.size && file.lastModified > 0 && new Date(file.lastModified).toISOString() === cached.modifiedAt) unchangedOnDisk.add(path);
+  }
+  const paths = all.filter((path) => !unchangedOnDisk.has(path));
   const expectedBytes = new Map(paths.map((path) => [path, expected[path] ? companionBytes(expected[path]) : null]));
   const nextBytes = new Map(paths.map((path) => [path, next[path] ? companionBytes(next[path]) : null]));
   const conflicts: string[] = [];
@@ -630,7 +661,8 @@ export async function syncConnectedDirectoryCompanions(
     if (bytes === null) await removeDirectoryFile(handle, path);
     else await writeDirectoryBytes(handle, path, bytes);
   }
-  return structuredClone(next);
+  // Copies of the records; their (possibly very large) contents are immutable strings, shared.
+  return Object.fromEntries(Object.entries(next).map(([path, file]) => [path, { ...file }]));
 }
 
 async function collectCompanionPaths(handle: FileSystemDirectoryHandle, prefix: string, paths: string[]) {
@@ -658,6 +690,15 @@ function bytesToBase64(bytes: Uint8Array) {
 function sameBytes(left: Uint8Array | null, right: Uint8Array | null) {
   return left === null || right === null ? left === right
     : left.length === right.length && left.every((byte, index) => byte === right[index]);
+}
+
+async function directoryFileInfoOrNull(handle: FileSystemDirectoryHandle, path: string): Promise<File | null> {
+  try {
+    return await (await getNestedFileHandle(handle, path)).getFile();
+  } catch (error) {
+    if (isDomExceptionNamed(error, "NotFoundError")) return null;
+    throw error;
+  }
 }
 
 async function readDirectoryBytesOrNull(handle: FileSystemDirectoryHandle, path: string): Promise<Uint8Array | null> {

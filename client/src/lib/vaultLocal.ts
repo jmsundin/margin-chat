@@ -2,7 +2,13 @@ import { zipSync, unzipSync, strToU8 } from "fflate";
 import { UnreadableFileError, readFreshBytes, readFreshText } from "./fileSnapshot";
 import { emptyVault, validVaultPath, type VaultDeferredEntry, type VaultFile, type VaultSnapshot, type VaultStore } from "./vaultTypes";
 
+// Native base64 (where the browser has it) avoids copying a large file through a binary string.
+type NativeBase64 = { toBase64?: (this: Uint8Array) => string };
+const nativeFromBase64 = (Uint8Array as unknown as { fromBase64?: (value: string) => Uint8Array }).fromBase64;
+
 export function bytesToBase64(bytes: Uint8Array): string {
+  const toBase64 = (bytes as Uint8Array & NativeBase64).toBase64;
+  if (typeof toBase64 === "function") return toBase64.call(bytes);
   let result = "";
   for (let i = 0; i < bytes.length; i += 8192) result += String.fromCharCode(...bytes.subarray(i, i + 8192));
   return btoa(result);
@@ -10,7 +16,11 @@ export function bytesToBase64(bytes: Uint8Array): string {
 
 export function vaultFileBytes(file: VaultFile): Uint8Array {
   if (file.encoding !== "base64") return new TextEncoder().encode(file.content);
-  return Uint8Array.from(atob(file.content), (character) => character.charCodeAt(0));
+  if (typeof nativeFromBase64 === "function") return nativeFromBase64(file.content);
+  const binary = atob(file.content);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 export const defaultVaultContentType = (path: string) => /\.md$/iu.test(path) ? "text/markdown; charset=utf-8"
