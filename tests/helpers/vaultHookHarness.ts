@@ -132,12 +132,13 @@ const projectionScenario = process.argv.includes("--projection-pending");
 const partialScenario = process.argv.includes("--partial-load");
 const workingSetScenario = process.argv.includes("--working-set");
 const folderDeletionScenario = process.argv.includes("--folder-mass-delete");
+const onlyCopyScenario = process.argv.includes("--only-copy");
 let projectionPending = projectionScenario;
 let commitRequests = 0;
 function vaultResponse(result: any) {
   return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest?.revision ?? result.revision } } : result);
 }
-if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario && !folderDeletionScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario && !folderDeletionScenario && !onlyCopyScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -864,8 +865,64 @@ async function checkFolderMassDeletion() {
   console.log(JSON.stringify({ checks: ["emptied folder held", "vault and cloud untouched while held", "held across scans", "put back restores files",
     "single deletion not held", "confirmed deletion applies everywhere", ...checks] }));
 }
+async function checkOnlyCopy() {
+  const { vaultFingerprint } = await import("../../client/src/lib/vaultBackupReminder");
+  const DAY = 24 * 60 * 60 * 1000;
+  // A free account has no cloud sync, so this browser holds the only copy.
+  user.role = "user";
+  user.billing = { accessKind: "free" };
+  networkReleased = true;
+  initialNetwork.resolve();
+  const key = `margin-chat:vault-backup:${user.id}`;
+  const record = () => JSON.parse(localStorage.getItem(key) ?? "{}");
+  const recheck = () => act(async () => { browser.document.dispatchEvent(new browser.Event("visibilitychange") as any); });
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "The free vault did not open.");
+  assert.equal(current.vault.onlyCopyReminder, null, "An empty vault was warned about.");
+  await act(async () => { type("Only this browser has this note."); });
+  await act(async () => { await current.vault.flushLocal(); });
+  await recheck();
+  assert.equal(current.vault.onlyCopyReminder, null, "A brand new note was warned about right away.");
+  assert(Math.abs(record().since - Date.now()) < 60_000, "The first note was not noted.");
+  localStorage.setItem(key, JSON.stringify({ since: Date.now() - 2 * DAY }));
+  await recheck();
+  assert.deepEqual(current.vault.onlyCopyReminder, { downloadedAt: null }, "A day-old vault with no copy was not warned about.");
+
+  await act(async () => { current.vault.snoozeOnlyCopyReminder(); });
+  assert.equal(current.vault.onlyCopyReminder, null, "Later left the reminder up.");
+  await recheck();
+  assert.equal(current.vault.onlyCopyReminder, null, "Later did not last.");
+  assert(record().snoozedUntil > Date.now() + 6 * DAY, "Later was not remembered for a week.");
+
+  const createObjectURL = URL.createObjectURL;
+  URL.createObjectURL = (() => "blob:fixture-export") as typeof URL.createObjectURL;
+  await act(async () => { await current.vault.download(); });
+  URL.createObjectURL = createObjectURL;
+  assert(Math.abs(record().downloadedAt - Date.now()) < 60_000, "The download was not remembered.");
+  assert.equal(record().snoozedUntil, undefined, "A download kept the old Later.");
+  assert.equal(record().fingerprint, vaultFingerprint((await local.read())!.files), "The download did not remember what it held.");
+  assert.equal(current.vault.lastDownloadedAt, record().downloadedAt);
+  assert.equal(current.vault.onlyCopyReminder, null);
+
+  // A week later, an unchanged vault still has a current copy; an edited one doesn't.
+  const downloadedAt = Date.now() - 8 * DAY;
+  localStorage.setItem(key, JSON.stringify({ ...record(), downloadedAt }));
+  await recheck();
+  assert.equal(current.vault.onlyCopyReminder, null, "An unchanged vault was warned about.");
+  await act(async () => { type("Written after the download."); });
+  await act(async () => { await current.vault.flushLocal(); });
+  await recheck();
+  assert.deepEqual(current.vault.onlyCopyReminder, { downloadedAt }, "Edits after a week-old download were not warned about.");
+
+  // A connected folder keeps a copy outside the browser.
+  await act(async () => { await current.vault.chooseDirectory(); });
+  await until(() => current.vault.onlyCopyReminder === null, "Choosing a folder left the reminder up.");
+  console.log(JSON.stringify({ checks: ["new vault not warned at once", "day-old vault with no copy warned", "Later lasts a week",
+    "download remembered", "edits after a week-old download warned", "folder ends the warning"] }));
+}
 try {
-  if (folderDeletionScenario) await checkFolderMassDeletion();
+  if (onlyCopyScenario) await checkOnlyCopy();
+  else if (folderDeletionScenario) await checkFolderMassDeletion();
   else if (partialScenario) await checkPartialLoad();
   else if (workingSetScenario) await checkWorkingSet();
   else if (projectionScenario) await checkProjectionPending();

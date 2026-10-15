@@ -24,7 +24,7 @@ const conflict: VaultConflict = {
 };
 const vault = {
   ready: true, storageMode: "server", matchesCloud: true, message: null, saving: false, localSaveError: null,
-  conflicts: [conflict], recentlyDeleted: [] as any[],
+  conflicts: [conflict], recentlyDeleted: [] as any[], lastDownloadedAt: null as number | null,
   async restoreDeleted(key: string) { restoredKeys.push(key); return []; },
   localDirectoryStatus: { directoryName: null, fileName: "workspace.md", permission: "unselected", supported: false },
   async syncNow() { syncs += 1; }, async download() { downloads += 1; }, async importArchive() {}, async chooseDirectory() {}, async clearDirectory() {},
@@ -36,7 +36,7 @@ function button(label: string) {
   return element;
 }
 async function click(label: string) { await act(async () => button(label).click()); }
-async function render() { await act(async () => root.render(createElement(VaultPanel, { vault, cloudSyncEnabled: true }))); }
+async function render(cloudSyncEnabled = true) { await act(async () => root.render(createElement(VaultPanel, { vault, cloudSyncEnabled }))); }
 const checks: string[] = [];
 
 try {
@@ -94,6 +94,20 @@ try {
   assert.deepEqual(restoredKeys, ["k2"]);
   assert(container.querySelector('[role="status"]')?.textContent?.includes("Restored “Trip to Japan and 1 more”"));
   checks.push("recently deleted documents can be restored");
+
+  // Without cloud sync, the panel says whether a copy exists outside this browser.
+  assert(!container.textContent?.includes("Copy outside this browser"), "Cloud sync users were told about copies outside the browser.");
+  vault.recentlyDeleted = [];
+  await render(false);
+  assert(container.textContent?.includes("Local only"));
+  assert(container.textContent?.includes("Copy outside this browserNone yet"));
+  vault.lastDownloadedAt = Date.now() - 3 * 86_400_000;
+  await render(false);
+  assert(container.textContent?.includes("Downloaded 3d ago"));
+  vault.localDirectoryStatus = { ...vault.localDirectoryStatus, directoryName: "Notes" };
+  await render(false);
+  assert(container.textContent?.includes("Folder “Notes”"));
+  checks.push("free accounts see whether a copy exists outside the browser");
 
   console.log(JSON.stringify({ checks }));
 } finally {

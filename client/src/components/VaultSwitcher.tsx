@@ -30,7 +30,8 @@ export function describeVault(vault: Pick<Vault, "localDirectoryStatus" | "folde
   const where = vault.folderAccessMessage ? "Needs access to see new files"
     : vault.localSaveError ? "Save needs attention"
     : vault.saving ? "Saving…"
-    : `${folder ? "Folder on this device" : "Saved in the app"}${cloud}`;
+    : folder ? `Folder on this device${cloud}`
+    : cloudSync ? `Saved in the app${cloud}` : "Only in this browser";
   return { name, where, folder };
 }
 

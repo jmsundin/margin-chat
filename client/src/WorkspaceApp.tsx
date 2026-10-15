@@ -65,6 +65,7 @@ import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocume
 import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
 import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
+import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import AIControls from "./components/AIControls";
 import JevRelatedItems from "./components/JevRelatedItems";
 import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
@@ -4488,6 +4489,8 @@ function WorkspaceAppContent({
           />
           <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={120000} />
           <FolderDeletionPrompt held={vault.heldFolderDeletion} onResolve={vault.resolveHeldFolderDeletion} />
+          <OnlyCopyPrompt reminder={vault.onlyCopyReminder} folderSupported={vault.localDirectoryStatus.supported}
+            onDownload={vault.download} onChooseFolder={vault.chooseDirectory} onLater={vault.snoozeOnlyCopyReminder} />
           <VaultFileDrop vault={vault} />
           <NotificationToast
             message={vault.message}
