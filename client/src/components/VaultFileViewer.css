@@ -50,3 +50,46 @@
 .vault-file-toolbar.is-in-header .vault-file-page-count { white-space: nowrap; }
 .document-header .vault-file-toolbar.is-in-header button { height: 28px; padding: 0 9px; white-space: nowrap; font-size: .78rem; line-height: 1; }
 @media (max-width: 640px) { .vault-file-toolbar.is-in-header .vault-file-page-count { display: none; } }
+
+/* Thumbnails and contents, beside the pages (or over them in a narrow window). */
+.vault-pdf-layout { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+.vault-pdf-layout > .vault-file-frame { flex: 1 1 auto; min-width: 0; }
+.vault-pdf-sidebar { position: sticky; top: 0; z-index: 4; flex: 0 0 196px; display: flex; flex-direction: column; min-height: 0;
+  height: calc(var(--vault-pdf-sidebar-height, 70vh) - 16px); max-height: calc(var(--vault-pdf-sidebar-height, 70vh) - 16px);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.vault-file-pdf.is-narrow .vault-pdf-layout { display: grid; grid-template-columns: minmax(0, 1fr); }
+.vault-file-pdf.is-narrow .vault-pdf-layout > * { grid-area: 1 / 1; }
+.vault-file-pdf.is-narrow .vault-pdf-sidebar { width: min(260px, 82%); justify-self: start; box-shadow: 0 8px 28px rgb(0 0 0 / .22); background: var(--bg); }
+
+.vault-file-pdf .vault-pdf-sidebar-tabs { display: flex; align-items: center; gap: 2px; padding: 6px; border-bottom: 1px solid var(--line); flex: none; }
+.vault-file-pdf .vault-pdf-sidebar-tabs button { background: none; border: 0; border-radius: 6px; color: var(--muted); font: inherit; font-size: .76rem; padding: 4px 8px; cursor: pointer; }
+.vault-file-pdf .vault-pdf-sidebar-tabs button:hover { color: var(--ink); background: var(--panel-strong); }
+.vault-file-pdf .vault-pdf-sidebar-tabs button[aria-selected="true"] { color: var(--ink); background: var(--panel-strong); font-weight: 600; }
+.vault-file-pdf .vault-pdf-sidebar-tabs .vault-pdf-sidebar-close { margin-left: auto; font-size: 1rem; line-height: 1; padding: 2px 7px; }
+
+.vault-file-pdf .vault-pdf-thumbnails { position: relative; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; margin: 0; padding: 10px 0 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.vault-file-pdf .vault-pdf-thumbnail button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 5px; background: none; border: 0; border-radius: 6px; cursor: pointer; color: var(--muted); font: inherit; }
+.vault-file-pdf .vault-pdf-thumbnail button:hover { background: var(--panel-strong); }
+.vault-file-pdf .vault-pdf-thumbnail-page { display: block; position: relative; background: #fff; border-radius: 2px; box-shadow: 0 1px 2px rgb(0 0 0 / .2), 0 0 0 1px rgb(0 0 0 / .08); overflow: hidden; }
+.vault-file-pdf .vault-pdf-thumbnail-page canvas { display: block; }
+.vault-file-pdf .vault-pdf-thumbnail-label { font-size: .72rem; font-variant-numeric: tabular-nums; }
+.vault-file-pdf .vault-pdf-thumbnail.is-current .vault-pdf-thumbnail-page { box-shadow: 0 0 0 2px var(--accent); }
+.vault-file-pdf .vault-pdf-thumbnail.is-current .vault-pdf-thumbnail-label { color: var(--accent); font-weight: 600; }
+
+.vault-file-pdf .vault-pdf-outline { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 4px 14px; }
+.vault-file-pdf .vault-pdf-outline-list { list-style: none; margin: 0; padding: 0; }
+.vault-file-pdf .vault-pdf-outline-entry { display: flex; align-items: flex-start; gap: 0; border-radius: 6px; }
+.vault-file-pdf .vault-pdf-outline-entry:hover { background: var(--panel-strong); }
+.vault-file-pdf .vault-pdf-outline-entry.is-current { background: var(--accent-soft); }
+.vault-file-pdf .vault-pdf-outline-toggle { flex: 0 0 18px; height: 24px; display: grid; place-items: center; padding: 0; background: none; border: 0; color: var(--muted); cursor: pointer; }
+.vault-file-pdf .vault-pdf-outline-toggle svg { width: 12px; height: 12px; transition: transform .12s ease; }
+.vault-file-pdf .vault-pdf-outline-title { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 6px; padding: 4px 6px 4px 2px; background: none; border: 0; color: var(--ink); font: inherit; font-size: .8rem; line-height: 1.3; text-align: left; cursor: pointer; }
+.vault-file-pdf .vault-pdf-outline-title > span:first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.vault-file-pdf .vault-pdf-outline-title:disabled { color: var(--muted); cursor: default; }
+.vault-file-pdf .vault-pdf-outline-page { flex: none; color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
+.vault-file-pdf .vault-pdf-outline-entry.is-current .vault-pdf-outline-title { font-weight: 600; }
+.vault-file-pdf .vault-pdf-outline-empty { padding: 14px 12px; color: var(--muted); font-size: .8rem; line-height: 1.45; }
+
+.vault-file-toolbar .vault-pdf-sidebar-toggle { display: inline-grid; place-items: center; padding: 0 7px; }
+.vault-pdf-sidebar-toggle svg { width: 15px; height: 15px; }

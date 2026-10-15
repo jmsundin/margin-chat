@@ -4,6 +4,8 @@ import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
 import { useVaultMedia } from "../lib/vaultMedia";
 import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
+import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
+import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
 import {
   imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, pdfPageFromSourceId, pdfPageSourceId, pdfPageText, vaultFileTitle,
   type ImageArea,
@@ -79,6 +81,21 @@ function ZoomBar(props: { label: string; scale: number | null; fit: boolean; onS
 
 interface PageSize { width: number; height: number }
 
+const SIDEBAR_STORAGE_KEY = "margin.pdfSidebar";
+
+/** Whether the pages panel was open and which tab it showed, remembered across PDFs. */
+function savedSidebar(): { open: boolean; tab: PdfSidebarTab } {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SIDEBAR_STORAGE_KEY) ?? "null") as { open?: unknown; tab?: unknown } | null;
+    return { open: saved?.open === true, tab: saved?.tab === "contents" ? "contents" : "thumbnails" };
+  } catch {
+    return { open: false, tab: "thumbnails" };
+  }
+}
+
+/** The panel lies over the pages instead of beside them below this width. */
+const SIDEBAR_BESIDE_MIN_WIDTH = 560;
+
 function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,12 +104,24 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
   const [scale, setScale] = useState<number | null>(null);
   const [width, setWidth] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [sidebar, setSidebar] = useState(savedSidebar);
+  const [outline, setOutline] = useState<PdfOutlineEntry[] | null>(null);
+  const [labels, setLabels] = useState<string[] | null>(null);
+  const [viewerWidth, setViewerWidth] = useState(0);
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const viewerRef = useRef<HTMLElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
+  const overlay = viewerWidth > 0 && viewerWidth < SIDEBAR_BESIDE_MIN_WIDTH;
+
+  function changeSidebar(next: { open: boolean; tab: PdfSidebarTab }) {
+    setSidebar(next);
+    try { localStorage.setItem(SIDEBAR_STORAGE_KEY, JSON.stringify(next)); } catch { /* storage may be blocked */ }
+  }
 
   useEffect(() => {
     let cancelled = false;
     let close: (() => void) | null = null;
-    setPdf(null); setSizes([]); setError(null);
+    setPdf(null); setSizes([]); setError(null); setOutline(null); setLabels(null); setCurrentPage(1);
     openPdf(props.blob).then(async (opened) => {
       close = opened.close;
       if (cancelled) { opened.close(); return; }
@@ -122,13 +151,81 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
     return () => observer.disconnect();
   }, [pdf]);
 
+  // The panel's size follows the document's own scrolling area, so it stays in view beside the pages.
+  useLayoutEffect(() => {
+    const viewer = viewerRef.current;
+    const scroller = viewer?.closest<HTMLElement>(".document-body");
+    if (!viewer) return;
+    const measure = () => { setViewerWidth(viewer.clientWidth); setViewportHeight(scroller?.clientHeight ?? window.innerHeight); };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(viewer);
+    if (scroller) observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [pdf]);
+
+  // The contents and page labels are read once the panel first opens.
+  useEffect(() => {
+    if (!pdf || !sidebar.open || outline) return;
+    let cancelled = false;
+    readPdfOutline(pdf).then((entries) => { if (!cancelled) setOutline(entries); }, () => { if (!cancelled) setOutline([]); });
+    pdf.getPageLabels().then((found) => {
+      // Labels that only repeat the page numbers add nothing.
+      if (!cancelled && found?.some((label, index) => label !== String(index + 1))) setLabels(found);
+    }, () => undefined);
+    return () => { cancelled = true; };
+  }, [pdf, sidebar.open, outline]);
+
+  /** Scrolls the document to a page, and to a height on it when a bookmark gives one. */
+  function jumpTo(page: number, top?: number | null) {
+    const frame = frameRef.current;
+    const scroller = frame?.closest<HTMLElement>(".document-body");
+    if (!frame || !scroller || !pdf || !shownScale) return;
+    const scale = shownScale;
+    let offset = 0;
+    const align = () => {
+      const element = frame.querySelector<HTMLElement>(`[data-pdf-page="${page}"]`);
+      if (!element) return 0;
+      const target = scroller.scrollTop + element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 8 + offset;
+      const moved = Math.abs(scroller.scrollTop - target);
+      scroller.scrollTop = target;
+      return moved;
+    };
+    align();
+    setCurrentPage(page);
+    if (overlay) changeSidebar({ ...sidebar, open: false });
+    // Pages measured as they come into view can shift the target a little; follow it for a moment.
+    let frames = 0;
+    let stopped = false;
+    const stop = () => { stopped = true; };
+    const events = ["wheel", "touchstart", "keydown", "pointerdown"] as const;
+    for (const name of events) scroller.addEventListener(name, stop, { once: true, passive: true });
+    const follow = () => {
+      frames += 1;
+      if (!stopped && (align() > 1 || frames < 20) && frames < 60) { requestAnimationFrame(follow); return; }
+      for (const name of events) scroller.removeEventListener(name, stop);
+    };
+    requestAnimationFrame(follow);
+    if (top !== null && top !== undefined) {
+      pdf.getPage(page).then((proxy) => {
+        const [, y] = proxy.getViewport({ scale }).convertToViewportPoint(0, top) as number[];
+        offset = Math.max(0, y - 12);
+        if (!stopped) align();
+      }, () => undefined);
+    }
+  }
+
   const fitScale = width && sizes[0] ? clampScale((width - 2) / sizes[0].width) : null;
   const shownScale = fit ? fitScale : scale;
 
   function reportPage() {
     const frame = frameRef.current;
     if (!frame) return;
-    const middle = frame.getBoundingClientRect().top + Math.min(window.innerHeight, frame.clientHeight) / 3;
+    // The page that crosses a third of the way down the visible part of the document.
+    const scroller = frame.closest<HTMLElement>(".document-body");
+    const view = scroller?.getBoundingClientRect() ?? { top: 0, height: window.innerHeight };
+    const middle = Math.max(view.top, frame.getBoundingClientRect().top) + Math.min(view.height, window.innerHeight) / 3;
     let page = 1;
     for (const element of frame.querySelectorAll<HTMLElement>("[data-pdf-page]")) {
       if (element.getBoundingClientRect().top <= middle) page = Number(element.dataset.pdfPage);
@@ -158,15 +255,26 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
   }, [props.anchors]);
 
   if (error) return <div className="vault-file-status" role="alert">{error}</div>;
-  return <section className="vault-file-viewer vault-file-pdf" aria-label={`PDF: ${props.file.path}`}>
+  return <section className={`vault-file-viewer vault-file-pdf${sidebar.open && pdf ? " has-sidebar" : ""}${overlay ? " is-narrow" : ""}`}
+    ref={viewerRef} aria-label={`PDF: ${props.file.path}`}
+    style={viewportHeight ? { ["--vault-pdf-sidebar-height" as string]: `${viewportHeight}px` } : undefined}>
     <ZoomBar label="PDF" target={props.toolbarTarget} scale={shownScale} fit={fit} onFit={() => setFit(true)} onScale={(next) => { setFit(false); setScale(next); }}>
-      <span className="vault-file-page-count">{pdf ? `Page ${currentPage} of ${pdf.numPages}` : "Opening…"}</span>
+      <button type="button" className="vault-pdf-sidebar-toggle" aria-pressed={sidebar.open} disabled={!pdf}
+        aria-label={sidebar.open ? "Hide thumbnails and contents" : "Show thumbnails and contents"} title={sidebar.open ? "Hide thumbnails and contents" : "Show thumbnails and contents"}
+        onClick={() => changeSidebar({ ...sidebar, open: !sidebar.open })}>
+        <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"><rect x="1.75" y="2.25" width="12.5" height="11.5" rx="1.5" /><path d="M6 2.25v11.5M3.25 5h1.25M3.25 7.5h1.25M3.25 10h1.25" strokeLinecap="round" /></svg>
+      </button>
+      <span className="vault-file-page-count">{pdf ? `Page ${labels?.[currentPage - 1] && labels[currentPage - 1] !== String(currentPage) ? `${labels[currentPage - 1]} (${currentPage})` : currentPage} of ${pdf.numPages}` : "Opening…"}</span>
     </ZoomBar>
+    <div className="vault-pdf-layout">
+    {sidebar.open && pdf ? <PdfSidebar pdf={pdf} tab={sidebar.tab} onTab={(tab) => changeSidebar({ ...sidebar, tab })} sizes={sizes} labels={labels}
+      outline={outline} currentPage={currentPage} onJump={jumpTo} onClose={() => changeSidebar({ ...sidebar, open: false })} /> : null}
     <div className="vault-file-frame" ref={frameRef}>
       {pdf && shownScale ? sizes.map((size, index) => <PdfPage key={index} pdf={pdf} number={index + 1} size={size} scale={shownScale}
         conversationId={props.conversation.id} anchors={anchorsByPage.get(index + 1) ?? []} onMeasured={measured}
         onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} />)
         : <div className="vault-file-status" role="status">Opening {vaultFileTitle(props.file.path)}…</div>}
+    </div>
     </div>
   </section>;
 }
