@@ -58,6 +58,14 @@ export class LocalDirectoryConflictError extends Error {
   }
 }
 
+/** The connected folder itself can't be opened: moved, deleted, on a drive that isn't connected, or refused. */
+export class FolderUnavailableError extends Error {
+  constructor(readonly folderName: string, readonly reason: "missing" | "refused") {
+    super(`Margin Chat can’t find or open the folder “${folderName}”. Nothing was changed in it or in your vault.`);
+    this.name = "FolderUnavailableError";
+  }
+}
+
 export interface LocalDirectoryWorkspace {
   workspace: MarkdownWorkspace;
   savedAt: string;
@@ -519,6 +527,26 @@ export async function listConnectedDirectoryFiles(handle: FileSystemDirectoryHan
     }
   }
   return listings;
+}
+
+/**
+ * Whether the connected folder itself can be listed. Reading a missing folder's
+ * files can look like reading an empty one, so check the folder first.
+ */
+export async function localDirectoryAvailability(userId: string, directoryId?: string): Promise<"available" | "missing" | "refused"> {
+  const handle = await getStoredDirectoryHandle(userId, directoryId);
+  if (!handle) return "missing";
+  const entries = (handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }).entries();
+  try {
+    await entries.next();
+    return "available";
+  } catch (error) {
+    if (isDomExceptionNamed(error, "NotFoundError")) return "missing";
+    if (isDomExceptionNamed(error, "NotAllowedError") || isDomExceptionNamed(error, "SecurityError")) return "refused";
+    throw error;
+  } finally {
+    await entries.return?.().catch(() => undefined);
+  }
 }
 
 /** A file read straight from the connected folder, for one too large to sync. */

@@ -21,7 +21,8 @@ let writeGate: ReturnType<typeof deferred> | null = null;
 let gatedWrite: { when: (file: string, contents: string) => boolean; gate: ReturnType<typeof deferred>; entered: ReturnType<typeof deferred> } | null = null;
 let writeEntered: ReturnType<typeof deferred> | null = null;
 let failLocalWrites = false;
-function directory(name: string): any {
+// onWrite hears every file written or removed in this folder and the folders inside it.
+function directory(name: string, onWrite?: (file: string) => void): any {
   const entries = new Map<string, any>();
   const identity = Symbol(name);
   return {
@@ -30,9 +31,9 @@ function directory(name: string): any {
     async isSameEntry(other: any) { return other.fixtureIdentity === identity; },
     queryPermission: async () => "granted",
     async *entries() { yield* entries.entries(); },
-    async removeEntry(child: string) { entries.delete(child); },
+    async removeEntry(child: string) { onWrite?.(child); entries.delete(child); },
     async getDirectoryHandle(child: string, options: any = {}) {
-      if (!entries.has(child) && options.create) entries.set(child, directory(child));
+      if (!entries.has(child) && options.create) entries.set(child, directory(child, onWrite));
       if (!entries.has(child)) throw new DOMException("Missing directory", "NotFoundError");
       return entries.get(child);
     },
@@ -61,6 +62,7 @@ function directory(name: string): any {
                   writeEntered?.resolve();
                   await gate.promise;
                 }
+                onWrite?.(child);
                 contents = pending;
               },
             };
@@ -133,12 +135,13 @@ const partialScenario = process.argv.includes("--partial-load");
 const workingSetScenario = process.argv.includes("--working-set");
 const folderDeletionScenario = process.argv.includes("--folder-mass-delete");
 const onlyCopyScenario = process.argv.includes("--only-copy");
+const desktopGateScenario = process.argv.includes("--desktop-gate");
 let projectionPending = projectionScenario;
 let commitRequests = 0;
 function vaultResponse(result: any) {
   return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest?.revision ?? result.revision } } : result);
 }
-if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario && !folderDeletionScenario && !onlyCopyScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario && !folderDeletionScenario && !onlyCopyScenario && !desktopGateScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -920,8 +923,156 @@ async function checkOnlyCopy() {
   console.log(JSON.stringify({ checks: ["new vault not warned at once", "day-old vault with no copy warned", "Later lasts a week",
     "download remembered", "edits after a week-old download warned", "folder ends the warning"] }));
 }
+async function checkDesktopGate() {
+  const checks: string[] = [];
+  // The desktop app's window, loaded from the Vite dev server: only the user agent says so.
+  Object.defineProperty(browser.navigator, "userAgent", { configurable: true,
+    value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) margin-chat-desktop/0.1.0 Chrome/146.0.0.0 Electron/44.7.0 Safari/537.36" });
+  const doc = (id: string, body: string) =>
+    `---\nmargin-chat-id: "${id}"\ntitle: "${id}"\ncreated: "2026-10-01T00:00:00.000Z"\nupdated: "2026-10-01T00:00:00.000Z"\n---\n# ${id}\n\n${body}\n`;
+  const desktopFolder = (name: string) => {
+    const writes: string[] = [];
+    const handle = directory(name, (file) => writes.push(file));
+    let permission: PermissionState = "granted";
+    const folder = { handle, writes, requests: 0, setPermission(next: PermissionState) { permission = next; } };
+    handle.queryPermission = async () => permission;
+    handle.requestPermission = async () => { folder.requests++; permission = "granted"; return permission; };
+    return folder;
+  };
+  const nested = async (folder: any, path: string, create = false) => {
+    const segments = path.split("/");
+    const name = segments.pop()!;
+    let parent = folder;
+    for (const segment of segments) parent = await parent.getDirectoryHandle(segment, { create });
+    return parent.getFileHandle(name, { create });
+  };
+  const readText = async (folder: any, path: string) => (await (await nested(folder, path)).getFile()).text();
+  const writeText = async (folder: any, path: string, text: string) => {
+    const writer = await (await nested(folder, path, true)).createWritable();
+    await writer.write(text);
+    await writer.close();
+  };
+  const reopen = async (whileClosed?: () => Promise<void> | void) => {
+    await act(async () => { root.unmount(); });
+    await whileClosed?.();
+    current = null;
+    root = createRoot(container as unknown as Element);
+    await act(async () => { root.render(createElement(Host)); });
+    await until(() => current?.vault.ready, "The desktop vault did not reopen.");
+  };
+  const typeIn = (id: string, content: string) => current.setState((state: any) => ({ ...state, conversations: { ...state.conversations,
+    [id]: { ...state.conversations[id], messages: [...state.conversations[id].messages,
+      { id: `typed-${state.conversations[id].messages.length}`, role: "user", createdAt: new Date().toISOString(), content }] } } }));
+  const markdown = (files: Record<string, any>) => Object.fromEntries(Object.entries(files).filter(([path]) => path.endsWith(".md") && !path.startsWith(".margin-chat/")));
+  const cloudDeletions = async () => Object.values((await remote.snapshot(user.id)).manifest.files).filter((entry: any) => entry.deleted).length;
+
+  await remote.commit(user.id, [
+    { path: "Docs/plan.md", content: doc("plan", "The plan as the app has it."), baseRevision: null },
+    { path: "Docs/notes.md", content: doc("notes", "Notes kept in the app."), baseRevision: null },
+  ]);
+  networkReleased = true;
+  initialNetwork.resolve();
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready && current.vault.matchesCloud && current.state.conversations.plan && current.state.conversations.notes,
+    "The desktop vault did not open with its documents.");
+  assert.equal(current.vault.vaultFolderPrompt, "choose", "First run did not ask for a vault folder.");
+  checks.push("first run asks for a vault folder");
+
+  await act(async () => { current.vault.snoozeVaultFolderPrompt(); });
+  assert.equal(current.vault.vaultFolderPrompt, null, "Not now left the prompt up.");
+  await reopen();
+  assert.equal(current.vault.vaultFolderPrompt, null, "Not now did not last while the app stayed open.");
+  browser.sessionStorage.clear();
+  await reopen();
+  assert.equal(current.vault.vaultFolderPrompt, "choose", "The next launch did not ask for a folder again.");
+  checks.push("Not now lasts until the next launch");
+
+  const first = desktopFolder("Margin Chat");
+  const beforeConnect = (await local.read())!.files;
+  (browser as any).showDirectoryPicker = async () => first.handle;
+  let picked: any;
+  await act(async () => { picked = await current.vault.pickFolder(); });
+  assert.equal(picked, first.handle);
+  await act(async () => { await current.vault.connectFolder(picked); });
+  assert.equal(current.vault.vaultFolderPrompt, null, "The prompt stayed up after choosing a folder.");
+  const connected = (await local.read())!.files;
+  for (const [path, file] of Object.entries(markdown(beforeConnect))) {
+    assert.equal(await readText(first.handle, path), (file as any).content, `${path} was not copied into the folder as it is.`);
+    assert.equal(connected[path]?.content, (file as any).content, `Choosing a folder changed ${path} in the vault.`);
+  }
+  for (const path of Object.keys(beforeConnect)) assert(connected[path], `Choosing a folder removed ${path} from the vault.`);
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(await cloudDeletions(), 0, "Choosing a folder deleted something in the cloud.");
+  checks.push("an empty folder receives the whole vault and nothing is deleted");
+
+  await reopen(() => writeText(first.handle, "Docs/added.md", "# Added while closed\n\nWritten by another app while Margin Chat was closed.\n"));
+  await until(() => Object.values(current.state.conversations).some((conversation: any) => conversation.title === "Added while closed"),
+    "A file added to the folder while the app was closed did not appear.");
+  assert.equal(current.vault.vaultFolderPrompt, null, "A remembered folder that is still allowed asked again.");
+  assert.equal(first.requests, 0, "Opening a remembered folder asked for access again.");
+  checks.push("a remembered folder opens at launch without asking, with files added while closed");
+
+  await reopen(() => first.setPermission("prompt"));
+  assert.equal(current.vault.vaultFolderPrompt, "allow", "A folder waiting for access did not ask to be allowed.");
+  const writesWhileWaiting = first.writes.length;
+  await act(async () => { typeIn("notes", "Typed before allowing access."); });
+  await act(async () => { await current.vault.flushLocal(); });
+  await act(async () => { await current.vault.syncNow(); });
+  assert.equal(first.writes.length, writesWhileWaiting, "Margin Chat wrote to a folder it was not allowed to open.");
+  const typedPath = Object.entries((await local.read())!.files).find(([, file]: [string, any]) => file.content.includes("Typed before allowing access."))?.[0];
+  assert(typedPath, "Typing while waiting for access was not saved.");
+  let allowed: boolean | undefined;
+  await act(async () => { allowed = await current.vault.allowDirectoryAccess(); });
+  assert.equal(allowed, true);
+  assert.equal(current.vault.vaultFolderPrompt, null, "Allowing access left the prompt up.");
+  assert((await readText(first.handle, typedPath)).includes("Typed before allowing access."), "Typing did not reach the folder after allowing access.");
+  checks.push("a folder waiting for access is not written until allowed, and typing reaches it afterwards");
+
+  const second = desktopFolder("Old copy");
+  const diskPlan = doc("plan", "The plan as edited in another app.");
+  await writeText(second.handle, "Docs/plan.md", diskPlan);
+  const appPlan = (await local.read())!.files["Docs/plan.md"].content;
+  assert.notEqual(appPlan, diskPlan);
+  await act(async () => { await current.vault.connectFolder(second.handle); });
+  assert.equal(await readText(second.handle, "Docs/plan.md"), diskPlan, "Connecting a folder changed a file already in it.");
+  const merged = (await local.read())!;
+  assert.equal(merged.files["Docs/plan.md"].content, diskPlan, "The folder's version did not stay current.");
+  const kept = merged.conflicts.find((conflict: any) => conflict.path === "Docs/plan.md");
+  assert(kept && kept.local?.content === appPlan, "The app's version was not kept in history.");
+  assert.equal(merged.files[`.margin-chat/history/${kept.id}/local/plan.md`]?.content, appPlan);
+  assert.equal(await readText(second.handle, `.margin-chat/history/${kept.id}/local/plan.md`), appPlan, "The folder did not receive the app's version in its history.");
+  assert((await readText(second.handle, typedPath)).includes("Typed before allowing access."), "The rest of the vault did not reach the folder.");
+  checks.push("a folder's own version of a file stays current on first connect, with the app's in history");
+
+  const intact = markdown((await local.read())!.files);
+  const writesBeforeMissing = second.writes.length;
+  const present = { entries: second.handle.entries, getFileHandle: second.handle.getFileHandle, getDirectoryHandle: second.handle.getDirectoryHandle };
+  await reopen(() => {
+    // Moved, deleted, or on a drive that isn't plugged in; access itself still looks granted.
+    const gone = () => { throw new DOMException("The folder could not be found.", "NotFoundError"); };
+    second.handle.entries = async function* () { gone(); };
+    second.handle.getFileHandle = async () => gone();
+    second.handle.getDirectoryHandle = async () => gone();
+  });
+  assert.equal(current.vault.vaultFolderPrompt, "missing", "A missing folder was not reported.");
+  assert.equal(current.vault.folderUnavailable, true);
+  assert.equal(current.vault.message, null, "A missing folder showed a generic error.");
+  await act(async () => { await current.vault.syncNow().catch(() => undefined); });
+  assert.equal(second.writes.length, writesBeforeMissing, "Margin Chat wrote to a missing folder.");
+  const afterMissing = (await local.read())!.files;
+  assert.deepEqual(Object.keys(markdown(afterMissing)).sort(), Object.keys(intact).sort(), "A missing folder removed documents from the vault.");
+  for (const [path, file] of Object.entries(intact)) assert.equal(afterMissing[path].content, (file as any).content, `${path} changed while its folder was missing.`);
+  assert.equal(await cloudDeletions(), 0, "A missing folder deleted something in the cloud.");
+  Object.assign(second.handle, present);
+  await act(async () => { await current.vault.checkFolder(); });
+  assert.equal(current.vault.vaultFolderPrompt, null, "The folder coming back left the prompt up.");
+  assert.equal(await readText(second.handle, "Docs/plan.md"), diskPlan);
+  checks.push("a missing vault folder is reported, never read as empty, and nothing is written");
+  console.log(JSON.stringify({ checks }));
+}
 try {
-  if (onlyCopyScenario) await checkOnlyCopy();
+  if (desktopGateScenario) await checkDesktopGate();
+  else if (onlyCopyScenario) await checkOnlyCopy();
   else if (folderDeletionScenario) await checkFolderMassDeletion();
   else if (partialScenario) await checkPartialLoad();
   else if (workingSetScenario) await checkWorkingSet();

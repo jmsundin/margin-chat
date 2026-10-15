@@ -25,8 +25,10 @@ import {
   listLocalDirectories, reconnectLocalDirectory, watchLocalDirectory, type RememberedLocalDirectory,
   getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectoryWorkspace,
   readLocalDirectoryCompanions, syncLocalDirectoryCompanions, listLocalDirectoryFiles, readLocalDirectoryFile, isCompanionPath,
-  type LocalDirectoryStatus,
+  localDirectoryAvailability, FolderUnavailableError, type LocalDirectoryStatus,
 } from "./workspaceStorage";
+import { isDesktopApp } from "./platform";
+import { createVaultFolder, isVaultFolderPromptSnoozed, saveVaultFolderPromptSnooze, vaultFolderPrompt } from "./desktopVault";
 import type { MarkdownWorkspace } from "./workspaceMarkdown";
 import { historyVaultFiles, type HistoryChat, type HistoryImportReceipt } from "./chatHistoryImport";
 
@@ -67,6 +69,9 @@ export function useMarkdownVault(args: {
     directoryName: null, fileName: getLocalWorkspaceFileName(storageUserId), permission: "unselected", supported: false,
   });
   const [localDirectories, setLocalDirectories] = useState<RememberedLocalDirectory[]>([]);
+  /** The remembered folder itself can't be opened (moved, deleted, or on a drive that isn't connected). */
+  const [folderUnavailable, setFolderUnavailable] = useState(false);
+  const [folderPromptSnoozed, setFolderPromptSnoozed] = useState(() => isVaultFolderPromptSnoozed(storageUserId));
   /** A folder scan that would delete many documents waits here for the user's answer. */
   const [heldFolderDeletion, setHeldFolderDeletion] = useState<HeldFolderDeletion | null>(null);
   const heldDeletionKey = useRef<string | null>(null);
@@ -139,6 +144,8 @@ export function useMarkdownVault(args: {
     if (error instanceof FolderChangingError) { setMessage(error.message); return; }
     // Held folder deletions have their own prompt; the vault and cloud sync are fine.
     if (error instanceof FolderDeletionHeldError) return;
+    // So does a folder that can't be opened (folderUnavailable).
+    if (error instanceof FolderUnavailableError) return;
     setStorageMode(enabledRef.current ? "fallback" : "local");
     setMatchesCloud(false);
     const detail = error instanceof Error ? error.message : "Your vault could not be synchronized.";
@@ -255,14 +262,23 @@ export function useMarkdownVault(args: {
     if (mounted.current) setHeldFolderDeletion(null);
   }
 
+  function showFolderUnavailable(unavailable: boolean) {
+    if (mounted.current) setFolderUnavailable(unavailable);
+  }
+
   async function readFolder() {
     const status = await getLocalDirectoryStatus(storageUserId);
     await showDirectoryStatus(status);
     if (status.permission !== "granted" || !status.directoryId) {
       folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
+      showFolderUnavailable(false);
       forgetHeldFolderDeletion();
       return;
     }
+    // A folder that can't be opened is not an empty folder: nothing is imported, deleted or written until it is back.
+    const availability = await localDirectoryAvailability(storageUserId, status.directoryId);
+    showFolderUnavailable(availability !== "available");
+    if (availability !== "available") throw new FolderUnavailableError(status.directoryName ?? "your vault folder", availability);
     if (folderId.current !== status.directoryId) {
       forgetHeldFolderDeletion();
       const baseline = (await engine.read()).directoryBaselines?.[status.directoryId];
@@ -311,7 +327,12 @@ export function useMarkdownVault(args: {
       forgetHeldFolderDeletion();
       await engine.edit(next, expected, directory);
     }
-    else if (Object.keys(incoming.workspace.files).length || Object.keys(companions).length) await engine.import(next, directory);
+    // A folder connected for the first time is the person's own copy: where it and the vault hold different
+    // versions of a file, the folder's stays current and the vault's goes to history. A legacy JSON-only
+    // folder (no modification times) is an old snapshot instead, so the vault keeps its versions.
+    else if (Object.keys(incoming.workspace.files).length || Object.keys(companions).length) {
+      await engine.import(next, directory, incoming.modifiedAt ? { keep: "imported", originals: incoming.workspace.files } : {});
+    }
     else await engine.rememberDirectory(directory.id, baseline);
     folder.current = incoming.workspace;
     folderCompanions.current = companions;
@@ -682,7 +703,8 @@ export function useMarkdownVault(args: {
   }, [ready, storageUserId, watchedDirectoryId]);
 
   // Without cloud sync or a folder, the browser's copy is the only one: say so until the vault is downloaded.
-  const folderChosen = Boolean(localDirectoryStatus.directoryName);
+  // A folder counts only while Margin Chat can actually write to it.
+  const folderChosen = Boolean(localDirectoryStatus.directoryName) && localDirectoryStatus.permission === "granted" && !folderUnavailable;
   useEffect(() => {
     if (!ready) return;
     const check = () => {
@@ -714,12 +736,17 @@ export function useMarkdownVault(args: {
     await enqueue(async () => {
       await hydrateEverything();
       const status = await connectLocalDirectory(storageUserId, handle);
+      showFolderUnavailable(false);
       await showDirectoryStatus(status);
       folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
       forgetHeldFolderDeletion();
       if (status.permission === "granted") await saveAndRefresh(false);
     });
   }
+
+  const folderPrompt = vaultFolderPrompt({
+    desktop: isDesktopApp(), ready, snoozed: folderPromptSnoozed, status: localDirectoryStatus, unavailable: folderUnavailable,
+  });
 
   const folderAccessMessage = localDirectoryStatus.directoryName && localDirectoryStatus.permission !== "granted"
     ? `Allow access to “${localDirectoryStatus.directoryName}” again so Margin Chat can see the files you add or change there.`
@@ -765,6 +792,17 @@ export function useMarkdownVault(args: {
     /** Shown once after the vault moved to a fresh copy on its own. */
     recoveryNotice, dismissRecoveryNotice: () => setRecoveryNotice(null),
     ready, storageMode, media, folderAccessMessage, cloudDocuments,
+    /** On desktop, what to ask before showing the workspace: choose a vault folder, allow it again, or find it. */
+    vaultFolderPrompt: folderPrompt,
+    /** "Not now": hide the vault folder prompt until the app is opened again. */
+    snoozeVaultFolderPrompt() {
+      saveVaultFolderPromptSnooze(storageUserId);
+      setFolderPromptSnoozed(true);
+    },
+    /** The remembered folder can't be found or opened; nothing is read from or written to it until it is back. */
+    folderUnavailable,
+    /** Cloud documents downloading right now, such as before a folder receives the whole vault. */
+    downloadProgress,
     /** Documents deleted in the last 30 days, in the app or in a connected folder. */
     recentlyDeleted,
     /** Set while this browser holds the only copy: no cloud sync, no folder, and no recent download. */
@@ -829,6 +867,24 @@ export function useMarkdownVault(args: {
       if (!handle) return;
       await connectDirectory(handle);
     },
+    /** Ask for a folder without connecting it yet, so it can be looked at first. Call from a click. */
+    pickFolder: () => pickLocalDirectory(),
+    /** Connect a folder the person picked: the whole vault is downloaded first, then copied into it. */
+    async connectFolder(handle: FileSystemDirectoryHandle) {
+      await connectDirectory(handle);
+    },
+    /**
+     * Ask where to put a new vault, make a folder named `name` there and copy the vault into it. Call
+     * from a click. A folder with that name that already holds files is refused (VaultFolderExistsError).
+     */
+    async createVault(name: string, onCreated?: (handle: FileSystemDirectoryHandle) => void) {
+      const parent = await pickLocalDirectory();
+      if (!parent) return false;
+      const handle = await createVaultFolder(parent, name);
+      onCreated?.(handle);
+      await connectDirectory(handle);
+      return true;
+    },
     /** Connect a folder used before on this device again. Call from a click. */
     async switchDirectory(directoryId: string) {
       // The access prompt needs the user's click, so it runs before queued folder work.
@@ -836,15 +892,28 @@ export function useMarkdownVault(args: {
       if (!handle) throw new Error("Margin Chat needs access to that folder to open it.");
       await connectDirectory(handle);
     },
-    /** Allow a remembered folder again after the browser forgot its access. */
+    /** Allow a remembered folder again after the browser forgot its access. Returns whether it was allowed. */
     async allowDirectoryAccess() {
       // The permission prompt needs the user's click, so it runs before queued folder work.
       const status = await requestLocalDirectoryPermission(storageUserId);
       await showDirectoryStatus(status);
-      if (status.permission === "granted") await enqueue(() => saveAndRefresh(true));
+      if (status.permission !== "granted") return false;
+      await enqueue(() => saveAndRefresh(true));
+      return true;
     },
     async clearDirectory() {
-      await enqueue(async () => { await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; forgetHeldFolderDeletion(); await showDirectoryStatus(await getLocalDirectoryStatus(storageUserId)); });
+      await enqueue(async () => {
+        await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; forgetHeldFolderDeletion();
+        showFolderUnavailable(false);
+        // Disconnecting on purpose doesn't bring the desktop folder prompt straight back; the next launch asks.
+        saveVaultFolderPromptSnooze(storageUserId);
+        if (mounted.current) setFolderPromptSnoozed(true);
+        await showDirectoryStatus(await getLocalDirectoryStatus(storageUserId));
+      });
+    },
+    /** Look for the connected folder again, such as after its drive is plugged back in. Nothing goes to the cloud. */
+    async checkFolder() {
+      await enqueue(() => saveAndRefresh(false));
     },
     async syncNow(onProgress?: (progress: StateUploadProgress) => void) {
       onProgress?.({ uploadedBytes: 0, totalBytes: 1 });

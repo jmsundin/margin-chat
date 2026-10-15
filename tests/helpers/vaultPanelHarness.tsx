@@ -109,6 +109,17 @@ try {
   assert(container.textContent?.includes("Folder “Notes”"));
   checks.push("free accounts see whether a copy exists outside the browser");
 
+  // In the desktop app the folder is the vault itself.
+  assert(container.textContent?.includes("Optional folder connection"));
+  Object.defineProperty(browser.navigator, "userAgent", { configurable: true, value: "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Electron/44.7.0 Safari/537.36" });
+  await render(false);
+  assert(container.textContent?.includes("Vault folderNotes"));
+  assert(!container.textContent?.includes("Optional folder connection"));
+  (vault as any).folderUnavailable = true;
+  await render(false);
+  assert(container.textContent?.includes("Margin Chat can’t find or open this folder right now."));
+  checks.push("desktop shows the vault folder and says when it can't be found");
+
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

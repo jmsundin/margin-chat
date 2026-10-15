@@ -16,5 +16,6 @@ test("vault shows save and sync status while keeping recovery history in the bac
     "real storage and sync errors remain visible",
     "recently deleted documents can be restored",
     "free accounts see whether a copy exists outside the browser",
+    "desktop shows the vault folder and says when it can't be found",
   ]);
 }, 15_000);
