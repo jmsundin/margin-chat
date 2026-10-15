@@ -4,6 +4,8 @@ import type { Conversation } from "../../client/src/types";
 import { documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://map-viewport-content.test/" });
+// These checks cover the classic rich-text document editor.
+browser.localStorage.setItem("margin-chat:document-editor", "classic");
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });

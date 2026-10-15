@@ -1,10 +1,15 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useSyncExternalStore } from "react";
 import type { RichDocumentEditorProps } from "./RichDocumentEditor";
+import { readDocumentEditorKind, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import "./LazyRichDocumentEditor.css";
 
-/** Tiptap, ProseMirror, and code highlighting load in the editor's own chunk. */
-export const loadRichDocumentEditor = () => import("./RichDocumentEditor");
-const RichDocumentEditor = lazy(loadRichDocumentEditor);
+/** Each editor and its libraries load in their own chunk. */
+export const loadClassicDocumentEditor = () => import("./RichDocumentEditor");
+export const loadLiveDocumentEditor = () => import("./LiveDocumentEditor");
+/** Loads whichever document editor this device uses. */
+export const loadRichDocumentEditor = () => readDocumentEditorKind() === "classic" ? loadClassicDocumentEditor() : loadLiveDocumentEditor();
+const ClassicDocumentEditor = lazy(loadClassicDocumentEditor);
+const LiveDocumentEditor = lazy(loadLiveDocumentEditor);
 
 /** Plain block text keeps a document readable and close to its final height until the editor mounts. */
 export function RichDocumentPlaceholder({ blocks, className }: Pick<RichDocumentEditorProps, "blocks" | "className">) {
@@ -14,7 +19,9 @@ export function RichDocumentPlaceholder({ blocks, className }: Pick<RichDocument
 }
 
 export default function LazyRichDocumentEditor(props: RichDocumentEditorProps) {
+  const kind = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentEditorKind, () => "live" as const);
+  const Editor = kind === "classic" ? ClassicDocumentEditor : LiveDocumentEditor;
   return <Suspense fallback={<RichDocumentPlaceholder blocks={props.blocks} className={props.className} />}>
-    <RichDocumentEditor {...props} />
+    <Editor {...props} />
   </Suspense>;
 }

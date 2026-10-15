@@ -1,0 +1,83 @@
+/* Documents in the Live Preview editor: one Markdown file, typed like Obsidian. */
+.live-document-editor { position: relative; padding: 4px 4px 28px; }
+.live-document-host { min-width: 0; }
+.live-document-host .cm-editor { background: transparent; color: var(--ink); font-size: .96rem; line-height: 1.8; outline: none; }
+.live-document-host .cm-editor.cm-focused { outline: none; }
+.live-document-host .cm-scroller { font-family: inherit; line-height: inherit; overflow: visible; }
+.live-document-host .cm-content { caret-color: var(--sage); min-height: 32px; padding: 0 0 12px; }
+.live-document-host .cm-line { overflow-wrap: anywhere; padding: 0 8px 0 40px; position: relative; }
+.live-document-host .cm-cursor { border-left: 2px solid var(--sage); }
+.live-document-host .cm-selectionBackground, .live-document-host .cm-focused .cm-selectionBackground { background: color-mix(in srgb, var(--sage) 26%, transparent); }
+.live-document-host .live-document-block { scroll-margin-block: 84px 24px; }
+.live-document-host .live-document-block.is-streaming, .live-document-host .cm-line.is-streaming { color: var(--muted); }
+/* A faint bar in the gutter marks AI-written text, like the classic editor's authorship note. */
+.live-document-host .live-document-block:is([data-authorship="ai"], [data-authorship="mixed"]) { background: linear-gradient(color-mix(in srgb, var(--sage) 45%, transparent), color-mix(in srgb, var(--sage) 45%, transparent)) 26px 50% / 2px 70% no-repeat; }
+.live-document-host .cm-line.cm-lp-placeholder::before { color: var(--muted); content: attr(data-placeholder); opacity: .7; pointer-events: none; position: absolute; }
+
+/* Syntax that Live Preview shows only on the line you're editing. */
+.live-document-host .cm-lp-mark { color: var(--muted); opacity: .75; }
+.live-document-host .cm-lp-heading { font-weight: 680; letter-spacing: -.01em; line-height: 1.35; }
+.live-document-host .cm-line.cm-lp-heading { padding-top: .5em; padding-bottom: .15em; }
+.live-document-host .cm-lp-h1 { font-size: 1.75em; }
+.live-document-host .cm-lp-h2 { font-size: 1.45em; }
+.live-document-host .cm-lp-h3 { font-size: 1.24em; }
+.live-document-host .cm-lp-h4 { font-size: 1.1em; }
+.live-document-host .cm-lp-h5, .live-document-host .cm-lp-h6 { font-size: 1em; }
+.live-document-host .cm-lp-em { font-style: italic; }
+.live-document-host .cm-lp-strong { font-weight: 700; }
+.live-document-host .cm-lp-strike, .live-document-host .cm-lp-task-done { color: var(--muted); text-decoration: line-through; }
+.live-document-host .cm-lp-code { background: color-mix(in srgb, var(--ink) 9%, transparent); border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; padding: .08em .3em; }
+.live-document-host .cm-line.cm-lp-code-line { background: color-mix(in srgb, var(--ink) 6%, transparent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .86em; line-height: 1.65; }
+.live-document-host .cm-line.cm-lp-code-fence { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78em; line-height: 1.4; }
+.live-document-host .cm-line.cm-lp-quote { background: linear-gradient(var(--line-strong, var(--line)), var(--line-strong, var(--line))) 40px 0 / 3px 100% no-repeat; color: color-mix(in srgb, var(--ink) 82%, var(--muted)); padding-left: 56px; }
+.live-document-host .cm-lp-link, .live-document-host .cm-lp-wikilink { color: var(--sage); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--sage) 45%, transparent); text-underline-offset: 3px; }
+.live-document-host .cm-lp-embed { color: var(--sage); }
+.live-document-host .cm-lp-highlight { background: color-mix(in srgb, #f4c95d 38%, transparent); border-radius: 2px; color: inherit; }
+.live-document-host .cm-lp-comment { color: var(--muted); font-style: italic; }
+.live-document-host .cm-lp-math-source, .live-document-host .cm-lp-html, .live-document-host .cm-line.cm-lp-table { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
+.live-document-host .cm-lp-bullet { color: var(--muted); display: inline-block; text-align: center; width: 1.1em; }
+.live-document-host .cm-lp-task { accent-color: var(--sage); cursor: pointer; margin: 0 .4em 0 .1em; vertical-align: -.1em; }
+.live-document-host .cm-lp-hr { border-top: 1px solid var(--line-strong, var(--line)); display: inline-block; vertical-align: middle; width: 100%; }
+.live-document-host .cm-lp-math { display: inline-block; }
+
+/* Saved passages with margin notes. */
+.live-document-host .message-anchor { border-radius: 3px; }
+
+/* Media, drawings, tables and diagrams render in place until you click into them. */
+.live-document-widget { margin: 6px 8px 6px 40px; min-width: 0; }
+.live-document-widget-body { min-width: 0; }
+.live-document-preview { cursor: text; font-size: .96rem; line-height: 1.8; overflow-x: auto; }
+.live-document-preview .message-content > :first-child { margin-top: 0; }
+.live-document-preview .message-content > :last-child { margin-bottom: 0; }
+.live-document-preview table { border-collapse: collapse; }
+.live-document-preview :is(th, td) { border: 1px solid var(--line-strong, var(--line)); padding: 4px 10px; text-align: left; }
+.live-document-after { margin: 0 8px 0 40px; position: relative; }
+.live-document-after:empty { display: none; }
+.live-document-beacons { pointer-events: none; }
+.live-document-beacon { height: 0; left: 0; pointer-events: none; position: absolute; width: 0; }
+
+/* Live Preview / Source / Reading, like Obsidian's ⌘E. */
+.live-document-modes { display: flex; gap: 2px; justify-content: flex-end; margin: 0 8px 4px; opacity: .55; transition: opacity .12s ease; }
+.live-document-editor:is(:hover, :focus-within) .live-document-modes { opacity: 1; }
+.live-document-modes button { background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: .74rem; padding: 3px 8px; }
+.live-document-modes button:hover { color: var(--ink); }
+.live-document-modes button[aria-pressed="true"] { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.live-document-editor[data-mode="reading"] .cm-cursor { display: none; }
+.live-document-editor[data-mode="source"] .cm-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
+
+/* "+" on an empty line inserts media, a drawing, a table or an equation. */
+.live-document-insert { left: 6px; position: absolute; z-index: 4; }
+.live-document-insert-toggle { align-items: center; background: transparent; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); cursor: pointer; display: inline-flex; font-size: 1rem; height: 26px; justify-content: center; line-height: 1; width: 26px; }
+.live-document-insert-toggle:hover, .live-document-insert-toggle[aria-expanded="true"] { border-color: var(--sage); color: var(--sage); }
+.live-document-insert-menu { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow, 0 8px 24px rgba(0, 0, 0, .2)); display: grid; margin-top: 4px; min-width: 160px; padding: 4px; }
+.live-document-insert-menu button { background: transparent; border: 0; border-radius: 7px; color: var(--ink); cursor: pointer; padding: 7px 10px; text-align: left; }
+.live-document-insert-menu button:hover, .live-document-insert-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.live-document-media-form { margin: 6px 8px 6px 40px; }
+
+@media (pointer: coarse) {
+  .live-document-host .cm-line, .live-document-widget, .live-document-after, .live-document-media-form { padding-left: 8px; margin-left: 0; }
+  .live-document-host .cm-line { padding-left: 8px; }
+  .live-document-touch-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .live-document-insert { display: none; }
+}
+.live-document-editor[data-mode="reading"] .cm-line.cm-lp-placeholder::before { content: none; }
