@@ -194,6 +194,8 @@ The runner rejects recipes declaring incompatible old app/client behavior. It do
 
 Blob backup captures each listed user's manifest once, retains the full initial object set and referenced immutable revisions, and validates revision hashes and references before publishing its private inventory. It can follow references added after the initial listing while users keep editing. Each captured manifest is recoverable; different users/objects may have different capture times. New accounts created after listing are outside that snapshot.
 
+A daily off-site copy of the Blob store, at another provider and in the same backup format, is described in [offsite-backups.md](offsite-backups.md).
+
 Neon and Blob are separate recovery boundaries. A database branch does not back up Blob, and two independent snapshots are not globally atomic. Postgres owns accounts, billing, captures, and encrypted keys; migrated vaults own Markdown, originals, manifests, history, and tombstones. Unsynchronized browser data is outside both backups. See [markdown-vault.md](markdown-vault.md).
 
 Before promotion, failure leaves the current app serving and successful compatible SQL migrations applied. Retry after resolving the reported issue; never replace production with the rehearsal branch.

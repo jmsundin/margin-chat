@@ -169,6 +169,26 @@ export function validateBlobStoreTokens({ sourceToken, backupToken, rehearsalTok
   return result;
 }
 
+/** Store identities for a backup: Vercel Blob stores come from their tokens, another provider's bucket names its own. */
+function backupStoreIdentities({ sourceToken, backupToken, backupSdk, backupStoreId }) {
+  if (!backupSdk) return validateBlobStoreTokens({ sourceToken, backupToken });
+  const sourceStoreId = tokenStoreId(sourceToken, "BLOB_READ_WRITE_TOKEN");
+  if (typeof backupStoreId !== "string" || !/^[a-z0-9][a-z0-9.:/_-]{0,199}$/i.test(backupStoreId) || backupStoreId === sourceStoreId) throw new Error("An off-site backup needs its own store ID.");
+  return { sourceStoreId, backupStoreId };
+}
+
+/**
+ * Reads every object of a complete backup, checking each one against the inventory and
+ * the vault manifests' references, and hands its bytes to `write`, such as to restore a
+ * backup into a folder. Throws on the first object that is missing or doesn't match.
+ */
+export async function readBlobBackup({ inventory, backupSdk, backupToken, write, concurrency = BLOB_CONCURRENCY, sleep = delay, onProgress }) {
+  validateInventory(inventory);
+  const backup = retryingBlobSdk(backupSdk ?? await import("@vercel/blob"), sleep);
+  await verifyInventoryObjects(backup, backupToken, inventory, { concurrency, onProgress, label: "Backup restore", write });
+  return { objectCount: inventory.objects.length, totalBytes: inventory.objects.reduce((sum, object) => sum + object.size, 0) };
+}
+
 function strongEtag(etag) {
   if (typeof etag !== "string" || !etag || etag.startsWith("W/")) throw new Error("Blob did not return a strong ETag.");
   return etag;
@@ -427,7 +447,7 @@ function validateInventory(inventory, { releaseId, sourceStoreId, backupStoreId 
   return inventory;
 }
 
-async function verifyInventoryObjects(sdk, token, inventory, { concurrency = BLOB_CONCURRENCY, onProgress, label = "Blob backup check" } = {}) {
+async function verifyInventoryObjects(sdk, token, inventory, { concurrency = BLOB_CONCURRENCY, onProgress, label = "Blob backup check", write } = {}) {
   const manifests = new Map();
   const shards = new Map();
   const revisionChecks = new Map();
@@ -443,6 +463,7 @@ async function verifyInventoryObjects(sdk, token, inventory, { concurrency = BLO
     }
     const check = verifyImmutableRevision(object.pathname, stored);
     if (check) revisionChecks.set(object.pathname, check);
+    await write?.(object, stored.bytes);
     progress();
   });
   validateVaultReferences(manifests, shards, paths, revisionChecks);
@@ -484,26 +505,28 @@ async function previousBackup(sdk, token, { releaseId, identities, sourcePrefix 
  * continue. Other objects are captured at their individual uncached reads.
  * Neither the complete store nor DB/Blob share one atomic point in time.
  */
-export async function backupBlobStore({ releaseId, sourceToken, backupToken, sourcePrefix = "", sdk, now = () => new Date(), concurrency = BLOB_CONCURRENCY, sleep = delay, onProgress }) {
+export async function backupBlobStore({ releaseId, sourceToken, backupToken, sourcePrefix = "", sdk, backupSdk, backupStoreId, now = () => new Date(), concurrency = BLOB_CONCURRENCY, sleep = delay, onProgress }) {
   releaseIdentifier(releaseId);
   if (typeof sourcePrefix !== "string" || (sourcePrefix && !safeBlobPathname(sourcePrefix.replace(/\/$/, "")))) throw new Error("Invalid Blob backup source prefix.");
-  const identities = validateBlobStoreTokens({ sourceToken, backupToken });
+  const identities = backupStoreIdentities({ sourceToken, backupToken, backupSdk, backupStoreId });
   const blob = retryingBlobSdk(sdk ?? await import("@vercel/blob"), sleep);
+  // An off-site backup goes to another provider's bucket through an SDK with the same three calls.
+  const backup = backupSdk ? retryingBlobSdk(backupSdk, sleep) : blob;
   const prefix = `releases/${releaseId}`;
   const inventoryPathname = `${prefix}/inventory.json`;
   const summarize = (inventory, bytes) => ({ inventory, inventoryPathname, inventorySha256: sha256(bytes), prefix, objectCount: inventory.objects.length, totalBytes: inventory.objects.reduce((sum, object) => sum + object.size, 0), ...identities });
-  const existing = await readBlob(blob, backupToken, inventoryPathname, { allowMissing: true });
+  const existing = await readBlob(backup, backupToken, inventoryPathname, { allowMissing: true });
   if (existing) {
     let inventory;
     try { inventory = JSON.parse(existing.bytes.toString("utf8")); } catch { throw new Error("Invalid existing Blob backup inventory."); }
     validateInventory(inventory, { releaseId, ...identities });
     if (inventory.sourcePrefix !== sourcePrefix) throw new Error("Blob backup source prefix mismatch.");
-    await verifyInventoryObjects(blob, backupToken, inventory, { concurrency, onProgress });
+    await verifyInventoryObjects(backup, backupToken, inventory, { concurrency, onProgress });
     return summarize(inventory, existing.bytes);
   }
   const startedAt = now().toISOString();
   const [previous, listed] = await Promise.all([
-    previousBackup(blob, backupToken, { releaseId, identities, sourcePrefix }),
+    previousBackup(backup, backupToken, { releaseId, identities, sourcePrefix }),
     listBlobs(blob, sourceToken, sourcePrefix),
   ]);
   const manifests = new Map();
@@ -562,7 +585,7 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
       // Same bytes as the earlier backup's copy (e.g. a re-saved manifest).
       ({ backupPathname, backupEtag } = prior);
       reusedCount += 1;
-    } else backupEtag = (await putVerified(blob, backupToken, backupPathname, current.bytes, current.contentType)).etag;
+    } else backupEtag = (await putVerified(backup, backupToken, backupPathname, current.bytes, current.contentType)).etag;
     // Captured bodies are only needed until their copy is verified.
     captured.delete(pathname);
     progress();
@@ -574,7 +597,7 @@ export async function backupBlobStore({ releaseId, sourceToken, backupToken, sou
   const inventory = { schemaVersion: 1, state: "complete", releaseId, ...identities, sourcePrefix, startedAt, completedAt: now().toISOString(),
     consistency: "Per-user captured manifests with verified immutable revisions; other objects captured individually. No global point-in-time or atomic database/Blob snapshot.", objects };
   const bytes = Buffer.from(`${JSON.stringify(inventory, null, 2)}\n`);
-  await putVerified(blob, backupToken, inventoryPathname, bytes, "application/json");
+  await putVerified(backup, backupToken, inventoryPathname, bytes, "application/json");
   return summarize(inventory, bytes);
 }
 
