@@ -298,6 +298,10 @@ function BrowserWorkspace() {
     await chrome.storage.local.remove("connection");
     if (previous) await signOut(previous).catch(() => undefined);
   }
+  // Leaving the side panel for one of the layouts drawn on the page.
+  function showOnPage(layout: string) {
+    if (layout !== "split") void message("float", { layout }).catch((failure) => setError(describe(failure)));
+  }
   const openExternal = (url: string) => { void chrome.tabs.create({ url }); };
   const onHandled = (id: string) => { setCaptureRequest((current) => current?.id === id ? null : current); setNotice(""); };
   const settings = () => { void chrome.runtime.openOptionsPage(); };
@@ -306,7 +310,9 @@ function BrowserWorkspace() {
   if (!connection) return <div className="extension-connect"><p className="eyebrow">Margin Chat</p><h1>{sidePanel ? "Your workspace, beside the page." : "Your workspace, above the page."}</h1><p>{error}</p>{connectedFrame && <button className="primary-button" onClick={settings}>Connect Workspace + AI</button>}{captureOnly && <p><button onClick={() => void message("pending").catch((failure) => setError(describe(failure)))}>Open capture-only clipper</button></p>}</div>;
   return <div className="browser-workspace">
     <section className={`browser-source${headerCollapsed ? " is-collapsed" : ""}`} aria-label="Web page context">
-      {!headerCollapsed && <><div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button>{sidePanel ? <button title="Close the side panel and open Margin Chat over the page" onClick={() => void message("float").catch((failure) => setError(describe(failure)))}>Show on page</button>
+      {!headerCollapsed && <><div className="browser-source-row"><div className="browser-source-name"><strong>{context?.title || "Current page"}</strong><small>{context?.sourceUrl}</small></div><button aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>Page context</button><button onClick={askPage}>Ask page</button>{sidePanel ? <select className="browser-layout" aria-label="View" title="Switch to a layout drawn on the page" value="split" onChange={(event) => showOnPage(event.target.value)}>
+          <option value="split">Side by side</option><option value="docked">Docked</option><option value="floating">Floating</option><option value="expanded">Expanded</option>
+        </select>
         : <button title="Open in Chrome's side panel so the page narrows beside it" onClick={openSideBySide}>Side by side</button>}</div>
       {detailsOpen && <div className="browser-source-details">
         <div className="browser-context-actions" role="group" aria-label="Choose source context"><button onClick={() => void read("selection")} disabled={busy} aria-pressed={context?.kind === "selection"}>Selected passage</button><button onClick={() => void read("article")} disabled={busy} aria-pressed={context?.kind === "article"}>Readable page</button><button onClick={() => void read("bookmark")} disabled={busy} aria-pressed={context?.kind === "bookmark"}>Link only</button></div>
