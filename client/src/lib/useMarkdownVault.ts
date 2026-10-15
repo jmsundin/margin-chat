@@ -9,7 +9,7 @@ import { FolderChangingError } from "./fileSnapshot";
 import { FolderDeletionHeldError, folderDeletionsToHold, type HeldFolderDeletion } from "./folderDeletionGuard";
 import { IN_MEMORY_VAULT_NOTICE, LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
-import { attachmentPath, MAX_VAULT_MEDIA_BYTES, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
+import { attachmentPath, MAX_VAULT_MEDIA_BYTES, MAX_VAULT_MEDIA_LABEL, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
 import { VaultSync, pendingVaultChanges } from "./vaultSync";
 import { type VaultDownloadProgress, type VaultEntry, type VaultFile, type VaultManifest, type VaultIndex, type VaultIndexEntry, type VaultSearchEvent, type VaultSnapshot, type VaultConflict } from "./vaultTypes";
@@ -704,9 +704,8 @@ export function useMarkdownVault(args: {
       return { path, blob: new Blob([new Uint8Array(vaultFileBytes(file))], { type }) };
     },
     async save(file) {
-      // The cloud vault accepts one file of at most 4 MiB per upload.
       if (file.size > MAX_VAULT_MEDIA_BYTES) {
-        throw new Error(`“${file.name}” is larger than 4 MB, the most a vault file can sync. Upload a video to YouTube or Vimeo and paste its link instead.`);
+        throw new Error(`“${file.name}” is larger than ${MAX_VAULT_MEDIA_LABEL}, the most a vault file can sync. Upload a longer video to YouTube or Vimeo and paste its link instead.`);
       }
       const content = bytesToBase64(new Uint8Array(await file.arrayBuffer()));
       const markdown = await enqueue(async () => {

@@ -17,8 +17,11 @@ import { passageSnippet, vaultSearchTerms } from "./search.mjs";
 export const PASSAGE_EMBEDDING_MODEL = TOPIC_EMBEDDING_MODEL;
 const SOURCES_PER_REQUEST = 100;
 const FILES_PER_REQUEST = 4;
-/** PDFs from the vault read and split per request; each is at most 4 MB. */
+/** PDFs from the vault read and split per request, up to this many bytes together (a larger one goes alone). */
 const VAULT_FILES_PER_REQUEST = 4;
+const VAULT_FILE_BATCH_BYTES = 32 * 1024 * 1024;
+/** A larger PDF still syncs and opens, but reading its text would outgrow a function's memory and time. */
+export const MAX_INDEXED_PDF_BYTES = 100 * 1024 * 1024;
 const PASSAGES_PER_REQUEST = 256;
 /** Passages each of keyword and meaning search consider before they are merged. */
 const SEARCH_CANDIDATES = 50;
@@ -105,7 +108,7 @@ export function createVaultPassageService({ database, env = process.env, vault =
     const current = new Map();
     for (const [path, entry] of Object.entries(manifest.files)) {
       if (entry.deleted || vaultFileKind(path) !== "pdf" || !isVaultFileDocumentPath(path)) continue;
-      current.set(vaultFileDocumentId(path), { path, revision: entry.revision });
+      current.set(vaultFileDocumentId(path), { path, revision: entry.revision, size: Number.isSafeInteger(entry.size) ? entry.size : 0 });
     }
     const gone = [...indexed.keys()].filter((id) => !current.has(id));
     if (gone.length) await database.deleteVaultFilePassageSources({ userId, ids: gone });
@@ -115,9 +118,18 @@ export function createVaultPassageService({ database, env = process.env, vault =
       return none;
     }
     let skipped = 0;
-    const sources = (await Promise.all(stale.slice(0, limit).map(async ([id, file]) => {
+    let batchBytes = 0;
+    const batch = [];
+    for (const item of stale) {
+      const bytes = item[1].size > MAX_INDEXED_PDF_BYTES ? 0 : item[1].size;
+      if (batch.length >= limit || (batch.length && batchBytes + bytes > VAULT_FILE_BATCH_BYTES)) break;
+      batch.push(item);
+      batchBytes += bytes;
+    }
+    const sources = (await Promise.all(batch.map(async ([id, file]) => {
       const source = { kind: "vault-file", id, itemKind: "file", title: vaultFileTitle(file.path), mimeType: "application/pdf",
         fingerprint: file.revision, updatedAt: null };
+      if (file.size > MAX_INDEXED_PDF_BYTES) return { ...source, readError: "This PDF is too large to search inside (over 100 MB). It still syncs and opens." };
       try {
         return { ...source, bytes: (await vault.readFile({ userId, path: file.path, revision: file.revision })).bytes };
       } catch (failure) {
@@ -129,7 +141,7 @@ export function createVaultPassageService({ database, env = process.env, vault =
       }
     }))).filter(Boolean);
     // Once this batch is saved, every PDF at this revision is indexed.
-    const complete = stale.length <= limit && !skipped;
+    const complete = stale.length === batch.length && !skipped;
     return { sources, remaining: stale.length - skipped, ...(complete ? { revision: manifest.revision } : {}) };
   }
 

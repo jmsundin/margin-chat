@@ -1,4 +1,4 @@
-import { MAX_VAULT_MEDIA_BYTES, safeName } from "./documentMedia";
+import { MAX_VAULT_MEDIA_BYTES, MAX_VAULT_MEDIA_LABEL, safeName } from "./documentMedia";
 import { isVaultFileDocumentPath, vaultFileContentType } from "./vaultFileDocuments";
 import { bytesToBase64, importVault } from "./vaultLocal";
 import type { VaultFile } from "./vaultTypes";
@@ -75,7 +75,7 @@ export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<
         plan.added.push(upload.name);
       } else if (isVaultFileDocumentPath(`file.${extension}`)) {
         if (upload.bytes.length > MAX_VAULT_MEDIA_BYTES) {
-          plan.skipped.push({ name: upload.name, reason: "is larger than 4 MB, the most a vault file can sync" });
+          plan.skipped.push({ name: upload.name, reason: `is larger than ${MAX_VAULT_MEDIA_LABEL}, the most a vault file can sync` });
           continue;
         }
         const path = uniquePath(fileBase(upload.name), extension, taken);

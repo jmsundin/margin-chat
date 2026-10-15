@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createEmptyState } from "../client/src/initialState";
 import {
-  addVaultFileDocuments, imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, isVaultFileDocumentPath,
+  addVaultFileDocuments, imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, isSyncableVaultFileSize, isVaultFileDocumentPath,
   pdfPageFromSourceId, pdfPageSourceId, pdfPageText, pdfTextForAI, vaultFileDocumentId, withoutUntouchedVaultFileDocuments,
 } from "../client/src/lib/vaultFileDocuments";
 import { stateToVaultFiles, vaultFileListings, vaultToState } from "../client/src/lib/vaultWorkspace";
@@ -153,22 +153,32 @@ function memoryDirectory(initial: Record<string, string | Uint8Array>) {
 }
 
 describe("a connected folder's PDFs and images", () => {
-  test("sync byte for byte, except files too large to sync, which stay in the folder", async () => {
-    const big = new Uint8Array(5 * 1024 * 1024);
+  test("sync byte for byte, large ones included", async () => {
+    const big = new Uint8Array(5 * 1024 * 1024).fill(7);
     const folder = memoryDirectory({ "Note.md": "Hello.", "Papers/Small.pdf": new Uint8Array([37, 80, 68, 70]), "Pics/Cat.jpg": new Uint8Array([255, 216]),
       "Books/Big.pdf": big, ".obsidian/icon.png": new Uint8Array([1]), "Other/data.bin": new Uint8Array([2]) });
     const listing = await listConnectedDirectoryFiles(folder.handle);
-    expect(listing.map((file) => [file.path, Boolean(file.localOnly)]).sort()).toEqual([["Books/Big.pdf", true], ["Papers/Small.pdf", false], ["Pics/Cat.jpg", false]]);
+    expect(listing.map((file) => [file.path, Boolean(file.localOnly)]).sort()).toEqual([["Books/Big.pdf", false], ["Papers/Small.pdf", false], ["Pics/Cat.jpg", false]]);
     const companions = await readConnectedDirectoryCompanions(folder.handle, undefined, listing);
-    expect(Object.keys(companions).sort()).toEqual(["Papers/Small.pdf", "Pics/Cat.jpg"]);
+    expect(Object.keys(companions).sort()).toEqual(["Books/Big.pdf", "Papers/Small.pdf", "Pics/Cat.jpg"]);
     expect(companions["Papers/Small.pdf"]).toEqual({ content: "JVBERg==", encoding: "base64", contentType: "application/pdf" });
     expect(companions["Pics/Cat.jpg"].contentType).toBe("image/jpeg");
+    expect(companions["Books/Big.pdf"].content.length).toBe(Math.ceil(big.length / 3) * 4);
 
-    // A PDF that arrives from another device is written into the folder.
+    // A rescan reuses an unchanged large file instead of reading and encoding it again.
+    const again = await readConnectedDirectoryCompanions(folder.handle, companions, await listConnectedDirectoryFiles(folder.handle));
+    expect(again["Books/Big.pdf"]).toBe(companions["Books/Big.pdf"]);
+
+    // A PDF that arrives from another device is written into the folder; unchanged files aren't touched.
     const next = { ...companions, "Scans/Receipt.png": { content: "AQI=", encoding: "base64" as const, contentType: "image/png" } };
     await syncConnectedDirectoryCompanions(folder.handle, next, companions);
     expect(folder.files.get("Scans/Receipt.png")).toEqual(new Uint8Array([1, 2]));
     expect(folder.files.get("Books/Big.pdf")).toBe(big);
+  });
+
+  test("only files over the sync limit stay in the folder", () => {
+    expect(isSyncableVaultFileSize(300 * 1024 * 1024)).toBe(true);
+    expect(isSyncableVaultFileSize(300 * 1024 * 1024 + 1)).toBe(false);
   });
 
   test("adding a PDF changes the folder signature, so it appears within seconds", async () => {

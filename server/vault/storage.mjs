@@ -75,6 +75,21 @@ export function createFileVaultStorage(directory) {
   };
 }
 
+/** The SDK's presigned upload takes the signature and parameters of a presigned
+ * URL rather than the URL itself; split one back into those parts. */
+export function presignedPayload(presignedUrl) {
+  const params = {};
+  let delegationToken = "";
+  let signature = "";
+  for (const [key, value] of new URL(presignedUrl).searchParams) {
+    if (key === "vercel-blob-delegation") delegationToken = value;
+    else if (key === "vercel-blob-signature") signature = value;
+    else if (key !== "pathname") params[key] = value;
+  }
+  if (!delegationToken || !signature) throw new Error("The vault store returned an invalid upload URL.");
+  return { delegationToken, signature, params };
+}
+
 export function createBlobVaultStorage(env = process.env, sdkOverride) {
   const options = env.BLOB_STORE_ID
     ? { storeId: env.BLOB_STORE_ID }
@@ -96,9 +111,61 @@ export function createBlobVaultStorage(env = process.env, sdkOverride) {
     }
     return { bytes: Buffer.from(await new Response(result.stream).arrayBuffer()), etag: result.blob.etag };
   }
+  /** Short-lived URL material scoped to one key, so a browser moves the bytes
+   * itself: a function can't carry a request or response over 4.5 MB on Vercel. */
+  async function signed(key, operations, extra = {}) {
+    const api = await sdk();
+    return api.issueSignedToken({ ...options, pathname: key, operations, validUntil: Date.now() + 60 * 60 * 1000, ...extra });
+  }
   return {
     kind: "blob",
     read,
+    direct: {
+      /** The store's own name for a key, which the browser uploads to. */
+      pathname: (key) => key,
+      /** The query the SDK's presigned upload expects: a PUT (or multipart) to exactly this key, at most `size` bytes. */
+      async uploadPayload(key, size) {
+        const api = await sdk();
+        const token = await signed(key, ["put"], { maximumSizeInBytes: size });
+        const { presignedUrl } = await api.presignUrl(token, {
+          operation: "put", pathname: key, access: "private", maximumSizeInBytes: size, allowOverwrite: false,
+        });
+        return presignedPayload(presignedUrl);
+      },
+      /** The stored size in bytes, or null when nothing is stored under the key. */
+      async size(key) {
+        const api = await sdk();
+        try {
+          return (await api.head(key, options))?.size ?? null;
+        } catch (error) {
+          if (error.name === "BlobNotFoundError" || (api.BlobNotFoundError && error instanceof api.BlobNotFoundError)) return null;
+          throw error;
+        }
+      },
+      async downloadUrl(key) {
+        const api = await sdk();
+        const token = await signed(key, ["get"]);
+        return (await api.presignUrl(token, { operation: "get", pathname: key, access: "private", validUntil: Date.now() + 15 * 60 * 1000 })).presignedUrl;
+      },
+      /** The SHA-256 of `lead` followed by the stored bytes, read as a stream; null when the key is missing. */
+      async digest(key, lead) {
+        const api = await sdk();
+        const result = await api.get(key, { ...options, access: "private", useCache: false, headers: { "accept-encoding": "identity" } });
+        if (!result) return null;
+        if (result.statusCode !== 200 || !result.stream) throw new Error("The vault store returned an invalid response.");
+        const hash = createHash("sha256").update(lead);
+        let size = 0;
+        for await (const chunk of result.stream) {
+          size += chunk.length;
+          hash.update(chunk);
+        }
+        return { digest: hash.digest("hex"), size };
+      },
+      async remove(key) {
+        const api = await sdk();
+        await api.del(key, options);
+      },
+    },
     async putImmutable(key, bytes, contentType) {
       const api = await sdk();
       try {
@@ -149,6 +216,14 @@ export function createVaultStorage(env = process.env) {
       read: (key) => storage.read(prefix + key),
       putImmutable: (key, bytes, type) => storage.putImmutable(prefix + key, bytes, type),
       compareAndSwap: (key, bytes, etag) => storage.compareAndSwap(prefix + key, bytes, etag),
+      direct: {
+        uploadPayload: (key, size) => storage.direct.uploadPayload(prefix + key, size),
+        size: (key) => storage.direct.size(prefix + key),
+        downloadUrl: (key) => storage.direct.downloadUrl(prefix + key),
+        digest: (key, lead) => storage.direct.digest(prefix + key, lead),
+        remove: (key) => storage.direct.remove(prefix + key),
+        pathname: (key) => prefix + key,
+      },
     };
   }
   return null;
