@@ -34,15 +34,15 @@ const clip = (text, maximum) => text.length <= maximum ? text : `${text.slice(0,
  * note and tool steps.
  */
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, onDelta, onStep, onThinking, onActivity }) {
+  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onStep, onThinking, onActivity }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
   const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter },
-    agentToolDefinitions(chatRequest, workspace));
+    agentToolDefinitions(chatRequest, workspace, { documents: Boolean(onDocuments) }));
   // Tool results of the round in progress; they join the adapter's history once the round ends.
   let outputs = [];
   const room = () => Number.isSafeInteger(maxInputCharacters)
     ? maxInputCharacters - adapter.size - JSON.stringify(outputs).length : Number.POSITIVE_INFINITY;
-  const executeTool = createAgentToolExecutor({ chatRequest, workspace, signal, room, readPage });
+  const executeTool = createAgentToolExecutor({ chatRequest, workspace, signal, room, readPage, importSection, onDocuments: onDocuments ?? null });
   const startedAt = now();
   // The meter may already carry this request's routing call; count only the run.
   const startingSpend = usageMeter?.summary().amountMicros ?? 0;

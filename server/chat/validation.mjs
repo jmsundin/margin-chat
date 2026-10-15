@@ -275,6 +275,8 @@ export function validateChatRequest(body) {
     })),
     modelId,
     serviceId: body.serviceId,
+    // The caller can create documents the agent's import_webpage tool sends it.
+    ...(body.acceptsDocuments === true ? { acceptsDocuments: true } : {}),
   };
 }
 

@@ -47,6 +47,8 @@ export function useChatStreams(onDelta: ConstructorParameters<typeof ChatExecuti
       onDelta: (...args) => latestDelta.current(...args),
       onExecution: (...args) => latestExecution.current?.(...args),
       onAgentEvent(id, event: AgentEvent) {
+        // Saved pages are created by whoever started the request; they are not progress.
+        if (event.type === "documents") return;
         if (event.type === "thinking") {
           pendingThinking.current.set(id, `${pendingThinking.current.get(id) ?? ""}${event.delta}`);
           thinkingTimer.current ??= setTimeout(flushThinking, THINKING_FLUSH_MS);
