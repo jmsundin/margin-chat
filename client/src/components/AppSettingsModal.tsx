@@ -1,5 +1,6 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, saveDictationButtonPreference, subscribeDictationButtonPreference } from "../lib/dictation";
+import { readDocumentEditorKind, saveDocumentEditorKind, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
@@ -46,6 +47,7 @@ export default function AppSettingsModal({
   vaultIndex,
 }: AppSettingsModalProps) {
   const showDictationButton = useSyncExternalStore(subscribeDictationButtonPreference, readDictationButtonPreference, () => true);
+  const documentEditor = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentEditorKind, () => "live" as const);
   useEffect(() => {
     if (!isOpen) {
       return undefined;
@@ -188,6 +190,17 @@ export default function AppSettingsModal({
             </div>
             <input id="jev-assistance" type="checkbox" role="switch" aria-describedby="jev-assistance-disclosure" checked={jevEnabled} onChange={(event) => onSetJevEnabled(event.target.checked)} />
           </div> : null}
+
+          <div className="app-settings-section app-settings-switch-section">
+            <div className="app-settings-copy">
+              <label className="app-settings-label" htmlFor="classic-document-editor">Classic document editor</label>
+              <p className="app-settings-description" id="classic-document-editor-disclosure">
+                Documents open in Live Preview, which shows Markdown only on the line you&apos;re editing, like Obsidian. Turn this on for the earlier editor with a grip and toolbar on each block. Saved on this device.
+              </p>
+            </div>
+            <input id="classic-document-editor" type="checkbox" role="switch" aria-describedby="classic-document-editor-disclosure"
+              checked={documentEditor === "classic"} onChange={(event) => saveDocumentEditorKind(event.target.checked ? "classic" : "live")} />
+          </div>
 
           {dictationSupported() ? <div className="app-settings-section app-settings-switch-section">
             <div className="app-settings-copy">

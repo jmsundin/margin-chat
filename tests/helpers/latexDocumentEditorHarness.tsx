@@ -4,6 +4,9 @@ import type { DocumentBlock } from "@margin-chat/workspace-contracts";
 import { blockEditor, documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://latex-document.test" });
+// These checks cover the classic rich-text document editor.
+browser.localStorage.setItem("margin-chat:document-editor", "classic");
+Object.defineProperty(globalThis, "localStorage", { configurable: true, value: browser.localStorage });
 browser.document.write("<!doctype html><html><head></head><body></body></html>");
 // happy-dom does not expose compatMode; KaTeX requires a standards-mode document.
 Object.defineProperty(browser.document, "compatMode", { value: "CSS1Compat" });

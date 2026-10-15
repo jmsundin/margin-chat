@@ -6,6 +6,8 @@ import { billingUser } from "./billingFixture";
 import { blockEditor, documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://margin-documents.test" });
+// These checks cover the classic rich-text document editor.
+browser.localStorage.setItem("margin-chat:document-editor", "classic");
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
 const workspaceStyles = browser.document.createElement("style");
 workspaceStyles.textContent = await Bun.file(new URL("../../client/src/document-workspace.css", import.meta.url)).text();

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { Window } from "happy-dom";
 
 const browser = new Window({ url: "http://document-panel-deferral.test" });
+// These checks cover the classic rich-text document editor.
+browser.localStorage.setItem("margin-chat:document-editor", "classic");
+Object.defineProperty(globalThis, "localStorage", { configurable: true, value: browser.localStorage });
 for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];
   if (value !== undefined) Object.defineProperty(globalThis, name, { configurable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });

@@ -159,13 +159,20 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const layout = () => {
       const markers = [...body.querySelectorAll<HTMLElement>(".document-prompt-marker")]
         .filter((marker) => marker.closest(".document-body") === body)
-        .map((marker) => ({ marker, top: (marker.closest(".rich-document-block") ?? marker.parentElement)?.getBoundingClientRect().top ?? 0 }))
+        .map((marker) => {
+          // The Live Preview editor shows a block's markers after it; they still line up with its first line.
+          const after = marker.closest<HTMLElement>("[data-after-block-id]");
+          const origin = (marker.closest(".rich-document-block") ?? after ?? marker.parentElement)?.getBoundingClientRect().top ?? 0;
+          const id = after?.dataset.afterBlockId;
+          const start = id ? after!.closest(".live-document-editor")?.querySelector(`:is(.cm-line, .live-document-widget)[data-document-block-id="${CSS.escape(id)}"]`) : null;
+          return { marker, origin, top: start?.getBoundingClientRect().top ?? origin };
+        })
         .sort((a, b) => a.top - b.top);
       let previousBottom = -Infinity;
-      for (const { marker, top } of markers) {
+      for (const { marker, origin, top } of markers) {
         const icons = marker.querySelectorAll(":scope > .document-prompt-icon, :scope > .document-child-nodes-icon").length || 1;
         const placed = Math.max(top, previousBottom + PROMPT_ICON_GAP);
-        const offset = `${Math.round(placed - top)}px`;
+        const offset = `${Math.round(placed - origin)}px`;
         if (marker.style.getPropertyValue("--prompt-stack-offset") !== offset) marker.style.setProperty("--prompt-stack-offset", offset);
         previousBottom = placed + icons * PROMPT_ICON_SIZE + (icons - 1) * PROMPT_ICON_GAP;
       }
