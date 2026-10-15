@@ -132,5 +132,5 @@ test("the desktop app asks for a vault folder, opens a remembered one at launch,
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Desktop vault folder integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(7);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(8);
 }, 15000);

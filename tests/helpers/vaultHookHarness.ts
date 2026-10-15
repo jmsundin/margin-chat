@@ -1068,6 +1068,18 @@ async function checkDesktopGate() {
   assert.equal(current.vault.vaultFolderPrompt, null, "The folder coming back left the prompt up.");
   assert.equal(await readText(second.handle, "Docs/plan.md"), diskPlan);
   checks.push("a missing vault folder is reported, never read as empty, and nothing is written");
+
+  // An unplugged drive while the workspace is open: a notice, not the vault folder screen.
+  const writesBeforeUnplug = second.writes.length;
+  second.handle.entries = async function* () { throw new DOMException("The folder could not be found.", "NotFoundError"); };
+  await act(async () => { await current.vault.syncNow().catch(() => undefined); });
+  assert.equal(current.vault.folderUnavailable, true, "A folder gone while the app was open was not noticed.");
+  assert.equal(current.vault.vaultFolderPrompt, null, "A folder gone while the app was open took the workspace away.");
+  assert.equal(second.writes.length, writesBeforeUnplug, "Margin Chat wrote to a folder that went missing.");
+  Object.assign(second.handle, present);
+  await act(async () => { await current.vault.checkFolder(); });
+  assert.equal(current.vault.folderUnavailable, false, "The folder coming back was not noticed.");
+  checks.push("a folder gone while the app is open shows a notice and keeps the workspace");
   console.log(JSON.stringify({ checks }));
 }
 try {

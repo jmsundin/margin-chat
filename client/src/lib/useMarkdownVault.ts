@@ -744,9 +744,13 @@ export function useMarkdownVault(args: {
     });
   }
 
-  const folderPrompt = vaultFolderPrompt({
+  // The vault folder screen is for opening the app. Once the workspace shows, a folder that goes missing
+  // or loses access (such as an unplugged drive) gets a notice instead of taking the workspace away.
+  const [folderPromptSettled, setFolderPromptSettled] = useState(false);
+  const folderPrompt = folderPromptSettled ? null : vaultFolderPrompt({
     desktop: isDesktopApp(), ready, snoozed: folderPromptSnoozed, status: localDirectoryStatus, unavailable: folderUnavailable,
   });
+  useEffect(() => { if (ready && !folderPrompt) setFolderPromptSettled(true); }, [ready, folderPrompt]);
 
   const folderAccessMessage = localDirectoryStatus.directoryName && localDirectoryStatus.permission !== "granted"
     ? `Allow access to “${localDirectoryStatus.directoryName}” again so Margin Chat can see the files you add or change there.`

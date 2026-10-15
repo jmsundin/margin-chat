@@ -118,7 +118,7 @@ The desktop app is local first: the vault is a folder on the computer, as in Obs
 - Folders used before on this computer, when there are any.
 - **Not now** keeps the vault in the app's own storage until the app is opened again. Disconnecting the folder in Vault settings also waits for the next launch to ask.
 
-Connecting downloads any documents still only in the cloud, then copies the vault into the folder, with progress shown (“Copying your vault into “Name”…”). Desktop apps released before the permission check handler forget access at each launch; they show a single **Allow access to “Name”** button, and edits made before allowing save in the app and reach the folder afterwards. A remembered folder that can't be found says so, offers to choose it again or another folder, and writes nothing. In the browser the folder stays optional, as before.
+Connecting downloads any documents still only in the cloud, then copies the vault into the folder, with progress shown (“Copying your vault into “Name”…”). Desktop apps released before the permission check handler forget access at each launch; they show a single **Allow access to “Name”** button, and edits made before allowing save in the app and reach the folder afterwards. A remembered folder that can't be found at launch says so, offers to choose it again or another folder, and writes nothing. These screens only come before the workspace: a folder that goes missing while the workspace is open, such as on a drive that was unplugged, shows a notice instead and the workspace stays. In the browser the folder stays optional, as before.
 
 ## Offline use, export, and limits
 
