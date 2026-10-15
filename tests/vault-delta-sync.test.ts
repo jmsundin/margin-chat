@@ -170,16 +170,17 @@ describe("delta sync", () => {
     await write(laptop, "a.md", null);
     await laptop.sync();
     const synced = await phone.sync();
-    expect(remote.requests).toEqual(["changes:1", "commit", "changes:1"]);
-    expect(remote.downloaded).toEqual(["b.md"]);
+    // The deleted document's Recently deleted copy is committed first, then the edits.
+    expect(remote.requests).toEqual(["changes:1", "commit", "changes:2", "commit", "changes:1"]);
+    expect(remote.downloaded.filter((path) => !path.startsWith(".margin-chat/trash/"))).toEqual(["b.md"]);
     expect(synced.files["b.md"].content).toBe("B from the laptop");
     expect(synced.files["a.md"]).toBeUndefined();
-    expect(synced.pulledRevision).toBe(2);
+    expect(synced.pulledRevision).toBe(3);
 
     // An idle sync downloads nothing.
     remote.requests.length = 0; remote.downloaded.length = 0;
     expect(await phone.sync()).toEqual(synced);
-    expect(remote.requests).toEqual(["changes:2"]);
+    expect(remote.requests).toEqual(["changes:3"]);
     expect(remote.downloaded).toEqual([]);
   });
 

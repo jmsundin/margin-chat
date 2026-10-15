@@ -789,6 +789,7 @@ async function checkWorkingSet() {
   console.log(JSON.stringify({ checks: ["arrivals kept", "idle document returned", "typing during return kept", "current kept", "identity kept", "opens on demand", "opened kept", "cloud unchanged"] }));
 }
 async function checkFolderMassDeletion() {
+  const checks: string[] = [];
   const documents = Array.from({ length: 12 }, (_, index) => {
     const id = `kept-${String(index + 1).padStart(2, "0")}`;
     return { path: `Docs/${id}.md`, baseRevision: null,
@@ -837,8 +838,31 @@ async function checkFolderMassDeletion() {
   assert.equal(current.vault.heldFolderDeletion, null, "Confirming the deletion left the prompt up.");
   assert.equal(Object.keys((await local.read())!.files).filter((path) => path.startsWith("Docs/")).length, 0, "Confirmed deletions stayed in the vault.");
   assert.equal(await cloudDeletions(), 12, "Confirmed deletions did not reach the cloud.");
+
+  // Both deletions wait in Recently deleted, also as hidden files in the folder.
+  await until(() => current.vault.recentlyDeleted.length === 2, "Deleted documents were not listed in Recently deleted.");
+  const [everything, single] = current.vault.recentlyDeleted;
+  assert.equal(everything.files.length, 11, "The confirmed folder deletion did not keep every file.");
+  assert.deepEqual(single.files.map((file: any) => file.path), ["Docs/kept-01.md"]);
+  const trashOnDisk = await (await connectedFolder.getDirectoryHandle(".margin-chat")).getDirectoryHandle("trash");
+  let trashEntries = 0;
+  for await (const _ of trashOnDisk.entries()) trashEntries++;
+  assert.equal(trashEntries, 2, "Recently deleted copies were not written to the connected folder.");
+  const cloudFiles = (await remote.snapshot(user.id)).manifest.files;
+  assert(Object.entries(cloudFiles).some(([path, entry]: [string, any]) => path.startsWith(`.margin-chat/trash/${everything.key}/`) && !entry.deleted),
+    "Recently deleted copies did not reach the cloud.");
+  checks.push("deleted documents kept in Recently deleted");
+
+  await act(async () => { await current.vault.restoreDeleted(everything.key); });
+  assert.equal(Object.keys((await local.read())!.files).filter((path) => /^Docs\//.test(path)).length, 11, "Restoring did not bring the files back.");
+  assert.equal((await onDisk()).length, 11, "Restored files were not written back to the folder.");
+  assert.equal(await cloudDeletions(), 1 + Object.keys(cloudFiles).filter((path) => path.startsWith(`.margin-chat/trash/${everything.key}/`)).length,
+    "Restored files did not come back in the cloud, or their copies stayed.");
+  assert.deepEqual(current.vault.recentlyDeleted.map((entry: any) => entry.key), [single.key], "A restored entry stayed in Recently deleted.");
+  assert(Object.values(current.state.conversations).some((conversation: any) => conversation.title === "kept-05"), "A restored document did not show in the app.");
+  checks.push("restore brings files back everywhere");
   console.log(JSON.stringify({ checks: ["emptied folder held", "vault and cloud untouched while held", "held across scans", "put back restores files",
-    "single deletion not held", "confirmed deletion applies everywhere"] }));
+    "single deletion not held", "confirmed deletion applies everywhere", ...checks] }));
 }
 try {
   if (folderDeletionScenario) await checkFolderMassDeletion();

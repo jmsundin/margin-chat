@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { carriesFiles, describeDroppedFolders, droppedFiles } from "../lib/fileDrop";
+import RecentlyDeleted from "./RecentlyDeleted";
 
 export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnType<typeof useMarkdownVault>; cloudSyncEnabled: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -71,6 +72,7 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
         {vault.localDirectoryStatus.directoryName ? <button className="thread-dialog-button" disabled={busy} onClick={() => void run(vault.clearDirectory)}>Disconnect folder</button> : null}
       </div>
     </div>
+    <RecentlyDeleted entries={vault.recentlyDeleted} onRestore={vault.restoreDeleted} />
     <p className="profile-storage-footnote">Clearing Margin Chat’s site data removes the files saved in this browser. Use Download vault to keep an independent copy. Files already synchronized remain in the cloud, and a connected folder’s files stay in that folder.</p>
   </>;
 }

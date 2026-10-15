@@ -27,7 +27,8 @@ function markdownIds(files: Record<string, VaultFile>) {
  * Returns nothing when the scan may be applied without asking.
  */
 export function folderDeletionsToHold(next: Record<string, VaultFile>, expected: Record<string, VaultFile>): string[] {
-  const counted = Object.keys(expected).filter((path) => path !== "workspace.json");
+  // Settings and copies of already deleted documents are not documents of their own.
+  const counted = Object.keys(expected).filter((path) => path !== "workspace.json" && !path.startsWith(".margin-chat/trash/"));
   let missing = counted.filter((path) => !next[path]);
   if (!missing.length) return [];
   const added = Object.keys(next).filter((path) => !expected[path]);

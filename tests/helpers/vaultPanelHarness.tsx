@@ -14,6 +14,7 @@ const container = browser.document.createElement("div");
 browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
 const choices: Array<[string, string]> = [];
+const restoredKeys: string[] = [];
 let syncs = 0;
 let downloads = 0;
 const conflict: VaultConflict = {
@@ -23,7 +24,8 @@ const conflict: VaultConflict = {
 };
 const vault = {
   ready: true, storageMode: "server", matchesCloud: true, message: null, saving: false, localSaveError: null,
-  conflicts: [conflict],
+  conflicts: [conflict], recentlyDeleted: [] as any[],
+  async restoreDeleted(key: string) { restoredKeys.push(key); return []; },
   localDirectoryStatus: { directoryName: null, fileName: "workspace.md", permission: "unselected", supported: false },
   async syncNow() { syncs += 1; }, async download() { downloads += 1; }, async importArchive() {}, async chooseDirectory() {}, async clearDirectory() {},
   async resolveConflict(id: string, choice: "local" | "remote" | "current") { choices.push([id, choice]); },
@@ -71,6 +73,27 @@ try {
   assert(container.textContent?.includes("Save needs attention"));
   assert.equal(container.querySelector('[role="alert"]')?.textContent, vault.message);
   checks.push("real storage and sync errors remain visible");
+
+  vault.message = null; vault.localSaveError = null;
+  vault.recentlyDeleted = [
+    { key: "k2", deletedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(), files: [
+      { path: "Trips/Japan.md", copy: ".margin-chat/trash/k2/1-Japan.md", title: "Trip to Japan" },
+      { path: "Trips/Japan note.md", copy: ".margin-chat/trash/k2/2-Japan note.md", title: "Packing list" },
+    ] },
+    { key: "k1", deletedAt: new Date(Date.now() - 3 * 86_400_000).toISOString(), files: [
+      { path: "Budget.md", copy: ".margin-chat/trash/k1/1-Budget.md", title: "Budget" },
+    ] },
+  ];
+  await render();
+  assert(container.textContent?.includes("2 deleted in the last 30 days"));
+  assert(container.textContent?.includes("Trip to Japan and 1 more"));
+  assert(container.textContent?.includes("Deleted 2h ago"));
+  const restoreButtons = [...container.querySelectorAll(".recently-deleted-list button")];
+  assert.equal(restoreButtons.length, 2);
+  await act(async () => { restoreButtons[0].click(); });
+  assert.deepEqual(restoredKeys, ["k2"]);
+  assert(container.querySelector('[role="status"]')?.textContent?.includes("Restored “Trip to Japan and 1 more”"));
+  checks.push("recently deleted documents can be restored");
 
   console.log(JSON.stringify({ checks }));
 } finally {
