@@ -151,12 +151,18 @@ describe("protected extension workspace frame", () => {
     expect(view.messages.at(-1)).toMatchObject({ type: "workspace:side-panel", tabId: 7, session: "valid-frame" });
   });
 
-  test("in the side panel the page row offers Show on page instead", async () => {
+  test("in the side panel a View picker switches back to a layout drawn on the page", async () => {
     const view = await frame({ search: "?panel=1&tab=7&session=valid-frame" }); await view.ready();
-    const labels = [...view.browser.document.querySelectorAll(".browser-source-row > button")].map((button) => button.textContent);
-    expect(labels).toEqual(["Page context", "Ask page", "Show on page"]);
-    await view.click("Show on page");
-    expect(view.messages.at(-1)).toMatchObject({ type: "workspace:float", tabId: 7 });
+    const doc = view.browser.document;
+    const labels = [...doc.querySelectorAll(".browser-source-row > button")].map((button) => button.textContent);
+    expect(labels).toEqual(["Page context", "Ask page"]);
+    const picker = doc.querySelector<HTMLSelectElement>(".browser-source-row > select[aria-label=View]")!;
+    expect([...picker.options].map((option) => option.textContent)).toEqual(["Side by side", "Docked", "Floating", "Expanded"]);
+    expect(picker.value).toBe("split");
+    picker.value = "floating";
+    picker.dispatchEvent(new view.browser.Event("change", { bubbles: true }));
+    await Bun.sleep(5);
+    expect(view.messages.at(-1)).toMatchObject({ type: "workspace:float", tabId: 7, layout: "floating" });
   });
 
   test("collapsing the panel header hides the page row, and expanding brings it back", async () => {
