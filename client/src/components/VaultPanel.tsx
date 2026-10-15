@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
+import { carriesFiles, describeDroppedFolders, droppedFiles } from "../lib/fileDrop";
 
 export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnType<typeof useMarkdownVault>; cloudSyncEnabled: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -7,10 +8,16 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
   const input = useRef<HTMLInputElement>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
+  const [dropping, setDropping] = useState(false);
   async function run(action: () => Promise<unknown>) {
     setBusy(true); setError(null); setUploaded(null);
     try { await action(); } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to complete this action."); }
     finally { setBusy(false); }
+  }
+  function upload(files: File[], folders: string[] = []) {
+    const folderNote = describeDroppedFolders(folders);
+    if (!files.length) { if (folderNote) setError(folderNote); return; }
+    void run(async () => setUploaded([(await vault.uploadFiles(files)).summary, folderNote].filter(Boolean).join(" ")));
   }
   return <>
     <div><p className="eyebrow">Markdown vault</p><h3>Your files, on every device</h3>
@@ -22,19 +29,32 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
     </div>
     {uploaded ? <p className="thread-dialog-copy" role="status">{uploaded}</p> : null}
     {(error || vault.message) ? <p className="profile-dialog-error" role="alert">{error ?? vault.message}</p> : null}
-    <div className="profile-storage-directory-actions">
+    <div className={`profile-storage-directory-actions vault-panel-drop${dropping ? " is-dropping" : ""}`} data-file-drop
+      onDragOver={(event) => {
+        if (!carriesFiles(event.dataTransfer)) return;
+        event.preventDefault(); event.dataTransfer.dropEffect = busy ? "none" : "copy"; setDropping(true);
+      }}
+      onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false); }}
+      onDrop={(event) => {
+        if (!carriesFiles(event.dataTransfer)) return;
+        event.preventDefault(); setDropping(false);
+        if (busy) return;
+        const { files, folders } = droppedFiles(event.dataTransfer);
+        upload(files, folders);
+      }}>
       <button className="thread-dialog-button is-primary" disabled={busy || !cloudSyncEnabled} onClick={() => void run(() => vault.syncNow())}>{busy ? "Working…" : "Sync now"}</button>
       <button className="thread-dialog-button" disabled={busy} onClick={() => void run(vault.download)}>Download vault</button>
       <button className="thread-dialog-button" disabled={busy} onClick={() => uploadInput.current?.click()}>Upload files</button>
       <button className="thread-dialog-button" disabled={busy} onClick={() => input.current?.click()}>Import vault</button>
       <input ref={uploadInput} hidden multiple type="file" onChange={(event) => {
         const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = "";
-        if (files.length) void run(async () => setUploaded((await vault.uploadFiles(files)).summary));
+        upload(files);
       }} />
       <input ref={input} hidden type="file" accept=".zip,application/zip" onChange={(event) => {
         const file = event.currentTarget.files?.[0]; event.currentTarget.value = "";
         if (file) void run(() => vault.importArchive(file));
       }} />
+      <small className="vault-panel-drop-hint">{dropping ? "Drop to add these files to your vault" : "Or drop files here, or anywhere in the app"}</small>
     </div>
     <div className="profile-storage-directory-card">
       <div><span>Optional folder connection</span><strong>{vault.localDirectoryStatus.directoryName ?? "No folder connected"}</strong>

@@ -91,7 +91,7 @@ export default function ChatHistoryImport({ existingIds, cloudSyncEnabled, onImp
           <p>In ChatGPT, open Settings → Data controls → Export data. Download the export when it is ready, then choose the ZIP below. You can also select conversations.json or several numbered conversation JSON files.</p>
           <a href="https://help.openai.com/en/articles/7260999-how-do-i-export-my-chatgpt-history-and-data" target="_blank" rel="noreferrer">Open ChatGPT export instructions</a>
         </details>
-        <div className="history-import-drop" onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
+        <div className="history-import-drop" data-file-drop onDragOver={(event) => event.preventDefault()} onDrop={(event) => {
           event.preventDefault(); if (!busyRef.current) read(Array.from(event.dataTransfer.files));
         }}>
           <button type="button" className="thread-dialog-button is-primary" disabled={!!busy} onClick={() => input.current?.click()}>

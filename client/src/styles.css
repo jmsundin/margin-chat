@@ -6768,6 +6768,16 @@ button {
   gap: 9px;
 }
 
+.vault-panel-drop {
+  border: 1.5px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.vault-panel-drop.is-dropping { background: var(--sage-soft); border-color: var(--sage); }
+.vault-panel-drop-hint { color: var(--muted); flex-basis: 100%; }
+
 .profile-storage-upload-progress {
   display: grid;
   gap: 5px;
