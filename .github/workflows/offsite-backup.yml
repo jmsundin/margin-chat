@@ -1,0 +1,40 @@
+name: Off-site backup
+
+on:
+  # Every day, copy the production vault store to a bucket at another provider.
+  schedule:
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+
+# One backup at a time; a slow one is never cancelled by the next day's.
+concurrency:
+  group: margin-chat-offsite-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Holds the production Blob token the release uses; the backup only reads that store.
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - name: Install pinned dependencies
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts
+      - name: Copy the vault store to the off-site bucket
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+          OFFSITE_BACKUP_S3_ENDPOINT: ${{ secrets.OFFSITE_BACKUP_S3_ENDPOINT }}
+          OFFSITE_BACKUP_S3_BUCKET: ${{ secrets.OFFSITE_BACKUP_S3_BUCKET }}
+          OFFSITE_BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.OFFSITE_BACKUP_S3_ACCESS_KEY_ID }}
+          OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY }}
+          OFFSITE_BACKUP_S3_REGION: ${{ secrets.OFFSITE_BACKUP_S3_REGION }}
+        run: bun --no-env-file scripts/offsite-backup.mjs
