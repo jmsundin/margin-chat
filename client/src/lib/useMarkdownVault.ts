@@ -6,6 +6,7 @@ import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
+import { FolderDeletionHeldError, folderDeletionsToHold, type HeldFolderDeletion } from "./folderDeletionGuard";
 import { IN_MEMORY_VAULT_NOTICE, LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
@@ -64,6 +65,10 @@ export function useMarkdownVault(args: {
     directoryName: null, fileName: getLocalWorkspaceFileName(storageUserId), permission: "unselected", supported: false,
   });
   const [localDirectories, setLocalDirectories] = useState<RememberedLocalDirectory[]>([]);
+  /** A folder scan that would delete many documents waits here for the user's answer. */
+  const [heldFolderDeletion, setHeldFolderDeletion] = useState<HeldFolderDeletion | null>(null);
+  const heldDeletionKey = useRef<string | null>(null);
+  const folderDeletionChoice = useRef<{ key: string; choice: "restore" | "delete" } | null>(null);
   const projectionPending = useRef(false);
   const [vaultIndex, setVaultIndex] = useState<VaultIndex | null>(null);
   const vaultIndexRef = useRef<VaultIndex | null>(null);
@@ -124,6 +129,8 @@ export function useMarkdownVault(args: {
     if (!mounted.current) return;
     // A busy connected folder says nothing about the vault or cloud sync.
     if (error instanceof FolderChangingError) { setMessage(error.message); return; }
+    // Held folder deletions have their own prompt; the vault and cloud sync are fine.
+    if (error instanceof FolderDeletionHeldError) return;
     setStorageMode(enabledRef.current ? "fallback" : "local");
     setMatchesCloud(false);
     const detail = error instanceof Error ? error.message : "Your vault could not be synchronized.";
@@ -224,14 +231,23 @@ export function useMarkdownVault(args: {
     setLocalDirectories(directories);
   }
 
+  function forgetHeldFolderDeletion() {
+    folderDeletionChoice.current = null;
+    if (heldDeletionKey.current === null) return;
+    heldDeletionKey.current = null;
+    if (mounted.current) setHeldFolderDeletion(null);
+  }
+
   async function readFolder() {
     const status = await getLocalDirectoryStatus(storageUserId);
     await showDirectoryStatus(status);
     if (status.permission !== "granted" || !status.directoryId) {
       folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
+      forgetHeldFolderDeletion();
       return;
     }
     if (folderId.current !== status.directoryId) {
+      forgetHeldFolderDeletion();
       const baseline = (await engine.read()).directoryBaselines?.[status.directoryId];
       folder.current = baseline ? {
         manifest: baseline.manifest,
@@ -260,7 +276,24 @@ export function useMarkdownVault(args: {
     const baseline = folderBaseline(incoming.workspace, companions);
     const directory = { id: status.directoryId, baseline };
     // An empty newly chosen directory is an output destination, not deletion of the vault.
-    if (folder.current) await engine.edit(next, expected, directory);
+    if (folder.current) {
+      // A folder that was emptied, moved or unmounted must not delete the vault everywhere.
+      const held = folderDeletionsToHold(next, expected);
+      const key = held.join("\n");
+      const choice = folderDeletionChoice.current?.key === key ? folderDeletionChoice.current.choice : null;
+      if (held.length && !choice) {
+        const pending = { folderName: status.directoryName ?? "your vault folder", paths: held };
+        if (heldDeletionKey.current !== key) {
+          heldDeletionKey.current = key;
+          if (mounted.current) setHeldFolderDeletion(pending);
+        }
+        throw new FolderDeletionHeldError(pending);
+      }
+      // Putting them back keeps the vault's copies; the folder write below restores them on disk.
+      if (choice === "restore") for (const path of held) next[path] = expected[path];
+      forgetHeldFolderDeletion();
+      await engine.edit(next, expected, directory);
+    }
     else if (Object.keys(incoming.workspace.files).length || Object.keys(companions).length) await engine.import(next, directory);
     else await engine.rememberDirectory(directory.id, baseline);
     folder.current = incoming.workspace;
@@ -644,6 +677,7 @@ export function useMarkdownVault(args: {
       const status = await connectLocalDirectory(storageUserId, handle);
       await showDirectoryStatus(status);
       folderId.current = null; folder.current = null; folderCompanions.current = {}; localFiles.current = [];
+      forgetHeldFolderDeletion();
       if (status.permission === "granted") await saveAndRefresh(false);
     });
   }
@@ -692,7 +726,16 @@ export function useMarkdownVault(args: {
     startFreshCopy: enabled && !ready ? () => { if (startFreshVaultCopy(storageUserId)) window.location.reload(); } : undefined,
     /** Shown once after the vault moved to a fresh copy on its own. */
     recoveryNotice, dismissRecoveryNotice: () => setRecoveryNotice(null),
-    ready, storageMode, media, folderAccessMessage, cloudDocuments, fetchStatus, openingPath, streamingPaths, arrivingIds,
+    ready, storageMode, media, folderAccessMessage, cloudDocuments,
+    /** Files missing from the connected folder that are not deleted until the user decides. */
+    heldFolderDeletion,
+    /** Answer the held folder scan: write the files back into the folder, or delete them everywhere. */
+    async resolveHeldFolderDeletion(choice: "restore" | "delete") {
+      const key = heldDeletionKey.current;
+      if (key === null) return;
+      folderDeletionChoice.current = { key, choice };
+      await enqueue(() => saveAndRefresh(true));
+    }, fetchStatus, openingPath, streamingPaths, arrivingIds,
     /** Search the whole cloud vault: matching titles first, then passages as the server finds them. */
     searchCloud: engine.transport.search
       ? (query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void) =>
@@ -742,7 +785,7 @@ export function useMarkdownVault(args: {
       if (status.permission === "granted") await enqueue(() => saveAndRefresh(true));
     },
     async clearDirectory() {
-      await enqueue(async () => { await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; await showDirectoryStatus(await getLocalDirectoryStatus(storageUserId)); });
+      await enqueue(async () => { await clearLocalDirectory(storageUserId); folderId.current = null; folder.current = null; folderCompanions.current = {}; forgetHeldFolderDeletion(); await showDirectoryStatus(await getLocalDirectoryStatus(storageUserId)); });
     },
     async syncNow(onProgress?: (progress: StateUploadProgress) => void) {
       onProgress?.({ uploadedBytes: 0, totalBytes: 1 });
