@@ -1,0 +1,27 @@
+.vault-file-drop {
+  align-items: center;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  border: 2px dashed var(--sage);
+  border-radius: 14px;
+  display: flex;
+  inset: 8px;
+  justify-content: center;
+  pointer-events: none;
+  position: fixed;
+  z-index: 10000;
+}
+
+.vault-file-drop-card {
+  background: var(--panel-strong);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  display: grid;
+  gap: 4px;
+  max-width: calc(100vw - 48px);
+  padding: 18px 24px;
+  text-align: center;
+}
+
+.vault-file-drop-card span { color: var(--muted); font-size: 0.875rem; }

@@ -105,6 +105,7 @@ import ResizableSidebar from "./components/ResizableSidebar";
 import MobileEdgeSwipe from "./components/MobileEdgeSwipe";
 import CloudVaultIndex, { VaultFetchIndicator } from "./components/CloudVaultIndex";
 import VaultSwitcher from "./components/VaultSwitcher";
+import VaultFileDrop from "./components/VaultFileDrop";
 import { loadSidebarDocumentSort, saveSidebarDocumentSort, type SidebarDocumentSort } from "./lib/sidebarDocumentOrder";
 import { useSidebarDocumentOrder } from "./lib/useSidebarDocumentOrder";
 import {
@@ -4475,6 +4476,7 @@ function WorkspaceAppContent({
             }) }}
           />
           <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={120000} />
+          <VaultFileDrop vault={vault} />
           <NotificationToast
             message={vault.message}
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
