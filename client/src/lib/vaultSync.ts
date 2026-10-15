@@ -9,6 +9,7 @@ import { mergeVaultFile } from "./vaultMerge";
 import { recoverVaultAlternatives } from "./vaultRecovery";
 import { defaultVaultContentType, vaultFileBytes, vaultFileRevision } from "./vaultLocal";
 import { remapVaultMergeAnchors } from "./vaultMergeAnchors";
+import { hasExpiredTrash, moveDeletionsToTrash, purgeExpiredTrash, restoreFromTrash } from "./vaultTrash";
 
 function assignFile(snapshot: VaultSnapshot, path: string, file: VaultFile | null | undefined) {
   if (file) snapshot.files[path] = file;
@@ -110,7 +111,9 @@ function nextVaultBatch(snapshot: VaultSnapshot): VaultChange[] {
   const pending = pendingVaultChanges(snapshot);
   // Finish uploading every recovery object before publishing working documents.
   // A large/binary archive may span batches; a failed upload must leave the cloud document untouched.
-  const recovery = pending.filter((change) => /^(?:_conflicts|\.margin-chat\/history)\//iu.test(change.path));
+  // Copies of deleted documents land before the deletions themselves.
+  const recovery = pending.filter((change) => /^(?:_conflicts|\.margin-chat\/history)\//iu.test(change.path)
+    || (/^\.margin-chat\/trash\//u.test(change.path) && change.content !== null));
   const changes = recovery.length ? recovery : pending;
   const byPath = new Map(changes.map((change) => [change.path, change]));
   const previousFiles = Object.fromEntries(Object.entries(snapshot.base)
@@ -407,10 +410,36 @@ export class VaultSync {
     id: string; baseline: NonNullable<VaultSnapshot["directoryBaselines"]>[string];
   }) {
     return this.store.lock(async () => {
-      const snapshot = applyVaultEdits(await reclaimEvicted((await this.store.read()) ?? emptyVault(), next, expected), next, expected);
+      const current = await reclaimEvicted((await this.store.read()) ?? emptyVault(), next, expected);
+      const snapshot = applyVaultEdits(current, next, expected);
+      // Every document deleted here, in the app or in a connected folder, can be restored for a while.
+      moveDeletionsToTrash(snapshot, current.files, next, expected);
       if (directory) snapshot.directoryBaselines = { ...snapshot.directoryBaselines, [directory.id]: structuredClone(directory.baseline) };
       await this.write(snapshot);
       return snapshot;
+    });
+  }
+
+  /** Puts a recently deleted document back. Returns the paths it was written to. */
+  restoreDeleted(key: string) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      const next = { ...snapshot, files: { ...snapshot.files } };
+      const restored = restoreFromTrash(next, key);
+      await this.write(next);
+      return { snapshot: next, restored };
+    });
+  }
+
+  /** Removes copies of documents deleted longer ago than the trash keeps them. */
+  purgeTrash(now = Date.now()) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      if (!hasExpiredTrash(snapshot.files, now)) return 0;
+      const next = { ...snapshot, files: { ...snapshot.files } };
+      const removed = purgeExpiredTrash(next, now);
+      await this.write(next);
+      return removed;
     });
   }
 

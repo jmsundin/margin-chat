@@ -6778,6 +6778,14 @@ button {
 .vault-panel-drop.is-dropping { background: var(--sage-soft); border-color: var(--sage); }
 .vault-panel-drop-hint { color: var(--muted); flex-basis: 100%; }
 
+.recently-deleted-list { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.recently-deleted-list li { align-items: center; border-top: 1px solid var(--button-border); display: flex; gap: 12px; justify-content: space-between; padding: 9px 0; }
+.recently-deleted-list li:first-child { border-top: 0; padding-top: 0; }
+.recently-deleted-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.recently-deleted-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recently-deleted-name small { color: var(--muted); }
+.recently-deleted-more { align-self: flex-start; }
+
 .profile-storage-upload-progress {
   display: grid;
   gap: 5px;

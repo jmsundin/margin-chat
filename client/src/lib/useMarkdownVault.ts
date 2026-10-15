@@ -6,6 +6,7 @@ import type { StateUploadProgress } from "./api";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
+import { listTrash, type TrashEntry } from "./vaultTrash";
 import { FolderDeletionHeldError, folderDeletionsToHold, type HeldFolderDeletion } from "./folderDeletionGuard";
 import { IN_MEMORY_VAULT_NOTICE, LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
@@ -69,6 +70,8 @@ export function useMarkdownVault(args: {
   const [heldFolderDeletion, setHeldFolderDeletion] = useState<HeldFolderDeletion | null>(null);
   const heldDeletionKey = useRef<string | null>(null);
   const folderDeletionChoice = useRef<{ key: string; choice: "restore" | "delete" } | null>(null);
+  /** Documents deleted in the last 30 days, newest first. */
+  const [recentlyDeleted, setRecentlyDeleted] = useState<TrashEntry[]>([]);
   const projectionPending = useRef(false);
   const [vaultIndex, setVaultIndex] = useState<VaultIndex | null>(null);
   const vaultIndexRef = useRef<VaultIndex | null>(null);
@@ -150,8 +153,16 @@ export function useMarkdownVault(args: {
     });
   }
 
+  function showTrash(snapshot: VaultSnapshot) {
+    if (!mounted.current) return;
+    const entries = listTrash(snapshot.files);
+    setRecentlyDeleted((current) => current.length === entries.length && current.every((entry, index) => entry.key === entries[index].key)
+      ? current : entries);
+  }
+
   function publish(snapshot: VaultSnapshot) {
     rememberDeferred(snapshot);
+    showTrash(snapshot);
     const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current,
       vaultFileListings(snapshot.files, Object.keys(snapshot.deferred ?? {}), localFiles.current));
     if (pendingFocus.current === next.activeConversationId) pendingFocus.current = null;
@@ -206,6 +217,7 @@ export function useMarkdownVault(args: {
       if (sidecar !== next["workspace.json"]) next = { ...next, "workspace.json": sidecar };
     }
     const snapshot = await engine.edit(next, displayedFiles.current);
+    showTrash(snapshot);
     displayedFiles.current = next;
     displayedState.current = editingState;
     hasVaultContent.current = !settingsOnly;
@@ -529,6 +541,8 @@ export function useMarkdownVault(args: {
       const snapshot = await persistAndPublish();
       await writeFolder(snapshot);
       if (sync && enabledRef.current) await evictIdleDocuments(snapshot).catch(() => undefined);
+      // Copies of documents deleted over 30 days ago are removed; this syncs on the next save.
+      if (await engine.purgeTrash().catch(() => 0)) showTrash(await engine.read());
       if (!enabledRef.current && mounted.current) setStorageMode("local");
     } catch (error) {
       // Even failed sync may have persisted remote revisions/conflicts. Keep later typing first.
@@ -727,6 +741,18 @@ export function useMarkdownVault(args: {
     /** Shown once after the vault moved to a fresh copy on its own. */
     recoveryNotice, dismissRecoveryNotice: () => setRecoveryNotice(null),
     ready, storageMode, media, folderAccessMessage, cloudDocuments,
+    /** Documents deleted in the last 30 days, in the app or in a connected folder. */
+    recentlyDeleted,
+    /** Put a recently deleted document back, with its margin notes when they were deleted together. */
+    async restoreDeleted(key: string) {
+      return enqueue(async () => {
+        await saveAppState();
+        const { restored } = await engine.restoreDeleted(key);
+        await persistAndPublish();
+        await saveAndRefresh(true).catch(() => undefined);
+        return restored;
+      });
+    },
     /** Files missing from the connected folder that are not deleted until the user decides. */
     heldFolderDeletion,
     /** Answer the held folder scan: write the files back into the folder, or delete them everywhere. */

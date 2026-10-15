@@ -30,7 +30,7 @@ export default function FolderDeletionPrompt({ held, onResolve }: {
         <p id="folder-deletion-title"><strong>{count} files are missing from “{held.folderName}”</strong></p>
         <p id="folder-deletion-detail">
           {describeHeldFiles(held.paths)} were moved or deleted outside Margin Chat. Nothing has been deleted yet:
-          your vault and the cloud still have them.
+          your vault and the cloud still have them. If you delete them, they stay in Recently deleted for 30 days.
         </p>
         {error ? <p role="alert">{error}</p> : null}
         <div className="folder-deletion-actions">

@@ -14,5 +14,6 @@ test("vault shows save and sync status while keeping recovery history in the bac
     "background history does not change saved status or request a choice",
     "sync and independent backup actions remain available",
     "real storage and sync errors remain visible",
+    "recently deleted documents can be restored",
   ]);
 }, 15_000);
