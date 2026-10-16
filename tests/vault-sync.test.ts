@@ -85,6 +85,41 @@ describe("multi-device Markdown sync", () => {
     expect((await device.read()).files["Notes/renamed.md"]).toEqual(older);
   });
 
+  test("a folder connected for the first time keeps its own versions current and the vault's in history, and nothing else changes", async () => {
+    const remote = cloud(); const device = remote.device();
+    const settings = file(JSON.stringify(JSON.parse(stateToVaultFiles(createEmptyState(), {})["workspace.json"].content)));
+    const appPlan = identified("plan", "The app's plan.");
+    const same = identified("same", "Identical everywhere.");
+    const unstamped = file("# Plain\n\nWritten in another app.\n");
+    const stamped = file(`---\nmargin-chat-id: "plain"\n---\n${unstamped.content}`);
+    await device.edit({ "workspace.json": settings, "Plan.md": appPlan, "Same.md": same, "Plain.md": stamped, "Only in app.md": identified("app", "Kept."),
+      "photo.png": { content: "AQID", encoding: "base64" } }, {});
+    const diskPlan = identified("plan", "The plan as edited on disk.");
+    const diskSettings = file(JSON.stringify({ ...JSON.parse(settings.content), savedAt: "2020-01-01T00:00:00.000Z" }));
+    // The folder's plain note is stamped with an identity on the way in; on disk it is still byte for byte the vault's.
+    const result = await device.import({ "workspace.json": diskSettings, "Plan.md": diskPlan, "Same.md": same,
+      "Plain.md": { content: `---\nmargin-chat-id: "plain"\ncreated: "2026-10-01T00:00:00.000Z"\n---\n${unstamped.content}` },
+      "photo.png": { content: "BAUG", encoding: "base64" }, "Only on disk.md": identified("disk", "New.") },
+    undefined, { keep: "imported", originals: { "Plan.md": diskPlan.content, "Same.md": same.content, "Plain.md": stamped.content, "Only on disk.md": "" } });
+    expect(result.files["Plan.md"]).toEqual(diskPlan);
+    expect(result.files["photo.png"]).toEqual({ content: "BAUG", encoding: "base64" });
+    expect(result.files["Same.md"]).toEqual(same);
+    expect(result.files["Plain.md"]).toEqual(stamped);
+    expect(result.files["Only in app.md"]).toEqual(identified("app", "Kept."));
+    expect(result.files["Only on disk.md"]).toEqual(identified("disk", "New."));
+    expect(result.files["workspace.json"]).toEqual(settings);
+    const kept = (path: string) => result.conflicts.find((conflict) => conflict.path === path)!;
+    expect(kept("Plan.md")).toMatchObject({ local: appPlan, remote: diskPlan, result: diskPlan });
+    expect(result.files[`.margin-chat/history/${kept("Plan.md").id}/local/Plan.md`]).toEqual(appPlan);
+    expect(kept("photo.png")).toMatchObject({ local: { content: "AQID", encoding: "base64" }, remote: { content: "BAUG", encoding: "base64" } });
+    expect(kept("workspace.json")).toMatchObject({ local: diskSettings, remote: settings });
+    expect(result.conflicts.map((conflict) => conflict.path).sort()).toEqual(["Plan.md", "photo.png", "workspace.json"]);
+    // Without the option an import keeps the vault's versions, as always.
+    const plain = await remote.device();
+    await plain.edit({ "Plan.md": appPlan }, {});
+    expect((await plain.import({ "Plan.md": diskPlan })).files["Plan.md"]).toEqual(appPlan);
+  });
+
   test("a directory rename moves concurrent local edits and preserves divergent disk edits as conflicts", async () => {
     const remote = cloud(); const device = remote.device();
     const initial = identified("moving", "Original.");

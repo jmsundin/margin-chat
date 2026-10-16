@@ -7,8 +7,20 @@ unchanged with its same-origin relative fetches.
 
 - Auth: the backend's HttpOnly session cookie is stored in Electron's cookie
   jar under the backend's domain. The renderer never sees it.
-- Vault: the File System Access API works as it does in Chrome. The app grants
-  the folder permission itself instead of prompting.
+- Vault: the vault is a folder on the computer, as in Obsidian, using the File
+  System Access API as in Chrome. `permissions.mjs` answers both kinds of
+  permission question for the app's own pages (`margin://app`, or the dev
+  server): requests, when the page asks for a folder, the clipboard or the
+  microphone, are granted without a prompt; checks, when Chromium asks whether
+  a folder chosen in an earlier session is still allowed, say yes for
+  `fileSystem`, so the vault folder opens at launch without a click. Every other
+  check keeps Electron's default answer. Without the check handler (desktop
+  builds before it), Chromium forgets folder access when the app closes and the
+  page asks for one click, Allow access, at each launch.
+- First run: until a vault folder is chosen, the page asks for one before
+  showing the workspace (open a folder, create a new vault, a folder used
+  before, or Not now until the next launch). See
+  [docs/markdown-vault.md](../docs/markdown-vault.md#desktop-app).
 - Links to other sites open in the default browser.
 - Only one instance runs at a time, so two windows never write the same vault.
 

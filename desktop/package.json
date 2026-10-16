@@ -26,6 +26,7 @@
     "files": [
       "main.mjs",
       "clientBundles.mjs",
+      "permissions.mjs",
       "shellUpdater.mjs",
       "updates.mjs",
       "package.json",

@@ -3,6 +3,7 @@ import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { carriesFiles, describeDroppedFolders, droppedFiles } from "../lib/fileDrop";
 import RecentlyDeleted from "./RecentlyDeleted";
 import { formatRelativeTime } from "../lib/conversationSearch";
+import { isDesktopApp } from "../lib/platform";
 
 export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnType<typeof useMarkdownVault>; cloudSyncEnabled: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -64,8 +65,10 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
       <small className="vault-panel-drop-hint">{dropping ? "Drop to add these files to your vault" : "Or drop files here, or anywhere in the app"}</small>
     </div>
     <div className="profile-storage-directory-card">
-      <div><span>Optional folder connection</span><strong>{vault.localDirectoryStatus.directoryName ?? "No folder connected"}</strong>
-        <small>{vault.folderAccessMessage
+      <div><span>{isDesktopApp() ? "Vault folder" : "Optional folder connection"}</span><strong>{vault.localDirectoryStatus.directoryName ?? "No folder connected"}</strong>
+        <small>{vault.folderUnavailable
+          ? "Margin Chat can’t find or open this folder right now. It may have been moved, renamed or be on a drive that isn’t connected. Edits save in the app until it’s back, or choose it again."
+          : vault.folderAccessMessage
           ? `${vault.folderAccessMessage} Until then, edits save in this browser only.`
           : vault.localDirectoryStatus.directoryName
           ? "This folder also holds Markdown files you can open in other apps. Folder edits are checked before saving and when Margin Chat resumes."

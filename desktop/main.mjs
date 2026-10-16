@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createClientBundles } from "./clientBundles.mjs";
+import { createPermissionHandlers } from "./permissions.mjs";
 import { createShellUpdater, DEFAULT_FEED } from "./shellUpdater.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
@@ -298,13 +299,10 @@ if (!app.requestSingleInstanceLock()) {
     if (!DEV_URL) await clientBundles.load().catch((error) => console.warn("Using the installed client.", error));
     protocol.handle(SCHEME, handleAppRequest);
 
-    // Grant only what the vault, editor and voice typing use, and only to the app itself.
-    const allowed = new Set(["fileSystem", "clipboard-read", "clipboard-sanitized-write"]);
-    const microphoneOnly = (permission, details) => permission === "media" &&
-      Array.isArray(details?.mediaTypes) && details.mediaTypes.length > 0 && details.mediaTypes.every((type) => type === "audio");
-    session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
-      callback((allowed.has(permission) || microphoneOnly(permission, details)) && isAppUrl(webContents.getURL()));
-    });
+    // The check handler keeps a vault folder chosen before readable at launch (desktop/permissions.mjs).
+    const permissions = createPermissionHandlers(isAppUrl);
+    session.defaultSession.setPermissionRequestHandler(permissions.request);
+    session.defaultSession.setPermissionCheckHandler(permissions.check);
 
     buildAppMenu();
     createWindow();

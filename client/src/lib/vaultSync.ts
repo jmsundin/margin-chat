@@ -454,9 +454,16 @@ export class VaultSync {
     });
   }
 
+  /**
+   * Adds files without replacing the vault's: where both hold a different version, the vault's stays current
+   * and the imported one is kept in history. `keep: "imported"` reverses that for a folder connected for the
+   * first time, the person's own copy: its version stays current and the vault's goes to history. Settings
+   * stay the vault's either way. `originals` holds imported Markdown as it was before identity headers were
+   * added, so a file the vault already holds byte for byte is left alone.
+   */
   import(files: Record<string, VaultFile>, directory?: {
     id: string; baseline: NonNullable<VaultSnapshot["directoryBaselines"]>[string];
-  }) {
+  }, options: { keep?: "current" | "imported"; originals?: Record<string, string> } = {}) {
     return this.store.lock(async () => {
       const snapshot = (await this.store.read()) ?? emptyVault();
       validateVaultWorkspace(files);
@@ -464,7 +471,12 @@ export class VaultSync {
         if (!validVaultPath(path) || !validVaultPath(sourcePath)) throw new Error("The imported vault contains an invalid path.");
         const current = snapshot.files[path];
         if (!current) snapshot.files[path] = file;
-        else if (!sameVaultFile(current, file)) preserveConflict(snapshot, path, file, current, sourcePath);
+        else if (sameVaultFile(current, file)) continue;
+        else if (options.keep !== "imported" || path === "workspace.json") preserveConflict(snapshot, path, file, current, sourcePath);
+        else if (current.encoding || options.originals?.[sourcePath] !== current.content) {
+          preserveConflict(snapshot, path, current, file, sourcePath);
+          snapshot.files[path] = file;
+        }
       }
       if (directory) snapshot.directoryBaselines = { ...snapshot.directoryBaselines, [directory.id]: structuredClone(directory.baseline) };
       await this.write(snapshot);

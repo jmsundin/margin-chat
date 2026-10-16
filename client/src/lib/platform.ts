@@ -20,6 +20,14 @@ export function detectPlatform(userAgent: string, maxTouchPoints = 0): VisitorPl
   return "unknown";
 }
 
+/** The Margin Chat desktop app: its built-in client on margin://, or the Vite dev server loaded in its window. */
+export function isDesktopApp(
+  location: { protocol: string } | undefined = typeof window === "undefined" ? undefined : window.location,
+  userAgent: string = typeof navigator === "undefined" ? "" : navigator.userAgent ?? "",
+): boolean {
+  return location?.protocol === "margin:" || /\bElectron\/\d/.test(userAgent);
+}
+
 export function detectVisitorPlatform(): VisitorPlatform {
   if (typeof navigator === "undefined") return "unknown";
   return detectPlatform(navigator.userAgent ?? "", navigator.maxTouchPoints ?? 0);

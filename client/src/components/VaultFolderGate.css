@@ -1,0 +1,40 @@
+.vault-folder-gate {
+  align-items: center;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 18px;
+}
+
+.vault-folder-gate .eyebrow {
+  margin: 0;
+}
+
+.vault-folder-gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.vault-folder-gate-folders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.thread-dialog-button.vault-folder-gate-quiet {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.vault-folder-gate-progress {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin: 0;
+}

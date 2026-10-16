@@ -66,6 +66,7 @@ import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
 import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
+import VaultFolderGate from "./components/VaultFolderGate";
 import AIControls from "./components/AIControls";
 import JevRelatedItems from "./components/JevRelatedItems";
 import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
@@ -687,6 +688,8 @@ function WorkspaceAppContent({
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
   const vault = useMarkdownVault({ user, storageUserId, state, setState, legacyHasState: initialStoredStateRef.current.hasStoredState });
+  // The vault folder screen stays up while it copies the vault into the chosen folder.
+  const [vaultFolderGateBusy, setVaultFolderGateBusy] = useState(false);
   const storageMode = vault.storageMode;
   const cloudBackupMatchesLocal = vault.matchesCloud;
   const localDirectoryStatus = vault.localDirectoryStatus;
@@ -4454,6 +4457,8 @@ function WorkspaceAppContent({
     </section></div>;
   }
 
+  if (vault.vaultFolderPrompt || vaultFolderGateBusy) return <VaultFolderGate vault={vault} onBusyChange={setVaultFolderGateBusy} />;
+
   return (
     <VaultMediaContext.Provider value={vault.media}>
     <ConversationGroupPickerContext.Provider value={{
@@ -4483,9 +4488,13 @@ function WorkspaceAppContent({
           />
           <NotificationToast
             message={vault.folderAccessMessage}
-            action={{ label: "Allow access", onClick: () => vault.allowDirectoryAccess().catch(() => {
+            action={{ label: "Allow access", onClick: () => vault.allowDirectoryAccess().then(() => undefined, () => {
               setProfileInitialTab("storage"); setProfileModalOpen(true);
             }) }}
+          />
+          <NotificationToast
+            message={vault.folderUnavailable ? `Margin Chat can’t find or open the folder “${vault.localDirectoryStatus.directoryName}”. Your edits are saved in the app and nothing in the folder is changed until it’s back.` : null}
+            action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />
           <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={120000} />
           <FolderDeletionPrompt held={vault.heldFolderDeletion} onResolve={vault.resolveHeldFolderDeletion} />
