@@ -25,7 +25,8 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const lastTouchActivation = useRef(-Infinity);
   const keyboardSession = useRef<{ height: number; width: number; reduced: boolean } | null>(null);
   const viewport = useVisualViewport(mobile);
-  const safeBottom = viewport.height < window.innerHeight - 100 ? "0px" : "env(safe-area-inset-bottom, 0px)";
+  const keyboardShown = viewport.height < window.innerHeight - 100;
+  const safeBottom = keyboardShown ? "0px" : "env(safe-area-inset-bottom, 0px)";
   useEffect(() => {
     const queries = mobileQueries.map((query) => window.matchMedia(query));
     const update = () => { setMobile(queries.some((query) => query.matches)); setEnabled(false); };
@@ -84,7 +85,8 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const, registerComposer }), [mobile, enabled, registerComposer]);
   return <MobileKeyboardContext.Provider value={value}>
     {children}
-    {mobile && hasTarget && composerCount === 0 && createPortal(<button type="button" className="mobile-keyboard-toggle" data-mobile-keyboard-toggle
+    {/* While the on-screen keyboard is up, its own Done/checkmark closes it, so the button would only cover text. */}
+    {mobile && hasTarget && composerCount === 0 && !keyboardShown && createPortal(<button type="button" className="mobile-keyboard-toggle" data-mobile-keyboard-toggle
       aria-label={enabled ? "Hide keyboard" : "Show keyboard"} title={enabled ? "Hide keyboard" : "Show keyboard"} aria-pressed={enabled}
       // Kept clear of the rounded screen corners on curved phones.
       style={{ top: `calc(${viewport.top + viewport.height - 72}px - ${safeBottom})`, left: viewport.left + viewport.width - 68 }}

@@ -104,7 +104,7 @@ try {
   assert.equal(changes, 0, "Keyboard toggles must not edit document content.");
 
   await resize(400, 80);
-  assert.equal(element('[aria-label="Hide keyboard"]').style.top, "calc(408px - 0px)");
+  assert.equal(browser.document.querySelector(".mobile-keyboard-toggle"), null, "The OS keyboard's own Done button closes it, so ours steps aside.");
   await resize(844, 0);
   assert.equal(editor.view.dom.getAttribute("inputmode"), "none", "Dismissing the OS keyboard returns to selection mode.");
   await touchButton('[aria-label="Show keyboard"]');
