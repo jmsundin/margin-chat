@@ -356,9 +356,9 @@ try {
   await fresh("tidy-undo");
   assert.equal(container.querySelector(".graph-map-tidy-undo"), null);
   await click(element(".graph-map-layout-options > summary"));
-  // Sort by topic is synchronous; ELK's bundle doesn't load under every test runtime.
-  await click(element('[aria-label="Organize graph by topic"]'));
-  assert.equal(layoutWriteLog.length, 1, "Sort by topic writes one set of positions");
+  // Gather groups is synchronous; ELK's bundle doesn't load under every test runtime.
+  await click(element('[aria-label="Gather documents by group"]'));
+  assert.equal(layoutWriteLog.length, 1, "Gather groups writes one set of positions");
   const arranged = layoutWriteLog[0];
   assert(Object.keys(arranged).length > 0);
   await click(element(".graph-map-tidy-undo"));
@@ -372,6 +372,19 @@ try {
   assert.equal(container.querySelector(".graph-map-tidy-undo"), null, "Undo is offered once per tidy up");
   layoutWrites = 0;
   checks.push("Tidy up on Canvas can be undone, restoring hand-placed positions");
+
+  await fresh("canvas-group-frames");
+  const frameNames = () => [...container.querySelectorAll(".canvas-group-frame-tab strong")].map((item: any) => item.textContent);
+  assert.deepEqual(frameNames(), ["Research", "Notes"], "Canvas draws each of your groups as a frame");
+  assert.equal(container.querySelector('[aria-label="Zoom out to all groups"]'), null, "Canvas has no All groups button");
+  const groupsSwitch = [...container.querySelectorAll(".conversation-graph-zoom button")].find((item: any) => item.textContent === "Groups") as any;
+  assert.equal(groupsSwitch?.getAttribute("aria-pressed"), "true");
+  await click(groupsSwitch);
+  assert.deepEqual(frameNames(), [], "The Groups switch hides the frames");
+  assert.equal(groupsSwitch.getAttribute("aria-pressed"), "false");
+  await fresh("canvas-group-frames");
+  assert.deepEqual(frameNames(), [], "The Groups switch is remembered");
+  checks.push("Canvas frames your groups, and the Groups switch turns them off");
   process.stdout.write(`${JSON.stringify({ checks })}\n`);
 } finally {
   await act(async () => reactRoot.unmount());

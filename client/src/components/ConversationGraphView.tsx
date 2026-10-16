@@ -59,6 +59,8 @@ import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, clusterHues, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getMapFamilyStyles, type MapFamilyStyle } from "../lib/graphFamilies";
 import MapLensBar from "./MapLensBar";
+import CanvasGroupFrames from "./CanvasGroupFrames";
+import { buildCanvasGroupFrames, canvasFrameAt, canvasGroupBuckets, canvasGroupDropChanges, type CanvasGroupFrame } from "../lib/canvasGroupFrames";
 import { countConnections, EMPTY_MAP_LENS, matchMapLens, newLensFilter, readMapLens, type MapLens, type SavedMapLens } from "../lib/mapLens";
 import { mapColoring, MAP_COLOR_BY_OPTIONS, readMapColorBy, type MapColorBy } from "../lib/mapColorBy";
 import { bundleLinks, edgeSignposts, interpolateViewport, isBigCameraMove, nextInDirection, placeLandmarks, readingOrder, screenGridRegion,
@@ -187,7 +189,6 @@ function getNodeZoomDetail(footprint?: { width: number; height: number }): Conve
 }
 
 /** Canvas shows group labels only when zoomed out further than this. */
-const CANVAS_GROUP_LABEL_SCALE = 0.6;
 /** Below this on-screen width, a zoomed-out Canvas card is drawn as a dot. */
 const MIN_CANVAS_CARD_WIDTH = 24;
 
@@ -1014,6 +1015,9 @@ export default function ConversationGraphView({
   const setSavedLenses = useCallback((next: SavedMapLens[]) => { setSavedLensesState(next); writeStoredJson(workspaceKey && `margin-map-saved-lenses:${workspaceKey}`, next); }, [workspaceKey]);
   const [colorBy, setColorByState] = useState<MapColorBy>(() => readStoredJson(workspaceKey && `margin-map-color-by:${workspaceKey}`, readMapColorBy, "family"));
   const setColorBy = useCallback((next: MapColorBy) => { setColorByState(next); writeStoredJson(workspaceKey && `margin-map-color-by:${workspaceKey}`, next); }, [workspaceKey]);
+  // Canvas draws your groups as frames unless you switch them off; the setting is per device.
+  const [canvasGroupFramesOn, setCanvasGroupFramesState] = useState(() => readStoredJson(workspaceKey && `margin-map-canvas-groups:${workspaceKey}`, (value) => value !== false, true));
+  const setCanvasGroupFrames = useCallback((next: boolean) => { setCanvasGroupFramesState(next); writeStoredJson(workspaceKey && `margin-map-canvas-groups:${workspaceKey}`, next); }, [workspaceKey]);
   // The minimap is off until someone asks for it; the setting is per device.
   const [minimapEnabled, setMinimapEnabledState] = useState(() => readStoredJson(MINIMAP_STORAGE_KEY, (value) => value === true, false));
   const setMinimapEnabled = (next: boolean) => { setMinimapEnabledState(next); writeStoredJson(MINIMAP_STORAGE_KEY, next); };
@@ -1432,10 +1436,11 @@ export default function ConversationGraphView({
     return [item.id, [...getGraphScopeConversationIds({ scope: itemScope, conversations, groups, concepts, threads: categorizedThreads })]];
   })), [overviewItems, conversations, groups, concepts, categorizedThreads]);
   const showThemeOverview = !panelView && scope.kind === "all" && !selectedConversation && navigation.state.overviewPresentation === "themes";
-  // Group labels help find your way around a zoomed-out Canvas; close up, or
-  // while a document is selected, they only get in the way.
-  const hideCanvasGroupLabels = isCanvasMode && (viewport.scale >= CANVAS_GROUP_LABEL_SCALE || !!selectedConversationId);
   const canvasTerritories = useMemo(() => buildMapTerritories(scene, territoryGroups), [scene, territoryGroups]);
+  // Canvas shows only the groups you made, as frames; no category names are guessed for it.
+  const showCanvasGroupFrames = isCanvasMode && !panelView && !documentsOnly && canvasGroupFramesOn;
+  const canvasGroupFrames = useMemo<CanvasGroupFrame[]>(() => showCanvasGroupFrames ? buildCanvasGroupFrames({ nodes: scene.nodes, conversations, groups,
+    unplacedRootIds: getUnplacedForestRootIds(conversations, graphLayouts) }) : [], [showCanvasGroupFrames, scene.nodes, conversations, groups, graphLayouts]);
   const territoriesPossible = !isCanvasMode && !documentsOnly && !browsingGroups;
   const crowdedLabels = useMemo(() => territoriesPossible && mapLabelsOverlap(unfocusedScene.nodes, viewport.scale),
     [territoriesPossible, unfocusedScene.nodes, viewport.scale]);
@@ -1927,7 +1932,14 @@ export default function ConversationGraphView({
     }
 
     const canvas = { width: viewportElement.clientWidth, height: viewportElement.clientHeight };
-    if (isCanvasMode) { applyViewport(calculateFitViewport(scene, viewportElement, false)); fitAsOverviewRef.current = false; return; }
+    if (isCanvasMode) {
+      // Group frames put their names above the top cards; leave room for them.
+      const room = showCanvasGroupFrames && canvasGroupFrames.length ? 40 : 0;
+      const fit = calculateFitViewport(scene, { clientWidth: viewportElement.clientWidth, clientHeight: viewportElement.clientHeight - room }, false);
+      applyViewport({ ...fit, y: fit.y + room });
+      fitAsOverviewRef.current = false;
+      return;
+    }
     if (forceLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
       applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }).viewport);
@@ -1949,7 +1961,7 @@ export default function ConversationGraphView({
         { maxScale: Math.min(0.69, groupScaleThreshold - 0.01) }) : standardFit);
     }
     fitAsOverviewRef.current = false;
-  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout]);
+  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout, showCanvasGroupFrames, canvasGroupFrames.length]);
 
   const fitLensMatches = useCallback(() => {
     const viewportElement = viewportRef.current;
@@ -2417,7 +2429,7 @@ export default function ConversationGraphView({
     else if ((event.key === "n" || event.key === "N") && lensMatches?.size) stepMatch(event.shiftKey ? -1 : 1);
     else if (event.key === "+" || event.key === "=") zoomByStep("in");
     else if (event.key === "-" || event.key === "_") zoomByStep("out");
-    else if (event.key === "Home" || event.key === "0") showAllGroups();
+    else if (event.key === "Home" || event.key === "0") { if (isCanvasMode) fitGraph(); else showAllGroups(); }
     else return;
     event.preventDefault();
   }
@@ -2660,6 +2672,14 @@ export default function ConversationGraphView({
       }
     }
     onUpdateGraphNodeLayouts?.(nextLayouts);
+    // Dropping cards into one of your group frames puts them in that group; dropping them outside every frame takes them out.
+    if (showCanvasGroupFrames && Object.keys(groups).length) {
+      const anchor = reflowedNodes.find((node) => node.conversationId === move.conversationId);
+      if (anchor) {
+        const target = canvasFrameAt(canvasGroupFrames, { x: anchor.x + anchor.width / 2, y: anchor.y + anchor.height / 2 }, viewport.scale, movedIds);
+        for (const [id, groupId] of canvasGroupDropChanges({ ids: move.conversationIds, conversations, groups, target })) onAssignGroup(id, groupId);
+      }
+    }
   }
 
   function handleViewportPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
@@ -3054,6 +3074,14 @@ export default function ConversationGraphView({
     applyManualViewport(fitGravityCluster(cluster, { width: canvas.clientWidth, height: canvas.clientHeight }));
   }
 
+  /** A frame's name zooms the Canvas to that group, staying on the Canvas. */
+  function fitCanvasGroupFrame(frame: CanvasGroupFrame) {
+    const canvas = viewportRef.current;
+    if (!canvas?.clientWidth || !canvas.clientHeight) return;
+    interactions.cancel();
+    applyManualViewport(fitMapTerritories([frame], { width: canvas.clientWidth, height: canvas.clientHeight }, { maxScale: 1, padding: 64 }));
+  }
+
   function fitTerritory(territory: MapTerritory) {
     interactions.cancel();
     setInspectedEdge(null);
@@ -3430,7 +3458,7 @@ export default function ConversationGraphView({
           <button type="button" aria-label="Back in map" title="Back in map" disabled={!navigation.canGoBack} onClick={() => restoreHistory("back")}><span aria-hidden="true">←</span></button>
           <button type="button" aria-label="Forward in map" title="Forward in map" disabled={!navigation.canGoForward} onClick={() => restoreHistory("forward")}><span aria-hidden="true">→</span></button>
         </div>
-        <button type="button" className="graph-map-all-groups" aria-label="Zoom out to all groups" onClick={showAllGroups}>All groups</button>
+        {isCanvasMode ? null : <button type="button" className="graph-map-all-groups" aria-label="Zoom out to all groups" onClick={showAllGroups}>All groups</button>}
         <span className={`graph-map-scope${focusedNodeId || scope.kind === "all" && !focusedTerritory ? " is-overview" : ""}`} aria-live="polite">{focusedTerritory ? `${focusedTerritory.label} · ${focusedTerritory.nodes.length} sources` : `${scopeLabel} · ${scopedIds.size} of ${Object.keys(conversations).length} sources`}</span>
         <div className="graph-map-search" ref={searchRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
           <input type="search" ref={searchInputRef} aria-label="Search this map" placeholder={searchPlaceholder} value={query}
@@ -3582,7 +3610,9 @@ export default function ConversationGraphView({
             })}
           </nav>
 
-          {!showThemeOverview && !documentsOnly && !hideCanvasGroupLabels ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={relationshipConversations} viewport={viewport}
+          {showCanvasGroupFrames && canvasGroupFrames.length ? <CanvasGroupFrames frames={canvasGroupFrames} viewport={viewport} nodeFootprint={nodeScreenFootprint}
+            selectedNodeId={selectedConversationId} onOpen={fitCanvasGroupFrame} /> : null}
+          {!showThemeOverview && !documentsOnly && !isCanvasMode ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={relationshipConversations} viewport={viewport}
             semanticLabels={groupSemantics.categoryLabels}
             mode={browsingGroups || showTerritories ? "overview" : "canvas"} activeTerritoryId={focusedTerritory?.id}
             selectedNodeId={selectedConversationId}
@@ -3762,7 +3792,7 @@ export default function ConversationGraphView({
                   actions={renderNodeActions?.(conversation)}
                   menuActions={renderNodeMenuActions?.(conversation)}
                   activeConversationId={activeConversationId}
-                  categoryLabel={categoryLabels.get(getConversationRootId(conversations, conversation.id) ?? conversation.id)}
+                  categoryLabel={isCanvasMode ? undefined : categoryLabels.get(getConversationRootId(conversations, conversation.id) ?? conversation.id)}
                   conversation={conversation}
                   family={familyStyle(familyStyles, cardHues, conversation.id)}
                   color={colorOf ? colorOf.get(conversation.id) ?? null : undefined}
@@ -3896,6 +3926,20 @@ export default function ConversationGraphView({
                   : "Select"}
               </span>
             </button> : null}
+            {isCanvasMode && !panelView ? <button
+              aria-pressed={canvasGroupFramesOn}
+              className="conversation-graph-multi-select-toggle"
+              data-graph-ui="true"
+              onClick={() => setCanvasGroupFrames(!canvasGroupFramesOn)}
+              title={canvasGroupFramesOn ? "Hide your groups' frames" : "Show your groups as frames around their cards"}
+              type="button"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <rect x="3.5" y="5.5" width="17" height="14" rx="3" />
+                <path d="M3.5 9.5h7" />
+              </svg>
+              <span>Groups</span>
+            </button> : null}
             {showTidyUp ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Tidy up</summary><div>
             <button
               aria-label="Auto-arrange graph with ELK"
@@ -3914,15 +3958,15 @@ export default function ConversationGraphView({
               <span>{isAutoArranging ? "Arranging…" : "Auto-arrange"}</span>
             </button>
             <button
-              aria-label="Organize graph by topic"
-              disabled={isAutoArranging || !scene.nodes.length || !onUpdateGraphNodeLayouts}
-              onClick={() => applyTidyUp(buildCategoryOrganizedGraphLayouts({ conversations, graphLayouts, threads: categorizedThreads }))}
-              title="Move documents into columns by topic category"
+              aria-label="Gather documents by group"
+              disabled={isAutoArranging || !scene.nodes.length || !onUpdateGraphNodeLayouts || !Object.keys(groups).length}
+              onClick={() => applyTidyUp(buildCategoryOrganizedGraphLayouts({ conversations, graphLayouts, threads: categorizedThreads, buckets: canvasGroupBuckets(conversations, groups) }))}
+              title={Object.keys(groups).length ? "Put each group's documents together" : "Make a group first"}
               type="button"
             >
-              Sort by topic
+              Gather groups
             </button>
-            <small className="graph-map-layout-context">Auto-arrange and Sort by topic move your cards. Undo puts them back.</small>
+            <small className="graph-map-layout-context">Auto-arrange and Gather groups move your cards. Undo puts them back.</small>
             </div></DismissibleDetails> : null}
             {showTidyUp && tidyUndo ? <button type="button" className="graph-map-tidy-undo" onClick={undoTidyUp}>Undo tidy up</button> : null}
             {showLayoutPicker ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Layout</summary><div>
