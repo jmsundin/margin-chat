@@ -37,7 +37,7 @@ function reasoningText(output) {
 /**
  * OpenAI and xAI share the Responses API: function_call items in, function_call_output items back.
  * Each call streams so the model's reasoning summary, or any reasoning text it shares, reaches
- * `live.thinking` as it is written.
+ * `live.thinking` and its text reaches `live.text` as they are written.
  */
 function createResponsesAdapter(provider, args, tools) {
   const messages = extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content }));
@@ -64,9 +64,10 @@ function createResponsesAdapter(provider, args, tools) {
           thinking = true;
         } else if (event.type === "response.reasoning_summary_part.added" && thinking) {
           await live.thinking?.("\n\n");
-        } else if (event.type === "response.output_text.delta" && !writing) {
+        } else if (event.type === "response.output_text.delta" && typeof event.delta === "string") {
+          if (!writing) await live.writing?.();
           writing = true;
-          await live.writing?.();
+          await live.text?.(event.delta);
         }
       };
       const request = (withSummary) => requestResponsesApiStream({
@@ -102,7 +103,7 @@ function createResponsesAdapter(provider, args, tools) {
 /** Claude's Messages API: tool_use blocks in, tool_result blocks back in the next user turn. The
  * assistant content is replayed unchanged so thinking blocks stay attached to their tool calls.
  * Claude 5 models hide thinking unless asked, so the agent asks for the summarized form and
- * streams it to `live.thinking`. */
+ * streams it to `live.thinking`; text streams to `live.text`. */
 function createAnthropicAdapter(args, tools) {
   const base = { ...anthropicBody(args), thinking: { type: "adaptive", display: "summarized" } };
   const messages = [...base.messages];
@@ -123,6 +124,8 @@ function createAnthropicAdapter(args, tools) {
         } else if (event.type === "content_block_start" && event.content_block?.type === "text" && !writing) {
           writing = true;
           await live.writing?.();
+        } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
+          await live.text?.(event.delta.text);
         }
       };
       const message = await requestAnthropicMessage({ apiKey: args.apiKey, body, signal: args.signal, usageMeter: args.usageMeter, onEvent });

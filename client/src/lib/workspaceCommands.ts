@@ -141,6 +141,17 @@ export function removeConversationDocument(state: AppState, conversationId: stri
   };
 }
 
+/** Removes `text` from the end of a streamed message, and the message itself once nothing is left. */
+export function retractMessageText(state: AppState, conversationId: string, messageId: string, text: string): AppState {
+  const conversation = state.conversations[conversationId];
+  const index = conversation?.messages.findIndex((message) => message.id === messageId) ?? -1;
+  if (index < 0 || !text || !conversation.messages[index].content.endsWith(text)) return state;
+  const content = conversation.messages[index].content.slice(0, -text.length);
+  const messages = content ? conversation.messages.map((message, at) => at === index ? { ...message, content } : message)
+    : conversation.messages.filter((_message, at) => at !== index);
+  return { ...state, conversations: { ...state.conversations, [conversationId]: { ...conversation, messages } } };
+}
+
 export function appendMessageDelta(state: AppState, conversationId: string, messageId: string, delta: string, createdAt: string): AppState {
   const conversation = state.conversations[conversationId];
   if (!conversation || !delta) return state;

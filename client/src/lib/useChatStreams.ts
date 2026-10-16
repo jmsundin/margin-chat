@@ -18,9 +18,13 @@ const LIVE_THINKING_CHARACTERS = 20_000;
 /** Thinking streams in small pieces; they are shown in batches so the workspace doesn't re-render for each one. */
 const THINKING_FLUSH_MS = 100;
 
-export function useChatStreams(onDelta: ConstructorParameters<typeof ChatExecutions>[0]["onDelta"], onExecution?: ConstructorParameters<typeof ChatExecutions>[0]["onExecution"]) {
+type ExecutionEvents = ConstructorParameters<typeof ChatExecutions>[0];
+
+export function useChatStreams(onDelta: ExecutionEvents["onDelta"], onExecution?: ExecutionEvents["onExecution"], onRetract?: ExecutionEvents["onRetract"]) {
   const latestDelta = useRef(onDelta);
   latestDelta.current = onDelta;
+  const latestRetract = useRef(onRetract);
+  latestRetract.current = onRetract;
   const latestExecution = useRef(onExecution);
   latestExecution.current = onExecution;
   const pendingThinking = useRef(new Map<string, string>());
@@ -45,10 +49,12 @@ export function useChatStreams(onDelta: ConstructorParameters<typeof ChatExecuti
     };
     return new ChatExecutions({
       onDelta: (...args) => latestDelta.current(...args),
+      onRetract: (...args) => latestRetract.current?.(...args),
       onExecution: (...args) => latestExecution.current?.(...args),
       onAgentEvent(id, event: AgentEvent) {
-        // Saved pages are created by whoever started the request; they are not progress.
-        if (event.type === "documents") return;
+        // Saved pages are created by whoever started the request, and retracted text is
+        // handled with the reply; neither is progress.
+        if (event.type === "documents" || event.type === "retract") return;
         if (event.type === "thinking") {
           pendingThinking.current.set(id, `${pendingThinking.current.get(id) ?? ""}${event.delta}`);
           thinkingTimer.current ??= setTimeout(flushThinking, THINKING_FLUSH_MS);

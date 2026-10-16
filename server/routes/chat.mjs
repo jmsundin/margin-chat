@@ -49,6 +49,9 @@ export async function handleChatRequest({ request, response, user, executeChatRe
         onDelta(delta) {
           writeChatStreamEvent(response, { delta, type: "delta" });
         },
+        onRetract() {
+          writeChatStreamEvent(response, { type: "retract" });
+        },
         onStep({ step, spentMicros }) {
           writeChatStreamEvent(response, { step, ...(spentMicros === undefined ? {} : { spentMicros }), type: "step" });
         },

@@ -139,7 +139,7 @@ import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
 import { addImportedWebDocuments } from "./lib/webImportDocuments";
-import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument } from "./lib/workspaceCommands";
+import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument, retractMessageText } from "./lib/workspaceCommands";
 import { buildDocumentSummaries, buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
   CONVERSATION_GROUP_COLORS,
@@ -739,7 +739,7 @@ function WorkspaceAppContent({
   const [selectionResponseDestination, setSelectionResponseDestination] = useState<"inline" | "side">("side");
   const [selectionReplaceText, setSelectionReplaceText] = useState(false);
   const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
-  const { executions: chatExecutions, pendingConversationIds, agentProgress } = useChatStreams(appendAssistantDelta, saveExecutionDetails);
+  const { executions: chatExecutions, pendingConversationIds, agentProgress } = useChatStreams(appendAssistantDelta, saveExecutionDetails, retractAssistantText);
   const [documentUploadByConversationId, setDocumentUploadByConversationId] =
     useState<Record<string, { error: string | null; uploading: boolean }>>({});
   const [typingMessageIds, setTypingMessageIds] = useState<Record<string, boolean>>(
@@ -2048,6 +2048,18 @@ function WorkspaceAppContent({
       if (!generation?.acceptedAt) return next;
       const blocks = conversation.document!.blocks.map((block) => generation.blockIds.includes(block.id)
         ? { ...block, content: block.content + contentDelta, updatedAt: createdAt } : block);
+      return { ...next, conversations: { ...next.conversations, [conversationId]: { ...conversation, document: { ...conversation.document!, blocks } } } };
+    });
+  }
+
+  function retractAssistantText(conversationId: string, messageId: string, text: string) {
+    setState((current) => {
+      const next = retractMessageText(current, conversationId, messageId, text);
+      const conversation = next.conversations[conversationId];
+      const generation = conversation?.document?.generations.find((item) => item.messageId === messageId);
+      if (!generation?.acceptedAt) return next;
+      const blocks = conversation.document!.blocks.map((block) => generation.blockIds.includes(block.id) && block.content.endsWith(text)
+        ? { ...block, content: block.content.slice(0, -text.length) } : block);
       return { ...next, conversations: { ...next.conversations, [conversationId]: { ...conversation, document: { ...conversation.document!, blocks } } } };
     });
   }

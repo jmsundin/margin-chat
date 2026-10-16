@@ -17,11 +17,13 @@ export interface ChatReplyResponse {
 
 /**
  * Live agent progress: a finished step (with the run's settled spend so far when
- * it is metered), a piece of the model's thinking as it streams, or the model
- * starting to write text.
+ * it is metered), a piece of the model's thinking as it streams, the model
+ * starting to write text, or the text streamed since the last retract being
+ * withdrawn because the model went on to call tools instead of answering.
  */
 export type AgentEvent =
   | { type: "step"; step: AgentRunStep; spentMicros?: number }
+  | { type: "retract" }
   | { type: "documents"; documents: ImportedWebDocument[] }
   | { type: "thinking"; delta: string }
   | { type: "activity"; activity: "writing" };
@@ -55,7 +57,7 @@ interface ChatStreamEvent {
   error?: string;
   metadata?: ChatReplyResponse["metadata"];
   statusCode?: number;
-  type?: "metadata" | "delta" | "step" | "thinking" | "activity" | "documents" | "done" | "error";
+  type?: "metadata" | "delta" | "retract" | "step" | "thinking" | "activity" | "documents" | "done" | "error";
 }
 
 export async function readChatReplyStream(
@@ -99,6 +101,10 @@ export async function readChatReplyStream(
     if (event.type === "delta" && typeof event.delta === "string") {
       reply += event.delta;
       onDelta?.(event.delta);
+    }
+    if (event.type === "retract") {
+      reply = "";
+      onAgentEvent?.({ type: "retract" });
     }
     if (event.type === "step") {
       const step = normalizeAgentStep(event.step);

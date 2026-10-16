@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readChatReplyStream, type ChatReplyResponse } from "../client/src/lib/chatStream";
 import { ChatExecutions } from "../client/src/lib/chatExecution";
+import { retractMessageText } from "../client/src/lib/workspaceCommands";
 import { normalizeAIExecution } from "@margin-chat/workspace-contracts";
 
 const metadata: ChatReplyResponse["metadata"] = {
@@ -59,5 +60,48 @@ describe("assistant completion acknowledgement", () => {
     expect(receipts.at(-1).completedAt).toBeUndefined();
     expect(errors).toHaveLength(1);
     expect(executions.has("chat")).toBe(false);
+  });
+
+  test("a retract drops the agent's text since the last retract, whether shown yet or still buffered", async () => {
+    const shown: string[] = [];
+    const retracted: string[] = [];
+    let flush: (() => void) | undefined;
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const executions = new ChatExecutions({
+      onDelta: (_conversationId, _messageId, delta) => shown.push(delta),
+      onRetract: (_conversationId, _messageId, text) => retracted.push(text),
+      onPending: (_conversationId, pending) => { if (!pending) finish(); },
+    }, { schedule: (callback) => { flush = callback; return 0 as unknown as ReturnType<typeof setTimeout>; }, cancel: () => { flush = undefined; } });
+    let send!: { delta: (text: string) => void; event: (event: any) => void; done: () => void };
+    executions.start({
+      conversationId: "chat", messageId: "answer", createdAt: "2026-10-16T00:00:00Z", onError() {},
+      request: (onDelta, _signal, _onMetadata, onAgentEvent) => new Promise((resolve) => {
+        send = { delta: onDelta, event: onAgentEvent, done: () => resolve(undefined) };
+      }),
+    });
+    await Promise.resolve(); await Promise.resolve();
+    send.delta("Let me "); flush?.();
+    send.delta("look."); send.event({ type: "retract" });
+    send.delta("Answer."); flush?.();
+    send.done();
+    await finished;
+    expect(shown).toEqual(["Let me ", "Answer."]);
+    expect(retracted).toEqual(["Let me "]);
+  });
+
+  test("the stream's reply is only the text after the last retract", async () => {
+    const events: unknown[] = [];
+    const result = await readChatReplyStream(response([{ type: "metadata", metadata }, { type: "delta", delta: "Let me look." }, { type: "retract" },
+      { type: "delta", delta: "Answer." }, { type: "done" }]).body!, undefined, undefined, (event) => events.push(event));
+    expect(result.reply).toBe("Answer.");
+    expect(events).toEqual([{ type: "retract" }]);
+  });
+
+  test("retracted text leaves the message, and an emptied message is removed", () => {
+    const state: any = { conversations: { chat: { id: "chat", messages: [{ id: "answer", role: "assistant", content: "Let me look.", createdAt: "" }] } } };
+    expect(retractMessageText(state, "chat", "answer", "look.").conversations.chat.messages[0].content).toBe("Let me ");
+    expect(retractMessageText(state, "chat", "answer", "Let me look.").conversations.chat.messages).toEqual([]);
+    expect(retractMessageText(state, "chat", "answer", "other")).toBe(state);
   });
 });

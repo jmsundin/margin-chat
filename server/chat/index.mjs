@@ -417,6 +417,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
           ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros, workspace,
           ...(handlers ? {
             onDelta,
+            onRetract: async () => { await ensureReady(); await handlers.onRetract?.(); },
             onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); },
             onThinking: async (delta) => { await ensureReady(); await handlers.onThinking?.(delta); },
             onActivity: async (activity) => { await ensureReady(); await handlers.onActivity?.(activity); },
