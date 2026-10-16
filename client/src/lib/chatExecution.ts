@@ -27,6 +27,8 @@ export class ChatExecutions {
 
   constructor(private readonly events: {
     onDelta: (conversationId: string, messageId: string, delta: string, createdAt: string) => void;
+    /** Removes `text`, already delivered through onDelta, from the end of the reply. */
+    onRetract?: (conversationId: string, messageId: string, text: string) => void;
     onPending: (conversationId: string, pending: boolean) => void;
     onExecution?: (conversationId: string, messageId: string, execution: AIExecutionRecord) => void;
     onAgentEvent?: (conversationId: string, event: AgentEvent) => void;
@@ -40,6 +42,8 @@ export class ChatExecutions {
   start(args: ChatExecution): boolean {
     if (this.has(args.conversationId)) return false;
     let buffer = "";
+    // Text delivered since the last retract; an agent withdraws it when it calls tools instead of answering.
+    let draft = "";
     let receipt: AIExecutionRecord | undefined;
     let receiptChanged = false;
     let hasOutput = false;
@@ -59,6 +63,7 @@ export class ChatExecutions {
         buffer = "";
         if (delta) {
           this.events.onDelta(args.conversationId, args.messageId, delta, args.createdAt);
+          draft += delta;
           hasOutput = true;
         }
         if (hasOutput && receipt && receiptChanged) {
@@ -99,7 +104,15 @@ export class ChatExecutions {
       if (hasOutput) execution.flush();
     };
     const onAgentEvent = (event: AgentEvent) => {
-      if (isCurrent()) this.events.onAgentEvent?.(args.conversationId, event);
+      if (!isCurrent()) return;
+      if (event.type === "retract") {
+        cancelTimer();
+        buffer = "";
+        if (draft) this.events.onRetract?.(args.conversationId, args.messageId, draft);
+        draft = "";
+        return;
+      }
+      this.events.onAgentEvent?.(args.conversationId, event);
     };
     // A synchronous transport failure follows the same cleanup path as a rejection.
     void Promise.resolve().then(() => {

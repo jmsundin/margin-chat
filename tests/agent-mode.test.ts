@@ -242,6 +242,47 @@ describe("agent mode in the chat service", () => {
     expect(normalizeAIExecution(result.metadata.execution)?.agent).toMatchObject({ reasoning: "shared", steps: [{ kind: "thinking", label: "Look in the notes." }, { kind: "tool" }] });
   });
 
+  test("streams the answer as it is written and withdraws text that turned out to come before tool calls", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls === 1 ? responsesSse([
+        { type: "response.output_text.delta", delta: "Let me " }, { type: "response.output_text.delta", delta: "look." },
+        { type: "response.completed", response: { model: "gpt", output: [answer("Let me look."),
+          { type: "function_call", name: "search_conversations", call_id: "call_1", arguments: "{\"query\":\"pricing\"}" }] } },
+      ]) : responsesSse([
+        { type: "response.output_text.delta", delta: "You chose " }, { type: "response.output_text.delta", delta: "$20 a month." },
+        { type: "response.completed", response: { model: "gpt", output: [answer("You chose $20 a month.")] } },
+      ]);
+    }) as typeof fetch;
+    const events: string[] = [];
+    const result = await service().requestReplyStream(payload("openai-api", { agent: true }), { userId: "owner" }, {
+      onReady: () => { events.push("ready"); },
+      onStep: ({ step }: any) => { events.push(`step:${step.kind}`); },
+      onDelta: (delta: string) => { events.push(`delta:${delta}`); },
+      onRetract: () => { events.push("retract"); },
+    });
+    expect(events).toEqual(["ready", "delta:Let me ", "delta:look.", "retract", "step:note", "step:tool", "delta:You chose ", "delta:$20 a month."]);
+    expect(result.reply).toBe("You chose $20 a month.");
+  });
+
+  test("streams Claude's answer text as it is written", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return calls === 1
+        ? claudeSse([{ type: "text", text: "Checking." }, { type: "tool_use", id: "tool_1", name: "search_conversations", input: { query: "pricing" } }], "tool_use")
+        : claudeSse([{ type: "text", text: "You chose $20 a month." }], "end_turn");
+    }) as typeof fetch;
+    const events: string[] = [];
+    await service().requestReplyStream(payload("anthropic-api", { agent: true }), { userId: "owner" }, {
+      onStep: ({ step }: any) => { events.push(`step:${step.kind}`); },
+      onDelta: (delta: string) => { events.push(`delta:${delta}`); },
+      onRetract: () => { events.push("retract"); },
+    });
+    expect(events).toEqual(["delta:Checking.", "retract", "step:note", "step:tool", "delta:You chose $20 a month."]);
+  });
+
   test("the retired OpenAI Agent service still runs as an agent", async () => {
     const bodies: any[] = [];
     globalThis.fetch = (async (_url: any, init: any) => { bodies.push(JSON.parse(init.body)); return Response.json({ output_text: "Hi", output: [] }); }) as typeof fetch;

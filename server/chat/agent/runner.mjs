@@ -32,9 +32,13 @@ const clip = (text, maximum) => text.length <= maximum ? text : `${text.slice(0,
  * streams it and `onActivity("writing")` marks when it starts writing text. Once
  * the call ends, that reasoning is recorded as a thinking step before the call's
  * note and tool steps.
+ *
+ * Text streams to `onDelta` as it is written, since a call that ends without tool
+ * calls is the answer. When a call's text turns out to be followed by tool calls,
+ * `onRetract` withdraws what was streamed and the text is kept as a note step.
  */
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onStep, onThinking, onActivity }) {
+  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
   const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter },
     agentToolDefinitions(chatRequest, workspace, { documents: Boolean(onDocuments) }));
@@ -56,9 +60,17 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     if (steps.length < MAX_STEPS) steps.push(step);
     await onStep?.({ step, ...(usageMeter ? { spentMicros: spent() } : {}) });
   };
+  // The current call's text sent to onDelta so far.
+  let streamed = "";
   const live = {
     thinking: async (delta) => { await onThinking?.(delta); },
     writing: async () => { await onActivity?.("writing"); },
+    text: async (delta) => {
+      const piece = streamed ? delta : delta.trimStart();
+      if (!piece || !onDelta) return;
+      streamed += piece;
+      await onDelta(piece);
+    },
   };
   const recordThinking = async (text) => {
     const thought = text?.trim();
@@ -79,12 +91,18 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     const stopReason = metered && spent() >= budgetMicros ? "budget"
       : now() - startedAt >= timeLimitMs ? "time-limit"
       : call === AGENT_MAX_MODEL_CALLS ? "round-limit" : null;
+    streamed = "";
     const result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null, live });
     signal?.throwIfAborted();
+    const answered = !result.toolCalls.length || stopReason;
+    if (!answered && streamed) {
+      streamed = "";
+      await onRetract?.();
+    }
     await recordThinking(result.thinking);
-    if (!result.toolCalls.length || stopReason) {
+    if (answered) {
       if (!result.text.trim()) throw new HttpError(502, `${provider} returned a response without assistant text.`);
-      await onDelta?.(result.text);
+      if (!streamed) await onDelta?.(result.text);
       return {
         model: result.model,
         reply: result.text,
