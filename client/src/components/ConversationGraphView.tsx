@@ -58,6 +58,8 @@ import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, clusterHues, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getMapFamilyStyles, type MapFamilyStyle } from "../lib/graphFamilies";
+import MapLensBar from "./MapLensBar";
+import { countConnections, EMPTY_MAP_LENS, matchMapLens, readMapLens, type MapLens, type SavedMapLens } from "../lib/mapLens";
 import { getGraphViewMode, isGraphPanelMode, type GraphViewMode, type GraphRelationKind } from "../lib/graphViewModes";
 import { GraphViewModeSelects, GraphViewModeTabs } from "./GraphViewModeControls";
 import { MORE_GRAPH_VIEW_MODES } from "../lib/graphViewModes";
@@ -119,6 +121,17 @@ const GRAPH_GRID_SIZE = 22;
 const GRAPH_MINIMAP_MAX_EDGES = 320;
 const GRAPH_MINIMAP_MAX_NODES = 280;
 const EMPTY_GRAPH_LAYOUTS: Record<string, GraphNodeLayout> = {};
+const EMPTY_COUNTS = new Map<string, number>();
+
+function readStoredJson<T>(key: string | false | undefined, parse: (value: unknown) => T, fallback: T): T {
+  if (!key) return fallback;
+  try { const raw = localStorage.getItem(key); return raw ? parse(JSON.parse(raw)) : fallback; } catch { return fallback; }
+}
+
+function writeStoredJson(key: string | false | undefined, value: unknown) {
+  if (!key) return;
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* Storage full or blocked: the lens still works for this visit. */ }
+}
 /** Most document cards drawn at once; more in view are drawn as dots. */
 export const MAX_GRAPH_CARDS = 400;
 /** Below this zoom, large maps draw documents as dots rather than cards. */
@@ -563,6 +576,7 @@ function GraphNode({
   categoryLabel,
   conversation,
   family,
+  lensDimmed = false,
   detailLevel,
   group,
   groups,
@@ -602,6 +616,8 @@ function GraphNode({
   conversation: Conversation;
   /** Parents draw larger than children, and a family shares a hue. */
   family?: MapFamilyStyle;
+  /** Outside the map's filters: drawn grey but kept for orientation. */
+  lensDimmed?: boolean;
   detailLevel: ConversationGraphDetail;
   group: ConversationGroup | null;
   groups: Record<string, ConversationGroup>;
@@ -679,6 +695,7 @@ function GraphNode({
         isMoving ? "is-moving" : "",
         isMultiSelected ? "is-multi-selected" : "",
         isNote ? "is-note" : "",
+        lensDimmed ? "is-lens-dimmed" : "",
         `is-semantic-${semanticLevel}`,
         conversation.id === activeConversationId ? "is-current-main" : "",
         zoomThroughProgress !== undefined ? "is-zooming-through" : "",
@@ -955,6 +972,12 @@ export default function ConversationGraphView({
   const setDockedConversationId = (id: string | null) => navigation.update({ dockedConversationId: id, source: null });
   const setViewport = navigation.update;
   const [concepts, setConcepts] = useState<GraphConcept[]>(() => workspaceKey ? readGraphConcepts(workspaceKey) : []);
+  const [lens, setLensState] = useState<MapLens>(() => readStoredJson(workspaceKey && `margin-map-lens:${workspaceKey}`, readMapLens, EMPTY_MAP_LENS));
+  const [savedLenses, setSavedLensesState] = useState<SavedMapLens[]>(() => readStoredJson(workspaceKey && `margin-map-saved-lenses:${workspaceKey}`,
+    (value) => Array.isArray(value) ? value.filter((item) => item && typeof item.id === "string" && typeof item.name === "string").map((item) => ({ ...item, ...readMapLens(item) })) : [], []));
+  const [lensOpen, setLensOpen] = useState(() => lens.filters.length > 0);
+  const setLens = useCallback((next: MapLens) => { setLensState(next); writeStoredJson(workspaceKey && `margin-map-lens:${workspaceKey}`, next); }, [workspaceKey]);
+  const setSavedLenses = useCallback((next: SavedMapLens[]) => { setSavedLensesState(next); writeStoredJson(workspaceKey && `margin-map-saved-lenses:${workspaceKey}`, next); }, [workspaceKey]);
   const [conceptSaveError, setConceptSaveError] = useState(false);
   const [inspectedEdge, setInspectedEdge] = useState<GraphAggregatedEdge | null>(null);
   /** A cluster (or group of clusters) whose details fill the side panel. */
@@ -1119,6 +1142,14 @@ export default function ConversationGraphView({
     });
     return { ...completeScene, nodes, edges, groups: groupPlacements };
   }, [completeScene, scope.kind, scopedIds, showBranches]);
+  // The lens greys out documents outside it; they stay on the map for orientation.
+  const lensIds = useMemo(() => unfocusedScene.nodes.map((node) => node.conversationId), [unfocusedScene.nodes]);
+  const connectionCounts = useMemo(() => lens.filters.some((filter) => filter.kind === "connections")
+    ? countConnections(getGraphAnalysisEdges(conversations)) : EMPTY_COUNTS, [lens.filters, conversations]);
+  const deferredLens = useDeferredValue(lens);
+  const lensMatches = useMemo(() => matchMapLens(lensIds, deferredLens, { conversations, groups, connectionCounts }),
+    [lensIds, deferredLens, conversations, groups, connectionCounts]);
+  const lensDimmed = useCallback((id: string) => !!lensMatches && !lensMatches.has(id), [lensMatches]);
   const territories = useMemo(() => buildMapTerritories(unfocusedScene, territoryGroups), [unfocusedScene, territoryGroups]);
   const focusedTerritory = territories.find((territory) => territory.id === focusedTerritoryId) ?? null;
   // Views with their own document layout (Clusters, Network, Lineage) never
@@ -1744,6 +1775,13 @@ export default function ConversationGraphView({
     }
     fitAsOverviewRef.current = false;
   }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout]);
+
+  const fitLensMatches = useCallback(() => {
+    const viewportElement = viewportRef.current;
+    if (!viewportElement?.clientWidth || !viewportElement.clientHeight || !lensMatches?.size) return;
+    const nodes = scene.nodes.filter((node) => lensMatches.has(node.conversationId));
+    if (nodes.length) applyViewport(calculateFitViewport({ ...scene, nodes, groups: [] }, viewportElement, !isCanvasMode));
+  }, [lensMatches, scene, applyViewport, isCanvasMode]);
 
   useEffect(() => {
     if (!isVisible || !viewportSize.width || !viewportSize.height || navigation.state.groupOverviewVersion === 1) return;
@@ -3116,7 +3154,9 @@ export default function ConversationGraphView({
             {scope.kind === "all" && !selectedConversation && !focusedTerritory ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setInspectedOverviewSources([]); navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), overviewPresentation: showThemeOverview ? "map" : "themes", focusedTerritoryId: null, focusedTerritoryScale: null }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
           </div>
         </DismissibleDetails>
-        {hasMapFilters ? <DismissibleDetails className="graph-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Filters</summary><div className="graph-map-context-controls" data-graph-ui="true">
+        <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
+          onClick={() => setLensOpen(!lensOpen)}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
+        {hasMapFilters ? <DismissibleDetails className="graph-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Lines</summary><div className="graph-map-context-controls" data-graph-ui="true">
             <label><input type="checkbox" checked={showBranches} disabled={isLineageMode} onChange={() => toggleRelation("branch")} /> Branch ancestry</label>
             <label><input type="checkbox" checked={showLinks} disabled={isLineageMode} onChange={() => toggleRelation("link")} /> Authored links</label>
             {isLineageMode ? <small>Lineage follows parent → child branch ancestry.</small> : null}
@@ -3125,6 +3165,11 @@ export default function ConversationGraphView({
           </div></DismissibleDetails> : null}
         {toolbarTrailing}
       </div>
+      {lensOpen && !panelView ? <MapLensBar lens={lens} onChange={setLens} ids={lensIds} matched={lensMatches} conversations={conversations} groups={groups}
+        saved={savedLenses} onFitMatches={fitLensMatches}
+        onSave={(name) => setSavedLenses([...savedLenses.filter((item) => item.name !== name), { id: `lens-${Date.now().toString(36)}`, name, filters: lens.filters }])}
+        onApplySaved={(item) => setLens({ filters: item.filters })}
+        onDeleteSaved={(id) => setSavedLenses(savedLenses.filter((item) => item.id !== id))} /> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
@@ -3218,12 +3263,12 @@ export default function ConversationGraphView({
             selectedNodeId={selectedConversationId}
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
-          {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} /> : null}
+          {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={lensMatches} /> : null}
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
             connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
             onOpenCluster={openCluster} onSelectDocument={selectConversation}
-            onSelectCluster={selectCluster} selectedClusterId={inspectedCluster?.id ?? null} /> : null}
+            onSelectCluster={selectCluster} selectedClusterId={inspectedCluster?.id ?? null} matched={lensMatches} /> : null}
           {linkDrag && placementByConversationId.get(linkDrag.sourceId) ? (() => {
             const source = placementByConversationId.get(linkDrag.sourceId)!;
             const x1 = viewport.x + (source.x + source.width / 2) * viewport.scale, y1 = viewport.y + (source.y + source.height / 2) * viewport.scale;
@@ -3305,7 +3350,7 @@ export default function ConversationGraphView({
                 const y2 = target.y + target.height / 2;
                 const geometry = documentsOnly ? documentConnectionGeometry(placement, target, documentLayoutMode)
                   : curvedGraphConnection({ startX: x1, startY: y1, endX: x2, endY: y2 });
-                return [<g key={`personal-${placement.conversationId}-${targetId}`} className="graph-personal-connection" data-graph-ui="true" role="button" tabIndex={0} aria-label={`My connection: ${conversations[placement.conversationId].title} and ${conversations[targetId].title}`} onClick={() => setInspectedPersonalConnection([placement.conversationId, targetId])} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedPersonalConnection([placement.conversationId, targetId]); } }}>
+                return [<g key={`personal-${placement.conversationId}-${targetId}`} className="graph-personal-connection" data-lens-dimmed={lensDimmed(sourceId) || lensDimmed(targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0} aria-label={`My connection: ${conversations[placement.conversationId].title} and ${conversations[targetId].title}`} onClick={() => setInspectedPersonalConnection([placement.conversationId, targetId])} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedPersonalConnection([placement.conversationId, targetId]); } }}>
                   <path className="graph-map-edge-hit" d={geometry.path} />
                   <path className="graph-personal-connection-line" d={geometry.path} />
                   <text x={geometry.labelX} y={geometry.labelY - 8}>My connection</text>
@@ -3325,7 +3370,7 @@ export default function ConversationGraphView({
                 const label = documentGraphEdgeLabel(edge);
                 const typeClass = edge.type ?? "mention";
                 const open = () => { setInspectedPersonalConnection(null); setInspectedRelationId(edge.id); };
-                return [<g key={edge.id} className={`graph-relation-edge is-${typeClass} is-${edge.kind}${edge.origin === "ai" ? " is-ai" : ""}`} data-graph-ui="true" role="button" tabIndex={0}
+                return [<g key={edge.id} className={`graph-relation-edge is-${typeClass} is-${edge.kind}${edge.origin === "ai" ? " is-ai" : ""}`} data-lens-dimmed={lensDimmed(edge.sourceId) || lensDimmed(edge.targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0}
                   aria-label={`${label}: ${conversations[edge.sourceId].title} ${edge.directed ? "to" : "and"} ${conversations[edge.targetId].title}`}
                   onClick={open} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } }}>
                   <path className="graph-map-edge-hit" d={geometry.path} />
@@ -3344,7 +3389,7 @@ export default function ConversationGraphView({
               })}
               {relatedEdges.map((edge) => <g key={`related-${edge.id}`} className="graph-map-related-edge"><path d={edge.path ?? buildConnectorPath(edge)} /><title>Possibly related: {conversations[edge.id].title}</title></g>)}
               {(showBranches ? renderedEdges : []).map((edge) => (
-                <g key={`${edge.parentConversationId}-${edge.childConversationId}`}>
+                <g key={`${edge.parentConversationId}-${edge.childConversationId}`} data-lens-dimmed={lensDimmed(edge.parentConversationId) || lensDimmed(edge.childConversationId) || undefined}>
                   <path className="graph-map-edge-hit" data-graph-ui="true" d={edge.path ?? buildConnectorPath(edge)} role="button" tabIndex={0} aria-label={`Show branch source for ${conversations[edge.childConversationId]?.title}`} onClick={() => { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); }} onKeyDown={(event) => { if (event.key === "Enter") { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); } }} />
                   <path
                     className={
@@ -3390,6 +3435,7 @@ export default function ConversationGraphView({
                   categoryLabel={categoryLabels.get(getConversationRootId(conversations, conversation.id) ?? conversation.id)}
                   conversation={conversation}
                   family={familyStyle(familyStyles, cardHues, conversation.id)}
+                  lensDimmed={lensDimmed(conversation.id)}
                   detailLevel={nodeDetail}
                   group={group}
                   groups={groups}

@@ -73,7 +73,7 @@ function cssVar(element: Element, name: string, fallback: string) {
 }
 
 export default function GraphClusterLayer({ clusters, levels = [], placements, connections, labels, viewport, size, showDots,
-  selectedId, titles, onOpenCluster, onSelectDocument, onSelectCluster, selectedClusterId = null, itemLabel = ["document", "documents"] }: {
+  selectedId, titles, onOpenCluster, onSelectDocument, onSelectCluster, selectedClusterId = null, itemLabel = ["document", "documents"], matched = null }: {
   clusters: GravityCluster[];
   /** Groups of clusters, smallest first. */
   levels?: GravityClusterLevel[];
@@ -95,6 +95,8 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
   selectedClusterId?: string | null;
   /** Singular and plural names for the clustered items. */
   itemLabel?: [string, string];
+  /** Documents that pass the map's filters; the rest are drawn as faint grey dots. Null when nothing is filtered. */
+  matched?: Set<string> | null;
 }) {
   const { x: panX, y: panY, scale } = viewport;
   const width = size.width || 1000, height = size.height || 700;
@@ -122,7 +124,7 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
 
   const dots = useMemo(() => {
     if (!showDots || level !== 0) return [];
-    const result: Array<{ id: string; cx: number; cy: number; hub: boolean; hue: number | null }> = [];
+    const result: Array<{ id: string; cx: number; cy: number; hub: boolean; hue: number | null; dim: boolean }> = [];
     for (const cluster of clusters) {
       if (!inView(cluster)) continue;
       const clusterHue = hues.get(cluster.id) ?? null;
@@ -131,14 +133,14 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
         if (!placement) continue;
         const cx = placement.x + placement.width / 2, cy = placement.y + placement.height / 2;
         if (cx < view.left || cx > view.right || cy < view.top || cy > view.bottom) continue;
-        result.push({ id, cx, cy, hub: id === cluster.hubId, hue: clusterHue });
+        result.push({ id, cx, cy, hub: id === cluster.hubId, hue: clusterHue, dim: !!matched && !matched.has(id) });
         if (result.length >= MAX_RENDERED_DOTS) return result;
       }
     }
     return result;
   // The visible rectangle is derived from the viewport and size below.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showDots, level, clusters, placements, hues, panX, panY, scale, width, height]);
+  }, [showDots, level, clusters, placements, hues, matched, panX, panY, scale, width, height]);
 
   const links = useMemo(() => {
     if (!showDots) return [];
@@ -222,28 +224,28 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
     // Dots sharing a color are drawn as one path: one fill per color rather
     // than one per dot. Hubs go on top, and the selected dot last.
     const radius = 4.5 * pixel;
-    const batches = new Map<string, { hue: number | null; hub: boolean; dots: typeof dots }>();
+    const batches = new Map<string, { hue: number | null; hub: boolean; dim?: boolean; dots: typeof dots }>();
     let selectedDot: (typeof dots)[number] | undefined;
     for (const dot of dots) {
       if (dot.id === selectedId) { selectedDot = dot; continue; }
-      const key = `${dot.hub ? 1 : 0}:${dot.hue}`;
+      const key = dot.dim ? `dim:${dot.hub ? 1 : 0}` : `${dot.hub ? 1 : 0}:${dot.hue}`;
       const batch = batches.get(key);
-      if (batch) batch.dots.push(dot); else batches.set(key, { hue: dot.hue, hub: dot.hub, dots: [dot] });
+      if (batch) batch.dots.push(dot); else batches.set(key, { hue: dot.hue, hub: dot.hub, dim: dot.dim, dots: [dot] });
     }
-    const drawDots = (batch: { hue: number | null; hub: boolean; dots: typeof dots }, selected = false) => {
+    const drawDots = (batch: { hue: number | null; hub: boolean; dim?: boolean; dots: typeof dots }, selected = false) => {
       const size = batch.hub ? radius * 1.7 : radius;
       context.beginPath();
       for (const dot of batch.dots) { context.moveTo(dot.cx + size, dot.cy); context.arc(dot.cx, dot.cy, size, 0, Math.PI * 2); }
-      context.fillStyle = batch.hue === null ? muted : `hsl(${batch.hue} 58% 48%)`;
-      context.globalAlpha = batch.hue === null ? 0.55 : 1;
+      context.fillStyle = batch.dim || batch.hue === null ? muted : `hsl(${batch.hue} 58% 48%)`;
+      context.globalAlpha = batch.dim ? 0.2 : batch.hue === null ? 0.55 : 1;
       context.fill();
       context.globalAlpha = 1;
       context.strokeStyle = selected ? ink : panel;
       context.lineWidth = pixel * (selected ? 3 : batch.hub ? 2 : 1);
       context.stroke();
     };
-    for (const batch of [...batches.values()].sort((a, b) => Number(a.hub) - Number(b.hub))) drawDots(batch);
-    if (selectedDot) drawDots({ hue: selectedDot.hue, hub: selectedDot.hub, dots: [selectedDot] }, true);
+    for (const batch of [...batches.values()].sort((a, b) => Number(!a.dim) - Number(!b.dim) || Number(a.hub) - Number(b.hub))) drawDots(batch);
+    if (selectedDot) drawDots({ hue: selectedDot.hue, hub: selectedDot.hub, dim: selectedDot.dim, dots: [selectedDot] }, true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showDots, dots, links, visible.length, level, panX, panY, scale, width, height, selectedId, hues]);
 
@@ -298,7 +300,7 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
     for (const cluster of ordered) {
       const text = labels[cluster.id]?.label ?? "";
       const fontSize = showDots && isUnlinked(cluster) ? 14 : showDots ? Math.min(level ? 20 : 22, 12 + Math.log2(cluster.memberIds.length) * (level ? 0.9 : 2)) : 14;
-      const countLength = ("level" in cluster ? 14 : 0) + String(cluster.memberIds.length).length + itemLabel[1].length + 2;
+      const countLength = ("level" in cluster ? 14 : 0) + String(cluster.memberIds.length).length + itemLabel[1].length + 2 + (matched ? 12 : 0);
       const labelWidth = Math.min(showDots ? 300 : 320, Math.max(90, text.length * fontSize * 0.56 + 28, countLength * 6.4 + 24));
       const centerX = panX + cluster.center.x * scale;
       const anchorY = showDots ? panY + cluster.center.y * scale - LABEL_HEIGHT / 2
@@ -311,7 +313,7 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
     }
     return result;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shownCircles, labels, panX, panY, scale, width, height, showDots, level]);
+  }, [shownCircles, labels, panX, panY, scale, width, height, showDots, level, matched]);
 
   const plural = (count: number, names: [string, string]) => `${count.toLocaleString("en-US")} ${names[count === 1 ? 0 : 1]}`;
   return <div ref={rootRef} className={`graph-clusters${showDots ? " is-dots" : ""}`} data-cluster-display={showDots ? "dots" : "cards"}
@@ -323,12 +325,14 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       const label = labels[cluster.id];
       const clusterHue = hue(cluster.id);
       const groups = "level" in cluster ? `${plural(cluster.childIds.length, cluster.level === 1 ? ["topic", "topics"] : ["area", "areas"])} · ` : "";
-      const count = `${groups}${plural(cluster.memberIds.length, itemLabel)}`;
+      const matchCount = matched ? cluster.memberIds.reduce((total, id) => total + (matched.has(id) ? 1 : 0), 0) : null;
+      const count = `${groups}${plural(cluster.memberIds.length, itemLabel)}${matchCount === null ? "" : ` · ${matchCount.toLocaleString()} match`}`;
       const name = label?.label ?? "this cluster";
       const selected = cluster.id === selectedClusterId;
       const labelButton = <button key={`${level}:${cluster.id}`} type="button" data-graph-ui="true" data-cluster-id={cluster.id}
         className={`graph-cluster-label${label?.generated ? " is-generated" : ""}${level ? " is-group" : ""}${onSelectCluster ? " is-selectable" : ""}${selected ? " is-selected" : ""}`}
         data-unlinked={clusterHue === null || undefined}
+        data-lens-empty={matchCount === 0 || undefined}
         style={{ left: rect.x, top: rect.y, width: rect.width, "--cluster-hue": clusterHue ?? 0, "--cluster-label-size": `${fontSize}px` } as CSSProperties}
         title={onSelectCluster ? `Show details about ${name}` : label?.generated ? `Topic named by Luna. Zoom into ${label.label}` : `Zoom into ${name}`}
         aria-label={onSelectCluster ? `${label?.label ?? "Cluster"}, ${count}` : `Zoom into ${label?.label ?? "cluster"}, ${count}`}
@@ -353,10 +357,12 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
 }
 
 /** Documents beyond the card budget, drawn as dots behind the cards. */
-export function GraphOverflowDots({ placements, viewport, size }: {
+export function GraphOverflowDots({ placements, viewport, size, matched = null }: {
   placements: ConversationGraphNodePlacement[];
   viewport: GraphViewport;
   size: { width: number; height: number };
+  /** Documents that pass the map's filters, drawn in the accent color over faint grey for the rest. */
+  matched?: Set<string> | null;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const width = size.width || 1000, height = size.height || 700;
@@ -368,17 +374,26 @@ export function GraphOverflowDots({ placements, viewport, size }: {
     canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
-    context.fillStyle = cssVar(canvas, "--muted", "#8a8a8a");
-    context.globalAlpha = 0.6;
-    context.beginPath();
-    for (const placement of placements) {
-      const x = viewport.x + (placement.x + placement.width / 2) * viewport.scale, y = viewport.y + (placement.y + placement.height / 2) * viewport.scale;
-      if (x < -3 || y < -3 || x > width + 3 || y > height + 3) continue;
-      context.moveTo(x + 3, y);
-      context.arc(x, y, 3, 0, Math.PI * 2);
+    const draw = (shown: (id: string) => boolean, color: string, alpha: number) => {
+      context.fillStyle = color;
+      context.globalAlpha = alpha;
+      context.beginPath();
+      for (const placement of placements) {
+        if (!shown(placement.conversationId)) continue;
+        const x = viewport.x + (placement.x + placement.width / 2) * viewport.scale, y = viewport.y + (placement.y + placement.height / 2) * viewport.scale;
+        if (x < -3 || y < -3 || x > width + 3 || y > height + 3) continue;
+        context.moveTo(x + 3, y);
+        context.arc(x, y, 3, 0, Math.PI * 2);
+      }
+      context.fill();
+    };
+    const muted = cssVar(canvas, "--muted", "#8a8a8a");
+    if (!matched) draw(() => true, muted, 0.6);
+    else {
+      draw((id) => !matched.has(id), muted, 0.2);
+      draw((id) => matched.has(id), cssVar(canvas, "--accent", "#3cc2a3"), 0.9);
     }
-    context.fill();
-  }, [placements, viewport, width, height]);
+  }, [placements, viewport, width, height, matched]);
   return <canvas ref={canvasRef} className="graph-cluster-canvas graph-overflow-dots" style={{ width, height }} aria-hidden="true"
     data-overflow-count={placements.length} />;
 }
