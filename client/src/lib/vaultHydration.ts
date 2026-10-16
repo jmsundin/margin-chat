@@ -117,6 +117,19 @@ export function preserveDeferredWorkspaceReferences(rendered: VaultFile, stored:
   }
   view.groups = groups;
 
+  // A session listing documents that are still in the cloud keeps them.
+  if (isRecord(before.sessions) && isRecord(before.sessions.items) && isRecord(view.sessions) && isRecord(view.sessions.items)) {
+    const items = { ...view.sessions.items };
+    for (const [sessionId, session] of Object.entries(before.sessions.items)) {
+      const current = items[sessionId];
+      if (!isRecord(session) || !Array.isArray(session.documentIds) || !isRecord(current)) continue;
+      const ids = Array.isArray(current.documentIds) ? current.documentIds : [];
+      const restored = restoreHidden(session.documentIds, ids, deferred);
+      if (restored) { changed = true; items[sessionId] = { ...current, documentIds: restored }; }
+    }
+    view.sessions = { ...view.sessions, items };
+  }
+
   if (isRecord(before.graphLayouts)) {
     const layouts = isRecord(view.graphLayouts) ? { ...view.graphLayouts } : {};
     for (const [id, layout] of Object.entries(before.graphLayouts)) {

@@ -5,6 +5,7 @@ export * from "./editableDocument.mjs";
 export * from "./marginDocuments.mjs";
 export * from "./documentLayout.mjs";
 export * from "./documentDock.mjs";
+export * from "./workspaceSessions.mjs";
 export * from "./markdown.mjs";
 export * from "./frontmatter.mjs";
 export * from "./relations.mjs";

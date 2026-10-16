@@ -82,7 +82,7 @@ const props = {
 const checks: string[] = [];
 function element(selector: string): any { const found = container.querySelector(selector); assert(found, `Missing ${selector}`); return found; }
 function panes() { return [...container.querySelectorAll(".conversation-canvas > [data-document-id]")].map((item) => item.getAttribute("data-document-id")); }
-function tab(id: string) { return element(`[data-document-tab-id="${id}"] [role="tab"]`); }
+function pane(id: string): any { return element(`.conversation-canvas > [data-document-id="${id}"]`); }
 function crumbs(): any[] { return [...container.querySelectorAll(".document-breadcrumb")]; }
 function trigger(index: number): any { return crumbs()[index].querySelector(".document-breadcrumb-trigger"); }
 function crumbLabels() { return crumbs().map((crumb) => crumb.querySelector(".document-breadcrumb-label").textContent); }
@@ -100,6 +100,10 @@ async function settle() {
   }
 }
 async function click(target: any) { assert(target, `Click target must exist after: ${checks.at(-1)}`); await act(async () => target.click()); await settle(); }
+async function focusPane(id: string) {
+  await act(async () => pane(id).dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" })));
+  await settle();
+}
 async function wait(ms: number) { await act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); }); }
 async function hover(target: any, type = "pointerover") {
   await act(async () => target.dispatchEvent(new browser.PointerEvent(type, { bubbles: true, pointerType: "mouse", relatedTarget: browser.document.body })));
@@ -112,13 +116,13 @@ try {
   await act(async () => root.render(createElement(WorkspaceApp, props)));
   await settle();
   const bar = element('nav[aria-label="Focused document path"]');
-  assert.equal(bar.previousElementSibling, element(".document-workspace-toolbar"), "The breadcrumb bar sits directly under the tab strip.");
+  assert.equal(bar.previousElementSibling, element(".document-workspace-toolbar"), "The breadcrumb bar sits directly under the workspace toolbar.");
   assert.deepEqual(panes(), ["main", "roofs"]);
   assert.deepEqual(crumbLabels(), ["Urban heat draft", "2 children"]);
   assert.equal(trigger(0).getAttribute("aria-current"), "page");
   assert.equal(trigger(0).getAttribute("aria-label"), "Urban heat draft (Peer documents: 2)");
   assert(back().disabled, "Back starts disabled.");
-  checks.push("one breadcrumb under the tabs shows the focused document's level and its children");
+  checks.push("one breadcrumb under the toolbar shows the focused document's level and its children");
 
   await hover(crumbs()[0]);
   await wait(80);
@@ -144,18 +148,18 @@ try {
   assert.equal(menu(), null);
   assert.equal(latest.activeConversationId, "interviews");
   assert.deepEqual(panes(), ["interviews", "roofs"], "Expand here fills the focused document's place.");
-  assert.equal(container.querySelector('[data-document-tab-id="main"]'), null, "The replaced document leaves the tab strip.");
+  assert.equal(container.querySelector('[data-document-id="main"]'), null, "The replaced document leaves the workspace.");
   assert.deepEqual(latest.conversations.interviews.document, interviews.document);
   assert.deepEqual(crumbLabels(), ["Interview notes"]);
   assert.equal(back().disabled, false);
   assert.equal(back().getAttribute("aria-label"), "Back to Urban heat draft");
-  checks.push("Expand here swaps the focused tab's document and enables Back");
+  checks.push("Expand here swaps the focused pane's document and enables Back");
 
-  await click(tab("roofs"));
+  await focusPane("roofs");
   assert.equal(latest.activeConversationId, "roofs");
-  assert.deepEqual(panes(), ["interviews", "roofs"], "Selecting a tab does not reopen its closed main document.");
-  assert.deepEqual(crumbLabels(), ["Urban heat draft", "Cool roofs evidence"], "The breadcrumb follows focus to the other tab.");
-  assert(back().disabled, "Back history belongs to the tab that navigated.");
+  assert.deepEqual(panes(), ["interviews", "roofs"], "Focusing a pane does not reopen its closed main document.");
+  assert.deepEqual(crumbLabels(), ["Urban heat draft", "Cool roofs evidence"], "The breadcrumb follows focus to the other pane.");
+  assert(back().disabled, "Back history belongs to the pane that navigated.");
   await hover(crumbs()[1]);
   await wait(250);
   assert.equal(menu().querySelector(".document-breadcrumb-menu-heading").textContent, "Children of Urban heat draft");
@@ -166,15 +170,15 @@ try {
   await hover(crumbs()[1], "pointerout");
   await wait(300);
   assert.equal(menu(), null, "Leaving the bar closes the level after a short grace period.");
-  checks.push("tabs keep their own documents and the breadcrumb follows the focused tab");
+  checks.push("panes keep their own documents and the breadcrumb follows the focused pane");
 
-  await click(tab("interviews"));
+  await focusPane("interviews");
   await click(back());
   assert.equal(latest.activeConversationId, "main");
   assert.deepEqual(panes(), ["main", "roofs"], "Back returns the previous document to the same place.");
-  assert.equal(container.querySelector('[data-document-tab-id="interviews"]'), null);
+  assert.equal(container.querySelector('[data-document-id="interviews"]'), null);
   assert(back().disabled);
-  checks.push("Back restores the previous document in the tab");
+  checks.push("Back restores the previous document in the pane");
 
   await click(trigger(0));
   assert(menu(), "Clicking a crumb opens its level immediately.");

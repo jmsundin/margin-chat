@@ -330,7 +330,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
             fileRecords.push(plannedRecords.get(note.id));
         }
     }
-    const { documentDock: _oldDocumentDock, ...previousView } = previousManifest?.workspace.view ?? {};
+    const { documentDock: _oldDocumentDock, sessions: _oldSessions, ...previousView } = previousManifest?.workspace.view ?? {};
     return {
         files,
         manifest: {

@@ -1,5 +1,5 @@
 import { createEmptyState } from "../initialState";
-import { migrateMarginNotes, normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock, normalizeConversationGraphFields } from "@margin-chat/workspace-contracts";
+import { migrateMarginNotes, normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock, normalizeWorkspaceSessions, normalizeConversationGraphFields } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { normalizeConversationGroups } from "./conversationGroups";
 import { normalizeGraphLayouts } from "./graphLayout";
@@ -152,9 +152,11 @@ export function hydratePersistedState(input: unknown): AppState | null {
       });
 
     const documentDock = normalizeDocumentDock(parsed.documentDock, conversations);
+    const sessions = normalizeWorkspaceSessions(parsed.sessions, conversations);
     return {
       activeConversationId: nextActiveConversationId,
       ...(documentDock ? { documentDock } : {}),
+      ...(sessions ? { sessions } : {}),
       conversations,
       defaultModelId,
       defaultServiceId,

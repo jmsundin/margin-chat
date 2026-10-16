@@ -23,6 +23,8 @@ export type {
   Conversation,
   DocumentDockNode,
   DocumentDockLayout,
+  WorkspaceSession,
+  WorkspaceSessions,
   DocumentDockPosition,
   GraphNodeLayout,
   ConversationGroup,

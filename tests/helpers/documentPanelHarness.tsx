@@ -240,11 +240,11 @@ try {
   checks.push("alternative preview, explicit acceptance, and undo preserve existing manual edits");
 
   await act(async () => replaceConversation({ ...latest, parentId: "source", branchAnchor: { id: "anchor", sourceConversationId: "source", sourceMessageId: "source-message", sourceBlockId: "source-block", startOffset: 0, endOffset: 13, quote: "A source idea", prompt: "Explore it", createdAt: date } }));
-  await click(button("← Source document"));
-  assert.deepEqual(opens, ["source"]);
+  assert.equal(element(".document-origin").querySelector("button"), null, "The parent is reached through the breadcrumb bar or compass, not a button in the origin row.");
+  assert.deepEqual(opens, [], "Showing a side document's origin opens nothing by itself.");
   assert.equal(element(".document-origin span").textContent, "A source idea");
   assert(editor("message:answer").isEditable);
-  checks.push("side documents retain the same editor with source navigation");
+  checks.push("side documents retain the same editor and show their source anchor");
 
   const emptyConversation = createMainConversation({ id: 'new-empty-document', createdAt: date });
   await act(async () => replaceConversation(emptyConversation));

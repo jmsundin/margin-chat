@@ -58,9 +58,9 @@ export interface DocumentPanelProps {
   marginWidth?: number;
   activeMarginNoteId?: string;
   /** Horizontal tabs of this document and its siblings, above its header. */
-  siblingTabs?: ReactNode;
-  parentDocument?: Pick<Conversation, "id" | "title">;
-  /** Replaces the "← parent" link with the full path of parents, as in Map View's side panel. */
+  /** Shown after the document's text, such as where to keep reading. */
+  bodyFooter?: ReactNode;
+  /** The full path of parents in the header, as in Map View's side panel. */
   parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
   groupControl?: ReactNode;
@@ -414,7 +414,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   }
 
   return <article className={`chat-panel document-panel${props.compact ? " is-compact-document" : ""}${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
-    {props.siblingTabs}
     {minimizedSideDocuments.length ? <nav className="document-side-restores" aria-label="Minimized side documents">
       {minimizedSideDocuments.map((sideDocument) => <button key={sideDocument.id} type="button"
         className="document-side-restore" aria-label={`Open side document: ${sideDocument.title || "Untitled document"}`}
@@ -431,7 +430,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {props.headerLeading}
           {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${conversation.title || "Untitled document"}`} title="Minimize document" onClick={props.onMinimize}>−</button> : null}
           {props.parentBreadcrumbs ? props.parentBreadcrumbs : conversation.parentId ? <div className="document-origin" ref={props.registerBranchOriginRef}>
-            <button type="button" title={`Open parent: ${props.parentDocument?.title || "Source document"}`} onClick={() => props.onOpenBranch(conversation.parentId!)}>← {props.parentDocument?.title || "Source document"}</button>
             {!document.marginNote && conversation.branchAnchor ? <span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span> : null}
           </div> : null}
           {conversation.vaultFile ? <div className="document-file-controls" ref={setFileControls} /> : null}
@@ -496,6 +494,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         : props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}
       {props.error ? <p className="document-error" role="alert">{props.error}</p> : null}
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
+      {props.bodyFooter}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>
       {props.marginNotes?.length && marginHeight ? <div className="document-margin-spacer" aria-hidden="true" style={{ top: marginHeight }}/> : null}
     </div>

@@ -171,8 +171,11 @@ try {
   const visibleDocument = [...container.querySelectorAll(".document-workspace")].find(isVisible);
   assert(visibleDocument, "Opening a tile activates Document mode.");
   assert(visibleDocument.textContent?.includes("Fresh unrelated document content."), "Retained views receive current workspace data when activated.");
-  assert.equal(visibleDocument.querySelector('[role="tab"][aria-selected="true"] .document-tab-title')?.textContent, "Unrelated project");
-  assert.equal(visibleDocument.querySelector('[aria-label="Document title"]'), null, "The document title appears in its tab without a duplicate body input.");
+  assert.equal(visibleDocument.querySelector('.document-breadcrumb-trigger[aria-current="page"] .document-breadcrumb-label')?.textContent, "Unrelated project",
+    "The breadcrumb bar follows the document opened from Tiles.");
+  assert.equal(visibleDocument.querySelector(".document-panel.is-active")?.textContent?.includes("Fresh unrelated document content."), true,
+    "The opened document is the focused pane.");
+  assert.equal(visibleDocument.querySelector('[aria-label="Document title"]'), null, "The document title appears in the breadcrumb bar without a duplicate body input.");
   checks.push("opening another document from Tiles refreshes the retained document view with its current content");
 
   async function shortcut(key: string, shiftKey = false) {

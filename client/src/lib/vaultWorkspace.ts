@@ -10,7 +10,7 @@ import {
 } from "./workspaceMarkdown";
 import type { VaultFile } from "./vaultTypes";
 import { addVaultFileDocuments, isVaultFileDocumentPath, withoutUntouchedVaultFileDocuments, type VaultFileListing } from "./vaultFileDocuments";
-import { normalizeDocumentDock } from "@margin-chat/workspace-contracts";
+import { normalizeDocumentDock, normalizeWorkspaceSessions } from "@margin-chat/workspace-contracts";
 
 /** Check the complete prospective working set before its durable index changes. */
 export function validateVaultWorkspace(files: Record<string, VaultFile>) {
@@ -90,7 +90,7 @@ export function createVaultFileRenderer() {
 
 export function hasSameAuthoredState(left: AppState, right: AppState) {
   return left.conversations === right.conversations && left.graphLayouts === right.graphLayouts
-    && left.documentDock === right.documentDock
+    && left.documentDock === right.documentDock && left.sessions === right.sessions
     && left.groups === right.groups && left.pinnedThreadIds === right.pinnedThreadIds
     && left.defaultModelId === right.defaultModelId && left.defaultServiceId === right.defaultServiceId;
 }
@@ -123,7 +123,8 @@ export function vaultToState(files: Record<string, VaultFile>, current: AppState
     if (withFiles !== parsed) {
       // A file's document can be open side by side before anything is saved for it.
       const documentDock = normalizeDocumentDock(workspace.manifest.workspace.view.documentDock, withFiles.conversations);
-      parsed = { ...withFiles, ...(documentDock ? { documentDock } : {}) };
+      const sessions = normalizeWorkspaceSessions(workspace.manifest.workspace.view.sessions, withFiles.conversations);
+      parsed = { ...withFiles, ...(documentDock ? { documentDock } : {}), ...(sessions ? { sessions } : {}) };
     }
   }
   const hydrated = parsed && hydratePersistedState(parsed);

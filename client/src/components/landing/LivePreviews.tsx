@@ -45,11 +45,9 @@ function DemoDocument({ vault, setVault, id, isActive, onSelection, onClearSelec
   const conversation = vault.conversations[id];
   const anchors = useMemo(() => Object.values(getAnchorsByMessageId(vault.conversations, id)).flat(), [vault.conversations, id]);
   if (!conversation) return null;
-  const parent = conversation.parentId ? vault.conversations[conversation.parentId] : undefined;
   return (
     <DocumentPanel
       conversation={conversation}
-      parentDocument={parent ? { id: parent.id, title: parent.title } : undefined}
       isActive={isActive}
       isSubmitting={false}
       aiControls={null}

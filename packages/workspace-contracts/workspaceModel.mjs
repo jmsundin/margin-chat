@@ -3,6 +3,7 @@ import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./ex
 import { normalizeEditableDocument } from "./editableDocument.mjs";
 import { normalizeDocumentLayout } from "./documentLayout.mjs";
 import { normalizeDocumentDock } from "./documentDock.mjs";
+import { normalizeWorkspaceSessions } from "./workspaceSessions.mjs";
 import { normalizeConversationGraphFields } from "./relations.mjs";
 export const WORKSPACE_DOCUMENT_SCHEMA_VERSION = 2;
 
@@ -79,6 +80,7 @@ export function createWorkspaceDocument(state) {
     schemaVersion: WORKSPACE_DOCUMENT_SCHEMA_VERSION,
     view: {
       ...(state.documentDock ? { documentDock: state.documentDock } : {}),
+      ...(state.sessions ? { sessions: state.sessions } : {}),
       activeItemId: state.activeConversationId,
       activeRootId: state.rootId,
       graphLayouts: state.graphLayouts,
@@ -202,6 +204,7 @@ function readWorkspaceDocument(input, mode) {
   return {
     activeConversationId: input.view.activeItemId,
     ...optionalDocumentDock(input.view.documentDock, conversations),
+    ...optionalSessions(input.view.sessions, conversations),
     conversations: { ...conversations },
     defaultModelId: input.preferences.defaultModelId,
     defaultServiceId: input.preferences.defaultServiceId,
@@ -221,6 +224,7 @@ export function createAppStateFromWorkspaceMetadata(metadata, conversations) {
   return {
     activeConversationId: metadata.view.activeItemId,
     ...optionalDocumentDock(metadata.view.documentDock, conversations),
+    ...optionalSessions(metadata.view.sessions, conversations),
     conversations,
     defaultModelId: metadata.preferences.defaultModelId,
     defaultServiceId: metadata.preferences.defaultServiceId,
@@ -230,6 +234,11 @@ export function createAppStateFromWorkspaceMetadata(metadata, conversations) {
     railOpen: metadata.view.railOpen,
     rootId: metadata.view.activeRootId
   };
+}
+
+function optionalSessions(input, conversations) {
+  const sessions = normalizeWorkspaceSessions(input, conversations);
+  return sessions ? { sessions } : {};
 }
 
 function optionalDocumentDock(input, conversations) {

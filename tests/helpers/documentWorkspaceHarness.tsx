@@ -36,6 +36,7 @@ Object.defineProperty(globalThis, "cancelAnimationFrame", { configurable: true, 
 const { createEmptyState, createMainConversation } = await import("../../client/src/initialState");
 const { getStateStorageKey } = await import("../../client/src/lib/appState");
 const { getEditableDocument } = await import("../../client/src/lib/editableDocument");
+const { getDocumentWorkspace } = await import("../../client/src/lib/documentWorkspace");
 const { buildConversationGraphScene } = await import("../../client/src/lib/conversationGraph");
 const initial = createEmptyState();
 const mainId = initial.rootId;
@@ -93,7 +94,42 @@ const checks: string[] = [];
 function element(selector: string): any { const found = container.querySelector(selector); assert(found, `Missing ${selector}`); return found; }
 function panes() { return [...container.querySelectorAll(".conversation-canvas > [data-document-id]")].map((item) => item.getAttribute("data-document-id")); }
 function pane(id: string) { return element(`.conversation-canvas > [data-document-id="${id}"]`); }
-function tab(id: string) { return element(`[data-document-tab-id="${id}"] [role="tab"]`); }
+function titleOf(id: string) { return latest.conversations[id].title || "Untitled document"; }
+/** The pane or pinned pane showing a document. */
+function documentPane(id: string): any { return element(`.conversation-canvas > [data-document-id="${id}"], [data-dock-document-id="${id}"]`); }
+/** A document's own options menu trigger, in its pane header. */
+function documentMenuTrigger(id: string): any {
+  const trigger = [...documentPane(id).querySelectorAll('[aria-haspopup="menu"]')].find((node: any) => node.getAttribute("aria-label") === `Options for ${titleOf(id)}`);
+  assert(trigger, `Missing document menu for ${id}`);
+  return trigger;
+}
+/** Clicking into a pane focuses it. */
+async function focusPane(id: string) {
+  await act(async () => documentPane(id).dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" })));
+  await settle();
+}
+async function openFromBreadcrumbs(id: string) {
+  await click((await breadcrumbRow(id)).querySelector(".document-breadcrumb-row-title"));
+}
+function focusedCrumbLabel() { return element('.document-breadcrumb-trigger[aria-current="page"] .document-breadcrumb-label').textContent; }
+function breadcrumbMenu(): any { return browser.document.querySelector(".document-breadcrumb-menu"); }
+/** Opens the breadcrumb level that lists `id` and returns its row, leaving the level open. */
+async function breadcrumbRow(id: string): Promise<any> {
+  for (const trigger of [...container.querySelectorAll(".document-breadcrumb-trigger")] as any[]) {
+    await click(trigger);
+    const found = breadcrumbMenu()?.querySelector(`[data-breadcrumb-document-id="${id}"]`);
+    if (found) return found;
+    if (breadcrumbMenu()) await click(trigger);
+  }
+  assert.fail(`No breadcrumb level lists ${id}`);
+}
+/** The tag a breadcrumb row shows for a document (Here, Open, Minimized or none), with the level closed again. */
+async function breadcrumbTag(id: string) {
+  const tag = (await breadcrumbRow(id)).querySelector(".document-breadcrumb-tag")?.textContent ?? null;
+  await click(browser.document.body);
+  assert.equal(breadcrumbMenu(), null);
+  return tag;
+}
 function sidebar(title: string) { return element(`.thread-item-main[title="${title}"]`); }
 function branch(title: string): any {
   const button = [...container.querySelectorAll(".branch-map-node")].find((item) => item.querySelector("strong")?.textContent === title);
@@ -119,7 +155,7 @@ async function settle() {
 }
 async function click(target: any) { assert(target, `Click target must exist after: ${checks.at(-1)}`); await act(async () => target.click()); await settle(); }
 async function rename(id: string, title: string) {
-  await click(element(`[data-document-tab-id="${id}"] .document-tab-menu-trigger`));
+  await click(documentMenuTrigger(id));
   await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.trim() === 'Rename document'));
   await act(async () => {
     const input = browser.document.querySelector('[aria-label="Document name"]')!;
@@ -140,8 +176,9 @@ try {
   await act(async () => root.render(createElement(WorkspaceApp, props)));
   await settle();
   assert.deepEqual(panes(), [mainId]);
-  assert.equal(container.querySelectorAll('[role="tablist"][aria-label="Document tabs"] [role="tab"]').length, 1, "Other root documents stay outside the current family tab strip.");
-  assert.equal(element('[aria-label="New side document"]').closest(".document-tabs"), element(".document-tabs"));
+  assert.equal(focusedCrumbLabel(), "Main research");
+  assert.equal(element('[aria-label="New side document"]').closest(".document-workspace-actions")?.closest(".document-workspace-toolbar"), element(".document-workspace-toolbar"),
+    "New side document lives in the workspace toolbar's actions.");
   assert.equal(container.querySelector('.thread-sidebar [aria-label="New side document"]'), null);
   const initialEditor = editor(mainId);
   const contentBeforeSidebarShortcuts = structuredClone(latest.conversations[mainId].document);
@@ -204,10 +241,10 @@ try {
   assert.deepEqual(panes(), [mainId, sideId]);
   await rename(sideId, "Side research");
   assert(sidebar("Side research"));
-  assert.equal(tab(sideId).getAttribute("aria-label"), "Side research");
-  checks.push("tab creation attaches a side document to the main document and exposes its renamed sidebar entry and tab");
+  assert.equal(focusedCrumbLabel(), "Side research", "The breadcrumb bar shows the renamed focused document.");
+  assert.equal(documentMenuTrigger(sideId).getAttribute("aria-label"), "Options for Side research");
+  checks.push("New side document attaches a side document to the main document and exposes its renamed sidebar entry and breadcrumb");
 
-  assert.equal(container.querySelector(".document-tab-minimize"), null, "Minimize is offered within document options rather than taking tab space.");
   const headerMenu = pane(sideId).querySelector('.document-header [aria-haspopup="menu"]');
   assert(headerMenu, "Every document exposes its menu beside its title.");
   await click(headerMenu);
@@ -223,7 +260,7 @@ try {
   await click(element('[aria-label="Document views"]'));
   await click(browser.document.querySelector('[role="menuitemcheckbox"][aria-controls="branch-navigation-map"]'));
   assert.equal(latest.railOpen, false);
-  checks.push("document headers share tab actions and the compact views menu opens and closes branches");
+  checks.push("document headers share document actions and the compact views menu opens and closes branches");
 
   const nestedId = await createSide();
   await rename(nestedId, "Nested research");
@@ -249,7 +286,9 @@ try {
   assert.equal(centered.at(-1), nestedId, "Opening a side document centers its pane while its ancestors remain visible.");
   const toolbar = element(".document-workspace-toolbar");
   const viewsTrigger = element('.document-workspace-toolbar [aria-label="Document views"]');
-  assert.equal(element('[role="tablist"][aria-label="Document tabs"]').closest(".document-workspace-toolbar"), toolbar, "Document tabs and the hierarchy control share one toolbar.");
+  assert.equal(viewsTrigger.closest(".document-workspace-toolbar"), toolbar);
+  assert.equal(element('[aria-label="New side document"]').closest(".document-workspace-toolbar"), toolbar, "Document actions and the hierarchy control share one toolbar.");
+  assert.equal(container.querySelector('[role="tablist"][aria-label="Document tabs"]'), null, "The toolbar no longer carries a document tab strip.");
   assert.equal(container.querySelector('[aria-label="Conversation hierarchy"]'), null, "The hierarchy no longer consumes a separate navigation row.");
   assert.equal(container.querySelector(".document-context-header"), null, "Side documents no longer repeat their parent context above the content.");
   await click(element('[aria-label="Document views"]'));
@@ -268,24 +307,11 @@ try {
   await click(element('[aria-label="Hide branches"]'));
   assert.equal(latest.railOpen, false);
   assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
-  checks.push("sidebar navigation scopes family tabs and the shared toolbar's branches control traverses ancestors and children without extra context rows");
-
-  const transfer = { effectAllowed: "", dropEffect: "", setData() {} };
-  for (const [id, type] of [[nestedId, "dragstart"], [mainId, "dragover"], [mainId, "drop"]]) {
-    const event = new browser.Event(type, { bubbles: true, cancelable: true });
-    Object.defineProperty(event, "dataTransfer", { value: transfer });
-    await act(async () => element(`[data-document-tab-id="${id}"]`).dispatchEvent(event));
-  }
-  await settle();
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId, sideId]);
-  assert.deepEqual(latest.conversations[mainId].documentLayout?.order, panes());
-  assert.equal(latest.conversations[nestedId].parentId, sideId);
-  assert.equal(latest.conversations[sideId].parentId, mainId);
-  checks.push("dragging a tab updates pane order and saved layout without changing document relationships");
+  checks.push("sidebar navigation scopes the family panes and the shared toolbar's branches control traverses ancestors and children without extra context rows");
 
   await menuAction(nestedId, "Minimize document");
   assert.equal(container.querySelector(`[data-document-id="${nestedId}"]`), null);
-  assert(tab(nestedId).getAttribute("aria-label").includes("minimized"));
+  assert.equal(await breadcrumbTag(nestedId), "Minimized", "The breadcrumb bar marks the minimized document.");
   assert.equal(latest.activeConversationId, sideId);
   assert.equal(latest.conversations[nestedId].parentId, sideId);
   assert.deepEqual(latest.conversations[nestedId].document, nestedContent);
@@ -295,7 +321,7 @@ try {
   assert.equal(restoreButtons(siblingId).length, 0, "Unrelated sibling panes do not display another parent's minimized child.");
   assert.equal(container.querySelectorAll('.document-side-restore[aria-label="Open side document: Nested research"]').length, 1);
   await click(restoreButton(sideId, "Nested research"));
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId, sideId]);
+  assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
   assert.deepEqual(latest.conversations[mainId].documentLayout?.order, panes());
   assert.equal(latest.activeConversationId, nestedId);
   assert.equal(centered.at(-1), nestedId);
@@ -306,11 +332,14 @@ try {
   checks.push("minimized children have one accessible restore icon only in their direct parent and reopen with content and tab order intact");
 
   await menuAction(nestedId, "Minimize document");
-  await click(tab(nestedId));
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId, sideId]);
+  assert.equal(latest.activeConversationId, sideId);
+  await click((await breadcrumbRow(nestedId)).querySelector('[aria-label="Open Nested research beside"]'));
+  assert.equal(latest.activeConversationId, sideId, "Open beside restores the minimized document without moving focus.");
+  await focusPane(nestedId);
+  assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
   assert.equal(latest.activeConversationId, nestedId);
   assert(editor(nestedId).getMarkdown().includes("durable nested observation"));
-  checks.push("minimize and tab restoration preserve sidebar presence, content, relationship, and visual position");
+  checks.push("minimize and breadcrumb restoration preserve sidebar presence, content, relationship, and visual position");
 
   await menuAction(sideId, "Minimize document");
   await menuAction(siblingId, "Minimize document");
@@ -320,12 +349,12 @@ try {
   assert.equal(restoreButtons(nestedId).length, 0);
   await click(restoreButton(mainId, "Sibling research"));
   assert.equal(latest.activeConversationId, siblingId);
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId]);
+  assert.deepEqual(panes(), [mainId, siblingId, nestedId]);
   assert.deepEqual(restoreButtons(mainId).map((button) => button.getAttribute("aria-label")), ["Open side document: Side research"]);
   assert(latest.conversations[mainId].documentLayout?.minimizedIds.includes(sideId), "Opening one icon leaves the other child minimized.");
   await click(restoreButton(mainId, "Side research"));
   assert.equal(latest.activeConversationId, sideId);
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId, sideId]);
+  assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
   assert.equal(restoreButtons(mainId).length, 0);
   checks.push("multiple minimized children have separate parent icons in saved tab order and each restores only its own document");
 
@@ -340,7 +369,7 @@ try {
   assert.equal(restoreButtons(mainId).length, 0);
   await click(restoreButton(sideId, "Nested research"));
   assert.equal(latest.activeConversationId, nestedId);
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId, sideId]);
+  assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
   assert.deepEqual(latest.conversations[nestedId].document, nestedContent);
   assert.equal(container.querySelector(".document-side-restore"), null);
   checks.push("restoring a minimized parent reveals its own minimized child icon and allows traversal down the saved document chain");
@@ -348,7 +377,7 @@ try {
   await menuAction(sideId, "Minimize document");
   await menuAction(nestedId, "Minimize document");
   await click(sidebar("Nested research"));
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId, sideId]);
+  assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
   assert.equal(latest.activeConversationId, nestedId);
   assert(!latest.conversations[mainId].documentLayout?.minimizedIds.includes(sideId));
   checks.push("opening a child from the sidebar restores minimized ancestors for graph traversal");
@@ -512,7 +541,7 @@ try {
   assert(scene.edges.some((edge) => edge.parentConversationId === sideId && edge.childConversationId === nestedId));
   checks.push("map scene retains main-to-side and nested child edges after document layout interactions");
   async function menuAction(id: string, label: string) {
-    await click(element(`[data-document-tab-id="${id}"] [aria-haspopup="menu"]`));
+    await click(documentMenuTrigger(id));
     const action = [...browser.document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((item) => (item.getAttribute("aria-label") ?? item.textContent?.trim().replace(/^✓\s*/, "")) === label);
     assert(action, `Missing menu action ${label}`);
     await click(action);
@@ -533,10 +562,7 @@ try {
     return titles;
   }
   assert.deepEqual(await childTitles(pane(sideId)), ["Nested research"], "An unpinned child owns its direct children, not its siblings.");
-  assert.deepEqual([...pane(sideId).querySelectorAll('.document-sibling-tabs [role="tab"]')].map((tab) => [tab.textContent, tab.getAttribute("aria-selected")]),
-    [["Side research", "true"], ["Sibling research", "false"]], "An opened child shows its siblings as tabs above its header, in creation order.");
-  assert.equal(pane(mainId).querySelector(".document-sibling-tabs"), null, "Top-level documents have no sibling tabs.");
-  assert.equal(pane(sideId).querySelector(".document-sibling-tabs")?.nextElementSibling?.classList.contains("document-header"), true, "Sibling tabs sit directly above the header.");
+  assert.equal(container.querySelector(".document-sibling-tabs"), null, "Siblings are reached through the breadcrumb bar and compass, not a row of tabs above the header.");
   assert.deepEqual(await childTitles(pane(mainId)), ["Side research", "Sibling research"]);
   const childTabs = await childItems(pane(mainId));
   assert(childTabs[1].textContent.includes("Minimized"));
@@ -545,10 +571,14 @@ try {
   assert(panes().includes(siblingId));
   assert.equal(centered.at(-1), siblingId);
   assert(panes().includes(mainId), "Opening children keeps their parent open.");
-  assert(pane(sideId).querySelector('.document-origin button').textContent.includes("Main research"), "Every child has a named parent link, including children without quoted anchors.");
-  await click(pane(sideId).querySelectorAll('.document-sibling-tabs [role="tab"]')[1]);
-  assert.equal(latest.activeConversationId, siblingId, "A sibling tab switches to that child.");
-  await click(pane(sideId).querySelector('.document-origin button'));
+  assert.equal(pane(sideId).querySelector('.document-origin button'), null, "The parent is reached through the breadcrumb bar or compass rather than a link in the header.");
+  await focusPane(sideId);
+  assert.equal(latest.activeConversationId, sideId);
+  await click(element('.document-compass [aria-label="Previous: Sibling research"]'));
+  assert.equal(latest.activeConversationId, siblingId, "The compass switches to the neighbouring side document.");
+  assert.equal(focusedCrumbLabel(), "Sibling research");
+  // Side documents share their source's level, so the source is listed in the same breadcrumb level.
+  await openFromBreadcrumbs(mainId);
   assert.equal(latest.activeConversationId, mainId);
   await menuAction(mainId, "Pin document");
   assert(dockPane(mainId).querySelector('.document-dock-pane-header .document-menu-trigger'));
@@ -563,7 +593,8 @@ try {
   assert(panes().includes(siblingId));
   await menuAction(mainId, "Unpin document");
   assert(pane(mainId).querySelector(".document-children-menu"), "Unpinning retains child navigation.");
-  await click(tab(nestedId));
+  await focusPane(nestedId);
+  assert.equal(latest.activeConversationId, nestedId);
   checks.push("all document headers expose direct children in saved order, restore minimized children and navigate back to named parents");
   pane(nestedId).querySelector(".document-body").scrollTop = 175;
   await menuAction(nestedId, "Pin document");
@@ -648,8 +679,8 @@ try {
   checks.push("unpinning restores scrolling documents and collapses the dock without deleting content");
 
   type ResizeEdge = "left" | "right";
-  const resizeDocumentIds = [nestedId, mainId, sideId];
-  assert.deepEqual(panes(), [nestedId, mainId, siblingId, sideId], "Resize coverage includes the first, a middle, and the last scrolling document.");
+  const resizeDocumentIds = [mainId, sideId, nestedId];
+  assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId], "Resize coverage includes the first, a middle, and the last scrolling document.");
   function documentWidths(): Record<string, number> {
     return Object.fromEntries(panes().map((id) => [id, Number.parseFloat(pane(id!).style.getPropertyValue("--chat-panel-width"))]));
   }
@@ -935,60 +966,68 @@ try {
   assert(controls.lastElementChild.classList.contains('document-close-button'));
   await click(controls.querySelector('.document-minimize-button'));
   assert(!panes().includes(sideId));
-  assert(tab(sideId).getAttribute('aria-label').includes('minimized'));
-  await click(tab(sideId));
+  assert.equal(await breadcrumbTag(sideId), 'Minimized');
+  await click(restoreButton(mainId, savedSide.title));
+  assert.equal(latest.activeConversationId, sideId);
   await click(pane(sideId).querySelector('.document-close-button'));
   assert(!panes().includes(sideId));
-  assert.equal(container.querySelector(`[data-document-tab-id="${sideId}"]`), null);
+  assert.equal(await breadcrumbTag(sideId), null, "A closed document is neither open nor minimized.");
+  assert(!getDocumentWorkspace(latest.conversations, mainId).minimizedIds.includes(sideId));
   assert.deepEqual(latest.conversations[sideId], savedSide);
   assert(sidebar(savedSide.title));
   await click((await childItems(pane(mainId))).find((button) => button.querySelector('.document-child-title')?.textContent === savedSide.title));
   assert(panes().includes(sideId));
-  assert(tab(sideId));
-  checks.push('header minimize retains the tab, close removes the tab without deleting, and Children reopens the saved document');
+  checks.push('header minimize keeps the document minimized, close hides it without deleting, and Children reopens the saved document');
 
   await menuAction(sideId, 'Close document');
-  assert.equal(container.querySelector(`[data-document-tab-id="${sideId}"]`), null);
+  assert(!panes().includes(sideId));
+  assert(getDocumentWorkspace(latest.conversations, mainId).closedIds.includes(sideId));
   await click(sidebar(savedSide.title));
   await menuAction(sideId, 'Pin document');
   await click(dockPane(sideId).querySelector('.document-close-button'));
   assert.equal(container.querySelector(`[data-dock-document-id="${sideId}"]`), null);
-  assert.equal(container.querySelector(`[data-document-tab-id="${sideId}"]`), null);
+  assert(!panes().includes(sideId));
+  assert(getDocumentWorkspace(latest.conversations, mainId).closedIds.includes(sideId));
   assert.deepEqual(latest.conversations[sideId], savedSide);
   await click(sidebar(savedSide.title));
   await menuAction(sideId, 'Pin document');
   await click(dockPane(sideId).querySelector('.document-minimize-button'));
   assert.equal(container.querySelector(`[data-dock-document-id="${sideId}"]`), null);
-  assert(tab(sideId).getAttribute('aria-label').includes('minimized'));
-  await click(tab(sideId));
-  checks.push('tab menus close documents and pinned pane minimize and close actions preserve the saved document');
+  assert(getDocumentWorkspace(latest.conversations, mainId).minimizedIds.includes(sideId));
+  assert.equal(await breadcrumbTag(sideId), 'Minimized');
+  await click(restoreButton(mainId, savedSide.title));
+  assert(pane(sideId));
+  checks.push('document menus close documents and pinned pane minimize and close actions preserve the saved document');
 
   const savedDocuments = Object.fromEntries(Object.values(latest.conversations).map((document) => [document.id, structuredClone({ document: document.document, parentId: document.parentId, childIds: document.childIds })]));
   await menuAction(sideId, 'Pin document');
-  const openIds = [...container.querySelectorAll('[data-document-tab-id]')].map((node) => node.getAttribute('data-document-tab-id'));
+  const openIds = [...panes(), ...[...container.querySelectorAll('[data-dock-document-id]')].map((node) => node.getAttribute('data-dock-document-id'))];
+  assert(openIds.includes(sideId) && openIds.includes(mainId));
   await click(element('[aria-label="Document views"]'));
   await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Minimize all documents'));
   assert.deepEqual(panes(), []);
   assert.equal(container.querySelector('[data-dock-document-id]'), null);
-  assert.deepEqual([...container.querySelectorAll('[data-document-tab-id]')].map((node) => node.getAttribute('data-document-tab-id')), openIds);
-  assert(openIds.every((id) => tab(id!).getAttribute('aria-label').includes('minimized')));
+  const afterMinimize = getDocumentWorkspace(latest.conversations, mainId);
+  assert(openIds.every((id) => afterMinimize.minimizedIds.includes(id!)), "Minimize all keeps every open document, pins included, as minimized.");
   await click(element('[aria-label="Document views"]'));
   assert([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Minimize all documents')?.hasAttribute('disabled'));
   await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Close all documents'));
-  assert.equal(container.querySelector('[data-document-tab-id]'), null);
+  const afterClose = getDocumentWorkspace(latest.conversations, mainId);
+  assert.deepEqual(afterClose.minimizedIds, [], "Close all leaves nothing minimized.");
+  assert(openIds.every((id) => afterClose.closedIds.includes(id!)));
   assert.deepEqual(panes(), []);
   await click(sidebar(savedSide.title));
   assert(pane(sideId));
-  checks.push('views menu minimizes all panes including pins while retaining tabs, then closes minimized tabs and allows reopening');
+  checks.push('views menu minimizes all panes including pins while keeping them minimized, then closes them and allows reopening');
 
   await click(sidebar('Unrelated project'));
   await menuAction('unrelated', 'Pin document');
   await click(sidebar(savedSide.title));
-  await click(tab('unrelated'));
+  await focusPane('unrelated');
+  assert.equal(latest.activeConversationId, 'unrelated');
   assert(dockPane('unrelated'));
   await click(element('[aria-label="Document views"]'));
   await click([...browser.document.querySelectorAll('[role="menuitem"]')].find((node) => node.textContent?.trim() === 'Close all documents'));
-  assert.equal(container.querySelector('[data-document-tab-id]'), null);
   assert.equal(container.querySelector('[data-dock-document-id]'), null);
   assert.deepEqual(panes(), []);
   assert.equal(latest.rootId, mainId, 'Closing a focused foreign pin keeps the current workspace empty.');
