@@ -62,6 +62,13 @@ export function workspaceReferenceIds(sidecar: VaultFile | undefined): Set<strin
     for (const id of Array.isArray(view?.pinnedItemIds) ? view.pinnedItemIds : []) if (typeof id === "string") ids.add(id);
     for (const id of [view?.activeItemId, view?.activeRootId]) if (typeof id === "string" && id) ids.add(id);
     const panes = view?.documentDock?.tree ? [view.documentDock.tree] : [];
+    // Every session's documents load up front, so switching sessions never finds a missing pane.
+    const sessions = view?.sessions?.items && typeof view.sessions.items === "object" ? Object.values(view.sessions.items) as any[] : [];
+    for (const session of sessions) {
+      for (const id of Array.isArray(session?.documentIds) ? session.documentIds : []) if (typeof id === "string") ids.add(id);
+      if (typeof session?.activeDocumentId === "string") ids.add(session.activeDocumentId);
+      if (session?.documentDock?.tree) panes.push(session.documentDock.tree);
+    }
     while (panes.length) {
       const pane = panes.pop();
       if (pane?.type === "pane" && typeof pane.documentId === "string") ids.add(pane.documentId);

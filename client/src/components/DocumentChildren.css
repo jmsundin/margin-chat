@@ -16,12 +16,3 @@
 .document-child-item small { color: var(--muted); font-size: 10.5px; }
 .document-child-item.is-minimized small { font-style: italic; }
 
-/* Horizontal sibling tabs above an opened child's header, styled like the workspace tabs. */
-.document-sibling-tabs { display: flex; align-items: stretch; gap: 4px; flex: 0 0 auto; min-width: 0; padding: 6px 10px 0; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--panel); border-radius: 10px 10px 0 0; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; overscroll-behavior-x: contain; }
-.document-panel .document-sibling-tab, .document-sibling-tab { display: flex; align-items: center; flex: 0 1 180px; min-width: 72px; max-width: 200px; min-height: 30px; margin-bottom: -1px; padding: 5px 10px; border: 1px solid transparent; border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--button-surface); color: var(--muted); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
-.document-sibling-tab:hover { background: var(--panel-strong); color: var(--ink); }
-.document-sibling-tab.is-active { background: var(--bg); color: var(--ink); border-color: var(--line); box-shadow: inset 0 2px var(--accent); cursor: default; }
-.document-sibling-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
-.document-sibling-tab-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.document-sibling-tabs::-webkit-scrollbar { height: 4px; }
-.document-sibling-tabs::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }

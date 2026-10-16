@@ -106,6 +106,16 @@ async function settle() {
   assert.equal(frames.size, 0, "Workspace animation effects settle.");
 }
 async function click(target: any) { await act(async () => target.click()); await settle(); }
+/** Go to a document through the breadcrumb level that lists it. */
+async function openFromBreadcrumbs(id: string) {
+  for (const trigger of [...browser.document.querySelectorAll(".document-breadcrumb-trigger")] as any[]) {
+    await click(trigger);
+    const row = browser.document.querySelector(`.document-breadcrumb-menu [data-breadcrumb-document-id="${id}"]`);
+    if (row) { await click(row.querySelector(".document-breadcrumb-row-title")); return; }
+    if (browser.document.querySelector(".document-breadcrumb-menu")) await click(trigger);
+  }
+  assert.fail(`No breadcrumb level lists ${id}`);
+}
 async function selectSourcePassage() {
   const current = editor("source-block");
   await act(async () => { current.commands.focus(); current.commands.setTextSelection(1); });
@@ -207,7 +217,8 @@ async function testMobileSelectionActions() {
     assert.deepEqual(latest.conversations.source.document!.blocks, sourceBlocks, "Completing a rewrite must not replace the original.");
     assert.equal(chatRequests.length, before + 1, "Streaming completion must not retrigger the action.");
     checks.push(`${label.toLowerCase()} immediately generates once with the selected source and preserves the original document`);
-    await click(element('[data-document-tab-id="source"] [role="tab"]'));
+    await openFromBreadcrumbs("source");
+    assert.equal(latest.activeConversationId, "source", "The breadcrumb bar returns to the source document.");
   }
 
   const { current: editingSource } = await selectSourcePassage();

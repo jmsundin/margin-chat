@@ -37,6 +37,7 @@ const { createEmptyState, createMainConversation, createSideConversation } = awa
 const { getStateStorageKey } = await import("../../client/src/lib/appState");
 const { getEditableDocument } = await import("../../client/src/lib/editableDocument");
 const { buildConversationGraphScene } = await import("../../client/src/lib/conversationGraph");
+const { getDocumentWorkspace } = await import("../../client/src/lib/documentWorkspace");
 const initial = createEmptyState();
 const mainId = initial.rootId;
 initial.conversations[mainId].title = "Main research";
@@ -101,7 +102,26 @@ const checks: string[] = [];
 function element(selector: string): any { const found = container.querySelector(selector); assert(found, `Missing ${selector}`); return found; }
 function panes() { return [...container.querySelectorAll(".conversation-canvas > [data-document-id]")].map((item) => item.getAttribute("data-document-id")); }
 function pane(id: string) { return element(`.conversation-canvas > [data-document-id="${id}"]`); }
-function tab(id: string) { return element(`[data-document-tab-id="${id}"] [role="tab"]`); }
+function breadcrumbMenu(): any { return browser.document.querySelector(".document-breadcrumb-menu"); }
+/** Opens the breadcrumb level that lists `id` and returns its row, leaving the level open. */
+async function breadcrumbRow(id: string): Promise<any> {
+  for (const trigger of [...container.querySelectorAll(".document-breadcrumb-trigger")] as any[]) {
+    await click(trigger);
+    const found = breadcrumbMenu()?.querySelector(`[data-breadcrumb-document-id="${id}"]`);
+    if (found) return found;
+    if (breadcrumbMenu()) await click(trigger);
+  }
+  assert.fail(`No breadcrumb level lists ${id}`);
+}
+/** Go to a document the way the breadcrumb bar offers it. */
+async function openFromBreadcrumbs(id: string) {
+  await click((await breadcrumbRow(id)).querySelector(".document-breadcrumb-row-title"));
+}
+/** Clicking into a pane focuses it. */
+async function focusPane(id: string) {
+  await act(async () => notePane(id).dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" })));
+  await settle();
+}
 function sidebar(title: string) { return element(`.thread-item-main[title="${title}"]`); }
 function branch(title: string): any {
   const button = [...container.querySelectorAll(".branch-map-node")].find((item) => item.querySelector("strong")?.textContent === title);
@@ -164,14 +184,13 @@ try {
   assert(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"] [data-document-id="${noteId}"]`));
   assert(notePane(noteId).querySelector('.document-panel.is-compact-document .rich-document-editor'));
   assert(sidebar('Keep this beside the main document.'));
-  assert(tab(noteId));
   assert.equal(notePane(noteId).querySelector('[aria-label="Document title"]'), null);
   assert.equal(notePane(noteId).querySelector('.document-margin-source'), null);
   assert.equal(notePane(noteId).querySelector('.document-children-trigger'), null);
   assert.equal(pane('full-side').querySelector('.document-children-trigger'), null);
   assert(notePane(noteId).querySelector('.document-margin-actions .document-presentation-toggle'));
   assert(notePane(noteId).querySelector('.document-margin-actions .document-menu-trigger'));
-  checks.push('legacy notes become child documents in the sidebar, tabs and parent margin');
+  checks.push('legacy notes become child documents in the sidebar and parent margin');
 
   const noteEditor = firstBlock(noteId);
   await act(async () => {
@@ -183,8 +202,9 @@ try {
   assert(latest.conversations[noteId].branchAnchor?.sourceBlockId);
   await click(element('[aria-label="Hide margin notes for Main research"]'));
   assert.equal(container.querySelector(`[data-document-id="${noteId}"]`), null);
-  await click(tab(noteId));
+  await openFromBreadcrumbs(noteId);
   assert.equal(latest.activeConversationId, noteId);
+  assert(notePane(noteId), "Going to the note reopens its margin column.");
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   checks.push('full rich editing persists and direct document navigation reopens a closed note column');
 
@@ -218,7 +238,8 @@ try {
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   checks.push('expansion and compact view preserve document identity, content and passage association');
 
-  await click(tab(mainId));
+  await focusPane(mainId);
+  assert.equal(latest.activeConversationId, mainId);
   await act(async () => {
     firstBlock(mainId).view.dom.focus();
     firstBlock(mainId).commands.setTextSelection({ from: 10, to: 14 });
@@ -309,11 +330,13 @@ try {
   checks.push('mini documents expose attachment and model controls and receive ordinary inline AI generations');
 
 
-  await click(tab(mainId));
+  await focusPane(mainId);
+  assert.equal(latest.activeConversationId, mainId);
   await documentAction(mainId, 'Pin document');
   assert(element(`[data-dock-document-id="${mainId}"]`).querySelector(`[data-document-id="${noteId}"]`));
   await click(element('[aria-label="Hide margin notes for Main research"]'));
-  await click(tab(nestedId));
+  await click(sidebar(latest.conversations[nestedId].title));
+  assert.equal(latest.activeConversationId, nestedId);
   assert(notePane(nestedId));
   checks.push('pinned parents retain notes, and nested navigation restores the ancestor columns');
 
@@ -324,14 +347,21 @@ try {
   assert(JSON.stringify(scene).includes(nestedId));
   checks.push('margin documents participate in document search and the graph');
   const savedNote = structuredClone(latest.conversations[passageId]);
-  await click(tab(passageId));
+  await focusPane(passageId);
+  assert.equal(latest.activeConversationId, passageId);
   await click(notePane(passageId).querySelector('.document-minimize-button'));
-  assert(tab(passageId).getAttribute('aria-label').includes('minimized'));
-  await click(tab(passageId));
-  await click(notePane(passageId).querySelector('.document-close-button'));
-  // A closed note keeps a dimmed tab after its open parent, so it can be reopened from the tab strip.
-  assert(tab(passageId).getAttribute('aria-label').includes('not open'));
   assert.equal(container.querySelector(`[data-document-id="${passageId}"]`), null);
+  assert(getDocumentWorkspace(latest.conversations, mainId).minimizedIds.includes(passageId));
+  assert.equal((await breadcrumbRow(passageId)).querySelector('.document-breadcrumb-tag')?.textContent, 'Minimized');
+  await click((await breadcrumbRow(passageId)).querySelector('.document-breadcrumb-row-title'));
+  assert.equal(latest.activeConversationId, passageId);
+  assert(notePane(passageId), "The breadcrumb bar restores a minimized note.");
+  await click(notePane(passageId).querySelector('.document-close-button'));
+  // A closed note stays listed under its parent in the breadcrumb bar, so it can be reopened from there.
+  assert.equal(container.querySelector(`[data-document-id="${passageId}"]`), null);
+  assert(getDocumentWorkspace(latest.conversations, mainId).closedIds.includes(passageId));
+  assert.equal((await breadcrumbRow(passageId)).querySelector('.document-breadcrumb-tag'), null);
+  await click(browser.document.body);
   assert.deepEqual(latest.conversations[passageId], savedNote);
   await click(sidebar(savedNote.title));
   assert(notePane(passageId));
@@ -344,7 +374,7 @@ try {
     assert.equal(container.querySelector('[data-dock-document-id]'), null);
     assert.deepEqual(latest.conversations[passageId], savedNote);
   }
-  assert.equal(container.querySelector('[data-document-tab-id]'), null);
+  assert.deepEqual(panes(), [], "Bulk actions leave no document panes open.");
   await click(sidebar(savedNote.title));
   assert(notePane(passageId));
   assert.deepEqual(latest.conversations[passageId], savedNote);

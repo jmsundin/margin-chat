@@ -288,6 +288,32 @@ export interface DocumentDockLayout {
   position?: DocumentDockPosition;
 }
 
+/** A named working space shown as a top tab, like a tmux session. A document may belong to several. */
+export interface WorkspaceSession {
+  id: string;
+  name: string;
+  /** "auto" names follow the session's documents; a rename makes it "user". */
+  nameSource: "auto" | "user";
+  /** The documents an automatic name was written for, so it is only renamed when they change. */
+  nameKey?: string;
+  color: string;
+  /** Documents that joined the session, oldest first. */
+  documentIds: string[];
+  /** The document that was focused when the session was last left. */
+  activeDocumentId?: string;
+  /** Pinned panes as they were when the session was last left. */
+  documentDock?: DocumentDockLayout;
+  createdAt: string;
+  lastOpenedAt: string;
+}
+
+export interface WorkspaceSessions {
+  items: Record<string, WorkspaceSession>;
+  /** Sessions shown in the tab bar, left to right. Others live only in the Sessions panel. */
+  tabIds: string[];
+  activeId: string | null;
+}
+
 export type DocumentRelationTypeId =
   | "supports" | "contradicts" | "cites" | "elaborates" | "example-of" | "part-of" | "depends-on" | "same-as";
 export type DocumentRelationOrigin = "user" | "ai" | "import";
@@ -371,5 +397,7 @@ export interface AppState {
   documentDock?: DocumentDockLayout;
   graphLayouts: Record<string, GraphNodeLayout>;
   groups: Record<string, ConversationGroup>;
+  /** Named workspaces shown as top tabs; absent until the first session is made. */
+  sessions?: WorkspaceSessions;
   conversations: Record<string, Conversation>;
 }

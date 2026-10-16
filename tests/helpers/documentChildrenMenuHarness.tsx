@@ -8,7 +8,6 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "Element",
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: DocumentChildrenMenu } = await import("../../client/src/components/DocumentChildrenMenu");
-const { default: DocumentSiblingTabs } = await import("../../client/src/components/DocumentSiblingTabs");
 const { createMainConversation } = await import("../../client/src/initialState");
 const parent = { ...createMainConversation({ id: "parent" }), title: "Angular" };
 const children = ["Components", "Services", "Routing"].map((title, i) => ({ ...createMainConversation({ id: `child-${i}` }), parentId: parent.id, title }));
@@ -53,20 +52,5 @@ try {
   await render([]);
   assert.equal(container.querySelector(".document-children-menu"), null, "Documents without children have no Children menu.");
 
-  selected.length = 0;
-  await act(async () => root.render(createElement(DocumentSiblingTabs, { parent, documents: children, currentDocumentId: children[1].id, onSelect: id => selected.push(id) })));
-  const tabs = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
-  assert.equal(container.querySelector('[role="tablist"]')?.getAttribute("aria-label"), "Children of Angular");
-  assert.deepEqual(tabs().map((tab) => tab.textContent), ["Components", "Services", "Routing"]);
-  assert.deepEqual(tabs().map((tab) => tab.getAttribute("aria-selected")), ["false", "true", "false"]);
-  await click(tabs()[1]);
-  assert.deepEqual(selected, [], "The current tab does nothing.");
-  await click(tabs()[2]);
-  assert.deepEqual(selected, [children[2].id]);
-  await act(async () => tabs()[1].focus());
-  await key(tabs()[1], "ArrowRight");
-  assert.equal(browser.document.activeElement, tabs()[2]);
-  await key(tabs()[2], "Home");
-  assert.equal(browser.document.activeElement, tabs()[0]);
   console.log(JSON.stringify({ passed: true }));
 } finally { await act(async () => root.unmount()); await browser.happyDOM.close(); }

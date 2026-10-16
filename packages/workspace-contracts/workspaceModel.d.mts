@@ -63,6 +63,7 @@ export interface WorkspaceDocument {
   schemaVersion: number;
   view: {
     documentDock?: AppState["documentDock"];
+    sessions?: AppState["sessions"];
     activeItemId: string;
     activeRootId: string;
     graphLayouts: Record<string, GraphNodeLayout>;

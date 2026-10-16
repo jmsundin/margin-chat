@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Conversation } from "../types";
 import { formatRelativeTime } from "../lib/conversationSearch";
@@ -18,6 +18,8 @@ interface Props {
   onBack: () => void;
   onExpand: (id: string) => void;
   onOpenBeside: (id: string) => void;
+  /** Controls at the bar's far end, such as how documents around this one are shown. */
+  trailing?: ReactNode;
 }
 
 const KIND_LABELS: Record<DocumentKind, string> = {
@@ -45,7 +47,7 @@ function titleOf(document: Conversation) {
 }
 
 /** One breadcrumb follows the focused document; each level lists its peers to expand here or open beside. */
-export default function DocumentBreadcrumbs({ conversations, focusedId, onScreenIds, minimizedIds, streamingIds, backTitle, onBack, onExpand, onOpenBeside }: Props) {
+export default function DocumentBreadcrumbs({ conversations, focusedId, onScreenIds, minimizedIds, streamingIds, backTitle, onBack, onExpand, onOpenBeside, trailing }: Props) {
   const { levels, children, childrenByParent } = useMemo(() => getDocumentBreadcrumbs(conversations, focusedId), [conversations, focusedId]);
   const focused = conversations[focusedId];
   const crumbs = [
@@ -225,6 +227,7 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
           </li>;
         })}
       </ol>
+      {trailing}
     </nav>
     {open && openIndex !== null ? createPortal(<nav ref={panel} id={panelId} className="document-breadcrumb-menu" aria-label={open.heading}
       onPointerEnter={cancelTimer} onPointerLeave={leave} onKeyDown={moveFocus}

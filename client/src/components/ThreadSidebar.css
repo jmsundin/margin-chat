@@ -374,3 +374,6 @@
   .sidebar-more-button { flex-basis: 44px; height: 44px; min-height: 44px; }
   .sidebar-secondary-row .sidebar-search-button { min-height: 44px; }
 }
+
+.sidebar-document-browser > .sidebar-sessions { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; }
+.sidebar-document-browser > .sidebar-sessions[hidden] { display: none; }

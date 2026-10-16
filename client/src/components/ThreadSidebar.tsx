@@ -21,6 +21,8 @@ const THREAD_MENU_HEIGHT = 212;
 const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
+type SidebarContent = "documents" | "groups" | "outline" | "sessions";
+
 interface ThreadSidebarProps {
   header?: ReactNode;
   /** The open vault and a way to switch it, at the foot of the sidebar. */
@@ -35,6 +37,8 @@ interface ThreadSidebarProps {
   fetchIndicator?: ReactNode;
   /** Documents that just streamed in from the cloud, briefly highlighted. */
   arrivingThreadIds?: ReadonlySet<string>;
+  /** The Sessions view: named workspaces to switch between and drag into the tab bar. */
+  sessionsPanel?: ReactNode;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
   mapExplorerActive?: boolean;
   onSelectSidebarSection?: (section: "chats" | "explore") => void;
@@ -354,6 +358,7 @@ export default function ThreadSidebar({
   cloudIndex,
   fetchIndicator,
   arrivingThreadIds,
+  sessionsPanel,
 }: ThreadSidebarProps) {
   const [openMenuState, setOpenMenuState] = useState<{
     left: number;
@@ -363,7 +368,7 @@ export default function ThreadSidebar({
   const [renameTarget, setRenameTarget] = useState<ThreadActionTarget | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<ThreadActionTarget | null>(null);
-  const [sidebarContent, setSidebarContent] = useState<"documents" | "groups" | "outline">("documents");
+  const [sidebarContent, setSidebarContent] = useState<SidebarContent>("documents");
   const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
   const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
   const [workspaceActionsOpen, setWorkspaceActionsOpen] = useState(false);
@@ -379,15 +384,16 @@ export default function ThreadSidebar({
   const listRef = useRef<HTMLDivElement>(null);
   const listScroll = useRef({ documents: 0, groups: 0 });
 
-  function showSidebarContent(next: "documents" | "groups" | "outline") {
-    if (sidebarContent !== "outline" && listRef.current) listScroll.current[sidebarContent] = listRef.current.scrollTop;
+  function showSidebarContent(next: SidebarContent) {
+    if ((sidebarContent === "documents" || sidebarContent === "groups") && listRef.current) listScroll.current[sidebarContent] = listRef.current.scrollTop;
     setOpenMenuState(null);
     setSidebarContent(next);
   }
 
   useLayoutEffect(() => {
-    if (sidebarContent !== "outline" && listRef.current) listRef.current.scrollTop = listScroll.current[sidebarContent];
+    if ((sidebarContent === "documents" || sidebarContent === "groups") && listRef.current) listRef.current.scrollTop = listScroll.current[sidebarContent];
   }, [sidebarContent]);
+
 
   useEffect(() => {
     if (sidebarContent === "outline") outlineTitleRef.current?.focus();
@@ -774,7 +780,7 @@ export default function ThreadSidebar({
   }
 
   function renderSortControl() {
-    if (!onDocumentSortChange || sidebarContent !== "documents") return null;
+    if (!onDocumentSortChange || (sidebarContent !== "documents" && sidebarContent !== "sessions")) return null;
     const unavailable = documentOrder?.meaningUnavailable ?? null;
     return (
       <div className="sidebar-sort">
@@ -1082,10 +1088,12 @@ export default function ThreadSidebar({
               aria-controls="sidebar-document-list" onClick={() => showSidebarContent("groups")}>Groups</button>
             <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
               aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button>
+            {sessionsPanel ? <button type="button" aria-label="Show sessions" aria-pressed={sidebarContent === "sessions"}
+              aria-controls="sidebar-sessions" onClick={() => showSidebarContent("sessions")}>Sessions</button> : null}
             {renderSortControl()}
           </div>
           {fetchIndicator}
-          <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline"}>
+          <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline" || sidebarContent === "sessions"}>
             {sidebarContent !== "groups" ? <>
               {documentOrder?.meaningLoading ? <p className="sidebar-sort-status" aria-live="polite">Sorting by meaning…</p>
                 : documentOrder?.note ? <p className="sidebar-sort-status">{documentOrder.note}</p> : null}
@@ -1230,6 +1238,9 @@ export default function ThreadSidebar({
             <ChatOutline key={activeThreadId} items={currentChatOutline} activeItemId={activeOutlineItemId} onSelect={onSelectOutlineItem}
               conversationId={activeThreadId} onNavigated={onOutlineNavigated} />
           </nav>
+          {sessionsPanel ? <div className="sidebar-sessions" id="sidebar-sessions" hidden={sidebarContent !== "sessions"}>
+            {sessionsPanel}
+          </div> : null}
         </div>
       )}
 
