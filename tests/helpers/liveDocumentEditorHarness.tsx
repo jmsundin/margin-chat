@@ -133,6 +133,15 @@ assert.equal(invocations.length, 1, "Space on an empty line opens Ask AI");
 assert.equal(invocations[0].markdown, "");
 assert.ok(latest.some((item) => item.id === invocations[0].blockId), "the empty line is saved before AI writes there");
 
+// Closing Ask AI keeps only the next Space plain; Space on another empty line still opens it.
+await act(async () => { invocations[0].restoreFocus(); });
+await type(" ");
+assert.equal(invocations.length, 1, "the first Space after closing Ask AI types a space");
+await act(async () => { setBlocks([...latest, block("list", "- one\n\n- two")]); });
+await select(text().indexOf("- one") + "- one\n".length);
+await type(" ");
+assert.equal(invocations.length, 2, "Space on a blank line inside a list opens Ask AI, even right after closing it");
+
 // Changes from outside (another tab, AI streaming) update the editor without becoming edits.
 const outsideCount = changes.length;
 await act(async () => { setBlocks(latest.map((item) => item.id === "intro" ? { ...item, content: "# Plan for Q4" } : item)); });

@@ -36,6 +36,9 @@ const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({
  */
 
 const externalSync = Annotation.define<boolean>();
+/** How long after the last keystroke the Ask AI button comes back under the caret. */
+const ASK_BUTTON_TYPING_PAUSE_MS = 900;
+const askButtonMeasure = {};
 
 interface AnchorRange { from: number; to: number; branchIds: string[]; noteIds: string[] }
 interface BlockMeta { authorship: string; messageId: string; streaming: boolean }
@@ -353,6 +356,11 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const pendingFocus = useRef<{ id: string; offset: number; to?: number } | null>(null);
   const suppressSpace = useRef(false);
   const literalSpace = useRef(false);
+  // The Ask AI button under the caret; it steps aside while you type.
+  const [askButton, setAskButton] = useState<{ top: number; left: number } | null>(null);
+  const typing = useRef(false);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const mobileRef = useRef(false);
   const vaultMedia = useVaultMedia();
   const vaultMediaRef = useRef(vaultMedia);
   vaultMediaRef.current = vaultMedia;
@@ -499,7 +507,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   function aiInput(view: EditorView, from: number, to: number, text: string) {
     if (!latest.current.onInvokeAI || view.composing || view.state.readOnly) return false;
     if (text !== " " && text !== " " && !/^\.[  ]$/.test(text)) { suppressSpace.current = false; literalSpace.current = false; return false; }
-    if (suppressSpace.current || literalSpace.current) return false;
+    if (literalSpace.current) return false;
+    // Only the first Space after closing Ask AI types a plain space; it doesn't keep Space from opening it later.
+    if (suppressSpace.current) { suppressSpace.current = false; return false; }
     const main = view.state.selection.main;
     if (!main.empty || inCode(view.state, main.head)) return false;
     const live = stateOf(view);
@@ -509,7 +519,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const line = view.state.doc.lineAt(main.head);
     const preceding = view.state.doc.sliceString(line.from, main.head);
     if (/^[  ]$/.test(text) && from === main.head && to === main.head) {
-      if (block.from === block.to) return invoke(view, 1);
+      // An empty line, whether it is its own block or a blank line inside one, such as a list just ended.
+      if (block.from === block.to || line.from === line.to) return invoke(view, 1);
       if (/\S[  ]$/.test(preceding)) {
         view.dispatch({ changes: { from: main.head - 1, to: main.head } });
         return invoke(view, 2);
@@ -520,6 +531,25 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       return invoke(view, 2);
     }
     return false;
+  }
+
+  function placeAskButton(view: EditorView) {
+    const clear = () => setAskButton((current) => current ? null : current);
+    if (!latest.current.onInvokeAI || !view.hasFocus || mobileRef.current || typing.current || view.state.readOnly) { clear(); return; }
+    const live = stateOf(view);
+    const main = view.state.selection.main;
+    if (live.mode === "reading" || !main.empty || !live.layout.length || inCode(view.state, main.head)
+      || live.locked.has(live.layout[blockIndexAt(live.layout, main.head)].id)) { clear(); return; }
+    view.requestMeasure({
+      key: askButtonMeasure,
+      read(target) {
+        const caret = target.coordsAtPos(target.state.selection.main.head);
+        const root = rootRef.current?.getBoundingClientRect();
+        if (!caret || !root) return null;
+        return { top: Math.round(caret.bottom - root.top + 4), left: Math.round(Math.max(0, Math.min(caret.left - root.left - 4, root.width - 96))) };
+      },
+      write(position) { setAskButton((current) => position && current && current.top === position.top && current.left === position.left ? current : position); },
+    });
   }
 
   function enter(view: EditorView) {
@@ -644,8 +674,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, notifySelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke });
-  handlers.current = { commit, notifySelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke };
+  const handlers = useRef({ commit, notifySelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton });
+  handlers.current = { commit, notifySelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton };
+  mobileRef.current = mobileKeyboard.mobile;
   const compartments = useMemo(() => ({ editable: new Compartment(), attributes: new Compartment(), history: new Compartment() }), []);
 
   function editableExtensions(currentMode: LivePreviewMode): Extension {
@@ -726,6 +757,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             if (event.key !== " " && event.key !== "Unidentified" && event.key !== "Process") suppressSpace.current = false;
             return false;
           },
+          mousedown() { suppressSpace.current = false; return false; },
           mouseup(_event, view) { queueMicrotask(() => { if (viewRef.current === view) proxy.current.notifySelection(view); }); return false; },
           paste(event, view) {
             const files = [...event.clipboardData?.files ?? []].filter(isMediaFile);
@@ -741,7 +773,17 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           },
         }),
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && !update.transactions.some((tr) => tr.annotation(externalSync))) proxy.current.commit(update);
+          const external = update.transactions.some((tr) => tr.annotation(externalSync));
+          if (update.docChanged && !external) proxy.current.commit(update);
+          if (update.docChanged && update.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"))) {
+            typing.current = true;
+            clearTimeout(typingTimer.current);
+            typingTimer.current = setTimeout(() => {
+              typing.current = false;
+              if (viewRef.current === update.view) proxy.current.placeAskButton(update.view);
+            }, ASK_BUTTON_TYPING_PAUSE_MS);
+          }
+          if (update.selectionSet || update.focusChanged || update.docChanged || update.geometryChanged) proxy.current.placeAskButton(update.view);
           if (update.selectionSet || update.focusChanged) {
             if (update.selectionSet) proxy.current.notifySelection(update.view);
             const live = update.state.field(liveField);
@@ -758,6 +800,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return () => {
       widgets.view = null;
       viewRef.current = null;
+      clearTimeout(typingTimer.current);
+      typing.current = false;
       view.destroy();
     };
     // The editor is created once per document; later prop changes are synchronized below.
@@ -988,6 +1032,10 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       </button>)}
     </div>
     <div ref={hostRef} className="live-document-host" />
+    {askButton && props.onInvokeAI && editable && editorFocused && mode !== "reading" && !mobileKeyboard.mobile
+      && <button type="button" className="live-document-ask" style={{ top: askButton.top, left: askButton.left }}
+        aria-label="Ask AI here" title="Ask AI here (or press Space on an empty line)"
+        onMouseDown={(event) => event.preventDefault()} onClick={() => { const view = viewRef.current; if (view) invoke(view); }}>✦ Ask AI</button>}
     {insertMenu && <div className="live-document-insert" style={{ top: insertMenu.top }}>
       <button type="button" className="live-document-insert-toggle" aria-label="Insert media, a drawing, a table or an equation" aria-expanded={insertMenu.open} title="Insert"
         onMouseDown={(event) => event.preventDefault()} onClick={() => setInsertMenu({ ...insertMenu, open: !insertMenu.open })}>+</button>
