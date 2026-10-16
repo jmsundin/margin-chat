@@ -28,5 +28,6 @@ export function usePdfNavigation(conversationId: string | null | undefined): Pdf
   return useSyncExternalStore(
     (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     () => conversationId ? open.get(conversationId) ?? null : null,
+    () => null,
   );
 }
