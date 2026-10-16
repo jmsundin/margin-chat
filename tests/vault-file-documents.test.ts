@@ -159,19 +159,19 @@ describe("a connected folder's PDFs and images", () => {
       "Books/Big.pdf": big, ".obsidian/icon.png": new Uint8Array([1]), "Other/data.bin": new Uint8Array([2]) });
     const listing = await listConnectedDirectoryFiles(folder.handle);
     expect(listing.map((file) => [file.path, Boolean(file.localOnly)]).sort()).toEqual([["Books/Big.pdf", false], ["Papers/Small.pdf", false], ["Pics/Cat.jpg", false]]);
-    const companions = await readConnectedDirectoryCompanions(folder.handle, undefined, listing);
+    const { files: companions, stats } = await readConnectedDirectoryCompanions(folder.handle, undefined, listing);
     expect(Object.keys(companions).sort()).toEqual(["Books/Big.pdf", "Papers/Small.pdf", "Pics/Cat.jpg"]);
     expect(companions["Papers/Small.pdf"]).toEqual({ content: "JVBERg==", encoding: "base64", contentType: "application/pdf" });
     expect(companions["Pics/Cat.jpg"].contentType).toBe("image/jpeg");
     expect(companions["Books/Big.pdf"].content.length).toBe(Math.ceil(big.length / 3) * 4);
 
     // A rescan reuses an unchanged large file instead of reading and encoding it again.
-    const again = await readConnectedDirectoryCompanions(folder.handle, companions, await listConnectedDirectoryFiles(folder.handle));
-    expect(again["Books/Big.pdf"]).toBe(companions["Books/Big.pdf"]);
+    const again = await readConnectedDirectoryCompanions(folder.handle, companions, await listConnectedDirectoryFiles(folder.handle), stats);
+    expect(again.files["Books/Big.pdf"]).toBe(companions["Books/Big.pdf"]);
 
     // A PDF that arrives from another device is written into the folder; unchanged files aren't touched.
     const next = { ...companions, "Scans/Receipt.png": { content: "AQI=", encoding: "base64" as const, contentType: "image/png" } };
-    await syncConnectedDirectoryCompanions(folder.handle, next, companions);
+    await syncConnectedDirectoryCompanions(folder.handle, next, companions, stats);
     expect(folder.files.get("Scans/Receipt.png")).toEqual(new Uint8Array([1, 2]));
     expect(folder.files.get("Books/Big.pdf")).toBe(big);
   });

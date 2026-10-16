@@ -59,8 +59,14 @@ export interface VaultSnapshot {
   directoryBaselines?: Record<string, {
     files: Record<string, VaultFile>;
     manifest: MarkdownWorkspaceManifest;
+    /** For files in `files`, the size and date on disk when those bytes were read, so an unchanged file isn't read again. */
+    stats?: DirectoryStats;
   }>;
 }
+
+/** A file's size and modification time (milliseconds) on disk when its bytes were read. */
+export type DirectoryFileStat = [size: number, lastModified: number];
+export type DirectoryStats = Record<string, DirectoryFileStat>;
 
 export interface VaultChange {
   path: string;
@@ -165,6 +171,17 @@ export function validVaultPath(path: string): boolean {
   return path.length > 0 && path.length <= 512 && !/[\\\u0000-\u001f\u007f\ud800-\udfff]/u.test(path)
     && !path.startsWith("/") && path.split("/").every((part) => part && part !== "." && part !== "..")
     && !path.split("/").some((part) => ["__proto__", "constructor", "prototype"].includes(part));
+}
+
+/** Folder stats as stored on this device; anything malformed is left out, so that file is read again. */
+export function validDirectoryStats(input: unknown): DirectoryStats | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const stats: DirectoryStats = {};
+  for (const [path, stat] of Object.entries(input)) {
+    if (validVaultPath(path) && Array.isArray(stat) && stat.length === 2
+      && stat.every((value) => Number.isSafeInteger(value) && value >= 0) && stat[1] > 0) stats[path] = [stat[0], stat[1]];
+  }
+  return stats;
 }
 
 export function sameVaultFile(a: VaultFile | null | undefined, b: VaultFile | null | undefined): boolean {

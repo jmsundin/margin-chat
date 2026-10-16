@@ -64,8 +64,10 @@ split into passages on the server (`server/vault/passages.mjs`,
 at headings where they can, carry the heading path and the block they start in,
 and overlap a little where a long section is cut. Private margin comments are
 never indexed. The open app keeps the index current: it asks the server to index
-what changed on load and every few minutes (`useVaultPassageIndex`), and each
-request handles a batch, so only edited sources cost anything.
+what changed on load, every few minutes, and about 15 seconds after a sync
+uploads changes (`useVaultPassageIndex`; a burst of saves makes one run, no more
+than two minutes after the first), and each request handles a batch, so only
+edited sources cost anything.
 
 PDFs in the cloud vault (synced from a connected folder, migration
 `0017_vault_file_passages`) are indexed too. The server reads each PDF at its

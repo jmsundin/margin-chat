@@ -1078,7 +1078,7 @@ function WorkspaceAppContent({
     groups: state.groups,
     pending: Object.values(pendingConversationIds).some(Boolean),
   });
-  const vaultIndex = useVaultPassageIndex({ userId: user.id, active: vault.ready && vault.storageMode === "server" });
+  const vaultIndex = useVaultPassageIndex({ userId: user.id, active: vault.ready && vault.storageMode === "server", uploads: vault.uploads });
   const jevCategoryKey = JSON.stringify(jev.categories);
   const jevGroupSuggestionKey = JSON.stringify(jev.groupSuggestions);
   useEffect(() => {

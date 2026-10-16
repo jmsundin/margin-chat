@@ -9,7 +9,7 @@ import {
   type MarkdownWorkspace,
 } from "./workspaceMarkdown";
 import { createWorkspaceDocument } from "./workspaceModel";
-import { validVaultPath, type VaultFile } from "./vaultTypes";
+import { validVaultPath, type DirectoryFileStat, type DirectoryStats, type VaultFile } from "./vaultTypes";
 import { readFreshBytes, readFreshFile, readFreshText, scanWhileFolderSettles } from "./fileSnapshot";
 import { isSyncableVaultFileSize, isVaultFileDocumentPath, vaultFileContentType, type VaultFileListing } from "./vaultFileDocuments";
 
@@ -71,6 +71,8 @@ export interface LocalDirectoryWorkspace {
   savedAt: string;
   /** Each Markdown file's modification time on disk. */
   modifiedAt?: Record<string, string>;
+  /** For Markdown files whose text the scan read (or reused), the size and date of those bytes. */
+  stats: DirectoryStats;
 }
 
 export function canSyncWorkspaceToCloud(user: AuthenticatedUser) {
@@ -341,16 +343,19 @@ export async function clearLocalDirectory(userId: string) {
   database.close();
 }
 
+/** `stats` holds the size and date each of `previousFiles` was read at; a file still the same isn't read again. */
 export async function readLocalDirectoryWorkspace(
   userId: string,
   fallbackManifest?: MarkdownWorkspaceManifest,
   previousFiles?: Record<string, string>,
   directoryId?: string,
+  stats?: DirectoryStats,
 ): Promise<LocalDirectoryWorkspace | null> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
   const snapshot = await scanWhileFolderSettles(handle.name, () => readDirectoryWorkspace(handle, userId,
-    fallbackManifest ?? observedDirectoryWorkspaces.get(userId)?.manifest, previousFiles ?? observedDirectoryWorkspaces.get(userId)?.files));
+    fallbackManifest ?? observedDirectoryWorkspaces.get(userId)?.manifest, previousFiles ?? observedDirectoryWorkspaces.get(userId)?.files,
+    previousFiles ? stats : undefined));
   observedDirectoryWorkspaces.set(userId, snapshot.workspace);
   return snapshot;
 }
@@ -392,12 +397,57 @@ export function writeLocalDirectoryState(
   return writeLocalDirectoryWorkspace(userId, createMarkdownWorkspace(record.state, record.savedAt, previous ?? undefined), previous);
 }
 
-/** Also exported to allow storage adapters to verify identical conflict semantics. */
+/** What a write to the connected folder starts from and should leave there. */
+export interface DirectoryWrite {
+  /** The Markdown to leave in the folder, and the folder's Markdown as last read. */
+  workspace: MarkdownWorkspace;
+  expectedWorkspace: MarkdownWorkspace | null;
+  /** The vault's files, whose companions (Margin Chat's folders, settings, PDFs and images) go to the folder, and the folder's companions as last read. */
+  files: Record<string, VaultFile>;
+  expectedFiles: Record<string, VaultFile>;
+  /** The size and date each file as last read was read at. */
+  stats?: DirectoryStats;
+}
+
+/**
+ * Writes the vault into the connected folder. Once the folder's Markdown checks out against what was last read,
+ * companions go first, then Markdown, so a deleted document's copy in .margin-chat/trash/ (or a replaced one's in
+ * .margin-chat/history/) is on disk before the document leaves or changes. Returns the companions now in the
+ * folder and the stats of the files it left as they were.
+ */
+export async function writeConnectedDirectory(handle: FileSystemDirectoryHandle, userId: string, write: DirectoryWrite) {
+  let companions: { files: Record<string, VaultFile>; stats: DirectoryStats } | undefined;
+  const markdownStats = await writeConnectedDirectoryWorkspace(handle, userId, write.workspace, write.expectedWorkspace, write.stats, async () => {
+    companions = await syncConnectedDirectoryCompanions(handle, write.files, write.expectedFiles, write.stats);
+  });
+  return { companions: companions!.files, stats: { ...markdownStats, ...companions!.stats } };
+}
+
+/** Writes the vault into the connected folder (see writeConnectedDirectory); null when it can't be written now. */
+export function writeLocalDirectory(userId: string, write: DirectoryWrite, directoryId?: string) {
+  const result = directoryWriteQueue.then(async () => {
+    const status = await getLocalDirectoryStatus(userId);
+    if (status.permission !== "granted") return null;
+    const handle = await getStoredDirectoryHandle(userId, directoryId);
+    if (!handle) return null;
+    const written = await writeConnectedDirectory(handle, userId, write);
+    observedDirectoryWorkspaces.set(userId, write.workspace);
+    return { status, ...written };
+  });
+  directoryWriteQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+/**
+ * Also exported to allow storage adapters to verify identical conflict semantics. A Markdown file still the size and
+ * date `knownStats` holds for it keeps its text from `previousFiles` instead of being read again.
+ */
 export async function readDirectoryWorkspace(
   handle: FileSystemDirectoryHandle,
   userId: string,
   fallbackManifest?: MarkdownWorkspaceManifest,
   previousFiles?: Record<string, string>,
+  knownStats?: DirectoryStats,
 ): Promise<LocalDirectoryWorkspace> {
   const manifestRaw = await readDirectoryFileOrNull(handle, getLocalWorkspaceFileName(userId));
   let manifest = fallbackManifest;
@@ -417,30 +467,38 @@ export async function readDirectoryWorkspace(
     if (!parsedManifest) throw new Error("The connected folder settings are invalid. Its files were preserved.");
     manifest = parsedManifest;
   }
-  const scanned = await scanMarkdownDirectory(handle);
+  const scanned = await scanMarkdownDirectory(handle, previousFiles && knownStats ? { files: previousFiles, stats: knownStats } : undefined);
   if (legacy && !Object.keys(scanned.files).length) {
-    return { workspace: createMarkdownWorkspace(legacy.state, legacy.savedAt), savedAt: legacy.savedAt };
+    return { workspace: createMarkdownWorkspace(legacy.state, legacy.savedAt), savedAt: legacy.savedAt, stats: {} };
   }
   const workspace = discoverMarkdownWorkspace(scanned.files, manifest, previousFiles);
   if (!parseMarkdownWorkspace(workspace.manifest, workspace.files)) {
     throw new Error("A connected Markdown file could not be read. Its files were preserved.");
   }
   const savedAt = new Date(Math.max(scanned.latestModified, Date.parse(workspace.manifest.savedAt))).toISOString();
-  return { workspace, savedAt, modifiedAt: scanned.modifiedAt };
+  return { workspace, savedAt, modifiedAt: scanned.modifiedAt, stats: scanned.stats };
 }
 
+/**
+ * `knownStats` holds the size and date each of expectedWorkspace's files was read at. Returns the same for the
+ * Markdown files this write left as they were; a file it wrote or removed has none until a scan reads it.
+ * `beforeChanges` runs once the folder's Markdown checks out, before any of it changes.
+ */
 export async function writeConnectedDirectoryWorkspace(
   handle: FileSystemDirectoryHandle,
   userId: string,
   workspace: MarkdownWorkspace,
   expectedWorkspace: MarkdownWorkspace | null,
-) {
+  knownStats?: DirectoryStats,
+  beforeChanges?: () => Promise<void>,
+): Promise<DirectoryStats> {
   for (const path of Object.keys(workspace.files)) {
     if (!isSafeMarkdownPath(path)) throw new Error(`Invalid Markdown path: ${path}`);
   }
   const manifestName = getLocalWorkspaceFileName(userId);
   const manifestBefore = await readDirectoryFileOrNull(handle, manifestName);
-  const actual = await scanWhileFolderSettles(handle.name, () => readDirectoryWorkspace(handle, userId, expectedWorkspace?.manifest, expectedWorkspace?.files));
+  const actual = await scanWhileFolderSettles(handle.name, () => readDirectoryWorkspace(handle, userId, expectedWorkspace?.manifest, expectedWorkspace?.files,
+    expectedWorkspace ? knownStats : undefined));
   const expectedFiles = markdownContentFiles(expectedWorkspace?.files ?? {});
   const desiredFiles = markdownContentFiles(workspace.files);
   const conflicts = changedFilePaths(expectedFiles, actual.workspace.files);
@@ -448,7 +506,9 @@ export async function writeConnectedDirectoryWorkspace(
     conflicts.push(manifestName);
   }
   if (conflicts.length) throw new LocalDirectoryConflictError(conflicts);
-  const diskFiles = (await scanWhileFolderSettles(handle.name, () => scanMarkdownDirectory(handle))).files;
+  // Look again for changes made during that read; a file unchanged since then costs only its size and date.
+  const disk = await scanWhileFolderSettles(handle.name, () => scanMarkdownDirectory(handle, { files: actual.workspace.files, stats: actual.stats }));
+  const diskFiles = disk.files;
   // A legacy JSON-only workspace has synthetic Markdown in its read snapshot.
   const legacyOnly = manifestBefore !== null && Object.keys(diskFiles).length === 0
     && parseLocalWorkspaceRecord(JSON.parse(manifestBefore)) !== null;
@@ -457,19 +517,23 @@ export async function writeConnectedDirectoryWorkspace(
     if (changedDuringRead.length) throw new LocalDirectoryConflictError(changedDuringRead);
   }
   const changes = changedFilePaths(diskFiles, desiredFiles);
+  await beforeChanges?.();
+  const stats = { ...disk.stats };
   for (const path of changes) {
+    // Check once more immediately before changing a file, from its bytes on disk; external editors do not share our queue.
     const current = await readDirectoryFileOrNull(handle, path);
-    // Check once more immediately before changing a file; external editors do not share our queue.
     if (current !== (diskFiles[path] ?? null)) throw new LocalDirectoryConflictError([path]);
     const next = desiredFiles[path];
+    delete stats[path];
     if (next === undefined) await removeDirectoryFile(handle, path);
     else await writeDirectoryFile(handle, path, next);
   }
-  if (await readDirectoryFileOrNull(handle, manifestName) !== manifestBefore) {
-    throw new LocalDirectoryConflictError([manifestName]);
-  }
   const serializedManifest = `${JSON.stringify(workspace.manifest, null, 2)}\n`;
-  if (serializedManifest !== manifestBefore) await writeDirectoryFile(handle, manifestName, serializedManifest);
+  if (serializedManifest !== manifestBefore) {
+    if (await readDirectoryFileOrNull(handle, manifestName) !== manifestBefore) throw new LocalDirectoryConflictError([manifestName]);
+    await writeDirectoryFile(handle, manifestName, serializedManifest);
+  }
+  return stats;
 }
 
 function changedFilePaths(left: Record<string, string>, right: Record<string, string>) {
@@ -497,10 +561,11 @@ export async function readLocalDirectoryCompanions(
   knownFiles?: Record<string, VaultFile>,
   directoryId?: string,
   listing?: VaultFileListing[],
-): Promise<Record<string, VaultFile> | null> {
+  stats?: DirectoryStats,
+): Promise<{ files: Record<string, VaultFile>; stats: DirectoryStats } | null> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  return scanWhileFolderSettles(handle.name, () => readConnectedDirectoryCompanions(handle, knownFiles, listing));
+  return scanWhileFolderSettles(handle.name, () => readConnectedDirectoryCompanions(handle, knownFiles, listing, stats));
 }
 
 /** The PDFs and images in the connected folder, with their sizes and dates. */
@@ -563,27 +628,19 @@ export async function readLocalDirectoryFile(userId: string, path: string, direc
   }
 }
 
-export function syncLocalDirectoryCompanions(
-  userId: string,
-  nextFiles: Record<string, VaultFile>,
-  expectedFiles: Record<string, VaultFile>,
-  directoryId?: string,
-): Promise<Record<string, VaultFile> | null> {
-  const write = directoryWriteQueue.then(async () => {
-    const handle = await getStoredDirectoryHandle(userId, directoryId);
-    if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-    return syncConnectedDirectoryCompanions(handle, nextFiles, expectedFiles);
-  });
-  directoryWriteQueue = write.then(() => undefined, () => undefined);
-  return write;
-}
+const CONFLICT_NOTE = /^(?:_conflicts|\.margin-chat\/history)\/[^/]+\/conflict\.json$/i;
 
-/** Scan managed namespaces and use prior file records as encoding/type hints. */
+/**
+ * Scan managed namespaces and use prior file records as encoding/type hints. A file still the size and date
+ * `knownStats` holds for it keeps its record from `knownFiles` instead of being read again. Returns the files
+ * and, for those read or kept, the size and date of their bytes.
+ */
 export async function readConnectedDirectoryCompanions(
   handle: FileSystemDirectoryHandle,
   knownFiles?: Record<string, VaultFile>,
   listing?: VaultFileListing[],
-): Promise<Record<string, VaultFile>> {
+  knownStats?: DirectoryStats,
+): Promise<{ files: Record<string, VaultFile>; stats: DirectoryStats }> {
   const known = knownFiles ? companionFiles(knownFiles) : null;
   const files = listing ?? await listConnectedDirectoryFiles(handle);
   // A file too large to sync stays in the folder; it opens from there on this device.
@@ -597,26 +654,38 @@ export async function readConnectedDirectoryCompanions(
     }
   }
   const bytesByPath = new Map<string, Uint8Array>();
-  const listed = new Map(files.map((file) => [file.path, file]));
   const reused: Record<string, VaultFile> = {};
+  const stats: DirectoryStats = {};
   for (const path of new Set(paths)) {
     if (!validVaultPath(path) || !isCompanionPath(path)) throw new Error(`Invalid vault companion path: ${path}`);
-    // A large PDF or image unchanged on disk since the last scan isn't read again.
-    const cached = largeFileCache.get(path);
-    const listing = listed.get(path);
-    if (cached && listing?.modifiedAt && cached.size === listing.size && cached.modifiedAt === listing.modifiedAt
-      && (!known?.[path] || known[path].content === cached.file.content)) {
-      reused[path] = cached.file;
-      continue;
+    // A file unchanged on disk since its known record was read costs only its size and date.
+    const record = known?.[path];
+    const stat = knownStats?.[path];
+    if (record && stat) {
+      const file = await directoryFileInfoOrNull(handle, path);
+      if (!file) continue;
+      if (unchangedSince(file, stat)) {
+        reused[path] = record;
+        stats[path] = stat;
+        continue;
+      }
     }
-    const bytes = await readDirectoryBytesOrNull(handle, path);
-    if (bytes !== null) bytesByPath.set(path, bytes);
+    const read = await readDirectoryBytesWithStat(handle, path);
+    if (!read) continue;
+    bytesByPath.set(path, read.bytes);
+    if (read.stat) stats[path] = read.stat;
   }
-  const binaryCopies = new Set<string>();
+  // Conflict notes say which copies hold binary bytes, whether read now or kept from before.
+  const notes: string[] = [];
   for (const [path, bytes] of bytesByPath) {
-    if (!/^(?:_conflicts|\.margin-chat\/history)\/[^/]+\/conflict\.json$/i.test(path)) continue;
+    if (!CONFLICT_NOTE.test(path)) continue;
+    try { notes.push(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { /* Not a readable note. */ }
+  }
+  for (const [path, file] of Object.entries(reused)) if (CONFLICT_NOTE.test(path) && !file.encoding) notes.push(file.content);
+  const binaryCopies = new Set<string>();
+  for (const note of notes) {
     try {
-      const descriptor = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      const descriptor = JSON.parse(note);
       if (descriptor.localEncoding === "base64" && typeof descriptor.copy === "string") binaryCopies.add(descriptor.copy);
       if (descriptor.remoteEncoding === "base64" && typeof descriptor.remoteCopy === "string") binaryCopies.add(descriptor.remoteCopy);
       if (descriptor.baseEncoding === "base64" && typeof descriptor.baseCopy === "string") binaryCopies.add(descriptor.baseCopy);
@@ -639,58 +708,61 @@ export async function readConnectedDirectoryCompanions(
       ...(metadata?.contentType ? { contentType: metadata.contentType }
         : isVaultFileDocumentPath(path) ? { contentType: vaultFileContentType(path) } : {}),
     };
-    const listing = listed.get(path);
-    if (listing?.modifiedAt && bytes.length > LARGE_FILE_BYTES) {
-      largeFileCache.set(path, { size: bytes.length, modifiedAt: listing.modifiedAt, file: companions[path] });
-    } else largeFileCache.delete(path);
   }
-  for (const path of largeFileCache.keys()) if (!companions[path]) largeFileCache.delete(path);
-  return companions;
+  return { files: companions, stats };
 }
-
-/** Large folder files as last read, by path, so a rescan skips the unchanged ones. */
-const LARGE_FILE_BYTES = 1024 * 1024;
-const largeFileCache = new Map<string, { size?: number; modifiedAt: string; file: VaultFile }>();
 
 const sameCompanion = (a: VaultFile | undefined, b: VaultFile | undefined) =>
   !!a && !!b && a.content === b.content && (a.encoding ?? "utf8") === (b.encoding ?? "utf8");
 
-/** Reject changed bytes before a batch and again immediately before each mutation. */
+/**
+ * Reject changed bytes before a batch and again immediately before each mutation. Every file is written before
+ * any is removed, so a deleted document's copy in .margin-chat/trash/ is on disk first. `knownStats` holds the size
+ * and date each expected file was read at; returns the same for the files this sync left as they were.
+ */
 export async function syncConnectedDirectoryCompanions(
   handle: FileSystemDirectoryHandle,
   nextFiles: Record<string, VaultFile>,
   expectedFiles: Record<string, VaultFile>,
-): Promise<Record<string, VaultFile>> {
+  knownStats?: DirectoryStats,
+): Promise<{ files: Record<string, VaultFile>; stats: DirectoryStats }> {
   const next = companionFiles(nextFiles);
   const expected = companionFiles(expectedFiles);
   const all = [...new Set([...Object.keys(next), ...Object.keys(expected)])];
-  // A large file this write leaves alone, still the size and date it had when last read, isn't read and compared again.
+  const stats: DirectoryStats = {};
+  // A file this write leaves alone, still the size and date it had when its expected bytes were read, isn't read and compared again.
   const unchangedOnDisk = new Set<string>();
   for (const path of all) {
-    const cached = largeFileCache.get(path);
-    if (!cached || !sameCompanion(next[path], expected[path]) || cached.file.content !== expected[path].content) continue;
+    const stat = knownStats?.[path];
+    if (!stat || !sameCompanion(next[path], expected[path])) continue;
     const file = await directoryFileInfoOrNull(handle, path);
-    if (file && file.size === cached.size && file.lastModified > 0 && new Date(file.lastModified).toISOString() === cached.modifiedAt) unchangedOnDisk.add(path);
+    if (file && unchangedSince(file, stat)) {
+      unchangedOnDisk.add(path);
+      stats[path] = stat;
+    }
   }
   const paths = all.filter((path) => !unchangedOnDisk.has(path));
   const expectedBytes = new Map(paths.map((path) => [path, expected[path] ? companionBytes(expected[path]) : null]));
   const nextBytes = new Map(paths.map((path) => [path, next[path] ? companionBytes(next[path]) : null]));
   const conflicts: string[] = [];
+  const changes: string[] = [];
   for (const path of paths) {
-    const current = await readDirectoryBytesOrNull(handle, path);
-    if (!sameBytes(current, expectedBytes.get(path)!)) conflicts.push(path);
+    const current = await readDirectoryBytesWithStat(handle, path);
+    if (!sameBytes(current?.bytes ?? null, expectedBytes.get(path)!)) conflicts.push(path);
+    else if (!sameBytes(nextBytes.get(path)!, expectedBytes.get(path)!)) changes.push(path);
+    else if (current?.stat) stats[path] = current.stat;
   }
   if (conflicts.length) throw new LocalDirectoryConflictError(conflicts);
-  for (const path of paths) {
+  const writes = changes.filter((path) => nextBytes.get(path) !== null);
+  const removals = changes.filter((path) => nextBytes.get(path) === null);
+  for (const path of [...writes, ...removals]) {
     const bytes = nextBytes.get(path)!;
-    const previous = expectedBytes.get(path)!;
-    if (sameBytes(bytes, previous)) continue;
-    if (!sameBytes(await readDirectoryBytesOrNull(handle, path), previous)) throw new LocalDirectoryConflictError([path]);
+    if (!sameBytes(await readDirectoryBytesOrNull(handle, path), expectedBytes.get(path)!)) throw new LocalDirectoryConflictError([path]);
     if (bytes === null) await removeDirectoryFile(handle, path);
     else await writeDirectoryBytes(handle, path, bytes);
   }
   // Copies of the records; their (possibly very large) contents are immutable strings, shared.
-  return Object.fromEntries(Object.entries(next).map(([path, file]) => [path, { ...file }]));
+  return { files: Object.fromEntries(Object.entries(next).map(([path, file]) => [path, { ...file }])), stats };
 }
 
 async function collectCompanionPaths(handle: FileSystemDirectoryHandle, prefix: string, paths: string[]) {
@@ -738,6 +810,34 @@ async function readDirectoryBytesOrNull(handle: FileSystemDirectoryHandle, path:
   }
 }
 
+/**
+ * Some disks keep file dates only to the second (or two), so a file saved again within the same second keeps its
+ * date, and can keep its size. Bytes read this soon after their file's date get no stats and are read again.
+ */
+const SAME_DATE_MS = 3_000;
+
+/** The size and date of the bytes just read from this snapshot, or null when they couldn't tell a later change apart. */
+function statWhenRead(file: File, readStartedAt: number): DirectoryFileStat | null {
+  return file.lastModified > 0 && readStartedAt - file.lastModified >= SAME_DATE_MS ? [file.size, file.lastModified] : null;
+}
+
+/** Whether a file is still the size and date it had when its saved bytes were read. */
+function unchangedSince(file: File, stat: DirectoryFileStat | undefined) {
+  return !!stat && stat[1] > 0 && file.size === stat[0] && file.lastModified === stat[1];
+}
+
+/** A file's bytes with, from the same snapshot, their size and date; null when the file doesn't exist. */
+async function readDirectoryBytesWithStat(handle: FileSystemDirectoryHandle, path: string) {
+  const readStartedAt = Date.now();
+  try {
+    return await readFreshFile(() => getNestedFileHandle(handle, path),
+      async (file) => ({ bytes: new Uint8Array(await file.arrayBuffer()), stat: statWhenRead(file, readStartedAt) }));
+  } catch (error) {
+    if (isDomExceptionNamed(error, "NotFoundError")) return null;
+    throw error;
+  }
+}
+
 async function writeDirectoryBytes(handle: FileSystemDirectoryHandle, path: string, bytes: Uint8Array) {
   const segments = path.split("/");
   const name = segments.pop()!;
@@ -763,9 +863,14 @@ async function readDirectoryFileOrNull(handle: FileSystemDirectoryHandle, path: 
   }
 }
 
-async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, prefix = "") {
+/**
+ * Reads the folder's Markdown files. A file still the size and date `known.stats` holds for it keeps its text from
+ * `known.files`, so an unchanged folder costs its listing and file sizes and dates, not its files' text.
+ */
+async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, known?: { files: Record<string, string>; stats: DirectoryStats }, prefix = "") {
   const files: Record<string, string> = {};
   const modifiedAt: Record<string, string> = {};
+  const stats: DirectoryStats = {};
   let latestModified = 0;
   const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
   for await (const [name, entry] of entries.entries()) {
@@ -773,19 +878,34 @@ async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, prefix =
     const path = prefix ? `${prefix}/${name}` : name;
     if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
     if (entry.kind === "directory") {
-      const child = await scanMarkdownDirectory(entry as FileSystemDirectoryHandle, path);
+      const child = await scanMarkdownDirectory(entry as FileSystemDirectoryHandle, known, path);
       Object.assign(files, child.files);
       Object.assign(modifiedAt, child.modifiedAt);
+      Object.assign(stats, child.stats);
       latestModified = Math.max(latestModified, child.latestModified);
     } else if (isSafeMarkdownPath(path)) {
-      const { text, lastModified } = await readFreshFile(async () => entry as FileSystemFileHandle,
-        async (file) => ({ text: await file.text(), lastModified: file.lastModified }));
-      files[path] = text;
+      const fileHandle = entry as FileSystemFileHandle;
+      const saved = known && Object.hasOwn(known.files, path) ? known.files[path] : undefined;
+      const stat = known && Object.hasOwn(known.stats, path) ? known.stats[path] : undefined;
+      const current = saved !== undefined && stat ? await fileHandle.getFile() : null;
+      let lastModified: number;
+      if (current && unchangedSince(current, stat)) {
+        files[path] = saved!;
+        stats[path] = stat!;
+        lastModified = current.lastModified;
+      } else {
+        const readStartedAt = Date.now();
+        const read = await readFreshFile(async () => fileHandle, async (file) => ({ text: await file.text(), file }));
+        files[path] = read.text;
+        const readStat = statWhenRead(read.file, readStartedAt);
+        if (readStat) stats[path] = readStat;
+        lastModified = read.file.lastModified;
+      }
       if (lastModified > 0) modifiedAt[path] = new Date(lastModified).toISOString();
       latestModified = Math.max(latestModified, lastModified);
     }
   }
-  return { files, modifiedAt, latestModified };
+  return { files, modifiedAt, stats, latestModified };
 }
 
 async function removeDirectoryFile(handle: FileSystemDirectoryHandle, path: string) {
@@ -942,8 +1062,11 @@ async function writeDirectoryFile(
 
   try {
     await writable.write(contents);
-  } finally {
     await writable.close();
+  } catch (error) {
+    // Aborting leaves the file as it was; closing would replace it with whatever was written before the failure.
+    await writable.abort?.().catch(() => undefined);
+    throw error;
   }
 }
 

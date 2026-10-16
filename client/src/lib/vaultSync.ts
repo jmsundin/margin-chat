@@ -296,6 +296,8 @@ const notFound = (error: unknown) => !!error && typeof error === "object" && "st
 export class VaultSync {
   /** Reports cloud downloads while they run, so the interface can show that fetching is happening. */
   onDownload?: (progress: VaultDownloadProgress) => void;
+  /** Called after the cloud saved a batch of this device's changes. */
+  onUpload?: () => void;
 
   constructor(readonly store: VaultStore, readonly transport: VaultTransport) {}
 
@@ -732,6 +734,7 @@ export class VaultSync {
         await this.write(snapshot);
         return snapshot;
       });
+      this.onUpload?.();
       if (!pendingVaultChanges(acknowledged).length) return acknowledged;
       // Drain additional batches without charging successful writes against the
       // bounded conflict retry budget. Each pass reads newly saved local edits.
