@@ -29,7 +29,7 @@ export default function PdfSidebar(props: PdfSidebarProps) {
     </div>
     {props.tab === "thumbnails"
       ? <Thumbnails {...props} />
-      : <Contents outline={props.outline} currentPage={props.currentPage} labels={props.labels} onJump={props.onJump} />}
+      : <PdfContents inTab outline={props.outline} currentPage={props.currentPage} labels={props.labels} onJump={props.onJump} />}
   </aside>;
 }
 
@@ -136,7 +136,8 @@ function Thumbnail(props: { pdf: PDFDocumentProxy; number: number; size: PageSiz
 
 /* ---------- Contents ---------- */
 
-function Contents(props: { outline: PdfOutlineEntry[] | null; currentPage: number; labels: string[] | null; onJump: (page: number, top?: number | null) => void }) {
+/** The PDF's bookmarks as a tree that follows the reader. Also shown in the left panel's Outline. */
+export function PdfContents(props: { outline: PdfOutlineEntry[] | null; currentPage: number; labels: string[] | null; onJump: (page: number, top?: number | null) => void; inTab?: boolean }) {
   const current = useMemo(() => props.outline ? currentPdfOutlineEntry(props.outline, props.currentPage) : null, [props.outline, props.currentPage]);
   const [open, setOpen] = useState<Set<string>>(() => new Set());
   const listRef = useRef<HTMLDivElement>(null);
@@ -187,5 +188,5 @@ function Contents(props: { outline: PdfOutlineEntry[] | null; currentPage: numbe
       </li>;
     })}
   </ul>;
-  return <div className="vault-pdf-outline" ref={listRef} role="tabpanel" aria-label="Contents">{render(props.outline, 0)}</div>;
+  return <div className="vault-pdf-outline" ref={listRef} role={props.inTab ? "tabpanel" : undefined} aria-label={props.inTab ? "Contents" : undefined}>{render(props.outline, 0)}</div>;
 }

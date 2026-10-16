@@ -77,19 +77,28 @@
 .vault-file-pdf .vault-pdf-thumbnail.is-current .vault-pdf-thumbnail-page { box-shadow: 0 0 0 2px var(--accent); }
 .vault-file-pdf .vault-pdf-thumbnail.is-current .vault-pdf-thumbnail-label { color: var(--accent); font-weight: 600; }
 
-.vault-file-pdf .vault-pdf-outline { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 4px 14px; }
-.vault-file-pdf .vault-pdf-outline-list { list-style: none; margin: 0; padding: 0; }
-.vault-file-pdf .vault-pdf-outline-entry { display: flex; align-items: flex-start; gap: 0; border-radius: 6px; }
-.vault-file-pdf .vault-pdf-outline-entry:hover { background: var(--panel-strong); }
-.vault-file-pdf .vault-pdf-outline-entry.is-current { background: var(--accent-soft); }
-.vault-file-pdf .vault-pdf-outline-toggle { flex: 0 0 18px; height: 24px; display: grid; place-items: center; padding: 0; background: none; border: 0; color: var(--muted); cursor: pointer; }
-.vault-file-pdf .vault-pdf-outline-toggle svg { width: 12px; height: 12px; transition: transform .12s ease; }
-.vault-file-pdf .vault-pdf-outline-title { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 6px; padding: 4px 6px 4px 2px; background: none; border: 0; color: var(--ink); font: inherit; font-size: .8rem; line-height: 1.3; text-align: left; cursor: pointer; }
-.vault-file-pdf .vault-pdf-outline-title > span:first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-.vault-file-pdf .vault-pdf-outline-title:disabled { color: var(--muted); cursor: default; }
-.vault-file-pdf .vault-pdf-outline-page { flex: none; color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
-.vault-file-pdf .vault-pdf-outline-entry.is-current .vault-pdf-outline-title { font-weight: 600; }
-.vault-file-pdf .vault-pdf-outline-empty { padding: 14px 12px; color: var(--muted); font-size: .8rem; line-height: 1.45; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 6px 4px 14px; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-list { list-style: none; margin: 0; padding: 0; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-entry { display: flex; align-items: flex-start; gap: 0; border-radius: 6px; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-entry:hover { background: var(--panel-strong); }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-entry.is-current { background: var(--accent-soft); }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-toggle { flex: 0 0 18px; height: 24px; display: grid; place-items: center; padding: 0; background: none; border: 0; color: var(--muted); cursor: pointer; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-toggle svg { width: 12px; height: 12px; transition: transform .12s ease; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-title { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: 6px; padding: 4px 6px 4px 2px; background: none; border: 0; color: var(--ink); font: inherit; font-size: .8rem; line-height: 1.3; text-align: left; cursor: pointer; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-title > span:first-child { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-title:disabled { color: var(--muted); cursor: default; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-page { flex: none; color: var(--muted); font-size: .72rem; font-variant-numeric: tabular-nums; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-entry.is-current .vault-pdf-outline-title { font-weight: 600; }
+:is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-empty { padding: 14px 12px; color: var(--muted); font-size: .8rem; line-height: 1.45; }
 
 .vault-file-toolbar .vault-pdf-sidebar-toggle { display: inline-grid; place-items: center; padding: 0 7px; }
 .vault-pdf-sidebar-toggle svg { width: 15px; height: 15px; }
+
+/* The same contents in the left panel's Outline, sized like its headings. */
+.chat-outline .vault-pdf-outline { flex: 0 1 auto; padding: 0 4px 10px 0; scrollbar-width: thin; }
+.chat-outline .vault-pdf-outline-title { color: var(--muted); font-size: .7rem; line-height: 1.5; padding: 5px 6px 5px 2px; }
+.chat-outline .vault-pdf-outline-entry:hover .vault-pdf-outline-title, .chat-outline .vault-pdf-outline-entry.is-current .vault-pdf-outline-title { color: var(--ink); }
+.chat-outline .vault-pdf-outline-page { font-size: .66rem; }
+.chat-outline .vault-pdf-outline-label { color: var(--muted); font-size: .66rem; letter-spacing: .05em; text-transform: uppercase; margin: 10px 6px 4px; }
+.chat-outline .vault-pdf-outline-empty { padding: 4px 6px; font-size: .72rem; }
+@media (pointer: coarse), (max-width: 600px) { .chat-outline .vault-pdf-outline-title { min-height: 40px; align-items: center; } .chat-outline .vault-pdf-outline-toggle { height: 40px; } }

@@ -58,6 +58,8 @@ interface ThreadSidebarProps {
   onPinThread: (conversationId: string) => void;
   onRenameThread: (conversationId: string, title: string) => void;
   onSelectOutlineItem: (outlineItemId: string) => void;
+  /** After the Outline moved the reader somewhere without an outline item, such as a PDF chapter. */
+  onOutlineNavigated?: () => void;
   onSelectThread: (conversationId: string, options?: { keepSidebarOpen?: boolean }) => void;
   onToggleGroup: (groupId: string) => void;
   onToggleTheme: () => void;
@@ -340,6 +342,7 @@ export default function ThreadSidebar({
   onPinThread,
   onRenameThread,
   onSelectOutlineItem,
+  onOutlineNavigated,
   onSelectThread,
   onToggleGroup,
   onToggleTheme,
@@ -1224,7 +1227,8 @@ export default function ThreadSidebar({
             <h2 className="sidebar-outline-title" ref={outlineTitleRef} tabIndex={-1} title={currentChatTitle}>
               <DocumentIcon /><span>{currentChatTitle || "Untitled document"}</span>
             </h2>
-            <ChatOutline key={activeThreadId} items={currentChatOutline} activeItemId={activeOutlineItemId} onSelect={onSelectOutlineItem} />
+            <ChatOutline key={activeThreadId} items={currentChatOutline} activeItemId={activeOutlineItemId} onSelect={onSelectOutlineItem}
+              conversationId={activeThreadId} onNavigated={onOutlineNavigated} />
           </nav>
         </div>
       )}

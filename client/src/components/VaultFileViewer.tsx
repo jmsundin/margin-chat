@@ -5,6 +5,7 @@ import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReferenc
 import { useVaultMedia } from "../lib/vaultMedia";
 import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
+import { publishPdfNavigation } from "../lib/pdfNavigation";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
 import {
   imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, pdfPageFromSourceId, pdfPageSourceId, pdfPageText, vaultFileTitle,
@@ -165,9 +166,9 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
     return () => observer.disconnect();
   }, [pdf]);
 
-  // The contents and page labels are read once the panel first opens.
+  // The contents and page labels are read once the PDF opens; the left panel's Outline shows them too.
   useEffect(() => {
-    if (!pdf || !sidebar.open || outline) return;
+    if (!pdf || outline) return;
     let cancelled = false;
     readPdfOutline(pdf).then((entries) => { if (!cancelled) setOutline(entries); }, () => { if (!cancelled) setOutline([]); });
     pdf.getPageLabels().then((found) => {
@@ -175,10 +176,10 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
       if (!cancelled && found?.some((label, index) => label !== String(index + 1))) setLabels(found);
     }, () => undefined);
     return () => { cancelled = true; };
-  }, [pdf, sidebar.open, outline]);
+  }, [pdf, outline]);
 
   /** Scrolls the document to a page, and to a height on it when a bookmark gives one. */
-  function jumpTo(page: number, top?: number | null) {
+  function jumpTo(page: number, top?: number | null, { fromPanel = true } = {}) {
     const frame = frameRef.current;
     const scroller = frame?.closest<HTMLElement>(".document-body");
     if (!frame || !scroller || !pdf || !shownScale) return;
@@ -194,7 +195,7 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
     };
     align();
     setCurrentPage(page);
-    if (overlay) changeSidebar({ ...sidebar, open: false });
+    if (overlay && fromPanel && sidebar.open) changeSidebar({ ...sidebar, open: false });
     // Pages measured as they come into view can shift the target a little; follow it for a moment.
     let frames = 0;
     let stopped = false;
@@ -215,6 +216,14 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
       }, () => undefined);
     }
   }
+
+  const jumpRef = useRef(jumpTo);
+  jumpRef.current = jumpTo;
+  const conversationId = props.conversation.id;
+  useEffect(() => {
+    if (!pdf) return;
+    return publishPdfNavigation(conversationId, { outline, labels, currentPage, jump: (page, top) => jumpRef.current(page, top, { fromPanel: false }) });
+  }, [conversationId, pdf, outline, labels, currentPage]);
 
   const fitScale = width && sizes[0] ? clampScale((width - 2) / sizes[0].width) : null;
   const shownScale = fit ? fitScale : scale;
