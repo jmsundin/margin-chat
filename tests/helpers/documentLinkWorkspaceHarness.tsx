@@ -245,7 +245,7 @@ async function testMobileSelectionActions() {
   assert.notEqual(browser.document.activeElement, prompt, "Opening Ask retains reading mode until the user taps the input.");
   assert.equal(chatRequests.length, beforeAsk, "Ask never starts generation just by opening.");
   assert.equal(container.contains(composer), false, "The compact prompt is portaled outside document scrolling.");
-  assert.equal(composer.querySelector('[aria-label="Choose AI model and provider"]'), null, "Model and destination controls stay tucked away initially.");
+  assert(composer.querySelector('[aria-label="Choose AI model and provider"]'), "Model and destination controls start open.");
   await click(element('[aria-label="Show selected text"]'));
   assert(composer.querySelector("blockquote").textContent.includes("selected passage"), "The saved quote survives native selection collapse when Ask blurs the editor.");
   await click(element('button[aria-label="Prompt options"]'));
@@ -273,7 +273,7 @@ async function testMobileSelectionActions() {
     prompt.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
   assert.equal(browser.document.activeElement, prompt);
-  assert.equal(element('button[aria-label="Prompt options"]').getAttribute("aria-expanded"), "false", "Typing collapses secondary controls to leave document space.");
+  assert.equal(element('button[aria-label="Prompt options"]').getAttribute("aria-expanded"), "true", "Prompt options stay open while typing.");
   assert.equal(chatRequests.length, beforeAsk, "Typing waits for an explicit send.");
   await act(async () => composer.dispatchEvent(new browser.Event("submit", { bubbles: true, cancelable: true })));
   await settle();

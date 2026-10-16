@@ -86,7 +86,8 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     {children}
     {mobile && hasTarget && composerCount === 0 && createPortal(<button type="button" className="mobile-keyboard-toggle" data-mobile-keyboard-toggle
       aria-label={enabled ? "Hide keyboard" : "Show keyboard"} title={enabled ? "Hide keyboard" : "Show keyboard"} aria-pressed={enabled}
-      style={{ top: `calc(${viewport.top + viewport.height - 56}px - ${safeBottom})`, left: viewport.left + viewport.width - 60 }}
+      // Kept clear of the rounded screen corners on curved phones.
+      style={{ top: `calc(${viewport.top + viewport.height - 72}px - ${safeBottom})`, left: viewport.left + viewport.width - 68 }}
       onPointerDown={(event) => { if (event.pointerType === "mouse") lastTouchActivation.current = -Infinity; event.preventDefault(); }}
       onMouseDown={(event) => event.preventDefault()}
       onTouchStart={(event) => {
@@ -127,5 +128,5 @@ export function MobileComposerViewport({ children }: { children: ReactNode }) {
   useEffect(() => registerComposer(), [registerComposer]);
   const viewport = useVisualViewport(true);
   const safeBottom = viewport.height < window.innerHeight - 100 ? "0px" : "env(safe-area-inset-bottom, 0px)";
-  return createPortal(<div className="mobile-composer-viewport" style={{ top: viewport.top, left: viewport.left, width: viewport.width, height: viewport.height, paddingBottom: `calc(8px + ${safeBottom})` }}>{children}</div>, document.body);
+  return createPortal(<div className="mobile-composer-viewport" style={{ top: viewport.top, left: viewport.left, width: viewport.width, height: viewport.height, paddingBottom: `calc(20px + ${safeBottom})` }}>{children}</div>, document.body);
 }

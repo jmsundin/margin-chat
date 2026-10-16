@@ -104,7 +104,7 @@ try {
   assert.equal(changes, 0, "Keyboard toggles must not edit document content.");
 
   await resize(400, 80);
-  assert.equal(element('[aria-label="Hide keyboard"]').style.top, "calc(424px - 0px)");
+  assert.equal(element('[aria-label="Hide keyboard"]').style.top, "calc(408px - 0px)");
   await resize(844, 0);
   assert.equal(editor.view.dom.getAttribute("inputmode"), "none", "Dismissing the OS keyboard returns to selection mode.");
   await touchButton('[aria-label="Show keyboard"]');
@@ -124,7 +124,7 @@ try {
   assert.equal(prompt.hasAttribute("data-mobile-keyboard"), false, "The prompt must not require a document keyboard toggle to type.");
   assert.equal(element('[aria-label="Generate response"]').disabled, true);
   assert.equal(form.querySelector("blockquote"), null, "Long selected text stays collapsed while composing.");
-  assert.equal(form.querySelector('[aria-label="Response destination"]'), null, "Secondary controls do not consume the visible document area.");
+  assert(form.querySelector('[aria-label="Response destination"]'), "Prompt options start open.");
   await click('[aria-label="Show selected text"]');
   assert.equal(form.querySelector("blockquote").textContent, "Select this");
   await click('button[aria-label="Prompt options"]');
@@ -138,7 +138,7 @@ try {
   });
   assert.equal(browser.document.activeElement, prompt, "The AI input accepts normal direct focus.");
   assert.equal(browser.document.querySelector(".mobile-keyboard-toggle"), null, "The document keyboard control is not needed over a native prompt field.");
-  assert.equal(element('button[aria-label="Prompt options"]').getAttribute("aria-expanded"), "false");
+  assert.equal(element('button[aria-label="Prompt options"]').getAttribute("aria-expanded"), "true", "Prompt options stay open while typing.");
   assert.equal(editor.view.dom.getAttribute("inputmode"), "none", "Typing in an AI prompt does not enable document editing.");
   assert.equal(submitted.length, 0, "Typing alone must not start generation.");
   prompt.setSelectionRange(2, 7);

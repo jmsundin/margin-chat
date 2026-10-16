@@ -24,7 +24,7 @@ export interface MobileAIComposerProps {
 export default function MobileAIComposer({
   prompt, onPromptChange, onSubmit, onClose, quote, contextLabel,
   disabled = false, textareaId, promptLabel = "AI prompt", placeholder = "Ask Margin…",
-  options, formRef, textareaRef, className = "", initiallyOpenOptions = false, testId,
+  options, formRef, textareaRef, className = "", initiallyOpenOptions = true, testId,
 }: MobileAIComposerProps) {
   const localTextareaRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = textareaRef ?? localTextareaRef;
@@ -80,7 +80,7 @@ export default function MobileAIComposer({
     {expanded === "options" ? <div id={optionsId} className="mobile-ai-options" role="region" aria-label="Prompt options">{options}</div> : null}
     <div className="mobile-ai-entry">
       <textarea ref={inputRef} id={textareaId} aria-label={promptLabel} placeholder={placeholder} value={prompt} inputMode="text" rows={1}
-        onFocus={() => setExpanded(null)} onChange={(event) => onPromptChange(event.target.value)}
+        onChange={(event) => onPromptChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
             event.preventDefault();

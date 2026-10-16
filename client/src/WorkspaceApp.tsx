@@ -3044,7 +3044,7 @@ function WorkspaceAppContent({
     } else handleCreateBranch(prompt);
   }
 
-  function openMobileSelectionPrompt(showOptions = false) {
+  function openMobileSelectionPrompt(showOptions = true) {
     setSelectionIntent("branch");
     setSelectionOptionsInitiallyOpen(showOptions);
     setSelectionActionsExpanded(true);
@@ -4288,7 +4288,8 @@ function WorkspaceAppContent({
   }
 
   function renderDocumentControls(conversation: Conversation, view: "chat" | "graph" = "chat") {
-    const noteCount = getMarginDocuments(conversation).length;
+    // On phones the breadcrumb bar lists notes and children (and reopens closed notes), so the header skips them.
+    const noteCount = isMobileViewport ? 0 : getMarginDocuments(conversation).length;
     if (!(view === "chat" && noteCount) && !conversation.document?.marginNote) return null;
     return <>
       {view === "chat" && noteCount ? <button type="button" className="document-margin-notes-toggle"
@@ -4313,7 +4314,7 @@ function WorkspaceAppContent({
 
   function renderChildrenMenu(conversation: Conversation, view: "chat" | "graph", dock?: GraphDockControls) {
     const childDocuments = getChildTabDocuments(conversation);
-    if (!childDocuments.length || isCompactDocument(conversation)) return null;
+    if ((isMobileViewport && view === "chat") || !childDocuments.length || isCompactDocument(conversation)) return null;
     return <DocumentChildrenMenu parent={conversation} documents={childDocuments}
       currentDocumentId={activeConversation.id}
       marginNoteIds={showsMarginInPanel(conversation, view) ? getMarginDocuments(conversation).map((note) => note.id) : []}
