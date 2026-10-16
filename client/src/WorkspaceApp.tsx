@@ -4575,6 +4575,7 @@ function WorkspaceAppContent({
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
               onSelectOutlineItem={handleSelectOutlineItem}
+              onOutlineNavigated={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
               onSelectThread={handleRevealConversation}
               onToggleGroup={handleToggleConversationGroup}
               onToggleTheme={() =>
