@@ -20,7 +20,9 @@ export type MapLensFilter =
   | { id: string; kind: "group"; values: string[] }
   | { id: string; kind: "has"; value: MapLensHas }
   | { id: string; kind: "text"; query: string }
-  | { id: string; kind: "words"; min: number; max: number | null };
+  | { id: string; kind: "words"; min: number; max: number | null }
+  /** Documents within `depth` lines of one document; the rest of the map greys out around it. */
+  | { id: string; kind: "near"; documentId: string; depth: number };
 
 export type MapLensFilterKind = MapLensFilter["kind"];
 
@@ -46,6 +48,7 @@ export const MAP_LENS_FILTER_KINDS: Array<{ kind: MapLensFilterKind; label: stri
   { kind: "has", label: "Has…" },
   { kind: "text", label: "Contains words" },
   { kind: "words", label: "Length" },
+  { kind: "near", label: "Near the selected document" },
 ];
 
 export const MAP_DOCUMENT_TYPES: Array<{ value: MapDocumentType; label: string }> = [
@@ -115,10 +118,15 @@ export interface MapLensContext {
   groups: Record<string, ConversationGroup>;
   /** Number of map lines touching each document. */
   connectionCounts: Map<string, number>;
+  /** Documents within `depth` map lines of a document, itself included. Needed only for "near" filters. */
+  neighborhood?: (documentId: string, depth: number) => Set<string>;
 }
 
-function matchesFilter(conversation: Conversation, filter: MapLensFilter, context: MapLensContext, groupsOf: Map<string, Set<string>>) {
+function matchesFilter(conversation: Conversation, filter: MapLensFilter, context: MapLensContext, groupsOf: Map<string, Set<string>>,
+  near: Map<string, Set<string>>) {
   switch (filter.kind) {
+    case "near":
+      return near.get(filter.id)?.has(conversation.id) ?? false;
     case "edited":
     case "created": {
       const at = lensDate(conversation, filter.kind);
@@ -166,10 +174,12 @@ export function matchMapLens(ids: Iterable<string>, lens: MapLens, context: MapL
       if (set) set.add(group.id); else groupsOf.set(id, new Set([group.id]));
     }
   }
+  const near = new Map<string, Set<string>>();
+  for (const filter of lens.filters) if (filter.kind === "near") near.set(filter.id, context.neighborhood?.(filter.documentId, filter.depth) ?? new Set([filter.documentId]));
   const matched = new Set<string>();
   for (const id of ids) {
     const conversation = context.conversations[id];
-    if (conversation && lens.filters.every((filter) => matchesFilter(conversation, filter, context, groupsOf))) matched.add(id);
+    if (conversation && lens.filters.every((filter) => matchesFilter(conversation, filter, context, groupsOf, near))) matched.add(id);
   }
   return matched;
 }
@@ -224,7 +234,10 @@ export function lensTimeline(ids: Iterable<string>, conversations: Record<string
   return bins;
 }
 
-export function newLensFilter(kind: MapLensFilterKind, now = Date.now()): MapLensFilter {
+export const MAP_LENS_NEAR_DEPTHS = [1, 2, 3];
+
+/** A new filter of `kind`; a "near" filter centers on `documentId`. */
+export function newLensFilter(kind: MapLensFilterKind, now = Date.now(), documentId = ""): MapLensFilter {
   const id = `${kind}-${now.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
   switch (kind) {
     case "edited":
@@ -235,12 +248,14 @@ export function newLensFilter(kind: MapLensFilterKind, now = Date.now()): MapLen
     case "has": return { id, kind, value: "marginNotes" };
     case "text": return { id, kind, query: "" };
     case "words": return { id, kind, min: 1000, max: null };
+    case "near": return { id, kind, documentId, depth: 1 };
   }
 }
 
 const shortDate = (value: number) => new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 
-export function describeLensFilter(filter: MapLensFilter, groups: Record<string, ConversationGroup> = {}): string {
+export function describeLensFilter(filter: MapLensFilter, groups: Record<string, ConversationGroup> = {},
+  conversations: Record<string, Conversation> = {}): string {
   const list = (values: string[], empty: string) => !values.length ? empty : values.length <= 2 ? values.join(", ") : `${values.slice(0, 2).join(", ")} +${values.length - 2}`;
   switch (filter.kind) {
     case "edited":
@@ -261,6 +276,10 @@ export function describeLensFilter(filter: MapLensFilter, groups: Record<string,
     case "has": return `Has ${MAP_LENS_HAS.find((option) => option.value === filter.value)?.label.toLowerCase()}`;
     case "text": return filter.query.trim() ? `Contains “${filter.query.trim()}”` : "Contains…";
     case "words": return MAP_LENS_LENGTHS.find((option) => option.min === filter.min && option.max === filter.max)?.label ?? `${filter.min}+ words`;
+    case "near": {
+      const title = conversations[filter.documentId]?.title || "a removed document";
+      return `Within ${filter.depth} ${filter.depth === 1 ? "step" : "steps"} of ${title.length > 28 ? `${title.slice(0, 27)}…` : title}`;
+    }
   }
 }
 
@@ -269,5 +288,6 @@ export function readMapLens(value: unknown): MapLens {
   const filters = (value as MapLens | null)?.filters;
   if (!Array.isArray(filters)) return EMPTY_MAP_LENS;
   const kinds = new Set(MAP_LENS_FILTER_KINDS.map((option) => option.kind));
-  return { filters: filters.filter((filter): filter is MapLensFilter => !!filter && typeof filter.id === "string" && kinds.has(filter.kind)) };
+  return { filters: filters.filter((filter): filter is MapLensFilter => !!filter && typeof filter.id === "string" && kinds.has(filter.kind)
+    && (filter.kind !== "near" || (typeof filter.documentId === "string" && Number.isInteger(filter.depth) && filter.depth > 0))) };
 }

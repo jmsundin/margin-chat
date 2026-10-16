@@ -5,6 +5,8 @@ import { fitNetworkMapViewport } from "./networkMapLayout";
 import { groupByTopicEmbedding, nearestTopicGroup } from "./topicEmbeddings";
 
 const CARD = getDocumentNodeFootprint(1);
+/** A document card's size in the Clusters layout. */
+export const CLUSTER_CARD = CARD;
 // Members of one cluster sit a card gap apart; clusters keep a much wider gap so
 // a hub's exclusive neighbors read as one island, not part of the next one.
 const CELL_WIDTH = CARD.width + 28;
@@ -129,7 +131,7 @@ function orderMembers(hubId: string, memberIds: string[], neighbors: Map<string,
 const cellCache = new Map<number, ReturnType<typeof computeClusterCells>>();
 
 /** Grid cells nearest the center first, so a cluster forms a compact round island. */
-function clusterCells(count: number) {
+export function clusterCells(count: number) {
   let cells = cellCache.get(count);
   if (!cells) {
     if (cellCache.size > 512) cellCache.clear();

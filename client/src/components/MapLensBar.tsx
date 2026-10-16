@@ -3,7 +3,7 @@ import "./MapLensBar.css";
 import type { Conversation, ConversationGroup } from "../types";
 import {
   describeLensFilter, lensTimeline, lensValueCounts, MAP_DOCUMENT_TYPES, MAP_LENS_CONNECTIONS, MAP_LENS_FILTER_KINDS, MAP_LENS_HAS,
-  MAP_LENS_LENGTHS, newLensFilter, type MapLens, type MapLensDateField, type MapLensFilter, type MapLensFilterKind, type SavedMapLens,
+  MAP_LENS_LENGTHS, MAP_LENS_NEAR_DEPTHS, newLensFilter, type MapLens, type MapLensDateField, type MapLensFilter, type MapLensFilterKind, type SavedMapLens,
 } from "../lib/mapLens";
 
 const DAY = 86_400_000;
@@ -76,6 +76,12 @@ function FilterEditor({ filter, onChange, conversations, groups }: {
     case "group":
       return <div className="map-lens-editor-body"><Checklist options={Object.values(groups).map((group) => ({ value: group.id, label: group.name, count: group.conversationIds.length }))}
         values={filter.values} empty="You have no groups yet." onChange={(values) => onChange({ ...filter, values })} /></div>;
+    case "near":
+      return <div className="map-lens-editor-body map-lens-options">
+        {MAP_LENS_NEAR_DEPTHS.map((depth) => <label key={depth}><input type="radio" name={filter.id} checked={filter.depth === depth}
+          onChange={() => onChange({ ...filter, depth })} /> Within {depth} {depth === 1 ? "step" : "steps"}</label>)}
+        <small>Steps follow branch lines, links and typed relations. Everything farther away greys out.</small>
+      </div>;
     case "text":
       return <div className="map-lens-editor-body">
         <label>Words in the title or text <input type="search" autoFocus value={filter.query} placeholder="e.g. vector index"
@@ -85,7 +91,8 @@ function FilterEditor({ filter, onChange, conversations, groups }: {
 }
 
 /** The map's lens: filter chips, a match count, a timeline brush and saved lenses. */
-export default function MapLensBar({ lens, onChange, ids, matched, conversations, groups, saved, onSave, onApplySaved, onDeleteSaved, onFitMatches }: {
+export default function MapLensBar({ lens, onChange, ids, matched, conversations, groups, saved, onSave, onApplySaved, onDeleteSaved, onFitMatches,
+  selectedId = null, matchPosition = null, onStepMatch }: {
   lens: MapLens;
   onChange: (lens: MapLens) => void;
   /** Documents in the current map scope. */
@@ -98,6 +105,12 @@ export default function MapLensBar({ lens, onChange, ids, matched, conversations
   onApplySaved: (lens: SavedMapLens) => void;
   onDeleteSaved: (id: string) => void;
   onFitMatches: () => void;
+  /** The selected document, which "Near the selected document" centers on. */
+  selectedId?: string | null;
+  /** Which match is selected, counting from 1, while stepping through them. */
+  matchPosition?: number | null;
+  /** Selects the next (1) or previous (-1) match and moves the map to it. */
+  onStepMatch?: (direction: 1 | -1) => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [field, setField] = useState<MapLensDateField>(() => lens.filters.some((filter) => filter.kind === "created") ? "created" : "edited");
@@ -111,7 +124,8 @@ export default function MapLensBar({ lens, onChange, ids, matched, conversations
   const update = (filter: MapLensFilter) => onChange({ filters: lens.filters.map((item) => item.id === filter.id ? filter : item) });
   const remove = (id: string) => { onChange({ filters: lens.filters.filter((item) => item.id !== id) }); if (editingId === id) setEditingId(null); };
   const add = (kind: MapLensFilterKind) => {
-    const filter = newLensFilter(kind);
+    if (kind === "near" && !selectedId) return;
+    const filter = newLensFilter(kind, Date.now(), selectedId ?? "");
     onChange({ filters: [...lens.filters, filter] });
     setEditingId(filter.id);
     if (kind === "edited" || kind === "created") setField(kind);
@@ -137,10 +151,10 @@ export default function MapLensBar({ lens, onChange, ids, matched, conversations
       <ul className="map-lens-chips" aria-label="Active filters">
         {lens.filters.map((filter) => <li key={filter.id} className="map-lens-chip">
           <button type="button" aria-expanded={editingId === filter.id} onClick={() => setEditingId(editingId === filter.id ? null : filter.id)}>
-            {describeLensFilter(filter, groups)}
+            {describeLensFilter(filter, groups, conversations)}
           </button>
-          <button type="button" className="map-lens-chip-remove" aria-label={`Remove filter: ${describeLensFilter(filter, groups)}`} onClick={() => remove(filter.id)}>×</button>
-          {editingId === filter.id ? <div className="map-lens-editor" role="dialog" aria-label={describeLensFilter(filter, groups)}
+          <button type="button" className="map-lens-chip-remove" aria-label={`Remove filter: ${describeLensFilter(filter, groups, conversations)}`} onClick={() => remove(filter.id)}>×</button>
+          {editingId === filter.id ? <div className="map-lens-editor" role="dialog" aria-label={describeLensFilter(filter, groups, conversations)}
             onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setEditingId(null); } }}>
             <FilterEditor filter={filter} onChange={update} conversations={conversations} groups={groups} />
             <button type="button" className="map-lens-done" onClick={() => setEditingId(null)}>Done</button>
@@ -151,6 +165,7 @@ export default function MapLensBar({ lens, onChange, ids, matched, conversations
             <summary>+ Add filter</summary>
             <div role="menu">
               {MAP_LENS_FILTER_KINDS.map((option) => <button type="button" role="menuitem" key={option.kind}
+                disabled={option.kind === "near" && !selectedId} title={option.kind === "near" && !selectedId ? "Select a document on the map first" : undefined}
                 onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); add(option.kind); }}>{option.label}</button>)}
             </div>
           </details>
@@ -160,6 +175,11 @@ export default function MapLensBar({ lens, onChange, ids, matched, conversations
         {matched ? <>{matched.size.toLocaleString()} <span>of {ids.length.toLocaleString()} match</span></> : <span>{ids.length.toLocaleString()} documents · add a filter to narrow them</span>}
       </strong>
       <div className="map-lens-actions">
+        {matched?.size && onStepMatch ? <div className="map-lens-step" role="group" aria-label="Step through matches">
+          <button type="button" aria-label="Previous match" title="Previous match (Shift+N)" onClick={() => onStepMatch(-1)}>‹</button>
+          <span aria-live="polite">{matchPosition ? `${matchPosition.toLocaleString()} / ${matched.size.toLocaleString()}` : "Step"}</span>
+          <button type="button" aria-label="Next match" title="Next match (N)" onClick={() => onStepMatch(1)}>›</button>
+        </div> : null}
         {matched?.size ? <button type="button" onClick={onFitMatches}>Fit to matches</button> : null}
         <details className="map-lens-saved">
           <summary>Saved{saved.length ? ` · ${saved.length}` : ""}</summary>

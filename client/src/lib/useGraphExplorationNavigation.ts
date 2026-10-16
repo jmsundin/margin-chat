@@ -141,6 +141,10 @@ export function useGraphExplorationNavigation(workspaceKey?: string) {
       present: keepPinnedDock({ ...current.present, ...patch }, pinnedDockRef.current), future: [],
     }));
   }, []);
+  /** Puts where the camera was before a long pan or zoom into Back, without changing anything else. */
+  const recordCamera = useCallback((viewport: GraphViewport) => {
+    setHistory((current) => ({ past: [...current.past.slice(-49), { ...current.present, viewport }], present: current.present, future: [] }));
+  }, []);
   const back = useCallback(() => setHistory((current) => current.past.length ? {
     past: current.past.slice(0, -1), present: keepPinnedDock(current.past.at(-1)!, pinnedDockRef.current), future: [current.present, ...current.future],
   } : current), []);
@@ -161,5 +165,5 @@ export function useGraphExplorationNavigation(workspaceKey?: string) {
     try { localStorage.setItem(lastViewKey(workspaceKey), JSON.stringify({ ...history.present, dockedConversationId: null, source: null, readerScroll: 0, query: "" })); }
     catch { /* Map view then opens on its first-visit view next session. */ }
   }, [history, workspaceKey]);
-  return { state: history.present, update, navigate, back, forward, pinnedDockId, setPinnedDockId, canGoBack: history.past.length > 0, canGoForward: history.future.length > 0, restored: Boolean(initial) };
+  return { state: history.present, update, navigate, recordCamera, back, forward, pinnedDockId, setPinnedDockId, canGoBack: history.past.length > 0, canGoForward: history.future.length > 0, restored: Boolean(initial) };
 }

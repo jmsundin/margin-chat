@@ -72,3 +72,7 @@
   .map-lens-bars { height: 34px; }
 }
 .graph-cluster-label[data-lens-empty] { opacity: .45; }
+.map-lens-add > div button:disabled { color: var(--muted); cursor: default; background: none; }
+.map-lens-step { display: inline-flex; align-items: center; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--graph-node-bg, var(--panel-bg)); }
+.map-lens-step button { width: 28px; height: 100%; border: 0; background: none; color: var(--ink); font: inherit; font-size: 16px; cursor: pointer; }
+.map-lens-step span { min-width: 44px; padding: 0 2px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
