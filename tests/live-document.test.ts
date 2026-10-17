@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { ChangeSet, MapMode, Text } from "@codemirror/state";
-import { blockSelection, layoutBlocks, liveBlockInfo, reflowBlocks, snapOutOfGaps, splitSpan, visibleEnd } from "../client/src/lib/liveDocument";
+import { blockSelection, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, splitSpan, visibleEnd } from "../client/src/lib/liveDocument";
 
 const pieces = (value: string, keepTrailing = 0) => splitSpan(value, [], keepTrailing).map((span) => value.slice(span.from, span.to));
 
@@ -73,4 +73,18 @@ test("media, drawings, tables and math render in place; text is edited inline", 
   expect(liveBlockInfo("| a | b |\n| --- | --- |\n| 1 | 2 |").kind).toBe("rendered");
   expect(liveBlockInfo("$$\nx^2\n$$").kind).toBe("rendered");
   expect(liveBlockInfo("First.\n\nSecond.").collapsed).toEqual([{ from: 6, to: 7 }]);
+});
+
+test("text selected in a rendered table maps to its Markdown", () => {
+  const markdown = "| Name | Role |\n| --- | --- |\n| Alice **Smith** | Engineer &amp; lead |\n| - | Designer |";
+  const rendered = "\nNameRole\n\nAlice Smith\tEngineer & lead\n-\tDesigner\n";
+  const select = (text: string) => { const start = rendered.indexOf(text); return renderedTableSelection(markdown, rendered, start, start + text.length); };
+  const quote = (text: string) => { const span = select(text); return span && markdown.slice(span.from, span.to); };
+  expect(quote("Smith")).toBe("Smith");
+  expect(quote("Alice Smith")).toBe("Alice **Smith");
+  expect(quote("Engineer & lead")).toBe("Engineer &amp; lead");
+  // A dash in a cell isn't mistaken for the delimiter row.
+  expect(select("-")).toEqual({ from: markdown.indexOf("| - |") + 2, to: markdown.indexOf("| - |") + 3 });
+  expect(quote("Role\n\nAlice")).toBe("Role |\n| --- | --- |\n| Alice");
+  expect(select("\n\n")).toBeNull();
 });
