@@ -34,6 +34,8 @@
 .mobile-ai-options label { min-height: 44px; display: inline-flex; align-items: center; gap: 8px; }
 .mobile-ai-options input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
 .mobile-ai-options button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.mobile-ai-options .agent-mode-toggle button { min-height: 44px; border-color: var(--line); border-radius: 10px; padding: 6px 10px; font-size: inherit; }
+.mobile-ai-options .agent-mode-toggle button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
 .mobile-ai-options-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .mobile-ai-options .document-ai-options { margin: 0 0 4px; }
 .mobile-ai-entry { display: flex; flex: 0 0 auto; align-items: flex-end; gap: 4px; padding: 3px; border: 1px solid var(--line-strong); border-radius: 26px; background: var(--panel); }

@@ -86,7 +86,7 @@ export interface LiveBlockInfo {
   collapsed: TextSpan[];
 }
 
-function isTableBlock(content: string) {
+export function isTableBlock(content: string) {
   const lines = content.trim().split("\n");
   return lines.length >= 2 && lines.every((line) => line.trim().startsWith("|")) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[1]);
 }
@@ -363,4 +363,30 @@ export function blockSelection(text: TextSource, layout: ReadonlyArray<LiveBlock
     to: end - head.from,
     joinBlockIds: layout.slice(first + 1, last + 1).map((block) => block.id),
   };
+}
+
+/**
+ * Text selected in a rendered table, as offsets in the table's Markdown. Each
+ * rendered character is matched to the next same character of the source, so
+ * cell pipes, emphasis marks and the delimiter row fall outside the passage.
+ */
+export function renderedTableSelection(markdown: string, rendered: string, start: number, end: number): TextSpan | null {
+  const delimiterFrom = markdown.indexOf("\n") + 1;
+  const delimiterTo = delimiterFrom > 0 ? markdown.indexOf("\n", delimiterFrom) : -1;
+  const positions: number[] = [];
+  let cursor = 0;
+  for (let index = 0; index < rendered.length; index += 1) {
+    const character = rendered[index];
+    let found = /\s/.test(character) ? -1 : markdown.indexOf(character, cursor);
+    if (found >= delimiterFrom && found < delimiterTo) found = markdown.indexOf(character, delimiterTo);
+    positions.push(found);
+    if (found >= 0) cursor = found + 1;
+  }
+  let first = -1, last = -1;
+  for (let index = Math.max(0, start); index < Math.min(end, positions.length); index += 1) {
+    if (positions[index] < 0) continue;
+    if (first < 0) first = positions[index];
+    last = positions[index];
+  }
+  return first >= 0 && last >= first ? { from: first, to: last + 1 } : null;
 }
