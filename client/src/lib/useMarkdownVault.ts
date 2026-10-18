@@ -9,7 +9,7 @@ import { FolderChangingError } from "./fileSnapshot";
 import { listTrash, type TrashEntry } from "./vaultTrash";
 import { FolderDeletionHeldError, folderDeletionsToHold, type HeldFolderDeletion } from "./folderDeletionGuard";
 import { BACKUP_REMIND_MS, loadVaultBackup, onlyCopyReminder, saveVaultBackup, vaultFingerprint, type OnlyCopyReminder } from "./vaultBackupReminder";
-import { IN_MEMORY_VAULT_NOTICE, LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, recoverWithFreshVaultCopy,
+import { LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, inMemoryVaultNotice, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, MAX_VAULT_MEDIA_LABEL, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
@@ -662,7 +662,7 @@ export function useMarkdownVault(args: {
         if (mounted.current) {
           setReady(true); setStorageMode(enabledRef.current ? "fallback" : "local");
           const recovered = takeVaultRecoveryNotice(storageUserId);
-          setRecoveryNotice(storeRef.current?.inMemory() ? IN_MEMORY_VAULT_NOTICE : recovered);
+          setRecoveryNotice(storeRef.current?.inMemory() ? inMemoryVaultNotice(storeRef.current.refused()) : recovered);
         }
         void navigator.storage.persist?.().catch(() => false);
         // The old workspace snapshot is migration input only. Future content comes from Markdown.

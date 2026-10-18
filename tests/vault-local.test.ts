@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { LocalVaultUnavailableError, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, recoverWithFreshVaultCopy,
+import { LocalVaultUnavailableError, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, inMemoryVaultNotice, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice } from "../client/src/lib/vaultLocal";
 import { emptyVault, type VaultSnapshot } from "../client/src/lib/vaultTypes";
 import { workspaceFromVault } from "../client/src/lib/vaultWorkspace";
@@ -219,6 +219,8 @@ describe("durable OPFS Markdown storage", () => {
     expect(await store.read()).toBeNull();
     expect(store.inMemory()).toBe(true);
     expect(refused.map((error) => error.step)).toEqual(["opening margin-chat-vaults/alice", "opening margin-chat-vaults/alice"]);
+    expect(store.refused()?.step).toBe("opening margin-chat-vaults/alice");
+    expect(inMemoryVaultNotice(store.refused())).toEndWith("(Chrome said InvalidStateError while opening margin-chat-vaults/alice.)");
     const downloaded = snapshot("Downloaded from the cloud");
     await store.lock(() => store.write(downloaded));
     expect(await store.lock(() => store.read())).toEqual(downloaded);
