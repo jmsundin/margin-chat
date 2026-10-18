@@ -1,6 +1,7 @@
 import { AGENT_THINKING_CHARACTERS, DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
 import { HttpError } from "../../lib/errors.mjs";
 import { createAgentAdapter } from "./adapters.mjs";
+import { ASK_TOOL_DEFINITION, agentQuestion } from "./askTool.mjs";
 import { agentToolDefinitions, createAgentToolExecutor, describeAgentStep } from "./tools.mjs";
 
 /** Model calls per run, the last of which must answer without tools. */
@@ -51,20 +52,25 @@ function webAddress(value) {
  *
  * With `webSearch`, providers with built-in web search (Meta) may search the web
  * inside their calls, up to AGENT_WEB_SEARCHES per run; each search is a step, and
- * the pages the answer cites are kept as the run's `sources`.
+ * the pages the answer cites are kept as the run's `webSources`.
+ *
+ * With `questions`, the agent may call ask_user, which ends the run with its
+ * question as the reply (stopReason "question"); the user's next message answers it.
+ * With `proposals`, it may draft edits and new documents, returned as the run's
+ * `proposals` for the user to approve.
  */
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, webSearch = false, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity }) {
+  signal, usageMeter, workspace = null, webSearch = false, questions = false, proposals = false, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
   const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter, webSearch },
-    agentToolDefinitions(chatRequest, workspace, { documents: Boolean(onDocuments) }));
+    agentToolDefinitions(chatRequest, workspace, { documents: Boolean(onDocuments), questions, proposals }));
   let searchesLeft = webSearch ? AGENT_WEB_SEARCHES[chatRequest.ai?.mode] ?? AGENT_WEB_SEARCHES.balanced : 0;
   const cited = new Map();
   // Tool results of the round in progress; they join the adapter's history once the round ends.
   let outputs = [];
   const room = () => Number.isSafeInteger(maxInputCharacters)
     ? maxInputCharacters - adapter.size - JSON.stringify(outputs).length : Number.POSITIVE_INFINITY;
-  const executeTool = createAgentToolExecutor({ chatRequest, workspace, signal, room, readPage, importSection, onDocuments: onDocuments ?? null });
+  const executeTool = createAgentToolExecutor({ chatRequest, workspace, signal, room, readPage, importSection, onDocuments: onDocuments ?? null, proposals });
   const startedAt = now();
   // The meter may already carry this request's routing call; count only the run.
   const startingSpend = usageMeter?.summary().amountMicros ?? 0;
@@ -127,27 +133,38 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
       const url = webAddress(page.url);
       if (url && !cited.has(url) && cited.size < MAX_SOURCES) cited.set(url, { url, title: clip(page.title.trim(), 200) });
     }
+    const finish = (reply, ending, extra = {}) => ({
+      model: result.model,
+      reply,
+      steps,
+      toolTruncated,
+      agent: {
+        steps, stopReason: ending, reasoning: reasoningShared ? "shared" : "not-shared", modelCalls: call,
+        ...(usageMeter ? { spentMicros: spent() } : {}), ...(metered ? { budgetMicros } : {}),
+        ...(cited.size ? { webSources: [...cited.values()] } : {}),
+        ...(executeTool.proposals().length ? { proposals: executeTool.proposals() } : {}), ...extra,
+      },
+    });
     if (answered) {
       if (!result.text.trim()) throw new HttpError(502, `${provider} returned a response without assistant text.`);
       if (!streamed) await onDelta?.(result.text);
-      return {
-        model: result.model,
-        reply: result.text,
-        steps,
-        toolTruncated,
-        agent: {
-          steps, stopReason: stopReason ?? "answered", reasoning: reasoningShared ? "shared" : "not-shared", modelCalls: call,
-          ...(usageMeter ? { spentMicros: spent() } : {}), ...(metered ? { budgetMicros } : {}),
-          ...(cited.size ? { webSources: [...cited.values()] } : {}),
-        },
-      };
+      return finish(result.text, stopReason ?? "answered");
+    }
+    // A clarifying question ends the run; anything else the model asked for alongside it waits for the answer.
+    const question = questions ? agentQuestion(result.toolCalls.find((toolCall) => toolCall.name === ASK_TOOL_DEFINITION.name)?.arguments) : null;
+    if (question) {
+      await record({ kind: "tool", tool: ASK_TOOL_DEFINITION.name, label: "Asked you a question", ok: true });
+      await onDelta?.(question.text);
+      return finish(question.text, "question", { question });
     }
     // Text written alongside tool calls is the model narrating its plan, not the answer.
     if (result.text.trim()) await record({ kind: "note", label: clip(result.text.trim().replace(/\s+/g, " "), 300), ok: true });
     outputs = [];
     for (const toolCall of result.toolCalls) {
       signal?.throwIfAborted();
-      const output = await executeTool(toolCall.name, toolCall.arguments);
+      const output = toolCall.name === ASK_TOOL_DEFINITION.name
+        ? { ok: false, error: questions ? "Write the question in the question field." : "Questions aren't available here. Answer with your best reading of the request and say what you assumed." }
+        : await executeTool(toolCall.name, toolCall.arguments);
       outputs.push({ id: toolCall.id, output });
       if (output?.truncated || output?.conversation?.truncated) toolTruncated = true;
       await record(describeAgentStep(toolCall.name, toolCall.arguments, output));

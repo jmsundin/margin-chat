@@ -1,0 +1,138 @@
+.agent-follow-up {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 14px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.agent-follow-up button {
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--button-active-surface);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-follow-up button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.agent-question {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent-question-reply {
+  display: flex;
+  gap: 6px;
+}
+
+.agent-question-reply input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--button-surface);
+  font: inherit;
+}
+
+.agent-proposals {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-strong);
+}
+
+.agent-proposals > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-proposals ol {
+  display: grid;
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agent-proposals li {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.agent-proposals li.is-dismissed .agent-proposal-text {
+  opacity: 0.55;
+}
+
+.agent-proposal-summary,
+.agent-proposal-what {
+  margin: 0 0 4px;
+}
+
+.agent-proposal-what {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-proposal-text {
+  margin: 4px 0;
+  padding: 4px 8px;
+  border-left: 3px solid var(--line-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.agent-proposal-text.is-removed {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.agent-proposal-text.is-added {
+  border-left-color: var(--sage);
+  background: var(--sage-soft);
+}
+
+.agent-follow-up .agent-proposal-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--message-link);
+  text-decoration: underline;
+}
+
+.agent-proposal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-proposal-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-proposal-error {
+  margin: 6px 0 0;
+  color: var(--accent);
+  font-size: 12px;
+}

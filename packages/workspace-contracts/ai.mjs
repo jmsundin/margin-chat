@@ -4,7 +4,7 @@ const scopes = new Set(["conversation", "selected", "workspace"]);
 /** Agent run budgets offered in the composer, in micro-dollars. */
 export const AGENT_BUDGET_CHOICES_MICROS = Object.freeze([250_000, 500_000, 1_000_000, 2_000_000]);
 export const DEFAULT_AGENT_BUDGET_MICROS = 1_000_000;
-const agentStopReasons = new Set(["answered", "budget", "round-limit", "time-limit"]);
+const agentStopReasons = new Set(["answered", "budget", "round-limit", "time-limit", "question"]);
 const routingMethods = new Set(["astra", "astra-task", "jev", "jev-task", "rules", "manual"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value, limit) => typeof value === "string" ? value.slice(0, limit) : "";
@@ -140,7 +140,39 @@ function normalizeAgentRun(input) {
     // Why Agent mode turned itself on for this reply, written by the server.
     ...(text(input.automatic, 200).trim() ? { automatic: text(input.automatic, 200) } : {}),
     ...webSourcesOf(input.webSources),
+    ...questionOf(input),
+    ...proposalsOf(input.proposals),
   };
+}
+
+const proposalStatuses = new Set(["approved", "dismissed"]);
+const idText = (value) => text(value, 256).trim();
+
+/** Changes an agent drafted for the user to approve, with what the user decided. A new document's
+ * `createdId` is the document approving it made. */
+function proposalsOf(input) {
+  const proposals = (Array.isArray(input) ? input : []).filter(record).flatMap((proposal) => {
+    const base = { id: text(proposal.id, 40), summary: text(proposal.summary, 300),
+      ...(proposalStatuses.has(proposal.status) ? { status: proposal.status } : {}) };
+    if (!base.id) return [];
+    if (proposal.kind === "edit" && idText(proposal.documentId) && typeof proposal.find === "string" && typeof proposal.replace === "string"
+        && proposal.find.length <= 4_000 && proposal.replace.length <= 20_000 && proposal.find !== proposal.replace) {
+      return [{ ...base, kind: "edit", documentId: idText(proposal.documentId), documentTitle: text(proposal.documentTitle, 300), find: proposal.find, replace: proposal.replace }];
+    }
+    if (proposal.kind === "create" && idText(proposal.parentId) && text(proposal.title, 200).trim() && typeof proposal.content === "string" && proposal.content.length <= 40_000) {
+      return [{ ...base, kind: "create", parentId: idText(proposal.parentId), parentTitle: text(proposal.parentTitle, 300), title: text(proposal.title, 200),
+        content: proposal.content, ...(idText(proposal.createdId) ? { createdId: idText(proposal.createdId) } : {}) }];
+    }
+    return [];
+  }).slice(0, 8);
+  return proposals.length ? { proposals } : {};
+}
+
+/** The clarifying question a run ended with, so the next message can resume the agent. */
+function questionOf(input) {
+  if (input.stopReason !== "question" || !record(input.question) || !text(input.question.text, 500).trim()) return {};
+  const options = (Array.isArray(input.question.options) ? input.question.options : []).map((option) => text(option, 120).trim()).filter(Boolean).slice(0, 4);
+  return { question: { text: text(input.question.text, 500), options } };
 }
 
 /** Web pages an agent's answer cites: plain http(s) links and their titles, never page text. */

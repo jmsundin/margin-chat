@@ -346,6 +346,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
     // is asking about a picture (agents can't see images yet), or no model in this request can call tools.
     const autoAgentReason = explicitAgent || instructionOverride || chatRequest.ai.agentAuto === false || chatRequest.conversation.file?.image
       || !routes.some((route) => AGENT_PROVIDERS.includes(providerName(route.serviceId))) ? null
+      : chatRequest.agentAnswer ? "it answers the question the agent asked"
       : agentNeedFromPrompt(chatRequest, { web: webReachable }) ?? (routingAnalysis?.needsAgent ? "it needs information this conversation doesn't include" : null);
     const agentRequested = explicitAgent || Boolean(autoAgentReason);
     if (automatic) routes = agentRequested ? preferAgentModel(routes, autoAgentReason) : withoutAgentOnlyRoutes(routes);
@@ -446,7 +447,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
         signal: context.signal,
         systemInstruction: [instructionOverride ?? (agentProvider
           ? buildAgentInstruction(prepared.chatRequest, { vaultTools, canWidenScope: Boolean(workspace) && !vaultTools,
-            documents: Boolean(chatRequest.acceptsDocuments && handlers?.onDocuments), webSearch })
+            documents: Boolean(chatRequest.acceptsDocuments && handlers?.onDocuments), webSearch, questions: Boolean(chatRequest.acceptsQuestions),
+            proposals: Boolean(chatRequest.acceptsProposals), answering: chatRequest.agentAnswer ?? null })
           : buildSystemInstruction(prepared.chatRequest)), blindToImage ? cannotSeeImageInstruction(file) : ""].filter(Boolean).join("\n\n"),
         image: sendsImage ? file.image : null,
         userId: context.userId,
@@ -465,7 +467,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         // stream. Once any delta or agent step is exposed, retries would corrupt a reply.
         const onDelta = async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); };
         const result = agentProvider ? await runAgent({
-          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, workspace, webSearch,
+          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, workspace, webSearch, questions: Boolean(chatRequest.acceptsQuestions), proposals: Boolean(chatRequest.acceptsProposals),
           ...(handlers ? {
             onDelta,
             onRetract: async () => { await ensureReady(); await handlers.onRetract?.(); },

@@ -28,7 +28,8 @@ export interface AgentRunStep {
 }
 export interface AgentRunRecord {
   steps: AgentRunStep[];
-  stopReason: "answered" | "budget" | "round-limit" | "time-limit";
+  /** "question": the run stopped to ask the user something; their next message answers it. */
+  stopReason: "answered" | "budget" | "round-limit" | "time-limit" | "question";
   /** Whether the model shared any of its thinking during the run; absent on runs saved before it was recorded. */
   reasoning?: "shared" | "not-shared";
   modelCalls?: number;
@@ -38,7 +39,35 @@ export interface AgentRunRecord {
   automatic?: string;
   /** Web pages the answer cites, from the model's built-in web search. */
   webSources?: AgentWebSource[];
+  /** The clarifying question a run stopped with, and the answers it suggested. */
+  question?: { text: string; options: string[] };
+  /** Changes the agent drafted for the user to approve. */
+  proposals?: AgentProposal[];
 }
+interface AgentProposalBase {
+  id: string;
+  summary: string;
+  /** Absent while the user hasn't decided. */
+  status?: "approved" | "dismissed";
+}
+/** Replace `find` (exact text; empty adds at the end) with `replace` in a document. */
+export interface AgentEditProposal extends AgentProposalBase {
+  kind: "edit";
+  documentId: string;
+  documentTitle: string;
+  find: string;
+  replace: string;
+}
+/** A new document under `parentId`; `createdId` is the document approving it made. */
+export interface AgentDocumentProposal extends AgentProposalBase {
+  kind: "create";
+  parentId: string;
+  parentTitle: string;
+  title: string;
+  content: string;
+  createdId?: string;
+}
+export type AgentProposal = AgentEditProposal | AgentDocumentProposal;
 export interface AgentWebSource {
   url: string;
   title: string;

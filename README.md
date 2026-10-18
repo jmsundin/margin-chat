@@ -47,7 +47,7 @@ Press <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> to search by words and by me
 
 ### And the rest
 
-- **Agent mode.** Switch Ask AI to Agent and it works through your notes on its own, searching the vault, reading pasted web pages and PDFs, and showing each step.
+- **Agent mode.** Switch Ask AI to Agent and it works through your notes on its own, searching the vault, reading pasted web pages and PDFs, searching the web on Muse Wonder, and showing each step. It asks you a short question when a request is unclear, and drafts edits and new documents that change nothing until you approve them.
 - **Your vault, your files.** Connect a folder on your computer (works with an Obsidian vault), sync it to the cloud, or import a zip. PDFs and images become documents you can annotate.
 - **Voice typing.** Dictate into any document and watch the words appear while you talk.
 - **Chrome extension.** Open your workspace on top of any web page, highlight a passage and ask about it, and save pages and links to your vault with their source.

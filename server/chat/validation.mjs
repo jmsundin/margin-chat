@@ -282,7 +282,24 @@ export function validateChatRequest(body) {
     serviceId: body.serviceId,
     // The caller can create documents the agent's import_webpage tool sends it.
     ...(body.acceptsDocuments === true ? { acceptsDocuments: true } : {}),
+    // The caller shows an agent's clarifying question, and says when the prompt answers one.
+    ...(body.acceptsQuestions === true ? { acceptsQuestions: true } : {}),
+    // The caller shows changes an agent drafts for approval, and names the document the user asked from.
+    ...(body.acceptsProposals === true ? { acceptsProposals: true } : {}),
+    ...(typeof body.sourceDocumentId === "string" && body.sourceDocumentId.trim() && body.sourceDocumentId.length <= 256
+      ? { sourceDocumentId: body.sourceDocumentId.trim() } : {}),
+    ...validateAgentAnswer(body.agentAnswer),
   };
+}
+
+/** The question an agent run stopped with and the request it was about, when the prompt answers it. */
+function validateAgentAnswer(value) {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.question !== "string" || typeof value.request !== "string"
+      || !value.question.trim() || value.question.length > 500 || value.request.length > 8_000) {
+    throw new HttpError(400, "agentAnswer must name the agent's question (up to 500 characters) and the original request (up to 8,000).");
+  }
+  return { agentAnswer: { question: value.question.trim(), request: value.request.trim() } };
 }
 
 export function isBackendServiceId(value) {

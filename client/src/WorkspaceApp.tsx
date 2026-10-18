@@ -139,6 +139,7 @@ import { getConversationRequestPayload } from "./lib/chatContext";
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
+import { applyTextEdit, canUndoProposal, undoEditArguments, withProposalUpdate } from "./lib/agentProposals";
 import { addImportedWebDocuments } from "./lib/webImportDocuments";
 import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument, retractMessageText } from "./lib/workspaceCommands";
 import { buildDocumentSummaries, buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
@@ -2230,6 +2231,9 @@ function WorkspaceAppContent({
         ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
         conversation: await conversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
         modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, signal, acceptsDocuments: true,
+        // Agent mode may ask a question or draft changes; both are shown under the reply in this document.
+        acceptsQuestions: true, acceptsProposals: true, sourceDocumentId: source.id,
+        ...(request.agentAnswer ? { agentAnswer: request.agentAnswer } : {}),
         // Pages agent mode imports become documents beside the one the user asked from.
         onAgentEvent: (event) => {
           if (event.type !== "documents") { onAgentEvent(event); return; }
@@ -2304,6 +2308,60 @@ function WorkspaceAppContent({
         ...conversation, messages: conversation.messages.map((message) => message.id === messageId ? { ...message, execution } : message),
       } } };
     });
+  }
+
+  /**
+   * Approve, dismiss or undo one change Agent mode proposed in the reply `messageId`. Returns why it
+   * couldn't be done, or null. The decision is saved on the reply, so it shows the same after reload.
+   */
+  function handleAgentProposal(conversationId: string, messageId: string, proposalId: string, action: "approve" | "dismiss" | "undo"): string | null {
+    const execution = currentStateRef.current.conversations[conversationId]?.messages.find((message) => message.id === messageId)?.execution;
+    const proposal = execution?.agent?.proposals?.find((candidate) => candidate.id === proposalId);
+    if (!execution || !proposal) return "This proposal is no longer available.";
+    /** Saves the decision on the reply, in the same state update as the change it decides. */
+    const decide = (current: AppState, update: Parameters<typeof withProposalUpdate>[2]): AppState => {
+      const conversation = current.conversations[conversationId];
+      const message = conversation?.messages.find((candidate) => candidate.id === messageId);
+      if (!conversation || !message?.execution) return current;
+      return { ...current, conversations: { ...current.conversations, [conversationId]: { ...conversation, updatedAt: new Date().toISOString(),
+        messages: conversation.messages.map((candidate) => candidate === message ? { ...candidate, execution: withProposalUpdate(message.execution!, proposalId, update) } : candidate) } } };
+    };
+    const commit = (change: (current: AppState) => AppState | null, update: Parameters<typeof withProposalUpdate>[2]) => setState((current) => {
+      const changed = change(current);
+      if (!changed) return current;
+      const next = decide(changed, update);
+      currentStateRef.current = next;
+      return next;
+    });
+    if (action === "dismiss") { commit((current) => current, { status: "dismissed" }); return null; }
+    if (proposal.kind === "edit") {
+      if (action === "undo" && !canUndoProposal(proposal)) return "This change can't be undone from here.";
+      const target = currentStateRef.current.conversations[proposal.documentId];
+      if (!target) return `Open \u201c${proposal.documentTitle || "that document"}\u201d first, then try again.`;
+      if (chatExecutions.has(target.id)) return "AI is still writing in that document. Try again when it finishes.";
+      const [find, replace] = action === "undo" ? undoEditArguments(proposal) : [proposal.find, proposal.replace];
+      const updatedAt = new Date().toISOString();
+      const checked = applyTextEdit(target, find, replace, updatedAt);
+      if (checked === "missing") return action === "undo" ? "The changed text has been edited since, so it can't be undone automatically." : "That text has changed since the agent read it, so the edit can't be applied.";
+      if (checked === "ambiguous") return "That text now appears more than once in the document, so the edit can't tell where to go.";
+      // Approving several at once runs each update on the last one's result, so each edit is applied to the latest text.
+      commit((current) => {
+        const conversation = current.conversations[proposal.documentId];
+        const updated = conversation ? applyTextEdit(conversation, find, replace, updatedAt) : "missing";
+        return typeof updated === "string" ? null : replaceDocumentConversation(current, updated);
+      }, action === "undo" ? {} : { status: "approved" });
+      return null;
+    }
+    if (action === "undo") return "This change can't be undone from here.";
+    if (!currentStateRef.current.conversations[proposal.parentId]) return `Open \u201c${proposal.parentTitle || "the parent document"}\u201d first, then try again.`;
+    // IDs are made once, so the state update gives the same document however often it runs.
+    const ids: Record<string, string> = { conversation: createId("conversation"), block: createId("block"), anchor: createId("anchor") };
+    commit((current) => {
+      const created = addAIChildNodes(current, proposal.parentId, [{ id: proposal.id, title: proposal.title, content: proposal.content, blockId: "", from: 0, to: 0 }],
+        { createId: (prefix) => ids[prefix] ?? createId(prefix) });
+      return created.createdIds.length ? created.state : null;
+    }, { status: "approved", createdId: ids.conversation });
+    return null;
   }
 
   function handleAISettingsChange(conversationId: string, ai: AISettings) {
@@ -4363,6 +4421,8 @@ function WorkspaceAppContent({
       onRemoveAttachment={(id) => handleRemoveDocument(conversation.id,id)} uploading={documentUploadByConversationId[conversation.id]?.uploading}
       onAcceptVersion={(id) => handleAcceptDocumentVersion(conversation.id,id)} onUndoInsertion={(id) => handleUndoDocumentInsertion(conversation.id,id)}
       onCreateChildNodes={(proposals) => handleCreateAIChildNodes(conversation.id, proposals)}
+      onAgentProposal={(messageId, proposalId, action) => handleAgentProposal(conversation.id, messageId, proposalId, action)}
+      documentTitle={(id) => state.conversations[id]?.title}
       registerPanelRef={(element) => {(view === "graph" ? graphPanelRefs : documentPanelRefs).current[conversation.id]=element;}}
       registerAnchorRef={(id,element) => {if (view === "chat") anchorRefs.current[id]=element;}}
       registerBranchOriginRef={(element) => {if (view === "chat") branchOriginRefs.current[conversation.id]=element;}}
