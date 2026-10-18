@@ -6,6 +6,7 @@ export type {
   AIExecutionRecord,
   AgentRunRecord,
   AgentRunStep,
+  AgentWebSource,
   AIContextSource,
   AIRetrievalPassage,
   AIRetrievalRecord,

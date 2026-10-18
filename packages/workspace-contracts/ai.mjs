@@ -139,5 +139,19 @@ function normalizeAgentRun(input) {
     ...(budgetMicros !== undefined ? { budgetMicros } : {}),
     // Why Agent mode turned itself on for this reply, written by the server.
     ...(text(input.automatic, 200).trim() ? { automatic: text(input.automatic, 200) } : {}),
+    ...webSourcesOf(input.webSources),
   };
+}
+
+/** Web pages an agent's answer cites: plain http(s) links and their titles, never page text. */
+function webSourcesOf(input) {
+  const seen = new Set();
+  const sources = (Array.isArray(input) ? input : []).filter(record).flatMap((source) => {
+    let url;
+    try { url = new URL(text(source.url, 2000)); } catch { return []; }
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || seen.has(url.href)) return [];
+    seen.add(url.href);
+    return [{ url: url.href, title: text(source.title, 200) }];
+  }).slice(0, 20);
+  return sources.length ? { webSources: sources } : {};
 }

@@ -36,6 +36,12 @@ export interface AgentRunRecord {
   budgetMicros?: number;
   /** Why Agent mode turned itself on for this reply ("it includes a web link to read"); absent when the user turned it on. */
   automatic?: string;
+  /** Web pages the answer cites, from the model's built-in web search. */
+  webSources?: AgentWebSource[];
+}
+export interface AgentWebSource {
+  url: string;
+  title: string;
 }
 export interface AIContextSource {
   kind: "conversation" | "note" | "document";

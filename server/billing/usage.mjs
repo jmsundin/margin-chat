@@ -12,6 +12,7 @@ export function getHostedModelPrice(env, provider, model) {
       price.inputMicrosPerMillionTokens + price.outputMicrosPerMillionTokens === 0 ||
       (price.cachedInputMicrosPerMillionTokens !== undefined && (!isCount(price.cachedInputMicrosPerMillionTokens) || price.cachedInputMicrosPerMillionTokens > price.inputMicrosPerMillionTokens)) ||
       (price.cacheWriteInputMicrosPerMillionTokens !== undefined && !isCount(price.cacheWriteInputMicrosPerMillionTokens)) ||
+      (price.webSearchMicrosPerSearch !== undefined && !isCount(price.webSearchMicrosPerSearch)) ||
       (provider === "gemini" && !isCount(price.maxReasoningTokens))) {
     throw new HttpError(503, `Hosted usage pricing is unavailable for ${provider}:${model}. Use a personal API key or ask the administrator to configure this model.`);
   }
@@ -54,16 +55,34 @@ export function normalizeProviderUsage(provider, payload, kind = "generation") {
   // output_tokens already includes it, so never add those details twice.
   if (kind !== "embedding" && isCount(total) && isCount(inputTokens) && isCount(outputTokens)) outputTokens = Math.max(outputTokens, total - inputTokens);
   if (![inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, reasoningTokens].every(isCount) || cachedInputTokens + cacheWriteInputTokens > inputTokens) return null;
-  return { inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, reasoningTokens };
+  const webSearches = webSearchCount(provider, payload);
+  return { inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, reasoningTokens, ...(webSearches ? { webSearches } : {}) };
+}
+
+/** Searches a provider's built-in web search ran for one Responses API call. They're billed per
+ * search on top of tokens, and usage doesn't count them, so each web_search_call item counts once. */
+function webSearchCount(provider, payload) {
+  if (provider === "anthropic" || provider === "gemini" || !Array.isArray(payload?.output)) return 0;
+  return payload.output.filter((item) => item?.type === "web_search_call" && item.status !== "failed").length;
+}
+
+/** The most built-in web searches a Responses request body allows, or 0 when it offers none. */
+function webSearchLimit(body) {
+  if (!Array.isArray(body?.tools) || !body.tools.some((tool) => tool?.type === "web_search")) return 0;
+  if (!isCount(body.max_tool_calls) || body.max_tool_calls === 0) throw new HttpError(503, "Hosted web search requests require a search limit.");
+  return body.max_tool_calls;
 }
 
 export function calculateUsageMicros(usage, price) {
   const cacheWriteInputTokens = usage.cacheWriteInputTokens ?? 0;
+  const webSearches = usage.webSearches ?? 0;
   if (cacheWriteInputTokens > 0 && !isCount(price.cacheWriteInputMicrosPerMillionTokens)) throw new HttpError(503, "Hosted cache-write pricing is not configured for this model.");
+  if (webSearches > 0 && !isCount(price.webSearchMicrosPerSearch)) throw new HttpError(503, "Hosted web search pricing is not configured for this model.");
   const numerator = BigInt(usage.inputTokens - usage.cachedInputTokens - cacheWriteInputTokens) * BigInt(price.inputMicrosPerMillionTokens) +
     BigInt(usage.cachedInputTokens) * BigInt(price.cachedInputMicrosPerMillionTokens ?? price.inputMicrosPerMillionTokens) +
     BigInt(cacheWriteInputTokens) * BigInt(price.cacheWriteInputMicrosPerMillionTokens ?? 0) +
-    BigInt(usage.outputTokens) * BigInt(price.outputMicrosPerMillionTokens);
+    BigInt(usage.outputTokens) * BigInt(price.outputMicrosPerMillionTokens) +
+    BigInt(webSearches) * BigInt(price.webSearchMicrosPerSearch ?? 0) * MILLION;
   const amount = (numerator + MILLION - 1n) / MILLION;
   if (amount > BigInt(Number.MAX_SAFE_INTEGER)) throw new HttpError(413, "This model request exceeds the supported prepaid usage limit.");
   return Number(amount);
@@ -83,12 +102,15 @@ export function createHostedUsageMeter({ env, billingService, requestId, userId,
       const inputBound = inputTokenLimit ?? Buffer.byteLength(JSON.stringify(body), "utf8") + 1024;
       const outputBound = maxOutputTokens + (provider === "gemini" ? price.maxReasoningTokens : 0);
       if (!isCount(outputBound)) throw new HttpError(503, "Invalid hosted output token limit.");
+      const searchBound = webSearchLimit(body);
+      if (searchBound && !isCount(price.webSearchMicrosPerSearch)) throw new HttpError(503, `Hosted web search pricing is unavailable for ${provider}:${model}.`);
       const estimate = { inputTokens: inputBound, outputTokens: outputBound, cachedInputTokens: 0,
         cacheWriteInputTokens: price.cacheWriteInputMicrosPerMillionTokens > price.inputMicrosPerMillionTokens ? inputBound : 0,
-        reasoningTokens: provider === "gemini" ? price.maxReasoningTokens : 0 };
+        reasoningTokens: provider === "gemini" ? price.maxReasoningTokens : 0, ...(searchBound ? { webSearches: searchBound } : {}) };
       const amountMicros = Math.max(1, calculateUsageMicros(estimate, price));
       const childRequestId = `${requestId}:${++sequence}`;
-      const metadata = { executionId: requestId, operation, kind, provider, model, pricing: price, inputTokenLimit: inputBound, outputTokenLimit: outputBound };
+      const metadata = { executionId: requestId, operation, kind, provider, model, pricing: price, inputTokenLimit: inputBound, outputTokenLimit: outputBound,
+        ...(searchBound ? { webSearchLimit: searchBound } : {}) };
       await billingService.reserveHostedRequest({ requestId: childRequestId, userId, amountMicros, metadata });
       let dispatched = false;
       let rejected = false;
@@ -121,7 +143,7 @@ export function createHostedUsageMeter({ env, billingService, requestId, userId,
             // the provider already generated. Only final usage releases a hold.
             const measured = unbilled ? { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningTokens: 0 } : finalUsage ? usage : estimate;
             const cost = calculateUsageMicros(measured, price);
-            const exceededReservation = measured.inputTokens > inputBound || measured.outputTokens > outputBound || cost > amountMicros;
+            const exceededReservation = measured.inputTokens > inputBound || measured.outputTokens > outputBound || (measured.webSearches ?? 0) > searchBound || cost > amountMicros;
             settlementEntry = {
               ...metadata, ...measured, amountMicros: Math.min(cost, amountMicros), reservedMicros: amountMicros,
               usageSource: unbilled ? "not-billed" : finalUsage ? "provider" : "estimated-upper-bound",

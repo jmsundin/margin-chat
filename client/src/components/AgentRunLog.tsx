@@ -50,12 +50,12 @@ export default function AgentRunLog({ steps, spentMicros, budgetMicros, stopReas
   stopReason?: "answered" | "budget" | "round-limit" | "time-limit";
   reasoning?: "shared" | "not-shared";
   thinking?: string;
-  activity?: "thinking" | "writing";
+  activity?: "thinking" | "searching" | "writing";
   live?: boolean;
 }) {
   const cost = spentMicros === undefined ? null
     : `${formatAgentMicros(spentMicros)}${live ? " so far" : ""}${budgetMicros ? ` of ${formatAgentMicros(budgetMicros)} budget` : ""}`;
-  const working = activity === "writing" ? "Writing…" : activity === "thinking" || thinking ? "Thinking…" : steps.length ? "Working…" : "Planning…";
+  const working = activity === "writing" ? "Writing…" : activity === "searching" ? "Searching the web…" : activity === "thinking" || thinking ? "Thinking…" : steps.length ? "Working…" : "Planning…";
   return <div className={`agent-run-log${live ? " is-live" : ""}`}>
     {steps.length || live ? <ol aria-label="Agent steps" aria-live={live ? "polite" : undefined}>
       {steps.map((step, index) => step.kind === "thinking"

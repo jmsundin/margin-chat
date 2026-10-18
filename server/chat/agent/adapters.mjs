@@ -19,6 +19,11 @@ const withExtra = (instruction, extra) => extra ? `${instruction}\n\n${extra}` :
 
 /** Muse Wonder always reasons and otherwise picks its own effort, so agent runs set it from the AI mode. */
 const META_REASONING_EFFORT = { fast: "low", balanced: "medium", thorough: "high" };
+/** How much of each page Meta's web search hands the model, by AI mode. */
+const META_SEARCH_CONTEXT = { fast: "low", balanced: "medium", thorough: "high" };
+
+/** Providers whose built-in web search the agent can offer. Searches run on the provider's side, inside a model call. */
+export const WEB_SEARCH_PROVIDERS = Object.freeze(["meta"]);
 
 /** Models that refused a reasoning summary request in this process, so later calls don't ask again.
  * OpenAI and Meta are asked; xAI may reject the setting, and reasoning text xAI does return is still shown. */
@@ -35,10 +40,27 @@ function reasoningText(output) {
   ]).filter((part) => ["summary_text", "reasoning_text"].includes(part?.type) && typeof part.text === "string").map((part) => part.text));
 }
 
+/** The searches one call's built-in web search ran, by query where the provider reports it. */
+function webSearches(output) {
+  return output.filter((item) => item?.type === "web_search_call").map((item) => {
+    const query = [item.action?.query, ...(Array.isArray(item.action?.queries) ? item.action.queries : [])].find((value) => typeof value === "string" && value.trim());
+    return { query: query?.trim() ?? null, ok: item.status !== "failed" };
+  });
+}
+
+/** Web pages the call's text cites, from its url_citation annotations. */
+function citedPages(output) {
+  return output.filter((item) => item?.type === "message" && Array.isArray(item.content))
+    .flatMap((item) => item.content).flatMap((part) => Array.isArray(part?.annotations) ? part.annotations : [])
+    .filter((annotation) => annotation?.type === "url_citation" && typeof annotation.url === "string")
+    .map((annotation) => ({ url: annotation.url, title: typeof annotation.title === "string" ? annotation.title : "" }));
+}
+
 /**
  * OpenAI, xAI and Meta share the Responses API: function_call items in, function_call_output items back.
  * Each call streams so the model's reasoning summary, or any reasoning text it shares, reaches
- * `live.thinking` and its text reaches `live.text` as they are written.
+ * `live.thinking` and its text reaches `live.text` as they are written. With `args.webSearch`, Meta's
+ * calls that may use tools also offer its built-in web_search, capped at `webSearches` searches.
  */
 function createResponsesAdapter(provider, args, tools) {
   const messages = extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content }));
@@ -47,10 +69,13 @@ function createResponsesAdapter(provider, args, tools) {
   const summaryKey = `${provider}:${args.model}`;
   const asksSummary = provider === "openai" || provider === "meta";
   const effort = provider === "meta" ? META_REASONING_EFFORT[args.chatRequest.ai?.mode] ?? "medium" : null;
+  const searchTool = args.webSearch && WEB_SEARCH_PROVIDERS.includes(provider)
+    ? { type: "web_search", search_context_size: META_SEARCH_CONTEXT[args.chatRequest.ai?.mode] ?? "medium" } : null;
   return {
     get size() { return JSON.stringify({ input, instructions: args.systemInstruction }).length; },
-    async call({ allowTools, extraInstruction, live = {} }) {
+    async call({ allowTools, extraInstruction, live = {}, webSearches: searchesLeft = 0 }) {
       if (provider === "xai") input[0] = { role: "system", content: withExtra(args.systemInstruction, extraInstruction) };
+      const search = allowTools && searchTool && searchesLeft > 0;
       const body = {
         model: args.model,
         input: [...input],
@@ -58,8 +83,10 @@ function createResponsesAdapter(provider, args, tools) {
         max_output_tokens: args.maxOutputTokens,
         // Meta accepts only tool_choice "auto", so its last call goes without tools instead.
         ...(provider === "meta"
-          ? allowTools ? { tools: definitions, tool_choice: "auto" } : {}
+          ? allowTools ? { tools: search ? [...definitions, searchTool] : definitions, tool_choice: "auto" } : {}
           : { tools: definitions, tool_choice: allowTools ? "auto" : "none" }),
+        // max_tool_calls counts only built-in tools, so it caps searches and leaves function calls alone.
+        ...(search ? { max_tool_calls: searchesLeft } : {}),
       };
       let thinking = false;
       let writing = false;
@@ -73,6 +100,8 @@ function createResponsesAdapter(provider, args, tools) {
           if (!writing) await live.writing?.();
           writing = true;
           await live.text?.(event.delta);
+        } else if (typeof event.type === "string" && event.type.startsWith("response.web_search_call.") && !writing) {
+          await live.searching?.();
         }
       };
       const request = (withSummary) => requestResponsesApiStream({
@@ -96,6 +125,8 @@ function createResponsesAdapter(provider, args, tools) {
         model: typeof payload?.model === "string" && payload.model.trim() ? payload.model : args.model,
         text: extractOpenAIReply(payload),
         thinking: reasoningText(output),
+        searches: webSearches(output),
+        sources: citedPages(output),
         toolCalls: output.filter((item) => item?.type === "function_call")
           .map((item) => ({ id: item.call_id, name: item.name, arguments: parseArguments(item.arguments, provider) })),
       };

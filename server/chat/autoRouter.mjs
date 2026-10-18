@@ -11,11 +11,12 @@ Use only the supplied model evidence and adapter capabilities; do not invent ran
 Return keep_default if no candidate has a clear advantage. Order workspace source IDs by relevance to the request.
 Set needs_agent true only when a good answer requires looking things up that the supplied messages do not contain:
 the user's saved documents, notes or chats beyond those supplied, a web page they linked, or something the request
-refers to without including it. Set it false when the supplied text and general knowledge can answer.
+refers to without including it. When agentWebSearch is true, current information from the web also counts: recent
+events, today's prices or figures, the latest releases. Set it false when the supplied text and general knowledge can answer.
 Do not answer the user or return a rationale. Return only the structured routing decision.`;
 
 /** One bounded, metered routing pass; credentials and candidate eligibility belong to the caller. */
-export async function analyzeAutoRoute({ chatRequest, routes, apiKey, usageMeter, signal }) {
+export async function analyzeAutoRoute({ chatRequest, routes, apiKey, usageMeter, signal, webSearch = false }) {
   const contextIds = (chatRequest.workspaceContext ?? []).map((item) => item.id);
   const publicMessages = (messages) => (messages ?? []).filter((message) => ["user", "assistant"].includes(message.role))
     .slice(-4).map(({ role, content }) => ({ role, content: content.slice(0, 4000) }));
@@ -27,6 +28,7 @@ export async function analyzeAutoRoute({ chatRequest, routes, apiKey, usageMeter
     workspace: chatRequest.workspaceContext,
     routes,
     adapterCapabilities: ROUTING_ADAPTER_CAPABILITIES,
+    agentWebSearch: webSearch,
   };
   const timeout = AbortSignal.timeout(15_000);
   const payload = await requestOpenAIResponsesPayload({ apiKey, usageMeter, kind: "routing",

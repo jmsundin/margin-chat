@@ -11,6 +11,10 @@ export const AGENT_TIME_LIMIT_MS = 240_000;
 const MAX_STEPS = 60;
 /** Thinking kept on a saved run across all its model calls; the live view shows all of it. */
 const THINKING_SAVED_CHARACTERS = 16_000;
+/** Built-in web searches one run may make, by AI mode. Each costs a fraction of a cent on top of tokens. */
+export const AGENT_WEB_SEARCHES = Object.freeze({ fast: 3, balanced: 6, thorough: 10 });
+/** Cited web pages kept on a saved run. */
+const MAX_SOURCES = 20;
 
 const WRAP_UP = {
   budget: "This run has reached its spending budget. Do not call any more tools. Answer now from what you have already found, and say briefly that you stopped early because of the budget.",
@@ -19,6 +23,14 @@ const WRAP_UP = {
 };
 
 const clip = (text, maximum) => text.length <= maximum ? text : `${text.slice(0, maximum - 1)}…`;
+const quote = (text) => `\u201c${clip(text.replace(/\s+/g, " "), 80)}\u201d`;
+/** A cited page's address when it's a plain http(s) link. */
+function webAddress(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && url.href.length <= 2000 ? url.href : null;
+  } catch { return null; }
+}
 
 /**
  * The agent loop: call the model with tools, run the tools it asks for, feed the
@@ -36,12 +48,18 @@ const clip = (text, maximum) => text.length <= maximum ? text : `${text.slice(0,
  * Text streams to `onDelta` as it is written, since a call that ends without tool
  * calls is the answer. When a call's text turns out to be followed by tool calls,
  * `onRetract` withdraws what was streamed and the text is kept as a note step.
+ *
+ * With `webSearch`, providers with built-in web search (Meta) may search the web
+ * inside their calls, up to AGENT_WEB_SEARCHES per run; each search is a step, and
+ * the pages the answer cites are kept as the run's `sources`.
  */
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity }) {
+  signal, usageMeter, workspace = null, webSearch = false, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
-  const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter },
+  const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter, webSearch },
     agentToolDefinitions(chatRequest, workspace, { documents: Boolean(onDocuments) }));
+  let searchesLeft = webSearch ? AGENT_WEB_SEARCHES[chatRequest.ai?.mode] ?? AGENT_WEB_SEARCHES.balanced : 0;
+  const cited = new Map();
   // Tool results of the round in progress; they join the adapter's history once the round ends.
   let outputs = [];
   const room = () => Number.isSafeInteger(maxInputCharacters)
@@ -65,6 +83,7 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
   const live = {
     thinking: async (delta) => { await onThinking?.(delta); },
     writing: async () => { await onActivity?.("writing"); },
+    searching: async () => { await onActivity?.("searching"); },
     text: async (delta) => {
       const piece = streamed ? delta : delta.trimStart();
       if (!piece || !onDelta) return;
@@ -92,7 +111,7 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
       : now() - startedAt >= timeLimitMs ? "time-limit"
       : call === AGENT_MAX_MODEL_CALLS ? "round-limit" : null;
     streamed = "";
-    const result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null, live });
+    const result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null, live, webSearches: searchesLeft });
     signal?.throwIfAborted();
     const answered = !result.toolCalls.length || stopReason;
     if (!answered && streamed) {
@@ -100,6 +119,14 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
       await onRetract?.();
     }
     await recordThinking(result.thinking);
+    for (const search of result.searches ?? []) {
+      searchesLeft = Math.max(0, searchesLeft - 1);
+      await record({ kind: "tool", tool: "web_search", label: search.query ? `Searched the web for ${quote(search.query)}` : "Searched the web", ok: search.ok });
+    }
+    for (const page of result.sources ?? []) {
+      const url = webAddress(page.url);
+      if (url && !cited.has(url) && cited.size < MAX_SOURCES) cited.set(url, { url, title: clip(page.title.trim(), 200) });
+    }
     if (answered) {
       if (!result.text.trim()) throw new HttpError(502, `${provider} returned a response without assistant text.`);
       if (!streamed) await onDelta?.(result.text);
@@ -111,6 +138,7 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
         agent: {
           steps, stopReason: stopReason ?? "answered", reasoning: reasoningShared ? "shared" : "not-shared", modelCalls: call,
           ...(usageMeter ? { spentMicros: spent() } : {}), ...(metered ? { budgetMicros } : {}),
+          ...(cited.size ? { webSources: [...cited.values()] } : {}),
         },
       };
     }

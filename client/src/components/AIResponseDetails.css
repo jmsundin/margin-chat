@@ -169,3 +169,21 @@ section.ai-response-details {
   color: var(--muted);
   white-space: pre-wrap;
 }
+
+.ai-web-sources {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ai-web-sources ol {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+
+.ai-web-sources a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--line-strong);
+}

@@ -1,5 +1,5 @@
 import { getBackendServiceModel, isBackendServiceId } from "../lib/services";
-import type { AIExecutionRecord, AIRetrievalRecord } from "../types";
+import type { AgentWebSource, AIExecutionRecord, AIRetrievalRecord } from "../types";
 import AgentRunLog from "./AgentRunLog";
 import "./AIResponseDetails.css";
 
@@ -65,6 +65,17 @@ function VaultSearch({ retrieval, onOpenSource, answered }: { retrieval: AIRetri
   </div>;
 }
 
+const hostOf = (url: string) => { try { return new URL(url).hostname.replace(/^www\./u, ""); } catch { return ""; } };
+
+/** Web pages the agent's answer cites, listed under the answer rather than inside the details. */
+function WebSources({ sources }: { sources: AgentWebSource[] }) {
+  return <div className="ai-web-sources"><strong>Sources</strong><ol>{sources.map((source) => {
+    const host = hostOf(source.url);
+    return <li key={source.url}><a href={source.url} target="_blank" rel="noopener noreferrer">{source.title || host || source.url}</a>
+      {source.title && host ? <small> · {host}</small> : null}</li>;
+  })}</ol></div>;
+}
+
 export default function AIResponseDetails({ execution, onOpenSource, isStreaming = false }: {
   execution: AIExecutionRecord;
   onOpenSource?: (id: string) => void;
@@ -78,7 +89,9 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
   // Vault passages are listed under Vault search, so Context used keeps what was chosen or attached.
   const vaultIds = new Set(retrieval && !retrieval.agent ? retrieval.passages.map((passage) => passage.id) : []);
   const sources = execution.sources.filter((source) => !vaultIds.has(source.id));
+  const webSources = execution.agent?.webSources ?? [];
   return <section className="ai-response-details" aria-label="Model selection">
+    {webSources.length ? <WebSources sources={webSources}/> : null}
     <details className="ai-response-more">
     <summary>
       <span className="ai-routing-model">{statusLabel} <strong>{modelLabel(execution.provider, execution.model)}</strong><span> · {providers[execution.provider] ?? execution.provider}</span></span>
