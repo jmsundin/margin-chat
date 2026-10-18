@@ -2451,7 +2451,7 @@ export default function ConversationGraphView({
     if (panelView) return;
     if (event.pointerType !== "touch") suppressTouchClickRef.current = false;
     const target = event.target as Element;
-    if (event.pointerType !== "touch" || showThemeOverview || target.closest("[data-graph-reader-scroll]") || (target.closest("[data-graph-ui]") && !target.closest(".graph-territory"))) return;
+    if (event.pointerType !== "touch" || showThemeOverview || target.closest("[data-graph-reader-scroll]") || (target.closest("[data-graph-ui]") && !target.closest(".graph-territory, .canvas-group-box-name"))) return;
     const touches = touchPointersRef.current;
     if (!touches.size) suppressTouchClickRef.current = false;
     if (touches.size >= 2) {
@@ -2502,9 +2502,9 @@ export default function ConversationGraphView({
     // the document. Pinch/Ctrl-wheel still belongs to the camera.
     if (readerRoot && !event.ctrlKey && !event.metaKey) return;
 
-    // Group headings and clickable SVG edges belong to the pannable canvas;
+    // Group headings, Canvas group names and clickable SVG edges belong to the pannable canvas;
     // only overlays and controls should keep ordinary wheel events for themselves.
-    const isMapSurface = graphUiRoot?.closest(".graph-territory, .conversation-graph-edges");
+    const isMapSurface = graphUiRoot?.closest(".graph-territory, .canvas-group-box-name, .conversation-graph-edges");
     if (graphUiRoot && !isMapSurface && !event.ctrlKey && !event.metaKey) {
       return;
     }
