@@ -56,14 +56,20 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
   // Removing a used reset token must not restart session hydration and race a new login.
   const [hasPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).has("reset_token"));
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
-  // The extension already knows its signed-in account, so it opens the workspace saved on this
-  // device straight away and confirms the session in the background instead of behind a spinner.
-  const [savedExtensionUser] = useState(() => {
-    const saved = extension?.userId ? loadOfflineUser() : null;
-    return saved?.id === extension?.userId ? saved : null;
+  // A returning visitor opens the workspace saved on this device straight away and the session is
+  // confirmed in the background instead of behind a spinner. Server endpoints still check the cookie.
+  const [savedUser] = useState(() => {
+    if (extension) {
+      const saved = extension.userId ? loadOfflineUser() : null;
+      return saved?.id === extension.userId ? saved : null;
+    }
+    if (hasPasswordResetToken) return null;
+    // Sign-in, consent and marketing pages wait for the real answer; they show something else when signed in.
+    const initialRoute = resolveSiteRoute(window.location, false);
+    return initialRoute.kind === "app" || (initialRoute.kind === "marketing" && initialRoute.page === "home") ? loadOfflineUser() : null;
   });
-  const [authStatus, setAuthStatus] = useState<AuthStatus>(savedExtensionUser ? "authenticated" : "checking");
-  const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(savedExtensionUser);
+  const [authStatus, setAuthStatus] = useState<AuthStatus>(savedUser ? "authenticated" : "checking");
+  const [authUser, setAuthUser] = useState<AuthenticatedUser | null>(savedUser);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authSubmitting, setAuthSubmitting] = useState(false);
   const [billingError, setBillingError] = useState<string | null>(null);
@@ -181,6 +187,17 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
           throw new ApiError(409, "The extension account changed. Reconnect Margin Chat to open this workspace.");
         }
         if (user) rememberOfflineUser(user); else forgetOfflineUser();
+        // The workspace was opened from this device's saved sign-in, which has ended: ask to sign in again.
+        if (!user && savedUser) {
+          if (resolveSiteRoute(window.location, Boolean(extension)).kind === "marketing") {
+            window.history.replaceState({}, "", AUTH_PATHS.login);
+            setRoute({ kind: "auth", mode: "login" });
+          }
+          setAuthUser(null);
+          setAuthStatus("unauthenticated");
+          setAuthError("Your session expired. Sign in again to continue.");
+          return;
+        }
         setAuthUser(user);
         setAuthStatus(user ? "authenticated" : "unauthenticated");
         setAuthError(null);
@@ -500,6 +517,8 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
   if (route.kind === "marketing" && route.page !== "home") return marketingSite;
 
   if (authStatus === "checking") {
+    // Visitors to the home page see it right away; a signed-in one moves on to the workspace once confirmed.
+    if (route.kind === "marketing") return marketingSite;
     return (
       <div className="app-shell">
         <div className="app-chrome auth-chrome">
@@ -558,7 +577,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
   }
 
   return (
-    <Suspense fallback={<div className="app-shell"><div className="auth-loading-card is-delayed-status" role="status">Opening your workspace…</div></div>}>
+    <Suspense fallback={<div className="app-shell" aria-busy="true" />}>
     {/* The extension's frame sits inside other sites, which must not get to grant or hold a microphone. */}
     {extension ? null : <DictationControl userId={authUser.id} />}
     <WorkspaceApp

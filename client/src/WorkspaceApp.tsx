@@ -4513,12 +4513,13 @@ function WorkspaceAppContent({
       conversations={state.conversations} currentId={activeConversation.id} onSelect={handleRevealConversation} />;
   }
 
-  if (!vault.ready) {
-    return <div className="auth-shell"><section className={`thread-dialog${vault.message ? "" : " is-delayed-status"}`} role="status">
+  // While the files saved on this device are read, the workspace already shows; it only waits on a screen when they can't be opened.
+  if (!vault.ready && vault.message) {
+    return <div className="auth-shell"><section className="thread-dialog" role="status">
       <h2>Opening your Markdown vault</h2>
-      <p>{vault.message ?? "Reading the files saved on this device…"}</p>
-      {vault.message ? <button className="thread-dialog-button" onClick={() => window.location.reload()}>Try again</button> : null}
-      {vault.message && vault.startFreshCopy ? <button className="thread-dialog-button" onClick={() => {
+      <p>{vault.message}</p>
+      <button className="thread-dialog-button" onClick={() => window.location.reload()}>Try again</button>
+      {vault.startFreshCopy ? <button className="thread-dialog-button" onClick={() => {
         if (window.confirm("Download your vault from the cloud into a new copy on this device? The copy that can't be opened is kept, but edits in it that never reached the cloud won't appear.")) vault.startFreshCopy?.();
       }}>Download a fresh copy from the cloud</button> : null}
     </section></div>;
@@ -4539,7 +4540,9 @@ function WorkspaceAppContent({
       status: jev.status,
       onCreateAndAssign: handleCreateAndAssignGroup,
     }}>
-    <div className={`app-shell${maximizedDocument ? " is-document-maximized" : ""}`}>
+    {/* Until the vault is read the workspace can't be edited, so nothing typed is replaced when the documents arrive. */}
+    <div className={`app-shell${maximizedDocument ? " is-document-maximized" : ""}${vault.ready ? "" : " is-vault-opening"}`}
+      aria-busy={!vault.ready || undefined} inert={!vault.ready || undefined}>
       <div className="app-chrome">
         <div className="workspace-notifications">
           {!leftSidebarOpen || isMobileViewport ? <VaultFetchIndicator status={vault.fetchStatus ?? null} compact /> : null}
@@ -4692,7 +4695,7 @@ function WorkspaceAppContent({
                     : "canvas-section"
               }
             >
-              {Object.values(state.conversations).every((chat) => !chat.messages.length && !chat.notes?.length && !chat.documents?.length && !chat.document?.blocks.some((block) => block.content.trim())) &&
+              {vault.ready && Object.values(state.conversations).every((chat) => !chat.messages.length && !chat.notes?.length && !chat.documents?.length && !chat.document?.blocks.some((block) => block.content.trim())) &&
                 <aside className="history-import-welcome">
                   <div><strong>Start with your conversations</strong><p>Bring chats from ChatGPT and pick up where you left off.</p></div>
                   <button type="button" className="thread-dialog-button" onClick={() => setHistoryImportOpen(true)}>Bring your chat history</button>
