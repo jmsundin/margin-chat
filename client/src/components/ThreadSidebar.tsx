@@ -37,8 +37,10 @@ interface ThreadSidebarProps {
   fetchIndicator?: ReactNode;
   /** Documents that just streamed in from the cloud, briefly highlighted. */
   arrivingThreadIds?: ReadonlySet<string>;
-  /** The Sessions view: named workspaces to switch between and drag into the tab bar. */
+  /** The Sessions view: named workspaces to switch between, rename and delete. */
   sessionsPanel?: ReactNode;
+  /** Changes each time something outside the sidebar asks for the Sessions view. */
+  sessionsRequest?: number;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
   mapExplorerActive?: boolean;
   onSelectSidebarSection?: (section: "chats" | "explore") => void;
@@ -359,6 +361,7 @@ export default function ThreadSidebar({
   fetchIndicator,
   arrivingThreadIds,
   sessionsPanel,
+  sessionsRequest = 0,
 }: ThreadSidebarProps) {
   const [openMenuState, setOpenMenuState] = useState<{
     left: number;
@@ -389,6 +392,11 @@ export default function ThreadSidebar({
     setOpenMenuState(null);
     setSidebarContent(next);
   }
+
+  useEffect(() => {
+    if (sessionsRequest) showSidebarContent("sessions");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsRequest]);
 
   useLayoutEffect(() => {
     if ((sidebarContent === "documents" || sidebarContent === "groups") && listRef.current) listRef.current.scrollTop = listScroll.current[sidebarContent];
