@@ -1,6 +1,6 @@
 import { analyzeAutoRoute, AUTO_ROUTER_LABEL } from "./autoRouter.mjs";
 import { HttpError } from "../lib/errors.mjs";
-import { AGENT_PROVIDERS } from "./agent/adapters.mjs";
+import { AGENT_PROVIDERS, WEB_SEARCH_PROVIDERS } from "./agent/adapters.mjs";
 import { agentNeedFromPrompt } from "./agent/autoAgent.mjs";
 import { runAgent } from "./agent/runner.mjs";
 import { vaultToolAccess } from "./agent/vaultTools.mjs";
@@ -21,7 +21,7 @@ import { applySemanticRouting, createSemanticRouteCandidates, isProviderAllowed,
 import { PROFILE_EVIDENCE } from "./modelProfiles.mjs";
 import { DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
 import { getRuntimeDefaultModelForService } from "../lib/backendModels.mjs";
-import { createHostedUsageMeter } from "../billing/usage.mjs";
+import { createHostedUsageMeter, getHostedModelPrice } from "../billing/usage.mjs";
 
 const PROVIDERS = Object.freeze({
   // Legacy service ID: OpenAI with agent mode always on.
@@ -160,6 +160,16 @@ export function createChatService({ database, documentService, env, runtimeConfi
     return hosted ? { apiKey: hosted, source: "hosted" } : { apiKey: null, source: null };
   }
 
+  /** Whether Agent mode on this route can use its provider's built-in web search: always with the
+   * user's own key, and on Margin Chat's key only when hosted pricing lists a per-search rate. */
+  function canSearchWeb(route, context) {
+    const provider = providerName(route.serviceId);
+    const credential = getProviderCredential(route.serviceId, context);
+    if (!WEB_SEARCH_PROVIDERS.includes(provider) || !credential.apiKey) return false;
+    if (credential.source !== "hosted") return true;
+    try { return Number.isSafeInteger(getHostedModelPrice(env, provider, route.model).webSearchMicrosPerSearch); } catch { return false; }
+  }
+
   function getRoutes(chatRequest, context) {
     if (chatRequest.serviceId !== "backend-services") {
       if (!isProviderAllowed(chatRequest.serviceId, chatRequest.ai)) {
@@ -273,6 +283,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
     let orderedRequest = chatRequest;
     const semanticWarnings = [];
     let routingAnalysis = null;
+    // Whether an agent run here could search the web, which lets questions about current events start one.
+    const webReachable = !instructionOverride && routes.some((route) => canSearchWeb(route, context));
     // Titles and credential preflight remain deterministic. A reply has one
     // semantic pass, shared by every eligible provider attempt.
     const automatic = chatRequest.serviceId === "backend-services";
@@ -295,7 +307,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
           const credential = getProviderCredential("openai-api", { ...context, ...(personal ? { allowHosted: false } : {}) });
           if (isProviderAllowed("openai-api", chatRequest.ai) && credential.apiKey) {
             analysis = await autoRouter({ chatRequest: semanticRequest, routes: candidates,
-              apiKey: credential.apiKey, signal: context.signal,
+              apiKey: credential.apiKey, signal: context.signal, webSearch: webReachable,
               usageMeter: credential.source === "hosted" ? context.usageMeter : null });
           }
         } else {
@@ -334,7 +346,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
     // is asking about a picture (agents can't see images yet), or no model in this request can call tools.
     const autoAgentReason = explicitAgent || instructionOverride || chatRequest.ai.agentAuto === false || chatRequest.conversation.file?.image
       || !routes.some((route) => AGENT_PROVIDERS.includes(providerName(route.serviceId))) ? null
-      : agentNeedFromPrompt(chatRequest) ?? (routingAnalysis?.needsAgent ? "it needs information this conversation doesn't include" : null);
+      : chatRequest.agentAnswer ? "it answers the question the agent asked"
+      : agentNeedFromPrompt(chatRequest, { web: webReachable }) ?? (routingAnalysis?.needsAgent ? "it needs information this conversation doesn't include" : null);
     const agentRequested = explicitAgent || Boolean(autoAgentReason);
     if (automatic) routes = agentRequested ? preferAgentModel(routes, autoAgentReason) : withoutAgentOnlyRoutes(routes);
     // Agent mode searches the vault itself; a plain reply gets the best passages up front.
@@ -386,6 +399,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
       agentSearches = [];
       const credential = getProviderCredential(route.serviceId, context);
       const agentProvider = agentRequested && AGENT_PROVIDERS.includes(providerName(route.serviceId)) ? providerName(route.serviceId) : null;
+      const webSearch = Boolean(agentProvider) && canSearchWeb(route, context);
       const sendsImage = Boolean(file?.image) && !agentProvider && modelSeesImages(providerName(route.serviceId));
       const blindToImage = file?.kind === "image" && !sendsImage && !file.text;
       const receipt = {
@@ -433,7 +447,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
         signal: context.signal,
         systemInstruction: [instructionOverride ?? (agentProvider
           ? buildAgentInstruction(prepared.chatRequest, { vaultTools, canWidenScope: Boolean(workspace) && !vaultTools,
-            documents: Boolean(chatRequest.acceptsDocuments && handlers?.onDocuments) })
+            documents: Boolean(chatRequest.acceptsDocuments && handlers?.onDocuments), webSearch, questions: Boolean(chatRequest.acceptsQuestions),
+            proposals: Boolean(chatRequest.acceptsProposals), answering: chatRequest.agentAnswer ?? null })
           : buildSystemInstruction(prepared.chatRequest)), blindToImage ? cannotSeeImageInstruction(file) : ""].filter(Boolean).join("\n\n"),
         image: sendsImage ? file.image : null,
         userId: context.userId,
@@ -452,7 +467,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         // stream. Once any delta or agent step is exposed, retries would corrupt a reply.
         const onDelta = async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); };
         const result = agentProvider ? await runAgent({
-          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, workspace,
+          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, workspace, webSearch, questions: Boolean(chatRequest.acceptsQuestions), proposals: Boolean(chatRequest.acceptsProposals),
           ...(handlers ? {
             onDelta,
             onRetract: async () => { await ensureReady(); await handlers.onRetract?.(); },

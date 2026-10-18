@@ -26,7 +26,7 @@ export type AgentEvent =
   | { type: "retract" }
   | { type: "documents"; documents: ImportedWebDocument[] }
   | { type: "thinking"; delta: string }
-  | { type: "activity"; activity: "writing" };
+  | { type: "activity"; activity: "writing" | "searching" };
 
 /** A page the agent saved with import_webpage, for the browser to create as a document. */
 export interface ImportedWebDocument {
@@ -112,7 +112,7 @@ export async function readChatReplyStream(
       if (step) onAgentEvent?.({ type: "step", step, ...(spentMicros === undefined ? {} : { spentMicros }) });
     }
     if (event.type === "thinking" && typeof event.delta === "string" && event.delta) onAgentEvent?.({ type: "thinking", delta: event.delta });
-    if (event.type === "activity" && event.activity === "writing") onAgentEvent?.({ type: "activity", activity: "writing" });
+    if (event.type === "activity" && (event.activity === "writing" || event.activity === "searching")) onAgentEvent?.({ type: "activity", activity: event.activity });
     if (event.type === "documents") {
       const documents = importedWebDocuments(event.documents);
       if (documents.length) onAgentEvent?.({ type: "documents", documents });

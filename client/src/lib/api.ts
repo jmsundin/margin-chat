@@ -143,6 +143,14 @@ export async function requestChatReply(args: {
   onAgentEvent?: (event: AgentEvent) => void;
   /** The caller creates the documents agent mode's import_webpage sends. */
   acceptsDocuments?: boolean;
+  /** The caller shows an agent's clarifying question with a way to answer it. */
+  acceptsQuestions?: boolean;
+  /** The latest message answers the question an agent run stopped with, asked about this request. */
+  agentAnswer?: { question: string; request: string };
+  /** The caller shows changes an agent drafts, under the reply, for the user to approve. */
+  acceptsProposals?: boolean;
+  /** The document the user asked from, which an agent's proposals mean by "this document". */
+  sourceDocumentId?: string;
   serviceId: BackendServiceId;
   signal?: AbortSignal;
 }): Promise<ChatReplyResponse> {

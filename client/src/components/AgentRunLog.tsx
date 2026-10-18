@@ -12,6 +12,7 @@ const stopNotes = {
   budget: "Stopped early at its budget and answered from what it had.",
   "round-limit": "Reached its step limit and answered from what it had.",
   "time-limit": "Reached its time limit and answered from what it had.",
+  question: "Stopped to ask you a question. Your reply picks up from here.",
 };
 
 const NOT_SHARED = "The model didn't share its thinking for this run, so only its steps are shown.";
@@ -47,15 +48,15 @@ export default function AgentRunLog({ steps, spentMicros, budgetMicros, stopReas
   steps: AgentRunStep[];
   spentMicros?: number;
   budgetMicros?: number;
-  stopReason?: "answered" | "budget" | "round-limit" | "time-limit";
+  stopReason?: "answered" | "budget" | "round-limit" | "time-limit" | "question";
   reasoning?: "shared" | "not-shared";
   thinking?: string;
-  activity?: "thinking" | "writing";
+  activity?: "thinking" | "searching" | "writing";
   live?: boolean;
 }) {
   const cost = spentMicros === undefined ? null
     : `${formatAgentMicros(spentMicros)}${live ? " so far" : ""}${budgetMicros ? ` of ${formatAgentMicros(budgetMicros)} budget` : ""}`;
-  const working = activity === "writing" ? "Writing…" : activity === "thinking" || thinking ? "Thinking…" : steps.length ? "Working…" : "Planning…";
+  const working = activity === "writing" ? "Writing…" : activity === "searching" ? "Searching the web…" : activity === "thinking" || thinking ? "Thinking…" : steps.length ? "Working…" : "Planning…";
   return <div className={`agent-run-log${live ? " is-live" : ""}`}>
     {steps.length || live ? <ol aria-label="Agent steps" aria-live={live ? "polite" : undefined}>
       {steps.map((step, index) => step.kind === "thinking"

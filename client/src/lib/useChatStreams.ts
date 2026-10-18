@@ -9,8 +9,8 @@ export interface AgentProgress {
   spentMicros?: number;
   /** The current model call's thinking so far, until the call ends and it arrives as a step. */
   thinking?: string;
-  /** What the current model call is doing, once it has started thinking or writing. */
-  activity?: "thinking" | "writing";
+  /** What the current model call is doing, once it has started thinking, searching the web or writing. */
+  activity?: "thinking" | "searching" | "writing";
 }
 
 const LIVE_STEPS = 60;

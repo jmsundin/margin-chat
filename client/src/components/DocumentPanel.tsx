@@ -19,6 +19,7 @@ import AIResponseDetails from "./AIResponseDetails";
 import MobileAIComposer from "./MobileAIComposer";
 import AgentModeToggle, { type AgentModeControls } from "./AgentModeToggle";
 import AgentRunLog from "./AgentRunLog";
+import AgentFollowUp, { type AgentProposalAction } from "./AgentFollowUp";
 import DocumentMargin, { type DocumentMarginItem } from "./DocumentMargin";
 import type { AgentProgress } from "../lib/useChatStreams";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
@@ -86,6 +87,10 @@ export interface DocumentPanelProps {
   onUndoInsertion: (generationId: string) => void;
   /** Offered on each AI response when set: create picked parts of it as child documents. */
   onCreateChildNodes?: (proposals: AIChildNodeProposal[]) => void;
+  /** Approve, dismiss or undo a change Agent mode proposed in the reply `messageId`; returns why it failed, or null. */
+  onAgentProposal?: (messageId: string, proposalId: string, action: AgentProposalAction) => string | null;
+  /** The current title of any document, for naming the documents an agent's proposals change. */
+  documentTitle?: (id: string) => string | undefined;
   registerPanelRef: (element: HTMLElement | null) => void;
   registerAnchorRef: (id: string, element: HTMLSpanElement | null) => void;
   registerBranchOriginRef: (element: HTMLElement | null) => void;
@@ -235,6 +240,27 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const generation = currentVersion(document.generations.find((candidate) => candidate.promptId === item.id && !candidate.alternativeOf));
     return [item.id, generation?.blockIds.find((id) => document.blocks.some((block) => block.id === id)) ?? document.blocks.at(-1)?.id];
   }));
+  // Under each agent reply: a way to answer the question it stopped with, and the changes it proposed.
+  const agentFollowUps = new Map<string, ReactNode[]>();
+  for (const item of document.prompts) {
+    const active = currentVersion(document.generations.find((candidate) => candidate.promptId === item.id && !candidate.alternativeOf));
+    if (!active || (active.status === "streaming" && props.isSubmitting)) continue;
+    const agent = conversation.messages.find((message) => message.id === active.messageId)?.execution?.agent;
+    const shown = active.blockIds.filter((id) => document.blocks.some((block) => block.id === id));
+    const questionBlock = agent?.stopReason === "question" && agent.question && document.generations.at(-1)?.id === active.id
+      ? document.blocks.find((block) => block.id === shown[0]) : undefined;
+    if (!agent || (!questionBlock && !agent.proposals?.length)) continue;
+    const anchor = shown.at(-1) ?? document.blocks.at(-1)?.id;
+    if (!anchor) continue;
+    const request = document.prompts.find((prompt) => prompt.id === active.promptId)?.content ?? item.content;
+    agentFollowUps.set(anchor, [...agentFollowUps.get(anchor) ?? [], <AgentFollowUp key={active.id} agent={agent} asking={Boolean(questionBlock)}
+      disabled={props.isSubmitting} currentDocumentId={conversation.id} documentTitle={props.documentTitle} onOpen={props.onOpenBranch}
+      // The answer takes the question's place, and the agent hears what it asked and about which request.
+      onAnswer={(answer) => questionBlock && props.onSubmit({ blockId: questionBlock.id, from: 0, to: questionBlock.content.length, quote: questionBlock.content,
+        prompt: answer, destination: "inline", replaceSelection: true, sourceContent: questionBlock.content,
+        agentAnswer: { question: agent.question!.text, request } })}
+      onProposal={(proposalId, action) => props.onAgentProposal ? props.onAgentProposal(active.messageId, proposalId, action) : "Changes can't be approved here."}/>]);
+  }
   const modelLabel = conversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(conversation.serviceId, conversation.modelId)?.label ?? conversation.modelId;
   const decorations = useMemo(() => {
     const ranges: Record<string, RichDocumentDecoration[]> = {};
@@ -482,6 +508,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering obsidian theme={props.theme}/>}
         renderAfterBlock={(block) => <>
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPrompt)}
+          {agentFollowUps.get(block.id)}
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
         </>}/> : <RichDocumentPlaceholder blocks={document.blocks} />}
       {props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))

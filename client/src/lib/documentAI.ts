@@ -14,6 +14,8 @@ export interface DocumentAIRequest extends DocumentInsertion {
   destination: "inline" | "side";
   replaceSelection?: boolean;
   rerunGenerationId?: string;
+  /** The prompt answers the question an agent run stopped with, asked about `request`. */
+  agentAnswer?: { question: string; request: string };
 }
 
 /** Keep the complete current document in the required latest message. The server

@@ -1,3 +1,5 @@
+import { ASK_TOOL_DEFINITION } from "./askTool.mjs";
+import { PROPOSAL_TOOL_DEFINITIONS, createProposalTools, describeProposalStep } from "./proposalTools.mjs";
 import { VAULT_TOOL_DEFINITIONS, createVaultTools, vaultToolAccess } from "./vaultTools.mjs";
 import { IMPORT_TOOL_DEFINITION, WEB_TOOL_DEFINITION, createWebTools, describeImportStep, describeWebStep, pastedWebAddresses } from "./webTools.mjs";
 
@@ -68,15 +70,18 @@ export const AGENT_TOOL_DEFINITIONS = [
 ];
 
 /** The tools offered to this request: the snapshot tools, the vault tools when the user's AI context allows
- * them, and read_webpage when the user pasted a web address, with import_webpage when the caller can
- * receive new documents. */
-export function agentToolDefinitions(chatRequest, workspace = null, { documents = false } = {}) {
+ * them, read_webpage when the user pasted a web address, with import_webpage when the caller can
+ * receive new documents, ask_user when the caller can show the agent's question, and the proposal
+ * tools when it can show changes for approval. */
+export function agentToolDefinitions(chatRequest, workspace = null, { documents = false, questions = false, proposals = false } = {}) {
   const pasted = pastedWebAddresses(chatRequest).length > 0;
   return [
     ...AGENT_TOOL_DEFINITIONS,
     ...(vaultToolAccess(chatRequest, workspace) ? VAULT_TOOL_DEFINITIONS : []),
     ...(pasted ? [WEB_TOOL_DEFINITION] : []),
     ...(pasted && documents ? [IMPORT_TOOL_DEFINITION] : []),
+    ...(proposals ? PROPOSAL_TOOL_DEFINITIONS : []),
+    ...(questions ? [ASK_TOOL_DEFINITION] : []),
   ];
 }
 
@@ -84,16 +89,18 @@ export function agentToolDefinitions(chatRequest, workspace = null, { documents 
  * `workspace` is `{ userId, vault, database }` for a signed-in request, or null.
  * `room()` is how many more characters the request can take; webpages, which have
  * their own allowance, never read past it. `onDocuments(documents)` receives pages
- * import_webpage saves.
+ * import_webpage saves. With `proposals`, the executor's `proposals()` lists the changes the run drafted.
  */
-export function createAgentToolExecutor({ chatRequest, workspace = null, signal, room, readPage, importSection, onDocuments = null }) {
+export function createAgentToolExecutor({ chatRequest, workspace = null, signal, room, readPage, importSection, onDocuments = null, proposals = false }) {
   const snapshots = permittedSnapshots(chatRequest);
   let remainingCharacters = chatRequest.ai?.mode === "fast" ? 6_000 : chatRequest.ai?.mode === "thorough" ? 24_000 : 12_000;
   const vaultTools = createVaultTools({ chatRequest, workspace, snapshots, readCharacters: Math.floor(remainingCharacters / 3) });
   const webTools = createWebTools({ chatRequest, signal, room, onDocuments, ...(readPage ? { readPage } : {}), ...(importSection ? { importSection } : {}) });
+  const proposalTools = proposals ? createProposalTools({ chatRequest, snapshots, reachable: vaultToolAccess(chatRequest, workspace) ?? undefined }) : null;
 
-  return async function executeTool(name, args = {}) {
+  async function executeTool(name, args = {}) {
     if (webTools?.has(name)) return webTools.run(name, args);
+    if (proposalTools?.has(name)) return proposalTools.run(name, args);
     let result;
     if (name === "search_conversations") {
       const query = String(args.query ?? "").trim().toLowerCase();
@@ -129,7 +136,9 @@ export function createAgentToolExecutor({ chatRequest, workspace = null, signal,
     if (size > remainingCharacters) return { ok: false, truncated: true, error: "The context budget for workspace tools is exhausted. Answer from the supplied context and disclose any missing information." };
     remainingCharacters -= size;
     return result;
-  };
+  }
+  executeTool.proposals = () => proposalTools?.list() ?? [];
+  return executeTool;
 }
 
 const quoted = (value, maximum = 80) => `\u201c${clipText(value, maximum) || "Untitled"}\u201d`;
@@ -150,6 +159,10 @@ function describeVaultStep(name, args, output, exhausted) {
 
 /** A short, human-readable line for the run log. Never includes tool output text. */
 export function describeAgentStep(name, args = {}, output = {}) {
+  if (PROPOSAL_TOOL_DEFINITIONS.some((tool) => tool.name === name)) {
+    const step = describeProposalStep(name, args, output);
+    return { kind: "tool", tool: name, label: step.label, ...(step.detail ? { detail: step.detail } : {}), ok: step.ok };
+  }
   if (name === WEB_TOOL_DEFINITION.name || name === IMPORT_TOOL_DEFINITION.name) {
     const step = (name === IMPORT_TOOL_DEFINITION.name ? describeImportStep : describeWebStep)(args, output);
     return { kind: "tool", tool: name, label: step.label, ...(step.detail ? { detail: step.detail } : {}), ok: step.ok };
