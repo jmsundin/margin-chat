@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createChildConversation, createMainConversation } from "../client/src/initialState";
 import { buildCanvasGroupFrames, canvasFrameAt, canvasGroupBuckets, canvasGroupDropChanges, canvasGroupOf, NOT_PLACED_FRAME_ID } from "../client/src/lib/canvasGroupFrames";
 import { buildCategoryOrganizedGraphLayouts } from "../client/src/lib/graphCategories";
-import type { ConversationGraphNodePlacement } from "../client/src/lib/conversationGraph";
+import { createDefaultGraphNodeLayout, mergeGraphNodeLayouts } from "../client/src/lib/graphLayout";
+import { getUnplacedForestRootIds, type ConversationGraphNodePlacement } from "../client/src/lib/conversationGraph";
 import type { Conversation, ConversationGroup } from "../client/src/types";
 
 function vault() {
@@ -75,5 +76,18 @@ describe("Canvas group frames", () => {
     expect(x("trip")).not.toBe(x("angular"));
     // A child moves with its main document; both started at the same spot here.
     expect(x("signals")).toBe(x("angular"));
+  });
+});
+
+describe("Undo tidy up", () => {
+  test("returns never-placed documents to the Not placed yet grid", () => {
+    const { conversations } = vault();
+    const tidied = mergeGraphNodeLayouts(conversations, {}, { loose: { x: 400, y: 300, positioned: true } });
+    expect(getUnplacedForestRootIds(conversations, tidied)).not.toContain("loose");
+    const undone = mergeGraphNodeLayouts(conversations, tidied, { loose: createDefaultGraphNodeLayout() }, { replace: true });
+    expect(getUnplacedForestRootIds(conversations, undone)).toContain("loose");
+    // A plain update keeps the tree's origin, which is what used to pin it at the left edge.
+    const merged = mergeGraphNodeLayouts(conversations, tidied, { loose: createDefaultGraphNodeLayout() });
+    expect(getUnplacedForestRootIds(conversations, merged)).not.toContain("loose");
   });
 });

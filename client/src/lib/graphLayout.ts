@@ -284,3 +284,60 @@ export function buildBranchGraphNodeLayout(args: {
         : parentLayout.y + GRAPH_BRANCH_OFFSET_Y,
   });
 }
+
+/**
+ * Saves new card positions. A tree's origin is set once: where the map showed
+ * it (sent with the move), or else where its root was saved. `replace` saves
+ * each layout exactly as given, so Undo tidy up can return cards to never placed.
+ * Returns the same map when nothing changed.
+ */
+export function mergeGraphNodeLayouts(
+  conversations: Record<string, Conversation>,
+  currentLayouts: Record<string, GraphNodeLayout>,
+  nextLayouts: Record<string, Partial<GraphNodeLayout>>,
+  options?: { replace?: boolean },
+): Record<string, GraphNodeLayout> {
+  let changed = false;
+  const graphLayouts = { ...currentLayouts };
+
+  for (const [conversationId, nextLayout] of Object.entries(nextLayouts)) {
+    const conversation = conversations[conversationId];
+
+    if (!conversation) {
+      continue;
+    }
+
+    const currentLayout =
+      currentLayouts[conversationId] ?? createDefaultGraphNodeLayout();
+    const preservesTreeOrigin =
+      conversation.parentId === null &&
+      nextLayout.positioned &&
+      !currentLayout.positioned;
+    const mergedLayout = options?.replace ? createDefaultGraphNodeLayout(nextLayout) : createDefaultGraphNodeLayout({
+      ...currentLayout,
+      ...nextLayout,
+      treeOriginX: currentLayout.treeOriginX ?? nextLayout.treeOriginX
+        ?? (preservesTreeOrigin ? currentLayout.x : undefined),
+      treeOriginY: currentLayout.treeOriginY ?? nextLayout.treeOriginY
+        ?? (preservesTreeOrigin ? currentLayout.y : undefined),
+    });
+
+    if (
+      currentLayout.x === mergedLayout.x &&
+      currentLayout.y === mergedLayout.y &&
+      currentLayout.width === mergedLayout.width &&
+      currentLayout.height === mergedLayout.height &&
+      Boolean(currentLayout.positioned) ===
+        Boolean(mergedLayout.positioned) &&
+      currentLayout.treeOriginX === mergedLayout.treeOriginX &&
+      currentLayout.treeOriginY === mergedLayout.treeOriginY
+    ) {
+      continue;
+    }
+
+    graphLayouts[conversationId] = mergedLayout;
+    changed = true;
+  }
+
+  return changed ? graphLayouts : currentLayouts;
+}

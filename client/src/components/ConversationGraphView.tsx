@@ -262,8 +262,10 @@ export interface ConversationGraphViewProps {
   /** Zooming in past a full-screen card opens its document; the map keeps its place. */
   onZoomIntoConversation?: (conversationId: string) => void;
   onToggleGroup: (groupId: string) => void;
+  /** `replace` saves each layout exactly as given, so an undo can return cards to never placed. */
   onUpdateGraphNodeLayouts?: (
     nextLayouts: Record<string, Partial<GraphNodeLayout>>,
+    options?: { replace?: boolean },
   ) => void;
   renderDockedConversation?: (conversationId: string, source: GraphEvidenceRef | undefined, dock: GraphDockControls) => ReactNode;
   renderExpandedConversation?: (conversationId: string) => ReactNode;
@@ -2003,7 +2005,7 @@ export default function ConversationGraphView({
 
   function undoTidyUp() {
     if (!tidyUndo) return;
-    onUpdateGraphNodeLayouts?.(tidyUndo);
+    onUpdateGraphNodeLayouts?.(tidyUndo, { replace: true });
     setTidyUndo(null);
     setFitAfterArrange(true);
   }
