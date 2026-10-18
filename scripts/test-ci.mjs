@@ -15,9 +15,9 @@ const groups = [files.filter((path) => !usesDatabase(path))];
 for (let index = 0; index < database.length; index += GROUP_SIZE) groups.push(database.slice(index, index + GROUP_SIZE));
 
 // Bun itself, or PGlite's WebAssembly Postgres, occasionally crashes mid-run ("Bun has crashed", a
-// segmentation fault, or "PANIC: ERRORDATA_STACK_SIZE exceeded") in a database group that passes on its
+// segmentation fault, "PANIC: ERRORDATA_STACK_SIZE exceeded", or a WebAssembly "access to a null reference") in a database group that passes on its
 // own. Such a group runs once more; a test that fails without a crash fails the run as usual.
-const CRASH = /Bun has crashed|Segmentation fault|severity: "PANIC"|PANIC:/;
+const CRASH = /Bun has crashed|Segmentation fault|severity: "PANIC"|PANIC:|RuntimeError: access to a null reference/;
 function runGroup(group, database) {
   const args = ["--no-env-file", "test", ...group.map((path) => `./${path}`)];
   // The large group streams as it runs; a database group's output is kept to look for a crash.
