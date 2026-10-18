@@ -42,8 +42,8 @@ export function canvasGroupOf(conversations: Record<string, Conversation>, group
 }
 
 /**
- * Canvas with groups on: each group is a box that owns its space. Its cards sit in a grid, a main
- * document followed by its children, so a box's size follows how many documents it holds. Boxes
+ * Canvas with groups on: each group is a box that owns its space. Its cards sit as lineage trees,
+ * a main document with its children to its right, so a box's size follows what it holds. Boxes
  * are packed in rows in sidebar order, with documents in no group last, so they never overlap.
  */
 export function layoutCanvasGroupBoxes({ nodes, conversations, groups }: {
@@ -77,10 +77,8 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups }: {
   ...(members.has(NO_GROUP_BOX_ID) ? [{ id: NO_GROUP_BOX_ID, label: "No group", color: "var(--muted)", kind: "none" as const }] : [])];
   const sized = order.map((box) => {
     const ids = members.get(box.id) ?? [];
-    // At least two columns wide, so even a one-document box has room for its name.
-    const columns = Math.max(2, Math.min(ids.length, Math.round(Math.sqrt(BOX_ASPECT * ids.length * cellHeight / cellWidth))));
-    const rows = Math.max(1, Math.ceil(ids.length / columns));
-    return { ...box, ids, columns,
+    const { cells, columns, rows } = layoutFamilyTrees(ids, conversations, cellHeight / cellWidth);
+    return { ...box, ids, cells,
       width: columns * cellWidth - CELL_GAP_X + BOX_PADDING * 2,
       height: rows * cellHeight - CELL_GAP_Y + BOX_PADDING_TOP + BOX_PADDING };
   });
@@ -94,16 +92,58 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups }: {
   for (const box of sized) {
     if (x > 0 && x + box.width > rowWidth) { x = 0; y += rowHeight + BOX_GAP; rowHeight = 0; }
     boxes.push({ id: box.id, label: box.label, color: box.color, kind: box.kind, x, y, width: box.width, height: box.height, conversationIds: box.ids });
-    box.ids.forEach((id, slot) => {
-      const node = byId.get(id)!;
-      placed.push({ ...node,
-        x: x + BOX_PADDING + (slot % box.columns) * cellWidth,
-        y: y + BOX_PADDING_TOP + Math.floor(slot / box.columns) * cellHeight });
-    });
+    for (const id of box.ids) {
+      const node = byId.get(id)!, cell = box.cells.get(id)!;
+      placed.push({ ...node, x: x + BOX_PADDING + cell.column * cellWidth, y: y + BOX_PADDING_TOP + cell.row * cellHeight });
+    }
     x += box.width + BOX_GAP;
     rowHeight = Math.max(rowHeight, box.height);
   }
   return { boxes, nodes: placed };
+}
+
+/**
+ * Inside a box, each family is a lineage tree: the main document on the left and its children in
+ * the next column, a parent level with the middle of its children. A child kept in another group
+ * starts its own tree there. Trees come first, then single documents, packed in shelves about as
+ * wide as the box is tall, each in reading order. Positions are in grid cells; rows may be fractional.
+ */
+export function layoutFamilyTrees(ids: string[], conversations: Record<string, Conversation>, cellAspect = 1) {
+  const inBox = new Set(ids);
+  const childrenOf = (id: string) => (conversations[id]?.childIds ?? []).filter((childId) => inBox.has(childId));
+  const roots = ids.filter((id) => { const parentId = conversations[id]?.parentId; return !parentId || !inBox.has(parentId); });
+  const blocks = roots.map((rootId) => {
+    const local = new Map<string, { column: number; row: number }>();
+    let leaves = 0, depth = 0;
+    const place = (id: string, column: number, trail: Set<string>): number => {
+      depth = Math.max(depth, column);
+      const kids = childrenOf(id).filter((childId) => !trail.has(childId) && !local.has(childId));
+      const next = new Set(trail).add(id);
+      const childRows = kids.map((childId) => place(childId, column + 1, next));
+      const row = childRows.length ? (childRows[0] + childRows[childRows.length - 1]) / 2 : leaves++;
+      local.set(id, { column, row });
+      return row;
+    };
+    place(rootId, 0, new Set());
+    return { cells: local, columns: depth + 1, rows: Math.max(1, leaves) };
+  });
+  // Families first, then single documents, so short rows of singles don't leave holes beside tall trees.
+  blocks.sort((a, b) => Number(a.cells.size === 1) - Number(b.cells.size === 1));
+  const area = blocks.reduce((sum, block) => sum + block.columns * block.rows, 0);
+  // At least two columns wide, so even a one-document box has room for its name.
+  const width = Math.max(2, ...blocks.map((block) => block.columns), Math.round(Math.sqrt(BOX_ASPECT * area * cellAspect)));
+  const cells = new Map<string, { column: number; row: number }>();
+  let column = 0, row = 0, shelf = 0, used = 0;
+  for (const block of blocks) {
+    if (column > 0 && column + block.columns > width) { column = 0; row += shelf; shelf = 0; }
+    for (const [id, cell] of block.cells) cells.set(id, { column: column + cell.column, row: row + cell.row });
+    column += block.columns;
+    used = Math.max(used, column);
+    shelf = Math.max(shelf, block.rows);
+  }
+  // Documents whose place a cycle hid still get a cell of their own.
+  for (const id of ids) if (!cells.has(id)) { cells.set(id, { column: 0, row: row + shelf }); shelf += 1; }
+  return { cells, columns: Math.max(2, used), rows: Math.max(1, row + shelf) };
 }
 
 /** The box under a point on the Canvas, if any. */

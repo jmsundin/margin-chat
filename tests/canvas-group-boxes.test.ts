@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createChildConversation, createMainConversation } from "../client/src/initialState";
-import { canvasBoxAt, canvasGroupDropChanges, canvasGroupOf, layoutCanvasGroupBoxes, NO_GROUP_BOX_ID } from "../client/src/lib/canvasGroupBoxes";
+import { canvasBoxAt, canvasGroupDropChanges, canvasGroupOf, layoutCanvasGroupBoxes, layoutFamilyTrees, NO_GROUP_BOX_ID } from "../client/src/lib/canvasGroupBoxes";
 import { createDefaultGraphNodeLayout, mergeGraphNodeLayouts } from "../client/src/lib/graphLayout";
 import { getUnplacedForestRootIds, type ConversationGraphNodePlacement } from "../client/src/lib/conversationGraph";
 import type { Conversation, ConversationGroup } from "../client/src/types";
@@ -60,6 +60,29 @@ describe("Canvas group boxes", () => {
     // A child with a group of its own sits in that group's box.
     groups.personal.conversationIds.push("signals");
     expect(layoutCanvasGroupBoxes({ nodes, conversations, groups }).boxes.find((box) => box.id === "personal")?.conversationIds).toEqual(["signals", "trip"]);
+  });
+
+  test("families sit as lineage trees: children in the next column, the parent level with their middle", () => {
+    const { conversations } = vault();
+    const angular = conversations.angular;
+    for (const id of ["routing", "forms"]) {
+      const child = createChildConversation({ id, parentConversation: angular });
+      angular.childIds.push(id);
+      conversations[id] = child;
+    }
+    const grand = createChildConversation({ id: "guards", parentConversation: conversations.routing });
+    conversations.routing.childIds.push("guards");
+    conversations.guards = grand;
+    const { cells } = layoutFamilyTrees(["angular", "signals", "routing", "guards", "forms", "weekly"], conversations);
+    expect(cells.get("angular")!.column).toBe(0);
+    expect(["signals", "routing", "forms"].map((id) => cells.get(id)!.column)).toEqual([1, 1, 1]);
+    expect(cells.get("guards")).toEqual({ column: 2, row: cells.get("routing")!.row });
+    expect(cells.get("angular")!.row).toBe((cells.get("signals")!.row + cells.get("forms")!.row) / 2);
+    // The single document doesn't sit inside the tree's cells.
+    const spots = [...cells.values()].map((cell) => `${cell.column},${cell.row}`);
+    expect(new Set(spots).size).toBe(spots.length);
+    // A child whose parent is in another box starts its own tree.
+    expect(layoutFamilyTrees(["guards"], conversations).cells.get("guards")).toEqual({ column: 0, row: 0 });
   });
 
   test("a card dropped into another box changes its group", () => {

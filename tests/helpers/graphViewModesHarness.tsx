@@ -183,7 +183,7 @@ try {
   await fresh("mode-retention", { selectedConversationId: "root", dockedConversationId: "root", detailLevel: "preview", query: "evidence", readerScroll: 211, source });
   const authored = positions();
   const canvasViewport = state().viewport;
-  for (const next of ["focus", "topics", "lineage", "network", "timeline", "matrix", "flow", "canvas"]) {
+  for (const next of ["focus", "topics", "lineage", "network", "canvas"]) {
     await show(next);
     assert.equal(state().selectedConversationId, "root", `${next} retains the selected source`);
     assert.equal(state().dockedConversationId, "root", `${next} retains the docked reader`);
@@ -197,13 +197,13 @@ try {
   assert.equal(layoutWrites, 0, "Changing automatic views does not write Canvas layouts");
   assert.deepEqual(layouts, originalLayouts);
   await click(element('[aria-label="Back in map"]'));
-  assert.equal(mode(), "flow");
+  assert.equal(mode(), "network");
   await click(element('[aria-label="Forward in map"]'));
   assert.equal(mode(), "canvas");
   await fresh("inline-reader-mode-switch", { selectedConversationId: "root", detailLevel: "reader", source, query: "evidence" });
   assert(element('.conversation-graph-node-reader [data-reader-id="root"]'));
-  await show("matrix");
-  assert.equal(state().dockedConversationId, "root", "Changing an inline reader to an analytical view keeps its source open in the dock");
+  await show("network");
+  assert.equal(state().dockedConversationId, "root", "Changing an inline reader to another view keeps its source open in the dock");
   assert.equal(state().detailLevel, "preview");
   assert.equal(container.querySelectorAll('[data-reader-id="root"]').length, 1, "Mode changes retain only one reader for the document");
   assert.deepEqual(state().source, source);
@@ -226,27 +226,6 @@ try {
   assert.equal(container.querySelectorAll(".graph-personal-connection").length, 0);
   assert.equal(container.querySelectorAll("path[data-parent-conversation-id]").length, 1);
   checks.push("Lineage shows only branch ancestry and relation filters apply independently elsewhere");
-
-  await fresh("matrix-read");
-  await show("matrix");
-  const matrix = element(".graph-analysis-matrix");
-  const matrixSource = [...matrix.querySelectorAll("button")].find((candidate: any) => candidate.textContent.trim() === "Linked comparison");
-  await click(matrixSource);
-  assert.equal(mode(), "matrix");
-  assert.equal(state().selectedConversationId, "side");
-  assert.equal(state().dockedConversationId, "side");
-  assert(element('.conversation-graph-dock [data-reader-id="side"]'));
-  for (const next of ["matrix", "timeline", "flow"]) {
-    if (mode() !== next) await show(next);
-    const before = state().viewport;
-    const panel = element(`.graph-analysis-${next}`);
-    for (const pinch of [false, true]) {
-      const event = await wheel(panel, pinch);
-      assert.deepEqual(state().viewport, before, `${next} panel gestures cannot pan or zoom the map`);
-      assert.equal(event.defaultPrevented, false, `${next} retains native scrolling`);
-    }
-  }
-  checks.push("matrix source opens in the dock without leaving its view and analysis panels keep native scrolling");
 
   await fresh("network-pins", { selectedConversationId: "root", detailLevel: "compact" });
   await show("network");

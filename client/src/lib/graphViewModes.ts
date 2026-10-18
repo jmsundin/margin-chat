@@ -8,9 +8,6 @@ export const GRAPH_VIEW_MODES = [
   { id: "lineage", label: "Lineage", description: "Follow branch ancestry from parent to child." },
   { id: "network", label: "Network", description: "Find hubs and bridges among explicit relationships." },
   { id: "evidence", label: "Evidence", description: "Organize claims and exact passages by their evidence roles." },
-  { id: "timeline", label: "Timeline", description: "Browse document creation and editing dates." },
-  { id: "matrix", label: "Matrix", description: "Inspect directed relationships from rows to columns." },
-  { id: "flow", label: "Link flow", description: "Count explicit relationships between groups." },
   // Reached from a tab rather than listed: Topics is Clusters grouped by your
   // groups, and Document layouts is Focus showing every document.
   { id: "topics", label: "Topics", description: "Browse your groups, then zoom into their documents." },
@@ -31,9 +28,9 @@ export type GraphModeCameras = Partial<Record<GraphViewMode, GraphModeCamera>>;
 /** The three toolbar tabs; each answers a different question about the map. */
 export const GRAPH_VIEW_TABS = ["canvas", "focus", "clusters"] as const;
 export type GraphViewTab = typeof GRAPH_VIEW_TABS[number];
-/** Views listed under More views. */
+/** Views listed under More views. Evidence is reached from the Content picker instead. */
 export const MORE_GRAPH_VIEW_MODES = GRAPH_VIEW_MODES.filter((mode) =>
-  !(GRAPH_VIEW_TABS as readonly string[]).includes(mode.id) && mode.id !== "topics" && mode.id !== "documents");
+  !(GRAPH_VIEW_TABS as readonly string[]).includes(mode.id) && mode.id !== "topics" && mode.id !== "documents" && mode.id !== "evidence");
 
 /** The toolbar tab a mode belongs to, or null for views under More views. */
 export function getGraphViewTab(mode: GraphViewMode): GraphViewTab | null {
@@ -58,7 +55,7 @@ export function getGraphViewMode(location: {
 }
 
 export function isGraphPanelMode(mode: GraphViewMode) {
-  return mode === "evidence" || mode === "timeline" || mode === "matrix" || mode === "flow";
+  return mode === "evidence";
 }
 
 export function normalizeGraphModeCameras(value: unknown): GraphModeCameras {

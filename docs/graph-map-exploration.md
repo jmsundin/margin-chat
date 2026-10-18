@@ -8,19 +8,16 @@ The mode bar provides four primary document views. **More views** opens analysis
 
 | View | Use | Relationship meaning |
 | --- | --- | --- |
-| Canvas | Arrange, compare, zoom into, scroll, and edit documents in place | Saved spatial positions; branches and authored links |
+| Canvas | Arrange, compare, zoom into, scroll, and edit documents in place | Saved spatial positions; with groups on, each family sits as a lineage tree (parent left, children to the right) inside its group box |
 | Focus | Start at the selected document and expand its neighborhood | Explicit relationships in either direction; depth can be expanded |
 | Topics | Browse groups and progressively reveal their documents | Existing collections, with cross-group connection counts |
 | Lineage | Follow a branch from parent to descendants | Parent → child ancestry only; never inferred dependency or taxonomy |
 | Network | Find hubs and bridges; relax the layout on demand | Frozen force layout of explicit connections; drag to pin |
 | Evidence | Gather passages around a concept, claim, or question | Manually assigned support, challenges, examples, questions, or references |
-| Timeline | Browse creation or editing activity | Stored creation/last-edited timestamps; undated items remain available |
-| Matrix | Inspect dense directed connections | Rows are sources, columns are targets; branch and authored-link cells stay distinct |
-| Link flow | Compare connection counts between groups | One count per directed relationship, with inspectable underlying documents |
 
 Mode switching retains the selected source, docked editor, search, relationship filters, and reader scroll. Each document mode remembers its camera in the current tab; Back/Forward restores complete navigation state. Lineage, Focus, and Network layouts do not write Canvas positions. Network pins are separate from Canvas positions, and pinning or moving one card leaves other cards still until the next relaxation. The older **Documents and connections** arrangements remain available as **Document layouts**.
 
-Branch ancestry and authored links can be filtered independently. Lineage always shows ancestry; returning to another mode restores the shared filter choices. Related suggestions remain a separate optional overlay. Matrix pages both axes independently. Flow pages group pairs and uses one membership combination for documents belonging to several groups, so each relationship is counted once. Flow is a count of stored links, not a claim about causality or information transfer.
+Branch ancestry and authored links can be filtered independently. Lineage always shows ancestry; returning to another mode restores the shared filter choices. Related suggestions remain a separate optional overlay.
 
 - **Overview** opens readable topic cards for concepts, groups, and ungrouped material. Activity categories remain available in the explorer; category cards also provide an overview when there are no named collections. **Show map** opens the spatial graph.
 - Select a topic to see connections. Shared-source counts measure conversations present in both topics. Directed branch counts measure conversation ancestry crossing between topics. **Inspect** lists the original sources; these links do not imply agreement or causality.

@@ -45,7 +45,6 @@ import {
 } from "../lib/conversationGraph";
 import GraphExplorationPanel, { type GraphExplorationOverviewItem } from "./GraphExplorationPanel";
 import GraphOverviewCanvas from "./GraphOverviewCanvas";
-import { GraphAnalysisViews } from "./GraphAnalysisViews";
 import { GraphEvidenceView } from "./GraphEvidenceView";
 import { getGraphAnalysisEdges } from "../lib/graphAnalysis";
 import { DOCUMENT_RELATION_TYPES, documentGraphEdgeLabel, getDocumentGraphEdges, getDocumentRelationType, type DocumentGraphEdge } from "../lib/documentRelations";
@@ -3586,9 +3585,7 @@ export default function ConversationGraphView({
                 onSelectConcept={(id) => navigation.update({ selectedConceptId: id })} onSaveConcepts={saveConcepts}
                 onOpenEvidence={openEvidence} lens={navigation.state.contentLens === "concepts" ? "concepts" : "evidence"} />
               {conceptSaveError ? <p className="graph-map-storage-error" role="status">Concept changes could not be saved on this device. Keep this view open to retain them.</p> : null}
-            </> : viewMode === "timeline" || viewMode === "matrix" || viewMode === "flow" ? <GraphAnalysisViews mode={viewMode}
-              conversations={scopedConversations} groups={groups} selectedConversationId={selectedConversationId}
-              relationKinds={navigation.state.relationKinds} onOpenConversation={(id) => openEvidence({ conversationId: id, sourceKind: "conversation" })} /> : null}
+            </> : null}
           </div> : <>
           {showThemeOverview ? <GraphOverviewCanvas items={overviewItems} memberships={overviewMemberships} conversations={relationshipConversations} selectedTopicId={navigation.state.overviewTopicId} onSelectTopic={(id) => navigation.update({ overviewTopicId: id })} onOpen={openOverviewItem} onInspectConnection={setInspectedOverviewSources} /> : null}
           <nav
