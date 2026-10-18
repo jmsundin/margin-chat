@@ -90,6 +90,7 @@
     "inputMicrosPerMillionTokens": 4000000,
     "cachedInputMicrosPerMillionTokens": 200000,
     "cacheWriteInputMicrosPerMillionTokens": 4000000,
-    "outputMicrosPerMillionTokens": 20000000
+    "outputMicrosPerMillionTokens": 20000000,
+    "webSearchMicrosPerSearch": 2500
   }
 }
