@@ -168,7 +168,7 @@ import {
 } from "./lib/services";
 import type { AgentModeControls } from "./components/AgentModeToggle";
 import {
-  createDefaultGraphNodeLayout,
+  mergeGraphNodeLayouts,
   normalizeGraphLayouts,
 } from "./lib/graphLayout";
 import {
@@ -2883,53 +2883,11 @@ function WorkspaceAppContent({
 
   function handleUpdateGraphNodeLayouts(
     nextLayouts: Record<string, Partial<GraphNodeLayout>>,
+    options?: { replace?: boolean },
   ) {
     setState((current) => {
-      let changed = false;
-      const graphLayouts = { ...current.graphLayouts };
-
-      for (const [conversationId, nextLayout] of Object.entries(nextLayouts)) {
-        const conversation = current.conversations[conversationId];
-
-        if (!conversation) {
-          continue;
-        }
-
-        const currentLayout =
-          current.graphLayouts[conversationId] ?? createDefaultGraphNodeLayout();
-        const preservesTreeOrigin =
-          conversation.parentId === null &&
-          nextLayout.positioned &&
-          !currentLayout.positioned;
-        // A tree's origin is set once: where the map showed it (sent with the
-        // move), or else where its root was saved.
-        const mergedLayout = createDefaultGraphNodeLayout({
-          ...currentLayout,
-          ...nextLayout,
-          treeOriginX: currentLayout.treeOriginX ?? nextLayout.treeOriginX
-            ?? (preservesTreeOrigin ? currentLayout.x : undefined),
-          treeOriginY: currentLayout.treeOriginY ?? nextLayout.treeOriginY
-            ?? (preservesTreeOrigin ? currentLayout.y : undefined),
-        });
-
-        if (
-          currentLayout.x === mergedLayout.x &&
-          currentLayout.y === mergedLayout.y &&
-          currentLayout.width === mergedLayout.width &&
-          currentLayout.height === mergedLayout.height &&
-          Boolean(currentLayout.positioned) ===
-            Boolean(mergedLayout.positioned) &&
-          currentLayout.treeOriginX === mergedLayout.treeOriginX &&
-          currentLayout.treeOriginY === mergedLayout.treeOriginY
-        ) {
-          continue;
-        }
-
-        graphLayouts[conversationId] = mergedLayout;
-        changed = true;
-      }
-
-      return changed ? { ...current, graphLayouts } : current;
+      const graphLayouts = mergeGraphNodeLayouts(current.conversations, current.graphLayouts, nextLayouts, options);
+      return graphLayouts === current.graphLayouts ? current : { ...current, graphLayouts };
     });
   }
 

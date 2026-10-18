@@ -4,6 +4,11 @@ import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
 import type { GraphNodeLayout } from "../../client/src/types";
 
 const browser = new Window({ url: "http://graph-view-modes.test/" });
+// ELK, behind Auto-arrange, reads JavaScript built-ins such as Error and Math from the window,
+// which older Bun runtimes leave off happy-dom's window.
+for (const name of Object.getOwnPropertyNames(globalThis)) {
+  if ((browser as any)[name] === undefined) try { (browser as any)[name] = (globalThis as any)[name]; } catch {}
+}
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect", "HTMLInputElement", "HTMLSelectElement"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? browser : (browser as any)[name] });
 }
@@ -115,6 +120,9 @@ async function settle() {
     await act(async () => { callbacks.forEach((callback) => callback(0)); });
   }
   assert.equal(frames.size, 0, "Switching views settles without animation loops");
+}
+function groupsSwitch(): any {
+  return [...container.querySelectorAll(".conversation-graph-zoom button")].find((item: any) => item.textContent === "Groups");
 }
 async function click(target: any) { await act(async () => target.click()); await settle(); }
 async function choose(label: string, value: string) {
@@ -327,7 +335,9 @@ try {
   // positions on Canvas, Layout reshapes computed views, and the rest have none.
   const bottomMenus = () => [...container.querySelectorAll(".graph-map-layout-options > summary")].map((summary: any) => summary.textContent.trim());
   await fresh("arrange-menus");
-  assert.deepEqual(bottomMenus(), ["Tidy up"], "Canvas offers Tidy up");
+  assert.deepEqual(bottomMenus(), [], "Canvas group boxes arrange themselves, so Tidy up waits until Groups is off");
+  await click(groupsSwitch());
+  assert.deepEqual(bottomMenus(), ["Tidy up"], "Canvas offers Tidy up for your free arrangement");
   await show("focus");
   assert.deepEqual(bottomMenus(), ["Layout"], "Focus offers a Layout choice");
   assert(element('[aria-label="Focus view"]').getAttribute("aria-pressed") === "true");
@@ -353,12 +363,13 @@ try {
   assert.equal(lastView.dockedConversationId, null);
   checks.push("Arrange shows Tidy up on Canvas, Layout on Focus and Lineage, and nothing on Clusters, Topics or Network");
 
+  browser.localStorage.setItem("margin-map-canvas-groups:tidy-undo", "false");
   await fresh("tidy-undo");
   assert.equal(container.querySelector(".graph-map-tidy-undo"), null);
   await click(element(".graph-map-layout-options > summary"));
-  // Gather groups is synchronous; ELK's bundle doesn't load under every test runtime.
-  await click(element('[aria-label="Gather documents by group"]'));
-  assert.equal(layoutWriteLog.length, 1, "Gather groups writes one set of positions");
+  await click(element('[aria-label="Auto-arrange graph with ELK"]'));
+  for (let wait = 0; wait < 200 && !layoutWriteLog.length; wait++) await settle();
+  assert.equal(layoutWriteLog.length, 1, "Auto-arrange writes one set of positions");
   const arranged = layoutWriteLog[0];
   assert(Object.keys(arranged).length > 0);
   await click(element(".graph-map-tidy-undo"));
@@ -373,18 +384,21 @@ try {
   layoutWrites = 0;
   checks.push("Tidy up on Canvas can be undone, restoring hand-placed positions");
 
-  await fresh("canvas-group-frames");
-  const frameNames = () => [...container.querySelectorAll(".canvas-group-frame-tab strong")].map((item: any) => item.textContent);
-  assert.deepEqual(frameNames(), ["Research", "Notes"], "Canvas draws each of your groups as a frame");
+  await fresh("canvas-group-boxes");
+  const boxNames = () => [...container.querySelectorAll(".canvas-group-box-name strong")].map((item: any) => item.textContent);
+  assert.deepEqual(boxNames().slice(0, 2), ["Research", "Notes"], "Canvas puts each of your groups in its own box");
   assert.equal(container.querySelector('[aria-label="Zoom out to all groups"]'), null, "Canvas has no All groups button");
-  const groupsSwitch = [...container.querySelectorAll(".conversation-graph-zoom button")].find((item: any) => item.textContent === "Groups") as any;
-  assert.equal(groupsSwitch?.getAttribute("aria-pressed"), "true");
-  await click(groupsSwitch);
-  assert.deepEqual(frameNames(), [], "The Groups switch hides the frames");
-  assert.equal(groupsSwitch.getAttribute("aria-pressed"), "false");
-  await fresh("canvas-group-frames");
-  assert.deepEqual(frameNames(), [], "The Groups switch is remembered");
-  checks.push("Canvas frames your groups, and the Groups switch turns them off");
+  const boxes = [...container.querySelectorAll(".canvas-group-box")].map((item: any) => ({ x: parseFloat(item.style.left), y: parseFloat(item.style.top), w: parseFloat(item.style.width), h: parseFloat(item.style.height) }));
+  for (const [index, a] of boxes.entries()) for (const b of boxes.slice(index + 1)) {
+    assert(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, "Group boxes never overlap");
+  }
+  assert.equal(groupsSwitch()?.getAttribute("aria-pressed"), "true");
+  await click(groupsSwitch());
+  assert.deepEqual(boxNames(), [], "The Groups switch hides the boxes");
+  assert.equal(groupsSwitch().getAttribute("aria-pressed"), "false");
+  await fresh("canvas-group-boxes");
+  assert.deepEqual(boxNames(), [], "The Groups switch is remembered");
+  checks.push("Canvas boxes your groups without overlap, and the Groups switch turns them off");
   process.stdout.write(`${JSON.stringify({ checks })}\n`);
 } finally {
   await act(async () => reactRoot.unmount());
