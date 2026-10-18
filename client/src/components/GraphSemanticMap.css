@@ -243,14 +243,22 @@
   .semantic-map .conversation-graph-node, .semantic-map .conversation-graph-node-actions { transition: none; }
 }
 /* Canvas: your groups as frames around their cards. */
-.canvas-group-frames { position: absolute; inset: 0; pointer-events: none; }
-.canvas-group-frame { position: absolute; box-sizing: border-box; border: 1.5px solid color-mix(in srgb, var(--group-color) 55%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--group-color) 6%, transparent); }
-.canvas-group-frame.is-not-placed { border-style: dashed; border-color: var(--line-strong); background: color-mix(in srgb, var(--panel-strong) 45%, transparent); }
-.canvas-group-frame-tab { position: absolute; left: 12px; top: -14px; z-index: 2; display: inline-flex; align-items: center; gap: 8px; max-width: max(calc(100% - 24px), 260px); height: 28px; box-sizing: border-box; padding: 0 11px; border: 1px solid color-mix(in srgb, var(--group-color) 55%, var(--line)); border-radius: 8px; background: var(--panel-strong); color: var(--ink); font: inherit; font-size: 13px; cursor: zoom-in; pointer-events: auto; }
-.canvas-group-frame-tab::before { content: ""; flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--group-color); }
-.canvas-group-frame-tab strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.canvas-group-frame-tab span { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.canvas-group-frame-tab:hover { background: color-mix(in srgb, var(--group-color) 10%, var(--panel-strong)); }
-.canvas-group-frame-tab:focus-visible { outline: 2px solid var(--group-color); outline-offset: 2px; }
-.canvas-group-frame.is-not-placed .canvas-group-frame-tab { border-color: var(--line-strong); }
-.canvas-group-frame.is-not-placed .canvas-group-frame-tab::before { display: none; }
+.canvas-group-boxes { position: absolute; inset: 0; pointer-events: none; }
+.canvas-group-box { position: absolute; box-sizing: border-box; border: 1.5px solid color-mix(in srgb, var(--group-color) 55%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--group-color) 7%, transparent); }
+.canvas-group-box.is-none { border-style: dashed; border-color: var(--line-strong); background: color-mix(in srgb, var(--panel-strong) 45%, transparent); }
+.canvas-group-box-name { position: absolute; left: 12px; top: -14px; z-index: 2; display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); height: 28px; box-sizing: border-box; padding: 0 11px; border: 1px solid color-mix(in srgb, var(--group-color) 55%, var(--line)); border-radius: 8px; background: var(--panel-strong); color: var(--ink); font: inherit; font-size: 13px; cursor: zoom-in; pointer-events: auto; }
+.canvas-group-box-name::before { content: ""; flex: 0 0 9px; width: 9px; height: 9px; border-radius: 50%; background: var(--group-color); }
+.canvas-group-box-name strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.canvas-group-box-name span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; white-space: nowrap; }
+.canvas-group-box-name:hover { background: color-mix(in srgb, var(--group-color) 10%, var(--panel-strong)); }
+.canvas-group-box-name:focus-visible { outline: 2px solid var(--group-color); outline-offset: 2px; }
+.canvas-group-box.is-none .canvas-group-box-name { border-color: var(--line-strong); }
+.canvas-group-box.is-none .canvas-group-box-name::before { display: none; }
+/* Zoomed out past reading the cards: each group is just its colored space, sized by how many documents it holds. */
+.canvas-group-boxes.is-collapsed .canvas-group-box { border-color: color-mix(in srgb, var(--group-color) 70%, transparent); background: color-mix(in srgb, var(--group-color) 32%, var(--panel)); }
+.canvas-group-boxes.is-collapsed .canvas-group-box.is-none { background: color-mix(in srgb, var(--panel-strong) 70%, transparent); }
+.canvas-group-boxes.is-collapsed .canvas-group-box-name { inset: 0; max-width: none; height: auto; flex-direction: column; justify-content: center; gap: 2px; padding: 4px; border: 0; border-radius: inherit; background: transparent; text-align: center; overflow: hidden; }
+.canvas-group-boxes.is-collapsed .canvas-group-box-name::before { display: none; }
+.canvas-group-boxes.is-collapsed .canvas-group-box-name strong { max-width: 100%; font-size: 15px; }
+.canvas-group-boxes.is-collapsed .canvas-group-box-name span { max-width: 100%; color: var(--ink); opacity: .75; }
+.canvas-group-boxes.is-collapsed .canvas-group-box-name:hover { background: color-mix(in srgb, var(--group-color) 14%, transparent); }

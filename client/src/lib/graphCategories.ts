@@ -325,20 +325,15 @@ export function buildCategoryOrganizedGraphLayouts(args: {
   conversations: Record<string, Conversation>;
   graphLayouts: Record<string, GraphNodeLayout>;
   threads: ThreadSummary[];
-  /** Main documents to gather together instead of topic categories, such as each of your groups. */
-  buckets?: string[][];
 }) {
   const normalizedLayouts = normalizeLayoutMap(args.conversations, args.graphLayouts);
-  const rootBuckets = args.buckets
-    ? args.buckets.map((ids) => ids.filter((id) => Boolean(args.conversations[id]))).filter((ids) => ids.length > 0)
-    : buildCategoryBuckets(args.conversations, args.threads).map((bucket) => bucket.threads.map((thread) => thread.id));
-  const buckets = rootBuckets.map((rootIds) => {
-    const subtreeLayouts = rootIds.map((rootConversationId) => ({
-      rootConversationId,
+  const buckets = buildCategoryBuckets(args.conversations, args.threads).map((bucket) => {
+    const subtreeLayouts = bucket.threads.map((thread) => ({
+      rootConversationId: thread.id,
       subtree: measureThreadSubtreeLayout({
         conversations: args.conversations,
         graphLayouts: normalizedLayouts,
-        rootConversationId,
+        rootConversationId: thread.id,
       }),
     }));
     const width = Math.max(
@@ -363,6 +358,7 @@ export function buildCategoryOrganizedGraphLayouts(args: {
     );
 
     return {
+      categoryId: bucket.categoryId,
       height,
       subtreeLayouts,
       width,
