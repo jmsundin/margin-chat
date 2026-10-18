@@ -105,8 +105,8 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups }: {
 /**
  * Inside a box, each family is a lineage tree: the main document on the left and its children in
  * the next column, a parent level with the middle of its children. A child kept in another group
- * starts its own tree there. Trees and single documents are packed in shelves about as wide as the
- * box is tall, keeping reading order. Positions are in grid cells and rows may be fractional.
+ * starts its own tree there. Trees come first, then single documents, packed in shelves about as
+ * wide as the box is tall, each in reading order. Positions are in grid cells; rows may be fractional.
  */
 export function layoutFamilyTrees(ids: string[], conversations: Record<string, Conversation>, cellAspect = 1) {
   const inBox = new Set(ids);
@@ -127,6 +127,8 @@ export function layoutFamilyTrees(ids: string[], conversations: Record<string, C
     place(rootId, 0, new Set());
     return { cells: local, columns: depth + 1, rows: Math.max(1, leaves) };
   });
+  // Families first, then single documents, so short rows of singles don't leave holes beside tall trees.
+  blocks.sort((a, b) => Number(a.cells.size === 1) - Number(b.cells.size === 1));
   const area = blocks.reduce((sum, block) => sum + block.columns * block.rows, 0);
   // At least two columns wide, so even a one-document box has room for its name.
   const width = Math.max(2, ...blocks.map((block) => block.columns), Math.round(Math.sqrt(BOX_ASPECT * area * cellAspect)));
