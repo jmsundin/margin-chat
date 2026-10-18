@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createClientBundles } from "./clientBundles.mjs";
+import { DEEP_LINK_SCHEME, findDeepLink, pathForDeepLink, pathForWebsiteLink } from "./deepLinks.mjs";
 import { createPermissionHandlers } from "./permissions.mjs";
 import { createShellUpdater, DEFAULT_FEED } from "./shellUpdater.mjs";
 
@@ -136,6 +137,51 @@ function openExternally(rawUrl) {
   if (/^(https?|mailto):/i.test(rawUrl)) void shell.openExternal(rawUrl);
 }
 
+// The page a marginchat:// link asked for, shown once a window exists.
+let pendingPath = pathForDeepLink(findDeepLink(process.argv) ?? "");
+// Set once launch has opened the first window; links before then wait for it.
+let launched = false;
+
+function mainWindow() {
+  return BrowserWindow.getAllWindows()[0] ?? null;
+}
+
+function showAppPath(window, appPath) {
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  // Opening the app itself keeps whatever the window already shows. Other pages
+  // change in place, like a link inside the app, so open edits are not reloaded away.
+  if (appPath === "/") return;
+  void window.webContents.executeJavaScript(
+    `window.history.pushState({}, "", ${JSON.stringify(appPath)}); window.dispatchEvent(new PopStateEvent("popstate"));`,
+  ).catch(() => {});
+}
+
+function openDeepLink(rawUrl) {
+  const appPath = pathForDeepLink(rawUrl);
+  if (appPath === null) return;
+  if (!launched) {
+    pendingPath = appPath;
+    return;
+  }
+  const window = mainWindow();
+  if (window) {
+    showAppPath(window, appPath);
+    return;
+  }
+  // On macOS the app keeps running with every window closed.
+  pendingPath = appPath;
+  createWindow();
+}
+
+// Links to Margin Chat open in the app; links to other sites (billing, sources, docs) open in the default browser.
+function followLink(window, rawUrl) {
+  const appPath = pathForWebsiteLink(rawUrl);
+  if (appPath !== null) showAppPath(window, appPath);
+  else openExternally(rawUrl);
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
@@ -154,18 +200,19 @@ function createWindow() {
 
   window.once("ready-to-show", () => window.show());
 
-  // Links to other sites (billing, sources, docs) open in the default browser.
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (!isAppUrl(url)) openExternally(url);
+    if (!isAppUrl(url)) followLink(window, url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event, url) => {
     if (isAppUrl(url)) return;
     event.preventDefault();
-    openExternally(url);
+    followLink(window, url);
   });
 
-  void window.loadURL(DEV_URL ?? `${APP_ORIGIN}/`);
+  const startPath = pendingPath ?? "/";
+  pendingPath = null;
+  void window.loadURL(new URL(startPath, DEV_URL ?? `${APP_ORIGIN}/`).toString());
   return window;
 }
 
@@ -283,15 +330,30 @@ function startShellUpdates() {
   });
 }
 
+// The website's "Open the app" button and links from other apps start the app with marginchat://.
+// Development runs Electron with this folder as an argument, which Windows has to repeat.
+function registerDeepLinks() {
+  const registered = process.defaultApp && process.argv.length >= 2
+    ? app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME, process.execPath, [path.resolve(process.argv[1])])
+    : app.setAsDefaultProtocolClient(DEEP_LINK_SCHEME);
+  if (!registered) console.warn(`Could not make Margin Chat the app for ${DEEP_LINK_SCHEME}:// links.`);
+}
+
+// macOS hands links to the running app, and can do so before it is ready.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  openDeepLink(url);
+});
+
 // Two windows writing the same vault folder race each other, so keep one instance.
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    const [window] = BrowserWindow.getAllWindows();
+  app.on("second-instance", (_event, argv) => {
+    const window = mainWindow();
     if (!window) return;
-    if (window.isMinimized()) window.restore();
-    window.focus();
+    const link = findDeepLink(argv);
+    showAppPath(window, link ? pathForDeepLink(link) ?? "/" : "/");
   });
 
   app.whenReady().then(async () => {
@@ -304,7 +366,9 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionRequestHandler(permissions.request);
     session.defaultSession.setPermissionCheckHandler(permissions.check);
 
+    registerDeepLinks();
     buildAppMenu();
+    launched = true;
     createWindow();
     // The dev server is always current, so only bundled builds check.
     if (!DEV_URL) {

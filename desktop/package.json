@@ -26,11 +26,20 @@
     "files": [
       "main.mjs",
       "clientBundles.mjs",
+      "deepLinks.mjs",
       "permissions.mjs",
       "shellUpdater.mjs",
       "updates.mjs",
       "package.json",
       "!node_modules/**/*"
+    ],
+    "protocols": [
+      {
+        "name": "Margin Chat",
+        "schemes": [
+          "marginchat"
+        ]
+      }
     ],
     "extraResources": [
       {

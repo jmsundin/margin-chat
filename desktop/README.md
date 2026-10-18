@@ -21,6 +21,15 @@ unchanged with its same-origin relative fetches.
   showing the workspace (open a folder, create a new vault, a folder used
   before, or Not now until the next launch). See
   [docs/markdown-vault.md](../docs/markdown-vault.md#desktop-app).
+- Default app on a computer: the app registers `marginchat://` links
+  (`deepLinks.mjs`). On a Mac, Windows or Linux browser, the signed-in web
+  workspace offers "Open the app" once a desktop release exists for that
+  system; after the app opens once, the browser remembers it and opens the app
+  by itself once per browser session, with "Stay in the browser" or "Use the
+  browser" a click away. Phones, tablets, Chromebooks, the extension and links
+  with a query string (Stripe returns, password resets) never see the offer.
+  `marginchat://open?path=/some/page` opens that page in the app; links to
+  www.marginchat.com app pages clicked inside the app stay in the app.
 - Links to other sites open in the default browser.
 - Only one instance runs at a time, so two windows never write the same vault.
 
