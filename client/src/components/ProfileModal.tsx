@@ -69,12 +69,14 @@ const API_KEY_FIELDS: Array<{
     placeholder: "hf_...",
   },
   { label: "xAI", provider: "xai", placeholder: "xai-..." },
+  { label: "Meta Muse", provider: "meta", placeholder: "Meta Model API key" },
 ];
 
 const EMPTY_API_KEY_DRAFTS: Record<ApiKeyProvider, string> = {
   anthropic: "",
   gemini: "",
   huggingface: "",
+  meta: "",
   openai: "",
   xai: "",
 };

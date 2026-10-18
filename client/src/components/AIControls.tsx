@@ -3,7 +3,7 @@ import { useState } from "react";
 import { AI_PROVIDERS, normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { AISettings, Conversation } from "../types";
 
-const labels = { openai: "OpenAI", anthropic: "Anthropic Claude", gemini: "Google Gemini", huggingface: "Hugging Face", xai: "xAI" };
+const labels = { openai: "OpenAI", anthropic: "Anthropic Claude", gemini: "Google Gemini", huggingface: "Hugging Face", xai: "xAI", meta: "Meta Muse" };
 const scopes = { conversation: "This chat + branch", selected: "Selected material", workspace: "Search my workspace" };
 const agentScopes = { conversation: "this chat + branch", selected: "selected material", workspace: "all documents" };
 
@@ -29,6 +29,9 @@ export default function AIControls({ conversation, conversations, disabled, onCh
           <option value="thorough">Thorough — favor deeper analysis</option>
         </select>
       </label> : null}
+      {!agentOn ? <label className="ai-agent-auto"><input type="checkbox" disabled={disabled} checked={settings.agentAuto !== false}
+        onChange={(event) => { const { agentAuto: _agentAuto, ...rest } = settings; onChange(event.target.checked ? rest : { ...rest, agentAuto: false }); }} />
+        Turn on Agent mode by itself when a question needs my documents, a link, or more context</label> : null}
       <label>Context available to AI
         <select aria-label="Context available to AI" disabled={disabled} value={settings.contextScope} onChange={(event) => onChange({ ...settings, contextScope: event.target.value as AISettings["contextScope"] })}>
           <option value="conversation">This conversation, its branch context and attachments</option>

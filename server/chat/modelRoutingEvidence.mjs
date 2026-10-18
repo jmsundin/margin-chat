@@ -28,6 +28,7 @@ const reviewed = {
   "MiniMaxAI/MiniMax-M3": ["Long-context reasoning and general work; custom MiniMax Community license.", "general", "https://huggingface.co/MiniMaxAI/MiniMax-M3"],
   "grok-4.6": ["Flagship general chat, coding, and reasoning option.", "demanding", "https://docs.x.ai/developers/models"],
   "grok-4.3": ["Additional supported Grok model; the app uses it for its fast profile.", "alternative", "https://docs.x.ai/developers/models/grok-4.3"],
+  "muse-wonder-1.0": ["Meta's agent-focused frontier model; preview on Meta's Model API. Agent mode's default.", "demanding", "https://dev.meta.ai/docs/models"],
 };
 
 export function getModelRoutingEvidence(serviceId, model) {

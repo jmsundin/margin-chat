@@ -1,5 +1,5 @@
 export const AI_MODES = Object.freeze(["balanced", "fast", "thorough"]);
-export const AI_PROVIDERS = Object.freeze(["openai", "anthropic", "gemini", "huggingface", "xai"]);
+export const AI_PROVIDERS = Object.freeze(["openai", "anthropic", "gemini", "huggingface", "xai", "meta"]);
 const scopes = new Set(["conversation", "selected", "workspace"]);
 /** Agent run budgets offered in the composer, in micro-dollars. */
 export const AGENT_BUDGET_CHOICES_MICROS = Object.freeze([250_000, 500_000, 1_000_000, 2_000_000]);
@@ -21,6 +21,8 @@ export function normalizeAISettings(input) {
     ...(value.agent === true ? { agent: true } : {}),
     ...(AGENT_BUDGET_CHOICES_MICROS.includes(value.agentBudgetMicros) ? { agentBudgetMicros: value.agentBudgetMicros } : {}),
     ...(scopes.has(value.agentScope) ? { agentScope: value.agentScope } : {}),
+    // On unless switched off: Agent mode starts by itself when a prompt needs looking things up.
+    ...(value.agentAuto === false ? { agentAuto: false } : {}),
     ...(Array.isArray(value.allowedProviders) ? {
       allowedProviders: [...new Set(value.allowedProviders.filter((provider) => AI_PROVIDERS.includes(provider)))],
     } : {}),
@@ -135,5 +137,7 @@ function normalizeAgentRun(input) {
     ...(modelCalls !== undefined ? { modelCalls } : {}),
     ...(spentMicros !== undefined ? { spentMicros } : {}),
     ...(budgetMicros !== undefined ? { budgetMicros } : {}),
+    // Why Agent mode turned itself on for this reply, written by the server.
+    ...(text(input.automatic, 200).trim() ? { automatic: text(input.automatic, 200) } : {}),
   };
 }

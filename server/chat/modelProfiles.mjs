@@ -50,10 +50,11 @@ export function selectProfileModel(serviceId, { mode, task }, runtimeConfig) {
 
 // Explicit routing preferences rather than fabricated quality scores. The
 // configured default breaks ties and controls ordinary conversational requests.
+// Muse Wonder is last: Auto uses it for Agent mode, not for plain replies.
 export const TASK_PROVIDER_PREFERENCES = Object.freeze({
-  coding: ["openai-api", "anthropic-api", "huggingface-api", "gemini-api", "xai-api"],
-  reasoning: ["openai-api", "anthropic-api", "huggingface-api", "gemini-api", "xai-api"],
-  research: ["gemini-api", "openai-api", "anthropic-api", "xai-api", "huggingface-api"],
-  summary: ["gemini-api", "openai-api", "anthropic-api", "huggingface-api", "xai-api"],
-  writing: ["openai-api", "anthropic-api", "gemini-api", "xai-api", "huggingface-api"],
+  coding: ["openai-api", "anthropic-api", "huggingface-api", "gemini-api", "xai-api", "meta-api"],
+  reasoning: ["openai-api", "anthropic-api", "huggingface-api", "gemini-api", "xai-api", "meta-api"],
+  research: ["gemini-api", "openai-api", "anthropic-api", "xai-api", "huggingface-api", "meta-api"],
+  summary: ["gemini-api", "openai-api", "anthropic-api", "huggingface-api", "xai-api", "meta-api"],
+  writing: ["openai-api", "anthropic-api", "gemini-api", "xai-api", "huggingface-api", "meta-api"],
 });

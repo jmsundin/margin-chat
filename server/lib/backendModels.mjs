@@ -3,6 +3,7 @@ const DEFAULT_MODEL_IDS = {
   "backend-services": "smart-routing",
   "gemini-api": "gemini-3.8-flash",
   "huggingface-api": "deepseek-ai/DeepSeek-V4.1-Flash",
+  "meta-api": "muse-wonder-1.0",
   "openai-api": "gpt-6-astra",
   "openai-agent": "gpt-6-astra",
   "xai-api": "grok-4.7",
@@ -38,6 +39,7 @@ const MODEL_IDS_BY_SERVICE = {
     "deepseek-ai/DeepSeek-R1",
     "Qwen/Qwen3-Coder-480B-A35B-Instruct",
   ]),
+  "meta-api": new Set(["muse-wonder-1.0"]),
   "openai-api": new Set([
     "gpt-6-astra",
     "gpt-6.1-sol",
@@ -102,6 +104,10 @@ export function getRuntimeDefaultModelForService(runtimeConfig, serviceId) {
 
   if (serviceId === "xai-api") {
     return runtimeConfig.xaiModel || getDefaultModelIdForService(serviceId);
+  }
+
+  if (serviceId === "meta-api") {
+    return runtimeConfig.metaModel || getDefaultModelIdForService(serviceId);
   }
 
   return getDefaultModelIdForService(serviceId);

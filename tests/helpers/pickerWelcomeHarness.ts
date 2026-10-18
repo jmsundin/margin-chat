@@ -53,7 +53,7 @@ try {
   assert.equal(dialog.querySelectorAll('[aria-label="Recent models"] .picker-model-row').length, 1);
   assert(dialog.textContent?.includes("AutoDefault"));
   assert.equal(dialog.querySelector('.picker-providers'), null);
-  assert.equal(dialog.querySelectorAll('[aria-label="Featured models"] .picker-model-row').length, 4);
+  assert.equal(dialog.querySelectorAll('[aria-label="Featured models"] .picker-model-row').length, 5);
   const first = dialog.querySelector("button")!;
   const last = [...dialog.querySelectorAll("button")].at(-1)!;
   last.focus();

@@ -3,7 +3,7 @@ import type { AIExecutionRecord, AIRetrievalRecord } from "../types";
 import AgentRunLog from "./AgentRunLog";
 import "./AIResponseDetails.css";
 
-const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI", "anthropic-api": "Anthropic Claude", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI" };
+const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI", "anthropic-api": "Anthropic Claude", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI", "meta-api": "Meta Muse" };
 const routingLabels = {
   astra: "Auto · selected by GPT-6 Astra (low reasoning)",
   "astra-task": "Auto · GPT-6 Astra task matching",
@@ -100,6 +100,7 @@ export default function AIResponseDetails({ execution, onOpenSource, isStreaming
         {execution.status && execution.status !== "complete" ? <div><dt>Status</dt><dd>{execution.status === "stopped" ? "Stopped; partial answer saved" : execution.status === "failed" ? "Interrupted; partial answer saved" : isStreaming ? "Responding" : "Partial answer saved; completion not recorded"}</dd></div> : null}
       </dl>
       {execution.agent ? <div className="ai-agent-run"><strong>Agent steps</strong>
+        {execution.agent.automatic ? <p className="ai-detail-note">Agent mode turned on by itself because {execution.agent.automatic}.</p> : null}
         <AgentRunLog steps={execution.agent.steps} spentMicros={execution.agent.spentMicros} budgetMicros={execution.agent.budgetMicros} stopReason={execution.agent.stopReason} reasoning={execution.agent.reasoning}/>
         {!execution.agent.steps.some((step) => step.kind === "tool") ? <p className="ai-detail-note">The agent answered without needing any tools.</p> : null}
       </div> : null}

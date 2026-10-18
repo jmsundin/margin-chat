@@ -23,6 +23,7 @@ export function createRuntimeConfig(env) {
       env.HUGGINGFACE_MODEL ??
       env.HF_MODEL ??
       getDefaultModelIdForService("huggingface-api"),
+    metaModel: normalizeBackendModelId("meta-api", env.META_MODEL),
     openaiModel: normalizeBackendModelId("openai-api", env.OPENAI_MODEL),
     passwordResetTtlMs: passwordResetMinutes * 60 * 1000,
     secureAuthCookies: parseBoolean(
@@ -42,6 +43,7 @@ function normalizeBackendProvider(value) {
     value === "anthropic-api" ||
     value === "gemini-api" ||
     value === "huggingface-api" ||
+    value === "meta-api" ||
     value === "openai-api" ||
     value === "xai-api"
   ) {

@@ -271,6 +271,24 @@ export const BACKEND_SERVICE_OPTIONS: BackendServiceOption[] = [
     ],
     provider: "xAI",
   },
+  {
+    id: "meta-api",
+    label: "Meta Muse",
+    description: "Route the conversation through Meta's Model API. Muse Wonder is Agent mode's default model.",
+    iconLabel: "MU",
+    keywords: ["meta", "muse", "wonder", "agent", "agentic", "tools", "reasoning"],
+    modeLabel: "Direct",
+    models: [
+      {
+        badgeLabel: "PREVIEW",
+        description: "Meta's agent-focused frontier model for long, multi-step work with tools. Preview release; behavior may change.",
+        featured: true,
+        id: "muse-wonder-1.0",
+        label: "Muse Wonder",
+      },
+    ],
+    provider: "Meta",
+  },
 ];
 
 // Keep saved chats and recent selections intact without promoting older models
@@ -307,7 +325,7 @@ const BACKEND_SERVICE_OPTIONS_BY_ID = new Map(
 
 /** Services whose models can call tools, so Agent mode can run on them. Auto
  * picks a model per reply; if it picks one without tools, the reply says so. */
-const AGENT_SERVICE_IDS = new Set<BackendServiceId>(["backend-services", "openai-api", "openai-agent", "anthropic-api", "xai-api"]);
+const AGENT_SERVICE_IDS = new Set<BackendServiceId>(["backend-services", "openai-api", "openai-agent", "anthropic-api", "xai-api", "meta-api"]);
 
 export function supportsAgentMode(serviceId: BackendServiceId) {
   return AGENT_SERVICE_IDS.has(serviceId);
