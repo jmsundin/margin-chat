@@ -115,7 +115,7 @@ export async function releaseProduction({ config, env = process.env, onProgress 
   } });
   const migrations = await loadMigrations();
   let productionClient, productionUrl, pooledUrl, previous, candidate, branches, backup, productionContext;
-  let clientFailure, stopLockHeartbeat, skipCheckpoint = false, ciPending, candidateBuild;
+  let clientFailure, stopLockHeartbeat, skipCheckpoint = false, ciPending, candidateBuild, servedBefore;
   const candidateBuildAbort = new AbortController();
   // One rehearsal copy is kept and topped up from each backup (the release lock
   // keeps rehearsals from overlapping), instead of a full copy per release.
@@ -327,13 +327,17 @@ export async function releaseProduction({ config, env = process.env, onProgress 
           blobToken: env.BLOB_READ_WRITE_TOKEN, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET });
       },
       async promote() {
+        // What production reports now, so verifyProduction can tell the old release still propagating
+        // from an unrelated one. Unread if production is unhealthy; that must not block promotion.
+        servedBefore = await checkReadiness({ baseUrl: config.productionUrl, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET, requestTimeoutMs: 15_000 })
+          .then((result) => result.release ?? null, () => undefined);
         return promoteVerifiedDeployment({ api: vercelApi, projectId: config.vercel.projectId,
           deploymentId: candidate.id, previousDeploymentId: previous.id, expectedSha: plan.sha, assertLock });
       },
       async verifyProduction() {
         await assertLock();
         await waitForProductionReadiness({ baseUrl: config.productionUrl, expectedSha: plan.sha,
-          previousSha: previous.meta?.marginReleaseSha, previousUnidentified: !previous.meta?.marginReleaseSha, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET, assertLock });
+          previousSha: previous.meta?.marginReleaseSha, previousUnidentified: !previous.meta?.marginReleaseSha, servedBefore, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET, assertLock });
         for (let index = 0; index < config.observation.checks; index += 1) {
           if (index) await delay(config.observation.intervalSeconds * 1000);
           await assertLock();

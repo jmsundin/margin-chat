@@ -21,8 +21,10 @@ export async function checkReadiness({ baseUrl, expectedSha, fetchImpl = fetch, 
 /** Promotion can finish before the public origin stops serving the old release,
  * and for a few seconds edge locations can alternate between the two. Wait
  * until `settledChecks` responses in a row serve the promoted release; a
- * response from the previous release in between starts the count again. */
-export async function waitForProductionReadiness({ expectedSha, previousSha, previousUnidentified = false, assertLock = async () => {},
+ * response from the previous release in between starts the count again.
+ * `servedBefore` is the release production reported just before promotion
+ * (null for none, undefined if unread); it counts as the previous release too. */
+export async function waitForProductionReadiness({ expectedSha, previousSha, previousUnidentified = false, servedBefore, assertLock = async () => {},
   sleep = delay, now = Date.now, timeoutMs = 180_000, pollMs = 1_000, settledChecks = 10, ...options }) {
   if (!expectedSha || !(timeoutMs > 0) || !(pollMs > 0) || !(settledChecks >= 1)) throw new Error("Invalid production readiness polling options.");
   const deadline = now() + timeoutMs;
@@ -41,7 +43,11 @@ export async function waitForProductionReadiness({ expectedSha, previousSha, pre
       // an unrelated release, and unhealthy storage must still fail immediately,
       // except that a previous deployment made outside the release runner (e.g.
       // `vercel --prod`) reports no identity, so that is its known signature.
-      const isPrevious = previousSha ? result.release === previousSha : previousUnidentified && result.release == null;
+      // A dashboard Redeploy can also keep reporting the release it copied while
+      // its metadata no longer names it, so what production served just before
+      // promotion is accepted as well.
+      const isPrevious = (previousSha ? result.release === previousSha : previousUnidentified && result.release == null)
+        || (servedBefore !== undefined && (result.release ?? null) === servedBefore);
       if (!isPrevious) throw new Error("The production URL is serving an unexpected release after promotion.");
       settled = 0;
     }
