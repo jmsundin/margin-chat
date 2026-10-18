@@ -158,7 +158,9 @@ describe("durable OPFS Markdown storage", () => {
     const saved = snapshot("Saved on this device");
     await createBrowserVaultStore("alice").write(saved);
     opfs.breakDirectory("margin-chat-vaults/alice/");
-    const error = await createBrowserVaultStore("alice").read().catch((caught) => caught);
+    // The same store switches to the fresh copy on its next read, so the page need not reload.
+    const fresh = createBrowserVaultStore("alice");
+    const error = await fresh.read().catch((caught) => caught);
     expect(error.message).toContain("while opening margin-chat-vaults/alice (InvalidStateError");
     const storage = new Map<string, string>();
     const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -167,7 +169,6 @@ describe("durable OPFS Markdown storage", () => {
     } });
     try {
       expect(startFreshVaultCopy("alice")).toBe(true);
-      const fresh = createBrowserVaultStore("alice");
       expect(await fresh.read()).toBeNull();
       await fresh.write(snapshot("Downloaded again"));
       expect([...opfs.files.keys()].some((path) => /^margin-chat-vaults-[a-z0-9]+\/alice\/vault-journal\.json$/.test(path))).toBe(true);

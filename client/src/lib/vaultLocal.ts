@@ -413,7 +413,11 @@ export function createBrowserVaultStore(userId: string): VaultStore {
           throw new Error(`This browser could not read “${error.fileName}” from the vault saved on this device (${error.detail}).`, { cause: error });
         }
         // Name the step instead of showing the browser's bare message.
-        if (error instanceof DOMException && error.name !== "NotFoundError") throw new LocalVaultUnavailableError(step, error);
+        if (error instanceof DOMException && error.name !== "NotFoundError") {
+          // Open the folder again next time, which may be a fresh copy by then.
+          directoryPromise = null;
+          throw new LocalVaultUnavailableError(step, error);
+        }
         throw error;
       }
     },

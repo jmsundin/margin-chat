@@ -645,7 +645,14 @@ export function useMarkdownVault(args: {
     void enqueue(async () => {
       if (initialized.current) return;
       try {
-        const existing = await engine.read();
+        const existing = await engine.read().catch((error: unknown) => {
+          // This device's copy can't be opened and the cloud has the vault: switch to a fresh copy right here
+          // instead of reloading the page. If that copy fails too, the vault opens in memory from the cloud.
+          if (enabledRef.current && error instanceof LocalVaultUnavailableError && recoverWithFreshVaultCopy(storageUserId, error.step)) {
+            return engine.read();
+          }
+          throw error;
+        });
         const exists = Object.keys(existing.files).length > 0 || existing.remoteRevision > 0;
         if (exists) publish(existing);
         else if (args.legacyHasState) {

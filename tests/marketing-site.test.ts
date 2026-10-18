@@ -54,3 +54,18 @@ test("signed-out visitors see the marketing pages and can reach sign-in", async 
   if (exitCode !== 0) throw new Error(`Marketing site harness failed:\n${stdout}\n${stderr}`);
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).result).toBe("pass");
 }, 15000);
+
+test("returning visitors see the workspace while the session is checked", async () => {
+  const child = Bun.spawn([process.execPath, "tests/helpers/returningVisitorHarness.ts"], {
+    cwd: new URL("..", import.meta.url).pathname,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timeout = setTimeout(() => child.kill(), 10000);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  clearTimeout(timeout);
+  if (exitCode !== 0) throw new Error(`Returning visitor harness failed:\n${stdout}\n${stderr}`);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).result).toBe("pass");
+}, 15000);
