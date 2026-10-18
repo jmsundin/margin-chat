@@ -170,9 +170,14 @@ export function canRecoverWithFreshVaultCopy(userId: string): boolean {
   try { return !sessionStorage.getItem(recoveryKey(userId)); } catch { return false; }
 }
 
-export const IN_MEMORY_VAULT_NOTICE = "Chrome won't open this site's storage on this device, so your vault was loaded from the cloud"
-  + " and is kept in this tab only. Your changes still save to the cloud. To fix it, quit Chrome completely (⌘Q on a Mac) and reopen it."
-  + " If that doesn't help, open DevTools > Application > Storage, click Clear site data, then reload and sign in again.";
+/** The notice for a vault opened in memory, naming what Chrome refused so a report says which step failed. */
+export function inMemoryVaultNotice(refused: LocalVaultUnavailableError | null): string {
+  const cause = refused?.cause instanceof DOMException ? refused.cause.name : null;
+  return "Chrome won't open this site's storage on this device, so your vault was loaded from the cloud"
+    + " and is kept in this tab only. Your changes still save to the cloud. To fix it, quit Chrome completely (⌘Q on a Mac) and reopen it."
+    + " If that doesn't help, open DevTools > Application > Storage, click Clear site data, then reload and sign in again."
+    + (refused ? ` (Chrome said ${cause ?? "an error"} while ${refused.step}.)` : "");
+}
 
 /** The browser refused an operation on this device's copy of the vault for a reason no retry fixed. */
 export class LocalVaultUnavailableError extends Error {
@@ -596,15 +601,21 @@ export function createMemoryVaultStore(): VaultStore {
  * This device's saved copy of the vault, unless the browser refuses to open it at all and
  * `fallBack` agrees: then an empty copy in memory, which the cloud fills, for the rest of the session.
  */
-export function createVaultStoreWithMemoryFallback(saved: VaultStore, fallBack: (error: LocalVaultUnavailableError) => boolean): VaultStore & { inMemory(): boolean } {
+export function createVaultStoreWithMemoryFallback(saved: VaultStore, fallBack: (error: LocalVaultUnavailableError) => boolean): VaultStore & {
+  inMemory(): boolean; refused(): LocalVaultUnavailableError | null;
+} {
   let memory: VaultStore | null = null;
+  let refused: LocalVaultUnavailableError | null = null;
   return {
     inMemory: () => memory !== null,
+    refused: () => refused,
     lock(operation) { return (memory ?? saved).lock(operation); },
     async read() {
       if (memory) return memory.read();
       try { return await saved.read(); } catch (error) {
         if (!(error instanceof LocalVaultUnavailableError) || !fallBack(error)) throw error;
+        refused = error;
+        console.error("Margin Chat opened the vault in memory because the browser refused its storage", error);
         memory = createMemoryVaultStore();
         return null;
       }
