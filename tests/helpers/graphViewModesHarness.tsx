@@ -392,6 +392,7 @@ try {
   for (const [index, a] of boxes.entries()) for (const b of boxes.slice(index + 1)) {
     assert(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, "Group boxes never overlap");
   }
+  assert.equal((await wheel(element(".canvas-group-box-name"))).defaultPrevented, true, "Scrolling over a group's name keeps panning the map");
   assert.equal(groupsSwitch()?.getAttribute("aria-pressed"), "true");
   await click(groupsSwitch());
   assert.deepEqual(boxNames(), [], "The Groups switch hides the boxes");
