@@ -166,7 +166,7 @@ import {
   type RecentBackendServiceSelection,
   upsertRecentBackendServiceSelection,
 } from "./lib/services";
-import type { AgentModeControls } from "./components/AgentModeToggle";
+import AgentModeToggle, { type AgentModeControls } from "./components/AgentModeToggle";
 import {
   mergeGraphNodeLayouts,
   normalizeGraphLayouts,
@@ -4931,6 +4931,7 @@ function WorkspaceAppContent({
                     aria-haspopup="dialog" aria-expanded={selectionModelOpen} onClick={() => setSelectionModelOpen(true)}>
                     Model: {selectionConversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(selectionConversation.serviceId, selectionConversation.modelId)?.label ?? selectionConversation.modelId} ⌄
                   </button> : null}
+                  {selectionConversation && selectionDraft.sourceBlockId ? <AgentModeToggle controls={agentModeControls(selectionConversation)} disabled={Boolean(pendingConversationIds[selectionConversation.id])}/> : null}
                   {selectionDraft.sourceBlockId ? <div className="document-ai-options">
                     <div role="group" aria-label="Response destination">
                       <button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={() => setSelectionResponseDestination("inline")}>In this document</button>
@@ -5067,6 +5068,7 @@ function WorkspaceAppContent({
                   aria-haspopup="dialog" aria-expanded={selectionModelOpen} onClick={() => setSelectionModelOpen(true)}>
                   {selectionConversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(selectionConversation.serviceId, selectionConversation.modelId)?.label ?? selectionConversation.modelId} ⌄
                 </button> : null}
+                {selectionConversation && selectionDraft.sourceBlockId ? <AgentModeToggle controls={agentModeControls(selectionConversation)} disabled={Boolean(pendingConversationIds[selectionConversation.id])}/> : null}
                 <button
                   className="selection-explain"
                   onClick={handleExplainSelection}

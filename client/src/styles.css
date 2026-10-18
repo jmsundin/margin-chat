@@ -5291,6 +5291,18 @@ button {
   padding: 0.72rem 0.96rem;
 }
 
+.selection-actions .agent-mode-toggle button {
+  background: var(--selection-explain-bg);
+  border: 1px solid var(--selection-explain-border);
+  border-radius: 999px;
+  font-size: inherit;
+  padding: 0.72rem 0.96rem;
+}
+
+.selection-actions .agent-mode-toggle button[aria-pressed="true"] {
+  border-color: var(--accent);
+}
+
 .search-modal-backdrop {
   align-items: flex-start;
   background: rgba(5, 8, 10, 0.52);

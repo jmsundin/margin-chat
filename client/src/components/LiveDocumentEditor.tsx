@@ -20,7 +20,7 @@ import type { DocumentEditFocus, DocumentEditOptions } from "../lib/documentEdit
 import { useMobileKeyboard } from "./MobileKeyboard";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
 import MathEquationDialog from "./MathEquationDialog";
-import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, layoutBlocks, liveBlockInfo, reflowBlocks, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource } from "../lib/liveDocument";
+import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource } from "../lib/liveDocument";
 import { livePreviewInline, type LivePreviewMode } from "../lib/livePreviewMarkdown";
 import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import "./LiveDocumentEditor.css";
@@ -356,6 +356,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const pendingFocus = useRef<{ id: string; offset: number; to?: number } | null>(null);
   const suppressSpace = useRef(false);
   const literalSpace = useRef(false);
+  const previewSelection = useRef(false);
   // The Ask AI button under the caret; it steps aside while you type.
   const [askButton, setAskButton] = useState<{ top: number; left: number } | null>(null);
   const typing = useRef(false);
@@ -462,6 +463,43 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     current.onSelectionChange({ conversationId: current.conversationId, messageId: block?.sourceMessageId ?? `document:${selection.id}`, sourceBlockId: selection.id,
       startOffset: selection.from, endOffset: selection.to, quote: selection.markdown.slice(selection.from, selection.to), rect: selectionRect(view),
       ...(selection.joinBlockIds.length ? { joinBlockIds: selection.joinBlockIds } : {}) });
+  }
+
+  /** Text selected in a rendered table, which CodeMirror doesn't see, as a passage of the table's Markdown. */
+  function notifyPreviewSelection() {
+    const current = latest.current;
+    const view = viewRef.current;
+    const root = rootRef.current;
+    if (!current.onSelectionChange || !view || !root) return;
+    const selection = window.getSelection();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    const widgetOf = (node: Node) => (node instanceof Element ? node : node.parentElement)?.closest<HTMLElement>(".live-document-widget") ?? null;
+    const widget = range && !range.collapsed ? widgetOf(range.startContainer) : null;
+    const id = widget?.dataset.documentBlockId;
+    const live = stateOf(view);
+    const block = id ? live.layout.find((item) => item.id === id) : undefined;
+    const markdown = block ? view.state.doc.sliceString(block.from, block.to) : "";
+    const body = widget?.querySelector(".live-document-widget-body");
+    if (!range || !widget || !id || !block || !body || widgetOf(range.endContainer) !== widget || !root.contains(widget)
+      || isDraftBlockId(id) || live.locked.has(id) || !isTableBlock(markdown)) {
+      if (previewSelection.current) {
+        previewSelection.current = false;
+        if (view.state.selection.main.empty) current.onSelectionChange(null);
+      }
+      return;
+    }
+    const offset = (node: Node, at: number) => {
+      const before = document.createRange();
+      before.selectNodeContents(body);
+      before.setEnd(node, at);
+      return before.toString().length;
+    };
+    const span = renderedTableSelection(markdown, body.textContent ?? "", offset(range.startContainer, range.startOffset), offset(range.endContainer, range.endOffset));
+    if (!span) return;
+    previewSelection.current = true;
+    const rect = range.getBoundingClientRect();
+    current.onSelectionChange({ conversationId: current.conversationId, messageId: blockById.get(id)?.sourceMessageId ?? `document:${id}`, sourceBlockId: id,
+      startOffset: span.from, endOffset: span.to, quote: markdown.slice(span.from, span.to), rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
   }
 
   function invoke(view: EditorView, spaces = 0, blockId?: string) {
@@ -674,8 +712,14 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, notifySelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton });
-  handlers.current = { commit, notifySelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton };
+  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton });
+  handlers.current = { commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton };
+  useEffect(() => {
+    let frame = 0;
+    const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
+    document.addEventListener("selectionchange", changed);
+    return () => { document.removeEventListener("selectionchange", changed); window.cancelAnimationFrame(frame); };
+  }, []);
   mobileRef.current = mobileKeyboard.mobile;
   const compartments = useMemo(() => ({ editable: new Compartment(), attributes: new Compartment(), history: new Compartment() }), []);
 
@@ -1004,7 +1048,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (kind === "drawing") {
       return createPortal(<Suspense fallback={<p role="status">Loading drawing…</p>}><DocumentDrawing markdown={block.content} readOnly={readOnly} onEdit={() => openDrawing(block)} /></Suspense>, element, key);
     }
-    return createPortal(<div className="live-document-preview" onClick={(event) => {
+    // The preview takes focus itself, so the editor doesn't put its own selection back over text selected here.
+    return createPortal(<div className="live-document-preview" tabIndex={-1} onClick={(event) => {
       if (!window.getSelection()?.isCollapsed || (event.target instanceof Element && event.target.closest("a, button, input, summary, [data-annotation-branches]"))) return;
       editBlock(id);
     }}>{props.renderBlockPreview?.(block) ?? <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(block.content) }} />}</div>, element, key);
