@@ -4,6 +4,11 @@ import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
 import type { GraphNodeLayout } from "../../client/src/types";
 
 const browser = new Window({ url: "http://graph-view-modes.test/" });
+// ELK, behind Auto-arrange, reads JavaScript built-ins such as Error and Math from the window,
+// which older Bun runtimes leave off happy-dom's window.
+for (const name of Object.getOwnPropertyNames(globalThis)) {
+  if ((browser as any)[name] === undefined) try { (browser as any)[name] = (globalThis as any)[name]; } catch {}
+}
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect", "HTMLInputElement", "HTMLSelectElement"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? browser : (browser as any)[name] });
 }
