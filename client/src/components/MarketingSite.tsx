@@ -5,6 +5,7 @@ import {
   detectVisitorPlatform, downloadHref, fetchDesktopRelease, primaryDownload, readDownloadLinks, withDesktopRelease, PLATFORM_LABELS,
   type DownloadLinks, type VisitorPlatform,
 } from "../lib/platform";
+import { claimAutoOpen, readDesktopPreference, saveDesktopPreference } from "../lib/desktopHandoff";
 import { apiFetch } from "../lib/apiTransport";
 import "./MarketingSite.css";
 
@@ -147,18 +148,28 @@ function SiteHeader({ page, site }: { page: MarketingPage; site: SiteContext }) 
   );
 }
 
+// Choosing the browser for this visit keeps the workspace from opening the desktop app by itself.
+function stayInBrowser() {
+  claimAutoOpen();
+}
+
+// Downloading the app brings back the workspace's offer to open it, even after "Use the browser".
+function offerDesktopAgain() {
+  if (readDesktopPreference() === "web") saveDesktopPreference(null);
+}
+
 function PrimaryActions({ site }: { site: SiteContext }) {
   const primary = primaryDownload(site.platform, site.links);
   return (
     <>
       <div className="mk-actions">
         {primary.kind === "desktop" ? (
-          <a className="mk-btn mk-btn-primary mk-btn-lg" href={downloadHref(primary.href ?? "", "hero")}><DownloadIcon />{primary.label}</a>
+          <a className="mk-btn mk-btn-primary mk-btn-lg" href={downloadHref(primary.href ?? "", "hero")} onClick={offerDesktopAgain}><DownloadIcon />{primary.label}</a>
         ) : (
           <a className="mk-btn mk-btn-primary mk-btn-lg" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Open Margin Chat" : primary.label}</a>
         )}
         {primary.kind === "desktop" ? (
-          <a className="mk-btn mk-btn-ghost mk-btn-lg" href={site.webAppPath} onClick={site.go}>Open in your browser</a>
+          <a className="mk-btn mk-btn-ghost mk-btn-lg" href={site.webAppPath} onClick={(event) => { stayInBrowser(); site.go(event); }}>Open in your browser</a>
         ) : (
           <a className="mk-btn mk-btn-ghost mk-btn-lg" href={MARKETING_PATHS.pricing} onClick={site.go}>See pricing</a>
         )}
@@ -504,7 +515,8 @@ function DownloadPage({ site }: { site: SiteContext }) {
   const extension = links.chromeExtension
     ? <a className="mk-btn mk-btn-ghost mk-btn-lg" href={links.chromeExtension}>Add to Chrome</a>
     : null;
-  const webApp = (label = "Open the web app", tone = "primary") => <a className={`mk-btn mk-btn-${tone} mk-btn-lg`} href={site.webAppPath} onClick={site.go}>{label}</a>;
+  // "Open in your browser" beside an installer means this visit stays in the browser.
+  const webApp = (label = "Open the web app", tone = "primary") => <a className={`mk-btn mk-btn-${tone} mk-btn-lg`} href={site.webAppPath} onClick={(event) => { if (tone === "ghost") stayInBrowser(); site.go(event); }}>{label}</a>;
 
   let title: string;
   let body: string;
@@ -512,7 +524,7 @@ function DownloadPage({ site }: { site: SiteContext }) {
   // The installers are not code-signed yet, so the system warns on first open.
   let firstOpen: string | null = null;
   const version = links.desktopVersion ? ` Version ${links.desktopVersion}.` : "";
-  const installer = (href: string, label: string, tone = "primary") => <a className={`mk-btn mk-btn-${tone} mk-btn-lg`} href={downloadHref(href, "download-page")}><DownloadIcon />{label}</a>;
+  const installer = (href: string, label: string, tone = "primary") => <a className={`mk-btn mk-btn-${tone} mk-btn-lg`} href={downloadHref(href, "download-page")} onClick={offerDesktopAgain}><DownloadIcon />{label}</a>;
   if (tab === "mac" && links.mac) {
     title = "Margin Chat for macOS";
     body = `The desktop app keeps your vault on your Mac and tells you when an update is ready. Runs on Apple Silicon and Intel.${version}`;
