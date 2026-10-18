@@ -39,14 +39,15 @@ import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
-import { SessionTabs, SessionsPanel } from "./components/Sessions";
+import { SessionSwitcher, SessionsPanel } from "./components/Sessions";
+import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentLocalGraph, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
-  addDocumentsToSession, applySessionAutoName, createSession, deleteSession, duplicateSession, ensureSessions, getActiveSession,
-  placeSessionTab, recordSessionDocument, removeDocumentFromSession, removeSessionTab, renameSession, sortSessions, switchSession,
+  applySessionAutoName, createSession, deleteSession, duplicateSession, ensureSessions, getActiveSession,
+  recordSessionDocument, removeDocumentFromSession, renameSession, sortSessions, switchSession,
 } from "./lib/workspaceSessions";
 import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
 import { DOCUMENT_MARGIN_GUTTER, type DocumentMarginItem } from "./components/DocumentMargin";
@@ -60,8 +61,8 @@ import WorkspaceView from "./components/WorkspaceView";
 import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
-import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
-import { getDocumentBackTarget, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
+import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
+import { getDocumentBackTarget, getPresentedParentId, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
@@ -971,6 +972,15 @@ function WorkspaceAppContent({
     ...visiblePinnedDocumentIds.filter((id) => !familyDocumentIds.has(id)).map((id) => state.conversations[id]),
     ...documentWorkspace.openDocuments,
   ];
+  // Tabs hold main and side documents only; margin notes and branches stay in the breadcrumbs and navigator.
+  const peerTabDocuments = tabDocuments.filter((document) => getPresentedParentId(state.conversations, document.id) === null);
+  let activePeerTabId = activeConversation.id;
+  for (const seen = new Set<string>(); !seen.has(activePeerTabId);) {
+    seen.add(activePeerTabId);
+    const parentId = getPresentedParentId(state.conversations, activePeerTabId);
+    if (!parentId) break;
+    activePeerTabId = parentId;
+  }
   // A workspace without sessions starts with one holding the documents already open.
   const hasActiveSession = Boolean(getActiveSession(state));
   useEffect(() => {
@@ -1126,7 +1136,7 @@ function WorkspaceAppContent({
   const orderedDocumentIds = useMemo(() => documentOrder.threads.map((thread) => thread.id), [documentOrder.threads]);
   const sortedSessions = useMemo(() => sortSessions(Object.values(sessions?.items ?? {}), documentSort, orderedDocumentIds),
     [sessions?.items, documentSort, orderedDocumentIds]);
-  const tabSessions = (sessions?.tabIds ?? []).map((id) => sessions!.items[id]).filter(Boolean);
+  const [sessionsRequest, setSessionsRequest] = useState(0);
   useSessionAutoNames({ userId: user.id, enabled: jevEnabled, sessions, conversations: state.conversations,
     onName: (sessionId, nameKey, name) => setState((current) => applySessionAutoName(current, sessionId, nameKey, name)) });
   const [navigationStyle, setNavigationStyle] = useState<DocumentNavigationStyle>(loadDocumentNavigationStyle);
@@ -3698,19 +3708,6 @@ function WorkspaceAppContent({
     handleCreateMainConversation();
   }
 
-  function handleRemoveSessionTab(sessionId: string) {
-    const { state: next, switchTo } = removeSessionTab(currentStateRef.current, sessionId);
-    currentStateRef.current = next;
-    setState(next);
-    if (switchTo) handleSwitchSession(switchTo);
-  }
-
-  function handleToggleSessionTab(sessionId: string) {
-    const current = currentStateRef.current;
-    if (current.sessions?.tabIds.includes(sessionId)) handleRemoveSessionTab(sessionId);
-    else setState((latest) => placeSessionTab(latest, sessionId, latest.sessions?.tabIds.length ?? 0));
-  }
-
   function handleDeleteSession(sessionId: string) {
     const { state: next, switchTo } = deleteSession(currentStateRef.current, sessionId);
     currentStateRef.current = next;
@@ -4252,8 +4249,11 @@ function WorkspaceAppContent({
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
-          // The closed document's menu is gone: focus the active session's tab, which stays put.
-          document.querySelector<HTMLButtonElement>(".session-tab.is-active .session-tab-title, .session-switcher-trigger")?.focus();
+          const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
+            .filter((button) => !button.closest("[hidden]"));
+          (triggers.find((button) => button.closest<HTMLElement>("[data-document-tab-id]")?.dataset.documentTabId === conversation.id)
+            ?? triggers.find((button) => button.closest<HTMLElement>("[data-document-tab-id]")?.dataset.documentTabId === currentStateRef.current.activeConversationId)
+            ?? triggers[0])?.focus();
         }} />;
   }
 
@@ -4614,14 +4614,15 @@ function WorkspaceAppContent({
               vaultSwitcher={<VaultSwitcher vault={vault} cloudSync={cloudSyncEnabled}
                 onOpenSettings={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }} />}
               documentOrder={documentOrder}
-              sessionsPanel={sessions ? <SessionsPanel sessions={sortedSessions} tabIds={sessions.tabIds} activeId={sessions.activeId}
+              sessionsPanel={sessions ? <SessionsPanel sessions={sortedSessions} activeId={sessions.activeId}
                 conversations={state.conversations} focusedDocumentId={activeConversation.id}
-                onOpen={handleSwitchSession} onToggleTab={handleToggleSessionTab}
+                onOpen={handleSwitchSession}
                 onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}
                 onDuplicate={(sessionId) => setState((current) => duplicateSession(current, sessionId))}
                 onDelete={handleDeleteSession} onNew={(name) => handleCreateSession(name)}
                 onOpenDocument={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
                 onRemoveDocument={(sessionId, documentId) => setState((current) => removeDocumentFromSession(current, sessionId, documentId))} /> : undefined}
+              sessionsRequest={sessionsRequest}
               documentSort={documentSort}
               onDocumentSortChange={(sort) => { setDocumentSort(sort); saveSidebarDocumentSort(storageUserId, sort); }}
               mapExplorerRef={setGraphExplorerContainer}
@@ -4813,22 +4814,33 @@ function WorkspaceAppContent({
                       onClick={handleToggleLeftSidebar}
                       type="button"
                     ><SidebarPanelIcon /></button>}
-                    <SessionTabs tabs={tabSessions} allSessions={sortedSessions} activeId={sessions?.activeId ?? null}
-                      compact={isMobileViewport}
-                      onSelect={handleSwitchSession} onRemoveTab={handleRemoveSessionTab} onNew={() => handleCreateSession()}
-                      onPlace={(sessionId, index) => setState((current) => placeSessionTab(current, sessionId, index))}
-                      onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}
-                      onDropDocument={(sessionId, documentId) => setState((current) => addDocumentsToSession(current, sessionId, [documentId]))} />
+                    {sessions ? <SessionSwitcher sessions={sortedSessions} activeId={sessions.activeId} compact={isMobileViewport}
+                      onSelect={handleSwitchSession} onNew={() => handleCreateSession()}
+                      onManage={() => { setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }} /> : null}
+                    <DocumentTabs documents={peerTabDocuments}
+                      groups={state.groups}
+                      onAssignGroup={handleAssignConversationGroup}
+                      onRename={handleRenameThread}
+                      activeDocumentId={activePeerTabId}
+                      minimizedDocumentIds={documentWorkspace.minimizedIds}
+                      pinnedDocumentIds={pinnedDocumentIds}
+                      familyPinnedDocumentIds={familyPinnedDocumentIds}
+                      onTogglePin={handleToggleDocumentPin}
+                      onTogglePinScope={handleToggleDocumentPinScope}
+                      canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
+                      onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
+                      onMinimize={handleMinimizeDocument}
+                      onClose={handleCloseDocument}
+                      showCloseButtons={inExtension}
+                      onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
+                      onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
+                    />
                     <div className="document-workspace-actions">
                       {mapReturnId ? <button type="button" className="document-back-to-map" onClick={() => handleSetMainViewMode("graph")}
                         title="Back to the map (or pinch out)">
                         <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5 7 10l5 5" /></svg>
                         Map
                       </button> : null}
-                      <button type="button" className="document-new-side-button" aria-label="New side document" title="New side document"
-                        onClick={() => handleAddSideChat(activeConversation.id)}>
-                        <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5 3h7l3 3v11H5zM10 8v6M7 11h6" /></svg>
-                      </button>
                       <DocumentViewsMenu currentDocumentId={activeConversation.id}
                         onMinimizeAll={() => handleHideAllDocuments("minimize")}
                         onCloseAll={() => handleHideAllDocuments("close")}
