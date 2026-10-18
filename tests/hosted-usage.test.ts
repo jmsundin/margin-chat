@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
 import { calculateUsageMicros, createHostedUsageMeter, getHostedModelPrice, normalizeProviderUsage } from "../server/billing/usage.mjs";
 import * as providers from "../server/chat/providers.mjs";
 import { runAgent } from "../server/chat/agent/runner.mjs";
@@ -266,7 +267,7 @@ describe("all model work uses the same prepaid meter", () => {
     }) as typeof fetch;
     const result = await runAgent({ ...args(f.meter), provider: "openai" });
     expect(result.reply).toBe("Hello");
-    expect(result.agent).toMatchObject({ stopReason: "answered", modelCalls: 2, spentMicros: 250, budgetMicros: 500_000 });
+    expect(result.agent).toMatchObject({ stopReason: "answered", modelCalls: 2, spentMicros: 250, budgetMicros: DEFAULT_AGENT_BUDGET_MICROS });
     expect(calls).toBe(2);
     expect(f.settlements.map((item) => item.amountMicros)).toEqual([125, 125]);
     expect(f.reservations.map((item) => item.requestId)).toEqual(["execution:1", "execution:2"]);
