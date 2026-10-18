@@ -5,6 +5,7 @@ export const VALID_SERVICE_IDS = new Set([
   "backend-services",
   "gemini-api",
   "huggingface-api",
+  "meta-api",
   "openai-api",
   "openai-agent",
   "xai-api",

@@ -41,9 +41,9 @@ export function validateVaultFileContext(input) {
   };
 }
 
-/** Claude, GPT, Gemini and Grok models read images; the open models offered through Hugging Face do not. */
+/** Claude, GPT, Gemini, Grok and Muse models read images; the open models offered through Hugging Face do not. */
 export function modelSeesImages(provider) {
-  return ["anthropic", "openai", "gemini", "xai"].includes(provider);
+  return ["anthropic", "openai", "gemini", "xai", "meta"].includes(provider);
 }
 
 function words(value) {

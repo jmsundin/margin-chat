@@ -7,7 +7,7 @@ import { AGENT_BUDGET_CHOICES_MICROS, DEFAULT_AGENT_BUDGET_MICROS } from "@margi
 import { validateVaultFileContext } from "./fileContext.mjs";
 
 const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
-const AI_PROVIDERS = new Set(["openai", "anthropic", "gemini", "huggingface", "xai"]);
+const AI_PROVIDERS = new Set(["openai", "anthropic", "gemini", "huggingface", "xai", "meta"]);
 
 export function validateAIOptions(input) {
   if (input !== undefined && (!input || typeof input !== "object" || Array.isArray(input))) {
@@ -33,6 +33,7 @@ export function validateAIOptions(input) {
   if (ai.agentScope !== undefined && !["conversation", "selected", "workspace"].includes(ai.agentScope)) {
     throw new HttpError(400, "Unsupported agent search scope.");
   }
+  if (ai.agentAuto !== undefined && typeof ai.agentAuto !== "boolean") throw new HttpError(400, "agentAuto must be a boolean.");
   if (ai.allowedProviders !== undefined && (!Array.isArray(ai.allowedProviders) ||
       ai.allowedProviders.some((provider) => !AI_PROVIDERS.has(provider)))) {
     throw new HttpError(400, "allowedProviders must contain supported provider names.");
@@ -42,7 +43,10 @@ export function validateAIOptions(input) {
     contextScope,
     selectedConversationIds: [...new Set(selectedConversationIds)],
     ...(ai.jevEnabled === true ? { jevEnabled: true } : {}),
-    ...(ai.agent === true ? { agent: true, agentBudgetMicros: ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, agentScope: ai.agentScope ?? "workspace" } : {}),
+    ...(ai.agent === true ? { agent: true, agentBudgetMicros: ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, agentScope: ai.agentScope ?? "workspace" }
+      // Kept with Agent mode off too: they apply when a prompt turns it on automatically.
+      : { ...(ai.agentBudgetMicros !== undefined ? { agentBudgetMicros: ai.agentBudgetMicros } : {}), ...(ai.agentScope !== undefined ? { agentScope: ai.agentScope } : {}) }),
+    ...(ai.agentAuto === false ? { agentAuto: false } : {}),
     ...(ai.allowedProviders === undefined ? {} : { allowedProviders: [...new Set(ai.allowedProviders)] }),
   };
 }
@@ -80,6 +84,7 @@ const VALID_SERVICE_IDS = new Set([
   "backend-services",
   "gemini-api",
   "huggingface-api",
+  "meta-api",
   "openai-api",
   "openai-agent",
   "xai-api",

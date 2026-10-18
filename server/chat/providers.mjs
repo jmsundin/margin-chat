@@ -28,12 +28,20 @@ export async function requestProviderJson({ apiKey, body, provider, url, signal,
   });
 }
 
+/** Responses API endpoints, by provider. Meta's Model API speaks the same format. */
+export const RESPONSES_URLS = Object.freeze({
+  openai: "https://api.openai.com/v1/responses",
+  xai: "https://api.x.ai/v1/responses",
+  meta: "https://api.meta.ai/v1/responses",
+});
+const RESPONSES_PROVIDERS = new Map(Object.entries(RESPONSES_URLS).map(([provider, url]) => [new URL(url).hostname, provider]));
+
 /** `onEvent` sees every stream event, such as reasoning summary deltas. A provider
  * that answers with one JSON payload instead of a stream is read as that payload.
  * With `acceptIncomplete`, a response cut short (such as by its output limit) is
  * returned as it stands, as a non-streamed request would return it. */
 export async function requestResponsesApiStream({ apiKey, body, fallbackError, onDelta, onEvent, onReady, url, signal, usageMeter, acceptIncomplete = false }) {
-  const provider = new URL(url).hostname === "api.x.ai" ? "xai" : "openai";
+  const provider = RESPONSES_PROVIDERS.get(new URL(url).hostname) ?? "openai";
   const requestBody = { ...body, stream: true };
   return runMeteredProviderOperation(usageMeter, {
     provider, model: body.model, body: requestBody, maxOutputTokens: outputLimit(body), signal,
@@ -89,7 +97,7 @@ function withImage(messages, image, imagePart, textPart) {
 function responsesBody(args, provider) {
   const messages = withImage(extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content })), args.image,
     (image) => ({ type: "input_image", image_url: `data:${image.mediaType};base64,${image.data}` }), (text) => ({ type: "input_text", text }));
-  return provider === "openai"
+  return provider !== "xai"
     ? { input: messages, instructions: args.systemInstruction, max_output_tokens: args.maxOutputTokens, model: args.model }
     : { input: [{ content: args.systemInstruction, role: "system" }, ...messages], max_output_tokens: args.maxOutputTokens, model: args.model };
 }
@@ -97,7 +105,7 @@ function responsesBody(args, provider) {
 async function responsesReply(args, provider, stream) {
   assertKey(args.apiKey, provider);
   const body = responsesBody(args, provider);
-  const url = provider === "openai" ? "https://api.openai.com/v1/responses" : "https://api.x.ai/v1/responses";
+  const url = RESPONSES_URLS[provider];
   const result = stream
     ? await requestResponsesApiStream({ ...args, body, url, fallbackError: `${provider} request failed.` })
     : { completedPayload: await requestProviderJson({ ...args, body, url, provider }) };
@@ -111,7 +119,9 @@ export const requestOpenAIResponse = (args) => responsesReply(args, "openai", fa
 export const requestOpenAIResponseStream = (args) => responsesReply(args, "openai", true);
 export const requestXAIResponse = (args) => responsesReply(args, "xai", false);
 export const requestXAIResponseStream = (args) => responsesReply(args, "xai", true);
-export const requestOpenAIResponsesPayload = (args) => requestProviderJson({ ...args, provider: "openai", url: "https://api.openai.com/v1/responses" });
+export const requestMetaResponse = (args) => responsesReply(args, "meta", false);
+export const requestMetaResponseStream = (args) => responsesReply(args, "meta", true);
+export const requestOpenAIResponsesPayload = (args) => requestProviderJson({ ...args, provider: "openai", url: RESPONSES_URLS.openai });
 
 function geminiBody(args) {
   return {

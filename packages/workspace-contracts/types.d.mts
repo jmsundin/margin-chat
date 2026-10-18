@@ -1,7 +1,7 @@
 export type Role = "system" | "user" | "assistant";
 
 export type AutoMode = "balanced" | "fast" | "thorough";
-export type AIProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai";
+export type AIProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai" | "meta";
 export interface AISettings {
   mode: AutoMode;
   contextScope: "conversation" | "selected" | "workspace";
@@ -15,6 +15,8 @@ export interface AISettings {
   agentBudgetMicros?: number;
   /** What Agent mode may search in the saved vault: all of it unless the user limits it. */
   agentScope?: "conversation" | "selected" | "workspace";
+  /** False when the user stopped Agent mode from turning itself on for prompts that need looking things up. */
+  agentAuto?: false;
 }
 export interface AgentRunStep {
   /** tool: a tool it ran; note: text it wrote between tool calls; thinking: its summarized reasoning for one model call. */
@@ -32,6 +34,8 @@ export interface AgentRunRecord {
   modelCalls?: number;
   spentMicros?: number;
   budgetMicros?: number;
+  /** Why Agent mode turned itself on for this reply ("it includes a web link to read"); absent when the user turned it on. */
+  automatic?: string;
 }
 export interface AIContextSource {
   kind: "conversation" | "note" | "document";
@@ -107,7 +111,8 @@ export type BackendServiceId =
   | "anthropic-api"
   | "gemini-api"
   | "huggingface-api"
-  | "xai-api";
+  | "xai-api"
+  | "meta-api";
 
 export interface Message {
   id: string;

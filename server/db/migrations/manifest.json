@@ -95,6 +95,11 @@
       "id": "0019_mcp_oauth",
       "file": "0019_mcp_oauth.sql",
       "transaction": true
+    },
+    {
+      "id": "0020_meta_muse_wonder",
+      "file": "0020_meta_muse_wonder.sql",
+      "transaction": true
     }
   ]
 }

@@ -1,11 +1,9 @@
 import { HttpError } from "../../lib/errors.mjs";
-import { anthropicBody, extractOpenAIReply, requestAnthropicMessage, requestResponsesApiStream } from "../providers.mjs";
+import { RESPONSES_URLS, anthropicBody, extractOpenAIReply, requestAnthropicMessage, requestResponsesApiStream } from "../providers.mjs";
 import { extractConversationMessages } from "../systemPrompt.mjs";
 
 /** Providers whose APIs can call tools. Gemini and Hugging Face answer without them. */
-export const AGENT_PROVIDERS = Object.freeze(["openai", "xai", "anthropic"]);
-
-const RESPONSES_URLS = { openai: "https://api.openai.com/v1/responses", xai: "https://api.x.ai/v1/responses" };
+export const AGENT_PROVIDERS = Object.freeze(["openai", "xai", "anthropic", "meta"]);
 
 function parseArguments(text, provider) {
   if (typeof text !== "string" || !text.trim()) return {};
@@ -19,8 +17,11 @@ function parseArguments(text, provider) {
 
 const withExtra = (instruction, extra) => extra ? `${instruction}\n\n${extra}` : instruction;
 
+/** Muse Wonder always reasons and otherwise picks its own effort, so agent runs set it from the AI mode. */
+const META_REASONING_EFFORT = { fast: "low", balanced: "medium", thorough: "high" };
+
 /** Models that refused a reasoning summary request in this process, so later calls don't ask again.
- * Only OpenAI is asked, since xAI may reject the setting; reasoning text xAI does return is still shown. */
+ * OpenAI and Meta are asked; xAI may reject the setting, and reasoning text xAI does return is still shown. */
 const summaryRefused = new Set();
 const refusesSummary = (error) => [400, 403].includes(error?.statusCode) && /summar/iu.test(error?.message ?? "");
 
@@ -35,15 +36,17 @@ function reasoningText(output) {
 }
 
 /**
- * OpenAI and xAI share the Responses API: function_call items in, function_call_output items back.
+ * OpenAI, xAI and Meta share the Responses API: function_call items in, function_call_output items back.
  * Each call streams so the model's reasoning summary, or any reasoning text it shares, reaches
  * `live.thinking` and its text reaches `live.text` as they are written.
  */
 function createResponsesAdapter(provider, args, tools) {
   const messages = extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content }));
-  const input = provider === "openai" ? messages : [{ role: "system", content: args.systemInstruction }, ...messages];
+  const input = provider === "xai" ? [{ role: "system", content: args.systemInstruction }, ...messages] : messages;
   const definitions = tools.map((tool) => ({ type: "function", strict: true, ...tool }));
   const summaryKey = `${provider}:${args.model}`;
+  const asksSummary = provider === "openai" || provider === "meta";
+  const effort = provider === "meta" ? META_REASONING_EFFORT[args.chatRequest.ai?.mode] ?? "medium" : null;
   return {
     get size() { return JSON.stringify({ input, instructions: args.systemInstruction }).length; },
     async call({ allowTools, extraInstruction, live = {} }) {
@@ -51,10 +54,12 @@ function createResponsesAdapter(provider, args, tools) {
       const body = {
         model: args.model,
         input: [...input],
-        ...(provider === "openai" ? { instructions: withExtra(args.systemInstruction, extraInstruction) } : {}),
+        ...(provider !== "xai" ? { instructions: withExtra(args.systemInstruction, extraInstruction) } : {}),
         max_output_tokens: args.maxOutputTokens,
-        tools: definitions,
-        tool_choice: allowTools ? "auto" : "none",
+        // Meta accepts only tool_choice "auto", so its last call goes without tools instead.
+        ...(provider === "meta"
+          ? allowTools ? { tools: definitions, tool_choice: "auto" } : {}
+          : { tools: definitions, tool_choice: allowTools ? "auto" : "none" }),
       };
       let thinking = false;
       let writing = false;
@@ -71,15 +76,16 @@ function createResponsesAdapter(provider, args, tools) {
         }
       };
       const request = (withSummary) => requestResponsesApiStream({
-        apiKey: args.apiKey, body: withSummary ? { ...body, reasoning: { summary: "auto" } } : body, url: RESPONSES_URLS[provider],
+        apiKey: args.apiKey, url: RESPONSES_URLS[provider],
+        body: withSummary || effort ? { ...body, reasoning: { ...(effort ? { effort } : {}), ...(withSummary ? { summary: "auto" } : {}) } } : body,
         signal: args.signal, usageMeter: args.usageMeter, onEvent, acceptIncomplete: true, fallbackError: `${provider} request failed.`,
       });
       let result;
       try {
-        result = await request(provider === "openai" && !summaryRefused.has(summaryKey));
+        result = await request(asksSummary && !summaryRefused.has(summaryKey));
       } catch (error) {
         // Some models or accounts can't return reasoning summaries; answer without them.
-        if (provider !== "openai" || summaryRefused.has(summaryKey) || !refusesSummary(error)) throw error;
+        if (!asksSummary || summaryRefused.has(summaryKey) || !refusesSummary(error)) throw error;
         summaryRefused.add(summaryKey);
         result = await request(false);
       }
@@ -148,7 +154,7 @@ function createAnthropicAdapter(args, tools) {
 }
 
 export function createAgentAdapter(provider, args, tools) {
-  if (provider === "openai" || provider === "xai") return createResponsesAdapter(provider, args, tools);
+  if (provider === "openai" || provider === "xai" || provider === "meta") return createResponsesAdapter(provider, args, tools);
   if (provider === "anthropic") return createAnthropicAdapter(args, tools);
   throw new HttpError(400, `Agent mode is not available for ${provider}.`);
 }

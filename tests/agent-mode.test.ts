@@ -313,7 +313,7 @@ describe("agent mode in the chat service", () => {
 
 describe("agent settings", () => {
   test("validation accepts only offered budgets and defaults one when agent mode is on", () => {
-    expect(validateAIOptions({ agent: true })).toMatchObject({ agent: true, agentBudgetMicros: 500_000, agentScope: "workspace" });
+    expect(validateAIOptions({ agent: true })).toMatchObject({ agent: true, agentBudgetMicros: 1_000_000, agentScope: "workspace" });
     expect(validateAIOptions({ agent: true, agentScope: "selected" }).agentScope).toBe("selected");
     expect(() => validateAIOptions({ agent: true, agentScope: "everything" })).toThrow("agent search scope");
     expect(validateAIOptions({ agent: true, agentBudgetMicros: 2_000_000 }).agentBudgetMicros).toBe(2_000_000);

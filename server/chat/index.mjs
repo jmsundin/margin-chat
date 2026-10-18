@@ -1,12 +1,14 @@
 import { analyzeAutoRoute, AUTO_ROUTER_LABEL } from "./autoRouter.mjs";
 import { HttpError } from "../lib/errors.mjs";
 import { AGENT_PROVIDERS } from "./agent/adapters.mjs";
+import { agentNeedFromPrompt } from "./agent/autoAgent.mjs";
 import { runAgent } from "./agent/runner.mjs";
 import { vaultToolAccess } from "./agent/vaultTools.mjs";
 import {
   requestAnthropicResponse, requestAnthropicResponseStream,
   requestGeminiResponse, requestGeminiResponseStream,
   requestHuggingFaceResponse, requestHuggingFaceResponseStream,
+  requestMetaResponse, requestMetaResponseStream,
   requestOpenAIResponse, requestOpenAIResponseStream,
   requestXAIResponse, requestXAIResponseStream,
 } from "./providers.mjs";
@@ -17,6 +19,8 @@ import { prepareChatContext } from "./context.mjs";
 import { cannotSeeImageInstruction, modelSeesImages, vaultFileInstruction } from "./fileContext.mjs";
 import { applySemanticRouting, createSemanticRouteCandidates, isProviderAllowed, planRoutes, providerName, routingReasonForAttempt } from "./routing.mjs";
 import { PROFILE_EVIDENCE } from "./modelProfiles.mjs";
+import { DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
+import { getRuntimeDefaultModelForService } from "../lib/backendModels.mjs";
 import { createHostedUsageMeter } from "../billing/usage.mjs";
 
 const PROVIDERS = Object.freeze({
@@ -27,7 +31,10 @@ const PROVIDERS = Object.freeze({
   "gemini-api": { reply: requestGeminiResponse, stream: requestGeminiResponseStream },
   "huggingface-api": { reply: requestHuggingFaceResponse, stream: requestHuggingFaceResponseStream },
   "xai-api": { reply: requestXAIResponse, stream: requestXAIResponseStream },
+  "meta-api": { reply: requestMetaResponse, stream: requestMetaResponseStream },
 });
+/** Automatic routing runs Agent mode on Muse Wonder when Meta is available; plain replies never use it. */
+const AGENT_DEFAULT_SERVICE_ID = "meta-api";
 const PREPAID_BALANCE_REQUIRED = "Your prepaid AI balance is empty. Add money in Billing or subscribe for $20/month to use hosted models. You can also use your own provider API key.";
 const SEMANTIC_CONTEXT_LIMIT = 24;
 /** Vault passages added to a plain reply with "Search my workspace", by AI mode. */
@@ -112,7 +119,7 @@ function semanticWorkspaceExcerpt(item) {
 
 export function createChatService({ database, documentService, env, runtimeConfig, semanticService, vaultService = null, passageService = null, autoRouter = analyzeAutoRoute }) {
   const automaticServicePriority = [...new Set([
-    runtimeConfig.defaultBackendProvider, "openai-api", "anthropic-api", "gemini-api", "huggingface-api", "xai-api",
+    runtimeConfig.defaultBackendProvider, "openai-api", "anthropic-api", "gemini-api", "huggingface-api", "xai-api", AGENT_DEFAULT_SERVICE_ID,
   ])].filter((id) => PROVIDERS[id] && id !== "openai-agent");
 
   function getHostedApiKey(serviceId) {
@@ -122,7 +129,28 @@ export function createChatService({ database, documentService, env, runtimeConfi
     if (provider === "gemini") return env.GEMINI_API_KEY;
     if (provider === "huggingface") return env.HUGGINGFACE_API_KEY ?? env.HF_TOKEN;
     if (provider === "xai") return env.XAI_API_KEY;
+    if (provider === "meta") return env.META_API_KEY;
     return null;
+  }
+
+  /** Auto's routes for an Agent mode reply: Muse Wonder first when Meta is available, then the other
+   * models that can call tools, then the rest as fallbacks. */
+  function preferAgentModel(routes, autoReason) {
+    const canAct = (route) => AGENT_PROVIDERS.includes(providerName(route.serviceId));
+    const ordered = [...routes.filter(canAct), ...routes.filter((route) => !canAct(route))];
+    const route = ordered.find((candidate) => candidate.serviceId === AGENT_DEFAULT_SERVICE_ID);
+    if (!route) return ordered;
+    const model = getRuntimeDefaultModelForService(runtimeConfig, AGENT_DEFAULT_SERVICE_ID);
+    const started = autoReason ? `Agent mode turned on automatically because ${autoReason}. ` : "";
+    return [{ ...route, model, routing: { method: "rules", selectedModel: model },
+      reason: `${started}Agent mode uses Meta's Muse Wonder (${model}) by default.` },
+    ...ordered.filter((candidate) => candidate !== route)];
+  }
+
+  /** Auto's routes for a plain reply leave out Muse Wonder unless it is the only model available. */
+  function withoutAgentOnlyRoutes(routes) {
+    const plain = routes.filter((route) => route.serviceId !== AGENT_DEFAULT_SERVICE_ID);
+    return plain.length ? plain : routes;
   }
 
   function getProviderCredential(serviceId, context = {}) {
@@ -244,6 +272,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
     const initialContext = prepareChatContext(chatRequest, {}, budgetOptions);
     let orderedRequest = chatRequest;
     const semanticWarnings = [];
+    let routingAnalysis = null;
     // Titles and credential preflight remain deterministic. A reply has one
     // semantic pass, shared by every eligible provider attempt.
     const automatic = chatRequest.serviceId === "backend-services";
@@ -256,7 +285,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
         // the original ordering could not fit. Never expand the selected scope.
         workspaceContext: workspaceCandidates.slice(0, SEMANTIC_CONTEXT_LIMIT).map(semanticWorkspaceExcerpt),
       };
-      const candidates = createSemanticRouteCandidates(chatRequest, routes, runtimeConfig);
+      // Muse Wonder is offered to Auto only as Agent mode's model, so the router never picks it for a plain reply.
+      const candidates = createSemanticRouteCandidates(chatRequest, routes.filter((route) => route.serviceId !== AGENT_DEFAULT_SERVICE_ID), runtimeConfig);
       let analysis = null;
       try {
         if (automatic) {
@@ -278,6 +308,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         if (error?.billingFailure || (automatic && error?.name === "AbortError")) throw error;
       }
       context.signal?.throwIfAborted();
+      routingAnalysis = analysis;
       if (!analysis) semanticWarnings.push(`${analyzerLabel} is unavailable; used standard context ordering and routing.`);
       if (Array.isArray(analysis?.warnings)) {
         semanticWarnings.push(...analysis.warnings.filter((warning) => typeof warning === "string").slice(0, 8).map((warning) => warning.slice(0, 500)));
@@ -298,7 +329,14 @@ export function createChatService({ database, documentService, env, runtimeConfi
         semanticWarnings.push(`${analyzerLabel} considered the first ${SEMANTIC_CONTEXT_LIMIT} permitted workspace sources; other sources retained their original order.`);
       }
     }
-    const agentRequested = !instructionOverride && (chatRequest.ai.agent === true || chatRequest.serviceId === "openai-agent");
+    const explicitAgent = !instructionOverride && (chatRequest.ai.agent === true || chatRequest.serviceId === "openai-agent");
+    // Agent mode turns itself on when a prompt needs looking things up, unless the user switched that off,
+    // is asking about a picture (agents can't see images yet), or no model in this request can call tools.
+    const autoAgentReason = explicitAgent || instructionOverride || chatRequest.ai.agentAuto === false || chatRequest.conversation.file?.image
+      || !routes.some((route) => AGENT_PROVIDERS.includes(providerName(route.serviceId))) ? null
+      : agentNeedFromPrompt(chatRequest) ?? (routingAnalysis?.needsAgent ? "it needs information this conversation doesn't include" : null);
+    const agentRequested = explicitAgent || Boolean(autoAgentReason);
+    if (automatic) routes = agentRequested ? preferAgentModel(routes, autoAgentReason) : withoutAgentOnlyRoutes(routes);
     // Agent mode searches the vault itself; a plain reply gets the best passages up front.
     const [attachedContext, vaultContext] = await Promise.all([
       getDocumentContext(initialContext.chatRequest, context),
@@ -414,7 +452,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         // stream. Once any delta or agent step is exposed, retries would corrupt a reply.
         const onDelta = async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); };
         const result = agentProvider ? await runAgent({
-          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros, workspace,
+          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, workspace,
           ...(handlers ? {
             onDelta,
             onRetract: async () => { await ensureReady(); await handlers.onRetract?.(); },
@@ -441,7 +479,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
               ...receipt,
               model: result.model,
               status: "complete",
-              ...(result.agent ? { agent: result.agent } : {}),
+              ...(result.agent ? { agent: { ...result.agent, ...(autoAgentReason ? { automatic: autoAgentReason } : {}) } } : {}),
               ...(retrieval ? { retrieval } : {}),
               truncated: receipt.truncated || Boolean(toolTruncated),
               warnings: toolTruncated ? [...receipt.warnings, "Workspace tool results were shortened to fit the context budget."] : receipt.warnings,
@@ -499,7 +537,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
       model: serviceId.startsWith("openai") ? runtimeConfig.openaiModel
         : serviceId === "anthropic-api" ? runtimeConfig.anthropicModel
         : serviceId === "gemini-api" ? runtimeConfig.geminiModel
-        : serviceId === "huggingface-api" ? runtimeConfig.huggingFaceModel : runtimeConfig.xaiModel,
+        : serviceId === "huggingface-api" ? runtimeConfig.huggingFaceModel
+        : serviceId === "meta-api" ? runtimeConfig.metaModel : runtimeConfig.xaiModel,
     }]));
     const aiConfigured = Object.values(services).some((service) => service.configured);
     services["backend-services"] = { configured: aiConfigured };
