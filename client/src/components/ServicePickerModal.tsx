@@ -67,7 +67,11 @@ export default function ServicePickerModal({
     setQuery("");
     setBrowseProviders(false);
     setExpandedProviderId(null);
-    inputRef.current?.focus();
+    // On a touch screen a focused search box can open the keyboard over the
+    // list, so the dialog itself takes focus there and search is one tap away.
+    const touch = window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
+    const focusStart = () => (touch ? dialogRef.current : inputRef.current)?.focus();
+    focusStart();
 
     const focusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
       'button, input:not([type="hidden"]), select, textarea, a[href], summary, [tabindex]',
@@ -97,7 +101,7 @@ export default function ServicePickerModal({
         const last = items.at(-1);
         if (!first || !last) return;
         const outside = !dialogRef.current?.contains(document.activeElement);
-        if (event.shiftKey && (document.activeElement === first || outside)) {
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current || outside)) {
           event.preventDefault();
           last.focus();
         } else if (!event.shiftKey && (document.activeElement === last || outside)) {
@@ -108,7 +112,7 @@ export default function ServicePickerModal({
     }
 
     function keepFocusInDialog(event: FocusEvent) {
-      if (event.target instanceof Node && !dialogRef.current?.contains(event.target)) inputRef.current?.focus();
+      if (event.target instanceof Node && !dialogRef.current?.contains(event.target)) focusStart();
     }
     document.addEventListener("keydown", handleKeyDown, true);
     document.addEventListener("focusin", keepFocusInDialog);
@@ -171,7 +175,7 @@ export default function ServicePickerModal({
 
   const modal = (
     <div className="service-picker-backdrop" onClick={(event) => { event.stopPropagation(); onClose(); }} onWheel={(event) => event.stopPropagation()} role="presentation">
-      <section ref={dialogRef} aria-labelledby={titleId} aria-modal="true" className="service-picker-modal compact-model-picker" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} role="dialog">
+      <section ref={dialogRef} aria-labelledby={titleId} aria-modal="true" className="service-picker-modal compact-model-picker" onClick={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()} onWheel={(event) => event.stopPropagation()} role="dialog" tabIndex={-1}>
         <header className="picker-header">
           <div><h2 id={titleId}>Choose a model</h2><p>Current: {currentChoice ? choiceLabel(currentChoice) : "Auto"}</p></div>
           <button className="picker-close" aria-label="Close model picker" onClick={onClose} type="button">

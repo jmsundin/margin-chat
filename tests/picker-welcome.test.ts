@@ -12,5 +12,5 @@ test("model picker keyboard navigation and welcome account flows", async () => {
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Picker/welcome regression failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(5);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(6);
 }, 15000);

@@ -22,6 +22,7 @@
 .compact-model-picker .picker-model-row.is-current { background: var(--accent-soft); border-color: var(--line); }
 .compact-model-picker .picker-model-row:hover, .compact-model-picker .picker-close:hover, .compact-model-picker .picker-provider-toggle:hover, .compact-model-picker .picker-browse-toggle:hover { background: var(--hover-bg, var(--accent-soft)); }
 .compact-model-picker button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.service-picker-modal.compact-model-picker:focus { outline: none; }
 .compact-model-picker .picker-model-icon { align-items: center; background: var(--panel-bg); border: 1px solid var(--line); border-radius: 8px; color: var(--muted); display: flex; flex: 0 0 30px; font-size: .66rem; font-weight: 650; height: 30px; justify-content: center; }
 .compact-model-picker .picker-model-copy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
 .compact-model-picker .picker-model-name { align-items: center; display: flex; flex-wrap: wrap; font-size: .87rem; font-weight: 600; gap: 8px; line-height: 1.35; }
