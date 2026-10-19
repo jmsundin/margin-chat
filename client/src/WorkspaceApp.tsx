@@ -41,7 +41,7 @@ import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } f
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SessionSwitcher, SessionsPanel } from "./components/Sessions";
 import DocumentTabs from "./components/DocumentTabs";
-import { DocumentCompass, DocumentKeepReading, DocumentLocalGraph, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
+import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
@@ -715,6 +715,11 @@ function WorkspaceAppContent({
     preserveMapMode?: boolean;
   } | null>(null);
   const graphFocusRequestCounterRef = useRef(0);
+  // The Map view floating over the document ("Around this document"), not a switch to Map view.
+  const [mapModalOpen, setMapModalOpen] = useState(false);
+  const [mapModalBounds, setMapModalBounds] = useState<CSSProperties | null>(null);
+  const canvasSectionRef = useRef<HTMLElement | null>(null);
+  const documentAreaRef = useRef<HTMLDivElement | null>(null);
   const mapUndoRef = useRef<((current: AppState) => AppState) | null>(null);
   const [mapEditMessage, setMapEditMessage] = useState("");
   const topicExpansion = useTopicExpansion({ state, setState, userId: user.id, onAuthExpired,
@@ -1412,10 +1417,43 @@ function WorkspaceAppContent({
   }, [mainViewMode]);
 
   useEffect(() => {
-    if (mainViewMode !== "graph") {
+    if (mainViewMode !== "graph" && !mapModalOpen) {
       setGraphFocusRequest(null);
     }
-  }, [mainViewMode]);
+  }, [mainViewMode, mapModalOpen]);
+
+  const showMapModal = mapModalOpen && mainViewMode === "chat" && navigationStyle === "graph";
+  // The modal covers the document area (below its header), measured because the header's height varies.
+  useLayoutEffect(() => {
+    if (!showMapModal) return;
+    function measure() {
+      const section = canvasSectionRef.current?.getBoundingClientRect();
+      const area = documentAreaRef.current?.getBoundingClientRect();
+      if (!section || !area) return;
+      const gap = area.width < 600 ? 4 : 12;
+      setMapModalBounds({ top: area.top - section.top + gap, left: area.left - section.left + gap,
+        width: Math.max(0, area.width - gap * 2), height: Math.max(0, area.height - gap * 2) });
+    }
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    if (canvasSectionRef.current) observer?.observe(canvasSectionRef.current);
+    if (documentAreaRef.current) observer?.observe(documentAreaRef.current);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [showMapModal]);
+
+  useEffect(() => {
+    if (!showMapModal) return;
+    function closeWithEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+      const target = event.target instanceof Element ? event.target : null;
+      // Escape inside the map's own menus and fields belongs to them.
+      if (target?.closest("input, textarea, select, [contenteditable='true'], details[open], [role='menu']")) return;
+      setMapModalOpen(false);
+    }
+    window.addEventListener("keydown", closeWithEscape);
+    return () => window.removeEventListener("keydown", closeWithEscape);
+  }, [showMapModal]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -3786,6 +3824,13 @@ function WorkspaceAppContent({
   function handleChangeNavigationStyle(style: DocumentNavigationStyle) {
     setNavigationStyle(style);
     saveDocumentNavigationStyle(style);
+    if (style === "graph") openMapModal();
+    else setMapModalOpen(false);
+  }
+
+  function openMapModal() {
+    setMapModalOpen(true);
+    setGraphFocusRequest({ conversationId: activeConversation.id, requestId: ++graphFocusRequestCounterRef.current, neighborhoodDepth: 2, preserveMapMode: true });
   }
 
   /** Scrolling panes, pinned panes and the margin notes shown beside them. */
@@ -4175,6 +4220,7 @@ function WorkspaceAppContent({
     setSearchModalOpen(false);
     setSearchExploreOpen(false);
     setSearchQuery("");
+    setMapModalOpen(false);
     setMainViewMode(nextViewMode);
 
     if (isMobileViewport) {
@@ -4747,12 +4793,13 @@ function WorkspaceAppContent({
               <div className="workspace-content">
 
             <section
+              ref={canvasSectionRef}
               className={
                 isTileView
                   ? "canvas-section is-thread-tile-view"
                   : isGraphView
                     ? "canvas-section is-graph-view"
-                    : "canvas-section"
+                    : showMapModal ? "canvas-section has-map-modal" : "canvas-section"
               }
             >
               {vault.ready && Object.values(state.conversations).every((chat) => !chat.messages.length && !chat.notes?.length && !chat.documents?.length && !chat.document?.blocks.some((block) => block.content.trim())) &&
@@ -4784,10 +4831,14 @@ function WorkspaceAppContent({
                   threads={threadSummaries}
                 />
               </WorkspaceView>
-              <WorkspaceView mode="graph" active={isGraphView}>
+              {showMapModal ? <div className="document-map-modal-backdrop" aria-hidden="true" onClick={() => setMapModalOpen(false)} /> : null}
+              <WorkspaceView mode="graph" active={isGraphView || showMapModal}
+                modal={showMapModal ? { labelledBy: "document-map-modal-title", style: mapModalBounds ?? undefined } : undefined}>
+                {showMapModal ? <DocumentMapHeader open onToggle={() => setMapModalOpen(false)}
+                  onOpenMap={() => handleSetMainViewMode("graph")} /> : null}
                 <Suspense fallback={<div className="workspace-view-loading" role="status">Opening Map View…</div>}>
                   <KnowledgeGraphWorkspace
-                    isVisible={isGraphView}
+                    isVisible={isGraphView || showMapModal}
                     onToggleSidebar={handleToggleLeftSidebar}
                     sidebarOpen={leftSidebarOpen}
                     onAddChildNote={handleAddMapChildNote}
@@ -4830,13 +4881,15 @@ function WorkspaceAppContent({
                     onActivateConversation={handleSelectConversation}
                     onAssignGroup={handleAssignConversationGroup}
                     onCreateChildConversation={handleAddGraphChildChat}
-                    onOpenConversation={(conversationId) =>
+                    onOpenConversation={(conversationId) => {
+                      setMapModalOpen(false);
                       handleSelectConversation(conversationId, {
                         nextViewMode: "chat",
-                      })
-                    }
+                      });
+                    }}
                     onZoomIntoConversation={(conversationId) => {
-                      setMapReturnId(conversationId);
+                      setMapModalOpen(false);
+                      if (!showMapModal) setMapReturnId(conversationId);
                       handleSelectConversation(conversationId, { nextViewMode: "chat" });
                     }}
                     onToggleGroup={handleToggleConversationGroup}
@@ -4918,8 +4971,8 @@ function WorkspaceAppContent({
                   </header>
                   {renderDocumentBreadcrumbs()}
                   {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
-                  <div className="document-workspace-with-search">
-                  {navigationStyle === "graph" && documentNeighbors ? <DocumentLocalGraph neighbors={documentNeighbors} onOpen={handleOpenNeighbor}
+                  <div className="document-workspace-with-search" ref={documentAreaRef}>
+                  {navigationStyle === "graph" && !showMapModal ? <DocumentMapHeader open={false} onToggle={openMapModal}
                     onOpenMap={() => handleSetMainViewMode("graph")} /> : null}
                   {navigationStyle === "outline" && documentNeighbors ? <DocumentTopicOutline neighbors={documentNeighbors}
                     onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}

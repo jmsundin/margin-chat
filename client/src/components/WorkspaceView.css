@@ -1,3 +1,8 @@
 .workspace-view { display: flex; flex: 1; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
 .workspace-view[hidden] { display: none; }
 .workspace-view-loading { color: var(--muted); margin: auto; padding: 24px; }
+/* "Around this document": the Map view floating over the document area; the size comes from the document area's measured box. */
+.canvas-section.has-map-modal { position: relative; }
+.document-map-modal-backdrop { position: absolute; inset: 0; z-index: 60; background: color-mix(in srgb, var(--ink) 18%, transparent); }
+.workspace-view.is-modal { position: absolute; inset: 12px; z-index: 61; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--bg); box-shadow: 0 18px 48px #0003; }
+.workspace-view.is-modal > .document-local-graph-header { flex-shrink: 0; padding: 8px 10px 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
