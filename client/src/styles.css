@@ -5459,7 +5459,8 @@ button {
   justify-content: center;
   padding: min(10vh, 76px) 18px 18px;
   position: fixed;
-  z-index: 32;
+  /* Above the phone Ask AI box (60) and keyboard button (65) that open it. */
+  z-index: 70;
 }
 
 .service-picker-modal {

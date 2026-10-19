@@ -85,6 +85,19 @@ try {
   await act(async () => { button("Close model picker").click(); });
   checks.push("picker searches specific models, selects exact provider, expands providers, and closes explicitly");
 
+  const matchMedia = browser.matchMedia;
+  (browser as any).matchMedia = (query: string) => ({ matches: query === "(pointer: coarse)", media: query, addEventListener() {}, removeEventListener() {} });
+  try {
+    await act(async () => { trigger.click(); });
+    const touchDialog = browser.document.querySelector('[role="dialog"]')!;
+    assert.equal(browser.document.activeElement, touchDialog);
+    await act(async () => { trigger.focus(); });
+    assert.equal(browser.document.activeElement, touchDialog);
+    await act(async () => { touchDialog.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    assert.equal(browser.document.activeElement, trigger);
+  } finally { (browser as any).matchMedia = matchMedia; }
+  checks.push("on a touch screen the picker focuses itself, not search, so no keyboard covers the list");
+
   await act(async () => { root.render(createElement(ServicePickerModal, {
     currentServiceId: "huggingface-api", currentModelId: "openai/gpt-oss-120b", isOpen: true,
     onClose() {}, onSelectModel() {}, recentSelections: [],
