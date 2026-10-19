@@ -6,7 +6,7 @@ export type DocumentNavigationStyle = "compass" | "graph" | "outline" | "reading
 
 export const DOCUMENT_NAVIGATION_STYLES: { id: DocumentNavigationStyle; label: string; description: string }[] = [
   { id: "compass", label: "Compass", description: "Parent, siblings, children and links in a strip above the document" },
-  { id: "graph", label: "Local graph", description: "A small map of the documents around this one" },
+  { id: "graph", label: "Local graph", description: "The map around this document, open over it" },
   { id: "outline", label: "Topic outline", description: "The whole document family as an outline beside the document" },
   { id: "reading", label: "Keep reading", description: "Where to go next, at the end of the document" },
 ];

@@ -1,4 +1,4 @@
-import { useState, type ReactElement } from "react";
+import type { ReactElement } from "react";
 import type { Conversation } from "../types";
 import { getDocumentKind } from "../lib/documentBreadcrumbs";
 import { DOCUMENT_NAVIGATION_STYLES, type DocumentNavigationStyle, type DocumentNeighbors } from "../lib/documentNeighbors";
@@ -78,61 +78,16 @@ export function DocumentCompass({ neighbors, onOpen }: { neighbors: DocumentNeig
   </nav>;
 }
 
-interface GraphNode { document: Conversation; relation: NeighborRelation | "here"; x: number; y: number }
-
-function spread(count: number, center: number, gap: number) {
-  return Array.from({ length: count }, (_, index) => center + (index - (count - 1) / 2) * gap);
-}
-
-/** F: a small map with the parent above, siblings beside, children below and links dashed. */
-export function DocumentLocalGraph({ neighbors, onOpen, onOpenMap }: { neighbors: DocumentNeighbors; onOpen: OpenNeighbor; onOpenMap?: () => void }) {
-  const [collapsed, setCollapsed] = useState(false);
-  const { focused, parent, siblings, index, children, linked } = neighbors;
-  const width = 300;
-  const height = 230;
-  const nodes: GraphNode[] = [{ document: focused, relation: "here", x: width / 2, y: 112 }];
-  if (parent) nodes.push({ document: parent, relation: "parent", x: width / 2, y: 30 });
-  const previous = siblings[index - 1];
-  const next = siblings[index + 1];
-  if (previous) nodes.push({ document: previous, relation: "sibling", x: 52, y: 112 });
-  if (next) nodes.push({ document: next, relation: "sibling", x: width - 52, y: 112 });
-  const shownChildren = children.slice(0, 4);
-  spread(shownChildren.length, width / 2, shownChildren.length > 2 ? 72 : 120).forEach((x, at) => nodes.push({ document: shownChildren[at], relation: "child", x, y: 192 }));
-  const shownLinked = linked.slice(0, 2);
-  [[46, 34], [width - 46, 34]].slice(0, shownLinked.length).forEach(([x, y], at) => nodes.push({ document: shownLinked[at], relation: "linked", x, y }));
-  const center = nodes[0];
-  return <aside className={`document-local-graph${collapsed ? " is-collapsed" : ""}`} aria-label="Map around this document">
-    <div className="document-local-graph-header">
-      <span>Around this document</span>
-      {onOpenMap ? <button type="button" className="document-local-graph-link" onClick={onOpenMap}>Open in Map</button> : null}
-      <button type="button" className="document-local-graph-toggle" aria-expanded={!collapsed}
-        aria-label={collapsed ? "Show the map around this document" : "Hide the map around this document"}
-        onClick={() => setCollapsed((value) => !value)}>{collapsed ? "+" : "–"}</button>
-    </div>
-    {collapsed ? null : <>
-      <svg className="document-local-graph-canvas" viewBox={`0 0 ${width} ${height}`} role="group" aria-label="Neighbouring documents">
-        {nodes.slice(1).map((node) => <line key={`edge-${node.document.id}`} x1={center.x} y1={center.y} x2={node.x} y2={node.y}
-          className={`document-local-graph-edge is-${node.relation}`} />)}
-        {nodes.map((node) => {
-          const label = titleOf(node.document);
-          const room = node.relation === "child" && shownChildren.length > 2 ? 10 : 16;
-          const short = label.length > room ? `${label.slice(0, room - 1).trimEnd()}…` : label;
-          return <g key={node.document.id} className={`document-local-graph-node is-${node.relation}`} transform={`translate(${node.x} ${node.y})`}
-            role={node.relation === "here" ? undefined : "button"} tabIndex={node.relation === "here" ? undefined : 0}
-            aria-label={node.relation === "here" ? undefined : `Go to ${label}`}
-            onClick={() => node.relation !== "here" && onOpen(node.document.id, node.relation)}
-            onKeyDown={(event) => {
-              if (node.relation !== "here" && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onOpen(node.document.id, node.relation); }
-            }}>
-            <title>{label}</title>
-            <circle r={node.relation === "here" ? 9 : 6} />
-            <text y={node.relation === "child" ? 18 : -13} textAnchor="middle">{short}</text>
-          </g>;
-        })}
-      </svg>
-      <p className="document-local-graph-legend">Up parent · beside siblings · down children · dashed linked</p>
-    </>}
-  </aside>;
+/** F: the map around this document. Open, it is a modal over the document holding the full Map view; minimized, a small bar. */
+export function DocumentMapHeader({ open, onToggle, onOpenMap }: { open: boolean; onToggle: () => void; onOpenMap?: () => void }) {
+  const header = <div className="document-local-graph-header">
+    <span id={open ? "document-map-modal-title" : undefined}>Around this document</span>
+    {onOpenMap ? <button type="button" className="document-local-graph-link" onClick={onOpenMap}>Open in Map</button> : null}
+    <button type="button" className="document-local-graph-toggle" aria-expanded={open}
+      aria-label={open ? "Minimize the map around this document" : "Show the map around this document"}
+      title={open ? "Minimize (Esc)" : "Show the map"} onClick={onToggle}>{open ? "–" : "+"}</button>
+  </div>;
+  return open ? header : <aside className="document-local-graph is-collapsed" aria-label="Map around this document">{header}</aside>;
 }
 
 /** G: the family as an outline beside the documents, with links underneath. */
