@@ -52,6 +52,7 @@ import {
 } from "./lib/workspaceSessions";
 import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
 import { DOCUMENT_MARGIN_GUTTER, type DocumentMarginItem } from "./components/DocumentMargin";
+import MinimizedChildNodes, { MINIMIZED_CHILD_NODES_WIDTH } from "./components/MinimizedChildNodes";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
@@ -4425,6 +4426,7 @@ function WorkspaceAppContent({
     // must not move a note's controls between pointerdown and click.
     "--document-focus-width": `${getRenderedPanelWidth(scrollingDocuments[0]?.id ?? activeConversation.id)}px`,
     "--document-notes-space": !scrollingDocuments[0] ? "0px"
+      : getMinimizedChildNodes(scrollingDocuments[0]) ? `${MINIMIZED_CHILD_NODES_WIDTH}px`
       : showsMarginInPanel(scrollingDocuments[0]) ? `${getDocumentMarginSpace(scrollingDocuments[0], false)}px`
       : !closedMarginNotes[scrollingDocuments[0].id] && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
   } as CSSProperties;
@@ -4596,7 +4598,7 @@ function WorkspaceAppContent({
       bodyFooter={view === "chat" && navigationStyle === "reading" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
-      minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
+      minimizedSideDocuments={view === "chat" && getMinimizedChildNodes(conversation) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
@@ -4632,6 +4634,20 @@ function WorkspaceAppContent({
     return (documentChildrenByParent.get(conversation.id) ?? []).filter((child) => child.parentId === conversation.id
       && isCompactDocument(child) && !getDocumentWorkspace(state.conversations, child.id).closedIds.includes(child.id) && !pinnedDocumentIds.includes(child.id)
       && !(minimizedSideDocumentsByParent.get(conversation.id) ?? []).some((item) => item.id === child.id));
+  }
+
+  /**
+   * On desktop, a document whose side documents and margin notes are all minimized shows them as
+   * map nodes in the space beside it. Phones, Full screen and pinned panes keep the small restore icons.
+   */
+  function getMinimizedChildNodes(conversation: Conversation): Conversation[] | null {
+    const minimized = minimizedSideDocumentsByParent.get(conversation.id);
+    if (!minimized?.length || isMobileViewport || maximizedDocument || isCompactDocument(conversation)
+      || pinnedDocumentIds.includes(conversation.id)) return null;
+    const viewingChild = (documentChildrenByParent.get(conversation.id) ?? []).some((child) => child.parentId === conversation.id
+      && !isCompactDocument(child) && visibleDocumentIds.has(child.id));
+    const viewingNote = !closedMarginNotes[conversation.id] && getMarginDocuments(conversation).length > 0;
+    return viewingChild || viewingNote ? null : minimized;
   }
 
   function getMarginColumnWidth(conversation: Conversation, includePreview = true): number {
@@ -4704,6 +4720,8 @@ function WorkspaceAppContent({
 
   function renderExpandedTreeConversation(conversation: Conversation) {
     const resizeInfo = getPanelResizeInfo(conversation);
+    const minimizedNodes = getMinimizedChildNodes(conversation);
+    const nodesWidth = minimizedNodes ? MINIMIZED_CHILD_NODES_WIDTH : 0;
     const resizeMinimum = resizeChatPanel({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
     const resizeMaximum = resizeChatPanel({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
     const isResizing =
@@ -4713,15 +4731,18 @@ function WorkspaceAppContent({
     return (
       <div
         className={`conversation-tree-expanded panel-slot is-resizable is-split-context${isResizing ? " is-resizing" : ""}${
-          maximizedDocument?.id === conversation.id ? " is-maximized-document" : ""}`}
+          maximizedDocument?.id === conversation.id ? " is-maximized-document" : ""}${minimizedNodes ? " has-minimized-child-nodes" : ""}`}
         data-expanded-conversation-id={conversation.id}
         data-document-id={conversation.id}
         onPointerDownCapture={() => handleFocusVisibleDocument(conversation.id)}
         onFocusCapture={() => handleFocusVisibleDocument(conversation.id)}
         key={conversation.id}
-        style={{ "--chat-panel-width": `${resizeInfo.width + getDocumentMarginSpace(conversation)}px` } as CSSProperties}
+        style={{ "--chat-panel-width": `${resizeInfo.width + getDocumentMarginSpace(conversation) + nodesWidth}px`,
+          ...(minimizedNodes ? { "--minimized-child-nodes-width": `${nodesWidth}px` } : {}) } as CSSProperties}
       >
         {renderConversationChatPanel(conversation)}
+        {minimizedNodes ? <MinimizedChildNodes documents={minimizedNodes}
+          onOpen={(id) => handleOpenDocumentReference(conversation.id, id)} /> : null}
         {(["left", "right"] as const).map((edge) => <div
           key={edge}
           data-resize-edge={edge}
