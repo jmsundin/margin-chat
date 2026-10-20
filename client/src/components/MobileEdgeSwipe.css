@@ -6,7 +6,7 @@
   :root.is-edge-swipe-closing .workspace-mobile-backdrop { opacity: 0; transition: opacity 200ms ease; }
 }
 
-.mobile-search-pull {
+.mobile-sync-pull {
   align-items: center;
   background: var(--panel-strong);
   border: 1px solid var(--line);
@@ -23,4 +23,4 @@
   z-index: 60;
 }
 
-.mobile-search-pull.is-ready { border-color: var(--accent); color: var(--accent); }
+.mobile-sync-pull.is-ready { border-color: var(--accent); color: var(--accent); }

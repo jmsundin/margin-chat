@@ -38,6 +38,7 @@ type StorageMode = "loading" | "fallback" | "local" | "server";
 const RECENT_DOCUMENT_COUNT = 12;
 /** Families downloading at once while recent documents stream in. */
 const STREAM_WIDTH = 3;
+const MANUAL_SYNC_MIN_MS = 800;
 
 export interface VaultFetchStatus {
   label: string;
@@ -92,6 +93,8 @@ export function useMarkdownVault(args: {
   const [streamingPaths, setStreamingPaths] = useState<ReadonlySet<string>>(() => new Set());
   const [arrivingIds, setArrivingIds] = useState<ReadonlySet<string>>(() => new Set());
   const [openingPath, setOpeningPath] = useState<string | null>(null);
+  /** A sync the person asked for (Sync now, or pulling down on a phone) is running. */
+  const [manualSyncs, setManualSyncs] = useState(0);
   /** The vault folder being read in the background just after the workspace opened. */
   const [readingFolder, setReadingFolder] = useState<string | null>(null);
   /** Counts syncs that uploaded changes, so search can index them soon. */
@@ -793,7 +796,7 @@ export function useMarkdownVault(args: {
     : streamingPaths.size ? { label: "Bringing in your recent documents…" }
     : openingPath ? { label: `Opening “${openingTitle ?? "document"}”…` }
     : readingFolder ? { label: `Reading “${readingFolder}”…` }
-    : downloadProgress ? { label: "Syncing documents…" }
+    : downloadProgress || manualSyncs ? { label: "Syncing documents…" }
     : null;
 
   async function connectDirectory(handle: FileSystemDirectoryHandle) {
@@ -987,7 +990,14 @@ export function useMarkdownVault(args: {
     },
     async syncNow(onProgress?: (progress: StateUploadProgress) => void) {
       onProgress?.({ uploadedBytes: 0, totalBytes: 1 });
-      await enqueue(() => saveAndRefresh(true));
+      if (mounted.current) setManualSyncs((count) => count + 1);
+      // Long enough to read, so a sync with nothing new still shows it happened.
+      const shown = new Promise((resolve) => window.setTimeout(resolve, MANUAL_SYNC_MIN_MS));
+      try {
+        await enqueue(() => saveAndRefresh(true));
+      } finally {
+        void shown.then(() => { if (mounted.current) setManualSyncs((count) => count - 1); });
+      }
       onProgress?.({ uploadedBytes: 1, totalBytes: 1 });
     },
     async download() {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  edgeSwipeCandidates, lockEdgeSwipe, searchPullDistance, searchPullTriggers, settleSidebarOpen, sidebarDragOffset,
+  edgeSwipeCandidates, lockEdgeSwipe, settleSidebarOpen, sidebarDragOffset, syncPullDistance, syncPullTriggers,
   type EdgeSwipeKind,
 } from "../lib/edgeSwipe";
 import "./MobileEdgeSwipe.css";
@@ -18,7 +18,7 @@ type Gesture = {
   width: number;
   offset: number;
   dy: number;
-  /** Top of the document the search pull started on, where its hint appears. */
+  /** Top of the document or sidebar the sync pull started on, where its hint appears. */
   pullTop: number;
   samples: { x: number; t: number }[];
 };
@@ -42,36 +42,33 @@ function documentAtTop(target: EventTarget | null): HTMLElement | null {
   return body && body.scrollTop <= 0 ? body : null;
 }
 
-/**
- * iOS raises the keyboard only for a focus made during the touch itself. Search focuses its box
- * after it renders, so hold the keyboard open with a stand-in field until then.
- */
-function holdKeyboardOpen() {
-  const field = document.createElement("input");
-  field.setAttribute("aria-hidden", "true");
-  field.tabIndex = -1;
-  field.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;font-size:16px;pointer-events:none;";
-  document.body.append(field);
-  field.addEventListener("blur", () => field.remove(), { once: true });
-  field.focus({ preventScroll: true });
-  window.setTimeout(() => field.remove(), 1000);
+/** The open sidebar under the touch when every list it is in is scrolled to its top. */
+function sidebarAtTop(target: EventTarget | null): HTMLElement | null {
+  const sidebar = target instanceof Element ? target.closest<HTMLElement>(SIDEBAR_SELECTOR) : null;
+  if (!sidebar) return null;
+  for (let element = target as Element | null; element && element !== sidebar; element = element.parentElement) {
+    if (element.scrollTop > 0) return null;
+  }
+  return sidebar.scrollTop > 0 ? null : sidebar;
 }
 
 /**
  * Phone gestures: swipe in from the left edge to pull out the sidebar (or swipe it back),
- * and pull down on a document scrolled to its top to open search.
+ * and pull down on a document or the open sidebar, scrolled to its top, to sync the cloud vault.
  */
-export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar, onOpenSearch, onOpenSidebar }: {
+export default function MobileEdgeSwipe({ canSync, disabled, sidebarOpen, onCloseSidebar, onOpenSidebar, onSync }: {
+  /** The vault syncs to the cloud, so a pull down has something to do. */
+  canSync: boolean;
   disabled: boolean;
   sidebarOpen: boolean;
   onCloseSidebar: () => void;
-  onOpenSearch: () => void;
   onOpenSidebar: () => void;
+  onSync: () => void;
 }) {
-  /** How far the finger has pulled down, and the top of the document it is pulling. */
+  /** How far the finger has pulled down, and the top of the document or sidebar it is pulling. */
   const [pull, setPull] = useState({ distance: 0, top: 0 });
-  const latest = useRef({ disabled, sidebarOpen, onCloseSidebar, onOpenSearch, onOpenSidebar });
-  latest.current = { disabled, sidebarOpen, onCloseSidebar, onOpenSearch, onOpenSidebar };
+  const latest = useRef({ canSync, disabled, sidebarOpen, onCloseSidebar, onOpenSidebar, onSync });
+  latest.current = { canSync, disabled, sidebarOpen, onCloseSidebar, onOpenSidebar, onSync };
 
   useEffect(() => {
     const root = document.documentElement;
@@ -90,17 +87,17 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
 
     const start = (event: TouchEvent) => {
       gesture = null;
-      const { disabled, sidebarOpen } = latest.current;
+      const { canSync, disabled, sidebarOpen } = latest.current;
       if (disabled || event.touches.length !== 1 || settleTimer) return;
       const touch = event.touches[0];
       if (ownsTouch(event.target)) return;
-      const body = sidebarOpen ? null : documentAtTop(event.target);
-      const candidates = edgeSwipeCandidates({ x: touch.clientX, sidebarOpen, atDocumentTop: Boolean(body) });
+      const pulled = !canSync ? null : sidebarOpen ? sidebarAtTop(event.target) : documentAtTop(event.target);
+      const candidates = edgeSwipeCandidates({ x: touch.clientX, sidebarOpen, canPullSync: Boolean(pulled) });
       if (!candidates.length) return;
       // Leave selection handles alone while text is selected.
       if (!sidebarOpen && !(window.getSelection()?.isCollapsed ?? true)) return;
       gesture = { id: touch.identifier, x: touch.clientX, y: touch.clientY, candidates, kind: null, width: 0, offset: 0, dy: 0,
-        pullTop: body?.getBoundingClientRect().top ?? 0,
+        pullTop: pulled?.getBoundingClientRect().top ?? 0,
         samples: [{ x: touch.clientX, t: event.timeStamp }] };
     };
 
@@ -115,7 +112,7 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
         if (lock === "pending") return;
         if (lock === "none" || !event.cancelable) { gesture = null; return; }
         current.kind = lock;
-        if (lock !== "pull-search") {
+        if (lock !== "pull-sync") {
           const sidebar = document.querySelector<HTMLElement>(SIDEBAR_SELECTOR);
           current.width = sidebar && lock === "close-sidebar" ? sidebar.getBoundingClientRect().width : Math.min(340, window.innerWidth * 0.88);
           root.classList.add("is-edge-swiping-sidebar");
@@ -125,7 +122,7 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
       }
       event.preventDefault();
       current.samples = [...current.samples.filter((sample) => event.timeStamp - sample.t < 100), { x: touch.clientX, t: event.timeStamp }];
-      if (current.kind === "pull-search") {
+      if (current.kind === "pull-sync") {
         current.dy = dy;
         setPull({ distance: Math.max(0, dy), top: current.pullTop });
       } else {
@@ -139,12 +136,9 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
       if (!current || ![...event.changedTouches].some((item) => item.identifier === current.id)) return;
       gesture = null;
       if (!current.kind) return;
-      if (current.kind === "pull-search") {
+      if (current.kind === "pull-sync") {
         setPull({ distance: 0, top: 0 });
-        if (event.type === "touchend" && searchPullTriggers(current.dy)) {
-          holdKeyboardOpen();
-          latest.current.onOpenSearch();
-        }
+        if (event.type === "touchend" && syncPullTriggers(current.dy)) latest.current.onSync();
         return;
       }
       const first = current.samples[0];
@@ -179,10 +173,13 @@ export default function MobileEdgeSwipe({ disabled, sidebarOpen, onCloseSidebar,
   }, []);
 
   if (!pull.distance) return null;
-  const ready = searchPullTriggers(pull.distance);
-  return <div aria-hidden="true" className={`mobile-search-pull${ready ? " is-ready" : ""}`}
-    style={{ top: pull.top, opacity: Math.min(1, pull.distance / 40), transform: `translate(-50%, ${searchPullDistance(pull.distance) - 40}px)` }}>
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
-    <span>{ready ? "Release to search" : "Pull to search"}</span>
+  const ready = syncPullTriggers(pull.distance);
+  return <div aria-hidden="true" className={`mobile-sync-pull${ready ? " is-ready" : ""}`}
+    style={{ top: pull.top, opacity: Math.min(1, pull.distance / 40), transform: `translate(-50%, ${syncPullDistance(pull.distance) - 40}px)` }}>
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      style={{ transform: `rotate(${Math.min(1, pull.distance / 72) * 180}deg)` }}>
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
+    </svg>
+    <span>{ready ? "Release to sync" : "Pull to sync"}</span>
   </div>;
 }
