@@ -518,6 +518,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           <div className="document-agent-status-head"><strong>Agent is working</strong><button type="button" onClick={props.onStop}>Stop</button></div>
           <AgentRunLog live steps={props.agentProgress?.steps ?? []} spentMicros={props.agentProgress?.spentMicros}
             thinking={props.agentProgress?.thinking} activity={props.agentProgress?.activity}
+            label={props.agentProgress?.label} since={props.agentProgress?.since}
             budgetMicros={props.agentMode?.showBudget ? props.agentMode.budgetMicros : undefined}/>
         </div>
         : props.isSubmitting ? <div className="document-writing-status" role="status">Writing… You can keep editing other blocks.<button type="button" onClick={props.onStop}>Stop</button></div> : null}

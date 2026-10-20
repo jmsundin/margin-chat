@@ -158,6 +158,26 @@ function describeVaultStep(name, args, output, exhausted) {
 }
 
 /** A short, human-readable line for the run log. Never includes tool output text. */
+/** What a tool call is doing while it runs, for the live progress line. `args` may still be empty while the model writes them. */
+export function agentToolActivity(name, args = {}) {
+  const query = typeof args?.query === "string" && args.query.trim() ? ` for ${quoted(args.query)}` : "";
+  const url = typeof args?.url === "string" && args.url.trim() ? ` ${args.url.trim().slice(0, 160)}` : "";
+  switch (name) {
+    case "search_vault": return `Searching your vault${query}`;
+    case "read_document": return "Reading a document";
+    case "list_related": return "Looking at linked documents";
+    case "search_conversations": return `Searching your notes${query}`;
+    case "list_recent_conversations": return "Listing recent chats and notes";
+    case "get_conversation": return "Opening a chat or note";
+    case "read_webpage": return url ? `Reading${url}` : "Reading a webpage";
+    case "import_webpage": return url ? `Saving${url} as documents` : "Saving a webpage as documents";
+    case "propose_edit": return "Drafting a change for you to approve";
+    case "propose_document": return "Drafting a new document for you to approve";
+    case "ask_user": return "Writing a question for you";
+    default: return "Using a tool";
+  }
+}
+
 export function describeAgentStep(name, args = {}, output = {}) {
   if (PROPOSAL_TOOL_DEFINITIONS.some((tool) => tool.name === name)) {
     const step = describeProposalStep(name, args, output);

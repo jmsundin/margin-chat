@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatExecutions } from "./chatExecution";
-import type { AgentEvent } from "./chatStream";
+import type { AgentActivity, AgentEvent } from "./chatStream";
 import type { AgentRunStep } from "../types";
 
 /** Live agent progress for a running request; cleared when the request ends. */
@@ -9,8 +9,11 @@ export interface AgentProgress {
   spentMicros?: number;
   /** The current model call's thinking so far, until the call ends and it arrives as a step. */
   thinking?: string;
-  /** What the current model call is doing, once it has started thinking, searching the web or writing. */
-  activity?: "thinking" | "searching" | "writing";
+  /** What the agent is doing right now, and the server's words for it ("Searching your vault for “pricing”"). */
+  activity?: AgentActivity;
+  label?: string;
+  /** When the current activity began, for how long it has been going. */
+  since?: number;
 }
 
 const LIVE_STEPS = 60;
@@ -42,7 +45,9 @@ export function useChatStreams(onDelta: ExecutionEvents["onDelta"], onExecution?
         const next = { ...current };
         for (const [id, text] of pending) {
           const previous = next[id] ?? { steps: [] };
-          next[id] = { ...previous, activity: "thinking", thinking: `${previous.thinking ?? ""}${text}`.slice(-LIVE_THINKING_CHARACTERS) };
+          const continuing = previous.activity === "thinking";
+          next[id] = { ...previous, activity: "thinking", label: continuing ? previous.label : undefined, since: continuing ? previous.since : Date.now(),
+            thinking: `${previous.thinking ?? ""}${text}`.slice(-LIVE_THINKING_CHARACTERS) };
         }
         return next;
       });
@@ -64,9 +69,12 @@ export function useChatStreams(onDelta: ExecutionEvents["onDelta"], onExecution?
         flushThinking();
         setAgentProgress((current) => {
           const previous = current[id] ?? { steps: [] };
-          if (event.type === "activity") return { ...current, [id]: { ...previous, activity: event.activity } };
-          // A step means its model call has ended; that call's thinking is now in the steps.
-          return { ...current, [id]: { steps: [...previous.steps, event.step].slice(-LIVE_STEPS), spentMicros: event.spentMicros ?? previous.spentMicros } };
+          if (event.type === "activity") {
+            const same = previous.activity === event.activity && previous.label === event.label;
+            return { ...current, [id]: { ...previous, activity: event.activity, label: event.label, since: same ? previous.since : Date.now() } };
+          }
+          // A step means its model call or tool has ended; that call's thinking is now in the steps.
+          return { ...current, [id]: { steps: [...previous.steps, event.step].slice(-LIVE_STEPS), spentMicros: event.spentMicros ?? previous.spentMicros, since: Date.now() } };
         });
       },
       onPending(id, pending) {

@@ -16,12 +16,14 @@ describe("agent thinking in Ask AI", () => {
       { type: "thinking", delta: "Look in " }, { type: "thinking", delta: "the notes." },
       { type: "thinking", delta: 7 }, { type: "activity", activity: "dancing" },
       { type: "step", step: { kind: "thinking", label: "Look in the notes." }, spentMicros: 120 },
+      { type: "activity", activity: "tool", label: "Reading a document" },
       { type: "activity", activity: "writing" },
       { type: "delta", delta: "Answer." }, { type: "done" },
     ]), undefined, undefined, (event) => seen.push(event));
     expect(seen).toEqual([
       { type: "thinking", delta: "Look in " }, { type: "thinking", delta: "the notes." },
       { type: "step", step: { kind: "thinking", label: "Look in the notes.", ok: true }, spentMicros: 120 },
+      { type: "activity", activity: "tool", label: "Reading a document" },
       { type: "activity", activity: "writing" },
     ]);
   });
@@ -31,8 +33,10 @@ describe("agent thinking in Ask AI", () => {
       steps={[{ kind: "tool", tool: "search_vault", label: "Searched your vault for “pricing”", detail: "3 results", ok: true }]}/>);
     expect(html).toContain("Thinking…");
     expect(html).toContain('<div class="agent-run-thinking is-live" aria-live="off"><p><strong>Checking notes</strong></p><p>The user asks &lt;b&gt;about&lt;/b&gt; pricing.</p></div>');
-    expect(renderToStaticMarkup(<AgentRunLog live activity="writing" thinking="Done thinking." steps={[]}/>)).toContain("Writing…");
+    expect(renderToStaticMarkup(<AgentRunLog live activity="writing" thinking="Done thinking." steps={[]}/>)).toContain("Writing the answer…");
     expect(renderToStaticMarkup(<AgentRunLog live steps={[]}/>)).toContain("Planning…");
+    expect(renderToStaticMarkup(<AgentRunLog live activity="tool" label="Searching your vault for “pricing”" since={Date.now() - 12_000} steps={[]}/>))
+      .toContain('<span class="agent-run-label">Searching your vault for “pricing”…</span> <small class="agent-run-elapsed">12s</small>');
   });
 
   test("saved, each call's thinking is a collapsed Thought with a preview, and a run without thinking says so", () => {
