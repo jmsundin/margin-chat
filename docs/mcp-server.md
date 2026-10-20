@@ -45,7 +45,8 @@ again. Before saving, each new or changed file is parsed back, and anything that
 wouldn't read as the same item is refused. Open apps pick up changes on their
 next sync, which runs every 15 seconds.
 
-Private margin comments are never searched or returned. Search by meaning embeds
+Documents the user marks "Hide from AI" (frontmatter `hide-from-ai: true`) are
+never searched or returned. Search by meaning embeds
 the query, and that cost goes to the member's own OpenAI key or their Plus
 credit, the same as searching in the app.
 

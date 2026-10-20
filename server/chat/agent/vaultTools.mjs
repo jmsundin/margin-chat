@@ -14,7 +14,7 @@ const documentId = { document_id: { type: "string", description: "Exact document
 export const VAULT_TOOL_DEFINITIONS = [
   {
     name: "search_vault",
-    description: "Search the user's saved documents, notes, chats, uploaded files and PDFs in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Private margin comments and documents the user hid from AI are never searched.",
+    description: "Search the user's saved documents, notes, chats, uploaded files and PDFs in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Documents the user hid from AI are never searched.",
     parameters: { type: "object", properties: { query: { type: "string", description: "A few keywords or a short phrase." } }, required: ["query"], additionalProperties: false },
   },
   {
