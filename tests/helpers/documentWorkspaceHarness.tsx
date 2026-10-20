@@ -325,6 +325,8 @@ try {
   assert.equal(restoreButtons(mainId).length, 0, "A minimized grandchild belongs only to its direct parent's restore rail.");
   assert.equal(restoreButtons(siblingId).length, 0, "Unrelated sibling panes do not display another parent's minimized child.");
   assert.equal(container.querySelectorAll('.document-side-restore[aria-label="Open side document: Nested research"]').length, 1);
+  assert(pane(sideId).querySelector(".minimized-child-nodes .minimized-child-node"), "With no child open, the minimized child shows as a node beside its document.");
+  assert.equal(pane(sideId).querySelector(".minimized-child-node strong").textContent, "Nested research");
   await click(restoreButton(sideId, "Nested research"));
   assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
   assert.deepEqual(latest.conversations[mainId].documentLayout?.order, panes());
@@ -351,11 +353,13 @@ try {
   assert.deepEqual(restoreButtons(mainId).map((button) => button.getAttribute("aria-label")), [
     "Open side document: Sibling research", "Open side document: Side research",
   ], "Separate child icons follow saved tab order, independently of child creation or minimization order.");
+  assert.equal(pane(mainId).querySelectorAll(".minimized-child-nodes li").length, 2, "Both minimized side documents stack as nodes beside the main document.");
   assert.equal(restoreButtons(nestedId).length, 0);
   await click(restoreButton(mainId, "Sibling research"));
   assert.equal(latest.activeConversationId, siblingId);
   assert.deepEqual(panes(), [mainId, siblingId, nestedId]);
   assert.deepEqual(restoreButtons(mainId).map((button) => button.getAttribute("aria-label")), ["Open side document: Side research"]);
+  assert.equal(pane(mainId).querySelector(".minimized-child-nodes"), null, "While one side document is open, the rest go back to small icons.");
   assert(latest.conversations[mainId].documentLayout?.minimizedIds.includes(sideId), "Opening one icon leaves the other child minimized.");
   await click(restoreButton(mainId, "Side research"));
   assert.equal(latest.activeConversationId, sideId);
