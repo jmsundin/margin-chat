@@ -21,7 +21,7 @@ The map has one search box ("Search, ask, or paste a link…") instead of separa
 
 ## Explored history
 
-- The clock button beside **+ Add** opens everything explored and not kept, grouped by search, newest first. Each item can be shown on or hidden from the map, kept, or forgotten. Each search can be hidden, kept or forgotten as a whole. **Clear history** asks first.
+- The clock button beside **+** (Add) opens everything explored and not kept, grouped by search, newest first. Each item can be shown on or hidden from the map, kept, or forgotten. Each search can be hidden, kept or forgotten as a whole. **Clear history** asks first.
 - Kept items leave history. If a kept note is deleted, its previews stay in history without a parent.
 - History is saved on the device and, for signed-in accounts, in the account record that held the old public map (`/api/public-map/state`), so it follows the user across devices. The old public map's topics move into history once.
 - History keeps the newest 400 items and the newest 20 mapped pages. When it is full, the oldest items that are not on the map go first. Pages with something still on the map are kept.

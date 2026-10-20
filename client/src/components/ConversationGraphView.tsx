@@ -3466,11 +3466,6 @@ export default function ConversationGraphView({
     <section ref={sectionRef} className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
       <div className={`graph-map-navigation${toolbarLeading ? " has-workspace-controls" : ""}`} role="toolbar" aria-label="Map exploration">
         {toolbarLeading}
-        <div className="graph-map-history">
-          <button type="button" aria-label="Back in map" title="Back in map" disabled={!navigation.canGoBack} onClick={() => restoreHistory("back")}><span aria-hidden="true">←</span></button>
-          <button type="button" aria-label="Forward in map" title="Forward in map" disabled={!navigation.canGoForward} onClick={() => restoreHistory("forward")}><span aria-hidden="true">→</span></button>
-        </div>
-        {isCanvasMode ? null : <button type="button" className="graph-map-all-groups" aria-label="Zoom out to all groups" onClick={showAllGroups}>All groups</button>}
         <span className={`graph-map-scope${focusedNodeId || scope.kind === "all" && !focusedTerritory ? " is-overview" : ""}`} aria-live="polite">{focusedTerritory ? `${focusedTerritory.label} · ${focusedTerritory.nodes.length} sources` : `${scopeLabel} · ${scopedIds.size} of ${Object.keys(conversations).length} sources`}</span>
         <div className="graph-map-search" ref={searchRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
           <input type="search" ref={searchInputRef} aria-label="Search this map" placeholder={searchPlaceholder} value={query}
@@ -3493,11 +3488,25 @@ export default function ConversationGraphView({
           </div> : null}
         </div>
         <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={chooseViewMode} />
-        <button type="button" ref={explorerTriggerRef} aria-label="Explore map collections and sources" onClick={openExplorer}>Explore</button>
+        <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
+          onClick={() => setLensOpen(!lensOpen)}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
+        {toolbarTrailing}
         <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
           <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}
             {clusterStatus ? <span className="graph-map-view-options-status" role="status" title={clusterStatus}><span className="public-map-visually-hidden">{clusterStatus}</span></span> : null}</summary>
           <div>
+            <div className="graph-map-menu-travel" role="group" aria-label="Move around the map">
+              <button type="button" aria-label="Back in map" title="Back in map" disabled={!navigation.canGoBack} onClick={() => restoreHistory("back")}><span aria-hidden="true">←</span></button>
+              <button type="button" aria-label="Forward in map" title="Forward in map" disabled={!navigation.canGoForward} onClick={() => restoreHistory("forward")}><span aria-hidden="true">→</span></button>
+              {isCanvasMode ? null : <button type="button" className="graph-map-all-groups" aria-label="Zoom out to all groups" onClick={() => { closeViewOptions(); showAllGroups(); }}>All groups</button>}
+            </div>
+            {/* Phones keep only search and a few icons in the bar; the views and Filter move in here. */}
+            <div className="graph-map-menu-compact" role="group" aria-label="Map views">
+              <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }} />
+              <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
+                onClick={() => { closeViewOptions(); setLensOpen(!lensOpen); }}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
+            </div>
+            <button type="button" ref={explorerTriggerRef} aria-label="Explore map collections and sources" onClick={() => { closeViewOptions(); openExplorer(); }}>Explore groups and sources</button>
             {modeSettings}
             <GraphViewModeSelects mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }}
               onLensChange={(lens) => {
@@ -3516,18 +3525,15 @@ export default function ConversationGraphView({
               {showMinimap ? <label><input type="checkbox" checked={minimapEnabled} onChange={(event) => setMinimapEnabled(event.target.checked)} /> Minimap</label> : null}
             </div>}
             {scope.kind === "all" && !selectedConversation && !focusedTerritory ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setInspectedOverviewSources([]); navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), overviewPresentation: showThemeOverview ? "map" : "themes", focusedTerritoryId: null, focusedTerritoryScale: null }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
+            {hasMapFilters ? <fieldset className="graph-map-filters"><legend>Lines</legend><div className="graph-map-context-controls" data-graph-ui="true">
+                <label><input type="checkbox" checked={showBranches} disabled={isLineageMode} onChange={() => toggleRelation("branch")} /> Branch ancestry</label>
+                <label><input type="checkbox" checked={showLinks} disabled={isLineageMode} onChange={() => toggleRelation("link")} /> Authored links</label>
+                {isLineageMode ? <small>Lineage follows parent → child branch ancestry.</small> : null}
+                {hasRelatedFilter ? <label><input type="checkbox" checked={showRelated} onChange={(event) => { navigation.update({ showRelated: event.target.checked }); setFitAfterArrange(true); }} /> Possibly related to {conversations[activeConversationId]?.title}</label> : null}
+                {showRelated && relatedStatus === "ready" ? <small>Suggestions from up to 40 recent items; relevance is not a factual relationship.</small> : null}
+              </div></fieldset> : null}
           </div>
         </DismissibleDetails>
-        <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
-          onClick={() => setLensOpen(!lensOpen)}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
-        {hasMapFilters ? <DismissibleDetails className="graph-map-filters" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Lines</summary><div className="graph-map-context-controls" data-graph-ui="true">
-            <label><input type="checkbox" checked={showBranches} disabled={isLineageMode} onChange={() => toggleRelation("branch")} /> Branch ancestry</label>
-            <label><input type="checkbox" checked={showLinks} disabled={isLineageMode} onChange={() => toggleRelation("link")} /> Authored links</label>
-            {isLineageMode ? <small>Lineage follows parent → child branch ancestry.</small> : null}
-            {hasRelatedFilter ? <label><input type="checkbox" checked={showRelated} onChange={(event) => { navigation.update({ showRelated: event.target.checked }); setFitAfterArrange(true); }} /> Possibly related to {conversations[activeConversationId]?.title}</label> : null}
-            {showRelated && relatedStatus === "ready" ? <small>Suggestions from up to 40 recent items; relevance is not a factual relationship.</small> : null}
-          </div></DismissibleDetails> : null}
-        {toolbarTrailing}
       </div>
       {lensOpen && !panelView ? <MapLensBar lens={lens} onChange={setLens} ids={lensIds} matched={lensMatches} conversations={conversations} groups={groups}
         saved={savedLenses} onFitMatches={fitLensMatches}
