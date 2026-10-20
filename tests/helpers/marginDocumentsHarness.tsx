@@ -247,21 +247,40 @@ try {
     firstBlock(mainId).commands.setTextSelection({ from: 10, to: 14 });
   });
   await settle();
-  await click(element('[aria-label="Add a margin note"]'));
   const beforePassageIds = new Set(Object.keys(latest.conversations));
-  await act(async () => {
-    const input = element('input[aria-label="Margin note"]');
-    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, 'Thought about this passage');
-    input.dispatchEvent(new browser.Event('input', { bubbles: true }));
-  });
-  await click(element('[aria-label="Save margin note"]'));
+  await click(element('[aria-label="Add a margin note"]'));
   const passageId = Object.keys(latest.conversations).find((id) => !beforePassageIds.has(id))!;
   assert(passageId);
   assert.equal(latest.conversations[passageId].parentId, mainId);
   assert.equal(latest.conversations[passageId].branchAnchor!.quote, 'main');
   assert.equal(latest.conversations[passageId].document!.marginNote!.display, 'compact');
   assert(notePane(passageId).querySelector('.rich-document-editor'));
+  await act(async () => editor(passageId).commands.insertContent('Thought about this passage'));
+  await settle();
+  assert(latest.conversations[passageId].document!.blocks.some((block) => block.content.includes('Thought about this passage')));
   checks.push('a selected passage creates an editable mini document with a normal passage anchor');
+
+  // A side document is made straight from the selection, with no prompt or AI.
+  await act(async () => {
+    firstBlock(mainId).view.dom.focus();
+    firstBlock(mainId).commands.setTextSelection({ from: 15, to: 23 });
+  });
+  await settle();
+  const beforeSideIds = new Set(Object.keys(latest.conversations));
+  await click(element('[aria-label="Create a side document from this passage"]'));
+  const sideId = Object.keys(latest.conversations).find((id) => !beforeSideIds.has(id))!;
+  assert(sideId);
+  const sideDocument = latest.conversations[sideId];
+  assert.equal(sideDocument.parentId, mainId);
+  assert.equal(sideDocument.branchAnchor!.quote, 'document');
+  assert.equal(sideDocument.branchAnchor!.sourceBlockId, latest.conversations[mainId].document!.blocks[0].id);
+  assert.equal(sideDocument.document!.marginNote, undefined);
+  assert.deepEqual(sideDocument.document!.blocks.map((block) => block.content), ['> document']);
+  assert.equal(sideDocument.messages.length, 0, 'No AI request is made.');
+  assert(panes().includes(sideId));
+  await click(documentElement(sideId).querySelector('.document-close-button'));
+  assert(!panes().includes(sideId));
+  checks.push('a selected passage creates a linked side document quoting it, without AI');
 
   // A note across two lines joins them into one block, since a passage points into one block.
   const firstLineId = latest.conversations[mainId].document!.blocks[0].id;
@@ -279,14 +298,8 @@ try {
     editor(mainId).commands.setTextSelection({ from: firstBlock(mainId).position(10), to: secondLine.position(7) });
   });
   await settle();
-  await click(element('[aria-label="Add a margin note"]'));
   const beforeJoinedIds = new Set(Object.keys(latest.conversations));
-  await act(async () => {
-    const input = element('input[aria-label="Margin note"]');
-    Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input, 'A thought across two lines');
-    input.dispatchEvent(new browser.Event('input', { bubbles: true }));
-  });
-  await click(element('[aria-label="Save margin note"]'));
+  await click(element('[aria-label="Add a margin note"]'));
   const joinedNoteId = Object.keys(latest.conversations).find((id) => !beforeJoinedIds.has(id))!;
   assert(joinedNoteId);
   const joinedBlock = latest.conversations[mainId].document!.blocks.find((block) => block.id === firstLineId)!;

@@ -223,7 +223,6 @@ const EMPTY_SET: ReadonlySet<string> = new Set();
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
-const NOTE_PROMPT_PLACEHOLDER = "Add a private thought about this text...";
 const EXPLAIN_SELECTION_PROMPT = "Explain the selected text.";
 const REWRITE_SELECTION_PROMPT = "Rewrite the selected text for clarity and flow, preserving its meaning and tone. Return only the rewritten passage.";
 const TOOLTIP_VIEWPORT_MARGIN = 16;
@@ -758,7 +757,7 @@ function WorkspaceAppContent({
   const selectionViewport = useVisualViewport(Boolean(selectionDraft) && !mobileKeyboard.mobile);
   const [selectionActionsExpanded, setSelectionActionsExpanded] = useState(false);
   const [selectionOptionsInitiallyOpen, setSelectionOptionsInitiallyOpen] = useState(false);
-  const [selectionIntent, setSelectionIntent] = useState<"branch" | "note" | "link">("branch");
+  const [selectionIntent, setSelectionIntent] = useState<"branch" | "link">("branch");
   const [selectionModelOpen, setSelectionModelOpen] = useState(false);
   const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
   const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
@@ -3189,6 +3188,7 @@ function WorkspaceAppContent({
     sourceStandaloneNoteId?: string;
     sourceBlockId?: string;
     startOffset?: number | null;
+    title?: string;
   }) {
     const now = new Date().toISOString();
     const id = createId("document");
@@ -3201,7 +3201,7 @@ function WorkspaceAppContent({
       if (!original) return current;
       const parent = { ...original, document: getEditableDocument(original),
         childIds: [...original.childIds, id], updatedAt: now };
-      const child = createMarginDocument(parent, note);
+      const child = { ...createMarginDocument(parent, note), ...(args.title ? { title: args.title } : {}) };
       return focusDocument({ ...current, conversations: { ...current.conversations, [parent.id]: parent, [id]: child } }, id);
     });
     setClosedMarginNotes((current) => ({ ...current, [args.conversationId]: false }));
@@ -3238,12 +3238,78 @@ function WorkspaceAppContent({
     });
   }
 
-  function handleCreateSelectionNote() {
-    if (!selectionDraft?.prompt.trim()) return;
+  /** Puts the cursor at the end of a newly created document once its editor mounts. */
+  function focusNewDocumentEditor(documentId: string) {
+    let attempts = 0;
+    const focus = () => {
+      const host = [...document.querySelectorAll<HTMLElement>("[data-document-id]")].find((element) => element.dataset.documentId === documentId);
+      const editable = host?.querySelector<HTMLElement>("[contenteditable='true'], textarea");
+      if (!editable) { if (attempts++ < 30) window.requestAnimationFrame(focus); return; }
+      editable.focus({ preventScroll: true });
+      if (editable instanceof HTMLTextAreaElement) { editable.setSelectionRange(editable.value.length, editable.value.length); return; }
+      const range = document.createRange();
+      range.selectNodeContents(editable);
+      range.collapse(false);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    };
+    window.requestAnimationFrame(focus);
+  }
+
+  /** A side document about the selected passage, without AI: the passage is quoted at the top and linked back. */
+  function handleCreateSelectionSideDocument() {
+    if (!selectionDraft) return;
     const draft = joinSelectedLines(selectionDraft);
     if (!draft) return;
-    handleCreateNote({
-      content: draft.prompt,
+    const source = currentStateRef.current.conversations[draft.conversationId];
+    if (!source) return;
+    const sourceDocument = source.document ? getEditableDocument(source) : null;
+    const sourceBlock = draft.sourceBlockId ? sourceDocument?.blocks.find((block) => block.id === draft.sourceBlockId) : undefined;
+    if (!sourceBlock && hasOverlappingAnchor(currentStateRef.current.conversations, draft)) {
+      window.alert("That highlight overlaps an existing branch. Try a different phrase for now.");
+      return;
+    }
+    const now = new Date().toISOString();
+    const id = createId("conversation");
+    const quote = draft.quote.trim();
+    const sideDocument: Conversation = {
+      id, kind: "chat", title: excerpt(quote.replace(/\s+/g, " "), 52) || "Untitled document", parentId: source.id,
+      serviceId: source.serviceId, modelId: source.modelId, ...(source.ai ? { ai: structuredClone(source.ai) } : {}),
+      documents: [...(source.documents ?? [])],
+      branchAnchor: { id: createId("anchor"), sourceConversationId: source.id,
+        sourceMessageId: sourceBlock ? sourceBlock.sourceMessageId ?? `document:${sourceBlock.id}` : draft.messageId,
+        ...(sourceBlock ? { sourceBlockId: sourceBlock.id } : {}),
+        startOffset: draft.startOffset, endOffset: draft.endOffset, quote: draft.quote, prompt: "Side document", createdAt: now },
+      childIds: [], messages: [], notes: [], createdAt: now, updatedAt: now,
+      document: { schemaVersion: 1, prompts: [], generations: [], blocks: [{ id: createId("block"), kind: "markdown",
+        content: quote.split(/\r?\n/).map((line) => line.trim() ? `> ${line}` : ">").join("\n"), authorship: "user", createdAt: now, updatedAt: now }] },
+    };
+    setState((current) => {
+      const parent = current.conversations[source.id];
+      if (!parent) return current;
+      // A document block the passage points into is saved as a source message, as the AI path does.
+      const snapshot = sourceBlock && !sourceBlock.sourceMessageId && sourceBlock.content.trim() && !parent.messages.some((message) => message.id === `document:${sourceBlock.id}`)
+        ? [{ id: `document:${sourceBlock.id}`, role: "user" as const, content: sourceBlock.content, createdAt: sourceBlock.createdAt }] : [];
+      const base = snapshot.length ? { ...current, conversations: { ...current.conversations, [parent.id]: { ...parent, messages: [...parent.messages, ...snapshot] } } } : current;
+      const next = addChildConversation(base, sideDocument, { activate: true, sourceNoteId: draft.sourceNoteId });
+      currentStateRef.current = next;
+      return next;
+    });
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+    setDocumentFocusSequence((sequence) => sequence + 1);
+    focusNewDocumentEditor(id);
+  }
+
+  /** An empty margin note on the selected passage, open and ready to write in. */
+  function handleCreateSelectionNote() {
+    if (!selectionDraft) return;
+    const draft = joinSelectedLines(selectionDraft);
+    if (!draft) return;
+    const noteId = handleCreateNote({
+      content: "",
+      // An empty note is named after its passage, so it can be told apart in lists.
+      title: excerpt(draft.quote.trim().replace(/\s+/g, " "), 52) || undefined,
       conversationId: draft.conversationId,
       kind: "comment",
       sourceMessageId: draft.messageId,
@@ -3255,6 +3321,7 @@ function WorkspaceAppContent({
     });
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
+    focusNewDocumentEditor(noteId);
   }
 
   function handleUpdateStandaloneNote(
@@ -5044,6 +5111,9 @@ function WorkspaceAppContent({
               onRewrite={() => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
               onAsk={() => openMobileSelectionPrompt()}
               onMore={() => openMobileSelectionPrompt(true)}
+              onSideDocument={handleCreateSelectionSideDocument}
+              onMarginNote={handleCreateSelectionNote}
+              marginNoteLabel={selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}
               onClose={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}
             /> : mobileKeyboard.mobile && selectionIntent === "branch" ? <MobileComposerViewport>
               <MobileAIComposer formRef={toolbarRef} testId="branch-composer" className="selection-mobile-composer"
@@ -5067,8 +5137,10 @@ function WorkspaceAppContent({
                     </div>
                     {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event) => setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
                   </div> : null}
+                  <button type="button" aria-label="Create a side document from this passage"
+                    onClick={handleCreateSelectionSideDocument}>Side document</button>
                   <button type="button" aria-label={selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note"}
-                    onClick={() => setSelectionIntent("note")}>{selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}</button>
+                    onClick={handleCreateSelectionNote}>{selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}</button>
                   <button type="button" aria-label="Link selected text to an existing document or block"
                     onClick={() => { setSelectionLinkError(null); setSelectionIntent("link"); }}>Link to existing</button>
                 </>}
@@ -5080,25 +5152,21 @@ function WorkspaceAppContent({
               data-testid="branch-composer"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (selectionIntent === "note") handleCreateSelectionNote();
-                else if (selectionIntent === "branch") handleCreateBranch();
+                if (selectionIntent === "branch") handleCreateBranch();
               }}
               ref={toolbarRef}
               style={mobileKeyboard.mobile ? undefined : toolbarStyle}
             >
               <div className="selection-tooltip-head">
                 <p className="eyebrow">
-                  {selectionIntent === "link" ? "Link this passage" : selectionIntent === "note"
-                    ? "New margin note"
+                  {selectionIntent === "link" ? "Link this passage"
                     : selectionDraft.sourceKind === "standalone-note"
                       ? "Selected note text"
                       : "Ask AI about this passage"}
                 </p>
                 <button
                   aria-label={
-                    selectionIntent === "link" ? "Cancel link" : selectionIntent === "note"
-                      ? "Cancel margin note"
-                      : "Cancel new branch"
+                    selectionIntent === "link" ? "Cancel link" : "Cancel new branch"
                   }
                   className="selection-close"
                   onClick={() => {
@@ -5114,22 +5182,19 @@ function WorkspaceAppContent({
               <p className="selection-tooltip-quote">
                 “{excerpt(selectionDraft.quote, 132)}”
               </p>
-              <div aria-label="Selected text action" className="selection-intent-switch" role="group">
+              <div aria-label="Create from this passage" className="selection-create-actions" role="group">
+                <button aria-label="Create a side document from this passage" onClick={handleCreateSelectionSideDocument} type="button">
+                  <span aria-hidden="true">＋</span> Side document
+                </button>
                 <button
-                  aria-label={
-                    selectionDraft.sourceKind === "standalone-note"
-                      ? "Create a side note"
-                      : "Add a margin note"
-                  }
-                  aria-pressed={selectionIntent === "note"}
-                  className={selectionIntent === "note" ? "is-active" : ""}
-                  onClick={() => setSelectionIntent("note")}
+                  aria-label={selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note"}
+                  onClick={handleCreateSelectionNote}
                   type="button"
                 >
-                  {selectionDraft.sourceKind === "standalone-note"
-                    ? "Side note"
-                    : "Margin note"}
+                  <span aria-hidden="true">＋</span> {selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}
                 </button>
+              </div>
+              <div aria-label="Selected text action" className="selection-intent-switch" role="group">
                 <button
                   aria-label={
                     selectionDraft.sourceKind === "standalone-note"
@@ -5156,19 +5221,16 @@ function WorkspaceAppContent({
                 <div role="group" aria-label="Response destination"><button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={()=>setSelectionResponseDestination("inline")}>In this document</button><button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={()=>setSelectionResponseDestination("side")}>Side document ↗</button></div>
                 {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event)=>setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
               </div> : null}
-              {selectionIntent === "note" ? (
-                <p className="selection-note-privacy">Small document linked to this passage</p>
-              ) : null}
               {selectionIntent === "link" ? <DocumentLinkPicker
                 conversations={state.conversations} sourceConversationId={selectionDraft.conversationId}
                 sourceBlockId={selectionDraft.sourceBlockId} onSelect={handleCreateDocumentLink}
                 onCancel={() => setSelectionIntent("branch")} error={selectionLinkError ?? undefined}
               /> : null}
               </div>
-              <div className={`selection-composer-entry${selectionIntent === "note" ? " is-note" : ""}`}>
+              <div className="selection-composer-entry">
               {selectionIntent !== "link" ? <div className="selection-input-row">
                 <input
-                  aria-label={selectionIntent === "note" ? "Margin note" : "Branch prompt"}
+                  aria-label="Branch prompt"
                   id="branch-prompt"
                   inputMode="text"
                   onChange={(event) =>
@@ -5178,12 +5240,12 @@ function WorkspaceAppContent({
                         : current,
                     )
                   }
-                  placeholder={selectionIntent === "note" ? NOTE_PROMPT_PLACEHOLDER : BRANCH_PROMPT_PLACEHOLDER}
+                  placeholder={BRANCH_PROMPT_PLACEHOLDER}
                   type="text"
                   value={selectionDraft.prompt}
                 />
                 <button
-                  aria-label={selectionIntent === "note" ? "Save margin note" : "Create branch with prompt"}
+                  aria-label="Create branch with prompt"
                   className="selection-send"
                   disabled={!selectionDraft.prompt.trim()}
                   type="submit"
