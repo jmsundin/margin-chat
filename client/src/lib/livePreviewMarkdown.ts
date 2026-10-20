@@ -1,5 +1,5 @@
 import { type EditorState, type Range } from "@codemirror/state";
-import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from "@codemirror/view";
+import { Decoration, EditorView, ViewPlugin, WidgetType, logException, type DecorationSet, type ViewUpdate } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode } from "@lezer/common";
 import { findObsidianInlineTokens } from "./obsidianMarkdown";
@@ -216,7 +216,7 @@ function buildDecorations(view: EditorView, mode: LivePreviewMode): DecorationSe
               const fence = line.from === first.from || line.from === last.from && last.number !== first.number;
               addLine(line.from, fence ? "cm-lp-code-fence" : "cm-lp-code-line");
               if (fence && !editing && line.to > line.from) ranges.push(hide.range(line.from, line.to));
-              else if (fence) ranges.push(syntaxMark.range(line.from, line.to));
+              else if (fence && line.to > line.from) ranges.push(syntaxMark.range(line.from, line.to));
             });
             return false;
           }
@@ -265,25 +265,45 @@ function buildDecorations(view: EditorView, mode: LivePreviewMode): DecorationSe
       if (!math) { offset = start + 1; continue; }
       const position = from + start;
       if (!inCode(position)) {
-        if (reveal(position)) ranges.push(mark("cm-lp-math-source").range(position, position + math.raw.length));
+        // A plugin can't replace across lines, so $$ math written over several lines shows as source.
+        if (reveal(position) || math.raw.includes("\n")) ranges.push(mark("cm-lp-math-source").range(position, position + math.raw.length));
         else ranges.push(Decoration.replace({ widget: new MathWidget(math.latex, math.displayMode, math.raw) }).range(position, position + math.raw.length));
       }
       offset = start + math.raw.length;
     }
   }
   for (const [from, classes] of lineClasses) ranges.push(Decoration.line({ class: [...classes].join(" ") }).range(from));
-  return Decoration.set(ranges, true);
+  return Decoration.set(ranges.filter((range) => drawable(doc, range)), true);
+}
+
+/** CodeMirror refuses a plugin's replacement that crosses a line break, and would stop drawing the editor. */
+function drawable(doc: EditorState["doc"], range: Range<Decoration>) {
+  return !range.value.point || range.to <= doc.lineAt(range.from).to;
+}
+
+/**
+ * A plugin that throws is switched off for good, which left a whole document
+ * as raw Markdown after one bad range (an empty mark from a code fence an AI
+ * answer hadn't closed yet). Plain text now, styling again on the next update.
+ */
+function safeDecorations(view: EditorView, mode: LivePreviewMode): DecorationSet {
+  try {
+    return buildDecorations(view, mode);
+  } catch (error) {
+    logException(view.state, error, "Live Preview styling");
+    return Decoration.none;
+  }
 }
 
 /** Live Preview styling for the visible lines. `mode` reads the current mode from the editor state. */
 export function livePreviewInline(mode: (state: EditorState) => LivePreviewMode) {
   return ViewPlugin.fromClass(class {
     decorations: DecorationSet;
-    constructor(view: EditorView) { this.decorations = buildDecorations(view, mode(view.state)); }
+    constructor(view: EditorView) { this.decorations = safeDecorations(view, mode(view.state)); }
     update(update: ViewUpdate) {
       if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged
         || syntaxTree(update.state) !== syntaxTree(update.startState) || mode(update.state) !== mode(update.startState)) {
-        this.decorations = buildDecorations(update.view, mode(update.state));
+        this.decorations = safeDecorations(update.view, mode(update.state));
       }
     }
   }, {
