@@ -53,3 +53,13 @@
   border-bottom: 1px solid var(--line);
 }
 .mobile-selection-actions .mobile-selection-actions-clipboard button { flex: 1 1 0; }
+
+/* Side document and margin note, created without AI. */
+.mobile-selection-actions .mobile-selection-actions-create {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 3px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--line);
+}
+.mobile-selection-actions .mobile-selection-actions-create button { flex: 1 1 0; border-color: var(--line-strong); }

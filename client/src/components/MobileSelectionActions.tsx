@@ -13,6 +13,10 @@ type MobileSelectionActionsProps = {
   onRewrite: () => void;
   onAsk: () => void;
   onMore: () => void;
+  /** Create a side document or margin note on the passage directly, without AI. */
+  onSideDocument: () => void;
+  onMarginNote: () => void;
+  marginNoteLabel?: string;
   onClose: () => void;
   disabled?: boolean;
 };
@@ -21,7 +25,7 @@ type MobileSelectionActionsProps = {
  * Keep selection actions beside the native handles without opening an input. The clipboard row
  * stands in for the system's Cut / Copy / Paste menu, which the workspace hides on phones.
  */
-export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onMore, onClose, disabled = false }: MobileSelectionActionsProps) {
+export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onMore, onSideDocument, onMarginNote, marginNoteLabel = "Margin note", onClose, disabled = false }: MobileSelectionActionsProps) {
   const viewport = useVisualViewport(true);
   const [selectionRect, setSelectionRect] = useState(rect);
   const [height, setHeight] = useState(102);
@@ -105,6 +109,10 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
       <button type="button" onClick={() => { void copySelection().then((done) => setCopied(done)); }}>{copied ? "Copied" : "Copy"}</button>
       {editable ? <button type="button" onClick={() => { void pasteIntoSelection(); }}>Paste</button> : null}
       <button type="button" onClick={() => selectAllAround()}>Select all</button>
+    </div>
+    <div className="mobile-selection-actions-create" role="group" aria-label="Create from this passage">
+      <button type="button" aria-label="Create a side document from this passage" onClick={onSideDocument}>＋ Side document</button>
+      <button type="button" aria-label={marginNoteLabel === "Margin note" ? "Add a margin note" : "Create a side note"} onClick={onMarginNote}>＋ {marginNoteLabel}</button>
     </div>
     <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onExplain}>Explain</button>
     <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onRewrite}>Rewrite</button>
