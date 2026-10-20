@@ -5,6 +5,10 @@
 .document-navigation-switcher-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .document-navigation-switcher-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .document-navigator-icon { width: 16px; height: 16px; }
+/* Labelled, as on a phone, the views read as tabs across the full width. */
+.document-navigation-switcher.is-labelled { margin-left: 0; }
+.document-navigation-switcher.is-labelled .document-navigation-switcher-option { display: flex; flex: 1; gap: 6px; width: auto; height: 36px; font: inherit; font-size: 13px; }
+.document-navigation-switcher.is-labelled .document-navigation-switcher-label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
 
 .document-navigator-kind { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 99px; background: var(--muted); }
 .document-navigator-kind.is-main { background: var(--accent); }
@@ -21,7 +25,6 @@
 .document-compass-step:disabled { opacity: .35; cursor: default; }
 .document-compass-step:hover:not(:disabled) { border-color: var(--accent); }
 .document-compass-more { color: var(--muted); font-size: 12px; }
-.document-compass-hint { flex: 0 0 auto; margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .document-navigator-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 200px; height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel, var(--bg)); color: var(--ink); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
 .document-navigator-chip:hover { border-color: var(--accent); }
 .document-navigator-chip.is-linked { border-style: dashed; }
@@ -58,7 +61,6 @@
 .document-keep-reading-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 
 @media (max-width: 640px) {
-  .document-compass-hint { display: none; }
   .document-workspace-with-search:has(> .document-topic-outline) { flex-direction: column; }
   .document-topic-outline { flex: 0 0 auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
   .document-local-graph { width: 240px; }

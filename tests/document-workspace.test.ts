@@ -27,6 +27,19 @@ describe("side-by-side document workspace", () => {
     );
   });
 
+  test("a document made from text in a margin note opens right after the note's host, ahead of other open documents", () => {
+    const { state, rootId } = fixture();
+    const host = state.conversations.a;
+    const note = { ...createSideConversation({ id: "note", sourceConversation: host }),
+      document: { schemaVersion: 1 as const, marginNote: { display: "compact" as const, source: { sourceMessageId: null, startOffset: null, endOffset: null, quote: null } }, blocks: [], prompts: [], generations: [] } };
+    let next = addChildConversation(state, note, { activate: true });
+    next = reorderDocument(next, "note", "nested");
+    expect(getDocumentWorkspace(next.conversations, rootId).documents.map((document) => document.id)).toEqual([rootId, "b", "a", "nested", "note"]);
+    next = addChildConversation(next, createSideConversation({ id: "fromNote", sourceConversation: next.conversations.note }), { activate: true });
+    const visible = getDocumentWorkspace(next.conversations, rootId).documents.map((document) => document.id).filter((id) => id !== "note");
+    expect(visible).toEqual([rootId, "b", "a", "fromNote", "nested"]);
+  });
+
   test("moving a side tab before main changes panel order without changing Map edges or graph positions", () => {
     const { state, rootId } = fixture();
     const moved = reorderDocument(state, "a", rootId);

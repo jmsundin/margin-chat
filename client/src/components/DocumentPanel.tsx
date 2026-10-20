@@ -47,6 +47,8 @@ export interface DocumentPanelProps {
   headerControls?: ReactNode;
   /** Controls shown at the start of the header, before the parent link. */
   headerLeading?: ReactNode;
+  /** On phones the workspace header names the document and holds its menu, so the panel's own header shows only what it can't. */
+  bareHeader?: boolean;
   onMinimize?: () => void;
   onClose?: () => void;
   marginNotesToggle?: ReactNode;
@@ -451,11 +453,12 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </svg>
       </button>)}
     </nav> : null}
-      {(conversation.vaultFile || props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.parentBreadcrumbs || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu || conversation.hiddenFromAI) ? <header className="document-header">
+      {(props.bareHeader ? (conversation.vaultFile || conversation.hiddenFromAI || document.marginNote)
+        : (conversation.vaultFile || props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.parentBreadcrumbs || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu || conversation.hiddenFromAI)) ? <header className="document-header">
         <div className="document-header-toolbar">
           {props.headerLeading}
           {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${conversation.title || "Untitled document"}`} title="Minimize document" onClick={props.onMinimize}>−</button> : null}
-          {props.parentBreadcrumbs ? props.parentBreadcrumbs : conversation.parentId ? <div className="document-origin" ref={props.registerBranchOriginRef}>
+          {props.parentBreadcrumbs ? props.parentBreadcrumbs : conversation.parentId && !props.bareHeader ? <div className="document-origin" ref={props.registerBranchOriginRef}>
             {!document.marginNote && conversation.branchAnchor ? <span title={conversation.branchAnchor.quote}>{conversation.branchAnchor.quote}</span> : null}
           </div> : null}
           {conversation.vaultFile ? <div className="document-file-controls" ref={setFileControls} /> : null}
