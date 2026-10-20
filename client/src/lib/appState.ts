@@ -88,7 +88,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
               const serviceId = isBackendServiceId(conversation.serviceId)
                 ? conversation.serviceId
                 : DEFAULT_BACKEND_SERVICE_ID;
-              const { publicTopic, linkedConversationIds, document, documentLayout, relations, nodeType, tags, ...base } = conversation;
+              const { publicTopic, linkedConversationIds, document, documentLayout, relations, nodeType, tags, hiddenFromAI, ...base } = conversation;
               const source = normalizePublicTopicSource(publicTopic);
               const layout = normalizeDocumentLayout(documentLayout, conversationId, parsed.conversations);
               const editableDocument = document === undefined ? undefined : normalizeEditableDocument(document);
@@ -100,7 +100,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
                 ...(layout ? { documentLayout: layout } : {}),
                 ...(source ? { publicTopic: source } : {}),
                 ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(linkedConversationIds, conversationId, parsed.conversations) } : {}),
-                ...normalizeConversationGraphFields({ relations, nodeType, tags }, conversationId, parsed.conversations),
+                ...normalizeConversationGraphFields({ relations, nodeType, tags, hiddenFromAI }, conversationId, parsed.conversations),
                 ...(conversation.ai ? { ai: normalizeAISettings(conversation.ai) } : {}),
                 messages: (conversation.messages ?? []).map((message) => ({ ...message,
                   ...(message.execution ? { execution: normalizeAIExecution(message.execution) } : {}),

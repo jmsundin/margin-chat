@@ -8,7 +8,7 @@ import { MobileSelectionActions } from "./components/MobileSelectionActions";
 import { hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
-import { createMarginDocument, isCompactDocument } from "@margin-chat/workspace-contracts";
+import { createMarginDocument, isCompactDocument, isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
 import "./document-workspace.css";
@@ -222,6 +222,7 @@ const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWo
 const EMPTY_SET: ReadonlySet<string> = new Set();
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
+const HIDDEN_FROM_AI_MESSAGE = "This document is hidden from AI, so nothing in it was sent. To ask AI about it, turn off “Hide from AI” in its menu.";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
 const EXPLAIN_SELECTION_PROMPT = "Explain the selected text.";
 const REWRITE_SELECTION_PROMPT = "Rewrite the selected text for clarity and flow, preserving its meaning and tone. Return only the rewritten passage.";
@@ -2163,7 +2164,7 @@ function WorkspaceAppContent({
       documentTitleTimers.current.delete(conversationId);
       const conversation = currentStateRef.current.conversations[conversationId];
       const content = conversation && getDocumentTitleSource(conversation, provisionalDocumentTitles.current.get(conversationId));
-      if (!conversation || !content) return;
+      if (!conversation || !content || isHiddenFromAI(conversation)) return;
       const placeholderTitle = conversation.title;
       // One attempt per document per session, so a failing provider is not retried on every keystroke.
       documentTitleRequests.current.add(conversationId);
@@ -2201,6 +2202,10 @@ function WorkspaceAppContent({
   function handleDocumentSubmit(conversationId: string, request: DocumentAIRequest) {
     const source = currentStateRef.current.conversations[conversationId];
     if (!source || !request.prompt.trim() || chatExecutions.has(conversationId)) return;
+    if (isHiddenFromAI(source)) {
+      setDocumentErrors((current) => ({ ...current, [conversationId]: HIDDEN_FROM_AI_MESSAGE }));
+      return;
+    }
     const now = new Date().toISOString();
     const originalDocument = getEditableDocument(source);
     const sourceBlock = originalDocument.blocks.find((block) => block.id === request.blockId);
@@ -2502,6 +2507,10 @@ function WorkspaceAppContent({
   }
 
   function startAssistantStream(conversation: Conversation, messages: Message[]) {
+    if (isHiddenFromAI(conversation)) {
+      appendAssistantMessage(conversation.id, HIDDEN_FROM_AI_MESSAGE);
+      return;
+    }
     return chatExecutions.start({
       conversationId: conversation.id,
       messageId: createId("message"),
@@ -2556,7 +2565,7 @@ function WorkspaceAppContent({
       isUntitledConversation
         ? excerpt(trimmed, 34)
         : conversation.title;
-    const shouldGenerateTitle = isUntitledConversation;
+    const shouldGenerateTitle = isUntitledConversation && !isHiddenFromAI(conversation);
     const createdAt = new Date().toISOString();
     const userMessage: Message = {
       id: createId("message"),
@@ -4186,6 +4195,17 @@ function WorkspaceAppContent({
 
   }
 
+  /** The user decides which notes and documents AI may read; nothing is hidden by default. */
+  function handleToggleHiddenFromAI(conversationId: string) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      const { hiddenFromAI, ...rest } = conversation;
+      return { ...current, conversations: { ...current.conversations,
+        [conversationId]: { ...rest, ...(hiddenFromAI ? {} : { hiddenFromAI: true }), updatedAt: new Date().toISOString() } } };
+    });
+  }
+
   function handleDeleteThread(conversationId: string) {
     const rootConversation = state.conversations[conversationId];
 
@@ -4418,6 +4438,7 @@ function WorkspaceAppContent({
         maximized={maximizedDocument?.id === conversation.id}
         onToggleMaximize={!isCompactDocument(conversation) ? toggleMaximizedDocument : undefined}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
+        onToggleHiddenFromAI={handleToggleHiddenFromAI}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
@@ -4482,6 +4503,7 @@ function WorkspaceAppContent({
     return <DocumentMenu conversation={conversation} className="document-header-menu-trigger"
       pinned={dock?.pinned} onTogglePin={dock ? () => dock.onTogglePin() : undefined}
       onClose={dock ? () => dock.onClose() : undefined} onRename={handleRenameThread}
+      onToggleHiddenFromAI={handleToggleHiddenFromAI}
       groups={state.groups} onAssignGroup={handleAssignConversationGroup} />;
   }
 

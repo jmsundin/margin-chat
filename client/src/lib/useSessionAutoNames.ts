@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import type { Conversation, WorkspaceSessions } from "../types";
 import { requestClusterLabel } from "./api";
 import { getDocumentPreview } from "./documentSources";
@@ -32,7 +33,7 @@ function writeCache(userId: string, nameKey: string, name: string) {
 export function buildSessionNamePrompt(documentIds: string[], conversations: Record<string, Conversation>) {
   const lines: string[] = [];
   let length = 0;
-  for (const root of getSessionRootDocuments({ documentIds }, conversations).slice(0, MAX_DOCUMENTS_IN_PROMPT)) {
+  for (const root of getSessionRootDocuments({ documentIds }, conversations).filter((root) => !isHiddenFromAI(root)).slice(0, MAX_DOCUMENTS_IN_PROMPT)) {
     const preview = getDocumentPreview(root, 140);
     const line = `- ${root.title.trim() || "Untitled"}${preview && preview !== "No content yet" ? `: ${preview}` : ""}`;
     if (length + line.length + 1 > MAX_PROMPT_LENGTH) break;

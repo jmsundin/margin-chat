@@ -8,6 +8,7 @@ import {
   getStandaloneNote,
   getStandaloneNoteContextMessageId,
 } from "./standaloneNotes";
+import { isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import { getConversationPath } from "./tree";
 import { getCurrentDocumentText } from "./documentSources";
 import type { VaultFileContext } from "./vaultFileContext";
@@ -39,7 +40,11 @@ export function getConversationRequestPayload(
         conversation,
       ]
     : [conversation];
-  const ancestorContext = contextPath.slice(0, -1).map((ancestor, index) => {
+  // A document the user hid from AI is left out, with any passage quoted from it.
+  const visibleAnchor = (anchor: BranchAnchor | null) =>
+    anchor && isHiddenFromAI(conversations[anchor.sourceConversationId]) ? null : anchor;
+  const ancestorContext = contextPath.slice(0, -1).flatMap((ancestor, index) => {
+    if (isHiddenFromAI(ancestor)) return [];
     const descendant = contextPath[index + 1];
     const sourceMessageId =
       descendant?.branchAnchor?.sourceConversationId === ancestor.id
@@ -50,8 +55,8 @@ export function getConversationRequestPayload(
       : -1;
     const standaloneNote = getStandaloneNote(ancestor);
 
-    return {
-      branchAnchor: ancestor.branchAnchor,
+    return [{
+      branchAnchor: visibleAnchor(ancestor.branchAnchor),
       id: ancestor.id,
       messages: ancestor.document
         ? [{ content: documentContextText(ancestor), createdAt: ancestor.updatedAt, id: `document-context-${ancestor.id}`, role: "user" as const }]
@@ -68,12 +73,12 @@ export function getConversationRequestPayload(
           ? ancestor.messages.slice(0, sourceMessageIndex + 1)
           : ancestor.messages,
       title: ancestor.title,
-    };
+    }];
   });
 
   return {
     ancestorContext,
-    branchAnchor: conversation.branchAnchor,
+    branchAnchor: visibleAnchor(conversation.branchAnchor),
     documents: conversation.documents ?? [],
     id: conversation.id,
     parentId: conversation.parentId,

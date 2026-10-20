@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { AppState } from "../types";
-import { normalizeAISettings } from "@margin-chat/workspace-contracts";
+import { isHiddenFromAI, normalizeAISettings } from "@margin-chat/workspace-contracts";
 import { getStandaloneNote } from "./standaloneNotes";
 import { requestTopicExpansion } from "./topicExpansion";
 import { applyTopicExpansion } from "./graphWorkspaceEdits";
@@ -45,6 +45,10 @@ export function useTopicExpansion(options: Options) {
     const { state, userId } = latest.current;
     const conversation = state.conversations[conversationId];
     if (!conversation?.publicTopic) return;
+    if (isHiddenFromAI(conversation)) {
+      setError({ conversationId, message: "This topic is hidden from AI. Turn off “Hide from AI” in its menu to build a subgraph with AI." });
+      return;
+    }
     const controller = new AbortController();
     const operation = { controller, conversationId, userId };
     active.current = operation;

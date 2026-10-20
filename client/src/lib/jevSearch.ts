@@ -1,4 +1,5 @@
 import { apiFetch } from "./apiTransport";
+import { isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import type { Conversation } from "../types";
 import type { SearchFacet, SearchPassageResult } from "./searchExploration";
 import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
@@ -32,7 +33,7 @@ function primaryPassage(result: SearchPassageResult, conversations: Record<strin
   const { evidence } = result;
   if (result.localOnly || evidence.sourceKind === "annotation") return null;
   const conversation = conversations[evidence.conversationId];
-  if (!conversation) return null;
+  if (!conversation || isHiddenFromAI(conversation)) return null;
   let content: string | undefined;
   let role: "user" | "assistant" | undefined;
   if (conversation.document || evidence.sourceKind === "document") {
@@ -60,7 +61,7 @@ function primaryPassage(result: SearchPassageResult, conversations: Record<strin
 }
 
 function currentContext(conversation?: Conversation): JevSearchSnapshot["current"] {
-  if (!conversation) return undefined;
+  if (!conversation || isHiddenFromAI(conversation)) return undefined;
   const content = conversation.document ? getCurrentDocumentText(conversation) : conversation.kind === "note" ? getStandaloneNote(conversation)?.content ?? "" : conversation.messages
     .filter((message) => (message.role === "user" || message.role === "assistant") && !message.id.startsWith(CONTEXT_PREFIX))
     .slice(-4).map((message) => `${message.role}: ${message.content.slice(-800)}`).join("\n").slice(-800);

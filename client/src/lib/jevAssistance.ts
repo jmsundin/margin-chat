@@ -1,5 +1,5 @@
 import { apiFetch } from "./apiTransport";
-import { normalizeAISettings } from "@margin-chat/workspace-contracts";
+import { isHiddenFromAI, normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { AISettings, Conversation, ConversationGroup, ThreadCategoryId, ThreadSummary } from "../types";
 import { getStandaloneNote } from "./standaloneNotes";
 import { THREAD_CATEGORY_DEFINITIONS, getThreadCategoryLabel } from "./threadCategories";
@@ -67,10 +67,10 @@ function visibleContent(conversation: Conversation, limit = 1600) {
 /** Deliberately constructs a whitelist: no notes array, receipts, attachments or system messages. */
 export function buildJevWorkspaceSnapshot(conversations: Record<string, Conversation>, currentId: string, groups: Record<string, ConversationGroup> = {}): JevWorkspaceSnapshot | null {
   const current = conversations[currentId];
-  if (!current) return null;
+  if (!current || isHiddenFromAI(current)) return null;
   const assignedIds = new Set(Object.values(groups).flatMap((group) => group.conversationIds));
   const needsOrganization = (conversation: Conversation) => !assignedIds.has(conversation.id) && conversation.grouping !== "manual" && Boolean(visibleContent(conversation).trim());
-  const candidates = Object.values(conversations).sort((a, b) =>
+  const candidates = Object.values(conversations).filter((conversation) => !isHiddenFromAI(conversation)).sort((a, b) =>
     Number(b.id === currentId) - Number(a.id === currentId) || Number(needsOrganization(b)) - Number(needsOrganization(a)) || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id),
   ).slice(0, 40);
   // Preserve detailed excerpts for small workspaces without expanding the total allowance.
@@ -84,7 +84,7 @@ export function buildJevWorkspaceSnapshot(conversations: Record<string, Conversa
   items.sort((a, b) => a.id.localeCompare(b.id));
   const groupCandidates = Object.values(groups).sort((a, b) => a.id.localeCompare(b.id)).slice(0, 20).map((group) => ({
     id: group.id, name: group.name.trim().slice(0, 80),
-    memberTitles: [...group.conversationIds].sort().map((id) => conversations[id]).filter((item): item is Conversation => Boolean(item))
+    memberTitles: [...group.conversationIds].sort().map((id) => conversations[id]).filter((item): item is Conversation => Boolean(item) && !isHiddenFromAI(item))
       .slice(0, 2).map((item) => item.title.slice(0, 80)),
   }));
   return { items, current: { id: current.id, title: current.title.slice(0, 200), content: visibleContent(current) }, ...(groupCandidates.length ? { groups: groupCandidates } : {}) };

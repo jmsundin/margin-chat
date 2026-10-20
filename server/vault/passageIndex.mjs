@@ -105,9 +105,12 @@ export function createVaultPassageService({ database, env = process.env, vault =
     if (vaultFilesIndexedAt.has(userId) && vaultFilesIndexedAt.get(userId) === await vault.revision(userId)) return none;
     const { manifest } = await vault.snapshot(userId);
     const indexed = await database.listVaultFilePassageSources({ userId });
+    // A PDF whose document the user hid from AI is not read; its passages are forgotten.
+    const hidden = new Set(database.listAIHiddenIds ? await database.listAIHiddenIds({ userId }) : []);
     const current = new Map();
     for (const [path, entry] of Object.entries(manifest.files)) {
       if (entry.deleted || vaultFileKind(path) !== "pdf" || !isVaultFileDocumentPath(path)) continue;
+      if (hidden.has(vaultFileDocumentId(path))) continue;
       current.set(vaultFileDocumentId(path), { path, revision: entry.revision, size: Number.isSafeInteger(entry.size) ? entry.size : 0 });
     }
     const gone = [...indexed.keys()].filter((id) => !current.has(id));

@@ -22,7 +22,7 @@ const INSTRUCTIONS = [
   "Margin Chat holds the user's documents, notes, chats, PDFs and the map of how they connect.",
   "Use search_vault to find material by words or meaning, read_document to read one by its document_id,",
   "and list_related to see its parent, children, typed relations and links.",
-  "Private margin comments are never included.",
+  "Private margin comments and documents the user hid from AI are never included.",
 ].join(" ");
 const READ_ONLY_NOTE = "This connection is read-only.";
 const WRITE_NOTE = "With create_document and append_to_document you can add to the vault; existing text is never changed or deleted. Search before creating, so you don't duplicate a document that already exists.";

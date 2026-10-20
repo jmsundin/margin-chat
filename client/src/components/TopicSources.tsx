@@ -68,6 +68,8 @@ export interface MapSourceNote {
   title: string;
   content: string;
   topic?: PublicTopic;
+  /** The user hid this note from AI: nothing about it may be asked. */
+  hiddenFromAI?: boolean;
 }
 
 /**
@@ -234,7 +236,8 @@ export function PrivateAskSection({ account, note, onSaveAnswer }: {
 
   return <section className="public-answers" aria-label={`Ask AI about ${note.title}`}>
     <h4>Ask AI</h4>
-    {account.canAsk ? <form className="public-ask" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
+    {note.hiddenFromAI ? <p className="public-map-muted">This note is hidden from AI. Turn off “Hide from AI” in its menu to ask about it.</p>
+    : account.canAsk ? <form className="public-ask" onSubmit={(event) => { event.preventDefault(); void ask(); }}>
       <label htmlFor={`private-ask-${note.id}`}>Ask AI about {note.title}</label>
       <textarea id={`private-ask-${note.id}`} value={question} maxLength={500} rows={2} disabled={!!asking} placeholder={`What would you like to know about ${note.title}?`}
         onChange={(event) => setQuestion(event.target.value)}

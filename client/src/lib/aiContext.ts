@@ -1,4 +1,4 @@
-import { normalizeAISettings } from "@margin-chat/workspace-contracts";
+import { isHiddenFromAI, normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { Conversation, Message } from "../types";
 import { getStandaloneNote } from "./standaloneNotes";
 import { getCurrentDocumentText } from "./documentSources";
@@ -18,9 +18,10 @@ export function prepareAIContext(conversations: Record<string, Conversation>, co
   const query = [...messages].reverse().find((message) => message.role === "user")?.content ?? "";
   const terms = [...new Set(query.toLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? [])];
   const selected = new Set(ai.selectedConversationIds);
-  // Only primary standalone notes are AI-visible. Comments and side notes never enter ranking.
+  // Only primary standalone notes are AI-visible. Comments, side notes and
+  // documents the user hid from AI never enter ranking, even when selected.
   const candidates = Object.values(conversations)
-    .filter((candidate) => candidate.id !== conversation.id && (ai.contextScope === "workspace" || selected.has(candidate.id)))
+    .filter((candidate) => candidate.id !== conversation.id && !isHiddenFromAI(candidate) && (ai.contextScope === "workspace" || selected.has(candidate.id)))
     .map((candidate) => {
       const content = candidate.document ? getCurrentDocumentText(candidate) : candidate.kind === "note" ? getStandaloneNote(candidate)?.content ?? "" : undefined;
       const visibleMessages = candidate.document || candidate.kind === "note" ? [] : candidate.messages.filter((message) => message.role !== "system");

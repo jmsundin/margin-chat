@@ -100,6 +100,11 @@
       "id": "0020_meta_muse_wonder",
       "file": "0020_meta_muse_wonder.sql",
       "transaction": true
+    },
+    {
+      "id": "0021_ai_hidden_documents",
+      "file": "0021_ai_hidden_documents.sql",
+      "transaction": true
     }
   ]
 }

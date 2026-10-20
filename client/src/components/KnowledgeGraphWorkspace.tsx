@@ -332,6 +332,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     id: sourceConversation.id, title: sourceConversation.title,
     content: getStandaloneNote(sourceConversation)?.content ?? "",
     topic: sourceConversation.publicTopic,
+    ...(sourceConversation.hiddenFromAI ? { hiddenFromAI: true } : {}),
   } : null, [sourceConversation]);
   const previewItem = selectedPreview ? exploration.items[selectedPreview] : undefined;
   const onMapIds = useMemo(() => Object.values(exploration.items).filter((item) => item.onMap).map((item) => item.id), [exploration]);

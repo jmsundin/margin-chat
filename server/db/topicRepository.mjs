@@ -22,7 +22,7 @@ const SOURCES = `
             order by created_at, id limit 6) m), '')
       end, $2) as body
     from marginchat_conversations c
-    where c.session_id = $1
+    where c.session_id = $1 and not c.ai_hidden
   )
   select id, title, body, md5(title || E'\\n' || body) as content_hash
   from sources
@@ -76,14 +76,14 @@ export async function saveTopicEmbeddings(client, { userId, model, embeddings })
 
 /**
  * Embeddings of documents that still exist, changed after `since` when given.
- * Embeddings of deleted documents are removed on the way.
+ * Embeddings of deleted documents, and of documents hidden from AI, are removed on the way.
  */
 export async function readTopicEmbeddings(client, { userId, model, since }) {
   const sessionId = await sessionIdFor(client, userId);
   if (!sessionId) return { embeddings: [], cursor: null };
   await client.query(
     `delete from marginchat_topic_embeddings e
-     where e.session_id = $1 and not exists (select 1 from marginchat_conversations c where c.id = e.conversation_id)`,
+     where e.session_id = $1 and not exists (select 1 from marginchat_conversations c where c.id = e.conversation_id and not c.ai_hidden)`,
     [sessionId],
   );
   const rows = (await client.query(

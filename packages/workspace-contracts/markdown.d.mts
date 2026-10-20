@@ -57,6 +57,8 @@ export interface MarkdownVaultFileSummary {
   created?: string;
   updated?: string;
   aliases?: string[];
+  /** Frontmatter `hide-from-ai: true`: no AI or connected app may read it. */
+  hiddenFromAI?: true;
   parentTarget: string | null;
   linkedTargets: string[];
 }
@@ -68,6 +70,7 @@ export interface MarkdownVaultIndexEntry {
   title: string;
   created?: string;
   updated?: string;
+  hiddenFromAI?: true;
   /** The conversation this file belongs under: a branch's parent or a note's document. */
   parentPath?: string;
   linkedPaths?: string[];

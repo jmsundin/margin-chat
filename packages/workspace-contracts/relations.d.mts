@@ -27,7 +27,10 @@ export function readDocumentGraphProperties(values: Record<string, unknown>): {
   edgeMeta: Record<string, unknown>;
   nodeType?: string;
   tags: string[];
+  hiddenFromAI?: true;
 };
 export function extractMarkdownWikiLinks(markdown: string): MarkdownWikiLink[];
 export function normalizeConversationGraphFields(input: unknown, conversationId: string, conversations?: Record<string, Conversation>):
-  Pick<Conversation, "relations" | "nodeType" | "tags">;
+  Pick<Conversation, "relations" | "nodeType" | "tags" | "hiddenFromAI">;
+export const HIDE_FROM_AI_KEY: "hide-from-ai";
+export function isHiddenFromAI(conversation: Pick<Conversation, "hiddenFromAI"> | null | undefined): boolean;

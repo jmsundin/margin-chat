@@ -139,6 +139,13 @@ export function readDocumentRelationMetadata(value) {
     };
 }
 
+/** Frontmatter property that keeps a document out of every AI request and connected app. */
+export const HIDE_FROM_AI_KEY = "hide-from-ai";
+
+function isHiddenFromAIValue(value) {
+    return value === true || (typeof value === "string" && /^(?:true|yes)$/iu.test(value.trim()));
+}
+
 /**
  * The graph properties of one file's frontmatter values: node type, tags,
  * relation targets (unresolved link text), and edge attributes.
@@ -155,7 +162,8 @@ export function readDocumentGraphProperties(values) {
     const edgeMeta = values[EDGE_META_KEY] && typeof values[EDGE_META_KEY] === "object" && !Array.isArray(values[EDGE_META_KEY]) ? values[EDGE_META_KEY] : {};
     const nodeType = normalizeDocumentNodeType(values.type);
     const tags = normalizeDocumentTags(values.tags);
-    return { relationTargets, edgeMeta, ...(nodeType ? { nodeType } : {}), tags };
+    const hiddenFromAI = isHiddenFromAIValue(values[HIDE_FROM_AI_KEY]);
+    return { relationTargets, edgeMeta, ...(nodeType ? { nodeType } : {}), tags, ...(hiddenFromAI ? { hiddenFromAI } : {}) };
 }
 
 /**
@@ -184,5 +192,11 @@ export function normalizeConversationGraphFields(input, conversationId, conversa
     const relations = normalizeDocumentRelations(input?.relations, conversationId, conversations);
     const nodeType = normalizeDocumentNodeType(input?.nodeType);
     const tags = normalizeDocumentTags(input?.tags);
-    return { ...(relations?.length ? { relations } : {}), ...(nodeType ? { nodeType } : {}), ...(tags.length ? { tags } : {}) };
+    return { ...(relations?.length ? { relations } : {}), ...(nodeType ? { nodeType } : {}), ...(tags.length ? { tags } : {}),
+        ...(input?.hiddenFromAI === true ? { hiddenFromAI: true } : {}) };
+}
+
+/** Whether the user keeps this document away from AI models and connected apps. */
+export function isHiddenFromAI(conversation) {
+    return conversation?.hiddenFromAI === true;
 }

@@ -417,6 +417,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     listStalePassageSources: (args) => withClient((client) => passages.listStalePassageSources(client, args)),
     listStaleFilePassageSources: (args) => withClient((client) => passages.listStaleFilePassageSources(client, args)),
     deleteMissingPassageSources: (args) => withClient((client) => passages.deleteMissingPassageSources(client, args)),
+    listAIHiddenIds: (args) => withClient((client) => passages.listAIHiddenIds(client, args)),
     listVaultFilePassageSources: (args) => withClient((client) => passages.listVaultFilePassageSources(client, args)),
     deleteVaultFilePassageSources: (args) => withClient((client) => passages.deleteVaultFilePassageSources(client, args)),
     replacePassageSources: (args) => withClient((client) => passages.replacePassageSources(client, args)),
