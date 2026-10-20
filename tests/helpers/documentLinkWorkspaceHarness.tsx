@@ -108,6 +108,9 @@ async function settle() {
 async function click(target: any) { await act(async () => target.click()); await settle(); }
 /** Go to a document through the breadcrumb level that lists it. */
 async function openFromBreadcrumbs(id: string) {
+  // On phones the path sits in the header drop-down, closed until its title row is tapped.
+  const phoneHeader = browser.document.querySelector('.document-header-title[aria-expanded="false"]');
+  if (phoneHeader) await click(phoneHeader);
   for (const trigger of [...browser.document.querySelectorAll(".document-breadcrumb-trigger")] as any[]) {
     await click(trigger);
     const row = browser.document.querySelector(`.document-breadcrumb-menu [data-breadcrumb-document-id="${id}"]`);
