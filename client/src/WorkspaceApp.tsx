@@ -3837,7 +3837,10 @@ function WorkspaceAppContent({
     }
     setDocumentFocusSequence((sequence) => sequence + 1);
     setSelectionDraft(null);
-    window.getSelection()?.removeAllRanges();
+    // A caret in the editor you're typing in stays (clicking a highlight there opens its document); selected text clears.
+    const selection = window.getSelection();
+    const active = window.document.activeElement;
+    if (!(selection?.isCollapsed && active instanceof HTMLElement && active.isContentEditable && selection.anchorNode && active.contains(selection.anchorNode))) selection?.removeAllRanges();
     setMainViewMode(
       getConversationSelectionViewMode({
         currentViewMode: mainViewMode,
