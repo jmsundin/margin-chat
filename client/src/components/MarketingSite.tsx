@@ -97,11 +97,12 @@ export default function MarketingSite({ page, signedIn, onNavigate, downloadLink
 
 function Logo() {
   return (
-    <svg width="28" height="28" viewBox="0 0 512 512" aria-hidden="true">
-      <rect width="512" height="512" rx="110" fill="#f4ecdf" />
-      <path d="M147 158h106v89h-48v105h-58z" fill="#a94b32" />
-      <path d="M253 202h62v150h-62z" fill="#2e5947" />
-      <path d="M303 274h62v78h-62z" fill="#2e5947" />
+    <svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true">
+      <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="#0b1318" stroke="rgba(224, 236, 230, 0.22)" />
+      <path d="M14 42V26a9 9 0 0 1 18 0v16M32 26a9 9 0 0 1 18 0v16" fill="none" stroke="#ecf4ef" strokeWidth="4.5" strokeLinecap="round" />
+      <circle cx="14" cy="42" r="5.5" fill="#7acaa4" />
+      <circle cx="32" cy="42" r="5.5" fill="#c9b8ff" />
+      <circle cx="50" cy="42" r="5.5" fill="#ff8d6d" />
     </svg>
   );
 }
