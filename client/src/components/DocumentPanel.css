@@ -26,6 +26,7 @@
 .document-header-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; margin-left: auto; }
 .document-panel .document-header-actions > :is(.document-menu-trigger, .document-presentation-toggle) { margin: 0; width: 28px; height: 28px; flex: 0 0 28px; }
 .document-panel .document-header-actions > .document-margin-notes-toggle { margin-top: 0; }
+.document-ai-hidden { flex: none; font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
 .document-origin { display:flex; align-items:center; gap:12px; font-size:12px; color:var(--muted); min-width: 0; }
 .document-origin span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .document-panel button { cursor:pointer; font:inherit; }

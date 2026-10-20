@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import type { Conversation } from "../types";
 import { requestClusterLabel } from "./api";
 import { getDocumentPreview } from "./documentSources";
@@ -48,7 +49,7 @@ export function buildClusterLabelPrompt(cluster: Pick<GravityCluster, "memberIds
   let length = 0;
   for (const id of cluster.memberIds.slice(0, MAX_MEMBERS_IN_PROMPT)) {
     const conversation = conversations[id];
-    if (!conversation) continue;
+    if (!conversation || isHiddenFromAI(conversation)) continue;
     const preview = getDocumentPreview(conversation, 160);
     const line = `- ${conversation.title.trim() || "Untitled"}${preview && preview !== "No content yet" ? `: ${preview}` : ""}`;
     if (length + line.length + 1 > MAX_PROMPT_LENGTH) break;

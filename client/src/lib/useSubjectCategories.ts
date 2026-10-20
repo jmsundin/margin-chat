@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import type { Conversation } from "../types";
 import { requestClusterCategories } from "./api";
 import type { SubjectCluster } from "./gravityClusters";
@@ -71,7 +72,7 @@ export function buildCategoriesPrompt(clusters: Array<Pick<SubjectCluster, "memb
   let length = 0;
   clusters.forEach((cluster, index) => {
     const titles = cluster.memberIds.slice(0, TITLES_PER_CLUSTER * 2)
-      .map((id) => conversations[id]?.title.trim().replace(/\s+/gu, " ").slice(0, MAX_TITLE_LENGTH))
+      .map((id) => isHiddenFromAI(conversations[id]) ? undefined : conversations[id]?.title.trim().replace(/\s+/gu, " ").slice(0, MAX_TITLE_LENGTH))
       .filter((title): title is string => !!title && !/^untitled/iu.test(title)).slice(0, TITLES_PER_CLUSTER);
     const before = previous.get(index);
     const line = `C${index + 1} (${cluster.memberIds.length} docs): ${titles.join("; ") || "Untitled documents"}${before ? ` [was: ${before}]` : ""}`;

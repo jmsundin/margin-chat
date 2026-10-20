@@ -35,7 +35,7 @@ const AGENT_PASSAGE_QUERIES = {
     select c.id as conversation_id, c.title, c.updated_at,
       jsonb_path_query_array(c.editable_document, '$.blocks[*].content') as contents
     from marginchat_conversations c
-    where c.session_id = $1 and c.editable_document is not null
+    where c.session_id = $1 and not c.ai_hidden and c.editable_document is not null
       and jsonb_path_query_array(c.editable_document, '$.blocks[*].content')::text ilike all ($2::text[])
     order by c.updated_at desc, c.id
     limit $3`,
@@ -43,7 +43,7 @@ const AGENT_PASSAGE_QUERIES = {
     select m.conversation_id, c.title, m.created_at as updated_at, m.content
     from marginchat_messages m
     join marginchat_conversations c on c.id = m.conversation_id
-    where c.session_id = $1 and c.editable_document is null and c.conversation_kind = 'chat'
+    where c.session_id = $1 and not c.ai_hidden and c.editable_document is null and c.conversation_kind = 'chat'
       and m.role <> 'system' and m.content ilike all ($2::text[])
     order by m.created_at desc, m.id
     limit $3`,
@@ -51,7 +51,7 @@ const AGENT_PASSAGE_QUERIES = {
     select n.conversation_id, c.title, n.updated_at, n.content
     from marginchat_conversation_notes n
     join marginchat_conversations c on c.id = n.conversation_id
-    where c.session_id = $1 and c.editable_document is null and c.conversation_kind = 'note'
+    where c.session_id = $1 and not c.ai_hidden and c.editable_document is null and c.conversation_kind = 'note'
       and n.note_kind = 'standalone' and n.content ilike all ($2::text[])
     order by n.updated_at desc, n.id
     limit $3`,
@@ -105,7 +105,7 @@ export async function readAgentConversation(client, { userId, conversationId, me
   const storedId = toWorkspaceEntityId(sessionId, conversationId);
   const found = await client.query(
     `select title, conversation_kind, parent_id, editable_document, updated_at
-     from marginchat_conversations where session_id = $1 and id = $2`,
+     from marginchat_conversations where session_id = $1 and id = $2 and not ai_hidden`,
     [sessionId, storedId],
   );
   if (!found.rowCount) return null;

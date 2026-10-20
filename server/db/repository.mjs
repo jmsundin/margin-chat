@@ -80,6 +80,7 @@ async function readWorkspaceSnapshot(client, userId) {
         grouping_mode,
         editable_document,
         document_layout,
+        ai_hidden,
         created_at,
         updated_at
       from marginchat_conversations
@@ -189,6 +190,7 @@ async function readWorkspaceSnapshot(client, userId) {
       ...(row.editable_document ? { document: row.editable_document } : {}),
       ...(row.document_layout ? { documentLayout: row.document_layout } : {}),
       ...(row.grouping_mode ? { grouping: row.grouping_mode } : {}),
+      ...(row.ai_hidden ? { hiddenFromAI: true } : {}),
     };
   }
 
@@ -531,9 +533,10 @@ export async function writeState(
             editable_document,
             document_layout,
             created_at,
-            updated_at
+            updated_at,
+            ai_hidden
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
           on conflict (id) do update set
             session_id = excluded.session_id,
             title = excluded.title,
@@ -546,7 +549,8 @@ export async function writeState(
             editable_document = excluded.editable_document,
             document_layout = excluded.document_layout,
             created_at = excluded.created_at,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            ai_hidden = excluded.ai_hidden
         `,
         [
           toStorageId(conversation.id),
@@ -562,6 +566,7 @@ export async function writeState(
           conversation.documentLayout ?? null,
           conversation.createdAt,
           conversation.updatedAt,
+          conversation.hiddenFromAI === true,
         ],
       );
     }

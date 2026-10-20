@@ -1,3 +1,4 @@
+import { isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import type { Conversation, VaultFileReference } from "../types";
 import type { VaultMedia } from "./vaultMedia";
 import { getConversationPath } from "./tree";
@@ -28,6 +29,8 @@ export function nearestVaultFile(conversations: Record<string, Conversation>, co
   for (let index = path.length - 1; index >= 0; index -= 1) {
     const file = path[index].vaultFile;
     if (!file) continue;
+    // A PDF or image the user hid from AI is never read for it.
+    if (isHiddenFromAI(path[index])) return null;
     // A passage selected on a PDF page, by this conversation or the branch between.
     const anchored = path.slice(index + 1).find((item) => item.branchAnchor?.sourceConversationId === path[index].id);
     const page = pdfPageFromSourceId(anchored?.branchAnchor?.sourceMessageId);

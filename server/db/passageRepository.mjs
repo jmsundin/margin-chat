@@ -17,7 +17,7 @@ const STALE_CONVERSATIONS = `
     from marginchat_conversations c
     left join marginchat_vault_passage_sources s
       on s.session_id = $1 and s.source_kind = 'conversation' and s.source_id = c.id
-    where c.session_id = $1 and s.fingerprint is distinct from c.xmin::text
+    where c.session_id = $1 and not c.ai_hidden and s.fingerprint is distinct from c.xmin::text
     order by c.updated_at desc, c.id
     limit $2
   ), texts as (
@@ -135,18 +135,30 @@ export async function deleteVaultFilePassageSources(client, { userId, ids }) {
   );
 }
 
-/** Forgets passages of documents and files that no longer exist. */
+/** Forgets passages of documents and files that no longer exist, or that the user hid from AI. */
 export async function deleteMissingPassageSources(client, { userId }) {
   const sessionId = await sessionIdFor(client, userId);
   if (!sessionId) return;
   await client.query(
     `delete from marginchat_vault_passage_sources s
      where s.session_id = $1 and (
-       (s.source_kind = 'conversation' and not exists (select 1 from marginchat_conversations c where c.id = s.source_id))
+       (s.source_kind = 'conversation' and not exists (select 1 from marginchat_conversations c where c.id = s.source_id and not c.ai_hidden))
+       -- A vault PDF's passages carry the ID of the document that shows it.
+       or (s.source_kind = 'vault-file' and exists (select 1 from marginchat_conversations c
+         where c.session_id = $1 and c.ai_hidden and c.id = $3 || s.source_id))
        or (s.source_kind = 'attachment' and not exists (
          select 1 from marginchat_documents d where d.user_id = $2 and coalesce(d.public_id, d.id) = s.source_id)))`,
-    [sessionId, userId],
+    [sessionId, userId, toWorkspaceEntityId(sessionId, "")],
   );
+}
+
+/** The documents the user hid from AI, by their IDs in the app. */
+export async function listAIHiddenIds(client, { userId }) {
+  const sessionId = await sessionIdFor(client, userId);
+  if (!sessionId) return [];
+  const rows = (await client.query(
+    "select id from marginchat_conversations where session_id = $1 and ai_hidden", [sessionId])).rows;
+  return rows.map((row) => fromWorkspaceEntityId(sessionId, row.id));
 }
 
 const storedSourceId = (sessionId, source) => source.kind === "conversation" ? toWorkspaceEntityId(sessionId, source.id) : source.id;
@@ -347,6 +359,10 @@ const SEARCH = `
     on p.session_id = $1 and p.source_kind = f.source_kind and p.source_id = f.source_id and p.content_hash = f.content_hash
   join marginchat_vault_passage_sources src
     on src.session_id = $1 and src.source_kind = f.source_kind and src.source_id = f.source_id
+  -- Passages of a document hidden from AI since they were indexed are never returned.
+  where not exists (select 1 from marginchat_conversations hidden
+    where hidden.session_id = $1 and hidden.ai_hidden and hidden.id = case
+      when f.source_kind = 'conversation' then f.source_id when f.source_kind = 'vault-file' then $8 || f.source_id end)
   order by f.score desc, f.semantic_rank nulls last, f.keyword_rank nulls last
   limit $7`;
 
@@ -377,7 +393,7 @@ export async function searchPassages(client, { userId, keywords, embedding, mode
         await client.query("rollback to savepoint vector_settings");
       }
     }
-    return (await client.query(SEARCH, [sessionId, keywords ?? "", vector, candidates, stored, model, limit])).rows;
+    return (await client.query(SEARCH, [sessionId, keywords ?? "", vector, candidates, stored, model, limit, toWorkspaceEntityId(sessionId, "")])).rows;
   });
   return rows.map((row) => ({
     sourceKind: row.source_kind,

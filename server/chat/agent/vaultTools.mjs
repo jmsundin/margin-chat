@@ -14,7 +14,7 @@ const documentId = { document_id: { type: "string", description: "Exact document
 export const VAULT_TOOL_DEFINITIONS = [
   {
     name: "search_vault",
-    description: "Search the user's saved documents, notes, chats, uploaded files and PDFs in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Private margin comments are never searched.",
+    description: "Search the user's saved documents, notes, chats, uploaded files and PDFs in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Private margin comments and documents the user hid from AI are never searched.",
     parameters: { type: "object", properties: { query: { type: "string", description: "A few keywords or a short phrase." } }, required: ["query"], additionalProperties: false },
   },
   {
@@ -73,12 +73,21 @@ function linkAliases(path) {
  * carries edits that may not be saved yet. `readCharacters` caps one document's text.
  */
 export function createVaultTools({ chatRequest, workspace, snapshots, readCharacters }) {
-  const permits = vaultToolAccess(chatRequest, workspace);
-  if (!permits) return null;
+  const allowed = vaultToolAccess(chatRequest, workspace);
+  if (!allowed) return null;
   const { userId, vault, database } = workspace;
   let indexed;
   // Margin comments are their own files in the vault; only documents, notes and chats are listed.
   const entries = () => (indexed ??= vault.index(userId).then((index) => index.entries.filter((entry) => entry.type === "conversation")));
+  // Documents the user hid from AI, by their file's frontmatter and by the saved
+  // copy, so a document just hidden on another device is left out either way.
+  let hiddenIds = new Set();
+  let hiddenLoaded;
+  const loadHidden = () => (hiddenLoaded ??= Promise.all([
+    entries().then((listed) => listed.filter((entry) => entry.hiddenFromAI).map((entry) => entry.id)),
+    database?.listAIHiddenIds ? database.listAIHiddenIds({ userId }) : [],
+  ]).then(([listed, stored]) => { hiddenIds = new Set([...listed, ...stored]); }));
+  const permits = (id) => allowed(id) && !hiddenIds.has(id);
   const summary = (entry, extra) => ({ document_id: entry.id, title: entry.title, kind: entry.kind, updated_at: entry.updated ?? entry.created ?? null, ...extra });
 
   /** The vault's passage index, best passage per document; null when it can't be searched. */
@@ -99,6 +108,7 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
   }
 
   async function search(args) {
+    await loadHidden();
     const query = String(args.query ?? "").trim();
     const terms = vaultSearchTerms(query);
     if (!terms.length) return { query, results: [], total_matches: 0, truncated: false };
@@ -155,6 +165,7 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
   }
 
   async function read(args) {
+    await loadHidden();
     const id = String(args.document_id ?? "");
     if (!permits(id)) return outside(id);
     const local = snapshots.get(id);
@@ -209,6 +220,7 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
   }
 
   async function related(args) {
+    await loadHidden();
     const id = String(args.document_id ?? "");
     if (!permits(id)) return outside(id);
     const listed = await entries();

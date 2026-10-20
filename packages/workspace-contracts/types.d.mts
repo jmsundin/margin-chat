@@ -394,6 +394,9 @@ export interface Conversation {
   nodeType?: string;
   /** The document's own tags from frontmatter, without Margin Chat's reserved tags. */
   tags?: string[];
+  /** The user keeps this document out of AI context, Agent tools, search by
+   * meaning and connected apps. Written as frontmatter `hide-from-ai: true`. */
+  hiddenFromAI?: boolean;
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   documents?: ConversationDocument[];
