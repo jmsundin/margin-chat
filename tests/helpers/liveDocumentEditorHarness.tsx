@@ -148,6 +148,16 @@ await act(async () => { setBlocks(latest.map((item) => item.id === "intro" ? { .
 assert.ok(text().startsWith("# Plan for Q4\n\n"));
 assert.equal(changes.length, outsideCount, "outside updates are not saved back as edits");
 
+// An AI answer mid-stream with a code fence it hasn't closed yet keeps Live Preview on, then and after.
+const styled = () => !!container.querySelector(".cm-lp-strong") && !container.querySelector(".cm-content")?.textContent?.includes("**");
+assert.ok(styled(), "bold is styled before streaming");
+await act(async () => { setBlocks([...latest, block("streaming", "```python\ndef shard_for(user_id):", { authorship: "ai" })]); });
+assert.ok(styled(), "an open code fence doesn't turn Live Preview off");
+await act(async () => { setBlocks(latest.map((item) => item.id === "streaming" ? { ...item, content: "```python\ndef shard_for(user_id):\n    return 0\n```" } : item)); });
+assert.ok(styled(), "Live Preview stays on once the answer finishes");
+await act(async () => { setBlocks([...latest, block("math", "Pick a shard:\n$$\nhash(k) \\bmod N\n$$", { authorship: "ai" })]); });
+assert.ok(styled(), "display math written over several lines doesn't break Live Preview");
+
 // ⌘E switches to Reading, which can't be edited.
 await key("e", { ctrlKey: true });
 assert.equal(container.querySelector(".live-document-editor")?.getAttribute("data-mode"), "reading");
