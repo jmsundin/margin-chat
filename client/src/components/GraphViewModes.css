@@ -36,24 +36,24 @@
 .graph-map-view-options-active { font-size: .76rem; white-space: nowrap; }
 .public-map-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (max-width: 760px) {
-  /* Phones get three short rows: map switcher and history, search and menus, then views. */
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) { gap: 4px 6px; padding: 6px 8px; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::before,
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::after { content: ""; flex: 0 0 100%; height: 0; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::before { order: 5; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar)::after { order: 15; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .knowledge-map-switcher { order: 0; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(.graph-map-history, .public-map-history) { order: 1; margin-right: auto; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .knowledge-map-add { order: 2; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(.graph-map-search, .public-map-search) { order: 10; flex: 1 1 120px; min-width: 0; width: auto; margin: 0; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(button:not(.graph-map-all-groups):not(.public-map-all-groups), .graph-map-view-options, .graph-map-filters, .public-map-filters) { order: 11; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > :is(.graph-map-all-groups, .public-map-all-groups) { order: 20; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .graph-view-mode-tabs { order: 21; flex: 1 1 0%; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) > .graph-map-scope { order: 30; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .graph-view-mode-tabs button { flex: 1 0 auto; min-height: 36px; padding: 4px 8px; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) :is(button, input, summary) { min-height: 36px; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .knowledge-map-switcher > div button { padding: 5px 8px; }
-  :is(.semantic-map .graph-map-navigation, .semantic-public-map .public-map-topbar) .knowledge-map-switcher > div { margin-right: 0; }
+  /* The public map gets three short rows on phones: history, search and menus, then views. The personal map has one row (GraphSemanticMap.css). */
+  .semantic-public-map .public-map-topbar { gap: 4px 6px; padding: 6px 8px; }
+  .semantic-public-map .public-map-topbar::before,
+  .semantic-public-map .public-map-topbar::after { content: ""; flex: 0 0 100%; height: 0; }
+  .semantic-public-map .public-map-topbar::before { order: 5; }
+  .semantic-public-map .public-map-topbar::after { order: 15; }
+  .semantic-public-map .public-map-topbar > .knowledge-map-switcher { order: 0; }
+  .semantic-public-map .public-map-topbar > .public-map-history { order: 1; margin-right: auto; }
+  .semantic-public-map .public-map-topbar > .knowledge-map-add { order: 2; }
+  .semantic-public-map .public-map-topbar > .public-map-search { order: 10; flex: 1 1 120px; min-width: 0; width: auto; margin: 0; }
+  .semantic-public-map .public-map-topbar > :is(button:not(.public-map-all-groups), .graph-map-view-options, .public-map-filters) { order: 11; }
+  .semantic-public-map .public-map-topbar > .public-map-all-groups { order: 20; }
+  .semantic-public-map .public-map-topbar > .graph-view-mode-tabs { order: 21; flex: 1 1 0%; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .semantic-public-map .public-map-topbar > .graph-map-scope { order: 30; }
+  .semantic-public-map .public-map-topbar .graph-view-mode-tabs button { flex: 1 0 auto; min-height: 36px; padding: 4px 8px; }
+  .semantic-public-map .public-map-topbar :is(button, input, summary) { min-height: 36px; }
+  .semantic-public-map .public-map-topbar .knowledge-map-switcher > div button { padding: 5px 8px; }
+  .semantic-public-map .public-map-topbar .knowledge-map-switcher > div { margin-right: 0; }
   .graph-view-mode-select { flex: 1; }
   .graph-view-mode-select select { flex: 1; min-width: 0; }
 }

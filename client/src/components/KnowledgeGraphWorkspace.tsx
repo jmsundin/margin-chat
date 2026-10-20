@@ -352,7 +352,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
       if (event.key !== "Escape") return;
       event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus();
     }}>
-      <summary aria-label="Add to map">+ Add</summary>
+      <summary aria-label="Add to map" title="Add to map"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg></summary>
       <div>
         <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onCreateMapNote({}); }}>New note</button>
         {onAddTopicConnections && publicMapAccount ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); openSources("add"); }}>From Wikipedia</button> : null}
