@@ -78,7 +78,7 @@ export default function AgentConnectionsPanel() {
   }
 
   const claudeCommand = created
-    ? `claude mcp add --transport http margin-chat ${endpoint} --header "Authorization: Bearer ${created.token}"`
+    ? `claude mcp add --scope user --transport http margin-chat ${endpoint} --header "Authorization: Bearer ${created.token}"`
     : "";
   const clientConfig = created
     ? JSON.stringify({ mcpServers: { "margin-chat": { type: "http", url: endpoint, headers: { Authorization: `Bearer ${created.token}` } } } }, null, 2)
@@ -145,7 +145,7 @@ export default function AgentConnectionsPanel() {
             <code>{claudeCommand}</code>
             <CopyButton text={claudeCommand} />
           </div>
-          <span className="thread-dialog-label">Other MCP clients (Cursor, VS Code and more)</span>
+          <span className="thread-dialog-label">Cursor and other MCP clients</span>
           <div className="agent-token-code">
             <pre>{clientConfig}</pre>
             <CopyButton text={clientConfig} />
@@ -185,7 +185,8 @@ export default function AgentConnectionsPanel() {
 
       <p className="thread-dialog-copy">
         Server address: <code>{endpoint}</code>. To connect ChatGPT or Claude.ai, add a custom connector with this
-        address. You'll be asked to sign in and approve it here, with no token to copy.
+        address. You'll be asked to sign in and approve it here, with no token to copy.{" "}
+        <a href="https://www.marginchat.com/connect" rel="noreferrer" target="_blank">Step-by-step guides for each app</a>
       </p>
     </>
   );

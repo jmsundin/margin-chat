@@ -4,7 +4,7 @@
 
 ## Set it up
 
-1. In Margin Chat, open **Settings → Agents** and make a token named "Claude Code" with **Can create documents and add to them** ticked. If you already added Margin Chat with `claude mcp add … --header "Authorization: Bearer mc_mcp_…"`, the installer reuses that token, so you can skip this step.
+1. In Margin Chat, open **Profile → Agents** and make a token named "Claude Code" with **Can create documents and add to them** ticked. If you already added Margin Chat with `claude mcp add … --header "Authorization: Bearer mc_mcp_…"`, the installer reuses that token, so you can skip this step.
 2. From your Margin Chat checkout, run:
 
    ```sh
@@ -38,6 +38,6 @@ Set `MARGIN_CHAT_AUTOSAVE=0` to skip saving for a session. `MARGIN_CHAT_TOKEN` a
 node ~/.claude/margin-chat-autosave/autosave.mjs uninstall
 ```
 
-This removes the hook. Delete `~/.claude/margin-chat-autosave/` and revoke the token in **Settings → Agents** to remove everything.
+This removes the hook. Delete `~/.claude/margin-chat-autosave/` and revoke the token in **Profile → Agents** to remove everything.
 
 Tests: `bun --no-env-file test tests/claude-code-autosave.test.ts`.
