@@ -473,7 +473,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
             onRetract: async () => { await ensureReady(); await handlers.onRetract?.(); },
             onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); },
             onThinking: async (delta) => { await ensureReady(); await handlers.onThinking?.(delta); },
-            onActivity: async (activity) => { await ensureReady(); await handlers.onActivity?.(activity); },
+            onActivity: async (activity, details) => { await ensureReady(); await handlers.onActivity?.(activity, details); },
             ...(chatRequest.acceptsDocuments && handlers.onDocuments ? {
               onDocuments: async (documents) => { await ensureReady(); await handlers.onDocuments(documents); },
             } : {}),

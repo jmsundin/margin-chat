@@ -15,6 +15,10 @@ export interface ChatReplyResponse {
   reply: string;
 }
 
+/** What the agent is doing right now: a model call thinking, a web search, a tool running, or the answer being written. */
+export type AgentActivity = "thinking" | "searching" | "tool" | "writing";
+const AGENT_ACTIVITIES: AgentActivity[] = ["thinking", "searching", "tool", "writing"];
+
 /**
  * Live agent progress: a finished step (with the run's settled spend so far when
  * it is metered), a piece of the model's thinking as it streams, the model
@@ -26,7 +30,7 @@ export type AgentEvent =
   | { type: "retract" }
   | { type: "documents"; documents: ImportedWebDocument[] }
   | { type: "thinking"; delta: string }
-  | { type: "activity"; activity: "writing" | "searching" };
+  | { type: "activity"; activity: AgentActivity; label?: string };
 
 /** A page the agent saved with import_webpage, for the browser to create as a document. */
 export interface ImportedWebDocument {
@@ -54,6 +58,7 @@ interface ChatStreamEvent {
   step?: unknown;
   spentMicros?: unknown;
   activity?: unknown;
+  label?: unknown;
   error?: string;
   metadata?: ChatReplyResponse["metadata"];
   statusCode?: number;
@@ -112,7 +117,10 @@ export async function readChatReplyStream(
       if (step) onAgentEvent?.({ type: "step", step, ...(spentMicros === undefined ? {} : { spentMicros }) });
     }
     if (event.type === "thinking" && typeof event.delta === "string" && event.delta) onAgentEvent?.({ type: "thinking", delta: event.delta });
-    if (event.type === "activity" && (event.activity === "writing" || event.activity === "searching")) onAgentEvent?.({ type: "activity", activity: event.activity });
+    if (event.type === "activity" && AGENT_ACTIVITIES.includes(event.activity as AgentActivity)) {
+      const label = typeof event.label === "string" && event.label.trim() ? event.label.trim().slice(0, 200) : undefined;
+      onAgentEvent?.({ type: "activity", activity: event.activity as AgentActivity, ...(label ? { label } : {}) });
+    }
     if (event.type === "documents") {
       const documents = importedWebDocuments(event.documents);
       if (documents.length) onAgentEvent?.({ type: "documents", documents });

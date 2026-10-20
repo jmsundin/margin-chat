@@ -63,7 +63,7 @@ describe("Meta Muse Wonder", () => {
     expect(calls.at(-1)!.body).not.toHaveProperty("tools");
     expect(calls.at(-1)!.body).not.toHaveProperty("tool_choice");
     expect(calls.at(-1)!.body.instructions).toContain("time limit");
-    expect(calls.every((call) => call.body.reasoning?.effort === "low" && call.body.reasoning?.summary === "auto")).toBe(true);
+    expect(calls.every((call) => call.body.reasoning?.effort === "low" && call.body.reasoning?.summary === "detailed")).toBe(true);
     expect(result.agent).toMatchObject({ stopReason: "time-limit" });
   });
 

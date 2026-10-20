@@ -58,8 +58,8 @@ export async function handleChatRequest({ request, response, user, executeChatRe
         onThinking(delta) {
           writeChatStreamEvent(response, { delta, type: "thinking" });
         },
-        onActivity(activity) {
-          writeChatStreamEvent(response, { activity, type: "activity" });
+        onActivity(activity, details = {}) {
+          writeChatStreamEvent(response, { activity, ...(details.label ? { label: details.label } : {}), ...(details.call ? { call: details.call } : {}), type: "activity" });
         },
         onDocuments(documents) {
           writeChatStreamEvent(response, { documents, type: "documents" });

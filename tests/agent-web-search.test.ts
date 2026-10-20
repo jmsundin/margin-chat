@@ -33,6 +33,36 @@ const agentArgs = (content: string, extra: Record<string, unknown> = {}) => ({
   chatRequest: chatRequest(content), ...extra,
 });
 
+const sse = (events: any[]) => new Response(events.map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
+
+describe("Agent mode live progress on Muse Wonder", () => {
+  test("says what it is doing while each call and tool runs: the search query, the tool, and detailed thinking", async () => {
+    const bodies: any[] = [];
+    globalThis.fetch = (async (_url: any, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return bodies.length === 1 ? sse([
+        { type: "response.web_search_call.searching", item_id: "ws_1" },
+        { type: "response.output_item.done", item: searchCall("heat pump rebates") },
+        { type: "response.output_item.added", item: { type: "function_call", name: "search_vault", call_id: "call_1", arguments: "" } },
+        { type: "response.completed", response: { model: "muse-wonder-1.0", usage, output: [searchCall("heat pump rebates"), toolCall("search_vault", { query: "rebates" })] } },
+      ]) : sse([
+        { type: "response.output_text.delta", delta: "Up to $8,000." },
+        { type: "response.completed", response: { model: "muse-wonder-1.0", usage, output: [cited("Up to $8,000.", [])] } },
+      ]);
+    }) as typeof fetch;
+    const live: string[] = [];
+    await runAgent({ ...agentArgs("What rebates are there?"), webSearch: true,
+      workspace: { userId: "owner", vault: {}, database: { searchAgentPassages: async () => [] } },
+      onActivity: async (activity: string, details: any = {}) => { live.push(`${activity}:${details.label ?? ""}`); } });
+    expect(bodies[0].reasoning).toMatchObject({ summary: "detailed" });
+    expect(live.slice(0, 5)).toEqual([
+      "thinking:Reading your request", "searching:Searching the web", "searching:Searching the web for “heat pump rebates”",
+      "tool:Searching your vault", "tool:Searching your vault for “rebates”",
+    ]);
+    expect(live.slice(5)).toEqual(["thinking:Thinking about what it found", "writing:"]);
+  });
+});
+
 describe("Agent mode web search on Muse Wonder", () => {
   test("offers Meta's web_search with a search cap, records each search, and keeps the pages the answer cites", async () => {
     const page = { url: "https://example.gov/rebates", title: "Heat pump rebates" };

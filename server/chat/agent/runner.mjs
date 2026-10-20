@@ -2,7 +2,7 @@ import { AGENT_THINKING_CHARACTERS, DEFAULT_AGENT_BUDGET_MICROS } from "@margin-
 import { HttpError } from "../../lib/errors.mjs";
 import { createAgentAdapter } from "./adapters.mjs";
 import { ASK_TOOL_DEFINITION, agentQuestion } from "./askTool.mjs";
-import { agentToolDefinitions, createAgentToolExecutor, describeAgentStep } from "./tools.mjs";
+import { agentToolActivity, agentToolDefinitions, createAgentToolExecutor, describeAgentStep } from "./tools.mjs";
 
 /** Model calls per run, the last of which must answer without tools. */
 export const AGENT_MAX_MODEL_CALLS = 12;
@@ -89,7 +89,8 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
   const live = {
     thinking: async (delta) => { await onThinking?.(delta); },
     writing: async () => { await onActivity?.("writing"); },
-    searching: async () => { await onActivity?.("searching"); },
+    searching: async (query) => { await onActivity?.("searching", { label: query ? `Searching the web for ${quote(query)}` : "Searching the web" }); },
+    tool: async (name) => { await onActivity?.("tool", { label: agentToolActivity(name) }); },
     text: async (delta) => {
       const piece = streamed ? delta : delta.trimStart();
       if (!piece || !onDelta) return;
@@ -117,6 +118,8 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
       : now() - startedAt >= timeLimitMs ? "time-limit"
       : call === AGENT_MAX_MODEL_CALLS ? "round-limit" : null;
     streamed = "";
+    // Say at once that a model call has started: some models think for a while before they stream anything.
+    await onActivity?.("thinking", { label: call === 1 ? "Reading your request" : "Thinking about what it found", call });
     const result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null, live, webSearches: searchesLeft });
     signal?.throwIfAborted();
     const answered = !result.toolCalls.length || stopReason;
@@ -162,6 +165,7 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     outputs = [];
     for (const toolCall of result.toolCalls) {
       signal?.throwIfAborted();
+      if (toolCall.name !== ASK_TOOL_DEFINITION.name) await onActivity?.("tool", { label: agentToolActivity(toolCall.name, toolCall.arguments) });
       const output = toolCall.name === ASK_TOOL_DEFINITION.name
         ? { ok: false, error: questions ? "Write the question in the question field." : "Questions aren't available here. Answer with your best reading of the request and say what you assumed." }
         : await executeTool(toolCall.name, toolCall.arguments);

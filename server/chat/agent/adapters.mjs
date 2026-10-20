@@ -17,7 +17,8 @@ function parseArguments(text, provider) {
 
 const withExtra = (instruction, extra) => extra ? `${instruction}\n\n${extra}` : instruction;
 
-/** Muse Wonder always reasons and otherwise picks its own effort, so agent runs set it from the AI mode. */
+/** Muse Wonder always reasons and otherwise picks its own effort, so agent runs set it from the AI mode.
+ * Its "auto" reasoning summaries are often empty, so agent runs ask for "detailed" ones to show while it works. */
 const META_REASONING_EFFORT = { fast: "low", balanced: "medium", thorough: "high" };
 /** How much of each page Meta's web search hands the model, by AI mode. */
 const META_SEARCH_CONTEXT = { fast: "low", balanced: "medium", thorough: "high" };
@@ -100,13 +101,19 @@ function createResponsesAdapter(provider, args, tools) {
           if (!writing) await live.writing?.();
           writing = true;
           await live.text?.(event.delta);
+        } else if (event.type === "response.output_item.added" && event.item?.type === "function_call" && typeof event.item.name === "string") {
+          await live.tool?.(event.item.name);
+        } else if (event.type === "response.output_item.done" && event.item?.type === "web_search_call") {
+          // The finished search names its query, which the in-progress events don't.
+          const query = [event.item.action?.query, ...(Array.isArray(event.item.action?.queries) ? event.item.action.queries : [])].find((value) => typeof value === "string" && value.trim());
+          if (!writing) await live.searching?.(query?.trim());
         } else if (typeof event.type === "string" && event.type.startsWith("response.web_search_call.") && !writing) {
           await live.searching?.();
         }
       };
       const request = (withSummary) => requestResponsesApiStream({
         apiKey: args.apiKey, url: RESPONSES_URLS[provider],
-        body: withSummary || effort ? { ...body, reasoning: { ...(effort ? { effort } : {}), ...(withSummary ? { summary: "auto" } : {}) } } : body,
+        body: withSummary || effort ? { ...body, reasoning: { ...(effort ? { effort } : {}), ...(withSummary ? { summary: provider === "meta" ? "detailed" : "auto" } : {}) } } : body,
         signal: args.signal, usageMeter: args.usageMeter, onEvent, acceptIncomplete: true, fallbackError: `${provider} request failed.`,
       });
       let result;
@@ -161,6 +168,8 @@ function createAnthropicAdapter(args, tools) {
         } else if (event.type === "content_block_start" && event.content_block?.type === "text" && !writing) {
           writing = true;
           await live.writing?.();
+        } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use" && typeof event.content_block.name === "string") {
+          await live.tool?.(event.content_block.name);
         } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
           await live.text?.(event.delta.text);
         }

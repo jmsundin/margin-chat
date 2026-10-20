@@ -78,7 +78,8 @@ describe("agent loop across providers", () => {
     expect(result.reply).toBe("You chose $20 a month.");
     expect(result.agent).toEqual({ steps, stopReason: "answered", reasoning: "shared", modelCalls: 2 });
     // Thinking streams while the call runs, then is recorded ahead of the call's other steps.
-    expect(live).toEqual(["thinking:Look it up.", "writing", "step:thinking", "step:note", "step:tool", "writing"]);
+    // Each call says it has started, and a tool says what it is doing as the model asks for it and again as it runs.
+    expect(live).toEqual(["thinking", "thinking:Look it up.", "writing", "tool", "step:thinking", "step:note", "tool", "step:tool", "thinking", "writing"]);
     // Claude 5 models hide thinking unless the request asks for the summarized form.
     expect(bodies[0].thinking).toEqual({ type: "adaptive", display: "summarized" });
     expect(steps).toEqual([
@@ -120,7 +121,7 @@ describe("agent loop across providers", () => {
     const result = await runAgent({ provider: "openai", apiKey: "sk", chatRequest, model: "gpt-summary", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null,
       onThinking: async (delta: string) => { live.push(delta); }, onActivity: async (activity: string) => { live.push(`[${activity}]`); } });
     expect(bodies[0]).toMatchObject({ stream: true, reasoning: { summary: "auto" } });
-    expect(live).toEqual(["**Checking notes**\n\n", "The user asks about pricing.", "\n\n", "Search first.", "[writing]"]);
+    expect(live).toEqual(["[thinking]", "**Checking notes**\n\n", "The user asks about pricing.", "\n\n", "Search first.", "[tool]", "[thinking]", "[writing]"]);
     expect(result.reply).toBe("You chose $20 a month.");
     expect(result.agent.reasoning).toBe("shared");
     expect(result.agent.steps.map((step: any) => step.kind)).toEqual(["thinking", "tool"]);
