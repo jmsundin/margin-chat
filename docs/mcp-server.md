@@ -68,6 +68,9 @@ claude mcp add --transport http margin-chat https://www.marginchat.com/api/mcp \
   --header "Authorization: Bearer mc_mcp_…"
 ```
 
+To save every Claude Code session into the vault automatically, see
+[Save Claude Code sessions automatically](claude-code-autosave.md).
+
 Other clients (`.cursor/mcp.json`, `.vscode/mcp.json` and similar):
 
 ```json
