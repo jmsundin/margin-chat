@@ -1,26 +1,27 @@
-/** Touch gestures that open phone navigation: the sidebar from the left edge, search from the document's top. */
-export type EdgeSwipeKind = "open-sidebar" | "close-sidebar" | "pull-search";
+/** Phone touch gestures: the sidebar from the left edge, and a cloud sync pulled down from the top of the page. */
+export type EdgeSwipeKind = "open-sidebar" | "close-sidebar" | "pull-sync";
 
 /** Wide enough to start inside the iOS and Android system back-gesture zones' margin. */
 export const SIDEBAR_EDGE_PX = 32;
-export const SEARCH_PULL_TRIGGER_PX = 72;
-export const SEARCH_PULL_MAX_PX = 112;
+export const SYNC_PULL_TRIGGER_PX = 72;
+export const SYNC_PULL_MAX_PX = 112;
 /** Movement before a gesture claims the touch, as native scrolling does. */
 export const LOCK_SLOP_PX = 10;
 const FLING_PX_PER_MS = 0.45;
 
 /**
- * `atDocumentTop`: the touch is on a document already scrolled to its top. Pulling down there
- * reveals search, as in Mail and Settings; it never starts in the OS's own top-edge swipe zone.
+ * `canPullSync`: the touch is on the document or the open sidebar, already scrolled to its top, and the
+ * vault syncs to the cloud. Pulling down there syncs, as pull to refresh does in Mail; it never starts in
+ * the OS's own top-edge swipe zone.
  */
-export type EdgeSwipeStart = { x: number; sidebarOpen: boolean; atDocumentTop: boolean };
+export type EdgeSwipeStart = { x: number; sidebarOpen: boolean; canPullSync: boolean };
 
 /** The gestures a touch could become, from where it started. */
-export function edgeSwipeCandidates({ x, sidebarOpen, atDocumentTop }: EdgeSwipeStart): EdgeSwipeKind[] {
-  if (sidebarOpen) return ["close-sidebar"];
+export function edgeSwipeCandidates({ x, sidebarOpen, canPullSync }: EdgeSwipeStart): EdgeSwipeKind[] {
   const kinds: EdgeSwipeKind[] = [];
-  if (x <= SIDEBAR_EDGE_PX) kinds.push("open-sidebar");
-  if (atDocumentTop) kinds.push("pull-search");
+  if (sidebarOpen) kinds.push("close-sidebar");
+  else if (x <= SIDEBAR_EDGE_PX) kinds.push("open-sidebar");
+  if (canPullSync) kinds.push("pull-sync");
   return kinds;
 }
 
@@ -34,7 +35,7 @@ export function lockEdgeSwipe(candidates: EdgeSwipeKind[], dx: number, dy: numbe
   const vertical = Math.abs(dy) > Math.abs(dx) * 1.2;
   if (horizontal && dx > 0 && candidates.includes("open-sidebar")) return "open-sidebar";
   if (horizontal && dx < 0 && candidates.includes("close-sidebar")) return "close-sidebar";
-  if (vertical && dy > 0 && candidates.includes("pull-search")) return "pull-search";
+  if (vertical && dy > 0 && candidates.includes("pull-sync")) return "pull-sync";
   return "none";
 }
 
@@ -52,11 +53,11 @@ export function settleSidebarOpen(offset: number, width: number, velocityX: numb
 }
 
 /** Rubber-banded pull distance, so the hint slows as it nears its limit. */
-export function searchPullDistance(dy: number): number {
+export function syncPullDistance(dy: number): number {
   if (dy <= 0) return 0;
-  return SEARCH_PULL_MAX_PX * (1 - Math.exp(-dy / SEARCH_PULL_MAX_PX));
+  return SYNC_PULL_MAX_PX * (1 - Math.exp(-dy / SYNC_PULL_MAX_PX));
 }
 
-export function searchPullTriggers(dy: number): boolean {
-  return dy >= SEARCH_PULL_TRIGGER_PX;
+export function syncPullTriggers(dy: number): boolean {
+  return dy >= SYNC_PULL_TRIGGER_PX;
 }

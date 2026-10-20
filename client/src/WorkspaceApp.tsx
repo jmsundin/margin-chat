@@ -4794,14 +4794,16 @@ function WorkspaceAppContent({
           ) : null}
 
           {isMobileViewport && mainViewMode === "chat" ? <MobileEdgeSwipe
+            canSync={cloudSyncEnabled && vault.ready}
             disabled={searchModalOpen}
             sidebarOpen={leftSidebarOpen}
             onCloseSidebar={() => setLeftSidebarOpen(false)}
-            onOpenSearch={handleOpenSearch}
             onOpenSidebar={() => {
               setState((current) => current.railOpen ? { ...current, railOpen: false } : current);
               setLeftSidebarOpen(true);
             }}
+            /* The vault shows its own notice if the sync fails. */
+            onSync={() => void vault.syncNow().catch(() => undefined)}
           /> : null}
 
           <main className="workspace">
