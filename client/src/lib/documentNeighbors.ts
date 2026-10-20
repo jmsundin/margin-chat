@@ -4,11 +4,11 @@ import type { DocumentGraphEdge } from "./documentRelations";
 
 export type DocumentNavigationStyle = "compass" | "graph" | "outline" | "reading";
 
-export const DOCUMENT_NAVIGATION_STYLES: { id: DocumentNavigationStyle; label: string; description: string }[] = [
-  { id: "compass", label: "Compass", description: "Parent, siblings, children and links in a strip above the document" },
-  { id: "graph", label: "Local graph", description: "The map around this document, open over it" },
-  { id: "outline", label: "Topic outline", description: "The whole document family as an outline beside the document" },
-  { id: "reading", label: "Keep reading", description: "Where to go next, at the end of the document" },
+export const DOCUMENT_NAVIGATION_STYLES: { id: DocumentNavigationStyle; label: string; shortLabel: string; description: string }[] = [
+  { id: "compass", label: "Compass", shortLabel: "Compass", description: "Siblings, children and links beside the document's path" },
+  { id: "graph", label: "Local graph", shortLabel: "Map", description: "The map around this document, open over it" },
+  { id: "outline", label: "Topic outline", shortLabel: "Outline", description: "The whole document family as an outline beside the document" },
+  { id: "reading", label: "Keep reading", shortLabel: "Reading", description: "Where to go next, at the end of the document" },
 ];
 
 const STORAGE_KEY = "margin-chat:document-navigation";

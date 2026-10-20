@@ -24,14 +24,14 @@ function titleOf(document: Conversation) {
   return document.title || "Untitled document";
 }
 
-/** Four ways to show the documents around the focused one; the choice is remembered in this browser. */
-export function DocumentNavigationSwitcher({ value, onChange }: { value: DocumentNavigationStyle; onChange: (style: DocumentNavigationStyle) => void }) {
-  return <div className="document-navigation-switcher" role="radiogroup" aria-label="Show documents around this one as">
+/** Four ways to show the documents around the focused one; the choice is remembered in this browser. Labelled, it reads as tabs. */
+export function DocumentNavigationSwitcher({ value, onChange, labelled }: { value: DocumentNavigationStyle; onChange: (style: DocumentNavigationStyle) => void; labelled?: boolean }) {
+  return <div className={`document-navigation-switcher${labelled ? " is-labelled" : ""}`} role="radiogroup" aria-label="Show documents around this one as">
     {DOCUMENT_NAVIGATION_STYLES.map((style) => <button key={style.id} type="button" role="radio"
       aria-checked={value === style.id} aria-label={style.label} title={`${style.label}: ${style.description}`}
       className="document-navigation-switcher-option" onClick={() => onChange(style.id)}>
       <Icon path={STYLE_ICONS[style.id]} />
-      <span className="document-navigation-switcher-label">{style.label}</span>
+      <span className="document-navigation-switcher-label">{labelled ? style.shortLabel : style.label}</span>
     </button>)}
   </div>;
 }
@@ -44,13 +44,15 @@ function Chip({ document, relation, onOpen, current }: { document: Conversation;
   </button>;
 }
 
-/** E: a strip above the documents with every direction you can go. */
-export function DocumentCompass({ neighbors, onOpen }: { neighbors: DocumentNeighbors; onOpen: OpenNeighbor }) {
-  const { parent, siblings, index, children, linked } = neighbors;
+/** E: every direction you can go from here. Beside the path, which already lists the parent and children, it shows only siblings and links. */
+export function DocumentCompass({ neighbors, onOpen, besidePath = false }: { neighbors: DocumentNeighbors; onOpen: OpenNeighbor; besidePath?: boolean }) {
+  const { siblings, index, linked } = neighbors;
+  const parent = besidePath ? null : neighbors.parent;
+  const children = besidePath ? [] : neighbors.children;
   const previous = siblings[index - 1];
   const next = siblings[index + 1];
   if (!parent && siblings.length < 2 && !children.length && !linked.length) return null;
-  return <nav className="document-compass" aria-label="Documents around this one">
+  return <nav className="document-compass" aria-label="Documents around this one" title="Ctrl ⌥ + arrows moves between them">
     {parent ? <div className="document-compass-group">
       <span className="document-compass-heading">Up</span>
       <Chip document={parent} relation="parent" onOpen={onOpen} />
@@ -74,7 +76,6 @@ export function DocumentCompass({ neighbors, onOpen }: { neighbors: DocumentNeig
       {linked.slice(0, 3).map((document) => <Chip key={document.id} document={document} relation="linked" onOpen={onOpen} />)}
       {linked.length > 3 ? <span className="document-compass-more">+{linked.length - 3}</span> : null}
     </div> : null}
-    <span className="document-compass-hint" aria-hidden="true">Ctrl ⌥ + arrows</span>
   </nav>;
 }
 

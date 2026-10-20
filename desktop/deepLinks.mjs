@@ -4,7 +4,7 @@ export const DEEP_LINK_SCHEME = "marginchat";
 
 const WEBSITE_HOSTS = new Set(["marginchat.com", "www.marginchat.com"]);
 // Website pages that stay in the browser: the marketing site, sign-up and connector consent.
-const WEBSITE_ONLY_PATHS = new Set(["/pricing", "/download", "/signup", "/oauth/authorize"]);
+const WEBSITE_ONLY_PATHS = new Set(["/pricing", "/download", "/connect", "/signup", "/oauth/authorize"]);
 
 /** The page inside the app to show: a root-relative path, never another site. */
 function appPath(pathname) {

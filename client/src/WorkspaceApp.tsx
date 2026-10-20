@@ -43,6 +43,7 @@ import { SessionSwitcher, SessionsPanel } from "./components/Sessions";
 import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
+import { loadDocumentHeaderOpen, saveDocumentHeaderOpen, useScrollAwayHeader } from "./lib/documentHeader";
 import { getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
@@ -62,7 +63,7 @@ import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
 import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
-import { getDocumentBackTarget, getPresentedParentId, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
+import { getDocumentBackTarget, getDocumentKind, getPresentedParentId, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
@@ -1146,6 +1147,13 @@ function WorkspaceAppContent({
   useSessionAutoNames({ userId: user.id, enabled: jevEnabled, sessions, conversations: state.conversations,
     onName: (sessionId, nameKey, name) => setState((current) => applySessionAutoName(current, sessionId, nameKey, name)) });
   const [navigationStyle, setNavigationStyle] = useState<DocumentNavigationStyle>(loadDocumentNavigationStyle);
+  // A computer keeps the path row open unless it was put away; a phone shows one row and drops the rest down on a tap.
+  const [desktopHeaderOpen, setDesktopHeaderOpen] = useState(loadDocumentHeaderOpen);
+  const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
+  const headerOpen = isMobileViewport ? mobileHeaderOpen : desktopHeaderOpen;
+  // On a phone the one-row header slides away while you read down a document and returns when you scroll up.
+  const headerScrolledAway = useScrollAwayHeader(documentAreaRef, isMobileViewport && !mobileHeaderOpen && !isTileView && !isGraphView);
+  useEffect(() => { setMobileHeaderOpen(false); }, [state.activeConversationId, isMobileViewport, mainViewMode]);
   // Links in text change as you type; the navigator can catch up a moment later.
   const deferredConversations = useDeferredValue(state.conversations);
   const documentGraphEdges = useMemo(() => getDocumentGraphEdges(deferredConversations), [deferredConversations]);
@@ -4425,7 +4433,67 @@ function WorkspaceAppContent({
       minimizedIds={new Set(getDocumentWorkspace(state.conversations, activeConversation.id).minimizedIds)}
       backTitle={backId ? state.conversations[backId].title || "Untitled document" : null} onBack={handleDocumentBack}
       onExpand={handleExpandDocumentHere} onOpenBeside={handleOpenDocumentBeside}
-      trailing={<DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />} />;
+      // On a computer the compass sits beside the path it continues; phones list the views as tabs below it.
+      trailing={isMobileViewport ? undefined : <>
+        {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
+        <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
+      </>} />;
+  }
+
+
+  /** The session, its tabs and the new side document button; one row of the header on a computer, the top of the drop-down on a phone. */
+  function renderSessionTabs() {
+    return <>
+                    {sessions ? <SessionSwitcher sessions={sortedSessions} activeId={sessions.activeId} compact={isMobileViewport}
+                      onSelect={handleSwitchSession} onNew={() => handleCreateSession()}
+                      onManage={() => { setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }} /> : null}
+                    <DocumentTabs documents={peerTabDocuments}
+                      groups={state.groups}
+                      onAssignGroup={handleAssignConversationGroup}
+                      onRename={handleRenameThread}
+                      activeDocumentId={activePeerTabId}
+                      minimizedDocumentIds={documentWorkspace.minimizedIds}
+                      pinnedDocumentIds={pinnedDocumentIds}
+                      familyPinnedDocumentIds={familyPinnedDocumentIds}
+                      onTogglePin={handleToggleDocumentPin}
+                      onTogglePinScope={handleToggleDocumentPinScope}
+                      canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
+                      onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
+                      onMinimize={handleMinimizeDocument}
+                      onClose={handleCloseDocument}
+                      showCloseButtons={inExtension}
+                      onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
+                      onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
+                    />
+    </>;
+  }
+
+  function renderDocumentViewsMenu() {
+    return <DocumentViewsMenu currentDocumentId={activeConversation.id}
+                        onMinimizeAll={() => handleHideAllDocuments("minimize")}
+                        onCloseAll={() => handleHideAllDocuments("close")}
+                        canMinimizeAll={tabDocuments.some((document) => pinnedDocumentIds.includes(document.id) || !documentWorkspace.minimizedIds.includes(document.id))}
+                        canCloseAll={tabDocuments.length > 0}
+                        relatedItems={jev.status === "ready" ? jev.related.filter((item) => item.id !== activeConversation.id && state.conversations[item.id]).slice(0, 5)
+                          .map(({ id }) => ({ id, title: state.conversations[id].title, kind: state.conversations[id].kind })) : []}
+                        relatedWarning={jev.warning} onSelectRelated={handleRevealConversation}
+                        branchCount={branchNavigationCount} branchesOpen={state.railOpen} branchesEnabled={branchAccessEnabled}
+                        onToggleBranches={handleToggleRail} />;
+  }
+
+  /** Full screen: the focused document alone, with the header and side panels put away. */
+  function renderFullScreenButton() {
+    if (isCompactDocument(activeConversation)) return null;
+    return <button type="button" className="document-full-screen-button" aria-keyshortcuts="Escape"
+      aria-label="Full screen" title="Full screen (Esc to leave)" onClick={() => toggleMaximizedDocument(activeConversation.id)}>
+      <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 8V3h5M17 8V3h-5M3 12v5h5M17 12v5h-5" />
+      </svg>
+    </button>;
+  }
+
+  function toggleDesktopHeader() {
+    setDesktopHeaderOpen((open) => { saveDocumentHeaderOpen(!open); return !open; });
   }
 
   function renderDocumentMenu(conversation: Conversation) {
@@ -4435,8 +4503,6 @@ function WorkspaceAppContent({
         minimized={documentWorkspace.minimizedIds.includes(conversation.id)}
         onTogglePin={handleToggleDocumentPin} onTogglePinScope={handleToggleDocumentPinScope}
         onMinimize={handleMinimizeDocument} onClose={handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
-        maximized={maximizedDocument?.id === conversation.id}
-        onToggleMaximize={!isCompactDocument(conversation) ? toggleMaximizedDocument : undefined}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
@@ -4510,28 +4576,23 @@ function WorkspaceAppContent({
   function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls) {
     const maximized = view === "chat" && maximizedDocument?.id === conversation.id;
     const dockHeader = view === "chat" && !maximized && pinnedDocumentIds.includes(conversation.id);
+    // On phones the workspace header names the document and holds its menu, which can minimize and close it.
+    const bareHeader = view === "chat" && isMobileViewport;
     return <DocumentPanel key={conversation.id} conversation={conversation}
-      compact={isCompactDocument(conversation)}
-      onMinimize={view === "chat" && !dockHeader && !maximized ? () => handleMinimizeDocument(conversation.id) : undefined}
-      onClose={view === "chat" && !dockHeader && !maximized ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
+      compact={isCompactDocument(conversation)} bareHeader={bareHeader}
+      onMinimize={view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
+      onClose={view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
       parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock) : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
-        {maximized ? <button type="button" className="document-restore-size-button" aria-keyshortcuts="Escape"
-          aria-label={`Restore document size: ${conversation.title || "Untitled document"}`} title="Restore document size (Esc)"
-          onClick={() => setMaximizedDocumentId(null)}>
-          <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M8 3v5H3M12 3v5h5M8 17v-5H3M12 17v-5h5" />
-          </svg>
-        </button> : null}
       </>}
       childNavigation={renderChildrenMenu(conversation, view, view === "graph" ? dock : undefined)}
       marginNotes={getMarginItems(conversation, view)} marginWidth={getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       activeMarginNoteId={activeConversation.id}
       bodyFooter={view === "chat" && navigationStyle === "reading" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
-      documentMenu={dockHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
+      documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
@@ -5011,7 +5072,11 @@ function WorkspaceAppContent({
               </WorkspaceView>
               <WorkspaceView mode="chat" active={!isTileView && !isGraphView}>
                 <div className="chat-tree-workspace document-workspace" data-from-map={mapReturnId ? "true" : undefined}>
-                  <header className="document-workspace-toolbar" aria-label="Document navigation">
+                  <header className={`document-workspace-header${headerOpen ? " is-open" : ""}${headerScrolledAway ? " is-scrolled-away" : ""}`}
+                    aria-label="Document navigation" onKeyDown={(event) => {
+                      if (event.key === "Escape" && isMobileViewport && mobileHeaderOpen) { event.stopPropagation(); setMobileHeaderOpen(false); }
+                    }}>
+                  <div className="document-workspace-toolbar">
                     {(!leftSidebarOpen || isMobileViewport) && <button
                       aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
                       aria-pressed={leftSidebarOpen}
@@ -5021,51 +5086,57 @@ function WorkspaceAppContent({
                       onClick={handleToggleLeftSidebar}
                       type="button"
                     ><SidebarPanelIcon /></button>}
-                    {sessions ? <SessionSwitcher sessions={sortedSessions} activeId={sessions.activeId} compact={isMobileViewport}
-                      onSelect={handleSwitchSession} onNew={() => handleCreateSession()}
-                      onManage={() => { setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }} /> : null}
-                    <DocumentTabs documents={peerTabDocuments}
-                      groups={state.groups}
-                      onAssignGroup={handleAssignConversationGroup}
-                      onRename={handleRenameThread}
-                      activeDocumentId={activePeerTabId}
-                      minimizedDocumentIds={documentWorkspace.minimizedIds}
-                      pinnedDocumentIds={pinnedDocumentIds}
-                      familyPinnedDocumentIds={familyPinnedDocumentIds}
-                      onTogglePin={handleToggleDocumentPin}
-                      onTogglePinScope={handleToggleDocumentPinScope}
-                      canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
-                      onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
-                      onMinimize={handleMinimizeDocument}
-                      onClose={handleCloseDocument}
-                      showCloseButtons={inExtension}
-                      onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
-                      onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
-                    />
+                    {isMobileViewport ? <button type="button" className="document-header-title" aria-expanded={mobileHeaderOpen}
+                      aria-controls="document-header-details" title={mobileHeaderOpen ? "Hide tabs and path" : "Show tabs, path and views"}
+                      onClick={() => setMobileHeaderOpen((open) => !open)}>
+                      <span className={`document-navigator-kind is-${getDocumentKind(activeConversation)}`} aria-hidden="true" />
+                      <span className="document-header-title-label">{activeConversation.title || "Untitled document"}</span>
+                      <svg className="document-header-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                    </button> : renderSessionTabs()}
                     <div className="document-workspace-actions">
                       {mapReturnId ? <button type="button" className="document-back-to-map" onClick={() => handleSetMainViewMode("graph")}
                         title="Back to the map (or pinch out)">
                         <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5 7 10l5 5" /></svg>
                         Map
                       </button> : null}
-                      <DocumentViewsMenu currentDocumentId={activeConversation.id}
-                        onMinimizeAll={() => handleHideAllDocuments("minimize")}
-                        onCloseAll={() => handleHideAllDocuments("close")}
-                        canMinimizeAll={tabDocuments.some((document) => pinnedDocumentIds.includes(document.id) || !documentWorkspace.minimizedIds.includes(document.id))}
-                        canCloseAll={tabDocuments.length > 0}
-                        relatedItems={jev.status === "ready" ? jev.related.filter((item) => item.id !== activeConversation.id && state.conversations[item.id]).slice(0, 5)
-                          .map(({ id }) => ({ id, title: state.conversations[id].title, kind: state.conversations[id].kind })) : []}
-                        relatedWarning={jev.warning} onSelectRelated={handleRevealConversation}
-                        branchCount={branchNavigationCount} branchesOpen={state.railOpen} branchesEnabled={branchAccessEnabled}
-                        onToggleBranches={handleToggleRail} />
+                      {renderFullScreenButton()}
+                      {isMobileViewport ? renderDocumentMenu(activeConversation) : <>
+                        <button type="button" className="document-header-toggle" aria-expanded={desktopHeaderOpen}
+                          aria-label={desktopHeaderOpen ? "Hide path and views" : "Show path and views"}
+                          title={desktopHeaderOpen ? "Hide path and views" : "Show path and views"} onClick={toggleDesktopHeader}>
+                          <svg className="document-header-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                        </button>
+                        {renderDocumentViewsMenu()}
+                      </>}
                     </div>
+                  </div>
+                  {isMobileViewport ? (mobileHeaderOpen ? <div id="document-header-details" className="document-header-details">
+                    <div className="document-header-tabs-row">
+                      {renderSessionTabs()}
+                      {renderDocumentViewsMenu()}
+                    </div>
+                    {renderDocumentBreadcrumbs()}
+                    <DocumentNavigationSwitcher labelled value={navigationStyle} onChange={(style) => {
+                      handleChangeNavigationStyle(style);
+                      if (style === "graph") setMobileHeaderOpen(false);
+                    }} />
+                    {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
+                    {navigationStyle === "outline" && documentNeighbors ? <DocumentTopicOutline neighbors={documentNeighbors}
+                      onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
+                  </div> : null) : desktopHeaderOpen ? renderDocumentBreadcrumbs() : null}
                   </header>
-                  {renderDocumentBreadcrumbs()}
-                  {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
+                  {maximizedDocument ? <button type="button" className="document-exit-full-screen" aria-keyshortcuts="Escape"
+                    aria-label={`Leave full screen: ${maximizedDocument.title || "Untitled document"}`} title="Leave full screen (Esc)"
+                    onClick={() => setMaximizedDocumentId(null)}>
+                    <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M8 3v5H3M12 3v5h5M8 17v-5H3M12 17v-5h5" />
+                    </svg>
+                  </button> : null}
+                  {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
                   <div className="document-workspace-with-search" ref={documentAreaRef}>
                   {navigationStyle === "graph" && !showMapModal ? <DocumentMapHeader open={false} onToggle={openMapModal}
                     onOpenMap={() => handleSetMainViewMode("graph")} /> : null}
-                  {navigationStyle === "outline" && documentNeighbors ? <DocumentTopicOutline neighbors={documentNeighbors}
+                  {navigationStyle === "outline" && documentNeighbors && !isMobileViewport ? <DocumentTopicOutline neighbors={documentNeighbors}
                     onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
                   {searchPanel ? <SearchResultsPanel initialQuery={searchPanel.query} initialScope={searchPanel.scope} provider={vaultSearchProvider}
                     currentConversationId={activeConversation.id} openingPath={vault.openingPath ?? null}

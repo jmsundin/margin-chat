@@ -1,4 +1,4 @@
-.document-workspace { min-width: 0; }
+.document-workspace { position: relative; min-width: 0; }
 
 .document-workspace-layout { position: relative; display: flex; flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
 .document-workspace-layout.dock-position-right { flex-direction: row-reverse; }
@@ -83,6 +83,43 @@
   .conversation-canvas.is-tree-browser.is-document-workspace { gap: 16px; padding: 0 0 10px; }
 }
 
+/* One header for the documents. On a computer: the tabs row, and under it the path with the views
+   (the chevron puts that row away). On a phone: one row naming the document; tapping it drops the
+   tabs, path and views down over the text, and the row slides away while you read down. */
+.document-workspace-header { display: flex; flex: 0 0 auto; flex-direction: column; min-width: 0; background: var(--panel); }
+.document-header-toggle { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.document-header-toggle:hover { background: var(--button-active-surface); color: var(--ink); }
+.document-header-toggle:focus-visible, .document-header-title:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-header-chevron { flex: 0 0 auto; width: 16px; height: 16px; transition: transform .15s ease; }
+[aria-expanded="true"] > .document-header-chevron { transform: rotate(180deg); }
+/* Beside the path the compass is a few quiet chips, not a strip of its own. */
+.document-breadcrumbs > .document-compass { flex: 0 1 auto; gap: 12px; margin-left: auto; padding: 0 4px; border: 0; background: transparent; }
+.document-breadcrumbs > .document-compass + .document-navigation-switcher { margin-left: 6px; }
+
+@media (max-width: 900px) {
+  .document-workspace-header { position: relative; z-index: 45; transition: margin-top .2s ease; }
+  .document-workspace-header > .document-workspace-toolbar { min-height: 44px; }
+  .document-workspace-header.is-scrolled-away { margin-top: -44px; }
+  .document-header-title { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; height: 40px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer; }
+  .document-header-title[aria-expanded="true"] { background: var(--button-active-surface); }
+  .document-header-title-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .document-header-title .document-header-chevron { color: var(--muted); }
+  .document-workspace-header .document-workspace-actions { border-left: 0; }
+  /* The drop-down sits over the text, so opening it doesn't move what you're reading. */
+  .document-header-details { position: absolute; top: 100%; right: 0; left: 0; display: flex; flex-direction: column; gap: 8px; max-height: calc(100dvh - 120px); padding: 8px 8px 12px; overflow-y: auto; border-bottom: 1px solid var(--line-strong); border-radius: 0 0 14px 14px; background: var(--panel); box-shadow: 0 14px 28px #0002; }
+  .document-header-tabs-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  .document-header-tabs-row > .document-tabs-container { flex: 1; min-width: 0; border-bottom: 0; }
+  .document-header-tabs-row .document-tabs { padding: 0; }
+  .document-header-details > .document-breadcrumbs { min-height: 44px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; }
+  .document-header-details > .document-compass { flex-wrap: wrap; gap: 8px 14px; padding: 2px 4px; overflow: visible; border: 0; background: transparent; }
+  .document-header-details > .document-compass .document-compass-group { flex-wrap: wrap; }
+  .document-header-details > .document-topic-outline { flex: 0 0 auto; max-height: 40dvh; padding: 4px 0; border: 1px solid var(--line); border-radius: 10px; }
+  .document-header-backdrop { position: absolute; inset: 0; z-index: 44; background: #0000001f; }
+}
+@media (max-width: 900px) and (prefers-reduced-motion: reduce) {
+  .document-workspace-header { transition: none; }
+}
+
 /* Tabs are the workspace heading; navigation stays in the same compact row. The focused
    tab covers the bottom rule so it joins the breadcrumb bar beneath it. */
 .document-workspace-toolbar {
@@ -150,11 +187,15 @@
   --document-left-padding: max(36px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
 }
 .app-shell.is-document-maximized .conversation-tree-expanded.is-maximized-document > .panel-resize-handle { display: none; }
-.document-panel .document-restore-size-button { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; margin-top: 10px; padding: 5px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
-.document-panel .document-restore-size-button svg { width: 16px; height: 16px; }
-.document-panel .document-restore-size-button:hover { color: var(--ink); background: var(--button-active-surface); }
-.document-panel .document-restore-size-button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Full screen puts the header away; one quiet button in the corner brings it back. */
+.app-shell.is-document-maximized .document-workspace-header, .app-shell.is-document-maximized .document-header-backdrop { display: none; }
+.document-full-screen-button, .document-exit-full-screen { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; padding: 7px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.document-full-screen-button svg, .document-exit-full-screen svg { width: 16px; height: 16px; }
+.document-full-screen-button:hover, .document-exit-full-screen:hover { color: var(--ink); background: var(--button-active-surface); }
+.document-full-screen-button:focus-visible, .document-exit-full-screen:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-exit-full-screen { position: absolute; top: 8px; left: 10px; z-index: 46; border: 1px solid var(--line); background: var(--panel); box-shadow: 0 2px 8px #0001; }
 @media (max-width: 900px) {
   .app-shell.is-document-maximized .conversation-canvas.is-tree-browser.is-document-workspace { padding: 0 0 10px; }
-  .document-panel .document-restore-size-button { flex-basis: 44px; width: 44px; height: 44px; margin-top: 0; }
+  .document-full-screen-button { flex-basis: 40px; width: 40px; height: 40px; padding: 11px; }
+  .document-exit-full-screen { right: 10px; left: auto; width: 40px; height: 40px; padding: 11px; }
 }

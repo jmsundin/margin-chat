@@ -5,12 +5,17 @@ Margin Chat is an [MCP](https://modelcontextprotocol.io) server at
 and VS Code can search and read a member's cloud vault using the same tools
 Agent mode uses. With a write token, they can also add documents.
 
+This page is the technical reference. Step-by-step setup for each AI app
+(Claude, Claude Code, ChatGPT, Gemini, Meta Muse, Muse Code, Cursor and VS Code)
+is at [marginchat.com/connect](https://www.marginchat.com/connect)
+(`client/src/components/landing/ConnectAppsPage.tsx`).
+
 ## Who can connect
 
 - Plus, Cloud and admin accounts. Their vault is stored in the cloud, so the
   server can read it. Free accounts and desktop vaults that are never synced
   live only on the member's device, so the server can't reach them.
-- Each member makes their own tokens in **Settings → Agents**. A token is shown
+- Each member makes their own tokens in **Profile → Agents**. A token is shown
   once, is named after the agent it's for, lasts up to a year and can be revoked
   at any time. The table stores only the token's SHA-256 hash
   (`marginchat_mcp_tokens`, migration `0018_mcp_tokens`). Each account can hold
@@ -65,19 +70,32 @@ which is how connectors find the sign-in described below.
 Claude Code:
 
 ```sh
-claude mcp add --transport http margin-chat https://www.marginchat.com/api/mcp \
+claude mcp add --scope user --transport http margin-chat https://www.marginchat.com/api/mcp \
   --header "Authorization: Bearer mc_mcp_…"
 ```
 
 To save every Claude Code session into the vault automatically, see
 [Save Claude Code sessions automatically](claude-code-autosave.md).
 
-Other clients (`.cursor/mcp.json`, `.vscode/mcp.json` and similar):
+`--scope user` makes it work in every folder; without it Claude Code only
+uses it in the folder where the command ran.
+
+Cursor (`~/.cursor/mcp.json`) and most other clients:
 
 ```json
-{ "mcpServers": { "margin-chat": { "type": "http", "url": "https://www.marginchat.com/api/mcp",
+{ "mcpServers": { "margin-chat": { "url": "https://www.marginchat.com/api/mcp",
   "headers": { "Authorization": "Bearer mc_mcp_…" } } } }
 ```
+
+VS Code (`.vscode/mcp.json`) names the top-level key `servers`:
+
+```json
+{ "servers": { "margin-chat": { "type": "http", "url": "https://www.marginchat.com/api/mcp",
+  "headers": { "Authorization": "Bearer mc_mcp_…" } } } }
+```
+
+Use the `www.` host. `marginchat.com` redirects to it, and some clients (Meta
+Muse among them) refuse to follow the redirect.
 
 ## Signing in from ChatGPT and claude.ai (OAuth)
 
@@ -108,7 +126,7 @@ as the MCP authorization spec describes (`server/mcp/oauth.mjs`):
 A connection is stored as a row in `marginchat_mcp_tokens` with its
 `client_id`. Only hashes are kept (migration `0019_mcp_oauth`, which also adds
 `marginchat_oauth_clients` and `marginchat_oauth_codes`). Connecting the same app
-again replaces its earlier connection. Connections appear in **Settings →
+again replaces its earlier connection. Connections appear in **Profile →
 Agents** as "Signed-in app" and can be revoked there like tokens, and they count
 toward the 20 per account. The same plan rule applies: only Plus, Cloud and
 admin accounts can approve a connection.
