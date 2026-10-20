@@ -220,7 +220,7 @@ describe("Jev workspace assistance", () => {
     const { state, current } = fixture();
     const settings = renderToStaticMarkup(<AppSettingsModal isOpen mainViewMode="chat" theme="light" onClose={() => {}} onSetMainViewMode={() => {}} onSetTheme={() => {}} onSetJevEnabled={() => {}} />);
     expect(settings).toContain("TypeSafe analyzes permitted chat context");
-    expect(settings).toContain("Private margin and side notes are excluded");
+    expect(settings).toContain("Documents you hide from AI are excluded");
     expect(settings).not.toContain('checked=""');
     const props = { conversations: state.conversations, currentId: current.id, related: [{ id: "note", score: 0.8 }], onSelect() {} };
     expect(renderToStaticMarkup(<JevRelatedItems {...props} status="off" />)).toBe("");

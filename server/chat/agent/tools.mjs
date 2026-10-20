@@ -54,7 +54,7 @@ function summarize(item) {
 export const AGENT_TOOL_DEFINITIONS = [
   {
     name: "search_conversations",
-    description: "Search only the permitted local conversation and note snapshot supplied for this request. Private margin annotations are excluded.",
+    description: "Search only the permitted local conversation and note snapshot supplied for this request. Documents the user hid from AI are excluded.",
     parameters: { type: "object", properties: { query: { type: "string", description: "Text to find in permitted titles and content." } }, required: ["query"], additionalProperties: false },
   },
   {

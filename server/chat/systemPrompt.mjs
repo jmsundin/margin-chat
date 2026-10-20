@@ -79,10 +79,10 @@ export function buildAgentInstruction(chatRequest, { vaultTools = false, canWide
   const reach = vaultTools ? [
     "search_conversations, list_recent_conversations and get_conversation read the local snapshot sent with this request: the current conversation, its ancestors and any supplied context, including edits that may not be saved yet.",
     "search_vault, read_document and list_related reach the user's saved vault in the cloud, within the context the user allowed. Use them to find documents beyond the snapshot and to follow connections on the user's map. The newest edits may not be saved there yet.",
-    "Private margin annotations and documents the user hid from AI are never available.",
+    "Documents the user hid from AI are never available.",
   ] : [
     "Workspace tools inspect only the permitted local snapshot supplied for this request, including the current conversation and its ancestors.",
-    "Other workspace content, private margin annotations and documents the user hid from AI are unavailable. Do not infer that the supplied snapshot is the whole workspace.",
+    "Other workspace content and documents the user hid from AI are unavailable. Do not infer that the supplied snapshot is the whole workspace.",
     ...(canWidenScope ? ["If the user asks about documents you cannot see, tell them they limited what Agent mode can search, and they can widen it under AI context in the model picker by setting \"Agent mode can search\" to \"All my saved documents\"."] : []),
   ];
   return [

@@ -66,7 +66,7 @@ export default function OAuthConsent({ user }: { user: AuthenticatedUser }) {
           <h1>Connect {request.clientName} to your vault?</h1>
           <p className="auth-copy">
             {request.clientName} will be able to search and read your documents, notes, chats and PDFs as {user.displayName}.
-            It never sees private margin comments. After you approve, you'll go back to {request.redirectHost}.
+            It never sees documents you hide from AI. After you approve, you'll go back to {request.redirectHost}.
           </p>
           {request.scope === "write" ? (
             <label className="agent-token-write">

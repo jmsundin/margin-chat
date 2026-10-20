@@ -32,7 +32,7 @@ export interface JevWorkspaceResult {
 }
 
 export type JevStatus = "off" | "checking" | "unconfigured" | "loading" | "ready" | "unavailable" | "paused";
-export const JEV_DISCLOSURE = "TypeSafe analyzes permitted chat context, search queries, workspace chat and note excerpts, group names, and member titles for automatic organization, passage ranking, and suggestions. Private margin and side notes are excluded.";
+export const JEV_DISCLOSURE = "TypeSafe analyzes permitted chat context, search queries, workspace chat and note excerpts, group names, and member titles for automatic organization, passage ranking, and suggestions. Documents you hide from AI are excluded.";
 
 export function getJevPreferenceKey(userId: string) {
   return `margin-chat-jev-assistance:${encodeURIComponent(userId)}`;
