@@ -3,38 +3,36 @@ import { createPortal } from "react-dom";
 import {
   finishLiveDictationSession,
   renewLiveDictationSession,
-  requestDictationCleanup,
   requestDictationTranscript,
   requestLiveDictationSession,
 } from "../lib/api";
 import { joinTranscripts } from "../lib/dictationText";
 import { startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
 import {
+  dictationHints,
   dictationShortcutLabel,
   dictationSupported,
   findDictationTarget,
   insertDictation,
   isDictationShortcut,
   readDictationButtonPreference,
+  readHoldSpacePreference,
+  removeSpaceBeforeCursor,
   startDictationPreview,
   startDictationRecording,
   subscribeDictationButtonPreference,
-  type DictationInsertion,
+  type DictationHints,
   type DictationPreview,
   type DictationRecording,
 } from "../lib/dictation";
 import "./DictationControl.css";
-
-type Version = "raw" | "clean";
 
 type Phase =
   | { kind: "idle" }
   | { kind: "starting"; target: HTMLElement }
   | { kind: "recording"; target: HTMLElement; startedAt: number }
   | { kind: "transcribing"; target: HTMLElement; done?: number; total?: number }
-  | { kind: "notice"; target: HTMLElement | null; message: string; retry?: () => void }
-  // The raw transcript is typed; the cleaned-up one is offered as a swap.
-  | { kind: "versions"; target: HTMLElement; raw: string; clean: string | null; cleanError: string | null; showing: Version; insertion: DictationInsertion };
+  | { kind: "notice"; target: HTMLElement | null; message: string; retry?: () => void };
 
 /** Distances from the viewport's right and bottom edges, so wider or taller states grow away from the corner. */
 interface Anchor { right: number; bottom: number }
@@ -43,6 +41,8 @@ const BUTTON_SIZE = 24;
 const INSET = 6;
 // Holding the shortcut longer than this makes it push-to-talk: letting go stops.
 const HOLD_MS = 450;
+// Holding plain Space talks once the key has repeated this often, so a quick tap still types a space.
+const HOLD_SPACE_REPEATS = 2;
 const SHORTEST_RECORDING_MS = 300;
 // A hosted live session holds ten minutes of credit; renew it before that runs out.
 const LIVE_RENEW_MS = 9 * 60 * 1000;
@@ -95,6 +95,7 @@ interface Pieces {
   done: Set<number>;
   /** Stops every piece's request when voice typing is cancelled. */
   controller: AbortController;
+  hints: DictationHints;
 }
 
 function formatElapsed(ms: number) {
@@ -107,9 +108,9 @@ function formatElapsed(ms: number) {
 
 /**
  * Voice typing for every text field in the app: a mic button on the focused
- * field and a shortcut that records, transcribes and types at the cursor.
- * Recordings run as long as the person talks. The word-for-word transcript
- * is typed, and a cleaned-up version is offered as a one-click swap.
+ * field, holding Space, or a shortcut, which record, transcribe and type at
+ * the cursor. Recordings run as long as the person talks, and what they said
+ * is typed word for word, like Claude Code.
  */
 export default function DictationControl({ userId, segmentMs }: { userId?: string; segmentMs?: number }) {
   const supported = dictationSupported();
@@ -129,8 +130,10 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
   const setPhase = useCallback((next: Phase) => { phaseRef.current = next; setPhaseState(next); }, []);
   const recordingRef = useRef<DictationRecording | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const cleanupRef = useRef<AbortController | null>(null);
   const keyPressRef = useRef<number | null>(null);
+  // A plain Space press that may turn into push-to-talk if it's held.
+  const spaceHoldRef = useRef<{ target: HTMLElement; repeats: number; started: boolean } | null>(null);
+  const holdSpace = useSyncExternalStore(subscribeDictationButtonPreference, readHoldSpacePreference, () => true);
   const noticeTimer = useRef(0);
   const coarsePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
 
@@ -142,12 +145,6 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     noticeTimer.current = window.setTimeout(() => {
       if (phaseRef.current.kind === "notice") setPhase({ kind: "idle" });
     }, 6000);
-  }, []);
-
-  const dismissVersions = useCallback(() => {
-    cleanupRef.current?.abort();
-    cleanupRef.current = null;
-    if (phaseRef.current.kind === "versions") setPhase({ kind: "idle" });
   }, []);
 
   // Stops a hosted session's charge; the server bills the time it ran.
@@ -163,7 +160,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     if (existing) return existing;
     // Wait for an earlier piece's slot, so a long recording doesn't flood the server.
     const ahead = pieces.texts[index - TRANSCRIBE_CONCURRENCY] ?? Promise.resolve("");
-    const text = ahead.catch(() => "").then(() => requestDictationTranscript(pieces.audio[index], { expectedUserId: userId, signal: pieces.controller.signal }));
+    const text = ahead.catch(() => "").then(() => requestDictationTranscript(pieces.audio[index], { expectedUserId: userId, signal: pieces.controller.signal, prompt: pieces.hints.prompt }));
     pieces.texts[index] = text;
     text.then(() => { pieces.done.add(index); }, () => {
       // A failed piece is tried again on the next attempt.
@@ -189,12 +186,12 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     if (piecesRef.current) switchToPieces(piecesRef.current);
   }, [endCharge, switchToPieces]);
 
-  const beginLive = useCallback((stream: MediaStream, target: HTMLElement): LiveRun => {
+  const beginLive = useCallback((stream: MediaStream, target: HTMLElement, hints: DictationHints): LiveRun => {
     const run: LiveRun = { transcription: null, preview: startDictationPreview(target), token: null, ended: false, renewTimer: 0 };
     if (typeof RTCPeerConnection === "undefined") { run.ended = true; return run; }
     void (async () => {
       try {
-        const session = await requestLiveDictationSession({ expectedUserId: userId });
+        const session = await requestLiveDictationSession({ expectedUserId: userId, ...hints });
         run.token = session.token;
         if (run.ended) { endCharge(run); return; }
         const transcription = await startLiveTranscription({
@@ -230,38 +227,15 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     return run;
   }, [dropLive, endCharge, switchToPieces, userId]);
 
-  /** Types the raw transcript and starts cleaning it up for the swap. */
-  const deliver = useCallback((target: HTMLElement, raw: string, preview: DictationPreview | null) => {
-    const insertion = preview ? preview.commit(raw) : insertDictation(target, raw);
+  /** Types the transcript where the words were going, and that's it, like Claude Code. */
+  const deliver = useCallback((target: HTMLElement, text: string, preview: DictationPreview | null) => {
+    const insertion = preview ? preview.commit(text) : insertDictation(target, text);
     if (!insertion) {
-      void navigator.clipboard?.writeText(raw).catch(() => undefined);
+      void navigator.clipboard?.writeText(text).catch(() => undefined);
       showNotice(null, "That field closed, so the transcript was copied instead.");
       return;
     }
-    setPhase({ kind: "versions", target, raw, clean: null, cleanError: null, showing: "raw", insertion });
-    const controller = new AbortController();
-    cleanupRef.current?.abort();
-    cleanupRef.current = controller;
-    const update = (patch: Partial<Extract<Phase, { kind: "versions" }>>) => {
-      const current = phaseRef.current;
-      if (controller.signal.aborted || current.kind !== "versions" || current.insertion !== insertion) return;
-      setPhase({ ...current, ...patch });
-    };
-    requestDictationCleanup(raw, { expectedUserId: userId, signal: controller.signal }).then(
-      (clean) => update({ clean: clean.trim() || raw }),
-      (error) => update({ cleanError: describeError(error) }),
-    );
-  }, [showNotice, userId]);
-
-  /** Puts the raw or clean version in the field. */
-  const showVersion = useCallback((version: Version) => {
-    const current = phaseRef.current;
-    if (current.kind !== "versions" || current.showing === version) return;
-    const text = version === "raw" ? current.raw : current.clean;
-    if (text === null) return;
-    if (current.insertion.swap(text)) { setPhase({ ...current, showing: version }); return; }
-    void navigator.clipboard?.writeText(text).catch(() => undefined);
-    showNotice(current.target, `The text was edited, so the ${version} version was copied instead.`);
+    setPhase({ kind: "idle" });
   }, [showNotice]);
 
   /** Turns the recording's pieces into one transcript and types it. Failures keep the audio for another try. */
@@ -302,6 +276,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     recordingRef.current = null;
     piecesRef.current = null;
     keyPressRef.current = null;
+    spaceHoldRef.current = null;
     const live = liveRef.current;
     liveRef.current = null;
     if (Date.now() - current.startedAt < SHORTEST_RECORDING_MS) {
@@ -365,15 +340,15 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     abortRef.current?.abort();
     abortRef.current = null;
     keyPressRef.current = null;
+    spaceHoldRef.current = null;
     setPhase({ kind: "idle" });
   }, [endCharge]);
 
   const start = useCallback(async (target: HTMLElement) => {
     if (phaseRef.current.kind === "starting" || phaseRef.current.kind === "recording" || phaseRef.current.kind === "transcribing") return;
-    dismissVersions();
     setPhase({ kind: "starting", target });
     try {
-      const pieces: Pieces = { audio: [], texts: [], batch: false, done: new Set(), controller: new AbortController() };
+      const pieces: Pieces = { audio: [], texts: [], batch: false, done: new Set(), controller: new AbortController(), hints: dictationHints(target) };
       const recording = await startDictationRecording({
         onLevel: setLevel,
         segmentMs,
@@ -386,7 +361,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       if ((phaseRef.current as Phase).kind !== "starting") { recording.cancel(); return; }
       recordingRef.current = recording;
       piecesRef.current = pieces;
-      const live = beginLive(recording.stream, target);
+      const live = beginLive(recording.stream, target, pieces.hints);
       liveRef.current = live;
       if (live.ended) switchToPieces(pieces);
       setPhase({ kind: "recording", target, startedAt: Date.now() });
@@ -394,7 +369,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       keyPressRef.current = null;
       showNotice(target, describeError(error));
     }
-  }, [beginLive, dismissVersions, segmentMs, showNotice, switchToPieces, transcribePiece]);
+  }, [beginLive, segmentMs, showNotice, switchToPieces, transcribePiece]);
 
   const toggle = useCallback((target: HTMLElement | null) => {
     const current = phaseRef.current;
@@ -435,7 +410,38 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       if (event.key === "Escape" && (kind === "recording" || kind === "starting" || kind === "transcribing")) {
         event.preventDefault();
         event.stopPropagation();
+        spaceHoldRef.current = null;
         cancel();
+        return;
+      }
+      if (event.code === "Space" && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey && !event.isComposing) {
+        const hold = spaceHoldRef.current;
+        if (!event.repeat) {
+          // Space again after a held recording stopped short of its release: stop.
+          if (hold?.started && kind === "recording") {
+            event.preventDefault();
+            event.stopPropagation();
+            spaceHoldRef.current = null;
+            void finish();
+            return;
+          }
+          // A tap types its space as usual (or opens AI on an empty line); only a hold talks.
+          const target = holdSpace && (kind === "idle" || kind === "notice") ? findDictationTarget(document.activeElement) : null;
+          spaceHoldRef.current = target ? { target, repeats: 0, started: false } : null;
+          return;
+        }
+        if (!hold) return;
+        // Held: the key's repeats never type, like Claude Code's warm-up.
+        event.preventDefault();
+        event.stopPropagation();
+        hold.repeats += 1;
+        if (hold.started || hold.repeats < HOLD_SPACE_REPEATS) return;
+        // Focus may have moved since the press, such as into the Ask AI box a Space on an empty line opens.
+        const target = findDictationTarget(document.activeElement);
+        if (!target) { spaceHoldRef.current = null; return; }
+        if (target === hold.target) removeSpaceBeforeCursor(target);
+        hold.started = true;
+        void start(target);
         return;
       }
       if (!isDictationShortcut(event)) return;
@@ -446,6 +452,13 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       toggle(findDictationTarget(document.activeElement));
     };
     const onKeyUp = (event: KeyboardEvent) => {
+      const hold = spaceHoldRef.current;
+      if (hold && event.code === "Space") {
+        // Letting go stops a held recording. One that's still opening the mic stops on the next Space.
+        if (hold.started && phaseRef.current.kind === "recording") { spaceHoldRef.current = null; void finish(); }
+        else if (!hold.started) spaceHoldRef.current = null;
+        return;
+      }
       const pressed = keyPressRef.current;
       if (pressed === null || event.code !== "Space") return;
       keyPressRef.current = null;
@@ -457,30 +470,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
     };
-  }, [cancel, finish, supported, toggle]);
-
-  // The swap stays on offer until the typed text is edited over or focus moves to another field.
-  const versionsInsertion = phase.kind === "versions" ? phase.insertion : null;
-  const versionsTarget = phase.kind === "versions" ? phase.target : null;
-  useEffect(() => {
-    if (!versionsInsertion || !versionsTarget) return undefined;
-    const tracked = versionsInsertion.intact();
-    let timer = 0;
-    const onInput = () => {
-      window.clearTimeout(timer);
-      timer = window.setTimeout(() => { if (tracked && !versionsInsertion.intact()) dismissVersions(); }, 0);
-    };
-    const onFocusIn = (event: FocusEvent) => {
-      if (event.target instanceof Node && !versionsTarget.contains(event.target)) dismissVersions();
-    };
-    document.addEventListener("input", onInput, true);
-    document.addEventListener("focusin", onFocusIn);
-    return () => {
-      window.clearTimeout(timer);
-      document.removeEventListener("input", onInput, true);
-      document.removeEventListener("focusin", onFocusIn);
-    };
-  }, [dismissVersions, versionsInsertion, versionsTarget]);
+  }, [cancel, finish, holdSpace, start, supported, toggle]);
 
   useEffect(() => {
     // Leaving the page mid-recording still ends a hosted session's charge.
@@ -492,7 +482,8 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
   }, [cancel]);
 
   const activeTarget = phase.kind === "idle" ? null : phase.target;
-  const buttonTarget = showButton && !coarsePointer && !typing ? focused : null;
+  // Phones get the mic too: tap to start, tap the stop button to finish. Their keyboards never move a pointer, so typing doesn't hide it.
+  const buttonTarget = showButton && (coarsePointer || !typing) ? focused : null;
   const anchorTarget = activeTarget ?? (phase.kind === "idle" ? buttonTarget : null);
 
   // Keep the control on its field as the page scrolls, resizes or reflows.
@@ -563,33 +554,6 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
         <>
           <span className="dictation-spinner" aria-hidden="true" />
           <span>{phase.total && phase.total > 1 ? `Transcribing ${Math.min(phase.done ?? 0, phase.total)} of ${phase.total}…` : "Transcribing…"}</span>
-        </>
-      ) : phase.kind === "versions" ? (
-        <>
-          <div aria-label="Which version to keep" className="dictation-versions" role="group">
-            <button
-              aria-pressed={phase.showing === "raw"}
-              className="dictation-version"
-              onClick={() => showVersion("raw")}
-              title="Everything you said, word for word"
-              type="button"
-            >
-              Raw
-            </button>
-            <button
-              aria-pressed={phase.showing === "clean"}
-              className="dictation-version"
-              disabled={phase.clean === null}
-              onClick={() => showVersion("clean")}
-              title={phase.cleanError ?? (phase.clean === null ? "Cleaning up…" : "Tidied by AI: fillers, false starts and repeats removed")}
-              type="button"
-            >
-              {phase.clean === null && !phase.cleanError ? <span className="dictation-spinner is-small" aria-hidden="true" /> : null}
-              Clean
-            </button>
-          </div>
-          {phase.cleanError ? <span className="dictation-pill-hint">Clean version unavailable</span> : null}
-          <button aria-label="Done" className="dictation-pill-button" onClick={dismissVersions} title="Done" type="button">×</button>
         </>
       ) : (
         <>

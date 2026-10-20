@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHostedUsageMeter } from "../server/billing/usage.mjs";
-import { createDictationService, dictationAudioExtension, dictationTokenLimits, liveDictationCharge, MAX_DICTATION_AUDIO_BYTES } from "../server/dictation/index.mjs";
+import { cleanDictationHints, createDictationService, dictationAudioExtension, dictationTokenLimits, liveDictationCharge, MAX_DICTATION_AUDIO_BYTES } from "../server/dictation/index.mjs";
 import { matchApiRoute } from "../server/routes/registry.mjs";
 import { joinTranscripts, splitForCleanup } from "../client/src/lib/dictationText";
 import { buildChatTitleInstruction, DOCUMENT_TITLE_MODEL_ID, sanitizeCleanedDictation, validateChatTitleRequest } from "../server/chat/title.mjs";
@@ -30,9 +30,9 @@ function meterFixture() {
   return { reservations, settlements, meter: createHostedUsageMeter({ env, billingService, requestId: "dictation", userId: "member", operation: "dictation" }) };
 }
 
-function stubOpenAI(reply: () => Response) {
+function stubOpenAI(reply: (url: string) => Response) {
   const calls: { url: string; init: RequestInit }[] = [];
-  globalThis.fetch = (async (url: string, init: RequestInit) => { calls.push({ url: String(url), init }); return reply(); }) as typeof fetch;
+  globalThis.fetch = (async (url: string, init: RequestInit) => { calls.push({ url: String(url), init }); return reply(String(url)); }) as typeof fetch;
   return calls;
 }
 
@@ -147,6 +147,18 @@ describe("voice typing transcription", () => {
     expect(await service.finishLive({ token: session.token, userId: "member" })).toEqual({ settled: true, seconds: 45 });
     expect(settlements[0]).toMatchObject({ requestId: reservations[0].requestId, userId: "member", amountMicros: 4_500 });
     expect((await service.finishLive({ token: session.token, userId: "member" })).settled).toBe(false);
+  });
+
+  test("passes the field's text and the document title as spelling hints", async () => {
+    const calls = stubOpenAI((url) => String(url).includes("client_secrets") ? Response.json({ value: "ek_hints" }) : Response.json({ text: "ok", usage }));
+    const { service } = liveFixture();
+    await service.startLive({ userId: "admin", prompt: "  Notes on   rapamycin ", keywords: ["Longevity notes", "Longevity notes", 7, "", "x".repeat(200)], context: { allowHosted: true, apiKeys: {}, usageMeter: null } });
+    expect(JSON.parse(String(calls[0].init.body)).session.audio.input.transcription).toEqual({
+      model: "gpt-live-transcribe", prompt: "Notes on rapamycin", keywords: ["Longevity notes", "x".repeat(80)],
+    });
+    await service.transcribe({ bytes: audio, contentType: "audio/webm", prompt: "x".repeat(1200), context: { allowHosted: false, apiKeys: { openai: "k" } } });
+    expect((calls[1].init.body as FormData).get("prompt")).toBe("x".repeat(1000));
+    expect(cleanDictationHints({ prompt: 5, keywords: "nope" })).toEqual({ prompt: null, keywords: [] });
   });
 
   test("own keys and admins open live sessions without a hold", async () => {

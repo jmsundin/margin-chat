@@ -182,21 +182,11 @@ assert.equal(latest, "Ask hello world");
 assert.equal(tracksStopped.length, 1, "microphone released");
 checks.push("records, transcribes and types into a React textarea");
 
-// The raw transcript is typed; the clean one is a click away, and so is going back.
-const version = (name: string) => [...document.querySelectorAll<HTMLButtonElement>(".dictation-version")].find((button) => button.textContent?.trim() === name)!;
-assert.ok(document.querySelector(".dictation-pill.is-versions"), "versions pill shows");
-assert.equal(version("Raw").getAttribute("aria-pressed"), "true");
+// What was said is typed and that's it, like Claude Code: no pill and no cleanup call.
 await act(async () => { await pause(20); });
-assert.deepEqual(cleanups, [{ kind: "dictation", prompt: "hello world" }]);
-assert.equal(version("Clean").disabled, false);
-await act(async () => { version("Clean").click(); });
-assert.equal(latest, "Ask Hello, world.");
-assert.equal(version("Clean").getAttribute("aria-pressed"), "true");
-await act(async () => { version("Raw").click(); });
-assert.equal(latest, "Ask hello world");
-await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pill.is-versions .dictation-pill-button")!.click(); });
-assert.equal(document.querySelector(".dictation-pill"), null);
-checks.push("swaps between the raw and clean versions");
+assert.equal(document.querySelector(".dictation-pill"), null, "nothing pops up after typing");
+assert.deepEqual(cleanups, []);
+checks.push("types what was said and nothing else pops up");
 
 // Esc cancels without sending anything.
 await act(async () => { window.dispatchEvent(shortcut()); await pause(20); });
@@ -273,8 +263,8 @@ assert.deepEqual(sent.map((message) => JSON.parse(message).type), ["input_audio_
 assert.equal(requests.length, transcribeCalls, "no second transcription of the recording");
 assert.ok(liveRequests.some((request) => request.url === "/api/dictation/live/finish" && JSON.parse(request.body).token === "hold-token"), "hosted hold settled");
 assert.equal(peersClosed, 1);
-assert.ok(document.querySelector(".dictation-pill.is-versions"));
-assert.equal(cleanups.at(-1)?.prompt, "Hello there, live world.");
+assert.equal(document.querySelector(".dictation-pill"), null);
+assert.deepEqual(cleanups, []);
 checks.push("shows live words and swaps in the final text");
 
 // Esc mid-sentence takes the live words back out.
@@ -328,17 +318,6 @@ await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pi
 assert.equal(latest, `${typedBefore} second try`);
 checks.push("keeps the recording when transcription fails");
 
-// When cleanup isn't available, the raw text stays and says so.
-cleanupReply = () => Response.json({ error: "Your prepaid balance is too low." }, { status: 402 });
-transcribeReply = () => Response.json({ text: "no credit left" });
-await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
-await pause(350);
-await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
-assert.equal(latest, `${typedBefore} second try no credit left`);
-assert.match(document.querySelector(".dictation-pill.is-versions")?.textContent ?? "", /Clean version unavailable/u);
-assert.equal(version("Clean").disabled, true);
-checks.push("keeps the raw text when cleanup fails");
-
 // A live session that drops partway hands over to the recording, which is transcribed in full.
 liveAvailable = true;
 channel = null;
@@ -356,6 +335,44 @@ await pause(350);
 await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
 assert.equal(latest, `${typedBeforeDrop} said before and after the drop`);
 checks.push("switches to the recording when live words drop");
+
+// Holding plain Space talks, like Claude Code: a tap types its space, a hold takes it back and records until release.
+await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pill .dictation-pill-button")?.click(); });
+const title = document.createElement("textarea");
+title.className = "document-title-input";
+title.value = "Longevity notes";
+document.body.append(title);
+composer.focus();
+composer.setSelectionRange(composer.value.length, composer.value.length);
+const space = (type: "keydown" | "keyup", repeat = false) => new KeyboardEvent(type, { code: "Space", key: " ", repeat, bubbles: true, cancelable: true });
+const typeSpace = () => {
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(composer, `${composer.value} `);
+  composer.setSelectionRange(composer.value.length, composer.value.length);
+  composer.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: " " }));
+};
+const typedBeforeHold = latest;
+await act(async () => { composer.dispatchEvent(space("keydown")); typeSpace(); composer.dispatchEvent(space("keyup")); await pause(20); });
+assert.equal(document.querySelector(".dictation-pill.is-recording"), null, "a tap doesn't record");
+assert.equal(latest, `${typedBeforeHold} `);
+channel = null;
+await act(async () => {
+  composer.dispatchEvent(space("keydown")); typeSpace();
+  const firstRepeat = space("keydown", true);
+  composer.dispatchEvent(firstRepeat);
+  assert.equal(firstRepeat.defaultPrevented, true, "held repeats never type");
+  composer.dispatchEvent(space("keydown", true));
+  await pause(30);
+});
+assert.ok(document.querySelector(".dictation-pill.is-recording"), "holding Space records");
+assert.equal(latest, `${typedBeforeHold} `, "the held press's space is taken back");
+const hintRequest = liveRequests.filter((request) => request.url === "/api/dictation/live").at(-1)!;
+assert.deepEqual(JSON.parse(hintRequest.body), { prompt: typedBeforeHold.slice(-400), keywords: ["Longevity notes"] });
+await act(async () => { channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-4", delta: "held words" }); await pause(10); });
+await pause(320);
+await act(async () => { composer.dispatchEvent(space("keyup")); await pause(450); });
+assert.equal(document.querySelector(".dictation-pill.is-recording"), null, "letting go stops");
+assert.equal(latest, `${typedBeforeHold} held words`);
+checks.push("holding Space talks and a tap still types a space");
 
 await act(async () => root.unmount());
 console.log(JSON.stringify({ checks }));
