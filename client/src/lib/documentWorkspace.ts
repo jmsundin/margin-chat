@@ -103,7 +103,9 @@ export function placeDocumentAfterParent(state: AppState, childId: string): AppS
   const { root, documents, minimizedIds } = getDocumentWorkspace(state.conversations, childId);
   if (!child?.parentId || !root) return state;
   const order = documents.map((document) => document.id).filter((id) => id !== childId);
-  order.splice(order.indexOf(child.parentId) + 1, 0, childId);
+  // A compact margin note shows in its host's margin, so a document made from it opens right after the host's pane.
+  const anchorId = isCompactDocument(state.conversations[child.parentId]) ? getMarginHostPath(state.conversations, child.parentId)[0] : child.parentId;
+  order.splice(order.indexOf(anchorId) + 1, 0, childId);
   return saveLayout(state, root, order, minimizedIds.filter((id) => id !== childId));
 }
 
