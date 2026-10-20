@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, saveDictationButtonPreference, subscribeDictationButtonPreference } from "../lib/dictation";
+import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, readHoldSpacePreference, saveDictationButtonPreference, saveHoldSpacePreference, subscribeDictationButtonPreference } from "../lib/dictation";
 import { readDocumentEditorKind, saveDocumentEditorKind, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
@@ -47,6 +47,7 @@ export default function AppSettingsModal({
   vaultIndex,
 }: AppSettingsModalProps) {
   const showDictationButton = useSyncExternalStore(subscribeDictationButtonPreference, readDictationButtonPreference, () => true);
+  const holdSpaceToTalk = useSyncExternalStore(subscribeDictationButtonPreference, readHoldSpacePreference, () => true);
   const documentEditor = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentEditorKind, () => "live" as const);
   useEffect(() => {
     if (!isOpen) {
@@ -206,11 +207,22 @@ export default function AppSettingsModal({
             <div className="app-settings-copy">
               <label className="app-settings-label" htmlFor="dictation-button">Voice typing button</label>
               <p className="app-settings-description" id="dictation-button-disclosure">
-                Shows a mic on the text field you&apos;re in. Press {dictationShortcutLabel()} to start and again to stop, or hold it while you talk; Esc cancels. Recordings are sent to OpenAI to transcribe, using your OpenAI key when you&apos;ve added one, otherwise your Plus credit.
+                Shows a mic on the text field you&apos;re in, on phones too. Press {dictationShortcutLabel()} to start and again to stop, or hold it while you talk; Esc cancels. Recordings are sent to OpenAI to transcribe, using your OpenAI key when you&apos;ve added one, otherwise your Plus credit.
               </p>
             </div>
             <input id="dictation-button" type="checkbox" role="switch" aria-describedby="dictation-button-disclosure"
               checked={showDictationButton} onChange={(event) => saveDictationButtonPreference(event.target.checked)} />
+          </div> : null}
+
+          {dictationSupported() ? <div className="app-settings-section app-settings-switch-section">
+            <div className="app-settings-copy">
+              <label className="app-settings-label" htmlFor="dictation-hold-space">Hold Space to talk</label>
+              <p className="app-settings-description" id="dictation-hold-space-disclosure">
+                In any text field, hold Space and talk, then let go to type what you said, like Claude Code. A quick tap still types a space, and on an empty document line it still opens AI; holding there talks into the AI box. Saved on this device.
+              </p>
+            </div>
+            <input id="dictation-hold-space" type="checkbox" role="switch" aria-describedby="dictation-hold-space-disclosure"
+              checked={holdSpaceToTalk} onChange={(event) => saveHoldSpacePreference(event.target.checked)} />
           </div> : null}
 
           {vaultIndex ? <div className="app-settings-section app-settings-switch-section">

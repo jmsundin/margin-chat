@@ -56,8 +56,22 @@ export function liveDictationCharge({ startedAt, endedAt, microsPerMinute, reser
   return { seconds, amountMicros: Math.min(reservedMicros, Math.ceil((seconds * microsPerMinute) / 60)) };
 }
 
+// Hints that help the model spell names, like the open document's title.
+const MAX_HINT_PROMPT_CHARS = 1000;
+const MAX_HINT_KEYWORDS = 10;
+const MAX_HINT_KEYWORD_CHARS = 80;
+
+/** Keeps only well-formed, bounded hints; anything else is dropped rather than refused. */
+export function cleanDictationHints({ prompt, keywords } = {}) {
+  const text = typeof prompt === "string" ? prompt.replace(/\s+/gu, " ").trim().slice(-MAX_HINT_PROMPT_CHARS) : "";
+  const words = Array.isArray(keywords)
+    ? [...new Set(keywords.filter((word) => typeof word === "string").map((word) => word.replace(/\s+/gu, " ").trim().slice(0, MAX_HINT_KEYWORD_CHARS)).filter(Boolean))].slice(0, MAX_HINT_KEYWORDS)
+    : [];
+  return { prompt: text || null, keywords: words };
+}
+
 export function createDictationService({ env = process.env, billingService = null, now = () => Date.now() } = {}) {
-  async function transcribe({ bytes, contentType, language = null, context }) {
+  async function transcribe({ bytes, contentType, language = null, prompt = null, context }) {
     const extension = dictationAudioExtension(contentType);
     if (!extension) throw new HttpError(415, "Voice typing needs WebM, Ogg, MP4, MP3 or WAV audio.");
     if (!bytes?.length) throw new HttpError(400, "No audio was recorded.");
@@ -78,6 +92,8 @@ export function createDictationService({ env = process.env, billingService = nul
       form.set("model", model);
       form.set("response_format", "json");
       if (language) form.set("language", language);
+      const hints = cleanDictationHints({ prompt });
+      if (hints.prompt) form.set("prompt", hints.prompt);
       form.set("file", new Blob([bytes], { type: String(contentType).split(";")[0].trim() }), `dictation.${extension}`);
       tracker.markDispatched();
       const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
@@ -131,11 +147,12 @@ export function createDictationService({ env = process.env, billingService = nul
    * OpenAI with the short-lived secret and shows words as they arrive. Hosted
    * sessions hold the cost of the longest recording and settle on `finishLive`.
    */
-  async function startLive({ language = null, context, userId }) {
+  async function startLive({ language = null, prompt = null, keywords = null, context, userId }) {
     if (language !== null && !/^[a-z]{2,3}$/u.test(language)) throw new HttpError(400, "Choose a two-letter language code.");
     const key = getTranscriptionKey(context, env);
     if (!key) throw new HttpError(402, "Voice typing needs an OpenAI API key in Settings, or the Plus plan.");
     const model = LIVE_TRANSCRIPTION_MODEL;
+    const hints = cleanDictationHints({ prompt, keywords });
     const billed = key.hosted && context.usageMeter && billingService;
     const hold = billed ? await reserveLiveHold({ userId, model, microsPerMinute: getHostedPerMinutePrice(env, "openai", model) }) : null;
     try {
@@ -147,7 +164,11 @@ export function createDictationService({ env = process.env, billingService = nul
           expires_after: { anchor: "created_at", seconds: 60 },
           session: {
             type: "transcription",
-            audio: { input: { transcription: { model, ...(language ? { language } : {}) }, turn_detection: null } },
+            audio: { input: { transcription: {
+              model, ...(language ? { language } : {}),
+              ...(hints.prompt ? { prompt: hints.prompt } : {}),
+              ...(hints.keywords.length ? { keywords: hints.keywords } : {}),
+            }, turn_detection: null } },
           },
         }),
       });

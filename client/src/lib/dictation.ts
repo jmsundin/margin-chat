@@ -137,6 +137,50 @@ function surfaceFor(target: HTMLElement): TextSurface | null {
   return null;
 }
 
+/**
+ * Takes back the space a held Space key typed before it turned into
+ * push-to-talk. Leaves anything else alone, such as a space an editor
+ * already turned into a list bullet.
+ */
+export function removeSpaceBeforeCursor(target: HTMLElement): void {
+  if (!target.isConnected) return;
+  const surface = surfaceFor(target);
+  if (surface) {
+    const at = surface.caret();
+    if (at > 0 && surface.read(at - 1, at) === " ") surface.replace(at - 1, at, "", false);
+    return;
+  }
+  const selection = window.getSelection();
+  const node = selection?.anchorNode;
+  if (node?.nodeType === Node.TEXT_NODE && selection?.isCollapsed && /\s/u.test((node.textContent ?? "").charAt(selection.anchorOffset - 1))) {
+    document.execCommand?.("delete");
+  }
+}
+
+/** Words that help the speech model spell names right, like Claude Code's project and branch hints. */
+export interface DictationHints {
+  /** What's already written just before the cursor, so the transcript continues it. */
+  prompt: string;
+  /** Names worth recognizing, such as the open document's title. */
+  keywords: string[];
+}
+
+export const HINT_PROMPT_CHARS = 400;
+
+export function dictationHints(target: HTMLElement): DictationHints {
+  let prompt = "";
+  try {
+    const surface = surfaceFor(target);
+    if (surface) {
+      const at = surface.caret();
+      prompt = surface.read(Math.max(0, at - HINT_PROMPT_CHARS), at);
+    }
+  } catch { prompt = ""; }
+  const title = document.querySelector<HTMLTextAreaElement>(".document-title-input")?.value.trim() ?? "";
+  const keywords = title && !/^untitled/iu.test(title) ? [title.slice(0, 80)] : [];
+  return { prompt: prompt.replace(/\s+/gu, " ").trim().slice(-HINT_PROMPT_CHARS), keywords };
+}
+
 /** Typed dictation that can be swapped for another version of itself. */
 export interface DictationInsertion {
   /** Whether the typed text is still where it was put, unchanged. */
@@ -348,6 +392,7 @@ export async function startDictationRecording(options: {
 }
 
 const BUTTON_PREFERENCE_KEY = "margin-chat:dictation-button";
+const HOLD_SPACE_PREFERENCE_KEY = "margin-chat:dictation-hold-space";
 const preferenceListeners = new Set<() => void>();
 
 /** Whether the mic button shows in text fields. The shortcut always works. */
@@ -365,4 +410,16 @@ export function saveDictationButtonPreference(show: boolean) {
 export function subscribeDictationButtonPreference(listener: () => void): () => void {
   preferenceListeners.add(listener);
   return () => preferenceListeners.delete(listener);
+}
+
+/** Whether holding Space in a text field talks, like Claude Code. A quick tap still types a space. */
+export function readHoldSpacePreference(): boolean {
+  try { return localStorage.getItem(HOLD_SPACE_PREFERENCE_KEY) !== "off"; }
+  catch { return true; }
+}
+
+export function saveHoldSpacePreference(on: boolean) {
+  try { localStorage.setItem(HOLD_SPACE_PREFERENCE_KEY, on ? "on" : "off"); }
+  catch { /* Private windows keep the default. */ }
+  preferenceListeners.forEach((listener) => listener());
 }

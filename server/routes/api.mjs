@@ -943,12 +943,12 @@ export function createApiHandler({
       }
 
       if (route?.id === "dictationLive") {
-        const body = await readJsonBody(request, 1024);
+        const body = await readJsonBody(request, 8 * 1024);
         const language = typeof body?.language === "string" && body.language ? body.language : null;
         const scope = createRequestAbortScope(request, response);
         try {
           const context = await executeChatReply.createUsageContext({ user: authContext.user, signal: scope.signal, operation: "dictation" });
-          sendJson(response, 200, await dictation.startLive({ language, context, userId: authContext.user.id }), { "Cache-Control": "private, no-store" });
+          sendJson(response, 200, await dictation.startLive({ language, prompt: body?.prompt, keywords: body?.keywords, context, userId: authContext.user.id }), { "Cache-Control": "private, no-store" });
         } finally {
           scope.dispose();
         }
@@ -970,11 +970,13 @@ export function createApiHandler({
       if (route?.id === "dictationTranscribe") {
         const contentType = String(request.headers["content-type"] ?? "");
         const language = url.searchParams.get("language") || null;
+        let prompt = null;
+        try { prompt = decodeURIComponent(String(request.headers["x-dictation-prompt"] ?? "")) || null; } catch { prompt = null; }
         const bytes = await readRawBody(request, MAX_DICTATION_AUDIO_BYTES);
         const scope = createRequestAbortScope(request, response);
         try {
           const context = await executeChatReply.createUsageContext({ user: authContext.user, signal: scope.signal, operation: "dictation" });
-          sendJson(response, 200, await dictation.transcribe({ bytes, contentType, language, context }), { "Cache-Control": "private, no-store" });
+          sendJson(response, 200, await dictation.transcribe({ bytes, contentType, language, prompt, context }), { "Cache-Control": "private, no-store" });
         } finally {
           scope.dispose();
         }

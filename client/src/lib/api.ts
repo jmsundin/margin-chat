@@ -4,7 +4,6 @@ import { readChatReplyStream, type AgentEvent, type ChatReplyResponse } from "./
 import type { ConversationContext } from "./chatContext";
 import type { WorkspaceContextItem } from "./aiContext";
 import type { AISettings } from "../types";
-import { splitForCleanup } from "./dictationText";
 import type {
   AppState,
   ApiKeyProvider,
@@ -423,12 +422,14 @@ export async function requestUploadDocument(
 }
 
 /** Sends one voice-typing recording and returns its transcript. */
-export async function requestDictationTranscript(audio: Blob, args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<string> {
+export async function requestDictationTranscript(audio: Blob, args: { expectedUserId?: string; signal?: AbortSignal; prompt?: string } = {}): Promise<string> {
   const response = await apiFetch("/api/dictation/transcribe", {
     body: audio,
     credentials: "same-origin",
     headers: {
       "Content-Type": audio.type || "audio/webm",
+      // Text before the cursor, so names and spelling carry on from it.
+      ...(args.prompt ? { "X-Dictation-Prompt": encodeURIComponent(args.prompt.slice(-400)) } : {}),
       ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}),
     },
     method: "POST",
@@ -451,9 +452,9 @@ export interface LiveDictationSession {
 }
 
 /** Opens a live voice typing session that streams words while the person talks. */
-export async function requestLiveDictationSession(args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<LiveDictationSession> {
+export async function requestLiveDictationSession(args: { expectedUserId?: string; signal?: AbortSignal; prompt?: string; keywords?: string[] } = {}): Promise<LiveDictationSession> {
   const response = await apiFetch("/api/dictation/live", {
-    body: "{}",
+    body: JSON.stringify({ ...(args.prompt ? { prompt: args.prompt } : {}), ...(args.keywords?.length ? { keywords: args.keywords } : {}) }),
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
     method: "POST",
@@ -481,24 +482,6 @@ export async function renewLiveDictationSession(token: string, expectedUserId?: 
     throw new Error("Backend returned an invalid live voice typing session.");
   }
   return payload.token;
-}
-
-/**
- * The cleaned-up version of a transcript: fillers, false starts and repeats
- * removed, punctuation fixed. Long transcripts are cleaned a piece at a time.
- */
-export async function requestDictationCleanup(text: string, args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<string> {
-  const pieces = splitForCleanup(text);
-  const cleaned: string[] = new Array(pieces.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < pieces.length) {
-      const index = next++;
-      cleaned[index] = await requestTitle({ ...args, kind: "dictation", prompt: pieces[index] });
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(3, pieces.length) }, worker));
-  return cleaned.join("\n\n");
 }
 
 /** Ends a hosted live session's charge. Keeps going while the page unloads. */
