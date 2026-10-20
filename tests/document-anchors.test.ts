@@ -29,6 +29,22 @@ describe("document passage anchors", () => {
     expect(remapDocumentAnchor(saved, before, after)).toEqual({ ...saved, startOffset: 11, endOffset: 19 });
   });
 
+  test("editing inside a passage keeps the rest of it highlighted", () => {
+    const before = conversation([block("source", "Before selected passage after", "original-message")]);
+    const saved = anchor(before.document!.blocks[0].content, "selected passage");
+    const edit = (content: string) => remapDocumentAnchor(saved, before, { ...before, document: { ...before.document!, blocks: [block("source", content, "original-message")] } });
+    // Typed inside, deleted inside, and cut off at either end.
+    expect(edit("Before selected red passage after")).toEqual({ ...saved, startOffset: 7, endOffset: 27, quote: "selected red passage" });
+    expect(edit("Before sel passage after")).toEqual({ ...saved, startOffset: 7, endOffset: 18, quote: "sel passage" });
+    expect(edit("Beforeed passage after")).toEqual({ ...saved, startOffset: 6, endOffset: 16, quote: "ed passage" });
+    expect(edit("Before selected pa after")).toEqual({ ...saved, startOffset: 7, endOffset: 18, quote: "selected pa" });
+    // Typing right at its edges stays outside it.
+    expect(edit("Before Xselected passageX after")).toEqual({ ...saved, startOffset: 8, endOffset: 24 });
+    // Deleting all of it, or typing over all of it, still detaches it.
+    expect(edit("Before  after").sourceBlockId).toBe("detached:source");
+    expect(edit("Before new words after").sourceBlockId).toBe("detached:source");
+  });
+
   test("a suffix split moves an assistant highlight into the new block and preserves the original source message", () => {
     const before = conversation([block("source", "Before selected after", "original-message"), block("neighbor", "Unrelated")]);
     const saved = anchor(before.document!.blocks[0].content, "selected");

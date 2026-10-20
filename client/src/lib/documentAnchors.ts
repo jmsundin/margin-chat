@@ -1,5 +1,5 @@
 import type { Conversation, DocumentBlock } from "@margin-chat/workspace-contracts";
-import { getDocumentSourceText, getEditableDocument, remapDocumentRange } from "./editableDocument";
+import { getDocumentSourceText, getEditableDocument, remapDocumentPassage, remapDocumentRange } from "./editableDocument";
 
 export interface DocumentAnchorRange {
   sourceMessageId: string | null;
@@ -63,6 +63,14 @@ function mergedAnchor<T extends DocumentAnchorRange>(anchor: T, oldTarget: Docum
     startOffset: matches[0], endOffset: matches[0] + quote.length };
 }
 
+/** A passage whose own text was edited keeps what survives of it, with that as its quote. */
+function editedAnchor<T extends DocumentAnchorRange>(anchor: T, before: string, after: string, from: number | null, to: number | null): T | null {
+  if (from === null || to === null) return null;
+  const range = remapDocumentPassage(before, after, from, to);
+  if (!range || !after.slice(range.from, range.to).trim()) return null;
+  return { ...anchor, startOffset: range.from, endOffset: range.to, quote: after.slice(range.from, range.to) };
+}
+
 /** Track a passage through ordinary edits and a block split without borrowing unrelated matches. */
 export function remapDocumentAnchor<T extends DocumentAnchorRange>(anchor: T, beforeConversation: Conversation, afterConversation: Conversation): T {
   if (beforeConversation.id !== afterConversation.id || !anchor.sourceMessageId || anchor.startOffset === null || anchor.endOffset === null ||
@@ -93,7 +101,8 @@ export function remapDocumentAnchor<T extends DocumentAnchorRange>(anchor: T, be
       return range.from === anchor.startOffset && range.to === anchor.endOffset ? anchor : { ...anchor, startOffset: range.from, endOffset: range.to };
     }
     const matches = occurrences(after, quote);
-    return oldMatches.length === 1 && matches.length === 1 ? { ...anchor, startOffset: matches[0], endOffset: matches[0] + quote.length } : anchor;
+    if (oldMatches.length === 1 && matches.length === 1) return { ...anchor, startOffset: matches[0], endOffset: matches[0] + quote.length };
+    return (quote && !matches.length ? editedAnchor(anchor, before, after, beforeFrom, beforeTo) : null) ?? anchor;
   }
 
   const beforeBlocks = getEditableDocument(beforeConversation).blocks;
@@ -130,8 +139,8 @@ export function remapDocumentAnchor<T extends DocumentAnchorRange>(anchor: T, be
     return range.from === anchor.startOffset && range.to === anchor.endOffset ? anchor : { ...anchor, startOffset: range.from, endOffset: range.to };
   }
   if (!quote || oldMatches.length !== 1 || matches.length !== 1) {
-    // Its line may have been joined onto the line above.
-    return (quote && !matches.length ? mergedAnchor(anchor, oldTarget, beforeBlocks, afterBlocks) : null) ?? detach(anchor, afterBlocks);
+    // Its line may have been joined onto the line above, or text inside the passage was edited.
+    return (quote && !matches.length ? mergedAnchor(anchor, oldTarget, beforeBlocks, afterBlocks) ?? editedAnchor(anchor, before, after, beforeFrom, beforeTo) : null) ?? detach(anchor, afterBlocks);
   }
   const match = matches[0];
   return { ...anchor, sourceBlockId: match.block.id,

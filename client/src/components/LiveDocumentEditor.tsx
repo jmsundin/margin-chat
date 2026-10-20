@@ -234,8 +234,9 @@ function buildBlockDecorations(state: EditorState, host: WidgetHost) {
           atomic.push(atomicMark.range(block.from + run.from, block.from + run.to + 1));
         }
         if (gapEnd > end) ranges.push(hide.range(end, gapEnd));
-        const zoneEnd = next ? next.from : doc.length;
-        if (zoneEnd > end) atomic.push(atomicMark.range(end, zoneEnd));
+        // The cursor skips the hidden lines after the last block. Between blocks, the transaction filter moves it out
+        // toward where it was heading: an atomic range there would send a click past a line's end to the next line.
+        if (!next && doc.length > end) atomic.push(atomicMark.range(end, doc.length));
       }
     }
     if (live.after.has(block.id)) ranges.push(Decoration.widget({ block: true, side: 1, widget: new AfterWidget(host, block.id) }).range(gapEnd));
@@ -571,6 +572,32 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return false;
   }
 
+  /** The Ask AI button sits over the line below the caret; a drag that starts on it selects that text as if it weren't there. */
+  const askButtonDragged = useRef(false);
+  function dragFromAskButton(start: MouseEvent) {
+    const view = viewRef.current;
+    if (!view || start.button !== 0) return;
+    askButtonDragged.current = false;
+    let anchor: number | null = null;
+    const move = (event: MouseEvent) => {
+      if (anchor === null) {
+        if (Math.hypot(event.clientX - start.clientX, event.clientY - start.clientY) < 4) return;
+        askButtonDragged.current = true;
+        setAskButton(null);
+        anchor = view.posAtCoords({ x: start.clientX, y: start.clientY }, false);
+      }
+      const head = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (head !== null) view.dispatch({ selection: EditorSelection.range(anchor, head), userEvent: "select.pointer" });
+    };
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up, true);
+      if (askButtonDragged.current) notifySelection(view);
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up, true);
+  }
+
   function placeAskButton(view: EditorView) {
     const clear = () => setAskButton((current) => current ? null : current);
     if (!latest.current.onInvokeAI || !view.hasFocus || mobileRef.current || typing.current || view.state.readOnly) { clear(); return; }
@@ -763,12 +790,15 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             if (blocked) return [];
           }
           // A click past the end of a line can land in the hidden blank line after it; the cursor belongs at the line's end.
+          // The keyboard moves it on through the hidden line in the direction it was going.
           if (tr.selection && live.mode !== "source") {
             const next = tr.state.field(liveField);
             const doc = textOf(tr.newDoc);
+            const previous = tr.docChanged ? tr.changes.mapPos(tr.startState.selection.main.head) : tr.startState.selection.main.head;
+            const direction = !tr.isUserEvent("select.pointer") && tr.newSelection.main.head > previous ? 1 : -1;
             const ranges = tr.newSelection.ranges.map((range) => {
-              const anchor = snapOutOfGaps(doc, next.layout, range.anchor, -1);
-              const head = snapOutOfGaps(doc, next.layout, range.head, -1);
+              const anchor = snapOutOfGaps(doc, next.layout, range.anchor, range.empty ? direction : -1);
+              const head = snapOutOfGaps(doc, next.layout, range.head, direction);
               return anchor === range.anchor && head === range.head ? range : EditorSelection.range(anchor, head);
             });
             if (ranges.some((range, index) => range !== tr.newSelection.ranges[index])) {
@@ -1080,7 +1110,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     {askButton && props.onInvokeAI && editable && editorFocused && mode !== "reading" && !mobileKeyboard.mobile
       && <button type="button" className="live-document-ask" style={{ top: askButton.top, left: askButton.left }}
         aria-label="Ask AI here" title="Ask AI here (or press Space on an empty line)"
-        onMouseDown={(event) => event.preventDefault()} onClick={() => { const view = viewRef.current; if (view) invoke(view); }}>✦ Ask AI</button>}
+        onMouseDown={(event) => { event.preventDefault(); dragFromAskButton(event.nativeEvent); }}
+        onClick={() => { const view = viewRef.current; if (view && !askButtonDragged.current) invoke(view); askButtonDragged.current = false; }}>✦ Ask AI</button>}
     {insertMenu && <div className="live-document-insert" style={{ top: insertMenu.top }}>
       <button type="button" className="live-document-insert-toggle" aria-label="Insert media, a drawing, a table or an equation" aria-expanded={insertMenu.open} title="Insert"
         onMouseDown={(event) => event.preventDefault()} onClick={() => setInsertMenu({ ...insertMenu, open: !insertMenu.open })}>+</button>

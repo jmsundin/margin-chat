@@ -200,3 +200,25 @@ export function remapDocumentRange(before: string, after: string, from: number, 
   if (from >= before.length - suffix) return { from: from + after.length - before.length, to: to + after.length - before.length };
   return null;
 }
+
+/**
+ * Like remapDocumentRange, but an edit inside the range, or one that cuts off
+ * its start or end, keeps whatever of the range survives. Null when nothing of
+ * it is left.
+ */
+export function remapDocumentPassage(before: string, after: string, from: number, to: number): { from: number; to: number } | null {
+  if (from < 0 || to < from || to > before.length) return null;
+  const range = remapDocumentRange(before, after, from, to);
+  if (range) return range;
+  let prefix = 0;
+  while (prefix < before.length && prefix < after.length && before[prefix] === after[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < before.length - prefix && suffix < after.length - prefix && before[before.length - 1 - suffix] === after[after.length - 1 - suffix]) suffix += 1;
+  const delta = after.length - before.length;
+  const editEnd = before.length - suffix;
+  // The whole range was deleted or typed over.
+  if (from >= prefix && to <= editEnd) return null;
+  // Text typed inside the range joins it; text cut from either side of it leaves the rest.
+  const next = { from: from <= prefix ? from : after.length - suffix, to: to >= editEnd ? to + delta : prefix };
+  return next.to > next.from ? next : null;
+}

@@ -107,6 +107,16 @@ await key("Backspace");
 assert.equal(latest.find((item) => item.id === "answer")?.content, "An answer from the AI.");
 assert.equal(latest.length, 3);
 
+// A click past a line's end that lands in the hidden blank line after it stays on that line;
+// the keyboard moving forward goes on to the next line.
+const introEnd = text().indexOf("\n\n");
+await act(async () => { view.focus(); view.dispatch({ selection: EditorSelection.cursor(introEnd + 1), userEvent: "select.pointer" }); });
+assert.equal(view.state.selection.main.head, introEnd, "a click in the hidden gap puts the caret at the end of the line above");
+await act(async () => { view.dispatch({ selection: EditorSelection.cursor(introEnd + 1), userEvent: "select" }); });
+assert.equal(view.state.selection.main.head, introEnd + 2, "moving right through the gap reaches the next line");
+await act(async () => { view.dispatch({ selection: EditorSelection.cursor(introEnd + 1), userEvent: "select" }); });
+assert.equal(view.state.selection.main.head, introEnd, "moving left through the gap reaches the line above");
+
 // Selecting a passage reports Markdown offsets in its block.
 const selectionStart = text().indexOf("**bold**");
 await select(selectionStart, selectionStart + 8);
