@@ -99,7 +99,7 @@ export function createMcpService({ database, vaultService, passageService, creat
   async function callTool(user, name, args, signal) {
     const writing = WRITE_TOOL_NAMES.has(name);
     if (!TOOL_NAMES.has(name) && !(writing && user.token?.scope === "write")) {
-      throw new RpcError(-32602, writing ? `${name} needs an agent token that can add documents. Make one in Margin Chat: Settings, Agents.` : `Unknown tool: ${name}`);
+      throw new RpcError(-32602, writing ? `${name} needs an agent token that can add documents. Make one in Margin Chat: Profile, Agents.` : `Unknown tool: ${name}`);
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new RpcError(-32602, "Tool arguments must be an object.");
     if (!vaultService?.configured) return { ok: false, error: "This Margin Chat server has no cloud vault storage configured." };

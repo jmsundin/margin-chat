@@ -64,6 +64,13 @@ try {
   await click(linuxTab);
   assert(container.textContent?.includes("The Linux app is on its way"), "Without a published build the Linux tab offers the web app");
 
+  await click(link("Connect your AI apps"));
+  assert.equal(browser.location.pathname, "/connect");
+  assert(container.textContent?.includes("https://www.marginchat.com/api/mcp"), "The setup guides show the server address");
+  assert(container.querySelector("#claude-code") && container.querySelector("#token"), "Each app's guide has its own anchor");
+  await act(async () => { browser.history.back(); });
+  await flushUntil(() => browser.location.pathname === "/download", "Back leaves the setup guides");
+
   await act(async () => { browser.history.back(); });
   await flushUntil(() => browser.location.pathname === "/pricing" && (container.textContent?.includes("Pay for the AI you use") ?? false), "Back returns to pricing");
 

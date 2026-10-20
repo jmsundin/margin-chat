@@ -113,7 +113,7 @@ export async function createOAuthConnection(client, { userId, clientId, name, sc
   await client.query("delete from marginchat_mcp_tokens where user_id = $1 and (client_id = $2 or expires_at <= now())", [userId, clientId]);
   const count = await client.query("select count(*)::int as count from marginchat_mcp_tokens where user_id = $1", [userId]);
   if (count.rows[0].count >= MAX_MCP_TOKENS) {
-    throw new HttpError(409, `You can have at most ${MAX_MCP_TOKENS} connected agents. Revoke one in Margin Chat's Settings, Agents first.`);
+    throw new HttpError(409, `You can have at most ${MAX_MCP_TOKENS} connected agents. Revoke one in Margin Chat's Profile, Agents first.`);
   }
   const result = await client.query(
     `insert into marginchat_mcp_tokens (id, user_id, name, token_hash, scope, expires_at, client_id, refresh_token_hash, access_expires_at)

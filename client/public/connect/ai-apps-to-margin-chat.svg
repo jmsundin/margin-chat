@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
+  <title id="title">Connect your AI apps to Margin Chat</title>
+  <desc id="desc">Claude, Claude Code, ChatGPT, Gemini, Meta Muse, Cursor and VS Code connect to Margin Chat's MCP server at www.marginchat.com/api/mcp, by signing in or with a token from Profile, Agents. The server searches and reads your vault and can create documents or add to them, but never edits or deletes anything.</desc>
+  <defs>
+    <marker id="sage-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#7acaa4"/></marker>
+    <marker id="violet-head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#c9b8ff"/></marker>
+  </defs>
+  <style>
+    text { font-family: "Avenir Next", "Segoe UI", system-ui, -apple-system, sans-serif; fill: #ecf4ef; }
+    .label { font-size: 13px; font-weight: 600; letter-spacing: 0.08em; fill: #97a9a2; }
+    .app { font-size: 16px; font-weight: 500; }
+    .tag { font-size: 12px; fill: #97a9a2; }
+    .body { font-size: 14px; fill: #b9c8c1; }
+    .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; fill: #ecf4ef; }
+    .node { font-size: 12px; fill: #dbe6e0; }
+    .num { font-size: 15px; font-weight: 700; fill: #1a0d08; }
+    .wire { fill: none; stroke: rgba(224, 236, 230, 0.28); stroke-width: 1.5; }
+  </style>
+
+  <rect width="1200" height="660" rx="24" fill="#0b1318"/>
+  <rect x="0.5" y="0.5" width="1199" height="659" rx="24" fill="none" stroke="rgba(224,236,230,0.14)"/>
+
+  <text x="40" y="58" font-size="26" font-weight="600">Your second brain, inside every AI app</text>
+  <text x="40" y="86" class="body">Add one address to the AI you already pay for. It can then search your notes and save what you make together.</text>
+
+  <!-- AI apps -->
+  <text x="40" y="132" class="label">YOUR AI APPS</text>
+  <g>
+    <rect x="40" y="146" width="300" height="48" rx="12" fill="#101b21" stroke="rgba(224,236,230,0.14)"/>
+    <circle cx="62" cy="170" r="5" fill="#ff8d6d"/><text x="78" y="175" class="app">Claude apps</text><text x="328" y="174" class="tag" text-anchor="end">sign in</text>
+    <rect x="40" y="204" width="300" height="48" rx="12" fill="#101b21" stroke="rgba(224,236,230,0.14)"/>
+    <circle cx="62" cy="228" r="5" fill="#ff8d6d"/><text x="78" y="233" class="app">Claude Code</text><text x="328" y="232" class="tag" text-anchor="end">token</text>
+    <rect x="40" y="262" width="300" height="48" rx="12" fill="#101b21" stroke="rgba(224,236,230,0.14)"/>
+    <circle cx="62" cy="286" r="5" fill="#7acaa4"/><text x="78" y="291" class="app">ChatGPT</text><text x="328" y="290" class="tag" text-anchor="end">sign in</text>
+    <rect x="40" y="320" width="300" height="48" rx="12" fill="#101b21" stroke="rgba(224,236,230,0.14)"/>
+    <circle cx="62" cy="344" r="5" fill="#c9b8ff"/><text x="78" y="349" class="app">Gemini</text><text x="328" y="348" class="tag" text-anchor="end">sign in</text>
+    <rect x="40" y="378" width="300" height="48" rx="12" fill="#101b21" stroke="rgba(224,236,230,0.14)"/>
+    <circle cx="62" cy="402" r="5" fill="#7acaa4"/><text x="78" y="407" class="app">Meta Muse, Muse Code</text><text x="328" y="406" class="tag" text-anchor="end">token</text>
+    <rect x="40" y="436" width="300" height="48" rx="12" fill="#101b21" stroke="rgba(224,236,230,0.14)"/>
+    <circle cx="62" cy="460" r="5" fill="#c9b8ff"/><text x="78" y="465" class="app">Cursor, VS Code, others</text><text x="328" y="464" class="tag" text-anchor="end">token</text>
+  </g>
+
+  <!-- wires into the server -->
+  <path class="wire" d="M340 170 C 400 170, 400 300, 452 300"/>
+  <path class="wire" d="M340 228 C 400 228, 400 305, 452 305"/>
+  <path class="wire" d="M340 286 C 400 286, 400 310, 452 310"/>
+  <path class="wire" d="M340 344 C 400 344, 400 315, 452 315"/>
+  <path class="wire" d="M340 402 C 400 402, 400 320, 452 320"/>
+  <path class="wire" d="M340 460 C 400 460, 400 325, 452 325"/>
+
+  <!-- MCP server -->
+  <rect x="452" y="186" width="300" height="250" rx="18" fill="#101b21" stroke="#ff8d6d" stroke-width="1.5"/>
+  <text x="476" y="222" class="label" fill="#ff8d6d" style="fill:#ff8d6d">MARGIN CHAT MCP SERVER</text>
+  <text x="476" y="256" class="mono">www.marginchat.com/api/mcp</text>
+  <line x1="476" y1="278" x2="728" y2="278" stroke="rgba(224,236,230,0.12)"/>
+  <!-- key -->
+  <g transform="translate(476 300)">
+    <circle cx="9" cy="9" r="7" fill="none" stroke="#ff8d6d" stroke-width="2"/>
+    <path d="M15 12 26 23M21 18l3-3M24 21l3-3" stroke="#ff8d6d" stroke-width="2" stroke-linecap="round"/>
+  </g>
+  <text x="514" y="312" class="app">Proof that it's you</text>
+  <text x="514" y="334" class="body">Sign in from the app, or paste</text>
+  <text x="514" y="354" class="body">a token you make in Margin Chat</text>
+  <text x="514" y="374" class="body">under Profile → Agents.</text>
+  <text x="476" y="414" class="tag">Plus and Cloud plans · revoke any time</text>
+
+  <!-- server to vault -->
+  <path d="M754 276 H 838" stroke="#7acaa4" stroke-width="2" marker-start="url(#sage-head)" marker-end="url(#sage-head)"/>
+  <text x="796" y="262" class="tag" text-anchor="middle" style="fill:#7acaa4">search, read</text>
+  <path d="M754 346 H 838" stroke="#c9b8ff" stroke-width="2" marker-end="url(#violet-head)"/>
+  <text x="796" y="332" class="tag" text-anchor="middle" style="fill:#c9b8ff">create, add</text>
+  <text x="796" y="372" class="tag" text-anchor="middle">never edits</text>
+  <text x="796" y="388" class="tag" text-anchor="middle">or deletes</text>
+
+  <!-- vault -->
+  <rect x="840" y="146" width="320" height="338" rx="18" fill="#101b21" stroke="rgba(224,236,230,0.22)"/>
+  <text x="864" y="182" class="label">YOUR VAULT</text>
+  <g stroke="rgba(224,236,230,0.24)" stroke-width="1.5">
+    <line x1="1000" y1="292" x2="920" y2="224"/>
+    <line x1="1000" y1="292" x2="1092" y2="228"/>
+    <line x1="1000" y1="292" x2="924" y2="372"/>
+    <line x1="1000" y1="292" x2="1084" y2="380"/>
+    <line x1="1092" y1="228" x2="1084" y2="380"/>
+  </g>
+  <rect x="938" y="276" width="124" height="32" rx="9" fill="#ff8d6d"/>
+  <text x="1000" y="297" class="node" text-anchor="middle" style="fill:#1a0d08;font-weight:600">Longevity</text>
+  <rect x="862" y="208" width="116" height="30" rx="9" fill="#18262e" stroke="rgba(122,202,164,0.5)"/>
+  <text x="920" y="228" class="node" text-anchor="middle">Rapamycin notes</text>
+  <rect x="1034" y="212" width="116" height="30" rx="9" fill="#18262e" stroke="rgba(122,202,164,0.5)"/>
+  <text x="1092" y="232" class="node" text-anchor="middle">Paper: mTOR</text>
+  <rect x="854" y="356" width="140" height="30" rx="9" fill="#0b1318" stroke="rgba(201,184,255,0.7)" stroke-dasharray="4 3"/>
+  <text x="924" y="376" class="node" text-anchor="middle" style="fill:#c9b8ff">Claude Code · session</text>
+  <rect x="1020" y="364" width="128" height="30" rx="9" fill="#0b1318" stroke="rgba(201,184,255,0.7)" stroke-dasharray="4 3"/>
+  <text x="1084" y="384" class="node" text-anchor="middle" style="fill:#c9b8ff">Saved from Gemini</text>
+  <text x="864" y="430" class="body">Documents, notes, chats and PDFs.</text>
+  <text x="864" y="452" class="body">Anything you hide from AI stays out.</text>
+
+  <!-- steps -->
+  <line x1="40" y1="516" x2="1160" y2="516" stroke="rgba(224,236,230,0.1)"/>
+  <circle cx="58" cy="562" r="16" fill="#ff8d6d"/><text x="58" y="567" class="num" text-anchor="middle">1</text>
+  <text x="86" y="556" class="app">Make a token</text>
+  <text x="86" y="578" class="body">Profile → Agents, one per app.</text>
+  <text x="86" y="598" class="body">Apps that sign in skip this.</text>
+  <circle cx="438" cy="562" r="16" fill="#7acaa4"/><text x="438" y="567" class="num" text-anchor="middle">2</text>
+  <text x="466" y="556" class="app">Add the address in your AI app</text>
+  <text x="466" y="578" class="body">A custom connector, or one command</text>
+  <text x="466" y="598" class="body">in Claude Code.</text>
+  <circle cx="818" cy="562" r="16" fill="#c9b8ff"/><text x="818" y="567" class="num" text-anchor="middle">3</text>
+  <text x="846" y="556" class="app">Just ask</text>
+  <text x="846" y="578" class="body">“Save this to Margin Chat.”</text>
+  <text x="846" y="598" class="body">“What do my notes say about…?”</text>
+</svg>

@@ -7,6 +7,7 @@ import {
 } from "../lib/platform";
 import { claimAutoOpen, readDesktopPreference, saveDesktopPreference } from "../lib/desktopHandoff";
 import { apiFetch } from "../lib/apiTransport";
+import ConnectAppsPage from "./landing/ConnectAppsPage";
 import "./MarketingSite.css";
 
 // The live previews run the real map and document editor, so they load in their own chunk.
@@ -88,7 +89,10 @@ export default function MarketingSite({ page, signedIn, onNavigate, downloadLink
     <div className="mk">
       <SiteHeader page={page} site={site} />
       <main>
-        {page === "home" ? <HomePage site={site} /> : page === "pricing" ? <PricingPage site={site} /> : <DownloadPage site={site} />}
+        {page === "home" ? <HomePage site={site} />
+          : page === "pricing" ? <PricingPage site={site} />
+          : page === "connect" ? <ConnectAppsPage webAppPath={site.webAppPath} signedIn={site.signedIn} go={site.go} />
+          : <DownloadPage site={site} />}
       </main>
       <SiteFooter site={site} />
     </div>
@@ -133,6 +137,7 @@ function SiteHeader({ page, site }: { page: MarketingPage; site: SiteContext }) 
         </a>
         <nav className="mk-nav" aria-label="Main">
           <a className="mk-hide-sm" href="/#features" onClick={page === "home" ? undefined : site.go}>Features</a>
+          <a className="mk-hide-sm" href={MARKETING_PATHS.connect} onClick={site.go} aria-current={current("connect")}>Connect AI</a>
           <a href={MARKETING_PATHS.pricing} onClick={site.go} aria-current={current("pricing")}>Pricing</a>
           <a href={MARKETING_PATHS.download} onClick={site.go} aria-current={current("download")}>Download</a>
           {site.signedIn ? (
@@ -355,6 +360,25 @@ function HomePage({ site }: { site: SiteContext }) {
             <div className="mk-panel mk-card"><h3 className="mk-h3">Search that shows the passage</h3><p className="mk-body">Results open as rendered previews with your search terms highlighted, so you find the line, not just the file.</p></div>
             <div className="mk-panel mk-card"><h3 className="mk-h3">Titles that write themselves</h3><p className="mk-body">New chats and notes get a short, sensible title automatically, so your vault stays readable.</p></div>
           </div>
+        </div>
+      </section>
+
+      <section className="mk-section" id="ai-apps">
+        <div className="mk-wrap">
+          <p className="mk-eyebrow is-violet">SECOND BRAIN</p>
+          <div className="mk-split is-tight">
+            <h2 className="mk-h2">Bring the AI you already pay for.</h2>
+            <div>
+              <p className="mk-body">Connect Claude, ChatGPT, Gemini, Muse, Claude Code or Cursor to your vault. While you chat there, they search your notes and save what you make together into Margin Chat, so every app adds to the same second brain.</p>
+              <p><a className="mk-strong-link" href={MARKETING_PATHS.connect} onClick={site.go}>Set up your AI apps →</a></p>
+            </div>
+          </div>
+          <a className="mk-connect-teaser-link" href={MARKETING_PATHS.connect} onClick={site.go}>
+            <picture>
+              <source media="(max-width: 640px)" srcSet="/connect/ai-apps-to-margin-chat-narrow.svg" width={480} height={1220} />
+              <img className="mk-connect-teaser" src="/connect/ai-apps-to-margin-chat.svg" width={1200} height={660} loading="lazy" alt="Your AI apps connect to Margin Chat's MCP server, which searches and reads your vault and can create documents or add to them, but never edits or deletes." />
+            </picture>
+          </a>
         </div>
       </section>
 
@@ -641,6 +665,7 @@ function SiteFooter({ site }: { site: SiteContext }) {
           <a href={MARKETING_PATHS.home} onClick={site.go}>Overview</a>
           <a href={MARKETING_PATHS.pricing} onClick={site.go}>Pricing</a>
           <a href={MARKETING_PATHS.download} onClick={site.go}>Download</a>
+          <a href={MARKETING_PATHS.connect} onClick={site.go}>Connect your AI apps</a>
         </nav>
         <nav aria-label="Account">
           <strong>Account</strong>

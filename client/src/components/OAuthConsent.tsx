@@ -75,7 +75,7 @@ export default function OAuthConsent({ user }: { user: AuthenticatedUser }) {
             </label>
           ) : null}
           {canConnect ? null : <p className="auth-copy">Connecting agents comes with the Plus and Cloud plans.</p>}
-          <p className="auth-copy">You can disconnect it any time in Settings, Agents.</p>
+          <p className="auth-copy">You can disconnect it any time in Profile, Agents.</p>
           <div className="oauth-consent-actions">
             <button className="thread-dialog-button" disabled={busy} onClick={() => void decide(false)} type="button">Cancel</button>
             <button className="thread-dialog-button is-primary" disabled={busy || !canConnect} onClick={() => void decide(true)} type="button">

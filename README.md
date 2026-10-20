@@ -45,6 +45,23 @@ Press <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> to search by words and by me
 
 ![Searching the vault and previewing matching passages](docs/media/readme/vault-search.gif)
 
+### Your second brain in every AI app
+
+Connect the AI apps you already pay for to your vault through Margin Chat's MCP server at `https://www.marginchat.com/api/mcp`. While you chat in Claude, ChatGPT, Gemini, Muse or your coding agent, it can search and read your notes, and save what you make together as new documents or additions to old ones. Nothing in your vault is ever edited or deleted, and documents you hide from AI stay out.
+
+![Your AI apps connect to Margin Chat's MCP server by signing in or with a token, and the server searches, reads and adds to your vault](client/public/connect/ai-apps-to-margin-chat.svg)
+
+| App | Connects with | Can save |
+| --- | --- | --- |
+| [Claude apps](https://www.marginchat.com/connect#claude) (web, desktop, phone) | Sign in, as a custom connector | Yes |
+| [Claude Code](https://www.marginchat.com/connect#claude-code) | Token, with `claude mcp add --scope user` | Yes, and can [save every session automatically](docs/claude-code-autosave.md) |
+| [ChatGPT](https://www.marginchat.com/connect#chatgpt) | Sign in, in developer mode | Business, Enterprise and Edu only; Plus and Pro search and read |
+| [Gemini](https://www.marginchat.com/connect#gemini) | Sign in, as a custom app | Yes, on eligible personal accounts |
+| [Meta Muse](https://www.marginchat.com/connect#muse) and [Muse Code](https://www.marginchat.com/connect#muse-code) | Token | Yes |
+| [Cursor](https://www.marginchat.com/connect#cursor), [VS Code](https://www.marginchat.com/connect#vscode) and other MCP clients | Token | Yes |
+
+Make tokens in Margin Chat under **Profile → Agents**, one per app, and tick **Can create documents and add to them** for apps that should save. Step-by-step guides for each app are at **[marginchat.com/connect](https://www.marginchat.com/connect)**; the technical reference is [docs/mcp-server.md](docs/mcp-server.md). Connecting needs the Plus or Cloud plan, because the server reads your cloud vault.
+
 ### And the rest
 
 - **Agent mode.** Switch Ask AI to Agent and it works through your notes on its own, searching the vault, reading pasted web pages and PDFs, searching the web on Muse Wonder, and showing each step. It asks you a short question when a request is unclear, and drafts edits and new documents that change nothing until you approve them.
@@ -52,7 +69,6 @@ Press <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> to search by words and by me
 - **Voice typing.** Dictate into any document and watch the words appear while you talk.
 - **Chrome extension.** Open your workspace on top of any web page, highlight a passage and ask about it, and save pages and links to your vault with their source.
 - **Desktop app.** Electron app for Mac, Windows and Linux that keeps itself up to date.
-- **MCP server.** Let Claude Code, Cursor, VS Code and other agents search, read and add to your cloud vault. See [docs/mcp-server.md](docs/mcp-server.md).
 - **Bring your chat history.** Import a ChatGPT export and continue any old chat as Markdown in your vault.
 
 ## Plans

@@ -398,7 +398,7 @@ async function commandInstall(args) {
   let token = argValue(args, "--token") || process.env.MARGIN_CHAT_TOKEN || loadConfig().token
     || tokenFromClaudeConfig(readJson(join(homedir(), ".claude.json"), {}));
   if (!token) {
-    process.stdout.write("Paste a Margin Chat agent token that can create documents (Settings → Agents): ");
+    process.stdout.write("Paste a Margin Chat agent token that can create documents (Profile → Agents): ");
     for await (const chunk of process.stdin) { token = String(chunk).trim(); break; }
   }
   if (!/^mc_mcp_\S+$/u.test(token ?? "")) throw new Error("That doesn't look like a Margin Chat agent token (they start with mc_mcp_).");
@@ -407,7 +407,7 @@ async function commandInstall(args) {
   // Check the token can write before changing anything.
   const probe = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
-  if (!probe.ok) throw new Error(`Margin Chat refused the token (${probe.status}). Make a new one in Settings → Agents.`);
+  if (!probe.ok) throw new Error(`Margin Chat refused the token (${probe.status}). Make a new one in Profile → Agents.`);
   const tools = (await probe.json()).result?.tools ?? [];
   if (!tools.some((tool) => tool.name === "create_document")) {
     throw new Error("That token can only read. Make one with \"Can create documents and add to them\" ticked.");
@@ -435,7 +435,7 @@ function commandUninstall() {
     if (kept.length) settings.hooks.SessionEnd = kept; else delete settings.hooks.SessionEnd;
     writeJson(settingsPath, settings);
   }
-  console.log(`Removed the hook. Your token is still in ${paths().config}; delete that folder and revoke the token in Settings → Agents if you're done with it.`);
+  console.log(`Removed the hook. Your token is still in ${paths().config}; delete that folder and revoke the token in Profile → Agents if you're done with it.`);
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
