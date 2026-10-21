@@ -29,10 +29,11 @@ export type SelectionMenuItem = { icon: SelectionIconName; label: string; onSele
 export type SelectionToolbarAction = SelectionMenuItem & { ariaLabel?: string; pressed?: boolean };
 
 /**
- * The one-row toolbar over selected text: everyday actions first, then a More menu, then Ask AI.
+ * The one-row toolbar over selected text, or at the caret: everyday actions first, then a More menu, then Ask AI.
  * Buttons keep the editor's selection and focus, so Copy and Highlight act on what is still selected.
  */
-export function SelectionToolbarRow({ actions, more, ask }: {
+export function SelectionToolbarRow({ actions, more, ask, label = "Selected text actions" }: {
+  label?: string;
   actions: SelectionToolbarAction[];
   more: SelectionMenuItem[];
   ask?: SelectionToolbarAction;
@@ -48,7 +49,7 @@ export function SelectionToolbarRow({ actions, more, ask }: {
     return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", escape, true); };
   }, [moreOpen]);
   const keep = (event: React.MouseEvent) => event.preventDefault();
-  return <div className="selection-toolbar-row" role="toolbar" aria-label="Selected text actions" onMouseDown={keep}>
+  return <div className="selection-toolbar-row" role="toolbar" aria-label={label} onMouseDown={keep}>
     {actions.map((action) => <button key={action.label} type="button" className="selection-toolbar-button"
       aria-label={action.ariaLabel ?? action.label} aria-pressed={action.pressed} disabled={action.disabled} title={action.hint}
       onClick={() => { setMoreOpen(false); action.onSelect(); }}>
