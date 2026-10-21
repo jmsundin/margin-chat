@@ -129,7 +129,8 @@ import {
   requestDocumentTitle,
   requestUploadDocument,
 } from "./lib/api";
-import { DOCUMENT_TITLE_IDLE_MS, getDocumentTitleSource, isPlaceholderDocumentTitle } from "./lib/documentTitle";
+import { DOCUMENT_TITLE_IDLE_MS, MAX_DOCUMENT_TITLE_CONTENT_LENGTH, getDocumentTitleSource, isPlaceholderDocumentTitle } from "./lib/documentTitle";
+import { DocumentTitleSuggestionContext, suggestLocalDocumentTitle, toPlainDocumentTitle, type SuggestDocumentTitle } from "./lib/documentTitleSuggestion";
 import {
   getRecentModelSelectionsStorageKey,
   getStateSavedAtStorageKey,
@@ -879,6 +880,11 @@ function WorkspaceAppContent({
   // Prompt excerpts the app used as a stand-in title; a generated title may replace these.
   const provisionalDocumentTitles = useRef(new Map<string, string>());
   useEffect(() => () => { for (const timer of documentTitleTimers.current.values()) clearTimeout(timer); }, []);
+  // AI names suggested in rename fields, by document and the text they came from, so reopening doesn't ask again.
+  const suggestedDocumentTitles = useRef(new Map<string, { content: string; title: Promise<string> }>());
+  const suggestDocumentTitleRef = useRef<SuggestDocumentTitle>(() => null);
+  // Stable, so an open rename field isn't refilled when the workspace re-renders.
+  const suggestDocumentTitle = useRef<SuggestDocumentTitle>((conversationId) => suggestDocumentTitleRef.current(conversationId)).current;
   const pendingMovedBlockFocus = useRef<{ conversationId: string; blockId: string } | null>(null);
   useLayoutEffect(() => {
     const request = pendingMovedBlockFocus.current;
@@ -2188,6 +2194,26 @@ function WorkspaceAppContent({
     scheduleDocumentTitle(conversationId);
   }
 
+  suggestDocumentTitleRef.current = (conversationId) => {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation || !isPlaceholderDocumentTitle(conversation.title)) return null;
+    const markdown = getEditableDocumentText(conversation);
+    const local = suggestLocalDocumentTitle(markdown);
+    if (!local) return null;
+    const content = markdown.replace(/\s+/gu, " ").trim().slice(0, MAX_DOCUMENT_TITLE_CONTENT_LENGTH);
+    // A few words are their own best name; only longer text is worth asking AI about.
+    if (isHiddenFromAI(conversation) || content.length < 40) return { local, ai: null };
+    return { local, ai: () => {
+      const cached = suggestedDocumentTitles.current.get(conversationId);
+      if (cached?.content === content) return cached.title;
+      const title = requestDocumentTitle({ ai: normalizeAISettings(conversation.ai), content, expectedUserId: user.id })
+        .finally(() => { void onRefreshBilling(); });
+      suggestedDocumentTitles.current.set(conversationId, { content, title });
+      title.catch(() => { if (suggestedDocumentTitles.current.get(conversationId)?.title === title) suggestedDocumentTitles.current.delete(conversationId); });
+      return title;
+    } };
+  };
+
   function scheduleDocumentTitle(conversationId: string) {
     if (documentTitleRequests.current.has(conversationId)) return;
     clearTimeout(documentTitleTimers.current.get(conversationId));
@@ -2205,8 +2231,10 @@ function WorkspaceAppContent({
             const target = current.conversations[conversationId];
             // Never replace a title the user typed while the request was running.
             if (!target || target.title !== placeholderTitle) return current;
+            const plainTitle = toPlainDocumentTitle(title, 80);
+            if (!plainTitle) return current;
             provisionalDocumentTitles.current.delete(conversationId);
-            return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title } } };
+            return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title: plainTitle } } };
           });
         })
         .catch(() => {
@@ -4862,6 +4890,7 @@ function WorkspaceAppContent({
 
   return (
     <VaultMediaContext.Provider value={vault.media}>
+    <DocumentTitleSuggestionContext.Provider value={suggestDocumentTitle}>
     <ConversationGroupPickerContext.Provider value={{
       getSuggestion: (conversationId) => {
         const match = jev.groupSuggestions[conversationId];
@@ -5577,6 +5606,7 @@ function WorkspaceAppContent({
       </div>
     </div>
     </ConversationGroupPickerContext.Provider>
+    </DocumentTitleSuggestionContext.Provider>
     </VaultMediaContext.Provider>
   );
 }

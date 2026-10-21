@@ -1764,6 +1764,12 @@ button {
   font-weight: 600;
 }
 
+.thread-dialog-hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin: -6px 0 0;
+}
+
 .thread-dialog-input {
   background: var(--input-bg);
   border: 1px solid var(--input-border);

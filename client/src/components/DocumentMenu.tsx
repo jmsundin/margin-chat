@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { Conversation, ConversationGroup } from "../types";
 import { getConversationGroupId } from "../lib/conversationGroups";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
+import { useSuggestedDocumentTitle } from "../lib/documentTitleSuggestion";
 import { ConversationGroupPickerContext } from "./ConversationGroupControls";
 import GroupPickerModal from "./GroupPickerModal";
 import "./DocumentMenu.css";
@@ -44,6 +45,9 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
   const renameDialog = useRef<HTMLFormElement>(null);
   const renameInput = useRef<HTMLInputElement>(null);
   const renameInputId = useId();
+  const renameHintId = useId();
+  const suggestedTitle = useSuggestedDocumentTitle({ conversationId: conversation.id, open: renameOpen && !!onRename,
+    value: renameTitle, setValue: setRenameTitle, input: renameInput });
   const [position, setPosition] = useState({ left: 0, top: 0 });
   const menu = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -220,10 +224,12 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         <h2>Rename document</h2>
         <label htmlFor={renameInputId}>Document name</label>
         <input ref={renameInput} id={renameInputId} aria-label="Document name" value={renameTitle} autoComplete="off"
+          aria-describedby={suggestedTitle ? renameHintId : undefined}
           onChange={(event) => setRenameTitle(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); rename(); }
           }} />
+        {suggestedTitle ? <p id={renameHintId} className="document-rename-hint">Suggested from the document. Type to replace it.</p> : null}
         <div className="document-rename-actions">
           <button type="button" onClick={() => setRenameOpen(false)}>Cancel</button>
           <button type="submit" disabled={!renameTitle.trim()}>Save</button>
