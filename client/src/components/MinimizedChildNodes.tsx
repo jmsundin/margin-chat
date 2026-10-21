@@ -4,7 +4,7 @@ import { getDocumentPreview } from "../lib/documentSources";
 import "./MinimizedChildNodes.css";
 
 /** Width the node column adds beside its document, including the connector space. */
-export const MINIMIZED_CHILD_NODES_WIDTH = 248;
+export const MINIMIZED_CHILD_NODES_WIDTH = 276;
 
 interface Props {
   documents: Conversation[];
@@ -13,7 +13,7 @@ interface Props {
 
 /**
  * Minimized side documents and margin notes, drawn as a vertical stack of map nodes in the empty
- * space beside their document, joined to it like Map view's left-to-right tree. Clicking one opens it.
+ * space beside their document, each joined to its passage by the same curve an open side document gets. Clicking one opens it.
  */
 export default function MinimizedChildNodes({ documents, onOpen }: Props) {
   return <nav className="minimized-child-nodes" aria-label="Minimized side documents">
@@ -24,7 +24,7 @@ export default function MinimizedChildNodes({ documents, onOpen }: Props) {
         const label = `${note ? "Open margin note" : "Open side document"}: ${title}`;
         const quote = item.branchAnchor?.quote?.trim();
         const preview = note && quote ? "" : getDocumentPreview(item, 90);
-        return <li key={item.id} className={note ? "is-margin-note" : "is-side-document"}>
+        return <li key={item.id} className={note ? "is-margin-note" : "is-side-document"} data-minimized-node-id={item.id}>
           <button type="button" className="document-side-restore minimized-child-node" aria-label={label} title={label} onClick={() => onOpen(item.id)}>
             <span className="minimized-child-node-kind">
               {note ? <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 2.5h10v8l-3 3H3z M10 13.5v-3h3 M5.5 6h5 M5.5 8.5h3"/></svg>
