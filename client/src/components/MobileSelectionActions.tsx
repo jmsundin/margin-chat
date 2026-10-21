@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { copySelection, cutSelection, pasteIntoSelection, selectAllAround, selectionEditingHost } from "../lib/selectionMenu";
+import { copySelection, cutSelection, isIOS, pasteIntoSelection, selectAllAround, selectionEditingHost } from "../lib/selectionMenu";
 import { useVisualViewport } from "../lib/useVisualViewport";
 import { SelectionIcon, type SelectionIconName } from "./SelectionToolbar";
 import "./MobileSelectionActions.css";
 
 type SelectionRect = { top: number; left: number; width: number; height: number };
+
+/** Room below a selection for the iOS edit menu and the selection handle. */
+const IOS_MENU_CLEARANCE = 72;
 
 type MobileSelectionActionsProps = {
   rect: SelectionRect;
@@ -103,8 +106,12 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
   const above = selectionRect.top - gap - height;
   const hasRoomBelow = below <= maximumTop;
   const hasRoomAbove = above >= minimumTop;
-  const placement = hasRoomBelow ? "below" : hasRoomAbove ? "above" : "edge";
-  const preferredTop = hasRoomBelow ? below : hasRoomAbove ? above
+  // iOS can still draw its own Cut / Copy / Paste menu beside the selection, so there the row
+  // docks to the bottom of the screen, or the top when the selection is down there.
+  const docked = isIOS();
+  const nearBottom = selectionRect.top + selectionRect.height + IOS_MENU_CLEARANCE > maximumTop;
+  const placement = docked ? (nearBottom ? "top" : "bottom") : hasRoomBelow ? "below" : hasRoomAbove ? "above" : "edge";
+  const preferredTop = docked ? (nearBottom ? minimumTop : maximumTop) : hasRoomBelow ? below : hasRoomAbove ? above
     : (selectionRect.top + selectionRect.height / 2 < viewport.top + viewport.height / 2 ? maximumTop : minimumTop);
   const top = Math.max(minimumTop, Math.min(preferredTop, maximumTop));
 

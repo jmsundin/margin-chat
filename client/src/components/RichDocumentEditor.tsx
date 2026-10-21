@@ -65,6 +65,15 @@ export interface RichDocumentInvocation {
   typing?: boolean;
   restoreFocus: (options?: { restoreSpaces?: boolean }) => void;
 }
+/** The action menu at the caret, opened when nothing is selected. */
+export interface RichDocumentCaretMenu {
+  /** The paragraph around the caret as a passage, when it has saved text a note or side document can point at. */
+  paragraph?: RichDocumentSelection;
+  rect: RichDocumentRect;
+  askAI: () => void;
+  paste: () => void;
+  selectParagraph: () => void;
+}
 export interface RichDocumentDecoration {
   from: number;
   to: number;
@@ -88,6 +97,8 @@ export interface RichDocumentEditorProps {
   onHistory?: (action: "undo" | "redo") => DocumentEditFocus | null;
   onInvokeAI?: (invocation: RichDocumentInvocation) => void;
   onSelectionChange?: (selection: RichDocumentSelection | null) => void;
+  /** Right-click, Alt+Enter or the ⋯ beside Ask AI at the caret. */
+  onCaretMenu?: (menu: RichDocumentCaretMenu) => void;
   readOnlyBlockIds?: string[];
   decorations?: Record<string, RichDocumentDecoration[]>;
   renderAfterBlock?: (block: DocumentBlock) => ReactNode;

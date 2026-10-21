@@ -6,6 +6,8 @@ import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } fro
 import MobileAIComposer from "./components/MobileAIComposer";
 import { MobileSelectionActions } from "./components/MobileSelectionActions";
 import { SelectionToolbarRow } from "./components/SelectionToolbar";
+import { CaretActions } from "./components/CaretActions";
+import type { DocumentCaretMenu } from "./components/DocumentPanel";
 import { isMarkdownHighlighted, toggleMarkdownHighlight } from "./lib/selectionHighlight";
 import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
@@ -766,6 +768,10 @@ function WorkspaceAppContent({
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
     null,
   );
+  const [caretMenu, setCaretMenu] = useState<DocumentCaretMenu | null>(null);
+  const closeCaretMenu = useRef(() => setCaretMenu(null)).current;
+  // Selecting text swaps the caret menu for the selection toolbar.
+  useEffect(() => { if (selectionDraft) setCaretMenu(null); }, [selectionDraft]);
   const selectionDraftRef = useRef(selectionDraft);
   selectionDraftRef.current = selectionDraft;
   const selectionViewport = useVisualViewport(Boolean(selectionDraft) && !mobileKeyboard.mobile);
@@ -3404,17 +3410,17 @@ function WorkspaceAppContent({
   }
 
   /** Search the vault for the selected passage. */
-  function handleFindRelatedToSelection() {
-    if (!selectionDraft) return;
-    setSearchQuery(selectionDraft.quote.replace(/\s+/g, " ").trim().slice(0, 200));
+  function handleFindRelatedToSelection(passage: SelectionDraft | null = selectionDraft) {
+    if (!passage) return;
+    setSearchQuery(passage.quote.replace(/\s+/g, " ").trim().slice(0, 200));
     closeSelectionDraft();
     handleOpenSearch();
   }
 
   /** A side document about the selected passage, without AI: the passage is quoted at the top and linked back. */
-  function handleCreateSelectionSideDocument() {
-    if (!selectionDraft) return;
-    const draft = joinSelectedLines(selectionDraft);
+  function handleCreateSelectionSideDocument(passage: SelectionDraft | null = selectionDraft) {
+    if (!passage) return;
+    const draft = joinSelectedLines(passage);
     if (!draft) return;
     const source = currentStateRef.current.conversations[draft.conversationId];
     if (!source) return;
@@ -3457,9 +3463,9 @@ function WorkspaceAppContent({
   }
 
   /** An empty margin note on the selected passage, open and ready to write in. */
-  function handleCreateSelectionNote() {
-    if (!selectionDraft) return;
-    const draft = joinSelectedLines(selectionDraft);
+  function handleCreateSelectionNote(passage: SelectionDraft | null = selectionDraft) {
+    if (!passage) return;
+    const draft = joinSelectedLines(passage);
     if (!draft) return;
     const noteId = handleCreateNote({
       content: "",
@@ -4755,6 +4761,7 @@ function WorkspaceAppContent({
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
       onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); setSelectionResponseDestination(defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(false); }}
+      onCaretMenu={(menu) => { setSelectionDraft(null); setCaretMenu(menu); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
       onClearSelection={() => { if (!isReselectingSelection()) setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current); }}
       onOpenBranch={(id) => handleOpenDocumentReference(conversation.id, id)}
@@ -5398,6 +5405,16 @@ function WorkspaceAppContent({
             />
           ) : null}
 
+          {!isTileView && caretMenu && !selectionDraft ? <CaretActions menu={caretMenu} mobile={mobileKeyboard.mobile} onClose={closeCaretMenu}
+            onNote={() => handleCreateSelectionNote(caretMenu.paragraph)}
+            onSideDocument={() => handleCreateSelectionSideDocument(caretMenu.paragraph)}
+            onLink={() => {
+              if (!caretMenu.paragraph) return;
+              // Link reuses the selection toolbar's picker, on the whole paragraph.
+              setSelectionDraft(caretMenu.paragraph); setSelectionIntent("link"); setSelectionLinkError(null);
+              if (mobileKeyboard.mobile) setSelectionActionsExpanded(true);
+            }}
+            onFindRelated={() => handleFindRelatedToSelection(caretMenu.paragraph)} /> : null}
           {!isTileView && selectionDraft ? (
             mobileKeyboard.mobile && !selectionActionsExpanded ? <MobileSelectionActions
               rect={selectionDraft.rect} formRef={toolbarRef}
@@ -5405,10 +5422,10 @@ function WorkspaceAppContent({
               onExplain={() => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT)}
               onRewrite={() => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
               onAsk={() => openMobileSelectionPrompt()}
-              onSideDocument={handleCreateSelectionSideDocument}
-              onMarginNote={handleCreateSelectionNote}
+              onSideDocument={() => handleCreateSelectionSideDocument()}
+              onMarginNote={() => handleCreateSelectionNote()}
               onLink={() => { setSelectionLinkError(null); setSelectionIntent("link"); setSelectionActionsExpanded(true); }}
-              onFindRelated={handleFindRelatedToSelection}
+              onFindRelated={() => handleFindRelatedToSelection()}
               onHighlight={selectionDraft.sourceBlockId ? handleToggleSelectionHighlight : undefined}
               highlighted={selectionHighlighted}
               marginNoteLabel={selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}
@@ -5436,9 +5453,9 @@ function WorkspaceAppContent({
                     {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event) => setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
                   </div> : null}
                   <button type="button" aria-label="Create a side document from this passage"
-                    onClick={handleCreateSelectionSideDocument}>Side document</button>
+                    onClick={() => handleCreateSelectionSideDocument()}>Side document</button>
                   <button type="button" aria-label={selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note"}
-                    onClick={handleCreateSelectionNote}>{selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}</button>
+                    onClick={() => handleCreateSelectionNote()}>{selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}</button>
                   <button type="button" aria-label="Link selected text to an existing document or block"
                     onClick={() => { setSelectionLinkError(null); setSelectionIntent("link"); }}>Link to existing</button>
                 </>}
@@ -5464,14 +5481,14 @@ function WorkspaceAppContent({
                 actions={[
                   ...(selectionDraft.sourceBlockId ? [{ icon: "highlight" as const, label: "Highlight", ariaLabel: selectionHighlighted ? "Remove highlight" : "Highlight selected text",
                     pressed: selectionHighlighted, onSelect: handleToggleSelectionHighlight }] : []),
-                  { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: handleCreateSelectionNote },
-                  { icon: "side", label: "Side doc", ariaLabel: "Create a side document from this passage", onSelect: handleCreateSelectionSideDocument },
+                  { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: () => handleCreateSelectionNote() },
+                  { icon: "side", label: "Side doc", ariaLabel: "Create a side document from this passage", onSelect: () => handleCreateSelectionSideDocument() },
                   { icon: "link", label: "Link", ariaLabel: "Link selected text to an existing document or block", pressed: selectionIntent === "link",
                     onSelect: () => { setSelectionLinkError(null); setSelectionIntent((intent) => intent === "link" ? "actions" : "link"); } },
                 ]}
                 more={[
                   { icon: "copy", label: "Copy", hint: "⌘C", onSelect: () => { void copySelection(); } },
-                  { icon: "find", label: "Find related", onSelect: handleFindRelatedToSelection },
+                  { icon: "find", label: "Find related", onSelect: () => handleFindRelatedToSelection() },
                   { icon: "explain", label: "Explain", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT) },
                   { icon: "rewrite", label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) },
                 ]}

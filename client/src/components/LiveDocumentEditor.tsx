@@ -548,6 +548,54 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return true;
   }
 
+  /**
+   * The action menu at the caret: the paragraph it sits in, plus Ask AI, Paste and Select
+   * that act where the caret was when the menu opened. Only an empty selection opens it.
+   */
+  function openCaretMenu(view: EditorView, blockId?: string) {
+    const current = latest.current;
+    if (!current.onCaretMenu) return false;
+    const live = stateOf(view);
+    const main = view.state.selection.main;
+    if (live.mode === "reading" || !main.empty || !live.layout.length) return false;
+    const block = blockId ? live.layout.find((item) => item.id === blockId) : live.layout[blockIndexAt(live.layout, main.head)];
+    if (!block) return false;
+    const head = blockId ? block.to : main.head;
+    const markdown = view.state.doc.sliceString(block.from, block.to);
+    const writable = !view.state.readOnly && !live.locked.has(block.id);
+    const saved = !isDraftBlockId(block.id) && !live.locked.has(block.id) && markdown.trim() && liveBlockInfo(markdown).kind === "text";
+    const back = () => {
+      const target = viewRef.current;
+      if (!target) return null;
+      target.focus();
+      target.dispatch({ selection: EditorSelection.cursor(Math.min(head, target.state.doc.length)) });
+      return target;
+    };
+    current.onCaretMenu({
+      paragraph: saved ? { conversationId: current.conversationId, messageId: blockById.get(block.id)?.sourceMessageId ?? `document:${block.id}`,
+        sourceBlockId: block.id, startOffset: 0, endOffset: markdown.length, quote: markdown, rect: selectionRect(view) } : undefined,
+      rect: selectionRect(view),
+      askAI() { const target = back(); if (target) invoke(target); },
+      paste() {
+        if (!writable) return;
+        void navigator.clipboard?.readText().then((text) => {
+          const target = back();
+          if (!target || !text) return;
+          target.dispatch({ changes: { from: target.state.selection.main.head, insert: text }, selection: EditorSelection.cursor(target.state.selection.main.head + text.length),
+            userEvent: "input.paste", scrollIntoView: true });
+        }).catch(() => undefined);
+      },
+      selectParagraph() {
+        const target = back();
+        const layout = target ? stateOf(target).layout.find((item) => item.id === block.id) : undefined;
+        if (!target || !layout) return;
+        target.dispatch({ selection: EditorSelection.range(layout.from, visibleEnd(textOf(target.state.doc), layout)) });
+        notifySelection(target);
+      },
+    });
+    return true;
+  }
+
   /** Space on an empty line, two spaces after a word, or a phone's ". " opens Ask AI. */
   function aiInput(view: EditorView, from: number, to: number, text: string) {
     if (!latest.current.onInvokeAI || view.composing || view.state.readOnly) return false;
@@ -617,7 +665,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
         const caret = target.coordsAtPos(target.state.selection.main.head);
         const root = rootRef.current?.getBoundingClientRect();
         if (!caret || !root) return null;
-        return { top: Math.round(caret.bottom - root.top + 4), left: Math.round(Math.max(0, Math.min(caret.left - root.left - 4, root.width - 96))) };
+        return { top: Math.round(caret.bottom - root.top + 4), left: Math.round(Math.max(0, Math.min(caret.left - root.left - 4, root.width - 128))) };
       },
       write(position) { setAskButton((current) => position && current && current.top === position.top && current.left === position.left ? current : position); },
     });
@@ -750,8 +798,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton });
-  handlers.current = { commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton };
+  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu });
+  handlers.current = { commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu };
   useEffect(() => {
     let frame = 0;
     const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
@@ -835,6 +883,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           { key: "Mod-i", run: (view) => !view.state.readOnly && toggleWrap(view, "*") },
           { key: "Mod-d", run: (view) => { if (view.state.readOnly) return false; view.dispatch(view.state.replaceSelection(formatDocumentDateTime()), { userEvent: "input" }); return true; } },
           { key: "Mod-e", run: (view) => { const live = view.state.field(liveField); proxy.current.setMode(live.mode === "reading" ? "live" : "reading"); return true; } },
+          // ⌘/ stays CodeMirror's comment toggle; Alt+Enter is the "actions here" key in many editors.
+          { key: "Alt-Enter", run: (view) => proxy.current.openCaretMenu(view) },
           { key: "Escape", run: () => { latest.current.onSelectionChange?.(null); return false; } },
           ...defaultKeymap,
           ...(props.onHistory ? [] : historyKeymap),
@@ -846,6 +896,15 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             return false;
           },
           mousedown() { suppressSpace.current = false; return false; },
+          // Right-click with nothing selected opens the app's menu at the caret; Shift keeps the browser's.
+          contextmenu(event, view) {
+            if (event.shiftKey || mobileRef.current || !latest.current.onCaretMenu || !view.state.selection.main.empty) return false;
+            const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (position !== null) view.dispatch({ selection: EditorSelection.cursor(position) });
+            if (!proxy.current.openCaretMenu(view)) return false;
+            event.preventDefault();
+            return true;
+          },
           mouseup(_event, view) { queueMicrotask(() => { if (viewRef.current === view) proxy.current.notifySelection(view); }); return false; },
           paste(event, view) {
             const files = [...event.clipboardData?.files ?? []].filter(isMediaFile);
@@ -1074,7 +1133,11 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       return createPortal(<>
         {touch && <div className="rich-document-touch-actions live-document-touch-actions">
           {props.onInvokeAI && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Ask AI" data-label="✦ Ask AI" onClick={() => { const view = viewRef.current; if (view) invoke(view, 0, id); }} />}
-          {block.content && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Select block" data-label="Select block" onClick={() => {
+          {props.onCaretMenu && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="More actions here" data-label="⋯ More" onClick={() => {
+            const view = viewRef.current;
+            if (view) openCaretMenu(view, view.state.selection.main.empty && stateOf(view).layout[blockIndexAt(stateOf(view).layout, view.state.selection.main.head)]?.id === id ? undefined : id);
+          }} />}
+          {!props.onCaretMenu && block.content && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Select block" data-label="Select block" onClick={() => {
             const view = viewRef.current;
             const target = view?.state.field(liveField).layout.find((item) => item.id === id);
             if (!view || !target) return;
@@ -1122,11 +1185,17 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       </button>)}
     </div>
     <div ref={hostRef} className="live-document-host" />
-    {askButton && props.onInvokeAI && editable && editorFocused && mode !== "reading" && !mobileKeyboard.mobile
-      && <button type="button" className="live-document-ask" style={{ top: askButton.top, left: askButton.left }}
-        aria-label="Ask AI here" title="Ask AI here (or press Space on an empty line)"
-        onMouseDown={(event) => { event.preventDefault(); dragFromAskButton(event.nativeEvent); }}
-        onClick={() => { const view = viewRef.current; if (view && !askButtonDragged.current) invoke(view); askButtonDragged.current = false; }}>✦ Ask AI</button>}
+    {askButton && (props.onInvokeAI || props.onCaretMenu) && editable && editorFocused && mode !== "reading" && !mobileKeyboard.mobile
+      && <div className="live-document-ask-group" style={{ top: askButton.top, left: askButton.left }}>
+        {props.onInvokeAI && <button type="button" className="live-document-ask"
+          aria-label="Ask AI here" title="Ask AI here (or press Space on an empty line)"
+          onMouseDown={(event) => { event.preventDefault(); dragFromAskButton(event.nativeEvent); }}
+          onClick={() => { const view = viewRef.current; if (view && !askButtonDragged.current) invoke(view); askButtonDragged.current = false; }}>✦ Ask AI</button>}
+        {props.onCaretMenu && <button type="button" className="live-document-ask is-more"
+          aria-label="More actions here" title="More actions here (Alt+Enter or right-click)"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => { const view = viewRef.current; if (view) openCaretMenu(view); }}>⋯</button>}
+      </div>}
     {insertMenu && <div className="live-document-insert" style={{ top: insertMenu.top }}>
       <button type="button" className="live-document-insert-toggle" aria-label="Insert media, a drawing, a table or an equation" aria-expanded={insertMenu.open} title="Insert"
         onMouseDown={(event) => event.preventDefault()} onClick={() => setInsertMenu({ ...insertMenu, open: !insertMenu.open })}>+</button>

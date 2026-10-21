@@ -29,6 +29,7 @@ let latest: DocumentBlock[] = [
 const changes: DocumentBlock[][] = [];
 const selections: any[] = [];
 const invocations: any[] = [];
+const caretMenus: any[] = [];
 let setBlocks!: (blocks: DocumentBlock[]) => void;
 
 function Host() {
@@ -40,6 +41,7 @@ function Host() {
     onChangeBlocks(next: DocumentBlock[]) { changes.push(next); latest = next; update(next); },
     onSelectionChange(selection: any) { selections.push(selection); },
     onInvokeAI(invocation: any) { invocations.push(invocation); },
+    onCaretMenu(menu: any) { caretMenus.push(menu); },
     renderAfterBlock: (item: DocumentBlock) => item.id === "answer" ? createElement("span", { className: "after-probe" }, "after answer") : null,
   });
 }
@@ -148,6 +150,22 @@ const cross = selections.filter(Boolean).at(-1);
 assert.equal(cross?.sourceBlockId, "intro");
 assert.deepEqual(cross?.joinBlockIds, ["body"]);
 assert.equal(cross?.quote, "Plan\n\nSome ");
+
+// Alt+Enter at the caret opens the action menu on the paragraph around it; Select there selects that paragraph.
+const menuAt = text().indexOf("words");
+await select(menuAt);
+await key("Enter", { altKey: true });
+assert.equal(caretMenus.length, 1, "Alt+Enter with nothing selected opens the caret menu");
+assert.equal(caretMenus[0].paragraph?.sourceBlockId, "body");
+assert.equal(caretMenus[0].paragraph?.startOffset, 0);
+assert.equal(caretMenus[0].paragraph?.quote, latest.find((item) => item.id === "body")?.content, "the menu's paragraph is the whole block's Markdown");
+await act(async () => { caretMenus[0].selectParagraph(); });
+const paragraphSelection = selections.filter(Boolean).at(-1);
+assert.equal(paragraphSelection?.sourceBlockId, "body");
+assert.equal(paragraphSelection?.startOffset, 0, "Select picks the paragraph from its start");
+await select(menuAt, menuAt + 3);
+await key("Enter", { altKey: true });
+assert.equal(caretMenus.length, 1, "Alt+Enter with text selected leaves the selection toolbar to it");
 
 // Space on the empty line asks AI there.
 const draftStart = text().length;

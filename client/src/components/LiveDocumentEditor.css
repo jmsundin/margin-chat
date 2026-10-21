@@ -73,7 +73,9 @@
 .live-document-insert-menu button { background: transparent; border: 0; border-radius: 7px; color: var(--ink); cursor: pointer; padding: 7px 10px; text-align: left; }
 .live-document-insert-menu button:hover, .live-document-insert-menu button:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .live-document-media-form { margin: 6px 8px 6px 40px; }
-.live-document-ask { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 2px 8px rgba(0, 0, 0, .12); color: var(--muted); cursor: pointer; font-size: .75rem; line-height: 1; padding: 4px 9px; position: absolute; white-space: nowrap; z-index: 4; }
+.live-document-ask-group { display: flex; gap: 4px; position: absolute; z-index: 4; }
+.live-document-ask { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 2px 8px rgba(0, 0, 0, .12); color: var(--muted); cursor: pointer; font-size: .75rem; line-height: 1; padding: 4px 9px; white-space: nowrap; }
+.live-document-ask.is-more { padding-inline: 8px; }
 .live-document-ask:hover, .live-document-ask:focus-visible { border-color: var(--sage); color: var(--sage); }
 
 @media (pointer: coarse) {
@@ -84,7 +86,7 @@
      so without it these buttons drew as empty grey boxes. */
   .live-document-touch-actions button { min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); color: var(--sage); font-size: .85rem; touch-action: manipulation; }
   .live-document-touch-actions button::before { content: attr(data-label); }
-  .live-document-insert, .live-document-ask { display: none; }
+  .live-document-insert, .live-document-ask-group { display: none; }
   /* The AI-written marker sits in the narrow touch gutter instead of over the first letters. */
   .live-document-host .live-document-block:is([data-authorship="ai"], [data-authorship="mixed"]) { background-position: 1px 50%; }
 }

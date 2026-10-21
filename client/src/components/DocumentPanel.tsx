@@ -9,7 +9,10 @@ import type { DocumentAIRequest } from "../lib/documentAI";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { DocumentEditHistory, type DocumentEditOptions } from "../lib/documentEditHistory";
 import { getBackendServiceModel, type RecentBackendServiceSelection } from "../lib/services";
-import type { RichDocumentInvocation, RichDocumentDecoration, RichDocumentEditorProps } from "./RichDocumentEditor";
+import type { RichDocumentCaretMenu, RichDocumentInvocation, RichDocumentDecoration, RichDocumentEditorProps } from "./RichDocumentEditor";
+
+/** The caret's action menu, with its paragraph read as a selected passage of this document. */
+export type DocumentCaretMenu = Omit<RichDocumentCaretMenu, "paragraph"> & { paragraph?: SelectionDraft };
 import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentEditor";
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
@@ -77,6 +80,7 @@ export interface DocumentPanelProps {
   onStop: () => void;
   onSelection: (selection: SelectionDraft) => void;
   onClearSelection?: () => void;
+  onCaretMenu?: (menu: DocumentCaretMenu) => void;
   onVisibleOutlineChange?: (conversationId: string, outlineItemId: string) => void;
   onOpenBranch: (id: string) => void;
   onRemoveLink?: (id: string) => void;
@@ -548,6 +552,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
             }
           }
         }}
+        onCaretMenu={props.onCaretMenu ? ({ paragraph, ...menu }) => props.onCaretMenu?.({ ...menu,
+          paragraph: paragraph && { ...paragraph, prompt: "", sourceKind: "message", sourceContent: paragraph.quote } }) : undefined}
         onSelectionChange={(selection) => {
           if (!selection) { props.onClearSelection?.(); return; }
           // A passage across lines is read in those lines joined as one block.
