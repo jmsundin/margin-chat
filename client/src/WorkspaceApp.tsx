@@ -5,7 +5,9 @@ import { useAppUpdateGuard } from "./lib/appUpdateSafety";
 import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } from "./components/MobileKeyboard";
 import MobileAIComposer from "./components/MobileAIComposer";
 import { MobileSelectionActions } from "./components/MobileSelectionActions";
-import { hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
+import { SelectionToolbarRow } from "./components/SelectionToolbar";
+import { isMarkdownHighlighted, toggleMarkdownHighlight } from "./lib/selectionHighlight";
+import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
 import { createMarginDocument, isCompactDocument, marginNoteToSideDocument, isHiddenFromAI } from "@margin-chat/workspace-contracts";
@@ -623,6 +625,12 @@ function getCodeMirrorSelection(
   };
 }
 
+/** The same passage, re-read after the selection settles or the editor reports it again. */
+function isSameSelectedPassage(current: SelectionDraft | null, next: SelectionDraft) {
+  return Boolean(current && current.conversationId === next.conversationId && current.messageId === next.messageId
+    && current.sourceBlockId === next.sourceBlockId && current.startOffset === next.startOffset && current.endOffset === next.endOffset);
+}
+
 function hasOverlappingAnchor(
   conversations: Record<string, Conversation>,
   selectionDraft: SelectionDraft,
@@ -758,10 +766,12 @@ function WorkspaceAppContent({
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(
     null,
   );
+  const selectionDraftRef = useRef(selectionDraft);
+  selectionDraftRef.current = selectionDraft;
   const selectionViewport = useVisualViewport(Boolean(selectionDraft) && !mobileKeyboard.mobile);
   const [selectionActionsExpanded, setSelectionActionsExpanded] = useState(false);
   const [selectionOptionsInitiallyOpen, setSelectionOptionsInitiallyOpen] = useState(false);
-  const [selectionIntent, setSelectionIntent] = useState<"branch" | "link">("branch");
+  const [selectionIntent, setSelectionIntent] = useState<"actions" | "branch" | "link">("actions");
   const [selectionModelOpen, setSelectionModelOpen] = useState(false);
   const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
   const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
@@ -2981,7 +2991,7 @@ function WorkspaceAppContent({
     );
     const rect = selectionRects.at(-1) ?? range.getBoundingClientRect();
 
-    setSelectionDraft({
+    const nextDraft: SelectionDraft = {
       conversationId,
       messageId,
       quote,
@@ -2998,9 +3008,15 @@ function WorkspaceAppContent({
       sourceKind,
       sourceNoteId:
         sourceKind === "standalone-note" ? sourceNoteId : undefined,
-    });
-    setSelectionIntent("branch");
-
+    };
+    // Re-reading the same passage keeps what the toolbar has open and the prompt typed so far.
+    const current = selectionDraftRef.current;
+    if (isSameSelectedPassage(current, nextDraft)) {
+      setSelectionDraft({ ...nextDraft, prompt: current!.prompt });
+      return;
+    }
+    setSelectionDraft(nextDraft);
+    setSelectionIntent("actions");
   }
 
   // On phones the app's selection bar replaces the system's Cut / Copy / Paste menu.
@@ -3354,6 +3370,45 @@ function WorkspaceAppContent({
       window.getSelection()?.addRange(range);
     };
     window.requestAnimationFrame(focus);
+  }
+
+  function closeSelectionDraft() {
+    setSelectionDraft(null);
+    window.getSelection()?.removeAllRanges();
+  }
+
+  /** Mark the selected passage with a highlight, or take the mark off when it already has one. */
+  function handleToggleSelectionHighlight() {
+    if (!selectionDraft?.sourceBlockId) return;
+    const draft = joinSelectedLines(selectionDraft);
+    if (!draft?.sourceBlockId) return;
+    const conversation = currentStateRef.current.conversations[draft.conversationId];
+    const document = conversation ? getEditableDocument(conversation) : null;
+    const block = document?.blocks.find((item) => item.id === draft.sourceBlockId);
+    const content = block && block.content.slice(draft.startOffset, draft.endOffset) === draft.quote
+      ? toggleMarkdownHighlight(block.content, draft.startOffset, draft.endOffset) : null;
+    if (!conversation || !document || !block || content === null) {
+      setDocumentErrors((current) => ({ ...current, [draft.conversationId]: "That passage can't be highlighted. Select plain text within one paragraph." }));
+      closeSelectionDraft();
+      return;
+    }
+    const now = new Date().toISOString();
+    const updated = { ...conversation, updatedAt: now, document: { ...document,
+      blocks: document.blocks.map((item) => item.id === block.id ? { ...item, content, updatedAt: now } : item) } };
+    setState((current) => {
+      const next = replaceDocumentConversation(current, updated);
+      currentStateRef.current = next;
+      return next;
+    });
+    closeSelectionDraft();
+  }
+
+  /** Search the vault for the selected passage. */
+  function handleFindRelatedToSelection() {
+    if (!selectionDraft) return;
+    setSearchQuery(selectionDraft.quote.replace(/\s+/g, " ").trim().slice(0, 200));
+    closeSelectionDraft();
+    handleOpenSearch();
   }
 
   /** A side document about the selected passage, without AI: the passage is quoted at the top and linked back. */
@@ -4484,6 +4539,10 @@ function WorkspaceAppContent({
   }
 
   const selectionConversation = selectionDraft ? state.conversations[selectionDraft.conversationId] : undefined;
+  const selectionPending = Boolean(selectionDraft && pendingConversationIds[selectionDraft.conversationId]);
+  const selectionBlock = selectionDraft?.sourceBlockId && selectionConversation?.document
+    ? getEditableDocument(selectionConversation).blocks.find((block) => block.id === selectionDraft.sourceBlockId) : undefined;
+  const selectionHighlighted = Boolean(selectionBlock && isMarkdownHighlighted(selectionBlock.content, selectionDraft!.startOffset, selectionDraft!.endOffset));
   useEffect(() => { if (!selectionDraft || selectionIntent !== "branch") setSelectionModelOpen(false); }, [selectionDraft, selectionIntent]);
   const selectionTooltipLayout =
     selectionDraft && typeof window !== "undefined"
@@ -4695,7 +4754,7 @@ function WorkspaceAppContent({
       onChange={(document) => handleDocumentChange(conversation.id, document)}
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
-      onSelection={(selection) => { setSelectionDraft(selection); setSelectionIntent("branch"); setSelectionLinkError(null); setSelectionResponseDestination(defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(false); }}
+      onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); setSelectionResponseDestination(defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(false); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
       onClearSelection={() => { if (!isReselectingSelection()) setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current); }}
       onOpenBranch={(id) => handleOpenDocumentReference(conversation.id, id)}
@@ -5346,9 +5405,12 @@ function WorkspaceAppContent({
               onExplain={() => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT)}
               onRewrite={() => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
               onAsk={() => openMobileSelectionPrompt()}
-              onMore={() => openMobileSelectionPrompt(true)}
               onSideDocument={handleCreateSelectionSideDocument}
               onMarginNote={handleCreateSelectionNote}
+              onLink={() => { setSelectionLinkError(null); setSelectionIntent("link"); setSelectionActionsExpanded(true); }}
+              onFindRelated={handleFindRelatedToSelection}
+              onHighlight={selectionDraft.sourceBlockId ? handleToggleSelectionHighlight : undefined}
+              highlighted={selectionHighlighted}
               marginNoteLabel={selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}
               onClose={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}
             /> : mobileKeyboard.mobile && selectionIntent === "branch" ? <MobileComposerViewport>
@@ -5384,7 +5446,7 @@ function WorkspaceAppContent({
             </MobileComposerViewport> :
             <SelectionComposerFrame mobile={mobileKeyboard.mobile}>
             <form
-              className="selection-tooltip"
+              className={`selection-tooltip${mobileKeyboard.mobile ? "" : " is-toolbar"}`}
               data-testid="branch-composer"
               onSubmit={(event) => {
                 event.preventDefault();
@@ -5393,117 +5455,79 @@ function WorkspaceAppContent({
               ref={toolbarRef}
               style={mobileKeyboard.mobile ? undefined : toolbarStyle}
             >
-              <div className="selection-tooltip-head">
-                <p className="eyebrow">
-                  {selectionIntent === "link" ? "Link this passage"
-                    : selectionDraft.sourceKind === "standalone-note"
-                      ? "Selected note text"
-                      : "Ask AI about this passage"}
-                </p>
-                <button
-                  aria-label={
-                    selectionIntent === "link" ? "Cancel link" : "Cancel new branch"
-                  }
-                  className="selection-close"
-                  onClick={() => {
-                    setSelectionDraft(null);
-                    window.getSelection()?.removeAllRanges();
-                  }}
-                  type="button"
-                >
+              {mobileKeyboard.mobile ? <div className="selection-tooltip-head">
+                <p className="eyebrow">Link this passage</p>
+                <button aria-label="Cancel link" className="selection-close" onClick={closeSelectionDraft} type="button">
                   <CloseIcon />
                 </button>
-              </div>
-              <div className="selection-composer-fields">
-              <p className="selection-tooltip-quote">
-                “{excerpt(selectionDraft.quote, 132)}”
-              </p>
-              <div aria-label="Create from this passage" className="selection-create-actions" role="group">
-                <button aria-label="Create a side document from this passage" onClick={handleCreateSelectionSideDocument} type="button">
-                  <span aria-hidden="true">＋</span> Side document
-                </button>
-                <button
-                  aria-label={selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note"}
-                  onClick={handleCreateSelectionNote}
-                  type="button"
-                >
-                  <span aria-hidden="true">＋</span> {selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}
-                </button>
-              </div>
-              <div aria-label="Selected text action" className="selection-intent-switch" role="group">
-                <button
-                  aria-label={
-                    selectionDraft.sourceKind === "standalone-note"
-                      ? "Create a side chat"
-                      : "Start branch"
-                  }
-                  aria-pressed={selectionIntent === "branch"}
-                  className={selectionIntent === "branch" ? "is-active" : ""}
-                  onClick={() => setSelectionIntent("branch")}
-                  type="button"
-                >
-                  {selectionDraft.sourceKind === "standalone-note"
-                    ? "Side chat"
-                    : "Ask AI"}
-                </button>
-                <button type="button" aria-label="Link selected text to an existing document or block"
-                  aria-pressed={selectionIntent === "link"}
-                  className={selectionIntent === "link" ? "is-active" : ""}
-                  onClick={() => { setSelectionLinkError(null); setSelectionIntent("link"); }}>
-                  Link to existing
-                </button>
-              </div>
-              {selectionIntent === "branch" && selectionDraft.sourceBlockId ? <div className="document-ai-options">
-                <div role="group" aria-label="Response destination"><button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={()=>setSelectionResponseDestination("inline")}>In this document</button><button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={()=>setSelectionResponseDestination("side")}>Side document ↗</button></div>
-                {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event)=>setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
+              </div> : <SelectionToolbarRow
+                actions={[
+                  ...(selectionDraft.sourceBlockId ? [{ icon: "highlight" as const, label: "Highlight", ariaLabel: selectionHighlighted ? "Remove highlight" : "Highlight selected text",
+                    pressed: selectionHighlighted, onSelect: handleToggleSelectionHighlight }] : []),
+                  { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: handleCreateSelectionNote },
+                  { icon: "side", label: "Side doc", ariaLabel: "Create a side document from this passage", onSelect: handleCreateSelectionSideDocument },
+                  { icon: "link", label: "Link", ariaLabel: "Link selected text to an existing document or block", pressed: selectionIntent === "link",
+                    onSelect: () => { setSelectionLinkError(null); setSelectionIntent((intent) => intent === "link" ? "actions" : "link"); } },
+                ]}
+                more={[
+                  { icon: "copy", label: "Copy", hint: "⌘C", onSelect: () => { void copySelection(); } },
+                  { icon: "find", label: "Find related", onSelect: handleFindRelatedToSelection },
+                  { icon: "explain", label: "Explain", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT) },
+                  { icon: "rewrite", label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) },
+                ]}
+                ask={{ icon: "ai", label: "Ask AI", ariaLabel: "Ask AI about this passage", pressed: selectionIntent === "branch",
+                  onSelect: () => setSelectionIntent((intent) => intent === "branch" ? "actions" : "branch") }}
+              />}
+              {selectionIntent === "branch" && !mobileKeyboard.mobile ? <div className="selection-toolbar-panel">
+                <div className="selection-input-row">
+                  <input
+                    aria-label="Branch prompt"
+                    autoFocus
+                    id="branch-prompt"
+                    inputMode="text"
+                    onChange={(event) =>
+                      setSelectionDraft((current) =>
+                        current
+                          ? { ...current, prompt: event.target.value }
+                          : current,
+                      )
+                    }
+                    placeholder={BRANCH_PROMPT_PLACEHOLDER}
+                    type="text"
+                    value={selectionDraft.prompt}
+                  />
+                  <button
+                    aria-label="Create branch with prompt"
+                    className="selection-send"
+                    disabled={!selectionDraft.prompt.trim() || selectionPending}
+                    type="submit"
+                  >
+                    <SendIcon />
+                  </button>
+                </div>
+                <div aria-label="Quick asks" className="selection-quick-asks" role="group">
+                  <button type="button" disabled={selectionPending} onClick={handleExplainSelection}>Explain</button>
+                  <button type="button" disabled={selectionPending} onClick={() => handleCreateBranch(REWRITE_SELECTION_PROMPT)}>Rewrite</button>
+                </div>
+                {selectionDraft.sourceBlockId ? <div className="document-ai-options">
+                  <div role="group" aria-label="Response destination"><button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={()=>setSelectionResponseDestination("inline")}>In this document</button><button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={()=>setSelectionResponseDestination("side")}>Side document ↗</button></div>
+                  {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event)=>setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
+                </div> : null}
+                <div className="selection-actions">
+                  {selectionConversation ? <button type="button" className="selection-explain" aria-label="Choose AI model and provider"
+                    aria-haspopup="dialog" aria-expanded={selectionModelOpen} onClick={() => setSelectionModelOpen(true)}>
+                    {selectionConversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(selectionConversation.serviceId, selectionConversation.modelId)?.label ?? selectionConversation.modelId} ⌄
+                  </button> : null}
+                  {selectionConversation && selectionDraft.sourceBlockId ? <AgentModeToggle controls={agentModeControls(selectionConversation)} disabled={selectionPending}/> : null}
+                </div>
               </div> : null}
-              {selectionIntent === "link" ? <DocumentLinkPicker
-                conversations={state.conversations} sourceConversationId={selectionDraft.conversationId}
-                sourceBlockId={selectionDraft.sourceBlockId} onSelect={handleCreateDocumentLink}
-                onCancel={() => setSelectionIntent("branch")} error={selectionLinkError ?? undefined}
-              /> : null}
-              </div>
-              <div className="selection-composer-entry">
-              {selectionIntent !== "link" ? <div className="selection-input-row">
-                <input
-                  aria-label="Branch prompt"
-                  id="branch-prompt"
-                  inputMode="text"
-                  onChange={(event) =>
-                    setSelectionDraft((current) =>
-                      current
-                        ? { ...current, prompt: event.target.value }
-                        : current,
-                    )
-                  }
-                  placeholder={BRANCH_PROMPT_PLACEHOLDER}
-                  type="text"
-                  value={selectionDraft.prompt}
+              {selectionIntent === "link" ? <div className={mobileKeyboard.mobile ? undefined : "selection-toolbar-panel"}>
+                <DocumentLinkPicker
+                  conversations={state.conversations} sourceConversationId={selectionDraft.conversationId}
+                  sourceBlockId={selectionDraft.sourceBlockId} onSelect={handleCreateDocumentLink}
+                  onCancel={() => mobileKeyboard.mobile ? closeSelectionDraft() : setSelectionIntent("actions")} error={selectionLinkError ?? undefined}
                 />
-                <button
-                  aria-label="Create branch with prompt"
-                  className="selection-send"
-                  disabled={!selectionDraft.prompt.trim()}
-                  type="submit"
-                >
-                  <SendIcon />
-                </button>
               </div> : null}
-              {selectionIntent === "branch" ? <div className="selection-actions">
-                {selectionConversation ? <button type="button" className="selection-explain" aria-label="Choose AI model and provider"
-                  aria-haspopup="dialog" aria-expanded={selectionModelOpen} onClick={() => setSelectionModelOpen(true)}>
-                  {selectionConversation.serviceId === "backend-services" ? "Auto" : getBackendServiceModel(selectionConversation.serviceId, selectionConversation.modelId)?.label ?? selectionConversation.modelId} ⌄
-                </button> : null}
-                {selectionConversation && selectionDraft.sourceBlockId ? <AgentModeToggle controls={agentModeControls(selectionConversation)} disabled={Boolean(pendingConversationIds[selectionConversation.id])}/> : null}
-                <button
-                  className="selection-explain"
-                  onClick={handleExplainSelection}
-                  type="button"
-                >
-                  Explain selection
-                </button>
-              </div> : null}
-              </div>
             </form>
             </SelectionComposerFrame>
           ) : null}
