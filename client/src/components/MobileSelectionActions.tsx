@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { copySelection, cutSelection, pasteIntoSelection, selectAllAround, selectionEditingHost } from "../lib/selectionMenu";
 import { useVisualViewport } from "../lib/useVisualViewport";
+import { SelectionIcon, type SelectionIconName } from "./SelectionToolbar";
 import "./MobileSelectionActions.css";
 
 type SelectionRect = { top: number; left: number; width: number; height: number };
@@ -12,25 +13,31 @@ type MobileSelectionActionsProps = {
   onExplain: () => void;
   onRewrite: () => void;
   onAsk: () => void;
-  onMore: () => void;
   /** Create a side document or margin note on the passage directly, without AI. */
   onSideDocument: () => void;
   onMarginNote: () => void;
+  onLink: () => void;
+  onFindRelated: () => void;
+  /** Offered only where the passage is in a document block that can carry the mark. */
+  onHighlight?: () => void;
+  highlighted?: boolean;
   marginNoteLabel?: string;
   onClose: () => void;
   disabled?: boolean;
 };
 
 /**
- * Keep selection actions beside the native handles without opening an input. The clipboard row
- * stands in for the system's Cut / Copy / Paste menu, which the workspace hides on phones.
+ * One row of actions beside the native handles, without opening an input: Copy and the
+ * everyday actions first, Ask AI near the end, and More for the rest. More also holds the
+ * system's Cut / Paste / Select all, which the workspace hides on phones.
  */
-export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onMore, onSideDocument, onMarginNote, marginNoteLabel = "Margin note", onClose, disabled = false }: MobileSelectionActionsProps) {
+export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onSideDocument, onMarginNote, onLink, onFindRelated, onHighlight, highlighted = false, marginNoteLabel = "Margin note", onClose, disabled = false }: MobileSelectionActionsProps) {
   const viewport = useVisualViewport(true);
   const [selectionRect, setSelectionRect] = useState(rect);
-  const [height, setHeight] = useState(102);
+  const [height, setHeight] = useState(64);
   const [editable, setEditable] = useState(() => Boolean(selectionEditingHost()));
   const [copied, setCopied] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
     if (!copied) return;
@@ -101,27 +108,34 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
     : (selectionRect.top + selectionRect.height / 2 < viewport.top + viewport.height / 2 ? maximumTop : minimumTop);
   const top = Math.max(minimumTop, Math.min(preferredTop, maximumTop));
 
+  const item = (icon: SelectionIconName, label: string, onClick: () => void, options: { ariaLabel?: string; ai?: boolean; disabled?: boolean; pressed?: boolean } = {}) =>
+    <button type="button" key={label} className={options.ai ? "is-ai" : undefined} aria-label={options.ariaLabel} aria-pressed={options.pressed}
+      disabled={options.disabled} onClick={onClick}><SelectionIcon name={icon} /><span>{label}</span></button>;
+
   return createPortal(<form ref={formRef} className="mobile-selection-actions" data-testid="branch-composer" data-placement={placement}
     role="group" aria-label="Selected text actions" style={{ top, left, width }}
     onSubmit={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()}>
-    <div className="mobile-selection-actions-clipboard" role="group" aria-label="Clipboard">
-      {editable ? <button type="button" onClick={() => { void cutSelection(); }}>Cut</button> : null}
-      <button type="button" onClick={() => { void copySelection().then((done) => setCopied(done)); }}>{copied ? "Copied" : "Copy"}</button>
-      {editable ? <button type="button" onClick={() => { void pasteIntoSelection(); }}>Paste</button> : null}
-      <button type="button" onClick={() => selectAllAround()}>Select all</button>
+    <div className="mobile-selection-actions-row">
+      {item("copy", copied ? "Copied" : "Copy", () => { void copySelection().then((done) => setCopied(done)); })}
+      {onHighlight ? item("highlight", "Highlight", onHighlight, { ariaLabel: highlighted ? "Remove highlight" : "Highlight selected text", pressed: highlighted }) : null}
+      {item("note", "Note", onMarginNote, { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note" : "Create a side note" })}
+      {item("side", "Side doc", onSideDocument, { ariaLabel: "Create a side document from this passage" })}
+      {item("link", "Link", onLink, { ariaLabel: "Link selected text to an existing document or block" })}
+      {item("ai", "Ask AI", onAsk, { ariaLabel: "Ask AI about this passage", ai: true, disabled })}
+      <button type="button" aria-label="More selection actions" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
+        <SelectionIcon name="more" /><span>More</span>
+      </button>
     </div>
-    <div className="mobile-selection-actions-create" role="group" aria-label="Create from this passage">
-      <button type="button" aria-label="Create a side document from this passage" onClick={onSideDocument}>＋ Side document</button>
-      <button type="button" aria-label={marginNoteLabel === "Margin note" ? "Add a margin note" : "Create a side note"} onClick={onMarginNote}>＋ {marginNoteLabel}</button>
-    </div>
-    <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onExplain}>Explain</button>
-    <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onRewrite}>Rewrite</button>
-    <button type="button" className="mobile-selection-actions-pill" disabled={disabled} onClick={onAsk}>Ask…</button>
-    <button type="button" className="mobile-selection-actions-icon" aria-label="More selection actions" title="More selection actions" disabled={disabled} onClick={onMore}>
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="4" cy="10" r="1.5" /><circle cx="10" cy="10" r="1.5" /><circle cx="16" cy="10" r="1.5" /></svg>
-    </button>
-    <button type="button" className="mobile-selection-actions-icon" aria-label="Dismiss selection actions" title="Dismiss selection actions" onClick={onClose}>
-      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8" /></svg>
-    </button>
+    {moreOpen ? <div className="mobile-selection-actions-more" role="group" aria-label="More selection actions">
+      {editable ? item("cut", "Cut", () => { void cutSelection(); }) : null}
+      {editable ? item("paste", "Paste", () => { void pasteIntoSelection(); }) : null}
+      {item("select", "Select all", () => selectAllAround())}
+      {item("find", "Find related", onFindRelated)}
+      {item("explain", "Explain", onExplain, { ai: true, disabled })}
+      {item("rewrite", "Rewrite", onRewrite, { ai: true, disabled })}
+      <button type="button" aria-label="Dismiss selection actions" onClick={onClose}>
+        <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8" /></svg><span>Close</span>
+      </button>
+    </div> : null}
   </form>, document.body);
 }

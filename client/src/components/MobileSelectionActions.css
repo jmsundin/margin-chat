@@ -2,14 +2,12 @@
   position: fixed;
   z-index: 60;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, .8fr) 44px 44px;
-  align-items: center;
-  gap: 3px;
+  gap: 2px;
   box-sizing: border-box;
   margin: 0;
   padding: 4px;
   border: 1px solid var(--line);
-  border-radius: 28px;
+  border-radius: 16px;
   background: var(--panel-strong);
   box-shadow: 0 6px 24px #0003;
   color: var(--ink);
@@ -17,49 +15,51 @@
   -webkit-user-select: none;
 }
 
+.mobile-selection-actions-row,
+.mobile-selection-actions-more {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 2px;
+}
+
+/* More wraps onto rows of four so its labels stay readable. */
+.mobile-selection-actions-more {
+  grid-auto-flow: row;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
 .mobile-selection-actions button {
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  min-height: 44px;
+  gap: 3px;
+  min-width: 0;
+  min-height: 52px;
   box-sizing: border-box;
-  padding: 0 4px;
-  border: 1px solid transparent;
-  border-radius: 24px;
+  padding: 4px 0;
+  border: 0;
+  border-radius: 12px;
   background: transparent;
   color: inherit;
   font: inherit;
-  font-size: 13px;
+  font-size: 10.5px;
   font-weight: 500;
-  line-height: 1.3;
+  line-height: 1.2;
   white-space: nowrap;
   touch-action: manipulation;
   cursor: pointer;
 }
 
-.mobile-selection-actions .mobile-selection-actions-pill { border-color: var(--line-strong); }
-.mobile-selection-actions .mobile-selection-actions-icon { color: var(--muted); }
+.mobile-selection-actions button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.mobile-selection-actions button .selection-toolbar-icon,
+.mobile-selection-actions button > svg { width: 20px; height: 20px; }
+.mobile-selection-actions button.is-ai { color: var(--accent); }
+.mobile-selection-actions button[aria-pressed="true"],
+.mobile-selection-actions button[aria-expanded="true"] { background: var(--accent-soft); }
 .mobile-selection-actions button:active:not(:disabled) { background: var(--accent-soft); color: var(--ink); }
 .mobile-selection-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mobile-selection-actions button:disabled { opacity: .45; cursor: default; }
-
-/* Stands in for the system's Cut / Copy / Paste menu. */
-.mobile-selection-actions .mobile-selection-actions-clipboard {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 3px;
-  padding-bottom: 3px;
-  border-bottom: 1px solid var(--line);
-}
-.mobile-selection-actions .mobile-selection-actions-clipboard button { flex: 1 1 0; }
-
-/* Side document and margin note, created without AI. */
-.mobile-selection-actions .mobile-selection-actions-create {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 3px;
-  padding-bottom: 3px;
-  border-bottom: 1px solid var(--line);
-}
-.mobile-selection-actions .mobile-selection-actions-create button { flex: 1 1 0; border-color: var(--line-strong); }

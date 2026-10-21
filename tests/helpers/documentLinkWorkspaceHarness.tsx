@@ -135,7 +135,11 @@ async function selectSourcePassage() {
 }
 async function selectPassage() {
   await selectSourcePassage();
-  assert(element(".selection-tooltip-quote").textContent.includes("selected passage"));
+  const toolbar = element('[role="toolbar"][aria-label="Selected text actions"]');
+  for (const label of ["Note", "Side doc", "Link", "Ask AI"]) assert(button(label, toolbar), `The selection toolbar offers ${label}.`);
+  assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Selecting text shows the toolbar, not a prompt.");
+  await click(element('[aria-label="Ask AI about this passage"]'));
+  assert(element('[aria-label="Branch prompt"]'), "Ask AI opens the prompt under the toolbar.");
   await click(element('[aria-label="Choose AI model and provider"]'));
   const search = element('[aria-label="Search AI models"]');
   await act(async () => {
@@ -143,7 +147,7 @@ async function selectPassage() {
     Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(search, "GPT-6.1 Sol");
     search.dispatchEvent(new browser.Event("input", { bubbles: true }));
   });
-  assert(element(".selection-tooltip-quote").textContent.includes("selected passage"));
+  assert(element('[aria-label="Branch prompt"]'), "Searching models keeps the selection prompt open.");
   await click(element('[aria-label="Search results"] .picker-model-row'));
   assert.equal(latest.conversations.source.modelId, "gpt-6.1-sol");
   assert.equal(latest.conversations.source.serviceId, "openai-api");
@@ -151,16 +155,18 @@ async function selectPassage() {
   assert(element('[aria-label="Choose AI model and provider"]').textContent.includes("GPT-6.1 Sol"));
   await click(element('[aria-label="Choose AI model and provider"]'));
   await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-  assert(element(".selection-tooltip-quote"), "Escape closes only the model picker.");
+  assert(element('[aria-label="Branch prompt"]'), "Escape closes only the model picker.");
   await click(element('[aria-label="Link selected text to an existing document or block"]'));
 }
 async function testMobileSelectionActions() {
   const sourceBlocks = structuredClone(latest.conversations.source.document!.blocks);
   const { current, from } = await selectSourcePassage();
   const actionBar = element('[data-testid="branch-composer"]');
-  for (const label of ["Explain", "Rewrite", "Ask"]) assert(button(label, actionBar));
-  const clipboard = actionBar.querySelector('[aria-label="Clipboard"]'); assert(clipboard, "Missing clipboard row");
-  for (const label of ["Copy", "Select all"]) assert(button(label, clipboard), `The app bar offers ${label} in place of the system menu.`);
+  for (const label of ["Copy", "Highlight", "Note", "Side doc", "Link", "Ask AI", "More"]) assert(button(label, actionBar), `The selection bar offers ${label}.`);
+  await click(button("More", actionBar));
+  const more = actionBar.querySelector('[role="group"][aria-label="More selection actions"]'); assert(more, "Missing More actions");
+  for (const label of ["Cut", "Paste", "Select all", "Explain", "Rewrite"]) assert(button(label, more), `More offers ${label} in place of the system menu.`);
+  await click(button("More", actionBar));
   const longPress = new browser.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
   current.view.dom.dispatchEvent(longPress);
   assert.equal(longPress.defaultPrevented, true, "A long press in the document must not open the system menu on top of the app bar.");
@@ -183,7 +189,7 @@ async function testMobileSelectionActions() {
   await act(async () => current.commands.setTextSelection({ from, to: from + 8 }));
   await settle();
   assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Adjusting the selected passage returns to the quick actions.");
-  assert(button("Explain", element('[data-testid="branch-composer"]')));
+  assert(button("Ask AI", element('[data-testid="branch-composer"]')));
   checks.push("native selection handles remain usable, no keyboard opens, and adjusting the passage restores quick actions");
 
   for (const [label, expectedPrompt] of [
@@ -192,6 +198,7 @@ async function testMobileSelectionActions() {
   ]) {
     await selectSourcePassage();
     const before = chatRequests.length;
+    await click(button("More", element('[data-testid="branch-composer"]')));
     const action = button(label, element('[data-testid="branch-composer"]'));
     await act(async () => {
       action.dispatchEvent(new browser.TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [] }));
@@ -289,6 +296,13 @@ async function testMobileSelectionActions() {
   await settle();
   assert.deepEqual(latest.conversations.source.document!.blocks, sourceBlocks);
   checks.push("Ask uses a compact normal typing field, retains context through model selection, and generates only on send");
+
+  await selectSourcePassage();
+  await click(element('[aria-label="Highlight selected text"]'));
+  assert.equal(latest.conversations.source.document!.blocks.find((block) => block.id === "source-block")!.content,
+    "Alpha ==selected passage== omega.", "Highlight marks the passage in the document's Markdown.");
+  assert.equal(browser.document.querySelector('[data-testid="branch-composer"]'), null, "Highlighting closes the selection bar.");
+  checks.push("Highlight marks the selected passage without AI");
 }
 
 async function openPreview() {

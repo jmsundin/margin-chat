@@ -19,5 +19,5 @@ test("mobile selection keeps native handles, replaces the system menu, generates
   const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
   clearTimeout(timeout);
   if (code !== 0) throw new Error(`Mobile selection regression:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(5);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(6);
 }, 25000);

@@ -151,6 +151,8 @@ try {
   await settle();
   await act(async () => editor("source-block").commands.setTextSelection({ from: 7, to: 23 }));
   await settle();
+  // The selection toolbar opens its prompt from Ask AI.
+  await click(element('[aria-label="Ask AI about this passage"]'));
   await fill(element('[aria-label="Branch prompt"]'), "Explain the passage.");
   await click(button("Side document ↗"));
   await click(element('[aria-label="Choose AI model and provider"]'));
