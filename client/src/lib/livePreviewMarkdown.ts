@@ -4,6 +4,7 @@ import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode } from "@lezer/common";
 import { findObsidianInlineTokens } from "./obsidianMarkdown";
 import { findLatexStart, readInlineLatexAtStart, renderLatexToHtml } from "./latex";
+import { OPEN_LINK_HINT, openableHref, openLinkInNewTab, shouldOpenLink } from "./documentLinkOpening";
 
 /**
  * Obsidian's Live Preview for CodeMirror: Markdown is styled in place, and its
@@ -166,7 +167,7 @@ function buildDecorations(view: EditorView, mode: LivePreviewMode): DecorationSe
             // [label](url): the label reads as a link; the brackets and address hide.
             if (marks.length >= 3 && url) {
               const labelFrom = marks[0].to, labelTo = marks[1].from;
-              if (labelTo > labelFrom) ranges.push(mark("cm-lp-link", { "data-href": url, title: url }).range(labelFrom, labelTo));
+              if (labelTo > labelFrom) ranges.push(mark("cm-lp-link", { "data-href": url, title: `${url}\n${OPEN_LINK_HINT}` }).range(labelFrom, labelTo));
               syntax(marks[0].from, marks[0].to);
               syntax(marks[1].from, node.to);
             } else ranges.push(mark("cm-lp-link").range(node.from, node.to));
@@ -175,10 +176,16 @@ function buildDecorations(view: EditorView, mode: LivePreviewMode): DecorationSe
           case "URL": {
             if (node.node.parent?.name === "Link" || node.node.parent?.name === "Image") return;
             const url = doc.sliceString(node.from, node.to);
-            ranges.push(mark("cm-lp-link", { "data-href": url }).range(node.from, node.to));
+            ranges.push(mark("cm-lp-link", { "data-href": url, title: OPEN_LINK_HINT }).range(node.from, node.to));
             return;
           }
-          case "Autolink": ranges.push(mark("cm-lp-link").range(node.from, node.to)); return false;
+          case "Autolink": {
+            // <https://example.com>: the address inside the angle brackets.
+            const address = node.node.getChild("URL");
+            const url = address ? doc.sliceString(address.from, address.to) : "";
+            ranges.push(mark("cm-lp-link", url ? { "data-href": url, title: OPEN_LINK_HINT } : undefined).range(node.from, node.to));
+            return false;
+          }
           case "Image": ranges.push(mark("cm-lp-image").range(node.from, node.to)); return false;
           case "ListItem": addLine(node.from, "cm-lp-list"); return;
           case "ListMark": {
@@ -295,10 +302,15 @@ function safeDecorations(view: EditorView, mode: LivePreviewMode): DecorationSet
   }
 }
 
+function linkAt(target: EventTarget | null): string | null {
+  return target instanceof Element ? openableHref(target.closest<HTMLElement>("[data-href]")?.dataset.href) : null;
+}
+
 /** Live Preview styling for the visible lines. `mode` reads the current mode from the editor state. */
 export function livePreviewInline(mode: (state: EditorState) => LivePreviewMode) {
   return ViewPlugin.fromClass(class {
     decorations: DecorationSet;
+    pointerType = "mouse";
     constructor(view: EditorView) { this.decorations = safeDecorations(view, mode(view.state)); }
     update(update: ViewUpdate) {
       if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged
@@ -309,13 +321,24 @@ export function livePreviewInline(mode: (state: EditorState) => LivePreviewMode)
   }, {
     decorations: (plugin) => plugin.decorations,
     eventHandlers: {
+      pointerdown(event) { this.pointerType = event.pointerType || "mouse"; return false; },
       mousedown(event) {
-        // Cmd or Ctrl and click opens a link, as in Obsidian; a plain click edits it.
-        if (!(event.metaKey || event.ctrlKey) || !(event.target instanceof Element)) return false;
-        const href = event.target.closest<HTMLElement>("[data-href]")?.dataset.href;
-        if (!href || !/^(https?:|mailto:)/i.test(href)) return false;
+        // Cmd or Ctrl and click opens a link, as in Obsidian, before the caret moves into it.
+        if (!(event.metaKey || event.ctrlKey) || event.button !== 0) return false;
+        const href = linkAt(event.target);
+        if (!href) return false;
         event.preventDefault();
-        window.open(href, "_blank", "noopener,noreferrer");
+        openLinkInNewTab(href);
+        return true;
+      },
+      click(event, view) {
+        // A tap on a touch screen, or a click in Reading mode, opens the link. Cmd or Ctrl and click opened on mousedown.
+        if (event.metaKey || event.ctrlKey) return false;
+        const href = linkAt(event.target);
+        if (!href || !shouldOpenLink({ button: event.button, metaKey: false, ctrlKey: false, shiftKey: event.shiftKey, altKey: event.altKey,
+          pointerType: this.pointerType, readOnly: view.state.readOnly, selecting: !view.state.selection.main.empty })) return false;
+        event.preventDefault();
+        openLinkInNewTab(href);
         return true;
       },
     },

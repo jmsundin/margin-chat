@@ -240,7 +240,17 @@ export function excerpt(value: string, maxLength = 52): string {
     return compact;
   }
 
-  return `${compact.slice(0, maxLength - 1).trimEnd()}...`;
+  const cut = maxLength - 1;
+  // Never cut a web address: half a link reads as a real one, and gets copied, opened or fetched as one.
+  const wordStart = compact.lastIndexOf(" ", cut) + 1;
+  const wordEnd = compact.indexOf(" ", wordStart);
+  const word = compact.slice(wordStart, wordEnd < 0 ? undefined : wordEnd);
+  if (wordStart < cut && wordStart + word.length > cut && /^(?:[a-z][a-z\d+.-]*:\/\/|www\.)/i.test(word)) {
+    if (wordStart > 0) return `${compact.slice(0, wordStart).trimEnd()}...`;
+    return wordEnd < 0 ? word : `${word} ...`;
+  }
+
+  return `${compact.slice(0, cut).trimEnd()}...`;
 }
 
 export function buildConversationTitle(quote: string, prompt: string): string {
