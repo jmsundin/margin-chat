@@ -7166,7 +7166,8 @@ button {
     left: calc(12px + env(safe-area-inset-left, 0px));
     max-width: min(360px, calc(100vw - 24px));
     opacity: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     padding: 18px 16px 16px;
     pointer-events: none;
     position: fixed;
@@ -7176,7 +7177,8 @@ button {
       transform 220ms ease,
       opacity 220ms ease;
     width: min(88vw, 360px);
-    z-index: 40;
+    /* Above the document header (45), so the open sidebar covers it. */
+    z-index: 47;
   }
 
   .thread-sidebar:not(.is-collapsed) {
@@ -7198,10 +7200,17 @@ button {
     margin-top: 16px;
   }
 
+  /* Titles truncate to the panel's width; the list only scrolls up and down. */
   .thread-list {
     display: flex;
+    overflow-x: hidden;
     overflow-y: auto;
     padding-right: 0;
+  }
+
+  .thread-list > * {
+    max-width: 100%;
+    min-width: 0;
   }
 
   .workspace-mobile-backdrop {
@@ -7212,7 +7221,7 @@ button {
     inset: 0;
     padding: 0;
     position: fixed;
-    z-index: 34;
+    z-index: 46;
   }
 
   .workspace-mobile-shell {
