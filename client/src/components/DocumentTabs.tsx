@@ -27,12 +27,16 @@ export interface DocumentTabsProps {
   groups?: Record<string, ConversationGroup>;
   onAssignGroup?: (conversationId: string, groupId: string | null) => void;
   onRename?: (id: string, title: string) => void;
+  /** A list of full-width rows with whole titles, as in the phone header's drop-down. */
+  vertical?: boolean;
 }
 
-export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, closedDocumentIds = [], parentTitles = {}, onSelect, onMinimize, onClose, showCloseButtons = false, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename }: DocumentTabsProps) {
+export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, closedDocumentIds = [], parentTitles = {}, onSelect, onMinimize, onClose, showCloseButtons = false, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename, vertical = false }: DocumentTabsProps) {
   const instructionsId = useId();
   const previewId = useId();
   const tabs = useRef(new Map<string, HTMLButtonElement>());
+  // A long list opens scrolled to the tab you're on.
+  useEffect(() => { if (vertical) tabs.current.get(activeDocumentId)?.scrollIntoView?.({ block: "nearest" }); }, [vertical, activeDocumentId]);
   const tablist = useRef<HTMLDivElement>(null);
   const draggedId = useRef<string | null>(null);
   const pointerDrag = useRef<{ cancel: () => void } | null>(null);
@@ -124,7 +128,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
       return;
     }
     const index = documents.findIndex((document) => document.id === id);
-    const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+    const direction = event.key === (vertical ? "ArrowUp" : "ArrowLeft") ? -1 : event.key === (vertical ? "ArrowDown" : "ArrowRight") ? 1 : 0;
     if (event.altKey && direction) {
       event.preventDefault();
       const target = documents[index + direction];
@@ -231,7 +235,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
     element.addEventListener("lostpointercapture", cancel);
   }
 
-  return <div className="document-tabs-container">
+  return <div className={`document-tabs-container${vertical ? " is-vertical" : ""}`}>
     <p id={instructionsId} className="document-tabs-instructions">
       Select a tab to focus or restore its document. Margin notes and branches are listed after their parent; select one that is not open to open it. Pin documents from their menu to keep them in the fixed pane area.
       Use Left and Right arrows to move between tabs, Enter to select, and Alt plus Left or Right to reorder.
@@ -239,7 +243,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
       Hover or focus pinned tabs to preview them. Right-click or press Shift plus F10 for document options.
     </p>
     <div ref={tablist} className={`document-tabs${draggingId ? " is-reordering" : ""}`}>
-      <div className="document-tabs-list" role="tablist" aria-label="Document tabs" aria-orientation="horizontal" aria-describedby={instructionsId}>
+      <div className="document-tabs-list" role="tablist" aria-label="Document tabs" aria-orientation={vertical ? "vertical" : "horizontal"} aria-describedby={instructionsId}>
       {documents.map((document, index) => {
         const title = document.title || "Untitled document";
         const minimized = minimizedDocumentIds.includes(document.id);
@@ -339,7 +343,7 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
       <button type="button" className="document-tab-create" onClick={onNewSideDocument}
         style={{ order: createButtonIndex * 2 + 1 }}
         aria-label="New side document" title="Create a side document linked to the focused document">
-        <span aria-hidden="true">+</span>
+        <span aria-hidden="true">+</span>{vertical ? " New side document" : null}
       </button>
     </div>
     {preview && previewDocument
