@@ -83,6 +83,10 @@ try {
   const quote = browser.getSelection()!.toString();
   assert.equal(quote, "Select this");
   assert(element('[aria-label="Show keyboard"]'));
+  const dock = element(".mobile-dock");
+  assert(dock.contains(element('[aria-label="Show keyboard"]')), "The keyboard button sits at the right end of the phone's bottom row.");
+  assert.equal(dock.lastElementChild, element('[aria-label="Show keyboard"]'));
+  assert.equal(dock.querySelectorAll(".mobile-dock-slot").length, 2, "The row keeps slots for the microphone and + to its left.");
   const nativeFocus = editor.view.dom.focus.bind(editor.view.dom);
   const focusRequests: Array<{ phase: string; inputMode: string | null; options: unknown }> = [];
   editor.view.dom.focus = (options?: FocusOptions) => {
@@ -105,6 +109,7 @@ try {
 
   await resize(400, 80);
   assert.equal(browser.document.querySelector(".mobile-keyboard-toggle"), null, "The OS keyboard's own Done button closes it, so ours steps aside.");
+  assert.equal(browser.document.querySelector(".mobile-dock"), null, "The whole bottom row steps aside while the OS keyboard is up.");
   await resize(844, 0);
   assert.equal(editor.view.dom.getAttribute("inputmode"), "none", "Dismissing the OS keyboard returns to selection mode.");
   await touchButton('[aria-label="Show keyboard"]');
