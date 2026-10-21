@@ -92,11 +92,11 @@ const GUIDES: AppGuide[] = [
     saves: "Yes, if your account can use custom apps",
     intro: <>Google offers custom apps to personal Google accounts in the US, in English, with Keep Activity on and access to Gemini Spark. Work and school accounts can’t add them yet.</>,
     steps: [
-      <>On a computer, open <a href="https://gemini.google.com">gemini.google.com</a>, then <strong>Settings &amp; help → Connected Apps</strong>.</>,
-      <>Under <strong>Custom apps</strong>, choose <strong>Add a custom app</strong> and paste the server address.</>,
+      <>On a computer, open <a href="https://gemini.google.com">gemini.google.com</a>, then <strong>Settings → Connected Apps</strong> at the bottom left.</>,
+      <>Under <strong>Custom apps for Spark</strong>, choose <strong>Add a custom app</strong> and paste the server address.</>,
       consentStep,
     ],
-    after: <>Custom apps run in Gemini Spark tasks. Gemini asks you to confirm before it saves anything.</>,
+    after: <>Use it from Gemini Spark or in a chat. Gemini asks you to confirm before it saves anything. If Gemini reports a connection error such as “Transport for env PROD not found”, the error is inside Gemini: remove Margin Chat under Connected Apps, add it again, and approve it once more. <strong>Profile → Agents</strong> in Margin Chat shows whether Gemini signed in and when it last reached your vault.</>,
   },
   {
     id: "muse",
