@@ -353,7 +353,9 @@ try {
   await click(options);
   let groupSetting = browser.document.querySelector('[role="menuitem"][aria-haspopup="dialog"]');
   assert.equal(groupSetting?.getAttribute("aria-label"), "Group for Main: Coding");
-  await act(async () => browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true })));
+  for (let step = 0; step < 4 && browser.document.activeElement !== groupSetting; step += 1) {
+    await act(async () => browser.document.activeElement?.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true })));
+  }
   assert.equal(browser.document.activeElement, groupSetting, "Keyboard menu navigation reaches group settings.");
   await click(groupSetting);
   assert(browser.document.querySelector('[role="dialog"]'));

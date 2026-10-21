@@ -180,40 +180,49 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         }
         if (event.key === "Tab") close(true);
       }}>
-      {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>
-        {maximized ? "Restore document size" : "Maximize document"}
-      </button> : null}
-      {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
-        {pinned ? "Unpin document" : "Pin document"}
-      </button> : null}
-      {onRename ? <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => {
-        close(true); setRenameTitle(conversation.title); setRenameOpen(true);
-      }}>Rename document</button> : null}
-      {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
-      {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
-        onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
-      {onToggleHiddenFromAI ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.hiddenFromAI === true}
-        title="AI and connected apps can't read a hidden document, even when you search your whole workspace."
-        onClick={() => action(onToggleHiddenFromAI)}>
-        <span className="document-menu-check" aria-hidden="true">{conversation.hiddenFromAI ? "✓" : ""}</span>
-        <span>Hide from AI</span>
-      </button> : null}
-      {pinned ? <button type="button" role="menuitemcheckbox" aria-checked={!familyPinned} disabled={!onTogglePinScope}
-        title="When off, show this pane only with this main document and its side documents."
-        onClick={() => action(onTogglePinScope)}>
-        <span className="document-menu-check" aria-hidden="true">{familyPinned ? "" : "✓"}</span>
-        <span>Keep visible across documents</span>
-      </button> : null}
-      {!minimized && onMinimize
-        ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
-      {minimized && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Restore document</button> : null}
-      {closed && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Open document</button> : null}
-      {onClose ? <button type="button" role="menuitem" aria-label="Close document" onClick={() => action(onClose)}><span aria-hidden="true">×</span> Close document</button> : null}
-      {onAssignGroup ? <button type="button" role="menuitem" className="document-menu-group-setting"
-        aria-label={`Group for ${title}: ${groupName}`} aria-haspopup="dialog"
-        onClick={() => { close(true); setGroupOpen(true); }}>
-        <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
-      </button> : null}
+      {/* About the document, then making from it, then what AI may read, then its pane on screen. */}
+      {onTogglePin || onRename || onAssignGroup ? <div role="group" className="document-menu-section">
+        {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
+          {pinned ? "Unpin document" : "Pin document"}
+        </button> : null}
+        {pinned ? <button type="button" role="menuitemcheckbox" aria-checked={!familyPinned} disabled={!onTogglePinScope}
+          title="When off, show this pane only with this main document and its side documents."
+          onClick={() => action(onTogglePinScope)}>
+          <span>Keep visible across documents</span>
+          <span className="document-menu-check" aria-hidden="true">{familyPinned ? "" : "✓"}</span>
+        </button> : null}
+        {onRename ? <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => {
+          close(true); setRenameTitle(conversation.title); setRenameOpen(true);
+        }}>Rename document</button> : null}
+        {onAssignGroup ? <button type="button" role="menuitem" className="document-menu-group-setting"
+          aria-label={`Group for ${title}: ${groupName}`} aria-haspopup="dialog"
+          onClick={() => { close(true); setGroupOpen(true); }}>
+          <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
+        </button> : null}
+      </div> : null}
+      {onNewMarginNote || onMoveToSideDocument ? <div role="group" className="document-menu-section">
+        {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
+        {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
+          onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
+      </div> : null}
+      {onToggleHiddenFromAI ? <div role="group" className="document-menu-section">
+        <button type="button" role="menuitemcheckbox" aria-checked={conversation.hiddenFromAI === true}
+          title="AI and connected apps can't read a hidden document, even when you search your whole workspace."
+          onClick={() => action(onToggleHiddenFromAI)}>
+          <span>Hide from AI</span>
+          <span className="document-menu-check" aria-hidden="true">{conversation.hiddenFromAI ? "✓" : ""}</span>
+        </button>
+      </div> : null}
+      {onToggleMaximize || onMinimize || onRestore || onClose ? <div role="group" className="document-menu-section">
+        {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>
+          {maximized ? "Restore document size" : "Maximize document"}
+        </button> : null}
+        {!minimized && onMinimize
+          ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
+        {minimized && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Restore document</button> : null}
+        {closed && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Open document</button> : null}
+        {onClose ? <button type="button" role="menuitem" onClick={() => action(onClose)}>Close document</button> : null}
+      </div> : null}
     </div>, document.body) : null}
     {renameOpen && onRename ? createPortal(<div className="document-rename-backdrop"
       onPointerDown={(event) => event.stopPropagation()}

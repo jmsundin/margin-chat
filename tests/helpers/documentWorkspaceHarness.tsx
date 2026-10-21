@@ -558,7 +558,7 @@ try {
   checks.push("map scene retains main-to-side and nested child edges after document layout interactions");
   async function menuAction(id: string, label: string) {
     await click(documentMenuTrigger(id));
-    const action = [...browser.document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((item) => (item.getAttribute("aria-label") ?? item.textContent?.trim().replace(/^✓\s*/, "")) === label);
+    const action = [...browser.document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((item) => (item.getAttribute("aria-label") ?? item.textContent?.trim().replace(/^✓\s*|\s*✓$/g, "")) === label);
     assert(action, `Missing menu action ${label}`);
     await click(action);
   }
