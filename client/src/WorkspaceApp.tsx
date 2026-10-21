@@ -1883,6 +1883,7 @@ function WorkspaceAppContent({
             markerViewport: viewport && bodyRect ? intersectConnectorRects(viewport, bodyRect) : viewport };
         }
 
+        const minimizedNodeElements = Array.from(canvasRef.current?.querySelectorAll<HTMLElement>("[data-minimized-node-id]") ?? []);
         const activePath = getConversationPath(
           state.conversations,
           focusedConversation.id,
@@ -1907,6 +1908,8 @@ function WorkspaceAppContent({
             }
             // A note in its parent's margin sits beside its passage with its own short link.
             if (isCompactDocument(childConversation) && showsMarginInPanel(parentConversation)) continue;
+            // A minimized child shown as a node beside its document gets its curve below.
+            if (minimizedNodeElements.some((node) => node.dataset.minimizedNodeId === childConversation.id)) continue;
 
             const connection = buildDocumentConnector({
               id: `tree-${childConversation.id}`,
@@ -1916,6 +1919,25 @@ function WorkspaceAppContent({
             });
             if (connection) nextConnections.push(connection);
           }
+        }
+
+        // Minimized children drawn as nodes beside their document curve to them from their passage,
+        // or from the document's header when they have none, like an open side document.
+        for (const node of minimizedNodeElements) {
+          const child = state.conversations[node.dataset.minimizedNodeId ?? ""];
+          const parentConversation = child?.parentId ? state.conversations[child.parentId] : undefined;
+          if (!child || !parentConversation) continue;
+          const nodeRect = getElementRect(node);
+          const listRect = getElementRect(node.closest(".minimized-child-nodes"));
+          const viewport = nodeRect && listRect ? intersectConnectorRects(workspaceRect, listRect) : null;
+          const sourceElement = child.branchAnchor ? anchorRefs.current[child.id] : panelRefs.current[parentConversation.id]?.querySelector(".document-header");
+          const connection = buildDocumentConnector({
+            id: `minimized-${child.id}`,
+            source: endpoint(parentConversation, sourceElement, { conversationId: parentConversation.id, anchorId: child.id }),
+            target: { title: child.title || "Untitled document", target: { conversationId: child.id }, panel: nodeRect, viewport, anchor: nodeRect, markerViewport: viewport },
+            active: parentConversation.id === focusedConversation.id,
+          });
+          if (connection) nextConnections.push(connection);
         }
 
         for (const conversation of Object.values(state.conversations)) {
