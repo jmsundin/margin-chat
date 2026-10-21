@@ -27,7 +27,7 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
   // runs, which can stop it partway up a long document.
   const toTop = () => scrollRef.current?.scrollTo({ top: 0 });
   const button = <button type="button" className={`back-to-top${floating ? " is-floating" : ""}`} aria-label="Back to top" title="Back to top"
-    // Stacked directly above the phone's keyboard button (48px, 20px in from the edge, 72px up).
+    // Stacked directly above the keyboard button at the right end of the phone's bottom row (48px, 20px in from the edge, 72px up).
     style={floating ? { top: `calc(${viewport.top + viewport.height - 72 - 8 - 40}px - env(safe-area-inset-bottom, 0px))`, left: viewport.left + viewport.width - 64 } : undefined}
     onPointerDown={(event) => event.preventDefault()} onClick={toTop}>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

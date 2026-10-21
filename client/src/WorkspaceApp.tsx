@@ -7,6 +7,9 @@ import MobileAIComposer from "./components/MobileAIComposer";
 import { MobileSelectionActions } from "./components/MobileSelectionActions";
 import { SelectionToolbarRow } from "./components/SelectionToolbar";
 import { CaretActions } from "./components/CaretActions";
+import { MobileCreateMenu, type MobileCreateTarget } from "./components/MobileCreateMenu";
+import { caretParagraphIn } from "./components/LiveDocumentEditor";
+import { useMobileDockSlot } from "./lib/mobileDock";
 import type { DocumentCaretMenu } from "./components/DocumentPanel";
 import { isMarkdownHighlighted, toggleMarkdownHighlight } from "./lib/selectionHighlight";
 import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
@@ -769,6 +772,8 @@ function WorkspaceAppContent({
     null,
   );
   const [caretMenu, setCaretMenu] = useState<DocumentCaretMenu | null>(null);
+  // The passage the phone's + menu was opened on.
+  const createMenuPassage = useRef<SelectionDraft | null>(null);
   const closeCaretMenu = useRef(() => setCaretMenu(null)).current;
   // Selecting text swaps the caret menu for the selection toolbar.
   useEffect(() => { if (selectionDraft) setCaretMenu(null); }, [selectionDraft]);
@@ -1039,6 +1044,7 @@ function WorkspaceAppContent({
     .map((item) => item.id)
     .join("|");
   const isTileView = mainViewMode === "tiles";
+  const createSlot = useMobileDockSlot("create");
   const isGraphView = mainViewMode === "graph";
   const visibleDocumentIds = new Set([...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]);
   const maximizedDocument = !isTileView && !isGraphView && maximizedDocumentId && visibleDocumentIds.has(maximizedDocumentId)
@@ -3378,6 +3384,22 @@ function WorkspaceAppContent({
     window.requestAnimationFrame(focus);
   }
 
+  /** The phone's + menu acts on the selection, else the paragraph at the caret, else the whole document. */
+  function prepareCreateMenu(): MobileCreateTarget {
+    if (selectionDraft?.conversationId === activeConversation.id) { createMenuPassage.current = selectionDraft; return "selection"; }
+    const paragraph = caretParagraphIn(activeConversation.id);
+    createMenuPassage.current = paragraph ? { ...paragraph, prompt: "", sourceKind: "message", sourceContent: paragraph.quote } : null;
+    return paragraph ? "paragraph" : "document";
+  }
+  function handleCreateMenuSideDocument() {
+    if (createMenuPassage.current) handleCreateSelectionSideDocument(createMenuPassage.current);
+    else handleAddSideChat(activeConversation.id);
+  }
+  function handleCreateMenuNote() {
+    if (createMenuPassage.current) { handleCreateSelectionNote(createMenuPassage.current); return; }
+    focusNewDocumentEditor(handleCreateNote({ conversationId: activeConversation.id, content: "", sourceMessageId: null }));
+  }
+
   function closeSelectionDraft() {
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
@@ -5405,6 +5427,8 @@ function WorkspaceAppContent({
             />
           ) : null}
 
+          {createSlot && mainViewMode === "chat" && !leftSidebarOpen ? <MobileCreateMenu slot={createSlot} prepare={prepareCreateMenu}
+            onNewDocument={handleCreateMainConversation} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote} /> : null}
           {!isTileView && caretMenu && !selectionDraft ? <CaretActions menu={caretMenu} mobile={mobileKeyboard.mobile} onClose={closeCaretMenu}
             onNote={() => handleCreateSelectionNote(caretMenu.paragraph)}
             onSideDocument={() => handleCreateSelectionSideDocument(caretMenu.paragraph)}

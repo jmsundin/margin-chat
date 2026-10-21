@@ -7,7 +7,7 @@ import { GFM } from "@lezer/markdown";
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { getDocumentBlockAuthorship, type DocumentBlock } from "@margin-chat/workspace-contracts";
-import type { RichDocumentEditorProps, RichDocumentRect } from "./RichDocumentEditor";
+import type { RichDocumentEditorProps, RichDocumentRect, RichDocumentSelection } from "./RichDocumentEditor";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { getMarkdownBackspaceEdit, getMarkdownEnterEdit } from "../lib/markdownEditing";
 import { formatDocumentDateTime } from "../lib/documentDateTime";
@@ -337,6 +337,16 @@ function toggleWrap(view: EditorView, marker: string) {
   return true;
 }
 
+/** The editor that last had focus, so a button outside it can act on the paragraph its caret is in. */
+let lastFocusedEditor: { conversationId: string; view: EditorView; paragraph: () => RichDocumentSelection | undefined } | null = null;
+
+/** The paragraph around the caret of the document's editor, when it was the last one typed or tapped in. */
+export function caretParagraphIn(conversationId: string) {
+  const editor = lastFocusedEditor;
+  if (!editor || editor.conversationId !== conversationId || !editor.view.dom.isConnected) return undefined;
+  return editor.paragraph();
+}
+
 export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const latest = useRef(props);
   latest.current = props;
@@ -548,6 +558,22 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return true;
   }
 
+  /** A paragraph as a passage, when it has saved text a note or side document can point at. */
+  function paragraphOf(view: EditorView, block: LiveBlock): RichDocumentSelection | undefined {
+    const live = stateOf(view);
+    const markdown = view.state.doc.sliceString(block.from, block.to);
+    const saved = !isDraftBlockId(block.id) && !live.locked.has(block.id) && markdown.trim() && liveBlockInfo(markdown).kind === "text";
+    return saved ? { conversationId: latest.current.conversationId, messageId: blockById.get(block.id)?.sourceMessageId ?? `document:${block.id}`,
+      sourceBlockId: block.id, startOffset: 0, endOffset: markdown.length, quote: markdown, rect: selectionRect(view) } : undefined;
+  }
+  const paragraphAtCaret = useRef(() => undefined as RichDocumentSelection | undefined);
+  paragraphAtCaret.current = () => {
+    const view = viewRef.current;
+    const live = view && stateOf(view);
+    if (!view || !live || live.mode === "reading" || !live.layout.length) return undefined;
+    return paragraphOf(view, live.layout[blockIndexAt(live.layout, view.state.selection.main.head)]);
+  };
+
   /**
    * The action menu at the caret: the paragraph it sits in, plus Ask AI, Paste and Select
    * that act where the caret was when the menu opened. Only an empty selection opens it.
@@ -563,7 +589,6 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const head = blockId ? block.to : main.head;
     const markdown = view.state.doc.sliceString(block.from, block.to);
     const writable = !view.state.readOnly && !live.locked.has(block.id);
-    const saved = !isDraftBlockId(block.id) && !live.locked.has(block.id) && markdown.trim() && liveBlockInfo(markdown).kind === "text";
     const back = () => {
       const target = viewRef.current;
       if (!target) return null;
@@ -572,8 +597,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       return target;
     };
     current.onCaretMenu({
-      paragraph: saved ? { conversationId: current.conversationId, messageId: blockById.get(block.id)?.sourceMessageId ?? `document:${block.id}`,
-        sourceBlockId: block.id, startOffset: 0, endOffset: markdown.length, quote: markdown, rect: selectionRect(view) } : undefined,
+      paragraph: paragraphOf(view, block),
       rect: selectionRect(view),
       askAI() { const target = back(); if (target) invoke(target); },
       paste() {
@@ -937,6 +961,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             const id = live.layout.length ? live.layout[blockIndexAt(live.layout, update.state.selection.main.head)].id : null;
             setFocusedBlockId(id);
             setEditorFocused(update.view.hasFocus);
+            if (update.view.hasFocus) lastFocusedEditor = { conversationId: latest.current.conversationId, view: update.view, paragraph: () => paragraphAtCaret.current() };
           }
         }),
       ],
