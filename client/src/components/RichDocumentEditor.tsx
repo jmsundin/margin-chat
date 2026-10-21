@@ -92,6 +92,8 @@ export interface RichDocumentEditorProps {
   decorations?: Record<string, RichDocumentDecoration[]>;
   renderAfterBlock?: (block: DocumentBlock) => ReactNode;
   renderBlockPreview?: (block: DocumentBlock) => ReactNode;
+  /** Shown above the text, beside the view switch where the editor has one. */
+  toolbarStart?: ReactNode;
   hidePlaceholder?: boolean;
   ariaLabel?: string;
   className?: string;
@@ -1482,6 +1484,7 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
       if ((event.target as Element).closest(".rich-document-toolbar")) { activeBlockDrag?.stop(); return; }
       if (activeBlockDrag) dropSurface.current.drop(activeBlockDrag, event.clientX, event.clientY);
     }}>
+    {props.toolbarStart ? <div className="rich-document-top-tools">{props.toolbarStart}</div> : null}
     <EditorContent editor={editor} />
     {slots.map(renderBlockChrome)}
     {dropPosition && !dropPosition.indicatorBlockId ? <div className="rich-document-drop-end" aria-hidden="true" /> : null}

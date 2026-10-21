@@ -1114,6 +1114,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       if (focus) { pendingHistoryFocus.current = focus; setHistoryRevision((revision) => revision + 1); setAnnouncement(event.shiftKey ? "Edit redone." : "Edit undone."); }
     }}>
     <div className="live-document-modes" role="toolbar" aria-label="Document view">
+      {props.toolbarStart}
       {(["live", "source", "reading"] as const).map((candidate) => <button key={candidate} type="button" aria-pressed={mode === candidate}
         title={candidate === "live" ? "Live Preview: Markdown shows on the line you're editing" : candidate === "source" ? "Source: the Markdown file as saved" : "Reading: rendered, not editable (⌘E)"}
         onMouseDown={(event) => event.preventDefault()} onClick={() => setMode(candidate)}>

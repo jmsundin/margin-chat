@@ -183,9 +183,6 @@
   --document-left-padding: max(24px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
   --document-right-padding: max(32px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
 }
-.app-shell.is-document-maximized .is-maximized-document > .document-panel .document-body.has-prompt-markers {
-  --document-left-padding: max(36px, calc((var(--maximized-body-width) - var(--maximized-text-width)) / 2));
-}
 .app-shell.is-document-maximized .conversation-tree-expanded.is-maximized-document > .panel-resize-handle { display: none; }
 /* Full screen puts the header away; one quiet button in the corner brings it back. */
 .app-shell.is-document-maximized .document-workspace-header, .app-shell.is-document-maximized .document-header-backdrop { display: none; }
