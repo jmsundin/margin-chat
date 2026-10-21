@@ -117,6 +117,20 @@ assert.equal(view.state.selection.main.head, introEnd + 2, "moving right through
 await act(async () => { view.dispatch({ selection: EditorSelection.cursor(introEnd + 1), userEvent: "select" }); });
 assert.equal(view.state.selection.main.head, introEnd, "moving left through the gap reaches the line above");
 
+// Shift+Enter at the end of a line breaks it inside the same block; Enter on that empty line starts a new block instead.
+await select(text().indexOf("# Plan") + "# Plan".length);
+await key("Enter", { shiftKey: true });
+await type("x");
+assert.equal(latest[0].content, "# Plan\nx", "a line break typed at a block's end stays in that block");
+await key("Enter", { shiftKey: true });
+await key("Enter");
+assert.equal(latest[0].content, "# Plan\nx", "Enter on the empty broken line leaves no blank line behind");
+assert.equal(latest[1].content, "", "and starts a new line");
+await key("Backspace");
+await key("Backspace");
+await key("Backspace");
+assert.equal(latest[0].content, "# Plan", "the line break and its text delete again");
+
 // Selecting a passage reports Markdown offsets in its block.
 const selectionStart = text().indexOf("**bold**");
 await select(selectionStart, selectionStart + 8);
