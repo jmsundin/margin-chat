@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useProgressiveList } from "../lib/useProgressiveList";
+import { useSuggestedDocumentTitle } from "../lib/documentTitleSuggestion";
 import { ConversationGroupSelect } from "./ConversationGroupControls";
 import type { ChatOutlineItem } from "../lib/chatOutline";
 import ChatOutline from "./ChatOutline";
@@ -468,6 +469,10 @@ export default function ThreadSidebar({
 
     setRenameValue(renameTarget.title);
   }, [renameTarget]);
+
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const suggestedRenameTitle = useSuggestedDocumentTitle({ conversationId: renameTarget?.id ?? null, open: !!renameTarget,
+    value: renameValue, setValue: setRenameValue, input: renameInputRef });
 
   useEffect(() => {
     if (!openMenuState) {
@@ -1372,15 +1377,22 @@ export default function ThreadSidebar({
               <label className="thread-dialog-field">
                 <span className="thread-dialog-label">Document title</span>
                 <input
+                  aria-describedby={suggestedRenameTitle ? "thread-rename-hint" : undefined}
                   autoFocus
                   className="thread-dialog-input"
                   maxLength={120}
                   onChange={(event) => setRenameValue(event.target.value)}
                   placeholder="Enter a new document title"
+                  ref={renameInputRef}
                   type="text"
                   value={renameValue}
                 />
               </label>
+              {suggestedRenameTitle ? (
+                <p className="thread-dialog-hint" id="thread-rename-hint">
+                  Suggested from the document. Type to replace it.
+                </p>
+              ) : null}
 
               <div className="thread-dialog-actions">
                 <button
