@@ -146,7 +146,7 @@ export function hiddenGaps(text: TextSource, layout: ReadonlyArray<LiveBlock>): 
  * cursor may not stop inside it: typing there would write into a hidden line.
  * `direction` is 1 when the cursor is moving forward.
  */
-export function snapOutOfGaps(text: TextSource, layout: ReadonlyArray<LiveBlock>, position: number, direction: 1 | -1): number {
+export function snapOutOfGaps(text: TextSource, layout: ReadonlyArray<LiveBlock>, position: number, direction: 1 | -1, keepTrailing = false): number {
   if (!layout.length) return position;
   const index = blockIndexAt(layout, position);
   const block = layout[index];
@@ -155,7 +155,8 @@ export function snapOutOfGaps(text: TextSource, layout: ReadonlyArray<LiveBlock>
     const from = block.from + run.from, to = block.from + run.to + 1;
     if (position > from && position < to) return direction > 0 ? to : from;
   }
-  const end = visibleEnd(text, block);
+  // `keepTrailing` lets the caret stay on blank lines a block ends with, such as one just typed there.
+  const end = keepTrailing ? block.to : visibleEnd(text, block);
   const next = layout[index + 1];
   if (!next) return position > end ? end : position;
   if (position > end && position < next.from) return direction > 0 ? next.from : end;

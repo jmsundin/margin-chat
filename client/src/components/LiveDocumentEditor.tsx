@@ -211,7 +211,10 @@ function buildBlockDecorations(state: EditorState, host: WidgetHost) {
     const info = liveBlockInfo(content);
     const next = live.layout[index + 1];
     const gapEnd = next ? next.from - 1 : doc.length;
-    const end = visibleEnd(text, block);
+    // A line break just typed at the end of a block shows as a new line while the caret is on it.
+    const head = state.selection.main.head;
+    const visible = visibleEnd(text, block);
+    const end = editing(block) && head > visible && head <= block.to ? block.to : visible;
     const attributes = blockAttributes(live, block);
     const meta = live.meta.get(block.id);
     if (rendered && info.kind !== "text" && !editing(block)) {
@@ -484,6 +487,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (!range || !widget || !id || !block || !body || widgetOf(range.endContainer) !== widget || !root.contains(widget)
       || isDraftBlockId(id) || live.locked.has(id) || !isTableBlock(markdown)) {
       if (previewSelection.current) {
+        // Typing into the Ask AI popup moves focus out of the document; the passage stays selected for it.
+        const active = document.activeElement;
+        if (active && active !== document.body && !root.contains(active) && !(range && root.contains(range.startContainer))) return;
         previewSelection.current = false;
         if (view.state.selection.main.empty) current.onSelectionChange(null);
       }
@@ -644,6 +650,11 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (inCode(view.state, head)) { view.dispatch(view.state.replaceSelection("\n"), { userEvent: "input", scrollIntoView: true }); return true; }
     // Enter starts a new line, which is a new block. At the end of a line that saved blank lines after it, the new line goes after them.
     const end = visibleEnd(textOf(doc), block);
+    // On an empty line just started with Shift+Enter, Enter replaces it with a new line block.
+    if (head > end && head <= block.to) {
+      view.dispatch({ changes: { from: end, to: head }, selection: EditorSelection.cursor(end), userEvent: "delete" });
+      return enter(view);
+    }
     const at = head === end ? block.to : head;
     view.dispatch({ changes: { from: at, insert: BLOCK_SEPARATOR }, selection: EditorSelection.cursor(at + BLOCK_SEPARATOR.length), userEvent: "input", scrollIntoView: true });
     return true;
@@ -790,15 +801,18 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             if (blocked) return [];
           }
           // A click past the end of a line can land in the hidden blank line after it; the cursor belongs at the line's end.
-          // The keyboard moves it on through the hidden line in the direction it was going.
+          // Moving right from a line's end goes on through the hidden line to the next one. Typing and deleting
+          // leave the caret where the edit put it, such as on the empty line Shift+Enter just started.
           if (tr.selection && live.mode !== "source") {
+            const edited = tr.docChanged && (tr.isUserEvent("input") || tr.isUserEvent("delete"));
             const next = tr.state.field(liveField);
             const doc = textOf(tr.newDoc);
-            const previous = tr.docChanged ? tr.changes.mapPos(tr.startState.selection.main.head) : tr.startState.selection.main.head;
-            const direction = !tr.isUserEvent("select.pointer") && tr.newSelection.main.head > previous ? 1 : -1;
+            const previous = tr.startState.selection.main.head;
+            const from = live.layout.length && !tr.docChanged ? live.layout[blockIndexAt(live.layout, previous)] : null;
+            const direction = from && !tr.isUserEvent("select.pointer") && previous === visibleEnd(textOf(tr.startState.doc), from) && tr.newSelection.main.head > previous ? 1 : -1;
             const ranges = tr.newSelection.ranges.map((range) => {
-              const anchor = snapOutOfGaps(doc, next.layout, range.anchor, range.empty ? direction : -1);
-              const head = snapOutOfGaps(doc, next.layout, range.head, direction);
+              const anchor = snapOutOfGaps(doc, next.layout, range.anchor, range.empty ? direction : -1, edited);
+              const head = snapOutOfGaps(doc, next.layout, range.head, direction, edited);
               return anchor === range.anchor && head === range.head ? range : EditorSelection.range(anchor, head);
             });
             if (ranges.some((range, index) => range !== tr.newSelection.ranges[index])) {
