@@ -8,7 +8,7 @@ import { MobileSelectionActions } from "./components/MobileSelectionActions";
 import { hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
-import { createMarginDocument, isCompactDocument, isHiddenFromAI } from "@margin-chat/workspace-contracts";
+import { createMarginDocument, isCompactDocument, marginNoteToSideDocument, isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
 import "./document-workspace.css";
@@ -3245,6 +3245,26 @@ function WorkspaceAppContent({
     setDocumentFocusSequence((sequence) => sequence + 1);
   }
 
+  /**
+   * A margin note that outgrew the margin becomes a side document: the same document, id and text,
+   * minus its margin-note flag. Its passage link carries over, and it opens right after its host, ready to write in.
+   */
+  function handleMoveMarginNoteToSideDocument(conversationId: string) {
+    const conversation = state.conversations[conversationId];
+    if (!conversation?.document?.marginNote) return;
+    setState((current) => {
+      const target = current.conversations[conversationId];
+      if (!target?.document?.marginNote) return current;
+      const next = focusDocument({ ...current, conversations: { ...current.conversations,
+        [conversationId]: marginNoteToSideDocument(target) } }, conversationId);
+      return placeDocumentAfterParent(next, conversationId);
+    });
+    // The menu click focused the host pane first; the new pane should still scroll into view.
+    suppressNextChatAutoCenterRef.current = false;
+    setDocumentFocusSequence((sequence) => sequence + 1);
+    focusNewDocumentEditor(conversationId);
+  }
+
   function handleResizeMarginDocument(conversationId: string, size: MarginDocumentSize) {
     setState((current) => {
       const target = current.conversations[conversationId];
@@ -4509,6 +4529,7 @@ function WorkspaceAppContent({
         onTogglePin={handleToggleDocumentPin} onTogglePinScope={handleToggleDocumentPinScope}
         onMinimize={handleMinimizeDocument} onClose={handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
+        onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
