@@ -4,7 +4,7 @@ import { useVisualViewport } from "../lib/useVisualViewport";
 import "./MobileKeyboard.css";
 
 const mobileQueries = ["(max-width: 700px)", "(pointer: coarse)"];
-const MobileKeyboardContext = createContext({ mobile: false, inputMode: "text" as "none" | "text", registerComposer: () => () => {} });
+const MobileKeyboardContext = createContext({ mobile: false, inputMode: "text" as "none" | "text", registerComposer: () => () => {}, overlayOpen: false });
 export const useMobileKeyboard = () => useContext(MobileKeyboardContext);
 
 /** Keep native editable selection, but let the reader explicitly request the software keyboard. */
@@ -82,7 +82,9 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     else if (range && native) { native.removeAllRanges(); native.addRange(range); }
   }
 
-  const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const, registerComposer }), [mobile, enabled, registerComposer]);
+  // Floating buttons stay out of the way of an open AI composer or on-screen keyboard.
+  const overlayOpen = mobile && (composerCount > 0 || keyboardShown);
+  const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const, registerComposer, overlayOpen }), [mobile, enabled, registerComposer, overlayOpen]);
   return <MobileKeyboardContext.Provider value={value}>
     {children}
     {/* While the on-screen keyboard is up, its own Done/checkmark closes it, so the button would only cover text. */}
