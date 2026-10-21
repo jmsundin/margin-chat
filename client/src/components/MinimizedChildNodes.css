@@ -1,13 +1,16 @@
-/* Minimized children beside their document: a column of map nodes, joined to their passages by connector curves. */
+/* Minimized children beside their document: a column of map nodes, joined to their passages and to each other by connector curves. */
 .conversation-tree-expanded.has-minimized-child-nodes { flex-direction: row; position: relative; }
 .conversation-tree-expanded.has-minimized-child-nodes > .chat-panel { flex: 1 1 auto; min-width: 0; }
 .conversation-tree-expanded.has-minimized-child-nodes > .panel-resize-handle:not(.is-left-edge) { right: var(--minimized-child-nodes-width); }
 
 .minimized-child-nodes { flex: 0 0 var(--minimized-child-nodes-width); width: var(--minimized-child-nodes-width); min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.minimized-child-nodes > ol { margin: 0; padding: 64px 8px 24px 64px; list-style: none; }
-.minimized-child-nodes li { padding: 6px 0; }
+.minimized-child-nodes > ol { padding: 64px 8px 24px var(--minimized-leading-gap); }
+.minimized-child-nodes ol { margin: 0; list-style: none; }
+.minimized-child-nodes li { display: flex; align-items: flex-start; padding: 6px 0; }
+/* A node's own children branch to its right; the first sits level with it. */
+.minimized-child-nodes li > ol { flex: none; margin: -6px 0; padding: 0 0 0 var(--minimized-level-gap); }
 
-.minimized-child-nodes .minimized-child-node { display: flex; place-items: initial; height: auto; flex: none; flex-direction: column; gap: 4px; width: 100%; padding: 9px 12px 10px; border: 1px solid var(--line-strong, var(--line)); border-radius: 12px 12px 12px 4px; background: var(--panel-strong); color: var(--ink); font: inherit; text-align: left; cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / .05); transition: border-color .12s, box-shadow .12s, transform .12s; }
+.minimized-child-nodes .minimized-child-node { display: flex; place-items: initial; height: auto; flex: none; flex-direction: column; gap: 4px; width: var(--minimized-node-width); padding: 9px 12px 10px; border: 1px solid var(--line-strong, var(--line)); border-radius: 12px 12px 12px 4px; background: var(--panel-strong); color: var(--ink); font: inherit; text-align: left; cursor: pointer; box-shadow: 0 1px 2px rgb(0 0 0 / .05); transition: border-color .12s, box-shadow .12s, transform .12s; }
 .minimized-child-nodes .minimized-child-node:hover { border-color: var(--accent); box-shadow: 0 3px 10px rgb(0 0 0 / .08); transform: translateX(2px); }
 .minimized-child-nodes .minimized-child-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .minimized-child-node-kind { display: flex; align-items: center; gap: 5px; color: var(--accent); font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }

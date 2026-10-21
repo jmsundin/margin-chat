@@ -371,6 +371,13 @@ try {
   await menuAction(nestedId, "Minimize document");
   assert.deepEqual(restoreButtons(mainId).map((button) => button.getAttribute("aria-label")), ["Open side document: Side research"]);
   assert.equal(container.querySelector('.document-side-restore[aria-label="Open side document: Nested research"]'), null, "A hidden parent's child icon does not leak into its grandparent.");
+  await menuAction(siblingId, "Minimize document");
+  const nestedNode = pane(mainId).querySelector('.minimized-child-node[aria-label="Open side document: Nested research"]');
+  assert(nestedNode, "With every child minimized, a minimized child's own children branch off its node, as in Map view.");
+  assert.equal(nestedNode.dataset.minimizedNodeParent, sideId);
+  assert.equal(pane(mainId).querySelectorAll(".minimized-child-nodes > ol > li").length, 2);
+  await click(restoreButton(mainId, "Sibling research"));
+  assert.deepEqual(panes(), [mainId, siblingId]);
   await click(restoreButton(mainId, "Side research"));
   assert.equal(latest.activeConversationId, sideId);
   assert.deepEqual(panes(), [mainId, siblingId, sideId]);

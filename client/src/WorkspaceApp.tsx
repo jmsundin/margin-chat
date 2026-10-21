@@ -52,7 +52,7 @@ import {
 } from "./lib/workspaceSessions";
 import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
 import { DOCUMENT_MARGIN_GUTTER, type DocumentMarginItem } from "./components/DocumentMargin";
-import MinimizedChildNodes, { MINIMIZED_CHILD_NODES_WIDTH } from "./components/MinimizedChildNodes";
+import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNode } from "./components/MinimizedChildNodes";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
@@ -1936,6 +1936,18 @@ function WorkspaceAppContent({
           const nodeRect = getElementRect(node);
           const listRect = getElementRect(node.closest(".minimized-child-nodes"));
           const viewport = nodeRect && listRect ? intersectConnectorRects(workspaceRect, listRect) : null;
+          // A node's own children hang off its right edge, as on the map.
+          const parentNode = node.dataset.minimizedNodeParent
+            ? minimizedNodeElements.find((element) => element.dataset.minimizedNodeId === node.dataset.minimizedNodeParent) : undefined;
+          if (parentNode) {
+            const parentRect = getElementRect(parentNode);
+            if (parentRect && nodeRect && viewport && intersectConnectorRects(parentRect, viewport) && intersectConnectorRects(nodeRect, viewport)) {
+              nextConnections.push({ id: `minimized-${child.id}`, variant: "curve",
+                active: node.closest<HTMLElement>("[data-document-id]")?.dataset.documentId === focusedConversation.id,
+                start: { x: parentRect.right, y: parentRect.top + parentRect.height / 2 }, end: { x: nodeRect.left, y: nodeRect.top + nodeRect.height / 2 } });
+            }
+            continue;
+          }
           const sourceElement = child.branchAnchor ? anchorRefs.current[child.id] : panelRefs.current[parentConversation.id]?.querySelector(".document-header");
           const connection = buildDocumentConnector({
             id: `minimized-${child.id}`,
@@ -4496,7 +4508,7 @@ function WorkspaceAppContent({
     // must not move a note's controls between pointerdown and click.
     "--document-focus-width": `${getRenderedPanelWidth(scrollingDocuments[0]?.id ?? activeConversation.id)}px`,
     "--document-notes-space": !scrollingDocuments[0] ? "0px"
-      : getMinimizedChildNodes(scrollingDocuments[0]) ? `${MINIMIZED_CHILD_NODES_WIDTH}px`
+      : getMinimizedChildNodes(scrollingDocuments[0]) ? `${getMinimizedChildNodesWidth(getMinimizedChildNodes(scrollingDocuments[0])!)}px`
       : showsMarginInPanel(scrollingDocuments[0]) ? `${getDocumentMarginSpace(scrollingDocuments[0], false)}px`
       : !closedMarginNotes[scrollingDocuments[0].id] && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
   } as CSSProperties;
@@ -4711,7 +4723,7 @@ function WorkspaceAppContent({
    * On desktop, a document whose side documents and margin notes are all minimized shows them as
    * map nodes in the space beside it. Phones, Full screen and pinned panes keep the small restore icons.
    */
-  function getMinimizedChildNodes(conversation: Conversation): Conversation[] | null {
+  function getMinimizedChildNodes(conversation: Conversation): MinimizedChildNode[] | null {
     const minimized = minimizedSideDocumentsByParent.get(conversation.id);
     if (!minimized?.length || isMobileViewport || maximizedDocument || isCompactDocument(conversation)
       || pinnedDocumentIds.includes(conversation.id)) return null;
@@ -4719,12 +4731,30 @@ function WorkspaceAppContent({
       && !isCompactDocument(child) && visibleDocumentIds.has(child.id));
     const viewingNote = !closedMarginNotes[conversation.id] && getMarginDocuments(conversation).length > 0;
     if (viewingChild || viewingNote) return null;
-    // Stack in reading order, so each curve from its passage runs straight across without crossing
-    // another. Nodes without a passage join the document's header, so they lead.
-    const blockOrder = new Map(getEditableDocument(conversation).blocks.map((block, index) => [block.id, index]));
+    const closedIds = new Set(getDocumentWorkspace(state.conversations, conversation.id).closedIds);
+    const seen = new Set([conversation.id]);
+    // A minimized document's own side documents and margin notes stay on its branch, as in Map view,
+    // unless they are open on screen or were closed.
+    function branch(parent: Conversation, children: Conversation[]): MinimizedChildNode[] {
+      return sortInReadingOrder(parent, children.filter((child) => !seen.has(child.id))).map((child) => {
+        seen.add(child.id);
+        const hidden = (documentChildrenByParent.get(child.id) ?? []).filter((grandchild) => grandchild.parentId === child.id
+          && !visibleDocumentIds.has(grandchild.id) && !closedIds.has(grandchild.id) && !pinnedDocumentIds.includes(grandchild.id));
+        return { document: child, children: branch(child, hidden) };
+      });
+    }
+    return branch(conversation, minimized);
+  }
+
+  /**
+   * Stack nodes in reading order, so each curve from its passage runs straight across without crossing
+   * another. Nodes without a passage join the document's header, so they lead.
+   */
+  function sortInReadingOrder(parent: Conversation, children: Conversation[]) {
+    const blockOrder = new Map(getEditableDocument(parent).blocks.map((block, index) => [block.id, index]));
     const position = (child: Conversation) => !child.branchAnchor ? [-1, 0]
       : [blockOrder.get(child.branchAnchor.sourceBlockId ?? "") ?? Number.MAX_SAFE_INTEGER, child.branchAnchor.startOffset];
-    return [...minimized].sort((left, right) => {
+    return [...children].sort((left, right) => {
       const [leftBlock, leftOffset] = position(left);
       const [rightBlock, rightOffset] = position(right);
       return leftBlock - rightBlock || leftOffset - rightOffset;
@@ -4802,7 +4832,7 @@ function WorkspaceAppContent({
   function renderExpandedTreeConversation(conversation: Conversation) {
     const resizeInfo = getPanelResizeInfo(conversation);
     const minimizedNodes = getMinimizedChildNodes(conversation);
-    const nodesWidth = minimizedNodes ? MINIMIZED_CHILD_NODES_WIDTH : 0;
+    const nodesWidth = minimizedNodes ? getMinimizedChildNodesWidth(minimizedNodes) : 0;
     const resizeMinimum = resizeChatPanel({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
     const resizeMaximum = resizeChatPanel({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
     const isResizing =
@@ -4822,7 +4852,7 @@ function WorkspaceAppContent({
           ...(minimizedNodes ? { "--minimized-child-nodes-width": `${nodesWidth}px` } : {}) } as CSSProperties}
       >
         {renderConversationChatPanel(conversation)}
-        {minimizedNodes ? <MinimizedChildNodes documents={minimizedNodes}
+        {minimizedNodes ? <MinimizedChildNodes nodes={minimizedNodes}
           onOpen={(id) => handleOpenDocumentReference(conversation.id, id)} /> : null}
         {(["left", "right"] as const).map((edge) => <div
           key={edge}
