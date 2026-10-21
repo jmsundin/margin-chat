@@ -172,9 +172,9 @@ export function createMcpService({ database, vaultService, passageService, creat
     /** Who a request's Bearer token belongs to; throws 401 or 403 otherwise. */
     async authenticate(request) {
       const match = TOKEN_PATTERN.exec(String(request.headers.authorization ?? ""));
-      if (!match) throw new HttpError(401, "Connect with a Margin Chat agent token: Settings, Connect agents.");
+      if (!match) throw new HttpError(401, "Connect with a Margin Chat agent token: Profile, Agents.");
       const user = await database.authenticateMcpToken(hash(match[1]));
-      if (!user) throw new HttpError(401, "This agent token was revoked or has expired. Make a new one in Margin Chat: Settings, Connect agents.");
+      if (!user) throw new HttpError(401, "This agent token was revoked or has expired. Make a new one in Margin Chat: Profile, Agents.");
       if (!canUseMcp(user)) throw new HttpError(403, "Connecting agents to your vault comes with the Plus and Cloud plans.");
       return user;
     },
