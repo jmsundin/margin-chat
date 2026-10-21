@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { createMarginDocument, migrateMarginNotes, normalizeEditableDocument, createWorkspaceDocument, createAppStateFromWorkspaceDocument } from "@margin-chat/workspace-contracts";
+import { createMarginDocument, marginNoteToSideDocument, migrateMarginNotes, normalizeEditableDocument, createWorkspaceDocument, createAppStateFromWorkspaceDocument } from "@margin-chat/workspace-contracts";
 import { createEmptyState, createMainConversation } from "../client/src/initialState";
 import { hydratePersistedState } from "../client/src/lib/appState";
 import { getEditableDocument } from "../client/src/lib/editableDocument";
 import { stateToVaultFiles, vaultToState, workspaceFromVault } from "../client/src/lib/vaultWorkspace";
 import { normalizeAppState } from "../server/db/validation.mjs";
+import { getDocumentKind } from "../client/src/lib/documentBreadcrumbs";
 
 function fixture() {
   const state = createEmptyState();
@@ -88,5 +89,37 @@ describe("margin notes as documents", () => {
     for (const width of [0, -10, Infinity, "400", 400.5]) {
       expect(normalizeEditableDocument({ ...document, marginNote: { display: "compact", size: { width, height: 500 } } })).toBeUndefined();
     }
+  });
+
+  test("moves a margin note to a side document without copying it, through vault saves and cloud sync", () => {
+    const migrated = hydratePersistedState(fixture())!;
+    const note = migrated.conversations["legacy-note"];
+    note.childIds = ["reply"];
+    const moved = marginNoteToSideDocument(note, "2026-10-21T00:00:00.000Z");
+    expect(moved.id).toBe(note.id);
+    expect(moved.parentId).toBe(note.parentId);
+    expect(moved.childIds).toEqual(["reply"]);
+    expect(moved.document!.marginNote).toBeUndefined();
+    expect(moved.document!.blocks).toEqual(note.document!.blocks);
+    expect(moved.branchAnchor).toEqual({ ...note.branchAnchor!, prompt: "Side document" });
+    expect(moved.updatedAt).toBe("2026-10-21T00:00:00.000Z");
+    expect(note.document!.marginNote).toBeDefined();
+    expect(marginNoteToSideDocument(moved)).toBe(moved);
+    expect(getDocumentKind(moved)).toBe("branch");
+    const unanchored = marginNoteToSideDocument({ ...note, branchAnchor: null });
+    expect(unanchored.branchAnchor).toBeNull();
+    expect(getDocumentKind(unanchored)).toBe("side");
+
+    note.childIds = [];
+    const state = { ...migrated, conversations: { ...migrated.conversations, [note.id]: marginNoteToSideDocument(note) } };
+    const files = stateToVaultFiles(migrated, {});
+    const reopened = vaultToState(stateToVaultFiles(state, files), migrated);
+    expect(reopened.conversations[note.id].document!.marginNote).toBeUndefined();
+    expect(reopened.conversations[note.id].branchAnchor).toEqual(state.conversations[note.id].branchAnchor);
+    const unmoved = vaultToState(files, migrated).conversations[note.id];
+    expect(reopened.conversations[note.id].document!.blocks).toEqual(unmoved.document!.blocks);
+    expect(Object.keys(reopened.conversations).sort()).toEqual(Object.keys(migrated.conversations).sort());
+    expect(createAppStateFromWorkspaceDocument(createWorkspaceDocument(state))!.conversations[note.id].document!.marginNote).toBeUndefined();
+    expect(() => normalizeAppState(state)).not.toThrow();
   });
 });

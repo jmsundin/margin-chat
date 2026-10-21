@@ -49,6 +49,17 @@ export function migrateMarginNotes(conversations) {
   return result;
 }
 
+/**
+ * A margin note that outgrew the margin, as a side document: same id, text and children,
+ * minus the margin-note flag. A note on a passage keeps that passage as its anchor.
+ */
+export function marginNoteToSideDocument(conversation, updatedAt = new Date().toISOString()) {
+  if (!conversation?.document?.marginNote) return conversation;
+  const { marginNote: _marginNote, ...document } = conversation.document;
+  return { ...conversation, updatedAt, document,
+    branchAnchor: conversation.branchAnchor ? { ...conversation.branchAnchor, prompt: "Side document" } : conversation.branchAnchor ?? null };
+}
+
 export function isCompactDocument(conversation) {
   return conversation?.document?.marginNote?.display === "compact";
 }
