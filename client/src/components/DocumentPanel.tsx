@@ -22,6 +22,7 @@ import AgentRunLog from "./AgentRunLog";
 import AgentFollowUp, { type AgentProposalAction } from "./AgentFollowUp";
 import DocumentMargin, { type DocumentMarginItem } from "./DocumentMargin";
 import BackToTopButton from "./BackToTopButton";
+import PromptHistory from "./PromptHistory";
 import type { AgentProgress } from "../lib/useChatStreams";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
 import { defaultSelectionDestination } from "../lib/selectionDestination";
@@ -29,8 +30,6 @@ import "./DocumentPanel.css";
 
 type DocumentValue = NonNullable<Conversation["document"]>;
 type Block = DocumentValue["blocks"][number];
-const PROMPT_ICON_SIZE = 28;
-const PROMPT_ICON_GAP = 4;
 
 export interface DocumentPanelProps {
   conversation: Conversation;
@@ -139,50 +138,38 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const [destination, setDestination] = useState<"inline" | "side">("inline");
   const [replaceSelection, setReplaceSelection] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [openPromptId, setOpenPromptId] = useState<string | null>(null);
+  const [promptFlash, setPromptFlash] = useState<{ key: number; top: number; height: number } | null>(null);
   const [rerunText, setRerunText] = useState("");
   useAppUpdateGuard("document-prompt", {
     check: () => prompt.trim() || (openPromptId && rerunText.trim()) ? "An unsent document prompt is open in a tab. Send or clear it before restarting." : null,
   });
   const [hiddenVersions, setHiddenVersions] = useState<string[]>([]);
   const [childNodes, setChildNodes] = useState<{ promptId: string; proposals: AIChildNodeProposal[]; picked: string[]; existing: string[]; created?: number } | null>(null);
-  const childNodesRef = useRef<HTMLElement>(null);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const composerRef = useRef<HTMLFormElement>(null);
-  const promptHistoryRef = useRef<HTMLDivElement>(null);
   useOutsideDismiss(Boolean(invocation), () => {
     setInvocation(null);
     setPrompt("");
   }, composerRef);
-  useOutsideDismiss(Boolean(openPromptId), () => setOpenPromptId(null), promptHistoryRef);
-  useOutsideDismiss(Boolean(childNodes), () => setChildNodes(null), childNodesRef);
   useEffect(() => { if (invocation && !mobileKeyboard.mobile) promptRef.current?.focus(); }, [invocation, mobileKeyboard.mobile]);
   const hasPrompts = document.prompts.length > 0;
   useEffect(() => {
     const body = bodyRef.current;
     if (!body || !hasPrompts || !editorMounted) return;
     let frame = 0;
-    // Prompt icons sit in the left margin at the top of their block. Several
-    // prompts on one block, or on short neighboring blocks, stack downward.
+    // Each prompt leaves an invisible outline target at the top of its block.
+    // The Live Preview editor puts it after the block, so it is moved up to the block's first line.
     const layout = () => {
-      const markers = [...body.querySelectorAll<HTMLElement>(".document-prompt-marker")]
-        .filter((marker) => marker.closest(".document-body") === body)
-        .map((marker) => {
-          // The Live Preview editor shows a block's markers after it; they still line up with its first line.
-          const after = marker.closest<HTMLElement>("[data-after-block-id]");
-          const origin = (marker.closest(".rich-document-block") ?? after ?? marker.parentElement)?.getBoundingClientRect().top ?? 0;
-          const id = after?.dataset.afterBlockId;
-          const start = id ? after!.closest(".live-document-editor")?.querySelector(`:is(.cm-line, .live-document-widget)[data-document-block-id="${CSS.escape(id)}"]`) : null;
-          return { marker, origin, top: start?.getBoundingClientRect().top ?? origin };
-        })
-        .sort((a, b) => a.top - b.top);
-      let previousBottom = -Infinity;
-      for (const { marker, origin, top } of markers) {
-        const icons = marker.querySelectorAll(":scope > .document-prompt-icon, :scope > .document-child-nodes-icon").length || 1;
-        const placed = Math.max(top, previousBottom + PROMPT_ICON_GAP);
-        const offset = `${Math.round(placed - origin)}px`;
+      for (const marker of body.querySelectorAll<HTMLElement>(".document-prompt-marker")) {
+        if (marker.closest(".document-body") !== body) continue;
+        const after = marker.closest<HTMLElement>("[data-after-block-id]");
+        const origin = (marker.closest(".rich-document-block") ?? after ?? marker.parentElement)?.getBoundingClientRect().top ?? 0;
+        const id = after?.dataset.afterBlockId;
+        const start = id ? after!.closest(".live-document-editor")?.querySelector(`:is(.cm-line, .live-document-widget)[data-document-block-id="${CSS.escape(id)}"]`) : null;
+        const offset = `${Math.round((start?.getBoundingClientRect().top ?? origin) - origin)}px`;
         if (marker.style.getPropertyValue("--prompt-stack-offset") !== offset) marker.style.setProperty("--prompt-stack-offset", offset);
-        previousBottom = placed + icons * PROMPT_ICON_SIZE + (icons - 1) * PROMPT_ICON_GAP;
       }
     };
     const schedule = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(layout); };
@@ -335,33 +322,81 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     try { const id=JSON.parse(mark.dataset.annotationBranches ?? "[]")[0];if(typeof id === "string")props.onOpenBranch(id); } catch { /* Ignore malformed saved decorations. */ }
   }
 
-  function renderPrompt(item: DocumentValue["prompts"][number]) {
+  /** Prompts listed in the history: a rerun shares its original's entry. */
+  const historyPrompts = document.prompts.filter((item) => promptBlockIds.has(item.id) && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf));
+  function promptVersions(item: DocumentValue["prompts"][number]) {
     const generations = document.generations.filter((generation) => generation.promptId === item.id);
     const original = generations.find((generation) => !generation.alternativeOf) ?? generations[0];
     const active = currentVersion(original);
     const activePrompt = document.prompts.find((prompt) => prompt.id === active?.promptId) ?? item;
     const alternatives = document.generations.filter((generation) => generation.alternativeOf === original?.id && !generation.acceptedAt && !hiddenVersions.includes(generation.id));
+    return { original, active, activePrompt, alternatives };
+  }
+  function closePromptHistory() {
+    setHistoryOpen(false);
+    setOpenPromptId(null);
+    setChildNodes(null);
+  }
+  function expandPrompt(item: DocumentValue["prompts"][number]) {
+    setOpenPromptId(item.id);
+    setRerunText(promptVersions(item).activePrompt.content);
+  }
+  function togglePromptHistory() {
+    if (historyOpen) { closePromptHistory(); return; }
+    setInvocation(null);
+    setChildNodes(null);
+    setHistoryOpen(true);
+    // With a single prompt there is nothing to pick, so its details open at once.
+    if (historyPrompts.length === 1) expandPrompt(historyPrompts[0]);
+    else setOpenPromptId(null);
+  }
+  /** Scroll to the text a prompt wrote and briefly highlight it. */
+  function showPromptText(item: DocumentValue["prompts"][number]) {
+    const body = bodyRef.current;
+    if (!body) return;
+    const { active } = promptVersions(item);
+    const shown = active?.blockIds.filter((id) => document.blocks.some((block) => block.id === id)) ?? [];
+    const ids = shown.length ? shown : [promptBlockIds.get(item.id)].filter((id): id is string => Boolean(id));
+    let top = Infinity, bottom = -Infinity;
+    for (const id of ids) {
+      const escaped = CSS.escape(id);
+      body.querySelectorAll<HTMLElement>(`[data-document-block-id="${escaped}"], [data-after-block-id="${escaped}"]`).forEach((element) => {
+        const bounds = element.getBoundingClientRect();
+        top = Math.min(top, bounds.top);
+        bottom = Math.max(bottom, element.dataset.afterBlockId ? bounds.top : bounds.bottom);
+      });
+    }
+    if (!Number.isFinite(top)) return;
+    const offset = top - body.getBoundingClientRect().top + body.scrollTop;
+    body.scrollTo?.({ top: Math.max(0, offset - body.clientHeight / 4), behavior: "smooth" });
+    setPromptFlash({ key: Date.now(), top: offset, height: Math.max(24, bottom - top) });
+  }
+  function renderPromptMarker(item: DocumentValue["prompts"][number]) {
+    return <span className="document-prompt-marker" key={item.id} aria-hidden="true" data-chat-outline-id={`message-${item.sourceMessageId ?? `document-prompt:${item.id}`}`}/>;
+  }
+
+  function renderPromptEntry(item: DocumentValue["prompts"][number]) {
+    const { original, active, activePrompt, alternatives } = promptVersions(item);
     const receipt = conversation.messages.find((message) => message.id === active?.messageId)?.execution;
-    return <div className="document-prompt-marker" key={item.id} ref={openPromptId === item.id ? promptHistoryRef : undefined} data-chat-outline-id={`message-${item.sourceMessageId ?? `document-prompt:${item.id}`}`}>
-      <button className="document-prompt-icon" aria-label={`Show AI prompt: ${item.content.slice(0,70)}`} aria-expanded={openPromptId === item.id} type="button"
-        title="AI prompt and versions" onClick={() => { setChildNodes(null); setOpenPromptId(openPromptId === item.id ? null : item.id); setRerunText(activePrompt.content); }}>
-        <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"><path d="m10 2 2.2 5.8L18 10l-5.8 2.2L10 18l-2.2-5.8L2 10l5.8-2.2Z"/></svg>
+    const expanded = openPromptId === item.id;
+    const writing = active?.status === "streaming" && props.isSubmitting;
+    return <li key={item.id} className={expanded ? "is-open" : undefined}>
+      <button type="button" className="document-prompt-entry" aria-expanded={expanded}
+        onClick={() => { if (expanded) { setOpenPromptId(null); return; } expandPrompt(item); if (!mobileKeyboard.mobile) showPromptText(item); }}>
+        {/* Open, the prompt is the editable box below. */}
+        {expanded ? null : <span className="document-prompt-entry-text">{activePrompt.content || "Untitled prompt"}</span>}
+        <small>{activePrompt.modelId || "Auto"} · {new Date(activePrompt.createdAt).toLocaleDateString()}{writing ? " · Writing…" : alternatives.length ? ` · ${alternatives.length} new ${alternatives.length === 1 ? "version" : "versions"}` : ""}</small>
       </button>
-      {props.onCreateChildNodes && active && !(active.status === "streaming" && props.isSubmitting) ? <button className="document-child-nodes-icon" type="button"
-        aria-label={`Make child nodes from AI response: ${item.content.slice(0,70)}`} aria-expanded={childNodes?.promptId === item.id}
-        title="Make child nodes from this AI response" onClick={() => childNodes?.promptId === item.id ? setChildNodes(null) : openChildNodes(item.id, active)}>
-        <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><circle cx="5" cy="10" r="2.2"/><circle cx="15" cy="4.5" r="2"/><circle cx="15" cy="10" r="2"/><circle cx="15" cy="15.5" r="2"/><path d="M7.2 10H13M7 9l6-4M7 11l6 4"/></svg>
-      </button> : null}
-      {childNodes?.promptId === item.id ? renderChildNodes() : null}
-      {openPromptId === item.id ? <section className="document-prompt-history" aria-label="AI prompt and versions" onKeyDown={(event) => { if(event.key === "Escape") {event.stopPropagation();setOpenPromptId(null);} }}>
-        <header><strong>AI prompt</strong><button aria-label="Close prompt history" type="button" onClick={() => setOpenPromptId(null)}>×</button></header>
+      {expanded ? <div className="document-prompt-details">
         <textarea aria-label="Saved AI prompt" value={rerunText} onChange={(event) => setRerunText(event.target.value)} rows={3}/>
-        <small>{activePrompt.modelId || "Auto"} · {new Date(activePrompt.createdAt).toLocaleDateString()}</small>
-        <div className="document-version-actions"><button type="button" aria-label="Choose AI model for another version" aria-haspopup="dialog" onClick={() => setModelOpen(true)}>{modelLabel} ⌄</button><button type="button" disabled={props.isSubmitting || !rerunText.trim()} onClick={() => {
-          props.onSubmit({ blockId: active?.blockIds[0] ?? document.blocks[0]?.id ?? "", from:0,to:0,prompt:rerunText,destination:"inline",rerunGenerationId:original?.id });
-        }}>↻ Try another version</button>
+        <div className="document-version-actions">
+          <button type="button" onClick={() => { if (mobileKeyboard.mobile) { closePromptHistory(); window.requestAnimationFrame(() => showPromptText(item)); } else showPromptText(item); }}>Go to text</button>
+          <button type="button" aria-label="Choose AI model for another version" aria-haspopup="dialog" onClick={() => setModelOpen(true)}>{modelLabel} ⌄</button>
+          <button type="button" disabled={props.isSubmitting || !rerunText.trim()} onClick={() => {
+            props.onSubmit({ blockId: active?.blockIds[0] ?? document.blocks[0]?.id ?? "", from:0,to:0,prompt:rerunText,destination:"inline",rerunGenerationId:original?.id });
+          }}>↻ Try another version</button>
           {active && active.blockIds.some((id) => document.blocks.some((block) => block.id === id)) ? <button disabled={props.isSubmitting} type="button" onClick={() => props.onUndoInsertion(active.id)}>Undo insertion</button> : null}
-          {props.onCreateChildNodes && active && !(active.status === "streaming" && props.isSubmitting) ? <button type="button" onClick={() => { setOpenPromptId(null); openChildNodes(item.id, active); }}>Make child nodes…</button> : null}
+          {props.onCreateChildNodes && active && !writing ? <button type="button" onClick={() => openChildNodes(item.id, active)}>Make child nodes…</button> : null}
         </div>
         {receipt ? <AIResponseDetails execution={receipt} isStreaming={props.isSubmitting} onOpenSource={props.onOpenBranch}/> : null}
         {alternatives.map((alternative) => <section className="document-alternative" key={alternative.id}>
@@ -369,8 +404,16 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           <MarkdownMessage anchors={[]} content={conversation.messages.find((message) => message.id === alternative.messageId)?.content ?? ""} conversationId={conversation.id} messageId={alternative.messageId} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={() => {}} registerNoteAnchorRef={() => {}} enableMermaidRendering theme={props.theme}/>
           {alternative.status !== "streaming" || !props.isSubmitting ? <div className="document-version-actions"><button type="button" disabled={alternative.status === "failed" || (alternative.status === "streaming" && props.isSubmitting) || !conversation.messages.find((message)=>message.id===alternative.messageId)?.content.trim()} onClick={() => props.onAcceptVersion(alternative.id)}>Use this version</button><button type="button" onClick={() => setHiddenVersions((current) => [...current, alternative.id])}>Keep current</button></div> : null}
         </section>)}
-      </section> : null}
-    </div>;
+      </div> : null}
+    </li>;
+  }
+
+  function renderPromptHistory() {
+    if (childNodes) return renderChildNodes();
+    return <>
+      <header><strong>Prompt history</strong><button aria-label="Close prompt history" type="button" onClick={closePromptHistory}>×</button></header>
+      <ol className="document-prompt-list">{historyPrompts.map(renderPromptEntry)}</ol>
+    </>;
   }
 
   function openChildNodes(promptId: string, generation: DocumentValue["generations"][number]) {
@@ -378,7 +421,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     // A passage that already anchors a child is not offered again.
     const anchored = new Set(props.anchors.map(({ anchor }) => `${anchor.sourceBlockId}:${anchor.startOffset}:${anchor.endOffset}`));
     const existing = proposals.filter((proposal) => anchored.has(`${proposal.blockId}:${proposal.from}:${proposal.to}`)).map((proposal) => proposal.id);
-    setOpenPromptId(null);
     setChildNodes({ promptId, proposals, existing, picked: proposals.map((proposal) => proposal.id).filter((id) => !existing.includes(id)) });
   }
 
@@ -388,9 +430,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const chosen = proposals.filter((proposal) => picked.includes(proposal.id) && proposal.title.trim());
     const edit = (id: string, title: string) => setChildNodes((current) => current && { ...current, proposals: current.proposals.map((proposal) => proposal.id === id ? { ...proposal, title } : proposal) });
     const toggle = (id: string) => setChildNodes((current) => current && { ...current, picked: current.picked.includes(id) ? current.picked.filter((candidate) => candidate !== id) : [...current.picked, id] });
-    return <section className="document-prompt-history document-child-nodes" ref={childNodesRef} aria-label="Make child nodes"
-      onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setChildNodes(null); } }}>
-      <header><strong>Make child nodes</strong><button aria-label="Close child nodes" type="button" onClick={() => setChildNodes(null)}>×</button></header>
+    return <div className="document-child-nodes" aria-label="Make child nodes" role="group">
+      <header><button type="button" className="document-prompt-back" aria-label="Back to prompt history" onClick={() => setChildNodes(null)}>‹</button><strong>Make child nodes</strong><button aria-label="Close child nodes" type="button" onClick={closePromptHistory}>×</button></header>
       {created !== undefined ? <p className="document-child-nodes-done" role="status">Created {created} child {created === 1 ? "node" : "nodes"}. {"They're linked to this document and placed beside it in the map."}</p>
         : !proposals.length ? <p>This response has no headings, list items or paragraphs to split into child nodes.</p> : <>
         <p className="document-child-nodes-hint">{existing.length === proposals.length ? "Every part of this response already has a child node."
@@ -408,7 +449,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           <button type="button" onClick={() => setChildNodes(null)}>Cancel</button>
         </div>
       </>}
-    </section>;
+    </div>;
   }
 
   function renderAIComposer() {
@@ -477,7 +518,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </header> : null}
     <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
       style={props.marginNotes?.length ? { "--document-margin-width": `${props.marginWidth ?? 300}px` } as CSSProperties : undefined}>
-    <div className={`panel-body document-body${hasPrompts ? " has-prompt-markers" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+    <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
@@ -485,11 +526,13 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </> : null}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
+        toolbarStart={historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
+          modal={mobileKeyboard.mobile}>{renderPromptHistory()}</PromptHistory> : null}
         onChangeBlocks={changeBlocks}
         onHistory={historyAction}
         onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks}, { beforeFocus: { blockId: id, from: 0, to: 0 }, afterFocus: { blockId: id, from: 0, to: 0 } });}}
         onInvokeAI={(next) => {
-          const open = () => { props.onClearSelection?.(); setInvocation(next); setDestination(next.selection ? defaultSelectionDestination(latestDocument.current.blocks, { sourceBlockId: next.blockId, quote: next.selection.quote }) : "inline"); setReplaceSelection(false); setOpenPromptId(null); };
+          const open = () => { props.onClearSelection?.(); setInvocation(next); setDestination(next.selection ? defaultSelectionDestination(latestDocument.current.blocks, { sourceBlockId: next.blockId, quote: next.selection.quote }) : "inline"); setReplaceSelection(false); closePromptHistory(); };
           if (mobileKeyboard.mobile && next.typing) {
             // Keep a keyboard shortcut in its active input session. Tapping
             // Ask AI leaves the document readable until the prompt is tapped.
@@ -513,7 +556,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         }}
         renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering obsidian theme={props.theme}/>}
         renderAfterBlock={(block) => <>
-          {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPrompt)}
+          {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPromptMarker)}
           {agentFollowUps.get(block.id)}
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
         </>}/> : <RichDocumentPlaceholder blocks={document.blocks} />}
@@ -530,6 +573,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {conversation.documents?.length || props.uploading ? <div className="document-attachments" aria-label="Attached documents">{conversation.documents?.map((attachment)=><span key={attachment.id}>{attachment.filename}<button type="button" aria-label={`Remove ${attachment.filename}`} onClick={()=>props.onRemoveAttachment(attachment.id)}>×</button></span>)}{props.uploading ? <span>Uploading…</span>:null}</div>:null}
       {props.bodyFooter}
       <input hidden multiple type="file" ref={fileRef} onChange={(event)=>{const files=Array.from(event.target.files??[]);event.target.value="";if(files.length)props.onUpload(files);}}/>
+      {promptFlash ? <div className="document-prompt-flash" key={promptFlash.key} aria-hidden="true" style={{ top: promptFlash.top, height: promptFlash.height }} onAnimationEnd={() => setPromptFlash(null)}/> : null}
       {props.marginNotes?.length && marginHeight ? <div className="document-margin-spacer" aria-hidden="true" style={{ top: marginHeight }}/> : null}
     </div>
     {props.marginNotes?.length ? <DocumentMargin bodyRef={bodyRef} documentId={conversation.id} items={props.marginNotes}

@@ -65,8 +65,8 @@ const selectedPassagePrompt = browser.document.createElement("textarea");
 selectedPassagePrompt.setAttribute("aria-label", "Selected passage prompt");
 browser.document.body.append(selectedPassagePrompt);
 const root = createRoot(container as unknown as Element);
-function element(selector: string): any { const node = container.querySelector(selector); assert(node, `Missing ${selector}`); return node; }
-function button(label: string): any { const node = [...container.querySelectorAll("button")].find((candidate) => candidate.textContent.trim() === label); assert(node, `Missing button ${label}`); return node; }
+function element(selector: string): any { const node = browser.document.body.querySelector(selector); assert(node, `Missing ${selector}`); return node; }
+function button(label: string): any { const node = [...browser.document.body.querySelectorAll("button")].find((candidate) => candidate.textContent.trim() === label); assert(node, `Missing button ${label}`); return node; }
 function editor(id: string): any { return blockEditor(browser.document, id); }
 async function click(node: any) { await act(async () => node.click()); }
 async function fill(label: string, value: string) {
