@@ -33,6 +33,7 @@ import { useMobileKeyboard } from "./MobileKeyboard";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
 import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
+import { openableHref, openLinkInNewTab, shouldOpenLink } from "../lib/documentLinkOpening";
 import "./RichDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
@@ -711,6 +712,7 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
     onFiles: (files) => control.current.onFiles(files),
   }), []);
 
+  const linkPointerType = useRef("mouse");
   const editorRef = useRef<Editor | null>(null);
   const editor: Editor | null = useEditor({
     extensions: createRichDocumentExtensions([createDocumentExtension(proxy), ...createBlockNodes(registry) as unknown as Extension[]], {
@@ -749,6 +751,16 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
           return true;
         },
         mouseup() { const editor = editorRef.current; if (editor) queueMicrotask(() => { if (!editor.isDestroyed) notifySelection(editor); }); return false; },
+        pointerdown(_view, event) { linkPointerType.current = event.pointerType || "mouse"; return false; },
+        click(view, event) {
+          const anchor = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>("a[href]") : null;
+          const href = openableHref(anchor?.getAttribute("href"));
+          if (!href || !shouldOpenLink({ button: event.button, metaKey: event.metaKey, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey,
+            altKey: event.altKey, pointerType: linkPointerType.current, readOnly: !view.editable, selecting: !view.state.selection.empty })) return false;
+          event.preventDefault();
+          openLinkInNewTab(href);
+          return true;
+        },
       },
     },
     onUpdate({ editor, transaction }) {
