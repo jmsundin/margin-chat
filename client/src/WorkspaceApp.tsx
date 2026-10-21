@@ -4529,12 +4529,16 @@ function WorkspaceAppContent({
 
 
   /** The session, its tabs and the new side document button; one row of the header on a computer, the top of the drop-down on a phone. */
-  function renderSessionTabs() {
+  function renderSessionSwitcher() {
+    return sessions ? <SessionSwitcher sessions={sortedSessions} activeId={sessions.activeId} compact={isMobileViewport}
+      onSelect={handleSwitchSession} onNew={() => handleCreateSession()}
+      onManage={() => { setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }} /> : null;
+  }
+
+  function renderSessionTabs(vertical = false) {
     return <>
-                    {sessions ? <SessionSwitcher sessions={sortedSessions} activeId={sessions.activeId} compact={isMobileViewport}
-                      onSelect={handleSwitchSession} onNew={() => handleCreateSession()}
-                      onManage={() => { setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }} /> : null}
-                    <DocumentTabs documents={peerTabDocuments}
+                    {vertical ? null : renderSessionSwitcher()}
+                    <DocumentTabs vertical={vertical} documents={peerTabDocuments}
                       groups={state.groups}
                       onAssignGroup={handleAssignConversationGroup}
                       onRename={handleRenameThread}
@@ -5248,9 +5252,10 @@ function WorkspaceAppContent({
                   </div>
                   {isMobileViewport ? (mobileHeaderOpen ? <div id="document-header-details" className="document-header-details">
                     <div className="document-header-tabs-row">
-                      {renderSessionTabs()}
+                      {renderSessionSwitcher()}
                       {renderDocumentViewsMenu()}
                     </div>
+                    {renderSessionTabs(true)}
                     {renderDocumentBreadcrumbs()}
                     <DocumentNavigationSwitcher labelled value={navigationStyle} onChange={(style) => {
                       handleChangeNavigationStyle(style);
