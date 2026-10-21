@@ -63,3 +63,7 @@
 .mobile-selection-actions button:active:not(:disabled) { background: var(--accent-soft); color: var(--ink); }
 .mobile-selection-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mobile-selection-actions button:disabled { opacity: .45; cursor: default; }
+
+/* Docked on iOS, the row sits over the floating keyboard and back-to-top buttons while text is selected. */
+.mobile-selection-actions[data-placement="bottom"],
+.mobile-selection-actions[data-placement="top"] { z-index: 66; }
