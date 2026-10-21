@@ -4690,7 +4690,17 @@ function WorkspaceAppContent({
     const viewingChild = (documentChildrenByParent.get(conversation.id) ?? []).some((child) => child.parentId === conversation.id
       && !isCompactDocument(child) && visibleDocumentIds.has(child.id));
     const viewingNote = !closedMarginNotes[conversation.id] && getMarginDocuments(conversation).length > 0;
-    return viewingChild || viewingNote ? null : minimized;
+    if (viewingChild || viewingNote) return null;
+    // Stack in reading order, so each curve from its passage runs straight across without crossing
+    // another. Nodes without a passage join the document's header, so they lead.
+    const blockOrder = new Map(getEditableDocument(conversation).blocks.map((block, index) => [block.id, index]));
+    const position = (child: Conversation) => !child.branchAnchor ? [-1, 0]
+      : [blockOrder.get(child.branchAnchor.sourceBlockId ?? "") ?? Number.MAX_SAFE_INTEGER, child.branchAnchor.startOffset];
+    return [...minimized].sort((left, right) => {
+      const [leftBlock, leftOffset] = position(left);
+      const [rightBlock, rightOffset] = position(right);
+      return leftBlock - rightBlock || leftOffset - rightOffset;
+    });
   }
 
   function getMarginColumnWidth(conversation: Conversation, includePreview = true): number {
