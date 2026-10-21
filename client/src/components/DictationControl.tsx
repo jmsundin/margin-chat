@@ -8,6 +8,7 @@ import {
 } from "../lib/api";
 import { joinTranscripts } from "../lib/dictationText";
 import { startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
+import { useMobileDockSlot } from "../lib/mobileDock";
 import {
   dictationHints,
   dictationShortcutLabel,
@@ -136,6 +137,8 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
   const holdSpace = useSyncExternalStore(subscribeDictationButtonPreference, readHoldSpacePreference, () => true);
   const noticeTimer = useRef(0);
   const coarsePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
+  // On phones the mic joins the bottom row beside the + and keyboard buttons while that row is shown.
+  const dockSlot = useMobileDockSlot("mic");
 
   const showNotice = useCallback((target: HTMLElement | null, message: string, retry?: () => void) => {
     window.clearTimeout(noticeTimer.current);
@@ -519,12 +522,24 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
 
   if (!supported) return null;
 
-  const floating = anchor
+  const dock = dockSlot?.parentElement?.getBoundingClientRect();
+  const floating = dock
+    // Recording on a phone shows just above the bottom row, so the row's buttons stay put.
+    ? { right: Math.max(4, window.innerWidth - dock.right + 20), bottom: window.innerHeight - dock.top + 10 }
+    : anchor
     ? { right: anchor.right, bottom: anchor.bottom }
     : { left: "50%", bottom: 24, transform: "translateX(-50%)" };
 
   if (phase.kind === "idle") {
-    if (!buttonTarget || !anchor) return null;
+    if (!buttonTarget) return null;
+    if (dockSlot) return createPortal(
+      <button aria-label="Voice typing" className="dictation-mic is-docked" data-dictation="off" onClick={() => toggle(buttonTarget)}
+        onMouseDown={(event) => event.preventDefault()} onPointerDown={(event) => event.preventDefault()} title="Voice typing" type="button">
+        <MicIcon size={24} />
+      </button>,
+      dockSlot,
+    );
+    if (!anchor) return null;
     return createPortal(
       <button
         aria-label={`Voice typing (${dictationShortcutLabel()})`}
@@ -571,9 +586,9 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
   );
 }
 
-function MicIcon() {
+function MicIcon({ size = 14 }: { size?: number }) {
   return (
-    <svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+    <svg aria-hidden="true" fill="none" height={size} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={size > 14 ? 1.6 : 2} viewBox="0 0 24 24" width={size}>
       <rect height="12" rx="3" width="6" x="9" y="3" />
       <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
     </svg>

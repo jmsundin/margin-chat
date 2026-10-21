@@ -139,3 +139,16 @@
 .dictation-pill-action:hover {
   border-color: var(--accent, #ff8d6d);
 }
+
+/* In the phone's bottom row, the same size and look as the keyboard button beside it. */
+.dictation-mic.is-docked {
+  position: relative;
+  z-index: auto;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  color: var(--ink, #ecf4ef);
+  box-shadow: 0 3px 12px #0003;
+  opacity: 1;
+  touch-action: manipulation;
+}
