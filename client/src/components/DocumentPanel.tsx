@@ -21,6 +21,7 @@ import AgentModeToggle, { type AgentModeControls } from "./AgentModeToggle";
 import AgentRunLog from "./AgentRunLog";
 import AgentFollowUp, { type AgentProposalAction } from "./AgentFollowUp";
 import DocumentMargin, { type DocumentMarginItem } from "./DocumentMargin";
+import BackToTopButton from "./BackToTopButton";
 import type { AgentProgress } from "../lib/useChatStreams";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
 import { defaultSelectionDestination } from "../lib/selectionDestination";
@@ -534,6 +535,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     {props.marginNotes?.length ? <DocumentMargin bodyRef={bodyRef} documentId={conversation.id} items={props.marginNotes}
       label={`Notes for ${conversation.title || "Untitled document"}`} width={props.marginWidth ?? 300}
       activeId={props.activeMarginNoteId} onHeightChange={setMarginHeight}/> : null}
+    <BackToTopButton scrollRef={bodyRef} active={props.isActive}/>
     </div>
     {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}
     <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>
