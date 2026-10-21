@@ -41,8 +41,10 @@
 }
 .document-menu button:hover, .document-menu button:focus-visible { background: var(--button-active-surface); outline: none; }
 .document-menu button:disabled { color: var(--muted); cursor: default; }
-.document-menu [role="menuitemcheckbox"] { display: flex; align-items: flex-start; gap: 7px; }
-.document-menu-check { flex: 0 0 13px; color: var(--accent); }
+.document-menu-section + .document-menu-section { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--line); }
+/* Checkbox items keep their label in line with the rest; the tick sits at the right edge. */
+.document-menu [role="menuitemcheckbox"] { display: flex; align-items: flex-start; gap: 8px; }
+.document-menu-check { flex: 0 0 13px; margin-left: auto; color: var(--accent); text-align: right; }
 .document-menu .document-menu-group-setting { display: flex; align-items: center; gap: 8px; }
 .document-menu-group-name { margin-left: auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
 .document-rename-backdrop {
