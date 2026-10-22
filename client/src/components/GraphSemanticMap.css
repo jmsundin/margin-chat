@@ -291,3 +291,24 @@
   /* The search box starts after the sidebar button, so its results must not run off the right edge. */
   .semantic-map .graph-map-search > .graph-map-search-results { left: 0; right: auto; width: calc(100vw - 64px); }
 }
+
+/* Closed documents as a circle sized by connections, with the title below it.
+   The card box keeps its size for layout; the circle sits at its center. */
+/* Doubled .semantic-map outranks the family card colors above. */
+.semantic-map.semantic-map .conversation-graph-node.is-dot { --dot-color: var(--map-family-color, color-mix(in srgb, var(--ink) 42%, var(--panel-bg))); background: transparent; border-color: transparent; box-shadow: none; }
+.semantic-map.semantic-map .conversation-graph-node.is-dot:hover { border-color: transparent; }
+.semantic-map .conversation-graph-node.is-dot .conversation-graph-node-select { position: absolute; inset: 0; padding: 0; height: 100%; background: transparent; }
+.semantic-map .conversation-graph-node.is-dot .conversation-graph-node-head { position: absolute; left: 50%; top: calc(50% - var(--map-dot-size) / 2); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 5px; width: max-content; min-height: 0; padding: 0; border: 0; pointer-events: none; }
+.semantic-map .conversation-graph-node.is-dot .conversation-graph-node-kicker { display: none; }
+.semantic-map .conversation-graph-node-dot { flex: 0 0 auto; width: var(--map-dot-size); height: var(--map-dot-size); border-radius: 50%; background: var(--dot-color); box-shadow: 0 0 0 2px var(--graph-canvas-bg, var(--bg-deep)); transition: box-shadow 120ms ease; }
+.semantic-map .conversation-graph-node.is-dot:hover .conversation-graph-node-dot { box-shadow: 0 0 0 2px var(--graph-canvas-bg, var(--bg-deep)), 0 0 0 5px color-mix(in srgb, var(--dot-color) 35%, transparent); }
+.semantic-map .conversation-graph-node.is-dot.is-selected .conversation-graph-node-dot,
+.semantic-map .conversation-graph-node.is-dot.is-multi-selected .conversation-graph-node-dot,
+.semantic-map .conversation-graph-node.is-dot.is-connection-center .conversation-graph-node-dot { box-shadow: 0 0 0 2px var(--graph-canvas-bg, var(--bg-deep)), 0 0 0 4px var(--accent); }
+.semantic-map .conversation-graph-node.is-dot.is-multi-selected::after { display: none; }
+/* One line; a title that would reach a neighbor ends in "…" (full title on hover). */
+.semantic-map.semantic-map .conversation-graph-node.is-dot .conversation-graph-node-head > strong { display: block; max-width: var(--map-dot-title-max, 240px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; -webkit-line-clamp: unset; font-size: 13px; font-weight: 500; line-height: 17px; color: var(--ink); text-shadow: 0 0 3px var(--graph-canvas-bg, var(--bg-deep)), 0 0 2px var(--graph-canvas-bg, var(--bg-deep)); }
+.semantic-map.semantic-map .conversation-graph-node.is-dot.is-dot-bold .conversation-graph-node-head > strong { font-weight: 650; }
+.semantic-map .conversation-graph-node.is-dot.is-note .conversation-graph-node-head > strong::before { content: none; }
+.semantic-map .conversation-graph-node.is-dot .conversation-graph-node-move-handle { left: calc(50% - var(--map-dot-size) / 2 - 34px); }
+.semantic-map .conversation-graph-node.is-dot .conversation-graph-node-actions { top: calc(50% - var(--map-dot-size) / 2 - 46px); right: auto; left: 50%; transform: translateX(-50%); }
