@@ -92,3 +92,8 @@
   .live-document-host .live-document-block:is([data-authorship="ai"], [data-authorship="mixed"]) { background-position: 1px 50%; }
 }
 .live-document-editor[data-mode="reading"] .cm-line.cm-lp-placeholder::before { content: none; }
+.live-document-preview:has(> .live-document-diagram-actions) { position: relative; }
+.live-document-diagram-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
+.live-document-preview:is(:hover, :focus-within) > .live-document-diagram-actions { opacity: 1; }
+@media (hover: none) { .live-document-diagram-actions { opacity: 1; } }
+.live-document-diagram-actions button { background: var(--panel-strong); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; line-height: 1.4; cursor: pointer; }
