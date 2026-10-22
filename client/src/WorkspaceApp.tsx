@@ -31,6 +31,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type SetStateAction,
+  useCallback,
   useDeferredValue,
   useEffect,
   useEffectEvent,
@@ -111,7 +112,10 @@ import MainChatTileView from "./components/MainChatTileView";
 import SettingsPage, { type SettingsSection } from "./components/SettingsPage";
 import ChatHistoryImport from "./components/ChatHistoryImport";
 import ViewIntro from "./components/ViewIntro";
+import GuidedTour, { DESKTOP_TOUR, PHONE_TOUR, TourPill } from "./components/GuidedTour";
 import { chatImportReminderDue, finishChatImportReminder } from "./lib/chatImportReminder";
+import { completedStarterTasks, isPristineWorkspace, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
+import { loadOnboarding, saveOnboarding, type OnboardingRecord } from "./lib/onboarding";
 import CaptureInbox from "./components/CaptureInbox";
 import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
@@ -1152,6 +1156,30 @@ function WorkspaceAppContent({
     if (jev.status !== "ready") return;
     setState((current) => applyJevGroupSuggestions(current, jev.categories, jev.groupSuggestions));
   }, [jev.status, jevCategoryKey, jevGroupSuggestionKey]);
+  const [onboarding, setOnboardingRecord] = useState<OnboardingRecord>(() => loadOnboarding(storageUserId));
+  const updateOnboarding = useCallback((change: Partial<OnboardingRecord>) => setOnboardingRecord((current) => {
+    const next = { ...current, ...change };
+    saveOnboarding(storageUserId, next);
+    return next;
+  }), [storageUserId]);
+  // A brand-new, empty workspace becomes "Start here" and the tour begins, once per device.
+  // Waiting for the cloud list keeps a new device from treating a full vault as empty.
+  const vaultSettled = vault.ready && !vault.fetchStatus && !(vault.cloudDocuments?.length);
+  useEffect(() => {
+    if (!vaultSettled || inExtension || onboarding.checked) return;
+    if (isPristineWorkspace(state)) {
+      setState((current) => seedStarterDocument(current));
+      updateOnboarding({ checked: true, tour: "active", step: 0 });
+    } else updateOnboarding({ checked: true });
+  }, [vaultSettled, inExtension, onboarding.checked]);
+  useEffect(() => { if (isGraphView && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [isGraphView, onboarding.mapSeen]);
+  const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen }),
+    [state.conversations, state.sessions, onboarding.mapSeen]);
+  const tourSteps = isMobileViewport ? PHONE_TOUR : DESKTOP_TOUR;
+  const starterTasksKey = [...starterTasksDone].sort().join(",");
+  useEffect(() => {
+    if (starterTasksDone.size) setState((current) => tickStarterTasks(current, starterTasksDone));
+  }, [starterTasksKey]);
   // A vault this small belongs to someone new, so the views say what they are for.
   const newVault = Object.keys(state.conversations).length <= 8;
   const threadSummaries = useMemo(
@@ -5146,6 +5174,11 @@ function WorkspaceAppContent({
               onNewNote={handleCreateStandaloneNote}
               onOpenInbox={() => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
+              onTakeTour={inExtension ? undefined : () => {
+                if (isMobileViewport) setLeftSidebarOpen(false);
+                handleSetMainViewMode("chat");
+                updateOnboarding({ tour: "active", step: 0 });
+              }}
               onOpenProfile={() => {
                 setProfileSaveError(null);
                 setProfileInitialTab(null);
@@ -5664,6 +5697,15 @@ function WorkspaceAppContent({
             }}
           /> : null}
 
+          {vault.ready && onboarding.tour === "active" ? <GuidedTour steps={tourSteps} step={onboarding.step}
+            onStep={(step) => updateOnboarding({ step })}
+            onPause={() => updateOnboarding({ tour: "paused" })}
+            onFinish={() => updateOnboarding({ tour: "done", step: 0 })} /> : null}
+          {vault.ready && onboarding.tour === "paused" ? <TourPill step={onboarding.step} total={tourSteps.length}
+            askToHide={starterTasksDone.size >= 3 && !onboarding.keepPill}
+            onResume={() => { handleSetMainViewMode("chat"); updateOnboarding({ tour: "active" }); }}
+            onHide={() => updateOnboarding({ tour: "done", step: 0 })}
+            onKeep={() => updateOnboarding({ keepPill: true })} /> : null}
           {historyImportOpen && <ChatHistoryImport
             existingIds={Object.keys(state.conversations)} cloudSyncEnabled={cloudSyncEnabled}
             onImport={async (chats) => {

@@ -59,6 +59,8 @@ interface ThreadSidebarProps {
   onNewNote: () => void;
   onOpenInbox?: () => void;
   onImportChatHistory?: () => void;
+  /** Start the guided tour from the beginning. */
+  onTakeTour?: () => void;
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
@@ -343,6 +345,7 @@ export default function ThreadSidebar({
   onNewNote,
   onOpenInbox,
   onImportChatHistory,
+  onTakeTour,
   onOpenProfile,
   onOpenSettings,
   onOpenSearch,
@@ -1012,6 +1015,9 @@ export default function ThreadSidebar({
               {onImportChatHistory ? <button type="button" className="sidebar-workspace-action" onClick={() => {
                 closeWorkspaceActions(); onImportChatHistory();
               }}><span>Bring your chat history</span></button> : null}
+              {onTakeTour ? <button type="button" className="sidebar-workspace-action" onClick={() => {
+                closeWorkspaceActions(); onTakeTour();
+              }}><span>Take the tour</span></button> : null}
               {onOpenInbox ? (
                 <button
                   className="sidebar-workspace-action"
