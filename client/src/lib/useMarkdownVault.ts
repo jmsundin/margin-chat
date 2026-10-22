@@ -1042,6 +1042,7 @@ export function useMarkdownVault(args: {
       return enqueue(async () => {
         const snapshot = await engine.read();
         const plan = planVaultUpload(uploads, [...Object.keys(snapshot.files), ...Object.keys(snapshot.deferred ?? {})]);
+        let documentIds: string[] = [];
         if (Object.keys(plan.files).length) {
           const files = normalizeVaultMarkdownIdentities(plan.files, plan.createdAtByPath);
           // Validate content before touching the local vault.
@@ -1050,14 +1051,15 @@ export function useMarkdownVault(args: {
           await engine.import(files);
           // What was just added is what the person is looking at, so it leads "Recently viewed".
           recordAddedVaultFileDates(storageUserId, plan.createdAtByPath);
-          recordOpenedDocuments(storageUserId, [
+          documentIds = [
             ...markdown.map((record) => record.id),
             ...Object.keys(files).filter((path) => isVaultFileDocumentPath(path)).map((path) => vaultFileDocumentId(path)),
-          ]);
+          ];
+          recordOpenedDocuments(storageUserId, documentIds);
           await persistAndPublish();
           await saveAndRefresh(true);
         }
-        return { added: plan.added, skipped: plan.skipped, summary: describeVaultUpload(plan) };
+        return { added: plan.added, skipped: plan.skipped, documentIds, summary: describeVaultUpload(plan) };
       });
     },
     async importChatHistory(chats: HistoryChat[]) {
