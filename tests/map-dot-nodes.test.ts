@@ -35,8 +35,18 @@ describe("map dot nodes", () => {
     expect(fitMapDotTitles([node("a", 0, 0, 300), node("b", 50, 200, 300)]).size).toBe(0);
   });
 
-  test("open cards count as neighbors, and a cut title keeps a few letters", () => {
-    const widths = fitMapDotTitles([node("a", 0, 0, 300)], [{ x0: 12, y0: 10, x1: 200, y1: 60 }]);
-    expect(widths.get("a")).toBe(48);
+  test("open cards count as neighbors, and a title without room for a few letters hides", () => {
+    expect(fitMapDotTitles([node("a", 0, 0, 300)], [{ x0: 40, y0: 10, x1: 200, y1: 60 }]).get("a")).toBe(2 * (40 - 6));
+    expect(fitMapDotTitles([node("a", 0, 0, 300)], [{ x0: 12, y0: 10, x1: 200, y1: 60 }]).get("a")).toBe(0);
+  });
+
+  test("a circle right below a title hides it rather than drawing over it", () => {
+    const widths = fitMapDotTitles([node("top", 0, 0, 120, 2), node("below", 0, 30, 120, 1)]);
+    expect(widths.get("top")).toBe(0);
+    expect(widths.has("below")).toBe(false);
+  });
+
+  test("a short title that fits is never hidden", () => {
+    expect(fitMapDotTitles([node("a", 0, 0, 30), node("b", 50, 26, 30)]).size).toBe(0);
   });
 });

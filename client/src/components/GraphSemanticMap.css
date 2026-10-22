@@ -312,3 +312,8 @@
 .semantic-map .conversation-graph-node.is-dot.is-note .conversation-graph-node-head > strong::before { content: none; }
 .semantic-map .conversation-graph-node.is-dot .conversation-graph-node-move-handle { left: calc(50% - var(--map-dot-size) / 2 - 34px); }
 .semantic-map .conversation-graph-node.is-dot .conversation-graph-node-actions { top: calc(50% - var(--map-dot-size) / 2 - 46px); right: auto; left: 50%; transform: translateX(-50%); }
+.semantic-map .conversation-graph-node.is-dot .conversation-graph-node-link-handle { right: auto; left: calc(50% + var(--map-dot-size) / 2 + 8px); }
+/* Touch screens always show card handles; on a circle only the selected one does, so a map of circles stays clean. */
+@media (hover: none), (pointer: coarse) {
+  .semantic-map .conversation-graph-node.is-dot:not(.is-selected, .is-moving) .conversation-graph-node-move-handle { opacity: 0; visibility: hidden; pointer-events: none; }
+}
