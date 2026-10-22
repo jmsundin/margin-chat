@@ -23,7 +23,7 @@ import { MicIcon, useDictationButton } from "./DictationButton";
 import { dictationShortcutLabel, requestDictation } from "../lib/dictation";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
 import MathEquationDialog from "./MathEquationDialog";
-import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource } from "../lib/liveDocument";
+import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource, type TextSpan } from "../lib/liveDocument";
 import { livePreviewInline, type LivePreviewMode } from "../lib/livePreviewMarkdown";
 import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import "./LiveDocumentEditor.css";
@@ -167,6 +167,14 @@ class AfterWidget extends WidgetType {
 }
 
 const hide = Decoration.replace({});
+/** Whether a block shows rendered at its start or end, where another line can't join onto it. */
+function renderedAt(content: string, edge: "start" | "end") {
+  const info = liveBlockInfo(content);
+  if (info.kind !== "text") return true;
+  return info.parts.some((part) => edge === "start" ? !content.slice(0, part.from).trim() : !content.slice(part.to).trim());
+}
+/** The widget key for the rendered table or diagram at `index` among a block's paragraphs. */
+const partKey = (index: number, id: string) => `part:${index}:${id}`;
 const atomicMark = Decoration.mark({});
 
 function blockAttributes(state: LiveState, block: LiveBlock): Record<string, string> {
@@ -209,7 +217,7 @@ function buildBlockDecorations(state: EditorState, host: WidgetHost) {
   const ranges: Range<Decoration>[] = [];
   const atomic: Range<Decoration>[] = [];
   const rendered = live.mode !== "source";
-  const editing = (block: LiveBlock) => live.mode === "live" && live.focused && state.selection.ranges.some((range) => range.from <= block.to && range.to >= block.from);
+  const editing = (span: TextSpan) => live.mode === "live" && live.focused && state.selection.ranges.some((range) => range.from <= span.to && range.to >= span.from);
   live.layout.forEach((block, index) => {
     const content = doc.sliceString(block.from, block.to);
     const info = liveBlockInfo(content);
@@ -244,6 +252,15 @@ function buildBlockDecorations(state: EditorState, host: WidgetHost) {
         // The cursor skips the hidden lines after the last block. Between blocks, the transaction filter moves it out
         // toward where it was heading: an atomic range there would send a click past a line's end to the next line.
         if (!next && doc.length > end) atomic.push(atomicMark.range(end, doc.length));
+        // Tables and diagrams among a block's paragraphs render on their own until the cursor reaches one.
+        info.parts.forEach((part, partIndex) => {
+          const span = { from: block.from + part.from, to: block.from + part.to };
+          if (editing(span)) return;
+          const widget = Decoration.replace({ block: true, widget: new BlockWidget(host, partKey(partIndex, block.id), content.slice(part.from, part.to),
+            { ...attributes, "data-live-part-from": String(part.from), "data-live-part-to": String(part.to) }) }).range(span.from, span.to);
+          ranges.push(widget);
+          atomic.push(widget);
+        });
       }
     }
     if (live.after.has(block.id)) ranges.push(Decoration.widget({ block: true, side: 1, widget: new AfterWidget(host, block.id) }).range(gapEnd));
@@ -503,7 +520,11 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const id = widget?.dataset.documentBlockId;
     const live = stateOf(view);
     const block = id ? live.layout.find((item) => item.id === id) : undefined;
-    const markdown = block ? view.state.doc.sliceString(block.from, block.to) : "";
+    // A table among a block's paragraphs is a part of it: its offsets start where the table does.
+    const partFrom = Number(widget?.dataset.livePartFrom ?? 0);
+    const partTo = widget?.dataset.livePartTo === undefined ? undefined : Number(widget.dataset.livePartTo);
+    const blockMarkdown = block ? view.state.doc.sliceString(block.from, block.to) : "";
+    const markdown = blockMarkdown.slice(partFrom, partTo);
     const body = widget?.querySelector(".live-document-widget-body");
     if (!range || !widget || !id || !block || !body || widgetOf(range.endContainer) !== widget || !root.contains(widget)
       || isDraftBlockId(id) || live.locked.has(id) || !isTableBlock(markdown)) {
@@ -531,11 +552,11 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     previewSelection.current = true;
     const rect = range.getBoundingClientRect();
     current.onSelectionChange({ conversationId: current.conversationId, messageId: blockById.get(id)?.sourceMessageId ?? `document:${id}`, sourceBlockId: id,
-      startOffset: span.from, endOffset: span.to, quote: markdown.slice(span.from, span.to), rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
+      startOffset: partFrom + span.from, endOffset: partFrom + span.to, quote: markdown.slice(span.from, span.to), rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
   }
 
   /** Selects the whole Mermaid fence behind a tapped diagram, so the selection menu and Ask AI work on it. */
-  function selectDiagram(id: string, diagram: HTMLElement, preview: HTMLElement) {
+  function selectDiagram(id: string, diagram: HTMLElement, preview: HTMLElement, firstFence: number) {
     const current = latest.current;
     const view = viewRef.current;
     if (!current.onSelectionChange || !view) return false;
@@ -543,7 +564,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const block = live.layout.find((item) => item.id === id);
     if (!block || isDraftBlockId(id) || live.locked.has(id)) return false;
     const markdown = view.state.doc.sliceString(block.from, block.to);
-    const fence = findMermaidFences(markdown)[[...preview.querySelectorAll(MERMAID_BLOCK_SELECTOR)].indexOf(diagram)];
+    const fence = findMermaidFences(markdown)[firstFence + [...preview.querySelectorAll(MERMAID_BLOCK_SELECTOR)].indexOf(diagram)];
     if (!fence) return false;
     clearDiagramSelection();
     diagram.classList.add("is-diagram-selected");
@@ -789,9 +810,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (main.head === block.from && index > 0) {
       const previous = live.layout[index - 1];
       if (live.locked.has(block.id) || live.locked.has(previous.id)) return true;
-      const previousKind = liveBlockInfo(doc.sliceString(previous.from, previous.to)).kind;
-      // A line never joins onto media or a drawing; an empty line before it just goes away.
-      if (previousKind !== "text" && block.to > block.from) { view.dispatch({ selection: EditorSelection.cursor(previous.from) }); return true; }
+      // A line never joins onto media, a drawing or a table; an empty line before it just goes away.
+      if (renderedAt(doc.sliceString(previous.from, previous.to), "end") && block.to > block.from) { view.dispatch({ selection: EditorSelection.cursor(previous.from) }); return true; }
       const end = visibleEnd(textOf(doc), previous);
       view.dispatch({ changes: { from: end, to: block.from }, selection: EditorSelection.cursor(end), userEvent: "delete", scrollIntoView: true });
       return true;
@@ -817,7 +837,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const next = live.layout[index + 1];
     if (!next || main.head !== visibleEnd(textOf(doc), block)) return false;
     if (live.locked.has(block.id) || live.locked.has(next.id)) return true;
-    if (liveBlockInfo(doc.sliceString(next.from, next.to)).kind !== "text") {
+    if (renderedAt(doc.sliceString(next.from, next.to), "start")) {
       if (block.from === block.to) view.dispatch({ changes: { from: block.from, to: next.from }, userEvent: "delete" });
       return true;
     }
@@ -1138,8 +1158,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const keys = new Set<string>();
     for (const block of visibleBlocks) {
       keys.add(`after:${block.id}`);
-      const kind = liveBlockInfo(block.content).kind;
-      if (kind !== "text") keys.add(`${kind}:${block.id}`);
+      const info = liveBlockInfo(block.content);
+      if (info.kind !== "text") keys.add(`${info.kind}:${block.id}`);
+      info.parts.forEach((_part, index) => keys.add(partKey(index, block.id)));
     }
     widgets.prune(keys);
   });
@@ -1206,13 +1227,13 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (!clean) return;
     insertMarkdown(equation.blockId, display ? `$$\n${clean}\n$$` : `$${clean}$`);
   }
-  /** Put the caret in a block, which shows its Markdown. */
-  function editBlock(id: string) {
+  /** Put the caret in a block, or `offset` into it, which shows its Markdown. */
+  function editBlock(id: string, offset = 0) {
     const view = viewRef.current;
     const block = view?.state.field(liveField).layout.find((item) => item.id === id);
     if (!view || !block || !editable || mode === "reading") return;
     view.focus();
-    view.dispatch({ selection: EditorSelection.cursor(block.from), scrollIntoView: true });
+    view.dispatch({ selection: EditorSelection.cursor(Math.min(block.from + offset, block.to)), scrollIntoView: true });
   }
 
   function renderWidget(key: string) {
@@ -1221,6 +1242,13 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const separator = key.indexOf(":");
     const kind = key.slice(0, separator);
     const id = key.slice(separator + 1);
+    if (kind === "part") {
+      // A table or diagram among a block's paragraphs: "part:<index>:<id>".
+      const at = id.indexOf(":");
+      const partBlock = blockById.get(id.slice(at + 1));
+      const part = partBlock && liveBlockInfo(partBlock.content).parts[Number(id.slice(0, at))];
+      return partBlock && part ? createPortal(renderPreview(partBlock, part), element, key) : null;
+    }
     const block = blockById.get(id);
     if (!block) return null;
     const readOnly = !editable || readOnlyIds.has(id) || mode === "reading";
@@ -1254,18 +1282,29 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (kind === "drawing") {
       return createPortal(<Suspense fallback={<p role="status">Loading drawing…</p>}><DocumentDrawing markdown={block.content} readOnly={readOnly} onEdit={() => openDrawing(block)} /></Suspense>, element, key);
     }
-    const diagrams = readOnly ? [] : findMermaidFences(block.content);
+    return createPortal(renderPreview(block), element, key);
+  }
+
+  /** A rendered block, or a rendered part of one (a table or diagram among its paragraphs). */
+  function renderPreview(block: DocumentBlock, part?: TextSpan) {
+    const id = block.id;
+    const readOnly = !editable || readOnlyIds.has(id) || mode === "reading";
+    const markdown = part ? block.content.slice(part.from, part.to) : block.content;
+    const offset = part?.from ?? 0;
+    // Diagrams are numbered across the whole block, as the editor dialog and Ask AI find them.
+    const firstFence = part ? findMermaidFences(block.content).filter((fence) => fence.start < part.from).length : 0;
+    const diagrams = readOnly ? [] : findMermaidFences(markdown);
     // The preview takes focus itself, so the editor doesn't put its own selection back over text selected here.
     const diagramAt = (target: EventTarget) => target instanceof Element && !target.closest("a, button") ? target.closest<HTMLElement>(MERMAID_BLOCK_SELECTOR) : null;
-    return createPortal(<div className="live-document-preview" tabIndex={-1} onClickCapture={(event) => {
+    return <div className="live-document-preview" tabIndex={-1} onClickCapture={(event) => {
       // A click on a diagram selects it for the selection menu (Ask AI changes it in place) instead of opening the viewer.
       // A double-click edits its Mermaid text.
       const diagram = !readOnly && mode === "live" ? diagramAt(event.target) : null;
       if (!diagram) return;
       event.stopPropagation();
       event.preventDefault();
-      if (event.detail > 1) { clearDiagramSelection(); latest.current.onSelectionChange?.(null); editBlock(id); return; }
-      selectDiagram(id, diagram, event.currentTarget);
+      if (event.detail > 1) { clearDiagramSelection(); latest.current.onSelectionChange?.(null); editBlock(id, offset); return; }
+      selectDiagram(id, diagram, event.currentTarget, firstFence);
     }} onKeyDown={(event) => {
       if (event.key !== "Escape" || !diagramSelection.current || !event.currentTarget.contains(diagramSelection.current.diagram)) return;
       clearDiagramSelection();
@@ -1273,15 +1312,15 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       latest.current.onSelectionChange?.(null);
     }} onClick={(event) => {
       if (!window.getSelection()?.isCollapsed || (event.target instanceof Element && event.target.closest("a, button, input, summary, [data-annotation-branches]"))) return;
-      editBlock(id);
+      editBlock(id, offset);
     }}>
-      {props.renderBlockPreview?.(block) ?? <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(block.content) }} />}
+      {props.renderBlockPreview?.(part ? { ...block, content: markdown } : block) ?? <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(markdown) }} />}
       {diagrams.length > 0 && <div className="live-document-diagram-actions">
-        {diagrams.map((_fence, index) => <button key={index} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => openDiagram(block, index)}>
+        {diagrams.map((_fence, index) => <button key={index} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => openDiagram(block, firstFence + index)}>
           {diagrams.length > 1 ? `Edit diagram ${index + 1}` : "Edit diagram"}
         </button>)}
       </div>}
-    </div>, element, key);
+    </div>;
   }
 
   return <div ref={rootRef} data-block-editor-conversation-id={props.conversationId} data-mode={mode}

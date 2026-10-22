@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -291,6 +292,8 @@ export default function MarkdownMessage({
   const registeredNoteIdsRef = useRef<string[]>([]);
   const viewerDragRef = useRef<MermaidViewerDragState | null>(null);
   const viewerRenderCountRef = useRef(0);
+  // Several previews of one message (a document's tables and diagrams render one by one) each draw their own diagrams.
+  const renderScope = useId();
   const viewerTransformRef = useRef<MermaidViewerTransform>({
     scale: 1,
     x: 0,
@@ -598,7 +601,7 @@ export default function MarkdownMessage({
 
         try {
           const { svg, bindFunctions } = await mermaid.render(
-            buildMermaidRenderId(messageId, index),
+            buildMermaidRenderId(`${messageId}-${renderScope}`, index),
             source,
           );
 
@@ -647,6 +650,7 @@ export default function MarkdownMessage({
     enableMermaidRendering,
     messageId,
     renderedHtml,
+    renderScope,
     theme,
   ]);
 

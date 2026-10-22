@@ -45,13 +45,19 @@
 .live-document-host .message-anchor { border-radius: 3px; }
 
 /* Media, drawings, tables and diagrams render in place until you click into them. */
-.live-document-widget { margin: 6px 8px 6px 40px; min-width: 0; }
+/* `contain` keeps a wide table from widening the editor; the table scrolls inside its own box instead. */
+.live-document-widget { contain: inline-size; margin: 6px 8px 6px 40px; min-width: 0; }
 .live-document-widget-body { min-width: 0; }
-.live-document-preview { cursor: text; font-size: .96rem; line-height: 1.8; overflow-x: auto; }
+/* The editor wraps its lines anywhere; rendered blocks wrap like a page, so table cells keep whole words and a wide table scrolls sideways. */
+.live-document-preview { cursor: text; font-size: .96rem; line-height: 1.8; overflow-x: auto; overflow-wrap: break-word; white-space: normal; word-break: normal; -webkit-overflow-scrolling: touch; }
 .live-document-preview .message-content > :first-child { margin-top: 0; }
 .live-document-preview .message-content > :last-child { margin-bottom: 0; }
 .live-document-preview table { border-collapse: collapse; }
 .live-document-preview :is(th, td) { border: 1px solid var(--line-strong, var(--line)); padding: 4px 10px; text-align: left; }
+/* Columns size to their words, never a letter at a time; a table wider than the page scrolls sideways. */
+.live-document-preview .message-content table { table-layout: auto; }
+.live-document-preview .message-content :is(th, td) { overflow-wrap: normal; word-break: normal; }
+.live-document-preview .message-content :is(th, td) code { white-space: nowrap; }
 .live-document-after { margin: 0 8px 0 40px; position: relative; }
 .live-document-after:empty { display: none; }
 .live-document-beacons { pointer-events: none; }
@@ -100,6 +106,6 @@
 .live-document-diagram-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 6px; opacity: 0; transition: opacity .12s; }
 .live-document-preview:is(:hover, :focus-within) > .live-document-diagram-actions { opacity: 1; }
 @media (hover: none) { .live-document-diagram-actions { opacity: 1; } }
-.live-document-diagram-actions button { background: var(--panel-strong); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; line-height: 1.4; cursor: pointer; }
+.live-document-diagram-actions button { white-space: nowrap; background: var(--panel-strong); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; line-height: 1.4; cursor: pointer; }
 .live-document-preview .message-mermaid-block.is-rendered { cursor: pointer; }
 .live-document-preview .message-mermaid-block.is-diagram-selected { outline: 2px solid var(--accent); outline-offset: -2px; }

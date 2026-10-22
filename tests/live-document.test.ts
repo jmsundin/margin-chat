@@ -75,6 +75,19 @@ test("media, drawings, tables and math render in place; text is edited inline", 
   expect(liveBlockInfo("First.\n\nSecond.").collapsed).toEqual([{ from: 6, to: 7 }]);
 });
 
+test("a long block renders only its tables and diagrams, each on its own", () => {
+  const diagram = "```mermaid\nflowchart LR\n  A --> B\n```";
+  const table = "| a | b |\n| --- | --- |\n| 1 | 2 |";
+  const content = `# Title\n\nIntro.\n\n${diagram}\n\nMiddle.\n\n${table}`;
+  const info = liveBlockInfo(content);
+  expect(info.kind).toBe("text");
+  expect(info.parts.map((part) => content.slice(part.from, part.to))).toEqual([diagram, table]);
+  expect(info.collapsed.length).toBe(4);
+  // A block that is only a diagram, or needs its reference definitions, still renders whole.
+  expect(liveBlockInfo(diagram)).toMatchObject({ kind: "rendered", parts: [] });
+  expect(liveBlockInfo("See [x][1].\n\n[1]: https://example.com").kind).toBe("rendered");
+});
+
 test("text selected in a rendered table maps to its Markdown", () => {
   const markdown = "| Name | Role |\n| --- | --- |\n| Alice **Smith** | Engineer &amp; lead |\n| - | Designer |";
   const rendered = "\nNameRole\n\nAlice Smith\tEngineer & lead\n-\tDesigner\n";
