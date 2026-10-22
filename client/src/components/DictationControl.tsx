@@ -9,13 +9,16 @@ import {
 import { joinTranscripts } from "../lib/dictationText";
 import { startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
 import { useMobileDockSlot } from "../lib/mobileDock";
+import { MicIcon } from "./DictationButton";
 import {
   dictationHints,
   dictationShortcutLabel,
   dictationSupported,
   findDictationTarget,
+  hasOwnDictationButton,
   insertDictation,
   isDictationShortcut,
+  onDictationRequest,
   readDictationButtonPreference,
   readHoldSpacePreference,
   removeSpaceBeforeCursor,
@@ -50,8 +53,21 @@ const LIVE_RENEW_MS = 9 * 60 * 1000;
 // Pieces of a long recording transcribed at once.
 const TRANSCRIBE_CONCURRENCY = 2;
 
-/** Bottom-right corner of the part of the field that is on screen. */
+/** The document's corner mic, where its recording shows. Phones float the active document's at the screen corner. */
+function slotFor(target: HTMLElement): HTMLElement | null {
+  if (!hasOwnDictationButton(target)) return null;
+  const slot = target.closest(".document-panel")?.querySelector<HTMLElement>("[data-dictation-slot]")
+    ?? document.querySelector<HTMLElement>("[data-dictation-slot].is-floating");
+  return slot?.getClientRects().length ? slot : null;
+}
+
+/** Bottom-right corner of the part of the field that is on screen, or the document's corner mic. */
 function anchorFor(target: HTMLElement): Anchor | null {
+  const slot = slotFor(target);
+  if (slot) {
+    const box = slot.getBoundingClientRect();
+    return { right: Math.max(4, window.innerWidth - box.right), bottom: Math.max(4, window.innerHeight - box.bottom + (box.height - BUTTON_SIZE) / 2) };
+  }
   const rect = target.getBoundingClientRect();
   const right = Math.min(rect.right, window.innerWidth);
   const bottom = Math.min(rect.bottom, window.innerHeight);
@@ -475,6 +491,9 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     };
   }, [cancel, finish, holdSpace, start, supported, toggle]);
 
+  // Mic buttons outside the field, like the document's, start and stop it here.
+  useEffect(() => supported ? onDictationRequest(toggle) : undefined, [supported, toggle]);
+
   useEffect(() => {
     // Leaving the page mid-recording still ends a hosted session's charge.
     window.addEventListener("pagehide", cancel);
@@ -486,7 +505,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
 
   const activeTarget = phase.kind === "idle" ? null : phase.target;
   // Phones get the mic too: tap to start, tap the stop button to finish. Their keyboards never move a pointer, so typing doesn't hide it.
-  const buttonTarget = showButton && (coarsePointer || !typing) ? focused : null;
+  const buttonTarget = showButton && (coarsePointer || !typing) && focused && !hasOwnDictationButton(focused) ? focused : null;
   const anchorTarget = activeTarget ?? (phase.kind === "idle" ? buttonTarget : null);
 
   // Keep the control on its field as the page scrolls, resizes or reflows.
@@ -522,7 +541,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
 
   if (!supported) return null;
 
-  const dock = dockSlot?.parentElement?.getBoundingClientRect();
+  const dock = activeTarget && slotFor(activeTarget) ? undefined : dockSlot?.parentElement?.getBoundingClientRect();
   const floating = dock
     // Recording on a phone shows just above the bottom row, so the row's buttons stay put.
     ? { right: Math.max(4, window.innerWidth - dock.right + 20), bottom: window.innerHeight - dock.top + 10 }
@@ -583,14 +602,5 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       )}
     </div>,
     document.body,
-  );
-}
-
-function MicIcon({ size = 14 }: { size?: number }) {
-  return (
-    <svg aria-hidden="true" fill="none" height={size} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={size > 14 ? 1.6 : 2} viewBox="0 0 24 24" width={size}>
-      <rect height="12" rx="3" width="6" x="9" y="3" />
-      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-    </svg>
   );
 }

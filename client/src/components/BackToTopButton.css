@@ -1,6 +1,10 @@
-.back-to-top { position: absolute; z-index: 5; right: 24px; bottom: 20px; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-strong); color: var(--muted); box-shadow: 0 2px 8px #0002; cursor: pointer; touch-action: manipulation; }
-.back-to-top:hover { color: var(--ink); }
-.back-to-top:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.back-to-top.is-floating { position: fixed; z-index: 65; right: auto; bottom: auto; }
+.back-to-top, .document-corner-mic { position: absolute; z-index: 5; right: 24px; bottom: 20px; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-strong); color: var(--muted); box-shadow: 0 2px 8px #0002; cursor: pointer; touch-action: manipulation; }
+/* The mic keeps one spot above Back to top, whether or not that is showing. */
+.document-corner-mic { bottom: 68px; border-radius: 999px; }
+.back-to-top:hover, .document-corner-mic:hover { color: var(--ink); }
+.back-to-top:focus-visible, .document-corner-mic:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Clicked into the text: the mic beside Ask AI takes over; this spot holds the recording controls. */
+.document-corner-mic.is-standby { visibility: hidden; pointer-events: none; }
+.back-to-top.is-floating, .document-corner-mic.is-floating { position: fixed; z-index: 65; right: auto; bottom: auto; }
 /* Sits at the bottom right of the text, not over the margin notes column. */
-.document-panel-content.has-margin-notes > .back-to-top:not(.is-floating) { right: calc(var(--document-margin-width) + 24px); }
+.document-panel-content.has-margin-notes > :is(.back-to-top, .document-corner-mic):not(.is-floating) { right: calc(var(--document-margin-width) + 24px); }

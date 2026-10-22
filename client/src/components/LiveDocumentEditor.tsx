@@ -18,6 +18,8 @@ import { useVaultMedia } from "../lib/vaultMedia";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { DocumentEditFocus, DocumentEditOptions } from "../lib/documentEditHistory";
 import { useMobileKeyboard } from "./MobileKeyboard";
+import { MicIcon, useDictationButton } from "./DictationButton";
+import { dictationShortcutLabel, requestDictation } from "../lib/dictation";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
 import MathEquationDialog from "./MathEquationDialog";
 import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource } from "../lib/liveDocument";
@@ -351,6 +353,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const latest = useRef(props);
   latest.current = props;
   const mobileKeyboard = useMobileKeyboard();
+  const micShown = useDictationButton();
+  /** Voice typing at the caret, from the mic beside Ask AI. */
+  const talkHere = () => { const content = viewRef.current?.contentDOM; if (content) requestDictation(content); };
   const rootRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -1162,6 +1167,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             const view = viewRef.current;
             if (view) openCaretMenu(view, view.state.selection.main.empty && stateOf(view).layout[blockIndexAt(stateOf(view).layout, view.state.selection.main.head)]?.id === id ? undefined : id);
           }} />}
+          {micShown && <button type="button" className="is-mic" onMouseDown={(event) => event.preventDefault()} aria-label="Voice typing here" data-label="" onClick={talkHere}>
+            <MicIcon size={16} /><span>Talk</span>
+          </button>}
           {!props.onCaretMenu && block.content && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Select block" data-label="Select block" onClick={() => {
             const view = viewRef.current;
             const target = view?.state.field(liveField).layout.find((item) => item.id === id);
@@ -1209,7 +1217,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
         {candidate === "live" ? "Live Preview" : candidate === "source" ? "Source" : "Reading"}
       </button>)}
     </div>
-    <div ref={hostRef} className="live-document-host" />
+    {/* Its mics are beside Ask AI and in the pane's corner, so voice typing doesn't float one over the text. */}
+    <div ref={hostRef} className="live-document-host" data-dictation-button="own" />
     {askButton && (props.onInvokeAI || props.onCaretMenu) && editable && editorFocused && mode !== "reading" && !mobileKeyboard.mobile
       && <div className="live-document-ask-group" style={{ top: askButton.top, left: askButton.left }}>
         {props.onInvokeAI && <button type="button" className="live-document-ask"
@@ -1220,6 +1229,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           aria-label="More actions here" title="More actions here (Alt+Enter or right-click)"
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => { const view = viewRef.current; if (view) openCaretMenu(view); }}>⋯</button>}
+        {micShown && <button type="button" className="live-document-ask is-mic"
+          aria-label="Voice typing here" title={`Voice typing here (hold Space or ${dictationShortcutLabel()})`}
+          onMouseDown={(event) => event.preventDefault()} onClick={talkHere}><MicIcon size={13} /></button>}
       </div>}
     {insertMenu && <div className="live-document-insert" style={{ top: insertMenu.top }}>
       <button type="button" className="live-document-insert-toggle" aria-label="Insert media, a drawing, a table or an equation" aria-expanded={insertMenu.open} title="Insert"
