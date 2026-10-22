@@ -845,8 +845,9 @@ button {
   cursor: pointer;
 }
 
+/* Selected text is blue so it never looks like a yellow highlight or a green note/side-doc anchor. */
 ::selection {
-  background: var(--accent-soft);
+  background: var(--selection-bg);
   color: var(--ink);
 }
 
@@ -7605,7 +7606,7 @@ button {
 
 .live-markdown-editor .cm-selectionBackground,
 .live-markdown-editor .cm-content ::selection {
-  background: color-mix(in srgb, var(--accent) 28%, transparent) !important;
+  background: var(--selection-bg) !important;
 }
 
 .live-markdown-editor .cm-live-heading {
@@ -11015,6 +11016,7 @@ button {
   --system-bubble-bg: #212121;
   --system-bubble-border: #3a3a3a;
   --message-anchor-bg: rgba(16, 163, 127, 0.22);
+  --selection-bg: rgba(64, 150, 255, 0.45);
   --composer-bg: #2f2f2f;
   --composer-border: #3a3a3a;
   --composer-shell-bg: #2f2f2f;
@@ -11122,6 +11124,7 @@ button {
   --system-bubble-bg: #f7f7f7;
   --system-bubble-border: #dedede;
   --message-anchor-bg: rgba(11, 143, 112, 0.16);
+  --selection-bg: rgba(0, 110, 255, 0.24);
   --composer-bg: #f4f4f4;
   --composer-border: #dedede;
   --composer-shell-bg: #f4f4f4;

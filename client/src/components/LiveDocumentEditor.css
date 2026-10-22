@@ -7,7 +7,8 @@
 .live-document-host .cm-content { caret-color: var(--sage); min-height: 32px; padding: 0 0 12px; }
 .live-document-host .cm-line { overflow-wrap: anywhere; padding: 0 8px 0 40px; position: relative; }
 .live-document-host .cm-cursor { border-left: 2px solid var(--sage); }
-.live-document-host .cm-selectionBackground, .live-document-host .cm-focused .cm-selectionBackground { background: color-mix(in srgb, var(--sage) 26%, transparent); }
+/* !important: CodeMirror's own focused rule is more specific and paints a pale lavender that's hard to read. */
+.live-document-host .cm-selectionBackground, .live-document-host .cm-focused .cm-selectionBackground { background: var(--selection-bg) !important; }
 .live-document-host .live-document-block { scroll-margin-block: 84px 24px; }
 .live-document-host .live-document-block.is-streaming, .live-document-host .cm-line.is-streaming { color: var(--muted); }
 /* A faint bar in the gutter marks AI-written text, like the classic editor's authorship note. */
