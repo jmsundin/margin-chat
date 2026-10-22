@@ -23,3 +23,18 @@
 .is-margin-note > .minimized-child-node { border-style: dashed; border-radius: 4px 12px 12px 12px; background: color-mix(in srgb, var(--sage, var(--accent)) 7%, var(--panel-strong)); }
 .is-margin-note > .minimized-child-node .minimized-child-node-kind { color: var(--sage, var(--accent)); }
 .is-margin-note > .minimized-child-node:hover { border-color: var(--sage, var(--accent)); }
+
+/* One-line pills while another child is open; hovering or focusing one shows its full card over the column. */
+.minimized-child-nodes.is-compact > ol { padding-top: 56px; }
+.minimized-child-nodes.is-compact li { padding: 4px 0; }
+.minimized-child-nodes.is-compact li > ol { margin: -4px 0; }
+.minimized-child-nodes.is-compact .minimized-child-node { position: relative; flex-direction: row; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; }
+.minimized-child-nodes.is-compact .minimized-child-node > svg { flex: 0 0 13px; width: 13px; height: 13px; color: var(--accent); }
+.minimized-child-nodes.is-compact .is-margin-note > .minimized-child-node > svg { color: var(--sage, var(--accent)); }
+.minimized-child-nodes.is-compact .minimized-child-node > strong { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.minimized-child-nodes.is-compact .minimized-child-node:hover { transform: none; }
+.minimized-child-node-card { display: none; }
+.minimized-child-nodes.is-compact .minimized-child-node:is(:hover, :focus-visible) > .minimized-child-node-card { position: absolute; z-index: 20; top: -1px; left: -1px; display: flex; flex-direction: column; gap: 4px; width: calc(var(--minimized-node-width) + 2px); padding: 9px 12px 10px; border: 1px solid var(--accent); border-radius: 12px 12px 12px 4px; background: var(--panel-strong); box-shadow: 0 6px 18px rgb(0 0 0 / .14); text-align: left; }
+.minimized-child-nodes.is-compact .is-margin-note > .minimized-child-node > .minimized-child-node-card { border-style: dashed; border-color: var(--sage, var(--accent)); border-radius: 4px 12px 12px 12px; }
+/* The open child's curve passes this column; the pills sit above it. */
+.minimized-child-nodes.is-compact { position: relative; z-index: 8; }

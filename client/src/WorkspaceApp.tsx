@@ -4643,7 +4643,7 @@ function WorkspaceAppContent({
     // must not move a note's controls between pointerdown and click.
     "--document-focus-width": `${getRenderedPanelWidth(scrollingDocuments[0]?.id ?? activeConversation.id)}px`,
     "--document-notes-space": !scrollingDocuments[0] ? "0px"
-      : getMinimizedChildNodes(scrollingDocuments[0]) ? `${getMinimizedChildNodesWidth(getMinimizedChildNodes(scrollingDocuments[0])!)}px`
+      : getMinimizedChildNodes(scrollingDocuments[0]) ? `${getMinimizedChildNodesWidth(getMinimizedChildNodes(scrollingDocuments[0])!.nodes, getMinimizedChildNodes(scrollingDocuments[0])!.compact)}px`
       : showsMarginInPanel(scrollingDocuments[0]) ? `${getDocumentMarginSpace(scrollingDocuments[0], false)}px`
       : !closedMarginNotes[scrollingDocuments[0].id] && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
   } as CSSProperties;
@@ -4866,17 +4866,18 @@ function WorkspaceAppContent({
   }
 
   /**
-   * On desktop, a document whose side documents and margin notes are all minimized shows them as
-   * map nodes in the space beside it. Phones, Full screen and pinned panes keep the small restore icons.
+   * On desktop, a document's minimized side documents and margin notes show as map nodes in the space
+   * beside it, shrunk to one-line pills while one of its children is open. Phones, Full screen and
+   * pinned panes keep the small restore icons.
    */
-  function getMinimizedChildNodes(conversation: Conversation): MinimizedChildNode[] | null {
+  function getMinimizedChildNodes(conversation: Conversation): { nodes: MinimizedChildNode[]; compact: boolean } | null {
     const minimized = minimizedSideDocumentsByParent.get(conversation.id);
     if (!minimized?.length || isMobileViewport || maximizedDocument || isCompactDocument(conversation)
       || pinnedDocumentIds.includes(conversation.id)) return null;
     const viewingChild = (documentChildrenByParent.get(conversation.id) ?? []).some((child) => child.parentId === conversation.id
       && !isCompactDocument(child) && visibleDocumentIds.has(child.id));
     const viewingNote = !closedMarginNotes[conversation.id] && getMarginDocuments(conversation).length > 0;
-    if (viewingChild || viewingNote) return null;
+    const compact = viewingChild || viewingNote;
     const closedIds = new Set(getDocumentWorkspace(state.conversations, conversation.id).closedIds);
     const seen = new Set([conversation.id]);
     // A minimized document's own side documents and margin notes stay on its branch, as in Map view,
@@ -4889,7 +4890,7 @@ function WorkspaceAppContent({
         return { document: child, children: branch(child, hidden) };
       });
     }
-    return branch(conversation, minimized);
+    return { nodes: branch(conversation, minimized), compact };
   }
 
   /**
@@ -4978,7 +4979,7 @@ function WorkspaceAppContent({
   function renderExpandedTreeConversation(conversation: Conversation) {
     const resizeInfo = getPanelResizeInfo(conversation);
     const minimizedNodes = getMinimizedChildNodes(conversation);
-    const nodesWidth = minimizedNodes ? getMinimizedChildNodesWidth(minimizedNodes) : 0;
+    const nodesWidth = minimizedNodes ? getMinimizedChildNodesWidth(minimizedNodes.nodes, minimizedNodes.compact) : 0;
     const resizeMinimum = resizeChatPanel({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
     const resizeMaximum = resizeChatPanel({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
     const isResizing =
@@ -4998,7 +4999,7 @@ function WorkspaceAppContent({
           ...(minimizedNodes ? { "--minimized-child-nodes-width": `${nodesWidth}px` } : {}) } as CSSProperties}
       >
         {renderConversationChatPanel(conversation)}
-        {minimizedNodes ? <MinimizedChildNodes nodes={minimizedNodes}
+        {minimizedNodes ? <MinimizedChildNodes nodes={minimizedNodes.nodes} compact={minimizedNodes.compact}
           onOpen={(id) => handleOpenDocumentReference(conversation.id, id)} /> : null}
         {(["left", "right"] as const).map((edge) => <div
           key={edge}
