@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { createMainConversation } from "../client/src/initialState";
-import { buildDocumentAIMessage } from "../client/src/lib/documentAI";
+import { buildDiagramAIMessage, buildDocumentAIMessage } from "../client/src/lib/documentAI";
 import type { Message } from "../client/src/types";
 
 test("document AI frames the complete current text and selected passage without expanding the saved prompt", () => {
@@ -35,4 +35,21 @@ test("a Mermaid diagram the reply replaces asks for the whole updated diagram as
   // Asking about a diagram without replacing it, or replacing ordinary text, keeps the usual framing.
   expect(buildDocumentAIMessage(conversation, prompt, diagram).content).not.toContain("Mermaid");
   expect(buildDocumentAIMessage(conversation, prompt, "plain text", { replaceSelection: true }).content).not.toContain("Mermaid");
+});
+
+test("Ask AI in the diagram editor sends the diagram, the selected lines and the document, and asks for one fence back", () => {
+  const conversation = createMainConversation({ id: "diagram-dialog", createdAt: "2026-10-22T00:00:00.000Z" });
+  conversation.title = "Trip planning";
+  conversation.document = { schemaVersion: 1, prompts: [], generations: [], blocks: [{ id: "p", kind: "markdown", content: "Museums close Mondays.", createdAt: conversation.createdAt, updatedAt: conversation.createdAt }] };
+  const prompt: Message = { id: "ask", role: "user", content: "Add a Monday check", createdAt: conversation.createdAt };
+  const diagram = "flowchart TD\n  A[Pack] --> B{Rain?}\n  B -->|yes| C[Museum]";
+  const selected = buildDiagramAIMessage(conversation, prompt, { diagram, selection: "  B -->|yes| C[Museum]\n" });
+  const parts = selected.content.split("\n\n");
+  expect(parts[0]).toContain("one ```mermaid fenced code block");
+  expect(parts[0]).toContain("the request is about those lines");
+  expect(JSON.parse(parts[2])).toEqual({ title: "Trip planning", document: "Museums close Mondays.", diagram, selectedLines: "B -->|yes| C[Museum]" });
+  expect(selected.content.endsWith("Add a Monday check")).toBe(true);
+  const whole = buildDiagramAIMessage(conversation, prompt, { diagram });
+  expect(whole.content).not.toContain("selected part");
+  expect(JSON.parse(whole.content.split("\n\n")[2])).not.toHaveProperty("selectedLines");
 });

@@ -18,6 +18,7 @@ import { createPortal } from "react-dom";
 import { getDocumentBlockAuthorship, type DocumentBlock, type Message } from "@margin-chat/workspace-contracts";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { documentAIInput } from "../lib/documentAIInput";
+import type { DiagramAIRequest } from "../lib/documentAI";
 import { documentPositionAtMarkdownOffset, escapeRichDocumentText, getRichDocumentFallbackReason, markdownOffsetAtDocumentPosition } from "../lib/richDocumentMarkdown";
 import { DocumentWikiLink } from "../lib/documentWikiLink";
 import { createDocumentMathExtensions, type EditEquation } from "../lib/documentMath";
@@ -96,6 +97,8 @@ export interface RichDocumentEditorProps {
   onMoveBlock?: (sourceConversationId: string, blockId: string, targetConversationId: string, beforeBlockId: string | null) => void;
   onHistory?: (action: "undo" | "redo") => DocumentEditFocus | null;
   onInvokeAI?: (invocation: RichDocumentInvocation) => void;
+  /** Ask AI in the Edit diagram dialog: returns the diagram's new Mermaid text. */
+  onAskDiagram?: (request: DiagramAIRequest) => Promise<string>;
   onSelectionChange?: (selection: RichDocumentSelection | null) => void;
   /** Right-click, Alt+Enter or the ⋯ beside Ask AI at the caret. */
   onCaretMenu?: (menu: RichDocumentCaretMenu) => void;

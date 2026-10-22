@@ -1337,7 +1337,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     {drawingError && !drawing && <p role="alert">{drawingError}</p>}
     {containerKeys.map(renderWidget)}
     {drawing && <Suspense fallback={<p role="status">Opening drawing editor…</p>}><DrawingDialog markdown={drawing.markdown} error={drawingError ?? ""} onSave={saveDrawing} onClose={() => setDrawing(null)} /></Suspense>}
-    {diagram && <Suspense fallback={<p role="status">Opening diagram editor…</p>}><MermaidDiagramDialog source={findMermaidFences(diagram.original)[diagram.index]?.source ?? ""} error={diagramError ?? ""} onSave={saveDiagram} onClose={() => setDiagram(null)} /></Suspense>}
+    {diagram && <Suspense fallback={<p role="status">Opening diagram editor…</p>}><MermaidDiagramDialog source={findMermaidFences(diagram.original)[diagram.index]?.source ?? ""} error={diagramError ?? ""} onSave={saveDiagram} onClose={() => setDiagram(null)} onAsk={props.onAskDiagram} /></Suspense>}
     {equation && <MathEquationDialog latex="" display={false} editing={false} error={null} onSave={saveEquation} onClose={() => setEquation(null)} />}
     <span className="rich-document-announcement" role="status" aria-live="polite">{announcement}</span>
   </div>;
