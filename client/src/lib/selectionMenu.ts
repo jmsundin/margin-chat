@@ -5,7 +5,7 @@
  */
 
 /** Text whose selections open the app's selection bar. */
-export const APP_SELECTION_SELECTOR = ".rich-document-editor, [data-message-bubble='true'], [data-selection-source='standalone-note']";
+export const APP_SELECTION_SELECTOR = ".rich-document-editor, [data-message-bubble='true'], [data-selection-source='standalone-note'], .vault-pdf-page .textLayer";
 /** Long presses here keep the system menu: links, media and form fields have their own. */
 const NATIVE_MENU_SELECTOR = "a[href], img, video, audio, input, textarea, select";
 const SETTLE_MS = 300;

@@ -47,6 +47,8 @@ export interface DocumentPanelProps {
   /** Live steps of a running agent request. */
   agentProgress?: AgentProgress;
   documentMenu?: ReactNode;
+  /** Full screen, or the way back out of it, beside the document menu. */
+  fullScreenToggle?: ReactNode;
   headerControls?: ReactNode;
   /** Controls shown at the start of the header, before the parent link. */
   headerLeading?: ReactNode;
@@ -501,8 +503,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </svg>
       </button>)}
     </nav> : null}
-      {(props.bareHeader ? (conversation.vaultFile || conversation.hiddenFromAI || document.marginNote)
-        : (conversation.vaultFile || props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.parentBreadcrumbs || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu || conversation.hiddenFromAI)) ? <header className="document-header">
+      {(props.bareHeader ? (conversation.vaultFile || conversation.hiddenFromAI || document.marginNote || props.fullScreenToggle)
+        : (conversation.vaultFile || props.fullScreenToggle || props.headerLeading || props.onMinimize || props.onClose || conversation.parentId || props.parentBreadcrumbs || props.headerControls || props.childNavigation || props.marginNotesToggle || props.presentationToggle || props.documentMenu || conversation.hiddenFromAI)) ? <header className="document-header">
         <div className="document-header-toolbar">
           {props.headerLeading}
           {props.onMinimize ? <button type="button" className="document-window-button document-minimize-button" aria-label={`Minimize document: ${conversation.title || "Untitled document"}`} title="Minimize document" onClick={props.onMinimize}>−</button> : null}
@@ -517,6 +519,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
             {props.childNavigation}
             {props.marginNotesToggle}
             {props.presentationToggle}
+            {props.fullScreenToggle}
             {props.documentMenu}
           </div>
           {props.onClose ? <button type="button" className="document-window-button document-close-button" aria-label={`Close document: ${conversation.title || "Untitled document"}`} title="Close document" onClick={props.onClose}>×</button> : null}

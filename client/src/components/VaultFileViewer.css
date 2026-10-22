@@ -8,13 +8,16 @@
 .vault-file-toolbar-spacer { flex: 1 1 auto; }
 .vault-file-page-count, .vault-file-zoom { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
 .vault-file-zoom { min-width: 44px; text-align: center; }
-.vault-file-frame { width: 100%; overflow-x: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.vault-file-frame { width: 100%; overflow-x: auto; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; touch-action: pan-x pan-y; }
+/* Auto margins center a page but, unlike centering the column, never push a zoomed page's left side out of reach. */
+.vault-file-frame > * { margin-inline: auto; }
 
 .vault-pdf-page { position: relative; flex: none; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .18), 0 0 0 1px rgb(0 0 0 / .06); border-radius: 2px; overflow: hidden; }
 .vault-pdf-page canvas { position: absolute; inset: 0; display: block; }
 .vault-pdf-page-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: #8a8a8a; font-size: .8rem; }
 .vault-file-highlights { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
-.vault-file-highlight { position: absolute; background: rgb(255 200 0 / .38); border-radius: 2px; mix-blend-mode: multiply; }
+/* Drawn like a passage in a document: an accent tint with an underline. Pages stay white in dark mode, so it multiplies. */
+.vault-file-highlight { position: absolute; background: color-mix(in srgb, var(--accent) 16%, transparent); border-bottom: 1.5px solid color-mix(in srgb, var(--accent) 62%, transparent); border-radius: 2px; mix-blend-mode: multiply; }
 
 /* pdf.js text layer: transparent text over the drawn page, so passages can be selected. */
 .vault-pdf-page .textLayer { position: absolute; inset: 0; z-index: 2; overflow: clip; opacity: 1; line-height: 1; text-align: initial;

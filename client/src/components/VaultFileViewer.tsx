@@ -57,6 +57,7 @@ export default function VaultFileViewer(props: VaultFileViewerProps) {
 }
 
 const MIN_SCALE = 0.25;
+const MAX_CANVAS_PIXELS = 16_000_000;
 const MAX_SCALE = 5;
 
 function clampScale(scale: number) {
@@ -228,6 +229,75 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
   const fitScale = width && sizes[0] ? clampScale((width - 2) / sizes[0].width) : null;
   const shownScale = fit ? fitScale : scale;
 
+  // Two fingers zoom the pages, not the app. The pages stretch under the fingers while they move,
+  // then draw again at the new size with the same spot of the page still under them.
+  const shownScaleRef = useRef(shownScale);
+  shownScaleRef.current = shownScale;
+  const pinchAnchor = useRef<{ page: number; x: number; y: number; clientX: number; clientY: number } | null>(null);
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame || !pdf) return;
+    let pinch: { distance: number; base: number; ratio: number; clientX: number; clientY: number } | null = null;
+    const spread = (touches: TouchList) => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    const middle = (touches: TouchList) => ({ clientX: (touches[0].clientX + touches[1].clientX) / 2, clientY: (touches[0].clientY + touches[1].clientY) / 2 });
+    const start = (event: TouchEvent) => {
+      const base = shownScaleRef.current;
+      if (event.touches.length !== 2 || !base) { if (pinch) finish(); return; }
+      const distance = spread(event.touches);
+      if (distance < 10) return;
+      pinch = { distance, base, ratio: 1, ...middle(event.touches) };
+      window.getSelection()?.removeAllRanges();
+    };
+    const move = (event: TouchEvent) => {
+      if (!pinch || event.touches.length !== 2) return;
+      event.preventDefault();
+      const ratio = clampScale(pinch.base * spread(event.touches) / pinch.distance) / pinch.base;
+      Object.assign(pinch, { ratio }, middle(event.touches));
+      const origin = frame.getBoundingClientRect();
+      frame.style.transformOrigin = `${pinch.clientX - origin.left}px ${pinch.clientY - origin.top}px`;
+      frame.style.transform = `scale(${ratio})`;
+    };
+    const finish = () => {
+      if (!pinch) return;
+      const { base, ratio, clientX, clientY } = pinch;
+      pinch = null;
+      frame.style.transform = "";
+      frame.style.transformOrigin = "";
+      if (Math.abs(ratio - 1) < 0.02) return;
+      // The page point under the fingers, as a share of that page, to scroll back under them.
+      for (const element of frame.querySelectorAll<HTMLElement>("[data-pdf-page]")) {
+        const rect = element.getBoundingClientRect();
+        if (clientY < rect.top || clientY > rect.bottom) continue;
+        pinchAnchor.current = { page: Number(element.dataset.pdfPage), x: (clientX - rect.left) / rect.width, y: (clientY - rect.top) / rect.height, clientX, clientY };
+        break;
+      }
+      setFit(false);
+      setScale(clampScale(base * ratio));
+    };
+    const end = (event: TouchEvent) => { if (pinch && event.touches.length < 2) finish(); };
+    frame.addEventListener("touchstart", start, { passive: true });
+    frame.addEventListener("touchmove", move, { passive: false });
+    frame.addEventListener("touchend", end, { passive: true });
+    frame.addEventListener("touchcancel", end, { passive: true });
+    return () => {
+      frame.removeEventListener("touchstart", start);
+      frame.removeEventListener("touchmove", move);
+      frame.removeEventListener("touchend", end);
+      frame.removeEventListener("touchcancel", end);
+    };
+  }, [pdf]);
+  useLayoutEffect(() => {
+    const anchor = pinchAnchor.current;
+    const frame = frameRef.current;
+    pinchAnchor.current = null;
+    const element = anchor && frame?.querySelector<HTMLElement>(`[data-pdf-page="${anchor.page}"]`);
+    const scroller = frame?.closest<HTMLElement>(".document-body");
+    if (!anchor || !frame || !element || !scroller) return;
+    const rect = element.getBoundingClientRect();
+    scroller.scrollTop += rect.top + anchor.y * rect.height - anchor.clientY;
+    frame.scrollLeft += rect.left + anchor.x * rect.width - anchor.clientX;
+  }, [shownScale]);
+
   function reportPage() {
     const frame = frameRef.current;
     if (!frame) return;
@@ -375,7 +445,8 @@ function PdfPage(props: PdfPageProps) {
       const canvas = canvasRef.current;
       const layer = layerRef.current;
       if (!canvas || !layer) return;
-      const ratio = Math.min(window.devicePixelRatio || 1, 3);
+      // Phones refuse canvases past about 16 million pixels, so a page zoomed far in draws a little softer instead of blank.
+      const ratio = Math.min(window.devicePixelRatio || 1, 3, Math.sqrt(MAX_CANVAS_PIXELS / (viewport.width * viewport.height)));
       canvas.width = Math.floor(viewport.width * ratio);
       canvas.height = Math.floor(viewport.height * ratio);
       canvas.style.width = `${Math.floor(viewport.width)}px`;
@@ -461,7 +532,12 @@ function PdfPage(props: PdfPageProps) {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         const selection = window.getSelection();
-        if (selection?.rangeCount && layerRef.current?.contains(selection.getRangeAt(0).commonAncestorContainer)) selectRef.current();
+        const layer = layerRef.current;
+        if (!selection?.rangeCount || !layer) return;
+        // A selection across pages belongs to the page it starts on.
+        const range = selection.getRangeAt(0);
+        const startElement = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+        if (layer.contains(range.startContainer) || (!startElement?.closest(".textLayer") && layer.contains(range.endContainer))) selectRef.current();
       }, 350);
     };
     document.addEventListener("selectionchange", changed);
