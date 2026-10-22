@@ -95,8 +95,10 @@ export async function renderMermaidBlocksIn(
   return changed;
 }
 
-/** Where a ```mermaid fence's diagram source sits inside a block's Markdown. */
+/** Where a ```mermaid fence sits inside a block's Markdown: `start`–`end` is the whole fence, `from`–`to` its diagram source. */
 export interface MermaidFence {
+  start: number;
+  end: number;
   from: number;
   to: number;
   source: string;
@@ -115,7 +117,8 @@ export function findMermaidFences(markdown: string): MermaidFence[] {
     const rest = markdown.slice(from);
     const close = closing.exec(rest);
     const to = close ? from + close.index : markdown.length;
-    fences.push({ from, to, source: markdown.slice(from, to).replace(/\n$/, "") });
+    const end = close ? to + close[0].length : markdown.length;
+    fences.push({ start: match.index, end, from, to, source: markdown.slice(from, to).replace(/\n$/, "") });
     MERMAID_FENCE.lastIndex = close ? to + close[0].length : markdown.length;
   }
   return fences;
@@ -126,4 +129,28 @@ export function replaceMermaidFence(markdown: string, fence: MermaidFence, sourc
   const body = source.replace(/\n+$/, "");
   const closed = fence.to < markdown.length || markdown.slice(fence.from, fence.to).endsWith("\n");
   return markdown.slice(0, fence.from) + body + (closed ? "\n" : "") + markdown.slice(fence.to);
+}
+
+/** Whether a selected passage is exactly one Mermaid diagram, fence lines included. */
+export function isMermaidDiagramPassage(markdown: string | undefined): boolean {
+  const trimmed = markdown?.trim() ?? "";
+  const fences = findMermaidFences(trimmed);
+  return fences.length === 1 && fences[0].start === 0 && fences[0].end === trimmed.length;
+}
+
+/**
+ * An AI reply meant to replace a diagram, as one ```mermaid fence: the first Mermaid fence in it,
+ * else its first fence of any kind, else the whole reply. Any words around the diagram are dropped.
+ */
+export function mermaidDiagramReply(reply: string): string {
+  const fence = findMermaidFences(reply)[0];
+  if (fence) return `\`\`\`mermaid\n${fence.source.trim()}\n\`\`\``;
+  const other = /^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n([\s\S]*?)^[ \t]{0,3}\1[ \t]*$/m.exec(reply);
+  const source = (other ? other[2] : reply).trim();
+  return source ? `\`\`\`mermaid\n${source}\n\`\`\`` : reply;
+}
+
+/** Whether focus is on a document preview whose diagram is selected for the selection menu (it has no text selection). */
+export function hasSelectedDiagramInFocus(): boolean {
+  return typeof document !== "undefined" && Boolean(document.activeElement?.closest(".live-document-preview")?.querySelector(".is-diagram-selected"));
 }

@@ -75,6 +75,7 @@ import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
+import { hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
 import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
@@ -235,6 +236,9 @@ const HIDDEN_FROM_AI_MESSAGE = "This document is hidden from AI, so nothing in i
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
 const EXPLAIN_SELECTION_PROMPT = "Explain the selected text.";
 const REWRITE_SELECTION_PROMPT = "Rewrite the selected text for clarity and flow, preserving its meaning and tone. Return only the rewritten passage.";
+const SIMPLIFY_DIAGRAM_PROMPT = "Simplify this diagram without losing a step or decision that matters.";
+const MATCH_DIAGRAM_PROMPT = "Update this diagram so it matches what the rest of the document says.";
+const DIAGRAM_PROMPT_PLACEHOLDER = "Describe the change, e.g. add a step after…";
 const TOOLTIP_VIEWPORT_MARGIN = 16;
 const CHAT_PANEL_DEFAULT_WIDTH_PX = 760;
 const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
@@ -2357,7 +2361,9 @@ function WorkspaceAppContent({
     });
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
-    const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote);
+    const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection });
+    // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
+    const diagramReply = request.destination === "inline" && request.replaceSelection && isMermaidDiagramPassage(selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
       request: async (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
@@ -2386,7 +2392,8 @@ function WorkspaceAppContent({
         setState((current) => {
           const conversation = current.conversations[targetId];
           if (!conversation?.document) return current;
-          const output = conversation.document.blocks.find((block)=>block.id===outputBlockId);
+          const streamed = conversation.document.blocks.find((block)=>block.id===outputBlockId);
+          const output = streamed && diagramReply && status === "complete" && streamed.content.trim() ? {...streamed,content:mermaidDiagramReply(streamed.content)} : streamed;
           const parts = output?.content ? splitDocumentMarkdown(output.content) : [];
           const completedBlocks = output && parts.length > 1 ? parts.map((content,index)=>({...output,id:index ? `${outputBlockId}:part:${index}` : outputBlockId,content})) : output ? [output] : [];
           return {...current,conversations:{...current.conversations,[targetId]:{...conversation,document:{...conversation.document,
@@ -3074,6 +3081,8 @@ function WorkspaceAppContent({
         // The selection is briefly lifted to dismiss the iOS edit menu; it is coming back.
         if (isReselectingSelection()) return;
         const selection = window.getSelection();
+        // A diagram tapped in a document is selected without any text selected; the document clears it when focus moves on.
+        if (selection?.isCollapsed && hasSelectedDiagramInFocus()) return;
         if (selection?.isCollapsed) setSelectionDraft(null);
         else syncSelectionDraft();
       });
@@ -4565,6 +4574,8 @@ function WorkspaceAppContent({
 
   const selectionConversation = selectionDraft ? state.conversations[selectionDraft.conversationId] : undefined;
   const selectionPending = Boolean(selectionDraft && pendingConversationIds[selectionDraft.conversationId]);
+  // A tapped diagram is selected whole; AI changes it in place, and Highlight or Rewrite would break its Mermaid.
+  const selectionIsDiagram = Boolean(selectionDraft?.sourceBlockId && isMermaidDiagramPassage(selectionDraft.quote));
   const selectionBlock = selectionDraft?.sourceBlockId && selectionConversation?.document
     ? getEditableDocument(selectionConversation).blocks.find((block) => block.id === selectionDraft.sourceBlockId) : undefined;
   const selectionHighlighted = Boolean(selectionBlock && isMarkdownHighlighted(selectionBlock.content, selectionDraft!.startOffset, selectionDraft!.endOffset));
@@ -4785,7 +4796,7 @@ function WorkspaceAppContent({
       onChange={(document) => handleDocumentChange(conversation.id, document)}
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
-      onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); setSelectionResponseDestination(defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(false); }}
+      onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); const diagram = isMermaidDiagramPassage(selection.quote); setSelectionResponseDestination(diagram ? "inline" : defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(diagram); }}
       onCaretMenu={(menu) => { setSelectionDraft(null); setCaretMenu(menu); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
       onClearSelection={() => { if (!isReselectingSelection()) setSelectionDraft((current) => current?.conversationId === conversation.id ? null : current); }}
@@ -5452,19 +5463,20 @@ function WorkspaceAppContent({
               rect={selectionDraft.rect} formRef={toolbarRef}
               disabled={Boolean(pendingConversationIds[selectionDraft.conversationId])}
               onExplain={() => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT)}
-              onRewrite={() => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
+              onRewrite={selectionIsDiagram ? undefined : () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
               onAsk={() => openMobileSelectionPrompt()}
               onSideDocument={() => handleCreateSelectionSideDocument()}
               onMarginNote={() => handleCreateSelectionNote()}
               onLink={() => { setSelectionLinkError(null); setSelectionIntent("link"); setSelectionActionsExpanded(true); }}
               onFindRelated={() => handleFindRelatedToSelection()}
-              onHighlight={selectionDraft.sourceBlockId ? handleToggleSelectionHighlight : undefined}
+              onHighlight={selectionDraft.sourceBlockId && !selectionIsDiagram ? handleToggleSelectionHighlight : undefined}
               highlighted={selectionHighlighted}
               marginNoteLabel={selectionDraft.sourceKind === "standalone-note" ? "Side note" : "Margin note"}
               onClose={() => { setSelectionDraft(null); window.getSelection()?.removeAllRanges(); }}
             /> : mobileKeyboard.mobile && selectionIntent === "branch" ? <MobileComposerViewport>
               <MobileAIComposer formRef={toolbarRef} testId="branch-composer" className="selection-mobile-composer"
-                textareaId="branch-prompt" promptLabel="Branch prompt" quote={selectionDraft.quote}
+                textareaId="branch-prompt" promptLabel="Branch prompt" quote={selectionIsDiagram ? undefined : selectionDraft.quote} contextLabel={selectionIsDiagram ? "Diagram" : undefined}
+                placeholder={selectionIsDiagram ? DIAGRAM_PROMPT_PLACEHOLDER : undefined}
                 prompt={selectionDraft.prompt}
                 onPromptChange={(prompt) => setSelectionDraft((current) => current ? { ...current, prompt } : current)}
                 onSubmit={() => handleCreateBranch()}
@@ -5482,7 +5494,7 @@ function WorkspaceAppContent({
                       <button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={() => setSelectionResponseDestination("inline")}>In this document</button>
                       <button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={() => setSelectionResponseDestination("side")}>Side document ↗</button>
                     </div>
-                    {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event) => setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
+                    {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event) => setSelectionReplaceText(event.target.checked)}/>{selectionIsDiagram ? "Change the diagram in place" : "Replace selection"}</label> : null}
                   </div> : null}
                   <button type="button" aria-label="Create a side document from this passage"
                     onClick={() => handleCreateSelectionSideDocument()}>Side document</button>
@@ -5511,7 +5523,7 @@ function WorkspaceAppContent({
                 </button>
               </div> : <SelectionToolbarRow
                 actions={[
-                  ...(selectionDraft.sourceBlockId ? [{ icon: "highlight" as const, label: "Highlight", ariaLabel: selectionHighlighted ? "Remove highlight" : "Highlight selected text",
+                  ...(selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "highlight" as const, label: "Highlight", ariaLabel: selectionHighlighted ? "Remove highlight" : "Highlight selected text",
                     pressed: selectionHighlighted, onSelect: handleToggleSelectionHighlight }] : []),
                   { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: () => handleCreateSelectionNote() },
                   { icon: "side", label: "Side doc", ariaLabel: "Create a side document from this passage", onSelect: () => handleCreateSelectionSideDocument() },
@@ -5522,9 +5534,9 @@ function WorkspaceAppContent({
                   { icon: "copy", label: "Copy", hint: "⌘C", onSelect: () => { void copySelection(); } },
                   { icon: "find", label: "Find related", onSelect: () => handleFindRelatedToSelection() },
                   { icon: "explain", label: "Explain", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT) },
-                  { icon: "rewrite", label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) },
+                  ...(selectionIsDiagram ? [] : [{ icon: "rewrite" as const, label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) }]),
                 ]}
-                ask={{ icon: "ai", label: "Ask AI", ariaLabel: "Ask AI about this passage", pressed: selectionIntent === "branch",
+                ask={{ icon: "ai", label: "Ask AI", ariaLabel: selectionIsDiagram ? "Ask AI to change this diagram" : "Ask AI about this passage", pressed: selectionIntent === "branch",
                   onSelect: () => setSelectionIntent((intent) => intent === "branch" ? "actions" : "branch") }}
               />}
               {selectionIntent === "branch" && !mobileKeyboard.mobile ? <div className="selection-toolbar-panel">
@@ -5541,7 +5553,7 @@ function WorkspaceAppContent({
                           : current,
                       )
                     }
-                    placeholder={BRANCH_PROMPT_PLACEHOLDER}
+                    placeholder={selectionIsDiagram ? DIAGRAM_PROMPT_PLACEHOLDER : BRANCH_PROMPT_PLACEHOLDER}
                     type="text"
                     value={selectionDraft.prompt}
                   />
@@ -5555,12 +5567,17 @@ function WorkspaceAppContent({
                   </button>
                 </div>
                 <div aria-label="Quick asks" className="selection-quick-asks" role="group">
-                  <button type="button" disabled={selectionPending} onClick={handleExplainSelection}>Explain</button>
-                  <button type="button" disabled={selectionPending} onClick={() => handleCreateBranch(REWRITE_SELECTION_PROMPT)}>Rewrite</button>
+                  {selectionIsDiagram ? <>
+                    <button type="button" disabled={selectionPending} onClick={() => handleCreateBranch(SIMPLIFY_DIAGRAM_PROMPT)}>Simplify</button>
+                    <button type="button" disabled={selectionPending} onClick={() => handleCreateBranch(MATCH_DIAGRAM_PROMPT)}>Match the document</button>
+                  </> : <>
+                    <button type="button" disabled={selectionPending} onClick={handleExplainSelection}>Explain</button>
+                    <button type="button" disabled={selectionPending} onClick={() => handleCreateBranch(REWRITE_SELECTION_PROMPT)}>Rewrite</button>
+                  </>}
                 </div>
                 {selectionDraft.sourceBlockId ? <div className="document-ai-options">
                   <div role="group" aria-label="Response destination"><button type="button" aria-pressed={selectionResponseDestination === "inline"} onClick={()=>setSelectionResponseDestination("inline")}>In this document</button><button type="button" aria-pressed={selectionResponseDestination === "side"} onClick={()=>setSelectionResponseDestination("side")}>Side document ↗</button></div>
-                  {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event)=>setSelectionReplaceText(event.target.checked)}/>Replace selection</label> : null}
+                  {selectionResponseDestination === "inline" ? <label><input type="checkbox" checked={selectionReplaceText} onChange={(event)=>setSelectionReplaceText(event.target.checked)}/>{selectionIsDiagram ? "Change the diagram in place" : "Replace selection"}</label> : null}
                 </div> : null}
                 <div className="selection-actions">
                   {selectionConversation ? <button type="button" className="selection-explain" aria-label="Choose AI model and provider"

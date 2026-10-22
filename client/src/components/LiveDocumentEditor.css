@@ -100,3 +100,5 @@
 .live-document-preview:is(:hover, :focus-within) > .live-document-diagram-actions { opacity: 1; }
 @media (hover: none) { .live-document-diagram-actions { opacity: 1; } }
 .live-document-diagram-actions button { background: var(--panel-strong); color: var(--ink); border: 1px solid var(--line-strong); border-radius: 6px; padding: 4px 10px; font: inherit; font-size: 12px; line-height: 1.4; cursor: pointer; }
+.live-document-preview .message-mermaid-block.is-rendered { cursor: pointer; }
+.live-document-preview .message-mermaid-block.is-diagram-selected { outline: 2px solid var(--accent); outline-offset: -2px; }
