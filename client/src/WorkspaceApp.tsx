@@ -114,6 +114,7 @@ import MainChatTileView from "./components/MainChatTileView";
 import SettingsPage, { type SettingsSection } from "./components/SettingsPage";
 import ChatHistoryImport from "./components/ChatHistoryImport";
 import ViewIntro from "./components/ViewIntro";
+import AIAccessDialog from "./components/AIAccessDialog";
 import GuidedTour, { DESKTOP_TOUR, PHONE_TOUR, TourPill } from "./components/GuidedTour";
 import { chatImportReminderDue, finishChatImportReminder } from "./lib/chatImportReminder";
 import { completedStarterTasks, isPristineWorkspace, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
@@ -816,11 +817,19 @@ function WorkspaceAppContent({
     previousPendingChats.current = pendingConversationIds;
     if (completed) refreshBillingAfterChat();
   }, [pendingConversationIds]);
+  // An account with no plan, credit or admin role gets the ways to turn AI on, not Billing with an error.
+  const [aiAccessOpen, setAIAccessOpen] = useState(false);
   useEffect(() => {
     if (!billingOpenRequest) return;
+    if (user.billing.accessKind === "none") { setAIAccessOpen(true); return; }
     setProfileInitialTab("billing");
     setProfileModalOpen(true);
   }, [billingOpenRequest]);
+  function openApiKeySettings() {
+    if (onOpenWebsiteSettings) { onOpenWebsiteSettings("api-keys"); return; }
+    setProfileInitialTab("api-keys");
+    setProfileModalOpen(true);
+  }
   const [captureHandoff, setCaptureHandoff] = useState(() => readCaptureHandoff(window.location.search));
   const [captureInboxOpen, setCaptureInboxOpen] = useState(() => new URLSearchParams(window.location.search).has("inbox") || !!readCaptureHandoff(window.location.search));
   const [captureAIRequest, setCaptureAIRequest] = useState<{ conversationId: string; prompt: string } | null>(null);
@@ -5778,6 +5787,10 @@ function WorkspaceAppContent({
             onResume={() => { handleSetMainViewMode("chat"); updateOnboarding({ tour: "active" }); }}
             onHide={() => updateOnboarding({ tour: "done", step: 0 })}
             onKeep={() => updateOnboarding({ keepPill: true })} /> : null}
+          {aiAccessOpen && <AIAccessDialog message={null} submitting={billingSubmitting} onClose={() => setAIAccessOpen(false)}
+            onUseOwnKey={() => { setAIAccessOpen(false); openApiKeySettings(); }}
+            onAddMoney={() => { setAIAccessOpen(false); void onAddMoney(500); }}
+            onSubscribe={() => { setAIAccessOpen(false); void onStartSubscription("plus"); }} />}
           {historyImportOpen && <ChatHistoryImport
             existingIds={Object.keys(state.conversations)} cloudSyncEnabled={cloudSyncEnabled}
             onImport={async (chats) => {

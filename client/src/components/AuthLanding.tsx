@@ -255,7 +255,7 @@ export default function AuthLanding({
             <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
               {isSubmitting ? "Creating account..." : "Create account"}
             </button>
-            <p className="auth-signup-note">You start with a “Start here” document and a short tour you can leave any time.</p>
+            <p className="auth-signup-note">You start with a “Start here” document and a short tour. Writing, notes and the Map are free; AI uses your own API key or credit you add.</p>
           </form>
         ) : mode === "login" ? (
           <form className="auth-form" onSubmit={handleLoginSubmit}>

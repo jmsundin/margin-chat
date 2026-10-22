@@ -1,0 +1,14 @@
+.ai-access-backdrop { position: fixed; inset: 0; z-index: 5000; background: #0006; display: grid; place-items: center; padding: 20px; }
+.ai-access-dialog { width: min(460px, 100%); max-height: calc(100dvh - 40px); overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 18px 60px #0005; display: grid; gap: 12px; }
+.ai-access-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-access-dialog header strong { font-size: 1.1rem; }
+.ai-access-dialog p { margin: 0; color: var(--muted); line-height: 1.5; }
+.ai-access-close { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 20px; cursor: pointer; }
+.ai-access-close:hover, .ai-access-close:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.ai-access-options { display: grid; gap: 8px; }
+.ai-access-option { display: grid; gap: 3px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.ai-access-option span { color: var(--muted); font-size: .85rem; line-height: 1.45; }
+.ai-access-option:hover, .ai-access-option:focus-visible { border-color: var(--sage); }
+.ai-access-option.is-featured { border-color: color-mix(in srgb, var(--sage) 55%, var(--line)); }
+.ai-access-option:disabled { cursor: progress; opacity: .6; }
+.ai-access-message { font-size: .85rem; }
