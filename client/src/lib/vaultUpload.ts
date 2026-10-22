@@ -19,7 +19,8 @@ export interface VaultUpload {
 
 export interface VaultUploadPlan {
   files: Record<string, VaultFile>;
-  /** When each new Markdown file was written, so it sorts by its own date. */
+  /** When each added file was made: its own date when the device gives one,
+   * otherwise the moment of the upload, never "unknown" (which reads as 1970). */
   createdAtByPath: Record<string, string>;
   /** Picked files that were added (a zip counts once). */
   added: string[];
@@ -50,10 +51,11 @@ function withoutSharedFolder(files: Record<string, VaultFile>) {
   return Object.fromEntries(paths.map((path) => [path.slice(top.length + 1), files[path]!]));
 }
 
-export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<string>): VaultUploadPlan {
+export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<string>, now = Date.now()): VaultUploadPlan {
   const taken = new Set([...existingPaths].map((path) => path.toLowerCase()));
   const plan: VaultUploadPlan = { files: {}, createdAtByPath: {}, added: [], skipped: [] };
-  const createdAt = (upload: VaultUpload) => upload.lastModified > 0 ? new Date(upload.lastModified).toISOString() : undefined;
+  // A date from the future (a wrong device clock) would pin the file above everything.
+  const createdAt = (lastModified: number) => new Date(lastModified > 0 && lastModified <= now ? lastModified : now).toISOString();
   for (const upload of uploads) {
     const extension = /\.([a-z0-9]+)$/iu.exec(upload.name)?.[1]?.toLowerCase() ?? "";
     try {
@@ -64,14 +66,16 @@ export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<
           plan.skipped.push({ name: upload.name, reason: "has no notes, PDFs or images" });
           continue;
         }
-        for (const [path, file] of Object.entries(files)) { plan.files[path] = file; taken.add(path.toLowerCase()); }
+        // A zip keeps no dates we can read, so its notes count from the upload (a note's own `created` still wins).
+        for (const [path, file] of Object.entries(files)) {
+          plan.files[path] = file; plan.createdAtByPath[path] = createdAt(0); taken.add(path.toLowerCase());
+        }
         plan.added.push(upload.name);
       } else if (MARKDOWN.test(upload.name)) {
         const content = new TextDecoder("utf-8", { fatal: true }).decode(upload.bytes);
         const path = uniquePath(fileBase(upload.name), "md", taken);
         plan.files[path] = { content };
-        const created = createdAt(upload);
-        if (created) plan.createdAtByPath[path] = created;
+        plan.createdAtByPath[path] = createdAt(upload.lastModified);
         plan.added.push(upload.name);
       } else if (isVaultFileDocumentPath(`file.${extension}`)) {
         if (upload.bytes.length > MAX_VAULT_MEDIA_BYTES) {
@@ -80,6 +84,7 @@ export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<
         }
         const path = uniquePath(fileBase(upload.name), extension, taken);
         plan.files[path] = { content: bytesToBase64(upload.bytes), encoding: "base64", contentType: vaultFileContentType(path) };
+        plan.createdAtByPath[path] = createdAt(upload.lastModified);
         plan.added.push(upload.name);
       } else {
         plan.skipped.push({ name: upload.name, reason: "isn’t a note, PDF, image or zip" });

@@ -25,6 +25,36 @@ export interface VaultFileListing {
   localOnly?: boolean;
 }
 
+const addedKey = (userId: string) => `margin-chat:vault-file-added:${userId}`;
+
+/**
+ * When each PDF and image was added on this device, by path. The cloud vault
+ * keeps no file dates, and an untouched file's document is never saved, so
+ * without this an upload would be dated 1970 and listed as the oldest document.
+ */
+export function loadAddedVaultFileDates(userId: string): Record<string, string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(addedKey(userId)) ?? "{}");
+    return Object.fromEntries(Object.entries(stored && typeof stored === "object" ? stored : {})
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string" && Number.isFinite(Date.parse(entry[1]))));
+  } catch {
+    return {};
+  }
+}
+
+export function recordAddedVaultFileDates(userId: string, dates: Record<string, string>) {
+  const added = Object.entries(dates).filter(([path]) => isVaultFileDocumentPath(path));
+  if (!added.length) return;
+  try {
+    localStorage.setItem(addedKey(userId), JSON.stringify({ ...loadAddedVaultFileDates(userId), ...Object.fromEntries(added) }));
+  } catch { /* Without storage the file is dated as before. */ }
+}
+
+/** Listings dated from when this device added them, unless the folder on disk says otherwise. */
+export function withAddedVaultFileDates(listings: VaultFileListing[], dates: Record<string, string>): VaultFileListing[] {
+  return listings.map((listing) => !listing.modifiedAt && dates[listing.path] ? { ...listing, modifiedAt: dates[listing.path] } : listing);
+}
+
 /** Whether a vault file can sync to the cloud; larger ones stay in the folder. */
 export function isSyncableVaultFileSize(size: number) {
   return size <= MAX_VAULT_MEDIA_BYTES;
