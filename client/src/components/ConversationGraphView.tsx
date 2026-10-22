@@ -27,6 +27,7 @@ import { getDocumentNodeFootprint, layoutDocumentMap, type DocumentLayoutMode } 
 import { getGraphNeighborhoodIds } from "../lib/graphNeighborhood";
 import { documentConnectionGeometry } from "../lib/documentMapConnections";
 import { curvedGraphConnection } from "../lib/graphConnectionCurve";
+import { fitMapDotTitles, mapDotDiameter, mapDotTitleIsBold, measureMapDotTitle, type MapBox, type MapDotTitle } from "../lib/mapDotNodes";
 import { buildMapTerritories, centerNodeInCanvas, fitMapTerritories, fitMapTerritory, fitMapTerritoryOverview, getMapScale, layoutMapTerritoryOverview, layoutFocusedMapTerritory, mapLabelsOverlap, OVERVIEW_NODE_FOOTPRINT as GROUP_NODE_FOOTPRINT, readableNodeSize, type MapTerritory } from "../lib/graphPresentation";
 import {
   buildConversationForestGraphScene,
@@ -626,6 +627,7 @@ function GraphNode({
   renderReader,
   semanticLevel,
   zoomThroughProgress,
+  dot,
 }: {
   actions?: ReactNode;
   menuActions?: ReactNode;
@@ -684,6 +686,8 @@ function GraphNode({
   semanticLevel: ConversationGraphSemanticLevel;
   /** How close zooming is to opening this card's document, 0 to 1. */
   zoomThroughProgress?: number;
+  /** Drawn as a circle sized by connections with the title below; `titleMax` cuts a title that would reach a neighbor. */
+  dot?: MapDotStyle;
 }) {
   const isPreview = detailLevel === "preview";
   const isReader = detailLevel === "reader";
@@ -706,7 +710,10 @@ function GraphNode({
     top: `${placement.y + (placement.height - (screenFootprint?.height ?? placement.height)) / 2}px`,
     width: `${screenFootprint?.width ?? placement.width}px`,
     // Opened previews and readers keep full size; overview cards size by family depth.
-    transform: `scale(${(screenFootprint ? 1 / zoomScale : readableNodeSize(zoomScale, isPreview || isReader)) * (isPreview || isReader ? 1 : family?.size ?? 1)})`,
+    // Circles size by connections instead, so every title below them reads at one size.
+    transform: `scale(${(screenFootprint ? 1 / zoomScale : readableNodeSize(zoomScale, isPreview || isReader)) * (isPreview || isReader || dot ? 1 : family?.size ?? 1)})`,
+    "--map-dot-size": dot ? `${dot.diameter}px` : undefined,
+    "--map-dot-title-max": dot?.titleMax !== undefined ? `${dot.titleMax}px` : undefined,
     "--map-family-color": familyColor ?? undefined,
     "--map-card-title-size": screenFootprint?.titleFontSize ? `${screenFootprint.titleFontSize}px` : undefined,
     "--map-card-title-lines": screenFootprint?.titleLines,
@@ -721,7 +728,7 @@ function GraphNode({
     <article
       className={[
         "conversation-graph-node",
-        screenFootprint ? "is-group-compact" : "",
+        screenFootprint && !dot ? "is-group-compact" : "",
         screenFootprint?.titleLines === 0 ? "is-title-hidden" : "",
         isConnectionCenter ? "is-connection-center" : "",
         isSpaced ? "is-group-spread" : "",
@@ -736,6 +743,8 @@ function GraphNode({
         `is-semantic-${semanticLevel}`,
         conversation.id === activeConversationId ? "is-current-main" : "",
         zoomThroughProgress !== undefined ? "is-zooming-through" : "",
+        dot ? "is-dot" : "",
+        dot?.bold ? "is-dot-bold" : "",
       ]
         .filter(Boolean)
         .join(" ")}
@@ -781,9 +790,11 @@ function GraphNode({
         className="conversation-graph-node-select"
         onClick={() => onSelect(conversation.id)}
         onPointerDown={onBodyPress ? (event) => onBodyPress(event, conversation.id) : undefined}
+        title={dot?.titleMax !== undefined ? conversation.title : undefined}
         type="button"
       >
         <span className="conversation-graph-node-head">
+          {dot ? <span aria-hidden="true" className="conversation-graph-node-dot" /> : null}
           <span className="conversation-graph-node-kicker">
             <span>{nodeType}</span>
             {categoryLabel ? <span className="conversation-graph-node-category">{categoryLabel}</span> : null}
@@ -880,6 +891,8 @@ function GraphNode({
     </article>
   );
 }
+
+export interface MapDotStyle { diameter: number; bold: boolean; titleMax?: number }
 
 function GraphGroupRegion({
   collapsed,
@@ -1217,7 +1230,9 @@ export default function ConversationGraphView({
   }, [completeScene, scope.kind, scopedIds, showBranches]);
   // The lens greys out documents outside it; they stay on the map for orientation.
   const lensIds = useMemo(() => unfocusedScene.nodes.map((node) => node.conversationId), [unfocusedScene.nodes]);
-  const needsCounts = colorBy === "connections" || lens.filters.some((filter) => filter.kind === "connections");
+  // Outside Canvas and Evidence, closed documents are circles sized by their connections, titled below.
+  const drawsDots = !isCanvasMode && viewMode !== "evidence";
+  const needsCounts = drawsDots || colorBy === "connections" || lens.filters.some((filter) => filter.kind === "connections");
   const needsEdges = needsCounts || lens.filters.some((filter) => filter.kind === "near");
   const analysisEdges = useMemo(() => needsEdges ? getGraphAnalysisEdges(conversations) : EMPTY_EDGES, [needsEdges, conversations]);
   const connectionCounts = useMemo(() => needsCounts ? countConnections(analysisEdges) : EMPTY_COUNTS, [needsCounts, analysisEdges]);
@@ -1605,6 +1620,40 @@ export default function ConversationGraphView({
     };
     return { placement, screenFootprint, nodeDetail, visualBounds, contentKey: `${placement.conversationId}:${nodeDetail}` };
   }), [renderedNodePlacements, selectedConversationId, detailLevel, nodeScreenFootprint, dockedConversationId, viewport.scale]);
+  const maxConnections = useMemo(() => Math.max(0, ...scene.nodes.map((node) => connectionCounts.get(node.conversationId) ?? 0)), [scene.nodes, connectionCounts]);
+  const dotNodes = useMemo(() => {
+    const dots = new Map<string, MapDotStyle & { bounds: { x: number; y: number; width: number; height: number } }>();
+    if (!drawsDots) return dots;
+    const scale = viewport.scale;
+    const titles: MapDotTitle[] = [], cardScale = new Map<string, number>();
+    // Titles also stop at the map's left and right edges.
+    const left = -viewport.x, right = left + viewportSize.width;
+    const obstacles: MapBox[] = viewportSize.width ? [{ x0: left - 1e6, y0: -1e9, x1: left, y1: 1e9 }, { x0: right, y0: -1e9, x1: right + 1e6, y1: 1e9 }] : [];
+    for (const { placement, screenFootprint, nodeDetail, visualBounds } of renderedNodeDetails) {
+      const conversation = conversations[placement.conversationId];
+      if (!conversation || hiddenConversationIds.has(placement.conversationId)) continue;
+      if (nodeDetail !== "compact") {
+        obstacles.push({ x0: visualBounds.x * scale, y0: visualBounds.y * scale, x1: (visualBounds.x + visualBounds.width) * scale, y1: (visualBounds.y + visualBounds.height) * scale });
+        continue;
+      }
+      const connections = connectionCounts.get(placement.conversationId) ?? 0;
+      const diameter = mapDotDiameter(connections, maxConnections), bold = mapDotTitleIsBold(diameter);
+      // Screen pixels per card pixel: footprint cards draw at screen size, others stay readable at any zoom.
+      const k = screenFootprint ? 1 : readableNodeSize(scale) * scale;
+      const x = placement.x + placement.width / 2, y = placement.y + placement.height / 2, radius = diameter / 2 * k / scale;
+      dots.set(placement.conversationId, { diameter, bold, bounds: { x: x - radius, y: y - radius, width: radius * 2, height: radius * 2 } });
+      cardScale.set(placement.conversationId, k);
+      titles.push({ id: placement.conversationId, x: x * scale, y: y * scale, radius: diameter / 2 * k, gap: 5 * k,
+        titleWidth: measureMapDotTitle(conversation.title, bold) * k, titleHeight: 17 * k, priority: connections });
+    }
+    for (const [id, width] of fitMapDotTitles(titles, obstacles)) dots.get(id)!.titleMax = Math.floor(width / cardScale.get(id)!);
+    return dots;
+  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width]);
+  /** Lines meet a circle's edge rather than the card space around it. */
+  const lineBounds = useCallback(<T extends { conversationId: string }>(placement: T): T => {
+    const dot = dotNodes.get(placement.conversationId);
+    return dot ? { ...placement, ...dot.bounds } : placement;
+  }, [dotNodes]);
   const visibleContentKeys = useMemo(() => {
     if (panelView || showTerritories || showThemeOverview || !viewportSize.width || !viewportSize.height) return [];
     const bounds = getConversationGraphViewportBounds({ viewport, viewportSize, overscan: 0 });
@@ -1643,12 +1692,14 @@ export default function ConversationGraphView({
         continue;
       }
 
-      const parentPlacement = previewPlacementByConversationId.get(
+      const parentFound = previewPlacementByConversationId.get(
         edge.parentConversationId,
       ) ?? placementByConversationId.get(edge.parentConversationId);
-      const childPlacement = previewPlacementByConversationId.get(
+      const parentPlacement = parentFound && lineBounds(parentFound);
+      const childFound = previewPlacementByConversationId.get(
         edge.childConversationId,
       ) ?? placementByConversationId.get(edge.childConversationId);
+      const childPlacement = childFound && lineBounds(childFound);
 
       if (!parentPlacement || !childPlacement) {
         continue;
@@ -1675,6 +1726,7 @@ export default function ConversationGraphView({
     scene.edges,
     documentsOnly,
     documentLayoutMode,
+    lineBounds,
   ]);
   const groupedEdges = useMemo(() => aggregateGraphEdges(scene, collapsedGroupPlacements).filter((edge) => edge.source.kind === "group" || edge.target.kind === "group"), [scene, collapsedGroupPlacements]);
   const aggregateEdges = useMemo(() => groupedEdges.filter((edge) =>
@@ -1682,16 +1734,18 @@ export default function ConversationGraphView({
   ), [groupedEdges, viewportBounds]);
   const relatedEdges = useMemo(() => {
     if (isLineageMode || !showRelated || relatedStatus !== "ready") return [];
-    const origin = placementByConversationId.get(activeConversationId);
-    if (!origin || hiddenConversationIds.has(activeConversationId)) return [];
+    const originFound = placementByConversationId.get(activeConversationId);
+    if (!originFound || hiddenConversationIds.has(activeConversationId)) return [];
+    const origin = lineBounds(originFound);
     return relatedItems.flatMap((item) => {
-      const target = placementByConversationId.get(item.id);
+      const targetFound = placementByConversationId.get(item.id);
+      const target = targetFound && lineBounds(targetFound);
       if (!target || hiddenConversationIds.has(item.id) || target.conversationId === activeConversationId) return [];
       const geometry = documentsOnly ? documentConnectionGeometry(origin, target, documentLayoutMode)
         : { startX: origin.x + origin.width, startY: origin.y + origin.height / 2, endX: target.x, endY: target.y + target.height / 2, path: undefined };
       return [{ id: item.id, ...geometry }];
     });
-  }, [showRelated, relatedStatus, activeConversationId, relatedItems, placementByConversationId, hiddenConversationIds, documentsOnly, documentLayoutMode, isLineageMode]);
+  }, [showRelated, relatedStatus, activeConversationId, relatedItems, placementByConversationId, hiddenConversationIds, documentsOnly, documentLayoutMode, isLineageMode, lineBounds]);
   const conversationGroupByConversationId = useMemo(() => {
     const groupByConversationId = new Map<string, ConversationGroup>();
 
@@ -3349,6 +3403,7 @@ export default function ConversationGraphView({
     }
   }
   const scenePlacement = (id: string) => previewPlacementByConversationId.get(id) ?? placementByConversationId.get(id);
+  const lineScenePlacement = (id: string) => { const placement = scenePlacement(id); return placement && lineBounds(placement); };
   const placementCenter = (id: string) => {
     const placement = scenePlacement(id);
     return placement ? { x: placement.x + placement.width / 2, y: placement.y + placement.height / 2 } : undefined;
@@ -3715,8 +3770,8 @@ export default function ConversationGraphView({
                   style={{ strokeWidth: Math.min(14, 1.5 + Math.log2(bundle.count) * 1.6) / viewport.scale }} />
               </g>)}
               {drawnPersonalLinks.flatMap(([sourceId, targetId]) => {
-                const placement = scenePlacement(sourceId);
-                const target = scenePlacement(targetId);
+                const placement = lineScenePlacement(sourceId);
+                const target = lineScenePlacement(targetId);
                 if (!placement || !target || hiddenConversationIds.has(sourceId) || hiddenConversationIds.has(targetId)) return [];
                 if (!drawsConnection(placement.conversationId, targetId)) return [];
                 const x1 = placement.x + placement.width / 2;
@@ -3735,8 +3790,8 @@ export default function ConversationGraphView({
                 {[...DOCUMENT_RELATION_TYPES.map((type) => type.id), "mention"].map((id) => <marker key={id} id={`graph-relation-arrow-${id}`} className={`graph-relation-arrow is-${id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" /></marker>)}
               </defs>
               {drawnRelationEdges.flatMap((edge) => {
-                const placement = scenePlacement(edge.sourceId);
-                const target = scenePlacement(edge.targetId);
+                const placement = lineScenePlacement(edge.sourceId);
+                const target = lineScenePlacement(edge.targetId);
                 if (!placement || !target || hiddenConversationIds.has(edge.sourceId) || hiddenConversationIds.has(edge.targetId)) return [];
                 if (!drawsConnection(edge.sourceId, edge.targetId)) return [];
                 const geometry = documentsOnly ? documentConnectionGeometry(placement, target, documentLayoutMode)
@@ -3849,6 +3904,7 @@ export default function ConversationGraphView({
                   renderReader={renderExpandedConversation}
                   semanticLevel={semanticLevel}
                   zoomThroughProgress={zoomThrough?.id === conversation.id ? zoomThrough.progress : undefined}
+                  dot={dotNodes.get(conversation.id)}
                 />
               ) : null;
             })}

@@ -190,8 +190,8 @@ function assertDocumentCards(ids: string[], requireInside = false) {
   const cards = ids.map((id) => element(`.conversation-graph-node[data-conversation-id="${id}"]`));
   const boxes = cards.map(screenRect);
   boxes.forEach((box, index) => {
-    // Children draw smaller than their parent; see graphFamilies.ts.
-    const size = mapFamilySize(Number(cards[index].dataset.familyDepth ?? 0));
+    // Children draw smaller than their parent (graphFamilies.ts), except circles, which size by connections.
+    const size = cards[index].classList.contains("is-dot") ? 1 : mapFamilySize(Number(cards[index].dataset.familyDepth ?? 0));
     assert(Math.abs(box.width - 180 * camera.scale * size) < 1e-6 && Math.abs(box.height - 96 * camera.scale * size) < 1e-6,
       "Document cards scale with the camera instead of retaining an overlapping readable-size floor");
     assert.equal(cards[index].classList.contains('is-title-hidden'), camera.scale < 0.4,
