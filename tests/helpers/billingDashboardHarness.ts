@@ -11,7 +11,7 @@ for (const name of ["window", "document", "navigator", "HTMLElement", "HTMLInput
 const { act, createElement } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: BillingDashboard } = await import("../../client/src/components/BillingDashboard");
-const { default: ProfileModal } = await import("../../client/src/components/ProfileModal");
+const { default: ProfileModal } = await import("../../client/src/components/SettingsPage");
 const container = browser.document.createElement("div");
 browser.document.body.append(container);
 const root = createRoot(container as unknown as Element);
@@ -108,7 +108,7 @@ try {
   };
   await act(async () => { root.render(createElement(ProfileModal, profileProps as any)); });
   assert.equal(intervals.size, 0);
-  await act(async () => { button("Billing").click(); });
+  await act(async () => { container.querySelector<HTMLButtonElement>("#profile-tab-billing")!.click(); });
   assert.equal(container.querySelector('#profile-tab-billing')?.getAttribute("aria-selected"), "true");
   const beforeUserRefresh = refreshes;
   await act(async () => {

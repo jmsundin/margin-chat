@@ -61,7 +61,7 @@ async function flushUntil(predicate: () => boolean) {
 
 try {
   if (scenario === "profile") {
-    const { default: ProfileModal } = await import("../../client/src/components/ProfileModal");
+    const { default: ProfileModal } = await import("../../client/src/components/SettingsPage");
     const changes: Array<{ currentPassword: string; password: string }> = [];
     let closes = 0;
     let logouts = 0;
@@ -112,19 +112,19 @@ try {
     assert(input("New password").disabled);
     assert(input("Confirm new password").disabled);
     assert(input("Current password").closest("form")?.querySelector('button[type="submit"]')?.disabled);
-    for (const label of ["Log out", "Save changes", "Cancel", "Billing", "Open billing dashboard"]) {
-      assert(button(label).disabled, `${label} must wait for the password change`);
-      await click(label);
+    const billingTab = container.querySelector<HTMLButtonElement>("#profile-tab-billing")!;
+    for (const control of [button("Log out"), button("Save changes"), billingTab]) {
+      assert(control.disabled, `${control.textContent} must wait for the password change`);
+      await act(async () => { control.click(); });
     }
-    const closeButton = container.querySelector<HTMLButtonElement>('button[aria-label="Close profile"]')!;
+    const closeButton = container.querySelector<HTMLButtonElement>('button[aria-label="Close settings"]')!;
     assert(closeButton.disabled);
     await act(async () => {
       closeButton.click();
-      container.querySelector<HTMLElement>(".thread-dialog-backdrop")!.click();
       browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     await submit("Display name");
-    assert.equal(closes, 1, "The profile backdrop dismisses even during a pending password change");
+    assert.equal(closes, 0, "Settings stay open during a pending password change");
     assert.equal(logouts, 0, "Logout must wait for the password change session cookie");
     assert.equal(profileSaves, 0, "Profile edits must wait for the password change");
     assert.equal(container.querySelector("#profile-tab-account")?.getAttribute("aria-selected"), "true");
@@ -132,7 +132,7 @@ try {
     assert(container.querySelector('[role="alert"]')?.textContent?.includes("Current password is incorrect."));
     assert.equal(container.querySelector('[role="status"]'), null);
     assert.equal(button("Change password").disabled, false);
-    for (const label of ["Log out", "Cancel", "Billing", "Open billing dashboard"]) assert.equal(button(label).disabled, false);
+    for (const control of [button("Log out"), billingTab]) assert.equal(control.disabled, false);
     assert.equal(closeButton.disabled, false);
 
     await enter("Current password", "correct-current-password");
@@ -151,13 +151,13 @@ try {
     await act(async () => { root.render(createElement(ProfileModal, profileProps as any)); });
     for (const label of ["Current password", "New password", "Confirm new password"]) assert.equal(input(label).value, "");
     assert.equal(container.querySelector('[role="status"]'), null);
-    await click("Billing");
+    await act(async () => { container.querySelector<HTMLButtonElement>("#profile-tab-billing")!.click(); });
     assert.equal(container.querySelector("#profile-tab-billing")?.getAttribute("aria-selected"), "true");
-    await click("Account");
+    await act(async () => { container.querySelector<HTMLButtonElement>("#profile-tab-account")!.click(); });
     await click("Log out");
-    await click("Cancel");
+    await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="Close settings"]')!.click(); });
     assert.equal(logouts, 1);
-    assert.equal(closes, 2);
+    assert.equal(closes, 1);
 
     await enter("Current password", "current-password");
     await enter("New password", "replacement-password");

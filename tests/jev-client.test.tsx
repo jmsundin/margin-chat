@@ -9,7 +9,7 @@ import {
 } from "../client/src/lib/jevAssistance";
 import { buildThreadSummaries } from "../client/src/lib/conversationSearch";
 import { buildCategoryOrganizedGraphLayouts } from "../client/src/lib/graphCategories";
-import AppSettingsModal from "../client/src/components/AppSettingsModal";
+import { AiFeatureSettings } from "../client/src/components/AppSettingsSections";
 import JevRelatedItems from "../client/src/components/JevRelatedItems";
 import ConversationGraphView, { calculateFitViewport } from "../client/src/components/ConversationGraphView";
 import { buildConversationForestGraphScene } from "../client/src/lib/conversationGraph";
@@ -218,7 +218,7 @@ describe("Jev workspace assistance", () => {
 
   test("shows consent disclosure and related notes only when valid results are ready", () => {
     const { state, current } = fixture();
-    const settings = renderToStaticMarkup(<AppSettingsModal isOpen mainViewMode="chat" theme="light" onClose={() => {}} onSetMainViewMode={() => {}} onSetTheme={() => {}} onSetJevEnabled={() => {}} />);
+    const settings = renderToStaticMarkup(<AiFeatureSettings onSetJevEnabled={() => {}} />);
     expect(settings).toContain("TypeSafe analyzes permitted chat context");
     expect(settings).toContain("Documents you hide from AI are excluded");
     expect(settings).not.toContain('checked=""');

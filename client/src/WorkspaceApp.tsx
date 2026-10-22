@@ -40,7 +40,6 @@ import {
   useState,
   type CSSProperties,
 } from "react";
-import AppSettingsModal from "./components/AppSettingsModal";
 import BranchRail from "./components/BranchRail";
 import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
@@ -109,7 +108,7 @@ import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
 import { ConversationGroupPickerContext } from "./components/ConversationGroupControls";
 import MainChatTileView from "./components/MainChatTileView";
-import ProfileModal from "./components/ProfileModal";
+import SettingsPage, { type SettingsSection } from "./components/SettingsPage";
 import ChatHistoryImport from "./components/ChatHistoryImport";
 import CaptureInbox from "./components/CaptureInbox";
 import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
@@ -786,13 +785,12 @@ function WorkspaceAppContent({
   const [selectionModelOpen, setSelectionModelOpen] = useState(false);
   const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
   const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
-  const [appSettingsOpen, setAppSettingsOpen] = useState(false);
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
-  const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
+  const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
-  const [profileInitialTab, setProfileInitialTab] = useState<"account" | "storage" | "billing" | "api-keys" | "agents">(() => {
+  const [profileInitialTab, setProfileInitialTab] = useState<SettingsSection | null>(() => {
     const tab = new URLSearchParams(window.location.search).get("settings");
-    return tab === "billing" || tab === "api-keys" || tab === "agents" ? tab : "account";
+    return tab === "account" || tab === "billing" || tab === "api-keys" || tab === "agents" || tab === "appearance" || tab === "voice" || tab === "storage" ? tab : null;
   });
   const previousPendingChats = useRef(pendingConversationIds);
   const refreshBillingAfterChat = useEffectEvent(() => { void onRefreshBilling(); });
@@ -1329,7 +1327,7 @@ function WorkspaceAppContent({
 
   // On phones the sidebar sits above everything, so a window opened from it
   // (profile, settings, inbox, import) would open hidden behind it.
-  const sidebarModalOpen = profileModalOpen || appSettingsOpen || captureInboxOpen || historyImportOpen;
+  const sidebarModalOpen = profileModalOpen || captureInboxOpen || historyImportOpen;
   useEffect(() => {
     if (!isMobileViewport || !sidebarModalOpen) return;
     setLeftSidebarOpen(false);
@@ -4539,7 +4537,6 @@ function WorkspaceAppContent({
 
     try {
       await onUpdateProfile(args);
-      setProfileModalOpen(false);
     } catch (error) {
       if (error instanceof ApiError && error.statusCode === 401) {
         onAuthExpired();
@@ -5133,9 +5130,14 @@ function WorkspaceAppContent({
               onImportChatHistory={() => setHistoryImportOpen(true)}
               onOpenProfile={() => {
                 setProfileSaveError(null);
+                setProfileInitialTab(null);
                 setProfileModalOpen(true);
               }}
-              onOpenSettings={() => setAppSettingsOpen(true)}
+              onOpenSettings={() => {
+                setProfileSaveError(null);
+                setProfileInitialTab("appearance");
+                setProfileModalOpen(true);
+              }}
               onOpenSearch={handleOpenSearch}
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
@@ -5649,7 +5651,7 @@ function WorkspaceAppContent({
             onOpenChat={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
             onClose={() => setHistoryImportOpen(false)}
           />}
-          <ProfileModal
+          <SettingsPage
             initialTab={profileInitialTab}
             onOpenWebsiteSettings={onOpenWebsiteSettings}
             billingDashboard={billingDashboard}
@@ -5687,19 +5689,14 @@ function WorkspaceAppContent({
             onUpgradeToPlus={onUpgradeToPlus}
             onSave={handleSaveProfile}
             user={user}
-          />
-
-          <AppSettingsModal
-            vaultIndex={vault.storageMode === "server" ? vaultIndex : undefined}
+            theme={theme}
+            onSetTheme={onSetTheme}
+            mainViewMode={mainViewMode}
+            onSetMainViewMode={handleSetMainViewMode}
             jevEnabled={jevEnabled}
             jevStatus={jev.status}
             onSetJevEnabled={setJevEnabled}
-            isOpen={appSettingsOpen}
-            mainViewMode={mainViewMode}
-            onClose={() => setAppSettingsOpen(false)}
-            onSetMainViewMode={handleSetMainViewMode}
-            onSetTheme={onSetTheme}
-            theme={theme}
+            vaultIndex={vault.storageMode === "server" ? vaultIndex : undefined}
           />
           </main>
         </div>
