@@ -123,12 +123,12 @@ try {
   await act(async () => { root.render(createElement(AuthLanding, props)); });
   assert(container.querySelector('figure mark'));
   await act(async () => {
-    type(input("Name"), "Reader"); type(input("Email"), "reader@example.test"); type(input("Password"), "test-password"); type(input("Confirm password"), "different");
+    type(input("Name"), "Reader"); type(input("Email"), "reader@example.test"); type(input("Password"), "test-password");
   });
-  await act(async () => { submit(); });
-  assert.equal(signup.length, 0);
-  assert.equal(container.querySelector('[role="alert"]')?.textContent, "Passwords do not match.");
-  await act(async () => { type(input("Confirm password"), "test-password"); });
+  // One password field, with Show to check what was typed instead of typing it twice.
+  assert.equal(input("Password").type, "password");
+  await act(async () => { button("Show").click(); });
+  assert.equal(input("Password").type, "text");
   await act(async () => { submit(); });
   assert.deepEqual(signup, [{ displayName: "Reader", email: "reader@example.test", password: "test-password" }]);
   await act(async () => { button("Log in").click(); });

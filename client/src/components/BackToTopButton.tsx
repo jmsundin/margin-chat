@@ -61,15 +61,17 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
   const [far, setFar] = useState(false);
   const [text, setText] = useState<{ editable: boolean; focused: boolean }>({ editable: false, focused: false });
   const touched = useRef(false);
-  // A document kept mounted under Map View or Tiles must not leave its mic over that view's controls.
+  // On phones the mic lives in the screen's button stack, so a document kept mounted under
+  // Map View or Tiles must not leave it over that view's controls. On a computer it sits in
+  // the document's own corner and hides with it.
   const [onScreen, setOnScreen] = useState(true);
   useEffect(() => {
     const body = scrollRef.current;
-    if (!body || typeof IntersectionObserver === "undefined") return undefined;
+    if (!body || !mobile || !micShown || typeof IntersectionObserver === "undefined") { setOnScreen(true); return undefined; }
     const observer = new IntersectionObserver((entries) => setOnScreen(entries.some((entry) => entry.isIntersecting)));
     observer.observe(body);
     return () => observer.disconnect();
-  }, [scrollRef]);
+  }, [scrollRef, mobile, micShown]);
   useEffect(() => {
     const body = scrollRef.current;
     if (!body) return;

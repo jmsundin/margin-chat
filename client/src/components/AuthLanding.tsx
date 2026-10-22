@@ -46,7 +46,7 @@ export default function AuthLanding({
   const [signupDisplayName, setSignupDisplayName] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
-  const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetToken, setResetToken] = useState(initialResetToken);
   const [newPassword, setNewPassword] = useState("");
@@ -120,11 +120,6 @@ export default function AuthLanding({
   function handleSignupSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (signupPassword !== signupConfirmPassword) {
-      setLocalError("Passwords do not match.");
-      return;
-    }
-
     setLocalError(null);
     setShowParentError(true);
     void onSignup({
@@ -140,37 +135,35 @@ export default function AuthLanding({
     <div className="auth-layout auth-welcome-layout">
       <section className="auth-hero">
         <p className="eyebrow">Margin Chat</p>
-        <h1>Follow an idea without losing your place.</h1>
+        <h1>Read, write and think beside your documents.</h1>
         <p className="auth-copy">
-          Highlight a passage to explore it in a branch. Keep notes beside the
-          conversation, and return to the main thread whenever you’re ready.
+          Select a passage to leave a margin note beside it or open a side
+          document for the idea it gave you. Ask AI about any of it, then see
+          how everything connects on the Map.
         </p>
         <figure className="auth-conversation-example">
-          <figcaption>A conversation with room to explore</figcaption>
+          <figcaption>A document with room to think</figcaption>
           <div className="auth-example-panels">
             <div className="auth-example-main">
-              <div className="auth-example-title"><span className="auth-example-dot" />A better reading habit</div>
-              <p className="auth-example-speaker">You</p>
-              <p>How can I remember more of what I read?</p>
-              <p className="auth-example-speaker">Margin</p>
-              <p>Keep one idea from each article. A <mark>weekly reflection</mark> can help you connect the dots.</p>
-              <span className="auth-example-branch-label">↳ 1 branch</span>
+              <div className="auth-example-title"><span className="auth-example-dot" />The printing press</div>
+              <p>Within fifty years of Gutenberg’s press, Europe had printed some twenty million books.</p>
+              <p>The change was less about speed than about <mark>copies being identical</mark>, which made it possible to cite a page and a line.</p>
+              <span className="auth-example-branch-label">✎ Margin note: Same words everywhere, so a claim could be checked.</span>
             </div>
             <div className="auth-example-branch">
-              <div className="auth-example-title"><span aria-hidden="true">↳</span>Weekly reflection</div>
-              <blockquote>“weekly reflection”</blockquote>
-              <p className="auth-example-speaker">You</p>
-              <p>What would a five-minute version look like?</p>
-              <p className="auth-example-speaker">Margin</p>
-              <p>Revisit three highlights. Choose one and write why it stayed with you.</p>
+              <div className="auth-example-title"><span aria-hidden="true">↗</span>Citation</div>
+              <blockquote>“copies being identical”</blockquote>
+              <p>Page numbers only work when every copy matches. Before print, two manuscripts of one book rarely did.</p>
+              <p className="auth-example-speaker">✦ Ask AI</p>
+              <p>When did page numbers become common in printed books?</p>
             </div>
           </div>
-          <p className="auth-example-caption">Explore the tangent. Keep the original thought in view.</p>
+          <p className="auth-example-caption">A note comments on the passage. A side document follows the new idea.</p>
         </figure>
-        <ul className="auth-welcome-benefits" aria-label="Ways to use Margin Chat">
-          <li><span aria-hidden="true">↳</span> Explore a tangent</li>
-          <li><span aria-hidden="true">✎</span> Keep a note</li>
-          <li><span aria-hidden="true">↩</span> Pick up where you left off</li>
+        <ul className="auth-welcome-benefits" aria-label="What you get">
+          <li><span aria-hidden="true">✎</span> Notes beside the text</li>
+          <li><span aria-hidden="true">↗</span> Side documents for new ideas</li>
+          <li><span aria-hidden="true">◎</span> A Map of how it connects</li>
         </ul>
       </section>
 
@@ -240,27 +233,21 @@ export default function AuthLanding({
             </label>
             <label className="auth-field">
               <span>Password</span>
-              <input
-                autoComplete="new-password"
-                disabled={isSubmitting}
-                onChange={(event) => setSignupPassword(event.target.value)}
-                placeholder="At least 8 characters"
-                type="password"
-                value={signupPassword}
-              />
-            </label>
-            <label className="auth-field">
-              <span>Confirm password</span>
-              <input
-                autoComplete="new-password"
-                disabled={isSubmitting}
-                onChange={(event) =>
-                  setSignupConfirmPassword(event.target.value)
-                }
-                placeholder="Repeat your password"
-                type="password"
-                value={signupConfirmPassword}
-              />
+              <span className="auth-password-row">
+                <input
+                  autoComplete="new-password"
+                  disabled={isSubmitting}
+                  minLength={8}
+                  onChange={(event) => setSignupPassword(event.target.value)}
+                  placeholder="At least 8 characters"
+                  type={showSignupPassword ? "text" : "password"}
+                  value={signupPassword}
+                />
+                <button className="auth-password-toggle" type="button" aria-pressed={showSignupPassword}
+                  onClick={() => setShowSignupPassword((shown) => !shown)}>
+                  {showSignupPassword ? "Hide" : "Show"}
+                </button>
+              </span>
             </label>
 
             {activeError ? <p className="auth-error" role="alert">{activeError}</p> : null}
@@ -268,6 +255,7 @@ export default function AuthLanding({
             <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
               {isSubmitting ? "Creating account..." : "Create account"}
             </button>
+            <p className="auth-signup-note">You start with a “Start here” document and a short tour you can leave any time.</p>
           </form>
         ) : mode === "login" ? (
           <form className="auth-form" onSubmit={handleLoginSubmit}>
