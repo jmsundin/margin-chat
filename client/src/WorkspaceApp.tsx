@@ -5,6 +5,7 @@ import { useAppUpdateGuard } from "./lib/appUpdateSafety";
 import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } from "./components/MobileKeyboard";
 import MobileAIComposer from "./components/MobileAIComposer";
 import { MobileSelectionActions } from "./components/MobileSelectionActions";
+import { pdfPageFromSourceId } from "./lib/vaultFileDocuments";
 import { SelectionToolbarRow } from "./components/SelectionToolbar";
 import { CaretActions } from "./components/CaretActions";
 import { MobileCreateMenu, type MobileCreateTarget } from "./components/MobileCreateMenu";
@@ -3020,7 +3021,8 @@ function WorkspaceAppContent({
     }
 
     const range = selection.getRangeAt(0);
-    if ((range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement)?.closest(".rich-document-editor")) return;
+    // The document editor and the PDF viewer report their own selections.
+    if ((range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement)?.closest(".rich-document-editor, .vault-pdf-page")) return;
     const startBubble = getSelectionSourceElement(range.startContainer);
     const endBubble = getSelectionSourceElement(range.endContainer);
 
@@ -4757,11 +4759,20 @@ function WorkspaceAppContent({
                         onToggleBranches={handleToggleRail} />;
   }
 
-  /** Full screen: the focused document alone, with the header and side panels put away. */
-  function renderFullScreenButton() {
-    if (isCompactDocument(activeConversation)) return null;
+  /** Full screen: the document alone, with the header and side panels put away. The same place in its header leads back out. */
+  function renderFullScreenButton(conversation: Conversation = activeConversation) {
+    if (isCompactDocument(conversation)) return null;
+    if (maximizedDocument?.id === conversation.id) {
+      return <button type="button" className="document-exit-full-screen" aria-keyshortcuts="Escape"
+        aria-label={`Leave full screen: ${conversation.title || "Untitled document"}`} title="Leave full screen (Esc)"
+        onClick={() => setMaximizedDocumentId(null)}>
+        <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 3v5H3M12 3v5h5M8 17v-5H3M12 17v-5h5" />
+        </svg>
+      </button>;
+    }
     return <button type="button" className="document-full-screen-button" aria-keyshortcuts="Escape"
-      aria-label="Full screen" title="Full screen (Esc to leave)" onClick={() => toggleMaximizedDocument(activeConversation.id)}>
+      aria-label="Full screen" title="Full screen (Esc to leave)" onClick={() => toggleMaximizedDocument(conversation.id)}>
       <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
         <path d="M3 8V3h5M17 8V3h-5M3 12v5h5M17 12v5h-5" />
       </svg>
@@ -4875,6 +4886,7 @@ function WorkspaceAppContent({
       activeMarginNoteId={activeConversation.id}
       bodyFooter={view === "chat" && navigationStyle === "reading" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
+      fullScreenToggle={view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={view === "chat" && getMinimizedChildNodes(conversation) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
@@ -4950,8 +4962,10 @@ function WorkspaceAppContent({
    */
   function sortInReadingOrder(parent: Conversation, children: Conversation[]) {
     const blockOrder = new Map(getEditableDocument(parent).blocks.map((block, index) => [block.id, index]));
+    // A PDF's passages have no blocks; their page puts them in order.
     const position = (child: Conversation) => !child.branchAnchor ? [-1, 0]
-      : [blockOrder.get(child.branchAnchor.sourceBlockId ?? "") ?? Number.MAX_SAFE_INTEGER, child.branchAnchor.startOffset];
+      : [blockOrder.get(child.branchAnchor.sourceBlockId ?? "") ?? pdfPageFromSourceId(child.branchAnchor.sourceMessageId) ?? Number.MAX_SAFE_INTEGER,
+        child.branchAnchor.startOffset];
     return [...children].sort((left, right) => {
       const [leftBlock, leftOffset] = position(left);
       const [rightBlock, rightOffset] = position(right);
@@ -5455,7 +5469,8 @@ function WorkspaceAppContent({
                         <svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5 7 10l5 5" /></svg>
                         Map
                       </button> : null}
-                      {renderFullScreenButton()}
+                      {/* On computers each document's own header holds it. */}
+                      {isMobileViewport ? renderFullScreenButton() : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : <>
                         <button type="button" className="document-header-toggle" aria-expanded={desktopHeaderOpen}
                           aria-label={desktopHeaderOpen ? "Hide path and views" : "Show path and views"}
@@ -5482,13 +5497,6 @@ function WorkspaceAppContent({
                       onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
                   </div> : null) : desktopHeaderOpen ? renderDocumentBreadcrumbs() : null}
                   </header>
-                  {maximizedDocument ? <button type="button" className="document-exit-full-screen" aria-keyshortcuts="Escape"
-                    aria-label={`Leave full screen: ${maximizedDocument.title || "Untitled document"}`} title="Leave full screen (Esc)"
-                    onClick={() => setMaximizedDocumentId(null)}>
-                    <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M8 3v5H3M12 3v5h5M8 17v-5H3M12 17v-5h5" />
-                    </svg>
-                  </button> : null}
                   {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
                   <div className="document-workspace-with-search" ref={documentAreaRef}>
                   {navigationStyle === "graph" && !showMapModal ? <DocumentMapHeader open={false} onToggle={openMapModal}
