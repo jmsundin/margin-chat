@@ -204,6 +204,7 @@
   .mk-split.is-reverse > :first-child { order: 0; }
   .mk-grid4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mk-see:not(.is-phone) { grid-template-columns: minmax(0, 1fr); }
+  .mk-tabs button { font-size: 14px; padding: 0 12px; }
   .mk-hero { padding-top: 64px; }
   .mk-section { padding-top: 88px; }
   .mk-map { height: 360px; }

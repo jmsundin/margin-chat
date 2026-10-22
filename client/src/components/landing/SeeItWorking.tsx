@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 export type ClipName = "web-docs" | "web-map" | "ext-docs" | "ext-map" | "phone-docs" | "phone-map";
 
 const FORMS = [
-  { id: "web", label: "Web and desktop", docs: "web-docs", map: "web-map", phone: false,
+  { id: "web", label: "Computer", docs: "web-docs", map: "web-map", phone: false,
     docsCaption: "Select a passage: a margin note stays beside it, a side document opens the new idea in its own pane.",
     mapCaption: "Map View draws every document, with lines for side documents, notes and links. Zoom in for titles." },
   { id: "extension", label: "Chrome extension", docs: "ext-docs", map: "ext-map", phone: false,
