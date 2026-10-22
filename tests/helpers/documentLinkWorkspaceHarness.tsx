@@ -111,6 +111,9 @@ async function openFromBreadcrumbs(id: string) {
   // On phones the path sits in the header drop-down, closed until its title row is tapped.
   const phoneHeader = browser.document.querySelector('.document-header-title[aria-expanded="false"]');
   if (phoneHeader) await click(phoneHeader);
+  // Phones show the path as plain links, with the focused document's children after it.
+  const link = browser.document.querySelector(`.document-breadcrumb-link[data-breadcrumb-document-id="${id}"]`);
+  if (link) { await click(link); return; }
   for (const trigger of [...browser.document.querySelectorAll(".document-breadcrumb-trigger")] as any[]) {
     await click(trigger);
     const row = browser.document.querySelector(`.document-breadcrumb-menu [data-breadcrumb-document-id="${id}"]`);

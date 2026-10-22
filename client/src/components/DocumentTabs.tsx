@@ -325,7 +325,8 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
           </button>
           <DocumentMenu conversation={document} onRename={onRename} pinned={pinned} familyPinned={familyPinnedDocumentIds.includes(document.id)}
             minimized={minimized} closed={closed} onTogglePin={onTogglePin} onTogglePinScope={onTogglePinScope}
-            onMinimize={closed ? undefined : onMinimize} onClose={closed ? undefined : onClose} onRestore={onSelect} groups={groups} onAssignGroup={onAssignGroup}
+            // The tab's × closes it; only pinned tabs, which have no ×, keep Close in the menu.
+            onMinimize={closed ? undefined : onMinimize} onClose={closed || !pinned ? undefined : onClose} onRestore={onSelect} groups={groups} onAssignGroup={onAssignGroup}
             className="document-tab-menu-trigger"
             onFocusFallback={() => (tabs.current.get(activeDocumentRef.current) ?? tabs.current.values().next().value)?.focus()} />
           {showCloseButtons && onClose && !closed && !pinned ? <button type="button" className="document-tab-close"

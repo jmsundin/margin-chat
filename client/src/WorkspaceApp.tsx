@@ -46,7 +46,7 @@ import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
-import { SessionSwitcher, SessionsPanel } from "./components/Sessions";
+import { SessionChips, SessionsPanel } from "./components/Sessions";
 import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
@@ -4600,13 +4600,13 @@ function WorkspaceAppContent({
       : !closedMarginNotes[scrollingDocuments[0].id] && getMarginDocuments(scrollingDocuments[0]).length ? `${getMarginColumnWidth(scrollingDocuments[0], false) + 32}px` : "0px",
   } as CSSProperties;
 
-  function renderDocumentBreadcrumbs() {
+  function renderDocumentBreadcrumbs(plain = false) {
     const backId = getDocumentBackTarget(documentHistory, activeConversation.id, state.conversations);
     return <DocumentBreadcrumbs conversations={state.conversations} focusedId={activeConversation.id}
       onScreenIds={getOnScreenDocumentIds()} streamingIds={streamingThreadIds}
       minimizedIds={new Set(getDocumentWorkspace(state.conversations, activeConversation.id).minimizedIds)}
       backTitle={backId ? state.conversations[backId].title || "Untitled document" : null} onBack={handleDocumentBack}
-      onExpand={handleExpandDocumentHere} onOpenBeside={handleOpenDocumentBeside}
+      onExpand={handleExpandDocumentHere} onOpenBeside={handleOpenDocumentBeside} plain={plain}
       // On a computer the compass sits beside the path it continues; phones list the views as tabs below it.
       trailing={isMobileViewport ? undefined : <>
         {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
@@ -4615,16 +4615,16 @@ function WorkspaceAppContent({
   }
 
 
-  /** The session, its tabs and the new side document button; one row of the header on a computer, the top of the drop-down on a phone. */
-  function renderSessionSwitcher() {
-    return sessions ? <SessionSwitcher sessions={sortedSessions} activeId={sessions.activeId} compact={isMobileViewport}
+  /** Sessions as chips: at the left of the tabs row on a computer, the top of the drop-down on a phone. */
+  function renderSessionChips() {
+    return sessions ? <SessionChips sessions={sortedSessions} activeId={sessions.activeId} limit={isMobileViewport ? Infinity : 3}
       onSelect={handleSwitchSession} onNew={() => handleCreateSession()}
       onManage={() => { setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }} /> : null;
   }
 
   function renderSessionTabs(vertical = false) {
     return <>
-                    {vertical ? null : renderSessionSwitcher()}
+                    {vertical ? null : renderSessionChips()}
                     <DocumentTabs vertical={vertical} documents={peerTabDocuments}
                       groups={state.groups}
                       onAssignGroup={handleAssignConversationGroup}
@@ -4639,7 +4639,7 @@ function WorkspaceAppContent({
                       onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
                       onMinimize={handleMinimizeDocument}
                       onClose={handleCloseDocument}
-                      showCloseButtons={inExtension}
+                      showCloseButtons
                       onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
                       onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
                     />
@@ -4674,13 +4674,19 @@ function WorkspaceAppContent({
     setDesktopHeaderOpen((open) => { saveDocumentHeaderOpen(!open); return !open; });
   }
 
+  /** Main and side documents have a tab, and close only from its ×. */
+  function hasDocumentTab(id: string) {
+    return getPresentedParentId(state.conversations, id) === null;
+  }
+
   function renderDocumentMenu(conversation: Conversation) {
     return <DocumentMenu conversation={conversation}
         className="document-header-menu-trigger"
         pinned={pinnedDocumentIds.includes(conversation.id)} familyPinned={familyPinnedDocumentIds.includes(conversation.id)}
         minimized={documentWorkspace.minimizedIds.includes(conversation.id)}
         onTogglePin={handleToggleDocumentPin} onTogglePinScope={handleToggleDocumentPinScope}
-        onMinimize={handleMinimizeDocument} onClose={handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
+        // Documents with a tab close from its ×; notes and branches have no tab, so their menu keeps Close.
+        onMinimize={handleMinimizeDocument} onClose={hasDocumentTab(conversation.id) ? undefined : handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
@@ -4760,7 +4766,7 @@ function WorkspaceAppContent({
     return <DocumentPanel key={conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)} bareHeader={bareHeader}
       onMinimize={view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
-      onClose={view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
+      onClose={view === "chat" && !dockHeader && !maximized && !bareHeader && !hasDocumentTab(conversation.id) ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
       parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock) : undefined}
       headerControls={dockHeader ? null : <>
@@ -5339,12 +5345,12 @@ function WorkspaceAppContent({
                     </div>
                   </div>
                   {isMobileViewport ? (mobileHeaderOpen ? <div id="document-header-details" className="document-header-details">
-                    <div className="document-header-tabs-row">
-                      {renderSessionSwitcher()}
-                      {renderDocumentViewsMenu()}
-                    </div>
+                    {sessions ? <div className="document-header-section-label">Session</div> : null}
+                    {renderSessionChips()}
+                    <div className="document-header-section-label">Open documents{renderDocumentViewsMenu()}</div>
                     {renderSessionTabs(true)}
-                    {renderDocumentBreadcrumbs()}
+                    <div className="document-header-section-label">Path</div>
+                    {renderDocumentBreadcrumbs(true)}
                     <DocumentNavigationSwitcher labelled value={navigationStyle} onChange={(style) => {
                       handleChangeNavigationStyle(style);
                       if (style === "graph") setMobileHeaderOpen(false);

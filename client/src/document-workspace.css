@@ -108,10 +108,11 @@
   /* The drop-down sits over the text, so opening it doesn't move what you're reading. */
   .document-header-details { position: absolute; top: 100%; right: 0; left: 0; display: flex; flex-direction: column; gap: 8px; max-height: calc(100dvh - 120px); padding: 8px 8px 12px; overflow-y: auto; border-bottom: 1px solid var(--line-strong); border-radius: 0 0 14px 14px; background: var(--panel); box-shadow: 0 14px 28px #0002; }
   /* The session gets the full width; its tabs follow as a list with whole titles, one per row. */
-  .document-header-tabs-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
-  .document-header-tabs-row > .session-switcher.is-compact { flex: 1 1 auto; max-width: none; }
-  .document-header-tabs-row > .session-switcher.is-compact .session-switcher-trigger { flex: 1; max-width: none; height: 44px; padding-inline: 12px; font-size: 15px; }
-  .document-header-tabs-row > .session-switcher .session-switcher-trigger > svg:last-child { margin-left: auto; }
+  .document-header-section-label { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding: 4px 8px 0; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  .document-header-section-label > * { color: var(--ink); font-size: 13px; font-weight: 400; letter-spacing: normal; text-transform: none; }
+  .document-header-section-label + .session-chips { padding: 0 4px; }
+  .document-header-details > .session-chips { flex: none; }
+  .document-header-details .session-chip { height: 36px; padding: 0 14px; font-size: 14px; }
   .document-header-details > .document-tabs-container.is-vertical { border: 0; background: transparent; }
   /* Many tabs scroll inside their own list, so the path and views below stay in reach. */
   .document-tabs-container.is-vertical .document-tabs { flex-direction: column; align-items: stretch; gap: 2px; max-height: 38dvh; padding: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
@@ -126,7 +127,7 @@
   .document-tabs-container.is-vertical .document-tab.is-pinned .document-tab-title { display: -webkit-box; }
   .document-tabs-container.is-vertical .document-tab.is-pinned .document-tab-menu-trigger { position: static; opacity: 1; pointer-events: auto; margin-right: 4px; }
   .document-tabs-container.is-vertical .document-tab-create { order: 99999 !important; align-self: stretch; justify-content: flex-start; gap: 8px; width: auto; min-height: 44px; margin: 0; padding: 0 12px; color: var(--accent); font-size: 15px; }
-  .document-header-details > .document-breadcrumbs { min-height: 44px; padding: 4px; border: 1px solid var(--line); border-radius: 10px; }
+  .document-header-details > .document-breadcrumbs.is-plain { padding: 0 4px; }
   .document-header-details > .document-compass { flex-wrap: wrap; gap: 8px 14px; padding: 2px 4px; overflow: visible; border: 0; background: transparent; }
   .document-header-details > .document-compass .document-compass-group { flex-wrap: wrap; }
   .document-header-details > .document-topic-outline { flex: 0 0 auto; max-height: 40dvh; padding: 4px 0; border: 1px solid var(--line); border-radius: 10px; }
@@ -149,7 +150,7 @@
   background: var(--panel);
 }
 .document-workspace-toolbar > .workspace-menu-button { flex: 0 0 36px; }
-.document-workspace-toolbar > .session-switcher { margin: 0 2px 0 4px; }
+.document-workspace-toolbar > .session-chips { flex: 0 1 auto; max-width: 40%; margin: 0 6px 0 4px; }
 .document-workspace-toolbar > .document-tabs-container { flex: 1; min-width: 0; border-bottom: 0; }
 .document-workspace-toolbar .document-tabs { padding: 4px 4px 0; }
 .document-workspace-actions { display: flex; align-items: center; flex: 0 0 auto; gap: 4px; padding-left: 6px; border-left: 1px solid var(--line); }
