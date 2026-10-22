@@ -358,7 +358,8 @@ try {
   assert.equal(latest.activeConversationId, siblingId);
   assert.deepEqual(panes(), [mainId, siblingId, nestedId]);
   assert.deepEqual(restoreButtons(mainId).map((button) => button.getAttribute("aria-label")), ["Open side document: Side research"]);
-  assert.equal(pane(mainId).querySelector(".minimized-child-nodes"), null, "While one side document is open, the rest go back to small icons.");
+  assert(pane(mainId).querySelector(".minimized-child-nodes.is-compact"), "While one side document is open, the rest stay beside the document as compact pills.");
+  assert.equal(pane(mainId).querySelector(".minimized-child-node > strong")?.textContent, "Side research");
   assert(latest.conversations[mainId].documentLayout?.minimizedIds.includes(sideId), "Opening one icon leaves the other child minimized.");
   await click(restoreButton(mainId, "Side research"));
   assert.equal(latest.activeConversationId, sideId);
@@ -368,8 +369,9 @@ try {
 
   await menuAction(sideId, "Minimize document");
   await menuAction(nestedId, "Minimize document");
-  assert.deepEqual(restoreButtons(mainId).map((button) => button.getAttribute("aria-label")), ["Open side document: Side research"]);
-  assert.equal(container.querySelector('.document-side-restore[aria-label="Open side document: Nested research"]'), null, "A hidden parent's child icon does not leak into its grandparent.");
+  assert.deepEqual(restoreButtons(mainId).map((button) => button.getAttribute("aria-label")), ["Open side document: Side research", "Open side document: Nested research"]);
+  assert.equal(container.querySelector('.document-side-restore[aria-label="Open side document: Nested research"]').dataset.minimizedNodeParent, sideId,
+    "A hidden parent's child stays on its parent's branch, never directly under its grandparent.");
   await menuAction(siblingId, "Minimize document");
   const nestedNode = pane(mainId).querySelector('.minimized-child-node[aria-label="Open side document: Nested research"]');
   assert(nestedNode, "With every child minimized, a minimized child's own children branch off its node, as in Map view.");
