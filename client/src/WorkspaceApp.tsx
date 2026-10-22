@@ -796,6 +796,7 @@ function WorkspaceAppContent({
   const [selectionModelOpen, setSelectionModelOpen] = useState(false);
   const [selectionLinkError, setSelectionLinkError] = useState<string | null>(null);
   const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<{ message: string; kind: "info" | "success" | "error" } | null>(null);
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
   const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
@@ -3476,6 +3477,17 @@ function WorkspaceAppContent({
     focusNewDocumentEditor(handleCreateNote({ conversationId: activeConversation.id, content: "", sourceMessageId: null }));
   }
 
+  /** Files picked from the + menu join the vault; one document opens right away. */
+  function handleCreateMenuUpload(files: File[]) {
+    setUploadNotice({ message: files.length === 1 ? `Adding “${files[0]!.name}”…` : `Adding ${files.length} files…`, kind: "info" });
+    vault.uploadFiles(files).then(({ added, documentIds, summary }) => {
+      setUploadNotice({ message: summary || "Nothing was added.", kind: added.length ? "success" : "error" });
+      if (documentIds.length === 1) handleSelectConversation(documentIds[0]!, { nextViewMode: "chat" });
+    }, (failure: unknown) => {
+      setUploadNotice({ message: failure instanceof Error ? failure.message : "Those files couldn’t be added. Try again.", kind: "error" });
+    });
+  }
+
   function closeSelectionDraft() {
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
@@ -5148,6 +5160,8 @@ function WorkspaceAppContent({
           <OnlyCopyPrompt reminder={vault.onlyCopyReminder} folderSupported={vault.localDirectoryStatus.supported}
             onDownload={vault.download} onChooseFolder={vault.chooseDirectory} onLater={vault.snoozeOnlyCopyReminder} />
           <VaultFileDrop vault={vault} />
+          <NotificationToast message={uploadNotice?.message ?? null} kind={uploadNotice?.kind}
+            duration={uploadNotice?.kind === "info" ? 120000 : 10000} onDismiss={() => setUploadNotice(null)} />
           <NotificationToast
             message={vault.message}
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
@@ -5533,7 +5547,8 @@ function WorkspaceAppContent({
           ) : null}
 
           {createSlot && mainViewMode === "chat" && !leftSidebarOpen ? <MobileCreateMenu slot={createSlot} prepare={prepareCreateMenu}
-            onNewDocument={handleCreateMainConversation} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote} /> : null}
+            onNewDocument={handleCreateMainConversation} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote}
+            onUpload={handleCreateMenuUpload} /> : null}
           {!isTileView && caretMenu && !selectionDraft ? <CaretActions menu={caretMenu} mobile={mobileKeyboard.mobile} onClose={closeCaretMenu}
             onNote={() => handleCreateSelectionNote(caretMenu.paragraph)}
             onSideDocument={() => handleCreateSelectionSideDocument(caretMenu.paragraph)}
