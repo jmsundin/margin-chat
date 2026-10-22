@@ -23,3 +23,16 @@ test("document AI frames the complete current text and selected passage without 
   expect(prompt).toEqual(original);
   expect(conversation.messages).toHaveLength(1);
 });
+
+test("a Mermaid diagram the reply replaces asks for the whole updated diagram as one fence", () => {
+  const conversation = createMainConversation({ id: "diagram", createdAt: "2026-10-22T00:00:00.000Z" });
+  const diagram = "```mermaid\nflowchart TD\n  A --> B\n```";
+  conversation.document = { schemaVersion: 1, prompts: [], generations: [], blocks: [{ id: "d", kind: "markdown", content: diagram, createdAt: conversation.createdAt, updatedAt: conversation.createdAt }] };
+  const prompt: Message = { id: "prompt", role: "user", content: "Add a step after A.", createdAt: conversation.createdAt };
+  const replacing = buildDocumentAIMessage(conversation, prompt, diagram, { replaceSelection: true }).content;
+  expect(replacing).toContain("The selected passage is a Mermaid diagram, and your reply replaces it.");
+  expect(JSON.parse(replacing.split("\n\n")[2]).selectedPassage).toBe(diagram);
+  // Asking about a diagram without replacing it, or replacing ordinary text, keeps the usual framing.
+  expect(buildDocumentAIMessage(conversation, prompt, diagram).content).not.toContain("Mermaid");
+  expect(buildDocumentAIMessage(conversation, prompt, "plain text", { replaceSelection: true }).content).not.toContain("Mermaid");
+});

@@ -14,7 +14,8 @@ type MobileSelectionActionsProps = {
   rect: SelectionRect;
   formRef: RefObject<HTMLFormElement | null>;
   onExplain: () => void;
-  onRewrite: () => void;
+  /** Left out where rewriting would break the passage, such as a diagram. */
+  onRewrite?: () => void;
   onAsk: () => void;
   /** Create a side document or margin note on the passage directly, without AI. */
   onSideDocument: () => void;
@@ -139,7 +140,7 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
       {item("select", "Select all", () => selectAllAround())}
       {item("find", "Find related", onFindRelated)}
       {item("explain", "Explain", onExplain, { ai: true, disabled })}
-      {item("rewrite", "Rewrite", onRewrite, { ai: true, disabled })}
+      {onRewrite ? item("rewrite", "Rewrite", onRewrite, { ai: true, disabled }) : null}
       <button type="button" aria-label="Dismiss selection actions" onClick={onClose}>
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8" /></svg><span>Close</span>
       </button>

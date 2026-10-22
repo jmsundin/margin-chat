@@ -12,7 +12,7 @@ import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { getMarkdownBackspaceEdit, getMarkdownEnterEdit } from "../lib/markdownEditing";
 import { formatDocumentDateTime } from "../lib/documentDateTime";
 import { drawingMarkdown, EMPTY_DRAWING, isDrawingMarkdown, readDrawing } from "../lib/documentDrawing";
-import { findMermaidFences, replaceMermaidFence } from "../lib/mermaidDiagrams";
+import { findMermaidFences, MERMAID_BLOCK_SELECTOR, replaceMermaidFence } from "../lib/mermaidDiagrams";
 import { freshDocumentBlockId, isDraftBlockId, reconcileDocumentBlocks, sameBlockList } from "../lib/continuousDocument";
 import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
@@ -380,6 +380,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const suppressSpace = useRef(false);
   const literalSpace = useRef(false);
   const previewSelection = useRef(false);
+  // A diagram tapped in a rendered preview is selected whole, for the selection menu and Ask AI.
+  const diagramSelection = useRef<{ diagram: HTMLElement; preview: HTMLElement } | null>(null);
   // The Ask AI button under the caret; it steps aside while you type.
   const [askButton, setAskButton] = useState<{ top: number; left: number } | null>(null);
   const typing = useRef(false);
@@ -509,6 +511,10 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
         // Typing into the Ask AI popup moves focus out of the document; the passage stays selected for it.
         const active = document.activeElement;
         if (active && active !== document.body && !root.contains(active) && !(range && root.contains(range.startContainer))) return;
+        // A selected diagram has no text selection of its own; it stays selected until focus moves elsewhere.
+        const diagram = diagramSelection.current;
+        if (diagram && (!range || range.collapsed) && (!active || active === document.body || diagram.preview.contains(active))) return;
+        clearDiagramSelection();
         previewSelection.current = false;
         if (view.state.selection.main.empty) current.onSelectionChange(null);
       }
@@ -526,6 +532,32 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const rect = range.getBoundingClientRect();
     current.onSelectionChange({ conversationId: current.conversationId, messageId: blockById.get(id)?.sourceMessageId ?? `document:${id}`, sourceBlockId: id,
       startOffset: span.from, endOffset: span.to, quote: markdown.slice(span.from, span.to), rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
+  }
+
+  /** Selects the whole Mermaid fence behind a tapped diagram, so the selection menu and Ask AI work on it. */
+  function selectDiagram(id: string, diagram: HTMLElement, preview: HTMLElement) {
+    const current = latest.current;
+    const view = viewRef.current;
+    if (!current.onSelectionChange || !view) return false;
+    const live = stateOf(view);
+    const block = live.layout.find((item) => item.id === id);
+    if (!block || isDraftBlockId(id) || live.locked.has(id)) return false;
+    const markdown = view.state.doc.sliceString(block.from, block.to);
+    const fence = findMermaidFences(markdown)[[...preview.querySelectorAll(MERMAID_BLOCK_SELECTOR)].indexOf(diagram)];
+    if (!fence) return false;
+    clearDiagramSelection();
+    diagram.classList.add("is-diagram-selected");
+    diagramSelection.current = { diagram, preview };
+    previewSelection.current = true;
+    window.getSelection()?.removeAllRanges();
+    const rect = diagram.getBoundingClientRect();
+    current.onSelectionChange({ conversationId: current.conversationId, messageId: blockById.get(id)?.sourceMessageId ?? `document:${id}`, sourceBlockId: id,
+      startOffset: fence.start, endOffset: fence.end, quote: markdown.slice(fence.start, fence.end), rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } });
+    return true;
+  }
+  function clearDiagramSelection() {
+    diagramSelection.current?.diagram.classList.remove("is-diagram-selected");
+    diagramSelection.current = null;
   }
 
   function invoke(view: EditorView, spaces = 0, blockId?: string) {
@@ -831,13 +863,27 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu });
-  handlers.current = { commit, notifySelection, notifyPreviewSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu };
+  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu });
+  handlers.current = { commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu };
   useEffect(() => {
     let frame = 0;
     const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
     document.addEventListener("selectionchange", changed);
-    return () => { document.removeEventListener("selectionchange", changed); window.cancelAnimationFrame(frame); };
+    // The selection menu closes on its own (its close button, Escape, sending a prompt); the diagram's outline goes with it.
+    let outlineFrame = 0;
+    const syncOutline = (event: Event) => {
+      if (!diagramSelection.current || (event.target instanceof Node && diagramSelection.current.preview.contains(event.target))) return;
+      window.cancelAnimationFrame(outlineFrame);
+      outlineFrame = window.requestAnimationFrame(() => {
+        if (!document.querySelector('[data-testid="branch-composer"]')) { handlers.current.clearDiagramSelection(); previewSelection.current = false; }
+      });
+    };
+    document.addEventListener("click", syncOutline, true);
+    document.addEventListener("keyup", syncOutline, true);
+    return () => {
+      document.removeEventListener("selectionchange", changed); window.cancelAnimationFrame(frame);
+      document.removeEventListener("click", syncOutline, true); document.removeEventListener("keyup", syncOutline, true); window.cancelAnimationFrame(outlineFrame);
+    };
   }, []);
   mobileRef.current = mobileKeyboard.mobile;
   const compartments = useMemo(() => ({ editable: new Compartment(), attributes: new Compartment(), history: new Compartment() }), []);
@@ -1210,7 +1256,22 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     }
     const diagrams = readOnly ? [] : findMermaidFences(block.content);
     // The preview takes focus itself, so the editor doesn't put its own selection back over text selected here.
-    return createPortal(<div className="live-document-preview" tabIndex={-1} onClick={(event) => {
+    const diagramAt = (target: EventTarget) => target instanceof Element && !target.closest("a, button") ? target.closest<HTMLElement>(MERMAID_BLOCK_SELECTOR) : null;
+    return createPortal(<div className="live-document-preview" tabIndex={-1} onClickCapture={(event) => {
+      // A click on a diagram selects it for the selection menu (Ask AI changes it in place) instead of opening the viewer.
+      // A double-click edits its Mermaid text.
+      const diagram = !readOnly && mode === "live" ? diagramAt(event.target) : null;
+      if (!diagram) return;
+      event.stopPropagation();
+      event.preventDefault();
+      if (event.detail > 1) { clearDiagramSelection(); latest.current.onSelectionChange?.(null); editBlock(id); return; }
+      selectDiagram(id, diagram, event.currentTarget);
+    }} onKeyDown={(event) => {
+      if (event.key !== "Escape" || !diagramSelection.current || !event.currentTarget.contains(diagramSelection.current.diagram)) return;
+      clearDiagramSelection();
+      previewSelection.current = false;
+      latest.current.onSelectionChange?.(null);
+    }} onClick={(event) => {
       if (!window.getSelection()?.isCollapsed || (event.target instanceof Element && event.target.closest("a, button, input, summary, [data-annotation-branches]"))) return;
       editBlock(id);
     }}>

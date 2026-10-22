@@ -119,7 +119,8 @@ export function insertDocumentBlock(conversation: Conversation, block: DocumentB
       const prefix = { ...target, content: target.content.slice(0, location.offset), updatedAt };
       const suffixContent = target.content.slice(end);
       split = suffixContent ? { ...target, id: uniqueBlockId(`split:${target.id.slice(0, 100)}:after:${block.id.slice(0, 100)}`, [...blocks, block]), content: suffixContent, updatedAt } : undefined;
-      blocks.splice(index, 1, prefix, block, ...(split ? [split] : []));
+      // A whole block replaced leaves no empty line behind; undo puts its text back in a new block.
+      blocks.splice(index, 1, ...(prefix.content ? [prefix] : []), block, ...(split ? [split] : []));
     }
   } else blocks.push(block);
   const generations = split?.generationId ? document.generations.map((generation) => generation.id === split!.generationId

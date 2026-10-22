@@ -88,6 +88,15 @@ function selectionReplacement(): Conversation {
 }
 
 describe("selection replacement undo", () => {
+  test("replacing a whole block, such as a diagram, leaves no empty line, and undo brings the text back", () => {
+    let conversation = updateDocumentBlock(fixture(), "message:original", "Whole block", later);
+    conversation = candidate(conversation, "whole", "New block");
+    const replaced = insertDocumentGeneration(conversation, "whole", { blockId: "message:original", offset: 0, replaceTo: 11 }, later);
+    expect(replaced.document!.blocks.map((value) => value.content)).toEqual(["New block"]);
+    const undone = undoDocumentInsertion(replaced, "whole", later);
+    expect(undone.document!.blocks.map((value) => value.content)).toEqual(["Whole block"]);
+  });
+
   test("restores the selected text at a rebased point after unrelated prefix editing", () => {
     const replaced = selectionReplacement();
     const edited = updateDocumentBlock(replaced, "message:original", "New Before ", later);
