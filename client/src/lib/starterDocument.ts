@@ -53,6 +53,7 @@ const sections = [
   "### Video\n\nPaste a YouTube or Vimeo link on its own line. Times listed under it jump the video there.\n\n![But what is a neural network?](https://www.youtube.com/watch?v=aircAruvnKk)\n- 0:00 Start\n- 3:00 Neurons and layers",
   "### Files\n\nDrag PDFs, images and other files into the sidebar. A PDF opens as a document you can highlight and take notes on, and AI can read it.",
   "## Bring in what you already have\n\nHave chats in ChatGPT? Choose **Bring your chat history** from the ⋯ menu at the top of the sidebar. Want to see this again? **Take the tour** is in the same menu.",
+  "## Turning on AI\n\nEverything above works without AI. For ✦ Ask AI and Agent mode, paste your own key from OpenAI, Anthropic, Google or another provider under **Settings → AI & privacy** (they bill you directly), or add credit or the Plus plan under **Settings → Billing**.",
 ];
 
 function block(id: string, index: number, content: string, at: string): DocumentBlock {
