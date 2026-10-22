@@ -179,7 +179,7 @@ try {
   assert.equal(focusedCrumbLabel(), "Main research");
   assert.equal(element('[aria-label="New side document"]').closest(".document-tabs")?.closest(".document-workspace-toolbar"), element(".document-workspace-toolbar"),
     "New side document sits in the toolbar's document tabs.");
-  assert.equal(element(".session-switcher").nextElementSibling, element(".document-tabs-container"), "The session switcher sits at the top left, before the document tabs.");
+  assert.equal(element(".session-chips").nextElementSibling, element(".document-tabs-container"), "The session chips sit at the top left, before the document tabs.");
   assert.equal(container.querySelector('.thread-sidebar [aria-label="New side document"]'), null);
   const initialEditor = editor(mainId);
   const contentBeforeSidebarShortcuts = structuredClone(latest.conversations[mainId].document);
@@ -290,10 +290,9 @@ try {
   assert.equal(viewsTrigger.closest(".document-workspace-toolbar"), toolbar);
   assert.equal(element('[aria-label="New side document"]').closest(".document-workspace-toolbar"), toolbar, "Document actions and the hierarchy control share one toolbar.");
   assert.equal(element('[role="tablist"][aria-label="Document tabs"]').closest(".document-workspace-toolbar"), toolbar, "Document tabs share the toolbar.");
-  assert.deepEqual([...container.querySelectorAll("[data-document-tab-id]")].map((tab: any) => tab.dataset.documentTabId), panes(),
-    "The main document and its side documents each have a tab, in pane order.");
-  assert.equal(element(`[data-document-tab-id="${mainId}"] [role="tab"]`).getAttribute("aria-selected"), "false");
-  assert.equal(element(`[data-document-tab-id="${nestedId}"] [role="tab"]`).getAttribute("aria-selected"), "true");
+  assert.deepEqual([...container.querySelectorAll("[data-document-tab-id]")].map((tab: any) => tab.dataset.documentTabId), [mainId],
+    "Only the main document has a tab; its side documents sit under it in the path.");
+  assert.equal(element(`[data-document-tab-id="${mainId}"] [role="tab"]`).getAttribute("aria-selected"), "true", "A focused side document selects its main document's tab.");
   assert.equal(container.querySelector('[aria-label="Conversation hierarchy"]'), null, "The hierarchy no longer consumes a separate navigation row.");
   assert.equal(container.querySelector(".document-context-header"), null, "Side documents no longer repeat their parent context above the content.");
   await click(element('[aria-label="Document views"]'));

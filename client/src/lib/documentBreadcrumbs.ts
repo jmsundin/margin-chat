@@ -3,35 +3,22 @@ import { getDocumentWorkspace } from "./documentWorkspace";
 
 export type DocumentKind = "main" | "side" | "branch" | "note";
 
-/** Side documents (created with + and not anchored to a passage) sit beside the document they came from. */
-export function isPeerDocument(document: Conversation | undefined): boolean {
-  return Boolean(document?.parentId && !document.branchAnchor && !document.document?.marginNote);
-}
-
 export function getDocumentKind(document: Conversation): DocumentKind {
   if (document.document?.marginNote) return "note";
   if (!document.parentId) return "main";
   return document.branchAnchor ? "branch" : "side";
 }
 
-/** Branches and margin notes belong under their source; side documents share their source's level. */
+/** Every child, side documents included, sits under the document it came from; only main documents get tabs. */
 export function getPresentedParentId(conversations: Record<string, Conversation>, id: string): string | null {
-  const visited = new Set<string>();
-  let current: Conversation | undefined = conversations[id];
-  while (current && !visited.has(current.id)) {
-    visited.add(current.id);
-    const parent: Conversation | undefined = current.parentId ? conversations[current.parentId] : undefined;
-    if (!parent) return null;
-    if (!isPeerDocument(current)) return parent.id;
-    current = parent;
-  }
-  return null;
+  const parentId = conversations[id]?.parentId;
+  return parentId && conversations[parentId] ? parentId : null;
 }
 
 export interface DocumentBreadcrumbLevel {
   /** The document on the focused path at this level. */
   document: Conversation;
-  /** The document this level is listed under; null for the main document and its side documents. */
+  /** The document this level is listed under; null for the main document. */
   parent: Conversation | null;
   /** Every document at this level, in the family's tab order. */
   options: Conversation[];

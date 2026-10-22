@@ -3,7 +3,7 @@ import { createMarginDocument } from "@margin-chat/workspace-contracts";
 import { createEmptyState, createMainConversation, createSideConversation } from "../client/src/initialState";
 import { addChildConversation, addRootConversation } from "../client/src/lib/workspaceCommands";
 import { closeDocument, focusDocument, getDocumentWorkspace, minimizeDocument, openDocumentBeside, replaceDocument, showDocument } from "../client/src/lib/documentWorkspace";
-import { getDocumentBackTarget, getDocumentBreadcrumbs, getDocumentKind, getPresentedParentId, isPeerDocument, recordDocumentNavigation, takeDocumentBack } from "../client/src/lib/documentBreadcrumbs";
+import { getDocumentBackTarget, getDocumentBreadcrumbs, getDocumentKind, getPresentedParentId, recordDocumentNavigation, takeDocumentBack } from "../client/src/lib/documentBreadcrumbs";
 import type { AppState, Conversation } from "../client/src/types";
 
 function branch(child: Conversation): Conversation {
@@ -29,34 +29,32 @@ const ids = (documents: Conversation[]) => documents.map((document) => document.
 const visible = (state: AppState, id: string) => ids(getDocumentWorkspace(state.conversations, id).visibleDocuments);
 
 describe("breadcrumb levels", () => {
-  test("side documents are peers of their source; branches and margin notes are its children", () => {
+  test("every child, side documents included, sits under the document it came from", () => {
     const { state: { conversations }, mainId } = fixture();
-    expect(["interviews", "field", "roofs-notes"].map((id) => isPeerDocument(conversations[id]))).toEqual([true, true, true]);
-    expect([mainId, "roofs", "followup", "check"].map((id) => isPeerDocument(conversations[id]))).toEqual([false, false, false, false]);
     expect(Object.fromEntries([mainId, "interviews", "field", "roofs", "roofs-notes", "followup", "check"]
       .map((id) => [id, getPresentedParentId(conversations, id)]))).toEqual({
-      [mainId]: null, interviews: null, field: null, roofs: mainId, "roofs-notes": mainId, followup: "interviews", check: mainId,
+      [mainId]: null, interviews: mainId, field: "interviews", roofs: mainId, "roofs-notes": "roofs", followup: "interviews", check: mainId,
     });
     expect([mainId, "interviews", "roofs", "check"].map((id) => getDocumentKind(conversations[id]))).toEqual(["main", "side", "branch", "note"]);
-    expect(conversations.interviews.parentId).toBe(mainId);
   });
 
   test("each level lists the documents that share it, in tab order, and the last crumb lists children", () => {
     const { state: { conversations }, mainId } = fixture();
     const main = getDocumentBreadcrumbs(conversations, mainId);
     expect(main.levels.map((level) => [level.document.id, level.parent?.id ?? null, ids(level.options)])).toEqual([
-      [mainId, null, [mainId, "interviews", "field"]],
+      [mainId, null, [mainId]],
     ]);
-    expect(ids(main.children)).toEqual(["check", "roofs", "roofs-notes"]);
+    expect(ids(main.children)).toEqual(["check", "roofs", "interviews"]);
     const deep = getDocumentBreadcrumbs(conversations, "roofs-notes");
     expect(deep.levels.map((level) => [level.document.id, ids(level.options)])).toEqual([
-      [mainId, [mainId, "interviews", "field"]],
-      ["roofs-notes", ["check", "roofs", "roofs-notes"]],
+      [mainId, [mainId]],
+      ["roofs", ["check", "roofs", "interviews"]],
+      ["roofs-notes", ["roofs-notes"]],
     ]);
     expect(deep.children).toEqual([]);
     const followup = getDocumentBreadcrumbs(conversations, "followup");
-    expect(followup.levels.map((level) => level.document.id)).toEqual(["interviews", "followup"]);
-    expect(ids(followup.levels[1].options)).toEqual(["followup"]);
+    expect(followup.levels.map((level) => level.document.id)).toEqual([mainId, "interviews", "followup"]);
+    expect(ids(followup.levels[2].options)).toEqual(["followup", "field"]);
     expect(ids(getDocumentBreadcrumbs(conversations, "unrelated").levels[0].options)).toEqual(["unrelated"]);
     expect(getDocumentBreadcrumbs(conversations, "missing")).toMatchObject({ levels: [], children: [] });
   });

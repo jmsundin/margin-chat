@@ -20,6 +20,8 @@ interface Props {
   onOpenBeside: (id: string) => void;
   /** Controls at the bar's far end, such as how documents around this one are shown. */
   trailing?: ReactNode;
+  /** Plain links with no level menus, for the phone header's drop-down. */
+  plain?: boolean;
 }
 
 const KIND_LABELS: Record<DocumentKind, string> = {
@@ -47,7 +49,7 @@ function titleOf(document: Conversation) {
 }
 
 /** One breadcrumb follows the focused document; each level lists its peers to expand here or open beside. */
-export default function DocumentBreadcrumbs({ conversations, focusedId, onScreenIds, minimizedIds, streamingIds, backTitle, onBack, onExpand, onOpenBeside, trailing }: Props) {
+export default function DocumentBreadcrumbs({ conversations, focusedId, onScreenIds, minimizedIds, streamingIds, backTitle, onBack, onExpand, onOpenBeside, trailing, plain = false }: Props) {
   const { levels, children, childrenByParent } = useMemo(() => getDocumentBreadcrumbs(conversations, focusedId), [conversations, focusedId]);
   const focused = conversations[focusedId];
   const crumbs = [
@@ -186,6 +188,30 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
     const next = event.key === "Home" ? 0 : event.key === "End" ? titles.length - 1
       : (index + (event.key === "ArrowDown" ? 1 : titles.length - 1)) % titles.length;
     titles[next]?.focus(); titles[next]?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  if (plain) {
+    const link = (document: Conversation) => {
+      const current = document.id === focusedId;
+      return <button type="button" className="document-breadcrumb-link" data-breadcrumb-document-id={document.id} aria-current={current ? "page" : undefined}
+        disabled={current} onClick={() => onExpand(document.id)}>
+        <Icon name={getDocumentKind(document)} className="document-breadcrumb-icon" />
+        <span className="document-breadcrumb-label">{titleOf(document)}</span>
+        {streamingIds.has(document.id) ? <span className="document-breadcrumb-streaming" title="AI writing">
+          <span className="thread-streaming-dot" aria-hidden="true" /></span> : null}
+      </button>;
+    };
+    return <nav className="document-breadcrumbs is-plain" aria-label="Focused document path">
+      <ol className="document-breadcrumbs-list">
+        {levels.map((level, index) => <li key={level.document.id} className="document-breadcrumb">
+          {index ? <span className="document-breadcrumb-separator" aria-hidden="true">›</span> : null}
+          {link(level.document)}
+        </li>)}
+      </ol>
+      {focused && children.length ? <ul className="document-breadcrumbs-children" aria-label={`Inside ${titleOf(focused)}`}>
+        {children.map((child) => <li key={child.id}>{link(child)}</li>)}
+      </ul> : null}
+    </nav>;
   }
 
   const detailDocument = detail ? conversations[detail.id] : undefined;

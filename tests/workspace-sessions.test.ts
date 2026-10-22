@@ -149,8 +149,8 @@ describe("document neighbours", () => {
     state.conversations[rootId] = { ...state.conversations[rootId], linkedConversationIds: ["taxes"] };
     const atRoot = getDocumentNeighbors(state.conversations, rootId, [])!;
     expect(atRoot.parent).toBeNull();
-    expect(atRoot.siblings.map((document) => document.id)).toEqual([rootId, "guards"]);
-    expect(atRoot.children.map((document) => document.id).sort()).toEqual(["canmatch", "urltree"]);
+    expect(atRoot.siblings.map((document) => document.id)).toEqual([rootId]);
+    expect(atRoot.children.map((document) => document.id).sort()).toEqual(["canmatch", "guards", "urltree"]);
     expect(atRoot.linked.map((document) => document.id)).toEqual(["taxes"]);
     const atChild = getDocumentNeighbors(state.conversations, "urltree", [{ id: "e", sourceId: "system", targetId: "urltree", type: null, kind: "mention", directed: true }])!;
     expect(atChild.parent?.id).toBe(rootId);

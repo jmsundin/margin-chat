@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Conversation, WorkspaceSession } from "../types";
 import { formatRelativeTime } from "../lib/conversationSearch";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
@@ -32,78 +32,35 @@ function RenameInput({ initial, label, onDone }: { initial: string; label: strin
     }} />;
 }
 
-interface SwitcherProps {
+interface ChipsProps {
   /** Every session, sorted like the sidebar's documents. */
   sessions: WorkspaceSession[];
   activeId: string | null;
-  /** Phones get a bottom sheet instead of a dropdown. */
-  compact: boolean;
   onSelect: (id: string) => void;
   onNew: () => void;
   /** Opens the left panel's Sessions view, where sessions are renamed and deleted. */
   onManage?: () => void;
+  /** Most chips to show; the active session always gets one. */
+  limit?: number;
 }
 
-function ChevronIcon() {
-  return <svg className="session-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4" /></svg>;
-}
-
-/**
- * The session switcher at the top left of Document view: the active session's
- * name, and a list to pick up another one where it was left, like tmux sessions.
- */
-export function SessionSwitcher({ sessions, activeId, compact, onSelect, onNew, onManage }: SwitcherProps) {
-  const [open, setOpen] = useState(false);
-  const popup = useRef<HTMLDivElement>(null);
-  const trigger = useRef<HTMLButtonElement>(null);
-  useOutsideDismiss(open, () => setOpen(false), popup, trigger);
+/** Sessions as a row of chips: one tap switches, with no menu to open first. */
+export function SessionChips({ sessions, activeId, onSelect, onNew, onManage, limit = Infinity }: ChipsProps) {
+  const others = sessions.filter((session) => session.id !== activeId);
   const active = sessions.find((session) => session.id === activeId);
-  useEffect(() => {
-    if (!open) return;
-    (popup.current?.querySelector<HTMLButtonElement>("[aria-current='true']") ?? popup.current?.querySelector<HTMLButtonElement>("button"))?.focus();
-  }, [open]);
-
-  function close(refocus: boolean) {
-    setOpen(false);
-    if (refocus) trigger.current?.focus();
-  }
-  function choose(action: () => void) {
-    setOpen(false);
-    action();
-  }
-  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (event.key === "Escape") { event.preventDefault(); close(true); return; }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    const buttons = [...popup.current?.querySelectorAll<HTMLButtonElement>("button") ?? []];
-    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    event.preventDefault();
-    buttons[(index + (event.key === "ArrowDown" ? 1 : buttons.length - 1)) % buttons.length]?.focus();
-  }
-
-  return <div className={`session-switcher${compact ? " is-compact" : ""}`}>
-    <button ref={trigger} type="button" className="session-switcher-trigger" aria-haspopup="dialog" aria-expanded={open}
-      aria-label={`Session: ${active?.name ?? "none"}. Switch session`}
-      title={active ? `${active.name} · ${countLabel(active.documentIds.length)} · switch session` : "Switch session"}
-      onClick={() => setOpen((value) => !value)}>
-      <span className="session-dot" style={{ background: active?.color }} aria-hidden="true" />
-      <span className="session-switcher-name">{active?.name ?? "Sessions"}</span>
-      <ChevronIcon />
-    </button>
-    {open ? <div ref={popup} className={compact ? "session-sheet" : "session-popover"} role="dialog" aria-label="Sessions" onKeyDown={handleKeyDown}>
-      {compact ? <div className="session-sheet-handle" aria-hidden="true" /> : null}
-      <div className="session-sheet-heading">Sessions</div>
-      <div className="session-sheet-list">
-        {sessions.map((session) => <button key={session.id} type="button" className="session-sheet-row"
-          aria-current={session.id === activeId ? "true" : undefined}
-          onClick={() => choose(() => onSelect(session.id))}>
-          <span className="session-dot" style={{ background: session.color }} aria-hidden="true" />
-          <span className="session-sheet-name">{session.name}</span>
-          <span className="session-meta">{countLabel(session.documentIds.length)}</span>
-        </button>)}
-      </div>
-      <button type="button" className="session-sheet-row is-new" onClick={() => choose(onNew)}><PlusIcon />New session</button>
-      {onManage ? <button type="button" className="session-sheet-row is-manage" onClick={() => choose(onManage)}>Manage sessions…</button> : null}
-    </div> : null}
+  const shown = active ? [active, ...others.slice(0, Math.max(0, limit - 1))] : others.slice(0, limit);
+  const hidden = sessions.length - shown.length;
+  const row = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (row.current) row.current.scrollLeft = 0; }, [activeId]);
+  return <div ref={row} className="session-chips" role="group" aria-label="Sessions">
+    {shown.map((session) => <button key={session.id} type="button" className="session-chip"
+      aria-pressed={session.id === activeId} title={`${session.name} · ${countLabel(session.documentIds.length)}`}
+      onClick={() => { if (session.id !== activeId) onSelect(session.id); }}>
+      <span className="session-dot" style={{ background: session.color }} aria-hidden="true" />
+      <span className="session-chip-name">{session.name}</span>
+    </button>)}
+    <button type="button" className="session-chip is-new" aria-label="New session" title="New session" onClick={onNew}><PlusIcon /><span className="session-chip-name">New</span></button>
+    {onManage && hidden > 0 ? <button type="button" className="session-chip is-more" title="All sessions" onClick={onManage}>{hidden} more</button> : null}
   </div>;
 }
 

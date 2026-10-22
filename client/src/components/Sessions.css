@@ -2,30 +2,19 @@
 .session-dot { flex: none; width: 9px; height: 9px; border-radius: 99px; background: var(--accent); }
 .session-meta { flex: none; margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; white-space: nowrap; }
 
-.session-switcher button:focus-visible, .sessions-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sessions-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .session-rename-input { flex: 1; min-width: 80px; height: 26px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel, var(--bg)); color: var(--ink); font: inherit; font-size: 13px; }
 
-/* Switcher at the top left of Document view */
-.session-switcher { position: relative; display: flex; flex: 0 1 auto; min-width: 0; align-items: center; }
-.session-switcher-trigger { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 220px; height: 32px; padding: 0 8px 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--button-surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
-.session-switcher-trigger:hover, .session-switcher-trigger[aria-expanded="true"] { border-color: var(--line-strong); background: var(--button-active-surface, var(--button-surface)); }
-.session-switcher-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.session-switcher.is-compact { max-width: 34vw; }
-.session-switcher.is-compact .session-switcher-trigger { max-width: 100%; height: 36px; gap: 6px; padding: 0 6px 0 9px; font-size: 14px; }
-.session-popover { position: absolute; top: calc(100% + 6px); left: 0; z-index: 400; display: flex; flex-direction: column; gap: 1px; width: 300px; max-height: min(420px, 70vh); padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 10px 30px #0003; }
-.session-popover .session-sheet-heading { padding: 4px 8px 6px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
-.session-popover .session-sheet-row { min-height: 34px; padding: 0 8px; gap: 8px; border-radius: 7px; font-size: 13px; cursor: pointer; }
-.session-popover .session-sheet-row:hover { background: var(--button-surface); }
-.session-popover .session-sheet-row.is-new { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 7px 7px; }
-.session-sheet { position: fixed; right: 0; bottom: 0; left: 0; z-index: 400; display: flex; flex-direction: column; gap: 2px; max-height: 70vh; padding: 10px 12px calc(20px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; background: var(--panel-strong); color: var(--ink); box-shadow: 0 -10px 30px #0003; }
-.session-sheet-handle { width: 40px; height: 4px; margin: 0 auto 10px; border-radius: 4px; background: var(--line-strong); }
-.session-sheet-heading { padding: 0 14px 6px; color: var(--muted); font-size: 13px; font-weight: 600; }
-.session-sheet-list { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; }
-.session-sheet-row { display: flex; align-items: center; gap: 12px; width: 100%; box-sizing: border-box; min-height: 52px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; text-align: left; }
-.session-sheet-row[aria-current="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); font-weight: 600; }
-.session-sheet-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.session-sheet-row.is-new { color: var(--accent); font-weight: 600; }
-.session-sheet-row.is-manage { color: var(--muted); }
+/* Session chips: the header's session row, one tap per session */
+.session-chips { display: flex; flex: 0 1 auto; align-items: center; gap: 6px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.session-chips::-webkit-scrollbar { display: none; }
+.session-chip { display: flex; flex: none; align-items: center; gap: 6px; max-width: 180px; height: 28px; padding: 0 10px; border: 1px solid var(--line); border-radius: 99px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.session-chip:hover { border-color: var(--line-strong); background: var(--button-surface); }
+.session-chip[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); font-weight: 600; cursor: default; }
+.session-chip-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.session-chip.is-new { color: var(--muted); }
+.session-chip.is-more { color: var(--muted); border-style: dashed; }
+.session-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Sessions panel */
 .sessions-panel { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 6px 4px 12px; }
