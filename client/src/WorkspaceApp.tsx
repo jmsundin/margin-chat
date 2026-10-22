@@ -110,6 +110,8 @@ import { ConversationGroupPickerContext } from "./components/ConversationGroupCo
 import MainChatTileView from "./components/MainChatTileView";
 import SettingsPage, { type SettingsSection } from "./components/SettingsPage";
 import ChatHistoryImport from "./components/ChatHistoryImport";
+import ViewIntro from "./components/ViewIntro";
+import { chatImportReminderDue, finishChatImportReminder } from "./lib/chatImportReminder";
 import CaptureInbox from "./components/CaptureInbox";
 import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
@@ -788,6 +790,11 @@ function WorkspaceAppContent({
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
   const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
+  const [chatImportReminder, setChatImportReminder] = useState(false);
+  // Days after the first visit, someone who never brought in old chats is offered it once.
+  useEffect(() => {
+    if (vault.ready && !inExtension && chatImportReminderDue(storageUserId)) setChatImportReminder(true);
+  }, [vault.ready, inExtension, storageUserId]);
   const [profileInitialTab, setProfileInitialTab] = useState<SettingsSection | null>(() => {
     const tab = new URLSearchParams(window.location.search).get("settings");
     return tab === "account" || tab === "billing" || tab === "api-keys" || tab === "agents" || tab === "appearance" || tab === "voice" || tab === "storage" ? tab : null;
@@ -1145,6 +1152,8 @@ function WorkspaceAppContent({
     if (jev.status !== "ready") return;
     setState((current) => applyJevGroupSuggestions(current, jev.categories, jev.groupSuggestions));
   }, [jev.status, jevCategoryKey, jevGroupSuggestionKey]);
+  // A vault this small belongs to someone new, so the views say what they are for.
+  const newVault = Object.keys(state.conversations).length <= 8;
   const threadSummaries = useMemo(
     () => applyJevCategories(buildThreadSummaries(state.conversations), jev.categories).map((thread) => ({
         ...thread,
@@ -5048,6 +5057,14 @@ function WorkspaceAppContent({
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />
           <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={120000} />
+          <NotificationToast
+            message={chatImportReminder ? "Have chats in ChatGPT? Bring them into Margin Chat to keep working on them here." : null}
+            duration={30000}
+            onDismiss={() => { finishChatImportReminder(storageUserId); setChatImportReminder(false); }}
+            action={{ label: "Bring your chat history", onClick: () => {
+              finishChatImportReminder(storageUserId); setChatImportReminder(false); setHistoryImportOpen(true);
+            } }}
+          />
           <FolderDeletionPrompt held={vault.heldFolderDeletion} onResolve={vault.resolveHeldFolderDeletion} />
           <OnlyCopyPrompt reminder={vault.onlyCopyReminder} folderSupported={vault.localDirectoryStatus.supported}
             onDownload={vault.download} onChooseFolder={vault.chooseDirectory} onLater={vault.snoozeOnlyCopyReminder} />
@@ -5107,6 +5124,7 @@ function WorkspaceAppContent({
                 onDuplicate={(sessionId) => setState((current) => duplicateSession(current, sessionId))}
                 onDelete={handleDeleteSession} onNew={(name) => handleCreateSession(name)}
                 onOpenDocument={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
+                showIntro={newVault}
                 onRemoveDocument={(sessionId, documentId) => setState((current) => removeDocumentFromSession(current, sessionId, documentId))} /> : undefined}
               sessionsRequest={sessionsRequest}
               documentSort={documentSort}
@@ -5184,19 +5202,17 @@ function WorkspaceAppContent({
                     : showMapModal ? "canvas-section has-map-modal" : "canvas-section"
               }
             >
-              {vault.ready && Object.values(state.conversations).every((chat) => !chat.messages.length && !chat.notes?.length && !chat.documents?.length && !chat.document?.blocks.some((block) => block.content.trim())) &&
-                <aside className="history-import-welcome">
-                  <div><strong>Start with your conversations</strong><p>Bring chats from ChatGPT and pick up where you left off.</p></div>
-                  <button type="button" className="thread-dialog-button" onClick={() => setHistoryImportOpen(true)}>Bring your chat history</button>
-                </aside>}
               {isTileView ? (
                 <div className="canvas-head">
                   <div className="canvas-view-intro">
-                    <p className="eyebrow">Main chats</p>
-                    <h2>Threads</h2>
+                    <p className="eyebrow">Tiles</p>
+                    <h2>Your documents</h2>
                     <p className="canvas-hint">
-                      Search or choose a thread to continue the conversation.
+                      Every main document as a card. Search, or open one to keep working.
                     </p>
+                    {newVault ? <ViewIntro id="tiles" className="is-tiles" title="What Tiles shows">
+                      Each main document gets a card here, with its side documents and notes counted on it. Make a group to keep a project&apos;s documents together.
+                    </ViewIntro> : null}
                   </div>
                   {renderRelatedItems()}
                 </div>
@@ -5218,6 +5234,9 @@ function WorkspaceAppContent({
                 modal={showMapModal ? { labelledBy: "document-map-modal-title", style: mapModalBounds ?? undefined } : undefined}>
                 {showMapModal ? <DocumentMapHeader open onToggle={() => setMapModalOpen(false)}
                   onOpenMap={() => handleSetMainViewMode("graph")} /> : null}
+                {isGraphView && newVault ? <ViewIntro id="map" className="is-map" title="What Map View shows">
+                  Every document is a dot. Side documents, margin notes and links you add become lines, so you can see how your ideas connect. Click a dot to open it.
+                </ViewIntro> : null}
                 <Suspense fallback={<div className="workspace-view-loading" role="status">Opening Map View…</div>}>
                   <KnowledgeGraphWorkspace
                     isVisible={isGraphView || showMapModal}
@@ -5647,7 +5666,11 @@ function WorkspaceAppContent({
 
           {historyImportOpen && <ChatHistoryImport
             existingIds={Object.keys(state.conversations)} cloudSyncEnabled={cloudSyncEnabled}
-            onImport={vault.importChatHistory} onUndo={vault.undoChatHistory}
+            onImport={async (chats) => {
+              const result = await vault.importChatHistory(chats);
+              finishChatImportReminder(storageUserId);
+              return result;
+            }} onUndo={vault.undoChatHistory}
             onOpenChat={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
             onClose={() => setHistoryImportOpen(false)}
           />}

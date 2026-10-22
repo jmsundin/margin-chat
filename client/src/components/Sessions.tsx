@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent }
 import type { Conversation, WorkspaceSession } from "../types";
 import { formatRelativeTime } from "../lib/conversationSearch";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
+import ViewIntro from "./ViewIntro";
 import "./Sessions.css";
 
 function countLabel(count: number) {
@@ -119,10 +120,12 @@ interface PanelProps {
   onNew: (name: string) => void;
   onOpenDocument: (id: string) => void;
   onRemoveDocument: (sessionId: string, documentId: string) => void;
+  /** Explain what a session is, for a nearly empty vault. */
+  showIntro?: boolean;
 }
 
 /** The left panel's Sessions view: every session, and the active one's documents. */
-export function SessionsPanel({ sessions, activeId, conversations, focusedDocumentId, onOpen, onRename, onDuplicate, onDelete, onNew, onOpenDocument, onRemoveDocument }: PanelProps) {
+export function SessionsPanel({ sessions, activeId, conversations, focusedDocumentId, onOpen, onRename, onDuplicate, onDelete, onNew, onOpenDocument, onRemoveDocument, showIntro = false }: PanelProps) {
   const [menuId, setMenuId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -158,6 +161,9 @@ export function SessionsPanel({ sessions, activeId, conversations, focusedDocume
   }
 
   return <div className="sessions-panel">
+    {showIntro ? <ViewIntro id="sessions" className="is-sessions" title="What sessions are">
+      A session is a set of documents you work on together, like a browser window with its tabs. Start one per project and switch back to pick up where you left off.
+    </ViewIntro> : null}
     <section aria-labelledby="sessions-all">
       <h3 id="sessions-all" className="sessions-heading">Sessions</h3>
       <ul className="sessions-list">{sessions.map(row)}</ul>
