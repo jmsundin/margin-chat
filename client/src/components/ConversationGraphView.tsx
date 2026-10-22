@@ -133,6 +133,8 @@ const EMPTY_EDGES: ReturnType<typeof getGraphAnalysisEdges> = [];
 const BUSY_LINK_COUNT = 80;
 /** Canvas names regions and well-linked documents once cards are narrower than this on screen. */
 const LANDMARK_CARD_WIDTH = 64;
+/** Narrower than this on screen, a zoomed-out Canvas card hides its title. */
+const CANVAS_TITLE_MIN_WIDTH = 56;
 const MINIMAP_STORAGE_KEY = "margin-map-minimap";
 const LINES_STORAGE_KEY = "margin-map-lines";
 /** How long the camera must rest before a long move goes into Back. */
@@ -207,7 +209,7 @@ export function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement
     // Titles stay at least 9px; a card too narrow to fit a few letters drops it.
     const titleFontSize = Math.max(9, Math.min(14, 20 * scale));
     return { width, height, titleFontSize,
-      titleLines: width < 56 ? 0 : Math.max(1, Math.min(3, Math.floor((height - 6) / (titleFontSize * 1.3)))) };
+      titleLines: width < CANVAS_TITLE_MIN_WIDTH ? 0 : Math.max(1, Math.min(3, Math.floor((height - 6) / (titleFontSize * 1.3)))) };
   }
   if (scale < 1.15 || detail === "reader") return undefined;
   // An explicitly opened preview keeps its reading space while the camera
@@ -729,7 +731,7 @@ function GraphNode({
       className={[
         "conversation-graph-node",
         screenFootprint && !dot ? "is-group-compact" : "",
-        screenFootprint?.titleLines === 0 ? "is-title-hidden" : "",
+        screenFootprint?.titleLines === 0 || dot?.titleMax === 0 ? "is-title-hidden" : "",
         isConnectionCenter ? "is-connection-center" : "",
         isSpaced ? "is-group-spread" : "",
         isSelected ? "is-selected" : "",
@@ -1230,8 +1232,8 @@ export default function ConversationGraphView({
   }, [completeScene, scope.kind, scopedIds, showBranches]);
   // The lens greys out documents outside it; they stay on the map for orientation.
   const lensIds = useMemo(() => unfocusedScene.nodes.map((node) => node.conversationId), [unfocusedScene.nodes]);
-  // Outside Canvas and Evidence, closed documents are circles sized by their connections, titled below.
-  const drawsDots = !isCanvasMode && viewMode !== "evidence";
+  // Outside Evidence, closed documents are circles sized by their connections, titled below.
+  const drawsDots = viewMode !== "evidence";
   const needsCounts = drawsDots || colorBy === "connections" || lens.filters.some((filter) => filter.kind === "connections");
   const needsEdges = needsCounts || lens.filters.some((filter) => filter.kind === "near");
   const analysisEdges = useMemo(() => needsEdges ? getGraphAnalysisEdges(conversations) : EMPTY_EDGES, [needsEdges, conversations]);
@@ -1637,14 +1639,17 @@ export default function ConversationGraphView({
         continue;
       }
       const connections = connectionCounts.get(placement.conversationId) ?? 0;
-      const diameter = mapDotDiameter(connections, maxConnections), bold = mapDotTitleIsBold(diameter);
+      // Zoomed-out Canvas shrinks its cards with the camera; circles shrink along, to half size.
+      const shrunk = screenFootprint && "titleLines" in screenFootprint ? screenFootprint : undefined;
+      const shrink = shrunk ? Math.min(1, Math.max(0.5, scale / 0.9)) : 1;
+      const diameter = Math.round(mapDotDiameter(connections, maxConnections) * shrink), bold = mapDotTitleIsBold(diameter);
       // Screen pixels per card pixel: footprint cards draw at screen size, others stay readable at any zoom.
       const k = screenFootprint ? 1 : readableNodeSize(scale) * scale;
       const x = placement.x + placement.width / 2, y = placement.y + placement.height / 2, radius = diameter / 2 * k / scale;
       dots.set(placement.conversationId, { diameter, bold, bounds: { x: x - radius, y: y - radius, width: radius * 2, height: radius * 2 } });
       cardScale.set(placement.conversationId, k);
       titles.push({ id: placement.conversationId, x: x * scale, y: y * scale, radius: diameter / 2 * k, gap: 5 * k,
-        titleWidth: measureMapDotTitle(conversation.title, bold) * k, titleHeight: 17 * k, priority: connections });
+        titleWidth: shrunk?.titleLines === 0 ? 0 : measureMapDotTitle(conversation.title, bold) * k, titleHeight: 17 * k, priority: connections });
     }
     for (const [id, width] of fitMapDotTitles(titles, obstacles)) dots.get(id)!.titleMax = Math.floor(width / cardScale.get(id)!);
     return dots;
@@ -3438,7 +3443,8 @@ export default function ConversationGraphView({
       const point = placementCenter(id);
       return point ? [{ id, x: viewport.x + point.x * viewport.scale, y: viewport.y + point.y * viewport.scale }] : [];
     }).slice(0, 400), viewportSize, { top: 52, right: 16, bottom: 64, left: 16 }, 120) : [];
-  const landmarks = mapOverlaysShown && landmarkPool.length && typicalCardWidth * viewport.scale < LANDMARK_CARD_WIDTH
+  // Circles keep their titles until they hide, so their signposts wait until then too.
+  const landmarks = mapOverlaysShown && landmarkPool.length && typicalCardWidth * viewport.scale < (drawsDots ? CANVAS_TITLE_MIN_WIDTH : LANDMARK_CARD_WIDTH)
     ? placeLandmarks(landmarkPool, viewport, viewportSize) : [];
   const matchPosition = lensOpen && selectedConversationId && lensMatches?.has(selectedConversationId)
     ? matchOrder().findIndex((item) => item.id === selectedConversationId) + 1 || null : null;

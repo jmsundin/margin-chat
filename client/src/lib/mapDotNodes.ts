@@ -31,11 +31,11 @@ export interface MapBox { x0: number; y0: number; x1: number; y1: number }
 
 /** Space kept clear between a title and whatever is beside it. */
 const TITLE_MARGIN = 6;
-/** A cut title still shows a few letters before the "…". */
+/** A cut title still shows a few letters before the "…"; with less room it hides. */
 const MIN_TITLE_WIDTH = 48;
 
 /**
- * Widths for the titles that must be cut, keyed by id. Titles are centered
+ * Widths for the titles that must be cut, keyed by id; 0 hides a title with no room. Titles are centered
  * under their circle; each one may grow until it meets another circle, a
  * title already placed, or one of `obstacles` (such as an open preview card).
  * More connected documents are placed first, so they keep their full title.
@@ -56,9 +56,9 @@ export function fitMapDotTitles(nodes: MapDotTitle[], obstacles: MapBox[] = []) 
       else if (box.x1 <= node.x) half = Math.min(half, node.x - box.x1 - TITLE_MARGIN);
       else half = 0;
     });
-    const width = Math.min(node.titleWidth, Math.max(MIN_TITLE_WIDTH, half * 2));
+    const width = half * 2 >= Math.min(node.titleWidth, MIN_TITLE_WIDTH) ? Math.min(node.titleWidth, half * 2) : 0;
     if (width < node.titleWidth) widths.set(node.id, width);
-    boxes.push({ x0: node.x - width / 2, y0: top, x1: node.x + width / 2, y1: bottom });
+    if (width) boxes.push({ x0: node.x - width / 2, y0: top, x1: node.x + width / 2, y1: bottom });
   }
   return widths;
 }
