@@ -18,7 +18,10 @@ import { type DirectoryStats, type VaultDownloadProgress, type VaultEntry, type 
 import { planVaultEviction, preserveDeferredWorkspaceReferences, recentVaultEntries, vaultHydrationClosure } from "./vaultHydration";
 import { WORKING_SET_IDLE_MS, claimWorkingSetCheck, loadOpenedDocuments, recordOpenedDocuments, workspaceReferenceIds } from "./vaultWorkingSet";
 import { createVaultFileRenderer, hasSameAuthoredState, normalizeVaultMarkdownIdentities, stateToVaultFiles, vaultFileListings, vaultToState, workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
-import { vaultFileContentType, withoutUntouchedVaultFileDocuments, type VaultFileListing } from "./vaultFileDocuments";
+import {
+  isVaultFileDocumentPath, loadAddedVaultFileDates, recordAddedVaultFileDates, vaultFileContentType, vaultFileDocumentId, withAddedVaultFileDates,
+  withoutUntouchedVaultFileDocuments, type VaultFileListing,
+} from "./vaultFileDocuments";
 import { describeVaultUpload, planVaultUpload } from "./vaultUpload";
 import {
   canSyncWorkspaceToCloud, pickLocalDirectory, connectLocalDirectory, requestLocalDirectoryPermission, clearLocalDirectory, getLocalDirectoryStatus,
@@ -187,8 +190,8 @@ export function useMarkdownVault(args: {
   function publish(snapshot: VaultSnapshot) {
     rememberDeferred(snapshot);
     showTrash(snapshot);
-    const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current,
-      vaultFileListings(snapshot.files, Object.keys(snapshot.deferred ?? {}), localFiles.current));
+    const next = vaultToState(snapshot.files, stateRef.current, pendingFocus.current, withAddedVaultFileDates(
+      vaultFileListings(snapshot.files, Object.keys(snapshot.deferred ?? {}), localFiles.current), loadAddedVaultFileDates(storageUserId)));
     if (pendingFocus.current === next.activeConversationId) pendingFocus.current = null;
     // Saved files are never changed in place, so the displayed set can share them.
     displayedFiles.current = { ...snapshot.files };
@@ -1042,9 +1045,15 @@ export function useMarkdownVault(args: {
         if (Object.keys(plan.files).length) {
           const files = normalizeVaultMarkdownIdentities(plan.files, plan.createdAtByPath);
           // Validate content before touching the local vault.
-          workspaceFromVault(files);
+          const markdown = workspaceFromVault(files).manifest.files;
           await saveAppState();
           await engine.import(files);
+          // What was just added is what the person is looking at, so it leads "Recently viewed".
+          recordAddedVaultFileDates(storageUserId, plan.createdAtByPath);
+          recordOpenedDocuments(storageUserId, [
+            ...markdown.map((record) => record.id),
+            ...Object.keys(files).filter((path) => isVaultFileDocumentPath(path)).map((path) => vaultFileDocumentId(path)),
+          ]);
           await persistAndPublish();
           await saveAndRefresh(true);
         }
