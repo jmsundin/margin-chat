@@ -80,13 +80,14 @@
 .live-document-ask.is-mic { display: grid; place-items: center; padding-inline: 7px; }
 .live-document-ask:hover, .live-document-ask:focus-visible { border-color: var(--sage); color: var(--sage); }
 
-@media (pointer: coarse) {
+/* Same test as MobileKeyboard's mobileQueries, which decides when the touch row is drawn. */
+@media (pointer: coarse), (max-width: 700px) {
   .live-document-host .cm-line, .live-document-widget, .live-document-after, .live-document-media-form { padding-left: 8px; margin-left: 0; }
   .live-document-host .cm-line { padding-left: 8px; }
-  .live-document-touch-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .live-document-touch-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
   /* Own copy of the classic editor's button look: RichDocumentEditor.css only loads with that editor,
      so without it these buttons drew as empty grey boxes. */
-  .live-document-touch-actions button { min-height: 44px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); color: var(--sage); font-size: .85rem; touch-action: manipulation; }
+  .live-document-touch-actions button { min-height: 44px; padding: 6px 12px; white-space: nowrap; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); color: var(--sage); font-size: .85rem; touch-action: manipulation; }
   .live-document-touch-actions button::before { content: attr(data-label); }
   .live-document-touch-actions button.is-mic { display: inline-flex; align-items: center; gap: 6px; }
   .live-document-touch-actions button.is-mic::before { content: none; }

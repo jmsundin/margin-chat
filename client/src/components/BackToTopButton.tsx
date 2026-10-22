@@ -61,6 +61,17 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
   const [far, setFar] = useState(false);
   const [text, setText] = useState<{ editable: boolean; focused: boolean }>({ editable: false, focused: false });
   const touched = useRef(false);
+  // On phones the mic lives in the screen's button stack, so a document kept mounted under
+  // Map View or Tiles must not leave it over that view's controls. On a computer it sits in
+  // the document's own corner and hides with it.
+  const [onScreen, setOnScreen] = useState(true);
+  useEffect(() => {
+    const body = scrollRef.current;
+    if (!body || !mobile || !micShown || typeof IntersectionObserver === "undefined") { setOnScreen(true); return undefined; }
+    const observer = new IntersectionObserver((entries) => setOnScreen(entries.some((entry) => entry.isIntersecting)));
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [scrollRef, mobile, micShown]);
   useEffect(() => {
     const body = scrollRef.current;
     if (!body) return;
@@ -95,7 +106,7 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
   // Phones show one document at a time; only the active one owns the screen corner.
   // Phones show one document at a time; only the active one puts its buttons in the screen's button stack.
   const docked = mobile && active;
-  const hidden = mobile && (!active || overlayOpen);
+  const hidden = !onScreen || (mobile && (!active || overlayOpen));
   const mic = micShown && text.editable && !hidden;
   const micSlot = useMobileDockSlot("mic");
   const topSlot = useMobileDockSlot("top");

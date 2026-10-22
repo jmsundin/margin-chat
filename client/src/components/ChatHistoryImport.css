@@ -31,8 +31,6 @@
 .history-import-preview { border: 1px solid #8884; border-radius: 12px; padding: 16px; margin-top: 16px; max-height: 360px; overflow: auto; }
 .history-import-preview pre { font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0 20px; }
 .history-import-warnings { padding-left: 22px; }
-.history-import-welcome { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 12px 18px; padding: 16px; border: 1px solid #8884; border-radius: 12px; }
-.history-import-welcome p { margin: 4px 0 0; }
 @media (max-width: 560px) {
   .history-import-head, .history-import-actions { padding: 14px; }
   .history-import-body { padding: 0 14px 14px; }

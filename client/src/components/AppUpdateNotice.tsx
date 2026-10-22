@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import NotificationToast from "./NotificationToast";
-import { acknowledgeVersion, onQuietMoment, readAcknowledgedVersion, trackFreshStart, watchAppUpdates } from "../lib/appUpdates";
+import { acknowledgeVersion, clearRestartForUpdate, markRestartForUpdate, onQuietMoment, readAcknowledgedVersion, readRestartForUpdate, trackFreshStart, watchAppUpdates } from "../lib/appUpdates";
 import { listenForAppRestart, listenForDesktopUpdate, reloadForDesktopUpdate, requestAppRestart, type DesktopUpdateKind } from "../lib/appUpdateRestart";
 
 export default function AppUpdateNotice({ commit }: { commit: string }) {
   const [previous] = useState(readAcknowledgedVersion);
-  const [showLoadedVersion, setShowLoadedVersion] = useState(previous !== commit);
+  // A new user never sees a version toast; "App updated" confirms only a restart someone asked for.
+  const [showLoadedVersion, setShowLoadedVersion] = useState(() => readRestartForUpdate() && previous !== null && previous !== commit);
   const [waiting, setWaiting] = useState<ServiceWorker | null>(null);
   // The desktop app has downloaded an update: a newer client (a reload) or a
   // new version of the app itself (installs on restart), which wins.
@@ -29,7 +30,10 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
     return tracker.stop;
   }, [startedAt]);
   // The loaded-version toast shows once per version, so a reload before it fades does not bring it back.
-  useEffect(() => { if (previous !== commit) acknowledgeVersion(commit); }, [previous, commit]);
+  useEffect(() => {
+    if (previous !== commit) acknowledgeVersion(commit);
+    clearRestartForUpdate();
+  }, [previous, commit]);
 
   useEffect(() => {
     const fallback = document.createElement("div");
@@ -60,6 +64,7 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
     if ((!waiting && !desktopReady) || busy.current) return;
     busy.current = true;
     if (!auto) {
+      markRestartForUpdate();
       setRestarting(true);
       setRestartError(null);
     }
@@ -85,7 +90,7 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
   return createPortal(
     <>
       {showLoadedVersion && <NotificationToast
-        message={`${previous ? "App updated" : "App version"} · ${version}`}
+        message={`App updated · ${version}`}
         kind="success"
         onDismiss={() => setShowLoadedVersion(false)}
       />}

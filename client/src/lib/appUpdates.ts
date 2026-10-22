@@ -31,6 +31,24 @@ export function acknowledgeVersion(commit: string) {
   catch { /* Notifications still work when storage is unavailable. */ }
 }
 
+export const UPDATE_RESTART_STORAGE_KEY = "marginchat-restarted-for-update";
+
+// Set when someone presses "Restart now", so only that reload confirms the new version.
+export function markRestartForUpdate() {
+  try { window.localStorage.setItem(UPDATE_RESTART_STORAGE_KEY, "1"); }
+  catch { /* Without storage the confirmation is skipped. */ }
+}
+
+export function readRestartForUpdate(): boolean {
+  try { return window.localStorage.getItem(UPDATE_RESTART_STORAGE_KEY) === "1"; }
+  catch { return false; }
+}
+
+export function clearRestartForUpdate() {
+  try { window.localStorage.removeItem(UPDATE_RESTART_STORAGE_KEY); }
+  catch { /* Nothing to clear without storage. */ }
+}
+
 // Download in the background; activation requires a coordinated restart or closed tabs.
 export function watchAppUpdates(onWaiting: (worker: ServiceWorker) => void): () => void {
   if (!("serviceWorker" in navigator)) return () => {};

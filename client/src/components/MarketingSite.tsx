@@ -8,6 +8,7 @@ import {
 import { claimAutoOpen, readDesktopPreference, saveDesktopPreference } from "../lib/desktopHandoff";
 import { apiFetch } from "../lib/apiTransport";
 import ConnectAppsPage from "./landing/ConnectAppsPage";
+import SeeItWorking, { Clip } from "./landing/SeeItWorking";
 import "./MarketingSite.css";
 
 // The live previews run the real map and document editor, so they load in their own chunk.
@@ -187,40 +188,6 @@ function PrimaryActions({ site }: { site: SiteContext }) {
   );
 }
 
-function AppPreview() {
-  return (
-    <div className="mk-preview" role="img" aria-label="Margin Chat with a note open and a branch in the margin about a highlighted sentence">
-      <div className="mk-preview-bar" aria-hidden="true">
-        <span /><span /><span />
-        <em>Vault › Reading › The printing press</em>
-      </div>
-      <div className="mk-preview-body" aria-hidden="true">
-        <div className="mk-preview-side">
-          <div className="mk-preview-label">VAULT</div>
-          <div>Inbox</div>
-          <div className="is-active">The printing press</div>
-          <div className="is-child">↳ Movable type in Korea</div>
-          <div className="is-child">↳ Who could read in 1500?</div>
-          <div>Reformation</div>
-          <div>Gutenberg Bible</div>
-          <div>Information overload</div>
-        </div>
-        <div className="mk-preview-doc">
-          <h3>The printing press</h3>
-          <p>Before Gutenberg, a book was copied by hand and a large library held a few hundred volumes. Within fifty years of his press, Europe had printed something like twenty million books, and <mark>the number of people who could check a claim against a source</mark> grew with it.</p>
-          <p className="is-muted">The change was less about speed than about copies being identical, which made it possible to cite page and line…</p>
-        </div>
-        <div className="mk-preview-margin">
-          <div className="mk-preview-label is-accent">BRANCH · FROM YOUR HIGHLIGHT</div>
-          <div className="mk-bubble">Who actually could read in 1500, and how do we know?</div>
-          <p>Estimates come from signatures on marriage registers and court records. In England, perhaps one man in ten could sign his name around 1500…</p>
-          <div className="mk-chips"><span>Save as child note</span><span>Back to main thread</span></div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 const MAP_NODES = [
   { label: "The printing press", x: 50, y: 50, kind: "center" },
   { label: "Gutenberg Bible", x: 27, y: 27, kind: "note" },
@@ -273,19 +240,28 @@ function HomePage({ site }: { site: SiteContext }) {
         <div className="mk-wrap">
           <p className="mk-eyebrow is-sage">FOR MAC, THE WEB AND CHROME</p>
           <h1 className="mk-h1">Think in the margins.</h1>
-          <p className="mk-lede">Chat with AI, branch off any passage without losing your place, and keep every idea as a Markdown note you own. Then see how it all connects on a map.</p>
+          <p className="mk-lede">Read, write and think with AI in one document. Select any passage to leave a margin note beside it, or open a side document for the new idea it gave you. Then see how everything connects on the Map.</p>
           <PrimaryActions site={site} />
         </div>
-        <div className="mk-wrap mk-hero-preview"><AppPreview /></div>
+        <div className="mk-wrap mk-hero-preview"><Clip name="web-docs" label="Margin Chat on a computer: making a margin note and a side document from a passage" /></div>
+      </section>
+
+      <section className="mk-section" id="see-it-working">
+        <div className="mk-wrap">
+          <p className="mk-eyebrow is-sage">SEE IT WORKING</p>
+          <h2 className="mk-h2">The same vault on your computer, beside any web page, and on your phone.</h2>
+          <p className="mk-body is-intro">These are recordings of the real app, not mockups.</p>
+          <SeeItWorking />
+        </div>
       </section>
 
       <section className="mk-section is-roomy">
         <div className="mk-wrap">
           <h2 className="mk-h2 is-wide">Chats scroll away. Ideas shouldn’t.</h2>
-          <p className="mk-body is-intro">A normal AI chat is one long line. Every tangent pushes the original question further up the page, and the good answers end up buried in a history you never reopen. Margin Chat gives each tangent its own place and keeps all of it.</p>
+          <p className="mk-body is-intro">A normal AI chat is one long line. Every tangent pushes the original question further up the page, and the good answers end up buried in a history you never reopen. In Margin Chat everything is a document, and each tangent gets its own place beside the words that started it.</p>
           <div className="mk-grid3">
-            <div className="mk-point is-coral"><h3>Branch, don’t scroll</h3><p>Highlight a sentence and ask about it in the margin. The main conversation stays exactly where you left it.</p></div>
-            <div className="mk-point is-sage"><h3>Keep what you learn</h3><p>Every chat and branch is a Markdown file in your vault, linked to where it came from.</p></div>
+            <div className="mk-point is-coral"><h3>Notes in the margin</h3><p>Select a sentence to comment on it or ask AI about it. The note sits beside that passage and the document stays where you left it.</p></div>
+            <div className="mk-point is-sage"><h3>Side documents for new ideas</h3><p>When a passage sparks something bigger, open a side document in its own pane, linked to the words it came from.</p></div>
             <div className="mk-point is-violet"><h3>See the shape of it</h3><p>Open the map and your notes become a graph you can arrange, cluster and grow.</p></div>
           </div>
         </div>
@@ -389,8 +365,8 @@ function HomePage({ site }: { site: SiteContext }) {
           <div className="mk-grid4">
             <a className="mk-panel mk-card mk-card-link" href={MARKETING_PATHS.download} onClick={site.go}><strong>Desktop app</strong><span>{site.links.mac || site.links.windows || site.links.linux ? "macOS, Windows and Linux." : "Coming soon."}</span></a>
             <a className="mk-panel mk-card mk-card-link" href={site.webAppPath} onClick={site.go}><strong>Web</strong><span>Any modern browser, nothing to install.</span></a>
-            <a className="mk-panel mk-card mk-card-link" href={MARKETING_PATHS.download} onClick={site.go}><strong>Chrome extension</strong><span>Chat beside any web page in a docked panel.</span></a>
-            <a className="mk-panel mk-card mk-card-link" href={site.webAppPath} onClick={site.go}><strong>Phone</strong><span>Swipe for the sidebar, pull down to search.</span></a>
+            <a className="mk-panel mk-card mk-card-link" href={MARKETING_PATHS.download} onClick={site.go}><strong>Chrome extension</strong><span>Your workspace docked beside any web page.</span></a>
+            <a className="mk-panel mk-card mk-card-link" href={site.webAppPath} onClick={site.go}><strong>Phone</strong><span>Swipe in for the sidebar. + and the mic sit by your thumb.</span></a>
           </div>
         </div>
       </section>
