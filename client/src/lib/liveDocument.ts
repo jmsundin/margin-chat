@@ -84,11 +84,25 @@ export interface LiveBlockInfo {
   kind: LiveBlockKind;
   /** Blank lines between paragraphs inside the block, as [first newline, last newline) offsets. */
   collapsed: TextSpan[];
+  /**
+   * In a text block, the items shown rendered while the cursor is elsewhere: a table or a
+   * diagram among paragraphs, as offsets in the block. Each one shows its Markdown on its own.
+   */
+  parts: TextSpan[];
 }
 
 export function isTableBlock(content: string) {
   const lines = content.trim().split("\n");
   return lines.length >= 2 && lines.every((line) => line.trim().startsWith("|")) && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(lines[1]);
+}
+
+/** Why Markdown shows rendered rather than as styled text, or null. */
+function renderedReason(content: string) {
+  if (isTableBlock(content)) return "Table";
+  const math = readBlockLatex(content.trim());
+  const reason = math && !math.trailing.trim() ? "Math" : getRichDocumentFallbackReason(content);
+  // A comment-only block would render as nothing, leaving no line to click into.
+  return reason === "Hidden comment" ? null : reason;
 }
 
 const infoCache = new Map<string, LiveBlockInfo>();
@@ -97,15 +111,18 @@ export function liveBlockInfo(content: string): LiveBlockInfo {
   const cached = infoCache.get(content);
   if (cached) return cached;
   let kind: LiveBlockKind = "text";
+  let parts: TextSpan[] = [];
   if (content.trim()) {
     if (parseMediaBlock(content)) kind = "media";
     else if (isDrawingMarkdown(content)) kind = "drawing";
-    else if (isTableBlock(content)) kind = "rendered";
     else {
-      const math = readBlockLatex(content.trim());
-      const reason = math && !math.trailing.trim() ? "Math" : getRichDocumentFallbackReason(content);
-      // A comment-only block would render as nothing, leaving no line to click into.
-      if (reason && reason !== "Hidden comment") kind = "rendered";
+      const reason = renderedReason(content);
+      const nodes = reason && reason !== "Reference" ? topLevelNodes(content) : [];
+      // A long block (a whole AI answer or an imported file) renders only its tables and diagrams,
+      // so the rest reads and edits as text and clicking one diagram doesn't show the whole block's Markdown.
+      // Reference links need their definitions, so a block that has them renders whole.
+      if (nodes.length > 1) parts = nodes.filter((node) => renderedReason(content.slice(node.from, node.to)));
+      if (reason && !parts.length) kind = "rendered";
     }
   }
   const collapsed: TextSpan[] = [];
@@ -116,7 +133,7 @@ export function liveBlockInfo(content: string): LiveBlockInfo {
       if (gap.length >= 2 && /^\n+$/.test(gap)) collapsed.push({ from: nodes[index - 1].to, to: nodes[index].from - 1 });
     }
   }
-  const info = { kind, collapsed };
+  const info = { kind, collapsed, parts };
   if (infoCache.size > 4000) infoCache.clear();
   infoCache.set(content, info);
   return info;
