@@ -8,14 +8,16 @@ import {
 } from "../lib/api";
 import { joinTranscripts } from "../lib/dictationText";
 import { startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
-import { useMobileDockSlot } from "../lib/mobileDock";
+import { MicIcon } from "./DictationButton";
 import {
   dictationHints,
   dictationShortcutLabel,
   dictationSupported,
   findDictationTarget,
+  hasOwnDictationButton,
   insertDictation,
   isDictationShortcut,
+  onDictationRequest,
   readDictationButtonPreference,
   readHoldSpacePreference,
   removeSpaceBeforeCursor,
@@ -50,8 +52,23 @@ const LIVE_RENEW_MS = 9 * 60 * 1000;
 // Pieces of a long recording transcribed at once.
 const TRANSCRIBE_CONCURRENCY = 2;
 
-/** Bottom-right corner of the part of the field that is on screen. */
+/** The document's corner mic, where its recording shows. On phones it's in the screen's button stack. */
+function slotFor(target: HTMLElement): HTMLElement | null {
+  if (!hasOwnDictationButton(target)) return null;
+  const slot = target.closest(".document-panel")?.querySelector<HTMLElement>("[data-dictation-slot]")
+    ?? document.querySelector<HTMLElement>("[data-dictation-slot].is-docked");
+  return slot?.getClientRects().length ? slot : null;
+}
+
+/** Bottom-right corner of the part of the field that is on screen, or the document's corner mic. */
 function anchorFor(target: HTMLElement): Anchor | null {
+  const slot = slotFor(target);
+  if (slot) {
+    const box = slot.getBoundingClientRect();
+    // A phone's mic stays visible to stop with, so the recording shows beside it.
+    const right = slot.classList.contains("is-docked") ? window.innerWidth - box.left + 8 : window.innerWidth - box.right;
+    return { right: Math.max(4, right), bottom: Math.max(4, window.innerHeight - box.bottom + (box.height - BUTTON_SIZE) / 2) };
+  }
   const rect = target.getBoundingClientRect();
   const right = Math.min(rect.right, window.innerWidth);
   const bottom = Math.min(rect.bottom, window.innerHeight);
@@ -137,8 +154,6 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
   const holdSpace = useSyncExternalStore(subscribeDictationButtonPreference, readHoldSpacePreference, () => true);
   const noticeTimer = useRef(0);
   const coarsePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
-  // On phones the mic joins the bottom row beside the + and keyboard buttons while that row is shown.
-  const dockSlot = useMobileDockSlot("mic");
 
   const showNotice = useCallback((target: HTMLElement | null, message: string, retry?: () => void) => {
     window.clearTimeout(noticeTimer.current);
@@ -475,6 +490,9 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     };
   }, [cancel, finish, holdSpace, start, supported, toggle]);
 
+  // Mic buttons outside the field, like the document's, start and stop it here.
+  useEffect(() => supported ? onDictationRequest(toggle) : undefined, [supported, toggle]);
+
   useEffect(() => {
     // Leaving the page mid-recording still ends a hosted session's charge.
     window.addEventListener("pagehide", cancel);
@@ -486,7 +504,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
 
   const activeTarget = phase.kind === "idle" ? null : phase.target;
   // Phones get the mic too: tap to start, tap the stop button to finish. Their keyboards never move a pointer, so typing doesn't hide it.
-  const buttonTarget = showButton && (coarsePointer || !typing) ? focused : null;
+  const buttonTarget = showButton && (coarsePointer || !typing) && focused && !hasOwnDictationButton(focused) ? focused : null;
   const anchorTarget = activeTarget ?? (phase.kind === "idle" ? buttonTarget : null);
 
   // Keep the control on its field as the page scrolls, resizes or reflows.
@@ -522,23 +540,12 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
 
   if (!supported) return null;
 
-  const dock = dockSlot?.parentElement?.getBoundingClientRect();
-  const floating = dock
-    // Recording on a phone shows just above the bottom row, so the row's buttons stay put.
-    ? { right: Math.max(4, window.innerWidth - dock.right + 20), bottom: window.innerHeight - dock.top + 10 }
-    : anchor
+  const floating = anchor
     ? { right: anchor.right, bottom: anchor.bottom }
     : { left: "50%", bottom: 24, transform: "translateX(-50%)" };
 
   if (phase.kind === "idle") {
     if (!buttonTarget) return null;
-    if (dockSlot) return createPortal(
-      <button aria-label="Voice typing" className="dictation-mic is-docked" data-dictation="off" onClick={() => toggle(buttonTarget)}
-        onMouseDown={(event) => event.preventDefault()} onPointerDown={(event) => event.preventDefault()} title="Voice typing" type="button">
-        <MicIcon size={24} />
-      </button>,
-      dockSlot,
-    );
     if (!anchor) return null;
     return createPortal(
       <button
@@ -583,14 +590,5 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       )}
     </div>,
     document.body,
-  );
-}
-
-function MicIcon({ size = 14 }: { size?: number }) {
-  return (
-    <svg aria-hidden="true" fill="none" height={size} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth={size > 14 ? 1.6 : 2} viewBox="0 0 24 24" width={size}>
-      <rect height="12" rx="3" width="6" x="9" y="3" />
-      <path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
-    </svg>
   );
 }

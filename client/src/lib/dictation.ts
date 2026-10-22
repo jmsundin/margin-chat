@@ -412,6 +412,25 @@ export function subscribeDictationButtonPreference(listener: () => void): () => 
   return () => preferenceListeners.delete(listener);
 }
 
+const REQUEST_EVENT = "margin-chat:dictation-request";
+
+/**
+ * Starts voice typing into a field, or stops the recording that is running.
+ * For mic buttons that live outside the field, like the one beside Ask AI.
+ */
+export function requestDictation(target: HTMLElement) {
+  window.dispatchEvent(new CustomEvent<HTMLElement>(REQUEST_EVENT, { detail: target }));
+}
+
+export function onDictationRequest(listener: (target: HTMLElement) => void): () => void {
+  const handle = (event: Event) => { if ((event as CustomEvent<unknown>).detail instanceof HTMLElement) listener((event as CustomEvent<HTMLElement>).detail); };
+  window.addEventListener(REQUEST_EVENT, handle);
+  return () => window.removeEventListener(REQUEST_EVENT, handle);
+}
+
+/** Fields whose own mic sits elsewhere (the document's caret row and corner) don't get the floating one. */
+export const hasOwnDictationButton = (target: HTMLElement) => Boolean(target.closest("[data-dictation-button='own']"));
+
 /** Whether holding Space in a text field talks, like Claude Code. A quick tap still types a space. */
 export function readHoldSpacePreference(): boolean {
   try { return localStorage.getItem(HOLD_SPACE_PREFERENCE_KEY) !== "off"; }

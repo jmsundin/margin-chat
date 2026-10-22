@@ -55,7 +55,8 @@ export function MobileCreateMenu({ slot, prepare, onNewDocument, onSideDocument,
       </svg>
     </button>, slot)}
     {open && row ? createPortal(<div ref={menuRef} className="mobile-create-menu" role="menu" aria-label="Create"
-      style={{ bottom: window.innerHeight - row.top + 10, right: Math.max(8, window.innerWidth - row.right + 20) }}
+      // Opens above the + at the top of the button stack, lined up with its right edge.
+      style={{ bottom: window.innerHeight - row.top + 10, right: Math.max(8, window.innerWidth - row.right) }}
       onMouseDown={(event) => event.preventDefault()}>
       <button type="button" role="menuitem" onClick={run(onNewDocument)}>
         <svg className="selection-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">

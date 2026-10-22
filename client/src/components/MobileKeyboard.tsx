@@ -28,6 +28,7 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const viewport = useVisualViewport(mobile);
   const micSlot = useCallback((element: HTMLElement | null) => setMobileDockSlot("mic", element), []);
   const createSlot = useCallback((element: HTMLElement | null) => setMobileDockSlot("create", element), []);
+  const topSlot = useCallback((element: HTMLElement | null) => setMobileDockSlot("top", element), []);
   const keyboardShown = viewport.height < window.innerHeight - 100;
   const safeBottom = keyboardShown ? "0px" : "env(safe-area-inset-bottom, 0px)";
   useEffect(() => {
@@ -90,14 +91,14 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const, registerComposer, overlayOpen }), [mobile, enabled, registerComposer, overlayOpen]);
   return <MobileKeyboardContext.Provider value={value}>
     {children}
-    {/* One row at the bottom: microphone, +, keyboard. While the on-screen keyboard is up,
-        its own Done/checkmark closes it, so the row would only cover text. */}
+    {/* One stack at the bottom right: +, microphone, back to top, keyboard. While the on-screen
+        keyboard is up, its own Done/checkmark closes it, so the stack would only cover text. */}
     {mobile && composerCount === 0 && !keyboardShown && createPortal(<div className="mobile-dock" data-mobile-dock
-      // Kept clear of the rounded screen corners on curved phones.
-      style={{ top: `calc(${viewport.top + viewport.height - 72}px - ${safeBottom})`, left: viewport.left, width: viewport.width }}>
-      <span className="mobile-dock-slot" ref={micSlot} />
+      // Kept clear of the rounded screen corners on curved phones: 24px up and 20px in.
+      style={{ bottom: `calc(${window.innerHeight - viewport.top - viewport.height + 24}px + ${safeBottom})`, right: window.innerWidth - viewport.left - viewport.width + 20 }}>
       <span className="mobile-dock-slot" ref={createSlot} />
-      {/* Keeps the + in place before a text field has been tapped. */}
+      <span className="mobile-dock-slot" ref={micSlot} />
+      <span className="mobile-dock-slot" ref={topSlot} />
       {hasTarget ? <button type="button" className="mobile-keyboard-toggle" data-mobile-keyboard-toggle
       aria-label={enabled ? "Hide keyboard" : "Show keyboard"} title={enabled ? "Hide keyboard" : "Show keyboard"} aria-pressed={enabled}
       onPointerDown={(event) => { if (event.pointerType === "mouse") lastTouchActivation.current = -Infinity; event.preventDefault(); }}
@@ -130,7 +131,7 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
         <rect x="2" y="5" width="20" height="14" rx="3" />
         <path d="M5 9h2m2 0h2m2 0h2m2 0h2M5 12h2m2 0h2m2 0h2m2 0h2M7 16h10" />
       </svg>
-    </button> : <span className="mobile-dock-placeholder" aria-hidden="true" />}
+    </button> : null}
     </div>, document.body)}
   </MobileKeyboardContext.Provider>;
 }
