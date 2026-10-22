@@ -67,10 +67,10 @@ describe("wheel gesture routing", () => {
     expect(getWheelGestureAxis(0, -0.5)).toBe("vertical");
   });
 
-  test("leaves wheel gestures inside the Profile dialog untouched", () => {
+  test("leaves wheel gestures inside the Settings page untouched", () => {
     const profileTarget = {
       closest: (selector: string) =>
-        selector === ".profile-dialog" ? { role: "dialog" } : null,
+        selector === ".settings-page" ? { role: "dialog" } : null,
     } as unknown as EventTarget;
     const workspaceTarget = {
       closest: () => null,

@@ -9,7 +9,7 @@ export function isProfileDialogWheelTarget(target: EventTarget | null) {
     return false;
   }
 
-  return Boolean((target as Element).closest(".profile-dialog"));
+  return Boolean((target as Element).closest(".settings-page"));
 }
 
 export function getWheelGestureAxis(

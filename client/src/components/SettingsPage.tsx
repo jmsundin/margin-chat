@@ -3,7 +3,8 @@ import AgentConnectionsPanel from "./AgentConnectionsPanel";
 import BillingDashboard from "./BillingDashboard";
 import PasswordChangeForm from "./PasswordChangeForm";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { AiFeatureSettings, AppearanceSettings, useVoiceTypingEnabled, VoiceTypingSettings, type ThemeMode } from "./AppSettingsSections";
 import type {
   ApiKeyProvider,
   ApiKeySettings,
@@ -11,15 +12,19 @@ import type {
   BillingDashboardData,
   BillingPlan,
 } from "../types";
-import {
-  getBillingDisplayLabel,
-  getBillingStatusCopy,
-} from "../lib/billing";
+import { formatCreditBalance } from "../lib/billing";
+import { dictationSupported } from "../lib/dictation";
+import type { JevStatus } from "../lib/jevAssistance";
+import type { VaultPassageIndex } from "../lib/useVaultPassageIndex";
+import type { MainViewMode } from "../types";
 import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import type { StateUploadProgress } from "../lib/api";
 
-interface ProfileModalProps {
-  initialTab?: "account" | "storage" | "billing" | "api-keys" | "agents";
+export type SettingsSection = "account" | "billing" | "api-keys" | "agents" | "appearance" | "voice" | "storage";
+
+interface SettingsPageProps {
+  /** The section to open; null or left out opens the section list on phones and Account on computers. */
+  initialTab?: SettingsSection | null;
   onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys" | "agents") => void;
   billingDashboard: BillingDashboardData | null;
   billingDashboardLoading: boolean;
@@ -53,6 +58,59 @@ interface ProfileModalProps {
   onUpgradeToPlus?: () => void | Promise<void>;
   onSave: (args: { displayName: string; email: string }) => void | Promise<void>;
   user: AuthenticatedUser;
+  theme?: ThemeMode;
+  onSetTheme?: (theme: ThemeMode) => void;
+  mainViewMode?: MainViewMode;
+  onSetMainViewMode?: (mode: MainViewMode) => void;
+  jevEnabled?: boolean;
+  jevStatus?: JevStatus;
+  onSetJevEnabled?: (enabled: boolean) => void;
+  vaultIndex?: VaultPassageIndex;
+}
+
+const SECTIONS: Array<{ id: SettingsSection; label: string; description: string; keywords: string }> = [
+  { id: "account", label: "Account", description: "Your name, email and password.", keywords: "profile name email password log out sign out" },
+  { id: "billing", label: "Plan & credit", description: "Your plan, AI balance, payments and receipts.", keywords: "billing balance money payment receipts subscription plus cloud plan budget" },
+  { id: "api-keys", label: "AI & privacy", description: "Your own model keys and the AI features that read your vault.", keywords: "api keys openai anthropic claude gemini google hugging face xai meta muse jev search by meaning embeddings" },
+  { id: "agents", label: "Connected apps", description: "Let Claude Code, ChatGPT, Gemini, Cursor and other AI apps use your vault.", keywords: "agents mcp tokens claude code cursor chatgpt gemini connect" },
+  { id: "appearance", label: "Editor & look", description: "Theme, the main view and the document editor.", keywords: "theme dark light main view chat tiles graph classic editor live preview" },
+  { id: "voice", label: "Voice typing", description: "Talk instead of typing in any text field.", keywords: "dictation mic microphone hold space talk speech" },
+  { id: "storage", label: "Vault & storage", description: "Where your Markdown files live and how they sync.", keywords: "markdown vault folder cloud sync download upload files storage deleted backup" },
+];
+
+const PHONE_QUERY = "(max-width: 720px)";
+
+function subscribePhoneLayout(onChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia(PHONE_QUERY);
+  query.addEventListener?.("change", onChange);
+  return () => query.removeEventListener?.("change", onChange);
+}
+
+function readPhoneLayout() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(PHONE_QUERY).matches;
+}
+
+export function matchesSettingsQuery(section: (typeof SECTIONS)[number], query: string) {
+  const haystack = `${section.label} ${section.keywords}`.toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every((word) => haystack.includes(word));
+}
+
+const SECTION_ICONS: Record<SettingsSection, string> = {
+  account: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5",
+  billing: "M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2ZM3 10h18M7 15h4",
+  "api-keys": "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z",
+  agents: "M9 3v5M15 3v5M6 8h12v3a6 6 0 0 1-12 0ZM12 17v4",
+  appearance: "M4 20h4L19 9l-4-4L4 16ZM13 7l4 4",
+  voice: "M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3ZM5 11a7 7 0 0 0 14 0M12 18v3",
+  storage: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
+};
+
+function SettingsIcon({ path }: { path: string }) {
+  return (
+    <svg aria-hidden="true" className="settings-page-icon" fill="none" stroke="currentColor" strokeLinecap="round"
+      strokeLinejoin="round" strokeWidth="1.7" viewBox="0 0 24 24"><path d={path} /></svg>
+  );
 }
 
 const API_KEY_FIELDS: Array<{
@@ -99,23 +157,6 @@ function formatByteCount(bytes: number) {
   return `${value.toFixed(fractionDigits)} ${units[unitIndex]}`;
 }
 
-function CloseIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="search-modal-close-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="2"
-    >
-      <path d="m7 7 10 10" />
-      <path d="m17 7-10 10" />
-    </svg>
-  );
-}
 
 function getInitials(displayName: string) {
   const initials = displayName
@@ -128,8 +169,8 @@ function getInitials(displayName: string) {
   return initials || "MC";
 }
 
-export default function ProfileModal({
-  initialTab = "account",
+export default function SettingsPage({
+  initialTab = null,
   billingDashboard, billingDashboardLoading, billingDashboardError, onRefreshBilling, onAddMoney,
   vault,
   billingErrorMessage,
@@ -155,7 +196,15 @@ export default function ProfileModal({
   onSave,
   onOpenWebsiteSettings,
   user,
-}: ProfileModalProps) {
+  theme,
+  onSetTheme,
+  mainViewMode,
+  onSetMainViewMode,
+  jevEnabled,
+  jevStatus,
+  onSetJevEnabled,
+  vaultIndex,
+}: SettingsPageProps) {
   const displayNameInputRef = useRef<HTMLInputElement>(null);
   const profileBodyRef = useRef<HTMLDivElement>(null);
   const passwordChangingRef = useRef(false);
@@ -169,9 +218,12 @@ export default function ProfileModal({
   const [apiKeySettings, setApiKeySettings] = useState(user.apiKeys);
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<
-    "account" | "api-keys" | "storage" | "billing" | "agents"
-  >(initialTab);
+  const phone = useSyncExternalStore(subscribePhoneLayout, readPhoneLayout, () => false);
+  const voiceTypingOn = useVoiceTypingEnabled();
+  const [selectedTab, setActiveTab] = useState<SettingsSection | null>(initialTab ?? null);
+  const [query, setQuery] = useState("");
+  // Phones show the section list until a section is picked; computers always show one section.
+  const activeTab: SettingsSection = selectedTab ?? "account";
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
@@ -193,7 +245,8 @@ export default function ProfileModal({
     setDirtyApiKeyProviders([]);
     setApiKeySettings(user.apiKeys);
     setApiKeyError(null);
-    setActiveTab(initialTab);
+    setActiveTab(initialTab ?? null);
+    setQuery("");
     setStorageError(null);
     setCloudBackupResult(null);
     setCloudBackupProgress(null);
@@ -222,10 +275,10 @@ export default function ProfileModal({
       profileBodyRef.current.scrollTop = 0;
     }
 
-    if (isOpen && activeTab === "account") {
+    if (isOpen && selectedTab === "account" && !phone) {
       displayNameInputRef.current?.focus();
     }
-  }, [activeTab, isOpen]);
+  }, [selectedTab, isOpen, phone]);
 
   if (!isOpen) {
     return null;
@@ -247,7 +300,7 @@ export default function ProfileModal({
     if (!passwordChangingRef.current) onClose();
   }
 
-  function selectTab(tab: typeof activeTab) {
+  function selectTab(tab: SettingsSection | null) {
     if (!passwordChangingRef.current) setActiveTab(tab);
   }
 
@@ -355,203 +408,162 @@ export default function ProfileModal({
     }
   }
 
+  const configuredKeyCount = Object.values(apiKeySettings.byProvider).filter((summary) => summary?.configured).length;
+  const facts: Partial<Record<SettingsSection, string>> = {
+    billing: user.billing.creditBalanceMicros > 0 ? formatCreditBalance(user.billing.creditBalanceMicros) : undefined,
+    "api-keys": configuredKeyCount ? `${configuredKeyCount} key${configuredKeyCount === 1 ? "" : "s"}` : undefined,
+    appearance: theme ? (theme === "dark" ? "Dark" : "Light") : undefined,
+    voice: dictationSupported() ? (voiceTypingOn ? "On" : "Off") : undefined,
+    storage: cloudSyncEnabled ? "Cloud" : "This device",
+  };
+  const visibleSections = SECTIONS.filter((section) => section.id !== "voice" || dictationSupported())
+    .filter((section) => matchesSettingsQuery(section, query));
+  const current = SECTIONS.find((section) => section.id === activeTab)!;
+  const showList = !phone || selectedTab === null;
+  const showSection = !phone || selectedTab !== null;
+
   return (
-    <div
-      className="thread-dialog-backdrop"
-      onClick={onClose}
-      role="presentation"
+    <section
+      aria-label="Settings"
+      aria-modal="true"
+      className={`settings-page${phone ? " is-phone" : ""}`}
+      role="dialog"
     >
-      <section
-        aria-labelledby="profile-dialog-title"
-        aria-modal="true"
-        className={`thread-dialog profile-dialog${activeTab === "billing" ? " is-billing" : ""}`}
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-      >
-        <div className="thread-dialog-head">
-          <div>
-            <p className="eyebrow">Profile</p>
-            <h2 id="profile-dialog-title">Your account</h2>
-          </div>
-
-          <button
-            aria-label="Close profile"
-            className="search-modal-close"
-            disabled={passwordChanging}
-            onClick={closeProfile}
-            type="button"
-          >
-            <CloseIcon />
+      <header className="settings-page-top">
+        {phone && selectedTab !== null ? (
+          <button className="settings-page-back" disabled={passwordChanging} onClick={() => selectTab(null)} type="button">
+            <SettingsIcon path="M15 6l-6 6 6 6" />Settings
           </button>
-        </div>
+        ) : (
+          <button aria-label="Close settings" className="settings-page-back" disabled={passwordChanging} onClick={closeProfile} type="button">
+            <SettingsIcon path="M15 6l-6 6 6 6" />Documents
+          </button>
+        )}
+        {phone ? null : <h1 className="settings-page-title">Settings</h1>}
+        {phone && selectedTab !== null ? (
+          <button aria-label="Close settings" className="settings-page-close" disabled={passwordChanging} onClick={closeProfile} type="button">
+            <SettingsIcon path="M6 6l12 12M18 6L6 18" />
+          </button>
+        ) : null}
+      </header>
 
-        <div
-          aria-label="Profile settings sections"
-          className="profile-dialog-tabs"
-          role="tablist"
-        >
-          {([
-            ["account", "Account"],
-            ["billing", "Billing"],
-            ["api-keys", "API keys"],
-            ["agents", "Agents"],
-            ["storage", "Markdown vault"],
-          ] as const).map(([tabId, label]) => (
-            <button
-              aria-controls={`profile-panel-${tabId}`}
-              aria-selected={activeTab === tabId}
-              className={activeTab === tabId ? "is-active" : ""}
-              disabled={passwordChanging}
-              id={`profile-tab-${tabId}`}
-              key={tabId}
-              onClick={() => selectTab(tabId)}
-              role="tab"
-              type="button"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      <div className="settings-page-layout">
+        {showList ? <nav aria-label="Settings sections" className="settings-page-nav">
+          {phone ? <h1 className="settings-page-title">Settings</h1> : null}
+          <div className="settings-page-me">
+            <span aria-hidden="true" className="profile-dialog-avatar settings-page-avatar">{getInitials(user.displayName)}</span>
+            <span className="settings-page-me-copy">
+              <strong>{user.displayName}</strong>
+              <span>{user.email}</span>
+            </span>
+          </div>
+          <label className="settings-page-search">
+            <SettingsIcon path="M11 4.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13ZM20 20l-4.2-4.2" />
+            <input
+              aria-label="Search settings"
+              data-dictation="off"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && visibleSections[0]) selectTab(visibleSections[0].id);
+                if (event.key === "Escape" && query) { event.stopPropagation(); setQuery(""); }
+              }}
+              placeholder="Search settings"
+              type="text"
+              value={query}
+            />
+          </label>
+          <div aria-orientation="vertical" className="settings-page-sections" role="tablist">
+            {visibleSections.map((section) => (
+              <button
+                aria-controls={`profile-panel-${section.id}`}
+                aria-selected={!phone && activeTab === section.id}
+                className={!phone && activeTab === section.id ? "settings-page-item is-active" : "settings-page-item"}
+                disabled={passwordChanging}
+                id={`profile-tab-${section.id}`}
+                key={section.id}
+                onClick={() => selectTab(section.id)}
+                role="tab"
+                type="button"
+              >
+                <SettingsIcon path={SECTION_ICONS[section.id]} />
+                <span className="settings-page-item-label">{section.label}</span>
+                {facts[section.id] ? <span className="settings-page-item-fact">{facts[section.id]}</span> : null}
+                {phone ? <SettingsIcon path="M9 6l6 6-6 6" /> : null}
+              </button>
+            ))}
+            {!visibleSections.length ? <p className="settings-page-empty">No settings match “{query.trim()}”.</p> : null}
+          </div>
+          <button className="settings-page-item settings-page-logout" disabled={isSaving || billingSubmitting || passwordChanging}
+            onClick={() => { if (!passwordChangingRef.current) void onLogout(); }} type="button">
+            <SettingsIcon path="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" />
+            <span className="settings-page-item-label">Log out</span>
+          </button>
+        </nav> : null}
 
-        <div className="profile-dialog-body" ref={profileBodyRef}>
-          {activeTab === "account" ? (
-            <div
-              aria-labelledby="profile-tab-account"
-              className="profile-dialog-panel"
-              id="profile-panel-account"
-              role="tabpanel"
-            >
+        {showSection ? <div className="settings-page-main" ref={profileBodyRef}>
+          <section
+            aria-labelledby={`profile-tab-${activeTab}`}
+            className={`settings-page-section profile-dialog-panel is-${activeTab}`}
+            id={`profile-panel-${activeTab}`}
+            role="tabpanel"
+          >
+            <div className="settings-page-heading">
+              <h2>{current.label}</h2>
+              <p>{current.description}</p>
+            </div>
+
+            {activeTab === "account" ? (onOpenWebsiteSettings ? <div className="thread-dialog-form">
+              <p className="thread-dialog-copy">Signed in as {user.email}. Manage your profile and password on the Margin Chat website.</p>
+              <div className="thread-dialog-actions">
+                <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("account")}>Manage account on website</button>
+              </div>
+            </div> : <>
               <div className="profile-dialog-summary">
-                <div aria-hidden="true" className="profile-dialog-avatar">
-                  {getInitials(user.displayName)}
-                </div>
-
+                <div aria-hidden="true" className="profile-dialog-avatar">{getInitials(user.displayName)}</div>
                 <div className="profile-dialog-summary-copy">
                   <strong>{user.displayName}</strong>
-                  <span>
-                    {user.role === "admin" ? "Admin account" : "Member account"}
-                  </span>
+                  <span>{user.role === "admin" ? "Admin account" : "Member account"}</span>
                 </div>
               </div>
-
-              <section
-                className="profile-billing-section"
-                aria-label="Billing summary"
-              >
-                <div className="profile-billing-copy">
-                  <p className="eyebrow">Plan access</p>
-                  <strong>{getBillingDisplayLabel(user.billing)}</strong>
-                  <span>{getBillingStatusCopy(user.billing)}</span>
-                </div>
-
-                <button className="thread-dialog-button is-primary" disabled={passwordChanging} onClick={() => selectTab("billing")} type="button">
-                  Open billing dashboard
-                </button>
-              </section>
-
-              {onOpenWebsiteSettings ? <div className="thread-dialog-form">
-                <p className="thread-dialog-copy">Signed in as {user.email}. Manage your profile and password on the Margin Chat website.</p>
-                <div className="thread-dialog-actions">
-                  <button className="thread-dialog-button" type="button" onClick={() => void onLogout()}>Log out</button>
-                  <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("account")}>Manage account on website</button>
-                </div>
-              </div> : <>
               <form
                 className="thread-dialog-form"
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (passwordChangingRef.current || isSaving) return;
-                  void onSave({
-                    displayName: trimmedDisplayName,
-                    email: trimmedEmail,
-                  });
+                  void onSave({ displayName: trimmedDisplayName, email: trimmedEmail });
                 }}
               >
                 <label className="thread-dialog-field">
                   <span className="thread-dialog-label">Display name</span>
-                  <input
-                    ref={displayNameInputRef}
-                    autoComplete="name"
-                    className="thread-dialog-input"
-                    disabled={passwordChanging}
-                    onChange={(event) => setDisplayName(event.target.value)}
-                    placeholder="Your name"
-                    type="text"
-                    value={displayName}
-                  />
+                  <input ref={displayNameInputRef} autoComplete="name" className="thread-dialog-input" disabled={passwordChanging}
+                    onChange={(event) => setDisplayName(event.target.value)} placeholder="Your name" type="text" value={displayName} />
                 </label>
-
                 <label className="thread-dialog-field">
                   <span className="thread-dialog-label">Email</span>
-                  <input
-                    autoComplete="email"
-                    className="thread-dialog-input"
-                    disabled={passwordChanging}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@example.com"
-                    type="email"
-                    value={email}
-                  />
+                  <input autoComplete="email" className="thread-dialog-input" disabled={passwordChanging}
+                    onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" type="email" value={email} />
                 </label>
-
-                {errorMessage ? (
-                  <p className="profile-dialog-error" role="alert">
-                    {errorMessage}
-                  </p>
-                ) : null}
-
-                {billingErrorMessage ? (
-                  <p className="profile-dialog-error" role="alert">
-                    {billingErrorMessage}
-                  </p>
-                ) : null}
-
+                {errorMessage ? <p className="profile-dialog-error" role="alert">{errorMessage}</p> : null}
+                {billingErrorMessage ? <p className="profile-dialog-error" role="alert">{billingErrorMessage}</p> : null}
                 <div className="thread-dialog-actions">
-                  <button
-                    className="thread-dialog-button is-danger profile-logout-button"
-                    disabled={isSaving || billingSubmitting || passwordChanging}
-                    onClick={() => { if (!passwordChangingRef.current) void onLogout(); }}
-                    type="button"
-                  >
-                    Log out
-                  </button>
-                  <button
-                    className="thread-dialog-button"
-                    disabled={passwordChanging}
-                    onClick={closeProfile}
-                    type="button"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="thread-dialog-button is-primary"
-                    disabled={isSaving || passwordChanging || !hasChanges}
-                    type="submit"
-                  >
+                  {hasChanges ? <button className="thread-dialog-button" disabled={passwordChanging} type="button"
+                    onClick={() => { setDisplayName(user.displayName); setEmail(user.email); }}>Undo changes</button> : null}
+                  <button className="thread-dialog-button is-primary" disabled={isSaving || passwordChanging || !hasChanges} type="submit">
                     {isSaving ? "Saving..." : "Save changes"}
                   </button>
                 </div>
               </form>
               <PasswordChangeForm disabled={isSaving} key={user.id} onChangePassword={changePassword} />
-              </>}
-            </div>
-          ) : null}
+            </>) : null}
 
-          {activeTab === "billing" ? (
-            <section aria-labelledby="profile-tab-billing" className="profile-dialog-panel" id="profile-panel-billing" role="tabpanel">
+            {activeTab === "billing" ? (
               <BillingDashboard data={billingDashboard} loading={billingDashboardLoading} errorMessage={billingDashboardError}
                 checkoutErrorMessage={billingErrorMessage} isSubmitting={billingSubmitting} onRefresh={onRefreshBilling}
                 onAddMoney={onAddMoney} onStartSubscription={onStartSubscription} onUpgradeToPlus={onUpgradeToPlus} onManageBilling={onManageBilling} user={user} />
-            </section>
-          ) : null}
+            ) : null}
 
-          {activeTab === "api-keys" ? (
-            <section
-              aria-labelledby="profile-tab-api-keys"
-              className="profile-api-key-section profile-dialog-panel"
-              id="profile-panel-api-keys"
-              role="tabpanel"
-            >
+            {activeTab === "api-keys" ? <>
+              <div className="profile-api-key-section">
               {onOpenWebsiteSettings ? <>
                 <h3>API keys</h3>
                 <p className="thread-dialog-copy">Your saved provider keys are available to AI conversations here. Add or remove keys on the Margin Chat website.</p>
@@ -572,7 +584,7 @@ export default function ProfileModal({
 
               <div className="profile-api-key-list">
                 {API_KEY_FIELDS.map(({ label, placeholder, provider }) => {
-                  const summary = apiKeySettings.byProvider[provider];
+                  const summary = apiKeySettings.byProvider[provider] ?? { configured: false, hint: null };
 
                   return (
                     <div className="profile-api-key-row" key={provider}>
@@ -645,36 +657,33 @@ export default function ProfileModal({
                 {apiKeySaving ? "Saving keys..." : "Save API keys"}
               </button>
               </>}
-            </section>
-          ) : null}
+              </div>
+              <AiFeatureSettings jevEnabled={jevEnabled} jevStatus={jevStatus} onSetJevEnabled={onSetJevEnabled} vaultIndex={vaultIndex} />
+            </> : null}
 
-          {activeTab === "agents" ? (
-            <section
-              aria-labelledby="profile-tab-agents"
-              className="profile-api-key-section profile-dialog-panel"
-              id="profile-panel-agents"
-              role="tabpanel"
-            >
-              {onOpenWebsiteSettings ? <>
-                <h3>Connect AI agents</h3>
-                <p className="thread-dialog-copy">Make tokens for Claude Code, Cursor and other MCP agents on the Margin Chat website.</p>
-                <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("agents")}>Manage agents on website</button>
-              </> : <AgentConnectionsPanel />}
-            </section>
-          ) : null}
+            {activeTab === "agents" ? (
+              <div className="profile-api-key-section">
+                {onOpenWebsiteSettings ? <>
+                  <p className="thread-dialog-copy">Make tokens for Claude Code, Cursor and other MCP agents on the Margin Chat website.</p>
+                  <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("agents")}>Manage agents on website</button>
+                </> : <AgentConnectionsPanel />}
+              </div>
+            ) : null}
 
-          {activeTab === "storage" ? (
-            <section
-              aria-labelledby="profile-tab-storage"
-              className="profile-storage-section profile-dialog-panel"
-              id="profile-panel-storage"
-              role="tabpanel"
-            >
-              <VaultPanel vault={vault} cloudSyncEnabled={cloudSyncEnabled} />
-            </section>
-          ) : null}
-        </div>
-      </section>
-    </div>
+            {activeTab === "appearance" ? (
+              <AppearanceSettings mainViewMode={mainViewMode} onSetMainViewMode={onSetMainViewMode} onSetTheme={onSetTheme} theme={theme} />
+            ) : null}
+
+            {activeTab === "voice" ? <VoiceTypingSettings /> : null}
+
+            {activeTab === "storage" ? (
+              <div className="profile-storage-section">
+                <VaultPanel vault={vault} cloudSyncEnabled={cloudSyncEnabled} />
+              </div>
+            ) : null}
+          </section>
+        </div> : null}
+      </div>
+    </section>
   );
 }

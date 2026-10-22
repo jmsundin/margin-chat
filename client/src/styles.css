@@ -12712,3 +12712,395 @@ body .live-markdown-editor {
   line-height: 1;
   padding: 2px 3px;
 }
+
+/* Settings page: sections listed on the left, one section on the right; phones show the list, then one section. */
+.settings-page {
+  background: var(--bg);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  inset: 0;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
+  position: fixed;
+  /* Above the phone's bottom buttons (65); toasts and pickers still open over it. */
+  z-index: 66;
+}
+
+.settings-page-top {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  flex: 0 0 auto;
+  gap: 14px;
+  min-height: 52px;
+  padding: 0 18px;
+}
+
+.settings-page-top .settings-page-title {
+  font-size: 0.95rem;
+  font-weight: 650;
+  margin: 0;
+}
+
+.settings-page-back,
+.settings-page-close {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  gap: 4px;
+  min-height: 36px;
+  padding: 0 8px 0 4px;
+}
+
+.settings-page-close {
+  margin-left: auto;
+  padding: 0 6px;
+}
+
+.settings-page-back:hover,
+.settings-page-close:hover {
+  color: var(--ink);
+}
+
+.settings-page-back:focus-visible,
+.settings-page-close:focus-visible,
+.settings-page-item:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.settings-page-icon {
+  flex: 0 0 auto;
+  height: 18px;
+  width: 18px;
+}
+
+.settings-page-layout {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.settings-page-nav {
+  background: var(--panel-strong);
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex: 0 0 260px;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 12px calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
+.settings-page-me {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  padding: 4px 8px 14px;
+}
+
+.settings-page-avatar {
+  border-radius: 50%;
+  font-size: 0.8rem;
+  height: 36px;
+  width: 36px;
+}
+
+.settings-page-me-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.settings-page-me-copy strong,
+.settings-page-me-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-page-me-copy span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.settings-page-search {
+  align-items: center;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+}
+
+.settings-page-search:focus-within {
+  border-color: var(--accent);
+}
+
+.settings-page-search input {
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  flex: 1;
+  font: inherit;
+  min-height: 34px;
+  min-width: 0;
+  outline: none;
+}
+
+.settings-page-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-page-item {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  font: inherit;
+  gap: 10px;
+  min-height: 36px;
+  padding: 0 10px;
+  text-align: left;
+  width: 100%;
+}
+
+.settings-page-item .settings-page-icon {
+  color: var(--muted);
+}
+
+.settings-page-item:hover {
+  background: var(--button-active-surface);
+}
+
+.settings-page-item.is-active {
+  background: var(--button-active-surface);
+  font-weight: 650;
+}
+
+.settings-page-item.is-active .settings-page-icon {
+  color: var(--accent);
+}
+
+.settings-page-item-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-page-item-fact {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.settings-page-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 6px 10px;
+}
+
+.settings-page-logout {
+  margin-top: auto;
+}
+
+.settings-page-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 32px 40px calc(48px + env(safe-area-inset-bottom, 0px));
+}
+
+.settings-page-section {
+  margin: 0 auto 0 0;
+  max-width: 680px;
+}
+
+.settings-page-heading h2 {
+  font-size: 1.45rem;
+  margin: 0 0 4px;
+}
+
+.settings-page-heading {
+  margin-bottom: 6px;
+}
+
+.settings-page-heading p {
+  color: var(--muted);
+  margin: 0;
+}
+
+/* On/off settings read as switches, and keep the switch beside its text on phones too. */
+.settings-page .app-settings-switch-section,
+.settings-page .jev-settings-section {
+  align-items: flex-start;
+  flex-direction: row;
+}
+
+.settings-page input[type="checkbox"][role="switch"] {
+  appearance: none;
+  background: var(--line-strong);
+  border-radius: 999px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  height: 22px;
+  margin: 2px 0 0;
+  position: relative;
+  transition: background-color 160ms ease;
+  width: 38px;
+}
+
+.settings-page input[type="checkbox"][role="switch"]::after {
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  content: "";
+  height: 18px;
+  left: 2px;
+  position: absolute;
+  top: 2px;
+  transition: left 160ms ease;
+  width: 18px;
+}
+
+.settings-page input[type="checkbox"][role="switch"]:checked {
+  background: var(--accent);
+}
+
+.settings-page input[type="checkbox"][role="switch"]:checked::after {
+  left: 18px;
+}
+
+.settings-page input[type="checkbox"][role="switch"]:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings-page input[type="checkbox"][role="switch"]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-page input[type="checkbox"][role="switch"],
+  .settings-page input[type="checkbox"][role="switch"]::after {
+    transition: none;
+  }
+}
+
+.settings-page-section .billing-dashboard > .billing-dashboard-heading:first-child {
+  align-items: flex-end;
+}
+
+/* The page heading names each section, so the panels' own small labels go. */
+.settings-page-section .eyebrow,
+.settings-page-section .billing-dashboard > .billing-dashboard-heading:first-child > div {
+  display: none;
+}
+
+.settings-page-section .billing-dashboard > .billing-dashboard-heading:first-child {
+  justify-content: flex-end;
+}
+
+.settings-page-section .app-settings-body {
+  overflow: visible;
+}
+
+.settings-page-section .profile-api-key-section {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+
+.settings-page-section .app-settings-body + .app-settings-body {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+
+/* Phones: the list is its own screen with larger rows; a section fills the screen under a back button. */
+.settings-page.is-phone .settings-page-top {
+  border-bottom: 0;
+  padding: 0 12px;
+}
+
+.settings-page.is-phone .settings-page-nav {
+  background: var(--bg);
+  border-right: 0;
+  flex: 1 1 auto;
+  padding: 0 16px calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+.settings-page.is-phone .settings-page-nav > .settings-page-title {
+  font-size: 1.8rem;
+  margin: 4px 0 12px;
+}
+
+.settings-page.is-phone .settings-page-me {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+}
+
+.settings-page.is-phone .settings-page-search {
+  margin-bottom: 14px;
+}
+
+.settings-page.is-phone .settings-page-search input {
+  font-size: 16px;
+  min-height: 40px;
+}
+
+.settings-page.is-phone .settings-page-sections {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  gap: 0;
+  overflow: hidden;
+}
+
+.settings-page.is-phone .settings-page-item {
+  border-radius: 0;
+  min-height: 52px;
+  padding: 0 14px;
+}
+
+.settings-page.is-phone .settings-page-sections .settings-page-item + .settings-page-item {
+  border-top: 1px solid var(--line);
+}
+
+.settings-page.is-phone .settings-page-logout {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--danger);
+  margin-top: 16px;
+}
+
+.settings-page.is-phone .settings-page-logout .settings-page-icon {
+  color: var(--danger);
+}
+
+.settings-page.is-phone .settings-page-main {
+  padding: 4px 16px calc(32px + env(safe-area-inset-bottom, 0px));
+}
+
+.settings-page.is-phone .settings-page-heading h2 {
+  font-size: 1.6rem;
+}
