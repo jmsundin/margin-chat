@@ -22,6 +22,8 @@ interface Props {
   trailing?: ReactNode;
   /** Plain links with no level menus, for the phone header's drop-down. */
   plain?: boolean;
+  /** When each document was last opened, so the trail below the focused document follows the latest child. */
+  openedAt?: ReadonlyMap<string, number>;
 }
 
 const KIND_LABELS: Record<DocumentKind, string> = {
@@ -32,7 +34,6 @@ const ICONS = {
   side: "M6 3h8l4 4v14H6zM9 12h6M9 16h6",
   branch: "M4 5h16v11H9l-5 4z",
   note: "M5 4h14v11l-5 5H5zM14 20v-5h5",
-  children: "M7 4v9a3 3 0 0 0 3 3h9M16 13l3 3-3 3",
   chevron: "M6 9l6 6 6-6",
   back: "M15 6l-6 6 6 6",
   expand: "M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7",
@@ -49,14 +50,11 @@ function titleOf(document: Conversation) {
 }
 
 /** One breadcrumb follows the focused document; each level lists its peers to expand here or open beside. */
-export default function DocumentBreadcrumbs({ conversations, focusedId, onScreenIds, minimizedIds, streamingIds, backTitle, onBack, onExpand, onOpenBeside, trailing, plain = false }: Props) {
-  const { levels, children, childrenByParent } = useMemo(() => getDocumentBreadcrumbs(conversations, focusedId), [conversations, focusedId]);
-  const focused = conversations[focusedId];
-  const crumbs = [
-    ...levels.map((level) => ({ key: level.document.id, document: level.document as Conversation | null, options: level.options,
-      heading: level.parent ? `Children of ${titleOf(level.parent)}` : "Peer documents" })),
-    ...(focused && children.length ? [{ key: "children", document: null, options: children, heading: `Children of ${titleOf(focused)}` }] : []),
-  ];
+export default function DocumentBreadcrumbs({ conversations, focusedId, onScreenIds, minimizedIds, streamingIds, backTitle, onBack, onExpand, onOpenBeside, trailing, plain = false, openedAt }: Props) {
+  const { levels, trail, childrenByParent } = useMemo(() => getDocumentBreadcrumbs(conversations, focusedId, openedAt), [conversations, focusedId, openedAt]);
+  // Below the focused document the path goes on by title: the latest child opened at each level.
+  const crumbs = [...levels, ...trail].map((level, index) => ({ key: level.document.id, document: level.document, options: level.options,
+    ahead: index >= levels.length, heading: level.parent ? `Children of ${titleOf(level.parent)}` : "Peer documents" }));
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const [detail, setDetail] = useState<{ id: string; top: number; left: number } | null>(null);
   const bar = useRef<HTMLElement>(null);
@@ -191,26 +189,18 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
   }
 
   if (plain) {
-    const link = (document: Conversation) => {
-      const current = document.id === focusedId;
-      return <button type="button" className="document-breadcrumb-link" data-breadcrumb-document-id={document.id} aria-current={current ? "page" : undefined}
-        disabled={current} onClick={() => onExpand(document.id)}>
-        <Icon name={getDocumentKind(document)} className="document-breadcrumb-icon" />
-        <span className="document-breadcrumb-label">{titleOf(document)}</span>
-        {streamingIds.has(document.id) ? <span className="document-breadcrumb-streaming" title="AI writing">
-          <span className="thread-streaming-dot" aria-hidden="true" /></span> : null}
-      </button>;
-    };
     return <nav className="document-breadcrumbs is-plain" aria-label="Focused document path">
       <ol className="document-breadcrumbs-list">
-        {levels.map((level, index) => <li key={level.document.id} className="document-breadcrumb">
+        {crumbs.map(({ document, ahead }, index) => <li key={document.id} className={`document-breadcrumb${ahead ? " is-ahead" : ""}`}>
           {index ? <span className="document-breadcrumb-separator" aria-hidden="true">›</span> : null}
-          {link(level.document)}
+          <button type="button" className="document-breadcrumb-link" data-breadcrumb-document-id={document.id}
+            aria-current={document.id === focusedId ? "page" : undefined} disabled={document.id === focusedId} onClick={() => onExpand(document.id)}>
+            <span className="document-breadcrumb-label">{titleOf(document)}</span>
+            {streamingIds.has(document.id) ? <span className="document-breadcrumb-streaming" title="AI writing">
+              <span className="thread-streaming-dot" aria-hidden="true" /></span> : null}
+          </button>
         </li>)}
       </ol>
-      {focused && children.length ? <ul className="document-breadcrumbs-children" aria-label={`Inside ${titleOf(focused)}`}>
-        {children.map((child) => <li key={child.id}>{link(child)}</li>)}
-      </ul> : null}
     </nav>;
   }
 
@@ -228,9 +218,9 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
       </button>
       <ol ref={list} className="document-breadcrumbs-list">
         {crumbs.map((crumb, index) => {
-          const label = crumb.document ? titleOf(crumb.document) : `${crumb.options.length} ${crumb.options.length === 1 ? "child" : "children"}`;
-          const current = crumb.document?.id === focusedId;
-          return <li key={crumb.key} className={`document-breadcrumb${crumb.document ? "" : " is-children"}`}
+          const label = titleOf(crumb.document);
+          const current = crumb.document.id === focusedId;
+          return <li key={crumb.key} className={`document-breadcrumb${crumb.ahead ? " is-ahead" : ""}`}
             onPointerEnter={(event) => enter(index, event.pointerType, event.buttons)} onPointerLeave={leave}>
             {index ? <span className="document-breadcrumb-separator" aria-hidden="true">›</span> : null}
             <button type="button" className="document-breadcrumb-trigger"
@@ -244,9 +234,8 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
                 if (event.key === "ArrowDown") { event.preventDefault(); event.stopPropagation(); show(index, true); }
                 else if (event.key === "Escape" && openIndex !== null) { event.preventDefault(); event.stopPropagation(); close(true); }
               }}>
-              <Icon name={crumb.document ? getDocumentKind(crumb.document) : "children"} className="document-breadcrumb-icon" />
               <span className="document-breadcrumb-label">{label}</span>
-              {crumb.document && streamingIds.has(crumb.document.id) ? <span className="document-breadcrumb-streaming" title="AI writing">
+              {streamingIds.has(crumb.document.id) ? <span className="document-breadcrumb-streaming" title="AI writing">
                 <span className="thread-streaming-dot" aria-hidden="true" /></span> : null}
               <Icon name="chevron" className="document-breadcrumb-chevron" />
             </button>

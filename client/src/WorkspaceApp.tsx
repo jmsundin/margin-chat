@@ -71,6 +71,7 @@ import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
 import { addPinnedDocument, listPinnedDocumentIds, removePinnedDocument } from "./lib/documentDock";
 import { closeDocument, focusDocument, getDocumentChildrenByParent, getDocumentWidth, getDocumentWorkspace, getMarginHostPath, minimizeDocument, openDocumentBeside, placeDocumentAfterParent, reorderDocument, replaceDocument, setDocumentWidth, showDocument } from "./lib/documentWorkspace";
+import { loadOpenedDocuments } from "./lib/vaultWorkingSet";
 import { getDocumentBackTarget, getDocumentKind, getPresentedParentId, recordDocumentNavigation, takeDocumentBack, type DocumentHistory } from "./lib/documentBreadcrumbs";
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
@@ -1016,6 +1017,8 @@ function WorkspaceAppContent({
   const visiblePinnedDocumentIds = pinnedDocumentIds.filter((id) => !familyPinnedDocumentIds.includes(id) || familyDocumentIds.has(id));
   const scrollingDocuments = documentWorkspace.visibleDocuments.filter((document) => !pinnedDocumentIds.includes(document.id)
     && (!isCompactDocument(document) || !document.parentId));
+  // When each document was last opened on this device; the path follows the latest child below the focused one.
+  const documentOpenedAt = useMemo(() => loadOpenedDocuments(storageUserId), [storageUserId, activeConversation.id]);
   const tabDocuments = [
     ...visiblePinnedDocumentIds.filter((id) => !familyDocumentIds.has(id)).map((id) => state.conversations[id]),
     ...documentWorkspace.openDocuments,
@@ -4651,7 +4654,7 @@ function WorkspaceAppContent({
       onScreenIds={getOnScreenDocumentIds()} streamingIds={streamingThreadIds}
       minimizedIds={new Set(getDocumentWorkspace(state.conversations, activeConversation.id).minimizedIds)}
       backTitle={backId ? state.conversations[backId].title || "Untitled document" : null} onBack={handleDocumentBack}
-      onExpand={handleExpandDocumentHere} onOpenBeside={handleOpenDocumentBeside} plain={plain}
+      onExpand={handleExpandDocumentHere} onOpenBeside={handleOpenDocumentBeside} plain={plain} openedAt={documentOpenedAt}
       // On a computer the compass sits beside the path it continues; phones list the views as tabs below it.
       trailing={isMobileViewport ? undefined : <>
         {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
