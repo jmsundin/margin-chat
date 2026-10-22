@@ -188,7 +188,8 @@ const server = createServer(async (request, response) => {
             const metadata = { model: "synthetic-document-fixture", requestedModelId: body.modelId,
               requestedServiceId: body.serviceId, resolvedServiceId: body.serviceId, credentialSource: "personal" };
             // A diagram edit gets a changed diagram, wrapped in the kind of words the app must drop.
-            const reply = JSON.stringify(body.messages ?? []).includes("selected passage is a Mermaid diagram")
+            const asked = JSON.stringify(body.messages ?? []);
+            const reply = asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;
             response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });

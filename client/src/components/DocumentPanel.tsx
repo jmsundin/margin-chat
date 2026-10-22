@@ -5,7 +5,7 @@ import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
 import { joinDocumentBlocks } from "../lib/continuousDocument";
 import { getGenerationBlocks, proposeAIChildNodes, type AIChildNodeProposal } from "../lib/aiChildNodes";
-import type { DocumentAIRequest } from "../lib/documentAI";
+import type { DiagramAIRequest, DocumentAIRequest } from "../lib/documentAI";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { DocumentEditHistory, type DocumentEditOptions } from "../lib/documentEditHistory";
 import { getBackendServiceModel, type RecentBackendServiceSelection } from "../lib/services";
@@ -77,6 +77,8 @@ export interface DocumentPanelProps {
   onChange: (document: DocumentValue) => void;
   onRename: (title: string) => void;
   onSubmit: (request: DocumentAIRequest) => void;
+  /** Ask AI in the Edit diagram dialog: returns the diagram's new Mermaid text. */
+  onAskDiagram?: (request: DiagramAIRequest) => Promise<string>;
   onStop: () => void;
   onSelection: (selection: SelectionDraft) => void;
   onClearSelection?: () => void;
@@ -529,7 +531,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
-        moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock}
+        moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} onAskDiagram={props.onAskDiagram}
         toolbarStart={historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
           modal={mobileKeyboard.mobile}>{renderPromptHistory()}</PromptHistory> : null}
         onChangeBlocks={changeBlocks}

@@ -76,8 +76,8 @@ import { getDocumentBackTarget, getDocumentKind, getPresentedParentId, recordDoc
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
-import { buildDocumentAIMessage, type DocumentAIRequest } from "./lib/documentAI";
-import { hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
+import { buildDiagramAIMessage, buildDocumentAIMessage, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
+import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
 import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
@@ -2446,6 +2446,35 @@ function WorkspaceAppContent({
         void onRefreshBilling();
       },
     });
+  }
+
+  /**
+   * Asks the AI to change a diagram open in the Edit diagram dialog and returns its new Mermaid text.
+   * The dialog shows the result; nothing reaches the document until the user saves the diagram.
+   */
+  async function handleAskDiagram(conversationId: string, request: DiagramAIRequest): Promise<string> {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) throw new Error("This document is no longer open.");
+    if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
+    const prompt: Message = { id: createId("message"), role: "user", content: request.prompt.trim(), createdAt: new Date().toISOString() };
+    const message = buildDiagramAIMessage(conversation, prompt, request);
+    try {
+      const { reply } = await requestChatReply({
+        ...prepareAIContext(currentStateRef.current.conversations, conversation, [message]),
+        ai: withJevConsent(conversation.ai, jevEnabled), expectedUserId: user.id,
+        conversation: await conversationRequestPayload(currentStateRef.current.conversations, conversation), messages: [message],
+        modelId: conversation.modelId, serviceId: conversation.serviceId, signal: request.signal,
+      });
+      const source = findMermaidFences(mermaidDiagramReply(reply))[0]?.source.trim();
+      if (!source) throw new Error("The AI didn't send back a diagram. Try asking another way.");
+      return source;
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) onAuthExpired();
+      else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
+      throw error;
+    } finally {
+      void onRefreshBilling();
+    }
   }
 
   function handleAcceptDocumentVersion(conversationId: string, generationId: string) {
@@ -4836,6 +4865,7 @@ function WorkspaceAppContent({
       onChange={(document) => handleDocumentChange(conversation.id, document)}
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
+      onAskDiagram={(request) => handleAskDiagram(conversation.id, request)}
       onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); const diagram = isMermaidDiagramPassage(selection.quote); setSelectionResponseDestination(diagram ? "inline" : defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(diagram); }}
       onCaretMenu={(menu) => { setSelectionDraft(null); setCaretMenu(menu); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}
