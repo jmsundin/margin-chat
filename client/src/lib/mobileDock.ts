@@ -1,13 +1,14 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * The phone's bottom row of buttons: microphone, +, keyboard. The keyboard
- * provider draws the row; voice typing and the workspace put their buttons
- * into its slots, so all three line up without knowing each other's size.
+ * The phone's stack of buttons at the bottom right, top to bottom: +, microphone,
+ * back to top, keyboard. The keyboard provider draws the stack; the workspace and
+ * the document put their buttons into its slots, so they line up without knowing
+ * each other's size, and a missing one leaves no gap.
  */
-export type MobileDockSlot = "mic" | "create";
+export type MobileDockSlot = "create" | "mic" | "top";
 
-let slots: Record<MobileDockSlot, HTMLElement | null> = { mic: null, create: null };
+let slots: Record<MobileDockSlot, HTMLElement | null> = { create: null, mic: null, top: null };
 const listeners = new Set<() => void>();
 
 export function setMobileDockSlot(name: MobileDockSlot, element: HTMLElement | null) {

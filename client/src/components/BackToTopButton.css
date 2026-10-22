@@ -5,6 +5,7 @@
 .back-to-top:focus-visible, .document-corner-mic:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Clicked into the text: the mic beside Ask AI takes over; this spot holds the recording controls. */
 .document-corner-mic.is-standby { visibility: hidden; pointer-events: none; }
-.back-to-top.is-floating, .document-corner-mic.is-floating { position: fixed; z-index: 65; right: auto; bottom: auto; }
+/* In the phone's button stack: the same size and look as the + and keyboard buttons. */
+.back-to-top.is-docked, .document-corner-mic.is-docked { position: relative; z-index: auto; inset: auto; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: 14px; color: var(--ink); box-shadow: 0 3px 12px #0003; }
 /* Sits at the bottom right of the text, not over the margin notes column. */
-.document-panel-content.has-margin-notes > :is(.back-to-top, .document-corner-mic):not(.is-floating) { right: calc(var(--document-margin-width) + 24px); }
+.document-panel-content.has-margin-notes > :is(.back-to-top, .document-corner-mic) { right: calc(var(--document-margin-width) + 24px); }

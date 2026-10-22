@@ -3,16 +3,13 @@ import { createPortal } from "react-dom";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { requestDictation } from "../lib/dictation";
-import { useVisualViewport } from "../lib/useVisualViewport";
+import { useMobileDockSlot } from "../lib/mobileDock";
 import { MicIcon, useDictationButton } from "./DictationButton";
 import { useMobileKeyboard } from "./MobileKeyboard";
 import "./BackToTopButton.css";
 
 /** How many screens down the reader must be before the button appears. */
 const SHOW_AFTER_SCREENS = 1.5;
-/** Phones: the keyboard button's top is 72px up; each button above it is 40px with an 8px gap. */
-const PHONE_STACK_BOTTOM = 72 + 8 + 40;
-const STACK_STEP = 40 + 8;
 
 /** The document's editable text, the field the corner mic types into. */
 function editableText(body: HTMLElement | null): HTMLElement | null {
@@ -96,10 +93,12 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
     };
   }, [scrollRef, micShown]);
   // Phones show one document at a time; only the active one owns the screen corner.
-  const floating = mobile && active;
+  // Phones show one document at a time; only the active one puts its buttons in the screen's button stack.
+  const docked = mobile && active;
   const hidden = mobile && (!active || overlayOpen);
   const mic = micShown && text.editable && !hidden;
-  const viewport = useVisualViewport(floating && (far || mic));
+  const micSlot = useMobileDockSlot("mic");
+  const topSlot = useMobileDockSlot("top");
   if (hidden || (!far && !mic)) return null;
 
   const toTop = () => { if (scrollRef.current) glideToTop(scrollRef.current); };
@@ -112,23 +111,24 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
     if (view) view.focus(); else target.focus();
     requestDictation(target);
   };
-  const place = (above: number) => floating
-    // Stacked directly above the keyboard button at the right end of the phone's bottom row (48px, 20px in from the edge).
-    ? { top: `calc(${viewport.top + viewport.height - PHONE_STACK_BOTTOM - above * STACK_STEP}px - env(safe-area-inset-bottom, 0px))`, left: viewport.left + viewport.width - 64 }
-    : undefined;
-  const buttons = <>
-    {mic && <button type="button" className={`document-corner-mic${floating ? " is-floating" : ""}${text.focused ? " is-standby" : ""}`}
-      data-dictation-slot="" data-dictation="off" aria-label="Voice typing" title="Voice typing" aria-hidden={text.focused || undefined}
-      tabIndex={text.focused ? -1 : undefined} style={place(1)}
-      onPointerDown={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()} onClick={talk}>
-      <MicIcon size={18} />
-    </button>}
-    {far && <button type="button" className={`back-to-top${floating ? " is-floating" : ""}`} aria-label="Back to top" title="Back to top" style={place(0)}
-      onPointerDown={(event) => event.preventDefault()} onClick={toTop}>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M6 4h12M12 20V9m-5 5 5-5 5 5"/>
-      </svg>
-    </button>}
+  // On a computer the mic beside Ask AI takes over once the text is clicked into. Phones keep
+  // this one in their stack, so a tapped paragraph has both it and the Talk button below the text.
+  const standby = text.focused && !docked;
+  const micButton = mic && <button type="button" className={`document-corner-mic${docked ? " is-docked" : ""}${standby ? " is-standby" : ""}`}
+    data-dictation-slot="" data-dictation="off" aria-label="Voice typing" title="Voice typing" aria-hidden={standby || undefined}
+    tabIndex={standby ? -1 : undefined}
+    onPointerDown={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()} onClick={talk}>
+    <MicIcon size={docked ? 22 : 18} />
+  </button>;
+  const topButton = far && <button type="button" className={`back-to-top${docked ? " is-docked" : ""}`} aria-label="Back to top" title="Back to top"
+    onPointerDown={(event) => event.preventDefault()} onClick={toTop}>
+    <svg width={docked ? 22 : 18} height={docked ? 22 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 4h12M12 20V9m-5 5 5-5 5 5"/>
+    </svg>
+  </button>;
+  if (docked) return <>
+    {micButton && micSlot ? createPortal(micButton, micSlot) : null}
+    {topButton && topSlot ? createPortal(topButton, topSlot) : null}
   </>;
-  return floating ? createPortal(buttons, document.body) : buttons;
+  return <>{micButton}{topButton}</>;
 }
