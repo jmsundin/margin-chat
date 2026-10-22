@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { findMermaidFences, isMermaidDiagramPassage, mermaidDiagramReply, replaceMermaidFence } from "../client/src/lib/mermaidDiagrams";
+import { findMermaidFences, getMermaidConfig, isMermaidDiagramPassage, mermaidDiagramReply, replaceMermaidFence } from "../client/src/lib/mermaidDiagrams";
 
 describe("Mermaid fences", () => {
   const markdown = "Intro\n```mermaid\nflowchart TD\n  A --> B\n```\ntext\n~~~~ Mermaid\nsequenceDiagram\n~~~~";
@@ -48,3 +48,20 @@ describe("Mermaid fences", () => {
   });
 });
 
+
+test("diagrams use the Clean look: the base theme in the app's colors, light and dark", () => {
+  const light = getMermaidConfig("light"), dark = getMermaidConfig("dark");
+  for (const [config, background] of [[light, "#ffffff"], [dark, "#171717"]] as const) {
+    expect(config.theme).toBe("base");
+    expect(config.themeVariables?.background).toBe(background);
+    // Edge labels are drawn in the page color the frame uses.
+    expect(config.themeVariables?.edgeLabelBackground).toBe(background);
+    expect(config.themeCSS).toContain(".node rect { rx: 10px; ry: 10px; }");
+    // Pie slices, mind map branches and chart series get the app palette, not shades of the node color.
+    expect(config.themeVariables?.pie1).not.toBe(config.themeVariables?.pie2);
+    expect(config.themeVariables?.cScale0).toBe(config.themeVariables?.pie1);
+  }
+  expect(light.darkMode).toBe(false);
+  expect(dark.darkMode).toBe(true);
+  expect(light.securityLevel).toBe("strict");
+});

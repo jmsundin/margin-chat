@@ -4044,10 +4044,11 @@ button {
   width: 100%;
 }
 
+/* Diagrams sit on the page in a hairline frame; Mermaid's edge labels are drawn in this same --bg. */
 .message-content.is-markdown .message-mermaid-block {
-  background: var(--message-code-bg);
-  border: 1px solid var(--message-code-border);
-  border-radius: 18px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   margin: 0.9rem 0 0;
   overflow: hidden;
 }
@@ -4095,7 +4096,7 @@ button {
 }
 
 .message-content.is-markdown .message-mermaid-status {
-  border-top: 1px solid var(--message-code-border);
+  border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 0.82rem;
   margin: 0;
@@ -4231,10 +4232,7 @@ button {
 }
 
 .mermaid-viewer-viewport {
-  background:
-    radial-gradient(circle at top left, rgba(122, 202, 164, 0.1), transparent 28%),
-    radial-gradient(circle at bottom right, rgba(255, 183, 107, 0.1), transparent 24%),
-    rgba(7, 10, 13, 0.88);
+  background: var(--bg);
   border: 0;
   border-radius: 0;
   cursor: grab;
