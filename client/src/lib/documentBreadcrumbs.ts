@@ -24,11 +24,15 @@ export interface DocumentBreadcrumbLevel {
   options: Conversation[];
 }
 
-/** Breadcrumb levels for the focused document's family, plus the focused document's own children. */
-export function getDocumentBreadcrumbs(conversations: Record<string, Conversation>, focusedId: string) {
+/**
+ * Breadcrumb levels for the focused document's family, plus the focused document's own children.
+ * The trail continues below the focused document, one child per level: the one opened most
+ * recently (`openedAt`), or the first child when none has been opened.
+ */
+export function getDocumentBreadcrumbs(conversations: Record<string, Conversation>, focusedId: string, openedAt: ReadonlyMap<string, number> = new Map()) {
   const focused = conversations[focusedId];
   const byParent = new Map<string | null, Conversation[]>();
-  if (!focused) return { levels: [] as DocumentBreadcrumbLevel[], children: [] as Conversation[], childrenByParent: byParent };
+  if (!focused) return { levels: [] as DocumentBreadcrumbLevel[], trail: [] as DocumentBreadcrumbLevel[], children: [] as Conversation[], childrenByParent: byParent };
   for (const document of getDocumentWorkspace(conversations, focusedId).documents) {
     const parentId = getPresentedParentId(conversations, document.id);
     byParent.set(parentId, [...byParent.get(parentId) ?? [], document]);
@@ -44,7 +48,16 @@ export function getDocumentBreadcrumbs(conversations: Record<string, Conversatio
     const options = byParent.get(parent?.id ?? null) ?? [];
     return { document, parent, options: options.includes(document) ? options : [...options, document] };
   });
-  return { levels, children: byParent.get(focused.id) ?? [], childrenByParent: byParent };
+  const trail: DocumentBreadcrumbLevel[] = [];
+  for (let parent = focused; ;) {
+    const options = byParent.get(parent.id) ?? [];
+    const next = options.reduce<Conversation | undefined>((best, option) =>
+      !best || (openedAt.get(option.id) ?? 0) > (openedAt.get(best.id) ?? 0) ? option : best, undefined);
+    if (!next || path.includes(next) || trail.some((level) => level.document === next)) break;
+    trail.push({ document: next, parent, options });
+    parent = next;
+  }
+  return { levels, trail, children: byParent.get(focused.id) ?? [], childrenByParent: byParent };
 }
 
 /** Back history for each tab, keyed by the document the tab currently shows. */

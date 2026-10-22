@@ -118,7 +118,9 @@ try {
   const bar = element('nav[aria-label="Focused document path"]');
   assert.equal(bar.previousElementSibling, element(".document-workspace-toolbar"), "The breadcrumb bar sits directly under the workspace toolbar.");
   assert.deepEqual(panes(), ["main", "roofs"]);
-  assert.deepEqual(crumbLabels(), ["Urban heat draft", "3 children"]);
+  assert.deepEqual(crumbLabels(), ["Urban heat draft", "Check source"], "Below the focused document the path names its first child.");
+  assert.equal(crumbs()[1].classList.contains("is-ahead"), true);
+  assert.equal(container.querySelector(".document-breadcrumbs .document-breadcrumb-icon"), null, "Crumbs show titles without icons.");
   assert.equal(trigger(0).getAttribute("aria-current"), "page");
   assert.equal(trigger(0).getAttribute("aria-label"), "Urban heat draft (Peer documents: 1)");
   assert(back().disabled, "Back starts disabled.");

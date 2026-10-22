@@ -60,6 +60,24 @@ describe("breadcrumb levels", () => {
   });
 });
 
+describe("trail below the focused document", () => {
+  test("follows the latest opened child at each level, or the first child when none was opened", () => {
+    const { state: { conversations }, mainId } = fixture();
+    const titles = (opened: Record<string, number>) =>
+      ids(getDocumentBreadcrumbs(conversations, mainId, new Map(Object.entries(opened))).trail.map((level) => level.document));
+    expect(titles({})).toEqual(["check"]);
+    expect(titles({ interviews: 2, roofs: 1 })).toEqual(["interviews", "followup"]);
+    expect(titles({ interviews: 2, field: 5, followup: 3 })).toEqual(["interviews", "field"]);
+    expect(titles({ roofs: 4 })).toEqual(["roofs", "roofs-notes"]);
+    const trail = getDocumentBreadcrumbs(conversations, mainId, new Map([["roofs", 4]])).trail;
+    expect(trail.map((level) => [level.parent?.id, ids(level.options)])).toEqual([
+      [mainId, ["check", "roofs", "interviews"]],
+      ["roofs", ["roofs-notes"]],
+    ]);
+    expect(getDocumentBreadcrumbs(conversations, "roofs-notes").trail).toEqual([]);
+  });
+});
+
 describe("expand here, open beside and back", () => {
   test("Expand here gives the focused document's place to the target and closes it until Back", () => {
     const { state, mainId } = fixture();
