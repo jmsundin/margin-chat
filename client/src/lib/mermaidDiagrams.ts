@@ -94,3 +94,36 @@ export async function renderMermaidBlocksIn(
   }
   return changed;
 }
+
+/** Where a ```mermaid fence's diagram source sits inside a block's Markdown. */
+export interface MermaidFence {
+  from: number;
+  to: number;
+  source: string;
+}
+
+const MERMAID_FENCE = /^([ \t]{0,3})(`{3,}|~{3,})[ \t]*mermaid[ \t]*\n/gim;
+
+/** The Mermaid fences in `markdown`; an unclosed fence runs to the end, as Markdown reads it. */
+export function findMermaidFences(markdown: string): MermaidFence[] {
+  const fences: MermaidFence[] = [];
+  MERMAID_FENCE.lastIndex = 0;
+  for (let match = MERMAID_FENCE.exec(markdown); match; match = MERMAID_FENCE.exec(markdown)) {
+    const from = match.index + match[0].length;
+    const marker = match[2];
+    const closing = new RegExp(`^[ \\t]{0,3}${marker[0] === "`" ? "`" : "~"}{${marker.length},}[ \\t]*$`, "m");
+    const rest = markdown.slice(from);
+    const close = closing.exec(rest);
+    const to = close ? from + close.index : markdown.length;
+    fences.push({ from, to, source: markdown.slice(from, to).replace(/\n$/, "") });
+    MERMAID_FENCE.lastIndex = close ? to + close[0].length : markdown.length;
+  }
+  return fences;
+}
+
+/** `markdown` with one fence's diagram source swapped for `source`, keeping the fence lines as written. */
+export function replaceMermaidFence(markdown: string, fence: MermaidFence, source: string): string {
+  const body = source.replace(/\n+$/, "");
+  const closed = fence.to < markdown.length || markdown.slice(fence.from, fence.to).endsWith("\n");
+  return markdown.slice(0, fence.from) + body + (closed ? "\n" : "") + markdown.slice(fence.to);
+}

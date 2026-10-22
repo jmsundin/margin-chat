@@ -12,6 +12,7 @@ import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { getMarkdownBackspaceEdit, getMarkdownEnterEdit } from "../lib/markdownEditing";
 import { formatDocumentDateTime } from "../lib/documentDateTime";
 import { drawingMarkdown, EMPTY_DRAWING, isDrawingMarkdown, readDrawing } from "../lib/documentDrawing";
+import { findMermaidFences, replaceMermaidFence } from "../lib/mermaidDiagrams";
 import { freshDocumentBlockId, isDraftBlockId, reconcileDocumentBlocks, sameBlockList } from "../lib/continuousDocument";
 import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
@@ -26,6 +27,7 @@ import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPref
 import "./LiveDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
+const MermaidDiagramDialog = lazy(() => import("./MermaidDiagramDialog"));
 
 /**
  * The document editor as Obsidian's Live Preview: one CodeMirror editor over
@@ -365,6 +367,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [drawing, setDrawing] = useState<{ blockId: string; markdown: string; original?: string } | null>(null);
   const [drawingError, setDrawingError] = useState<string | null>(null);
+  const [diagram, setDiagram] = useState<{ blockId: string; index: number; original: string } | null>(null);
+  const [diagramError, setDiagramError] = useState<string | null>(null);
   const [equation, setEquation] = useState<{ blockId: string; at: number; docLength: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const pendingFocus = useRef<{ id: string; offset: number; to?: number } | null>(null);
@@ -1128,6 +1132,22 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     else insertAfter(block.id, [markdown]);
     setDrawing(null);
   }
+  function openDiagram(block: DocumentBlock, index: number) {
+    setDiagramError(null);
+    setDiagram({ blockId: block.id, index, original: block.content });
+  }
+  function saveDiagram(source: string) {
+    if (!diagram) return;
+    const block = blockById.get(diagram.blockId);
+    if (!block || readOnlyIds.has(block.id)) return;
+    const fence = findMermaidFences(block.content)[diagram.index];
+    if (block.content !== diagram.original || !fence) {
+      setDiagramError("This diagram changed while it was open. Cancel and reopen the latest diagram before saving.");
+      return;
+    }
+    setBlockContent(block.id, replaceMermaidFence(block.content, fence, source));
+    setDiagram(null);
+  }
   function saveEquation(latex: string, display: boolean) {
     if (!equation) return;
     setEquation(null);
@@ -1180,11 +1200,19 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (kind === "drawing") {
       return createPortal(<Suspense fallback={<p role="status">Loading drawing…</p>}><DocumentDrawing markdown={block.content} readOnly={readOnly} onEdit={() => openDrawing(block)} /></Suspense>, element, key);
     }
+    const diagrams = readOnly ? [] : findMermaidFences(block.content);
     // The preview takes focus itself, so the editor doesn't put its own selection back over text selected here.
     return createPortal(<div className="live-document-preview" tabIndex={-1} onClick={(event) => {
       if (!window.getSelection()?.isCollapsed || (event.target instanceof Element && event.target.closest("a, button, input, summary, [data-annotation-branches]"))) return;
       editBlock(id);
-    }}>{props.renderBlockPreview?.(block) ?? <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(block.content) }} />}</div>, element, key);
+    }}>
+      {props.renderBlockPreview?.(block) ?? <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(block.content) }} />}
+      {diagrams.length > 0 && <div className="live-document-diagram-actions">
+        {diagrams.map((_fence, index) => <button key={index} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => openDiagram(block, index)}>
+          {diagrams.length > 1 ? `Edit diagram ${index + 1}` : "Edit diagram"}
+        </button>)}
+      </div>}
+    </div>, element, key);
   }
 
   return <div ref={rootRef} data-block-editor-conversation-id={props.conversationId} data-mode={mode}
@@ -1193,7 +1221,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     onKeyDownCapture={(event) => {
       if (!props.onHistory || !(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== "z" || event.nativeEvent.isComposing) return;
       const target = event.target instanceof Element ? event.target : null;
-      if (!target || target.closest(".document-ai-composer, .document-prompt-history, .math-equation-dialog, .document-drawing-dialog, .live-document-after, .live-document-widget")) return;
+      if (!target || target.closest(".document-ai-composer, .document-prompt-history, .math-equation-dialog, .document-drawing-dialog, .mermaid-diagram-dialog, .live-document-after, .live-document-widget")) return;
       if (target.closest("input, textarea")) return;
       event.preventDefault();
       event.stopPropagation();
@@ -1236,6 +1264,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     {drawingError && !drawing && <p role="alert">{drawingError}</p>}
     {containerKeys.map(renderWidget)}
     {drawing && <Suspense fallback={<p role="status">Opening drawing editor…</p>}><DrawingDialog markdown={drawing.markdown} error={drawingError ?? ""} onSave={saveDrawing} onClose={() => setDrawing(null)} /></Suspense>}
+    {diagram && <Suspense fallback={<p role="status">Opening diagram editor…</p>}><MermaidDiagramDialog source={findMermaidFences(diagram.original)[diagram.index]?.source ?? ""} error={diagramError ?? ""} onSave={saveDiagram} onClose={() => setDiagram(null)} /></Suspense>}
     {equation && <MathEquationDialog latex="" display={false} editing={false} error={null} onSave={saveEquation} onClose={() => setEquation(null)} />}
     <span className="rich-document-announcement" role="status" aria-live="polite">{announcement}</span>
   </div>;
