@@ -910,7 +910,8 @@ export function useMarkdownVault(args: {
       await enqueue(() => saveAndRefresh(true));
     }, fetchStatus, openingPath, streamingPaths, arrivingIds,
     /** Search the whole cloud vault: matching titles first, then passages as the server finds them. */
-    searchCloud: engine.transport.search
+    // Free accounts have no cloud vault: the server answers 403, so search stays local.
+    searchCloud: enabled && engine.transport.search
       ? (query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void) =>
         engine.transport.search!(query, options, onEvent)
       : undefined,

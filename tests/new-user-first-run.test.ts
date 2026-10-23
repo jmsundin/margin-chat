@@ -44,6 +44,9 @@ describe("Start here document", () => {
     expect(side.document?.marginNote).toBeUndefined();
     expect(side.title).toBe("Hallmarks of aging");
     expect(side.branchAnchor?.quote).toBe("hallmarks of aging");
+    // It starts minimized, so Start here opens at full width.
+    expect(root.documentLayout?.minimizedIds).toContain(STARTER_SIDE_DOCUMENT_ID);
+    expect(seeded.activeConversationId).toBe(root.id);
     // Its anchors point at the passage's real text.
     const passage = root.document!.blocks.find((block) => block.id === note.branchAnchor!.sourceBlockId)!;
     expect(passage.content.slice(note.branchAnchor!.startOffset!, note.branchAnchor!.endOffset!)).toBe(note.branchAnchor!.quote);

@@ -1,4 +1,5 @@
 import { apiStorageNamespace } from "./lib/apiTransport";
+import { rememberLogin } from "./lib/newDeviceNotice";
 import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
 import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -321,6 +322,7 @@ export default function App({ extension, browserCaptureRequest, onBrowserCapture
 
     try {
       const user = await requestLogin(args);
+      rememberLogin(user.id);
       rememberOfflineUser(user);
       setAuthUser(user);
       setAuthStatus("authenticated");

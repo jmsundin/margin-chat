@@ -6,11 +6,14 @@ import "katex/dist/katex.min.css";
 import "./components/MathEquation.css";
 import { Analytics } from "@vercel/analytics/react"
 import AppUpdateNotice from "./components/AppUpdateNotice";
+import AppErrorBoundary from "./components/AppErrorBoundary";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <Analytics />
-    <App />
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
     {import.meta.env.PROD && <AppUpdateNotice commit={import.meta.env.VITE_APP_COMMIT} />}
   </React.StrictMode>,
 );

@@ -2,6 +2,7 @@ import { createMarginDocument, marginNoteToSideDocument, type DocumentBlock } fr
 import type { AppState, Conversation, ConversationNote } from "../types";
 import { DEFAULT_MAIN_CHAT_TITLE } from "../initialState";
 import { addChildConversation } from "./workspaceCommands";
+import { minimizeDocument } from "./documentWorkspace";
 
 /**
  * The "Start here" document a new, empty vault opens with. It teaches by doing
@@ -95,6 +96,8 @@ export function seedStarterDocument(state: AppState, at = new Date().toISOString
   let next: AppState = { ...state, conversations: { ...state.conversations, [root.id]: starter } };
   next = addChildConversation(next, note);
   next = addChildConversation(next, side);
+  // The side document starts as a node beside the passage, so "Start here" keeps the full width.
+  next = minimizeDocument(next, side.id);
   // The first session was named after "New chat"; it follows the new title.
   const items = next.sessions?.items;
   if (next.sessions && items) next = { ...next, sessions: { ...next.sessions, items: Object.fromEntries(Object.entries(items).map(([id, session]) =>
