@@ -118,6 +118,7 @@ import ViewIntro from "./components/ViewIntro";
 import AIAccessDialog from "./components/AIAccessDialog";
 import GuidedTour, { DESKTOP_TOUR, PHONE_TOUR, TourPill } from "./components/GuidedTour";
 import { chatImportReminderDue, finishChatImportReminder } from "./lib/chatImportReminder";
+import { NEW_DEVICE_NOTICE, loggedInThisTab } from "./lib/newDeviceNotice";
 import { completedStarterTasks, isPristineWorkspace, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
 import { loadOnboarding, saveOnboarding, type OnboardingRecord } from "./lib/onboarding";
 import CaptureInbox from "./components/CaptureInbox";
@@ -253,6 +254,8 @@ const CHAT_PANEL_DEFAULT_WIDTH_PX = 760;
 const CHAT_PANEL_KEYBOARD_STEP_PX = 24;
 const CHAT_PANEL_MAX_WIDTH_PX = 980;
 const CHAT_PANEL_MIN_WIDTH_PX = 320;
+/** A document and its open side document may each narrow this far so both fit on screen. */
+const PAIRED_PANEL_MIN_WIDTH_PX = 280;
 const MOBILE_PANEL_RESIZE_BREAKPOINT_PX = 900;
 
 function normalizeWheelDelta(
@@ -1152,7 +1155,22 @@ function WorkspaceAppContent({
   const panelMaximumWidth = Math.max(CHAT_PANEL_MIN_WIDTH_PX, Math.min(CHAT_PANEL_MAX_WIDTH_PX, canvasWidth - 48));
   function getRenderedPanelWidth(conversationId: string) {
     if (isMobileViewport) return chatPanelLayout.width;
-    return Math.min(resizedPanelWidths[conversationId] ?? getDocumentWidth(state.conversations, conversationId) ?? chatPanelLayout.width, panelMaximumWidth);
+    const chosen = resizedPanelWidths[conversationId] ?? getDocumentWidth(state.conversations, conversationId);
+    if (chosen !== undefined) return Math.min(chosen, panelMaximumWidth);
+    // A document and its side document share the canvas frame by frame: margin notes and
+    // minimized side documents beside either one come out of both text columns, so the
+    // source isn't pushed off screen when a side document opens.
+    if (chatPanelLayout.fitsPair && scrollingDocuments.length === 2 && scrollingDocuments.some((document) => document.id === conversationId)) {
+      const lanes = scrollingDocuments.reduce((total, document) => total + getPanelLaneWidth(document), 0);
+      const shared = (canvasWidth - 80 - lanes) / 2;
+      return Math.min(panelMaximumWidth, Math.max(PAIRED_PANEL_MIN_WIDTH_PX, Math.min(chatPanelLayout.width, shared)));
+    }
+    return Math.min(chatPanelLayout.width, panelMaximumWidth);
+  }
+  /** Width a document's frame adds beside its text: its margin notes and minimized side documents. */
+  function getPanelLaneWidth(conversation: Conversation) {
+    const nodes = getMinimizedChildNodes(conversation);
+    return getDocumentMarginSpace(conversation) + (nodes ? getMinimizedChildNodesWidth(nodes.nodes, nodes.compact) : 0);
   }
   function getPanelResizeInfo(conversation: Conversation) {
     return {
@@ -1174,6 +1192,7 @@ function WorkspaceAppContent({
     if (jev.status !== "ready") return;
     setState((current) => applyJevGroupSuggestions(current, jev.categories, jev.groupSuggestions));
   }, [jev.status, jevCategoryKey, jevGroupSuggestionKey]);
+  const [newDeviceNotice, setNewDeviceNotice] = useState(false);
   const [onboarding, setOnboardingRecord] = useState<OnboardingRecord>(() => loadOnboarding(storageUserId));
   const updateOnboarding = useCallback((change: Partial<OnboardingRecord>) => setOnboardingRecord((current) => {
     const next = { ...current, ...change };
@@ -1188,6 +1207,8 @@ function WorkspaceAppContent({
     if (isPristineWorkspace(state)) {
       setState((current) => seedStarterDocument(current));
       updateOnboarding({ checked: true, tour: "active", step: 0 });
+      // An existing Free account on an empty browser has its documents on another device.
+      if (!canSyncWorkspaceToCloud(user) && loggedInThisTab(user.id)) setNewDeviceNotice(true);
     } else updateOnboarding({ checked: true });
   }, [vaultSettled, inExtension, onboarding.checked]);
   useEffect(() => { if (isGraphView && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [isGraphView, onboarding.mapSeen]);
@@ -1658,6 +1679,22 @@ function WorkspaceAppContent({
           - Math.max(0, (canvas.clientWidth - groupWidth) / 2),
         behavior: "smooth",
       });
+      return;
+    }
+    // A side document beside its source: show the pair together, or as much of the source as fits.
+    const source = scrollingDocuments.length === 2 && scrollingDocuments[1].id === state.activeConversationId
+      ? panelRefs.current[scrollingDocuments[0].id]?.closest<HTMLElement>("[data-document-id]") : null;
+    const slot = panel?.closest<HTMLElement>("[data-document-id]");
+    if (chatPanelLayout.fitsPair && source && slot && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const canvasLeft = canvas.getBoundingClientRect().left;
+      const left = source.getBoundingClientRect().left;
+      const right = slot.getBoundingClientRect().right;
+      const offset = right - left <= canvas.clientWidth
+        ? left - canvasLeft - (canvas.clientWidth - (right - left)) / 2
+        // Too wide for both: keep the source's text uncut and let the side document's edge go first.
+        : Math.min(right - canvasLeft - canvas.clientWidth + 24, left - canvasLeft);
+      canvas.scrollTo({ left: canvas.scrollLeft + offset, behavior: "smooth" });
       return;
     }
     panel?.scrollIntoView({
@@ -2308,25 +2345,32 @@ function WorkspaceAppContent({
       documentTitleTimers.current.delete(conversationId);
       const conversation = currentStateRef.current.conversations[conversationId];
       const content = conversation && getDocumentTitleSource(conversation, provisionalDocumentTitles.current.get(conversationId));
-      if (!conversation || !content || isHiddenFromAI(conversation)) return;
+      if (!conversation || !content) return;
       const placeholderTitle = conversation.title;
+      const applyTitle = (title: string) => setState((current) => {
+        const target = current.conversations[conversationId];
+        // Never replace a title the user typed while the request was running.
+        if (!target || target.title !== placeholderTitle) return current;
+        const plainTitle = toPlainDocumentTitle(title, 80);
+        if (!plainTitle) return current;
+        provisionalDocumentTitles.current.delete(conversationId);
+        return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title: plainTitle } } };
+      });
+      // Without AI the document still gets a name: its first heading or sentence.
+      const applyLocalTitle = () => {
+        const latest = currentStateRef.current.conversations[conversationId];
+        const local = latest ? suggestLocalDocumentTitle(getEditableDocumentText(latest)) : "";
+        if (local) applyTitle(local);
+      };
       // One attempt per document per session, so a failing provider is not retried on every keystroke.
       documentTitleRequests.current.add(conversationId);
+      const canUseAI = user.role === "admin" || user.billing.hasAccess || user.apiKeys.hasAny;
+      if (isHiddenFromAI(conversation) || !canUseAI) {
+        applyLocalTitle();
+        return;
+      }
       void requestDocumentTitle({ ai: normalizeAISettings(conversation.ai), content, expectedUserId: user.id })
-        .then((title) => {
-          setState((current) => {
-            const target = current.conversations[conversationId];
-            // Never replace a title the user typed while the request was running.
-            if (!target || target.title !== placeholderTitle) return current;
-            const plainTitle = toPlainDocumentTitle(title, 80);
-            if (!plainTitle) return current;
-            provisionalDocumentTitles.current.delete(conversationId);
-            return { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, title: plainTitle } } };
-          });
-        })
-        .catch(() => {
-          // Keep the placeholder title when generation is unavailable.
-        })
+        .then(applyTitle, applyLocalTitle)
         .finally(() => { void onRefreshBilling(); });
     }, DOCUMENT_TITLE_IDLE_MS));
   }
@@ -5178,6 +5222,12 @@ function WorkspaceAppContent({
             action={{ label: "Bring your chat history", onClick: () => {
               finishChatImportReminder(storageUserId); setChatImportReminder(false); setHistoryImportOpen(true);
             } }}
+          />
+          <NotificationToast
+            message={newDeviceNotice ? NEW_DEVICE_NOTICE : null}
+            duration={60000}
+            onDismiss={() => setNewDeviceNotice(false)}
+            action={{ label: "Vault settings", onClick: () => { setNewDeviceNotice(false); setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />
           <FolderDeletionPrompt held={vault.heldFolderDeletion} onResolve={vault.resolveHeldFolderDeletion} />
           <OnlyCopyPrompt reminder={vault.onlyCopyReminder} folderSupported={vault.localDirectoryStatus.supported}
