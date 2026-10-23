@@ -164,3 +164,106 @@ export async function readChatReplyStream(
     reader.releaseLock();
   }
 }
+
+/** A reply as the server saved it; it keeps writing after this browser disconnects. */
+export interface ChatRunSnapshot {
+  status: "running" | "complete" | "failed" | "cancelled";
+  reply: string;
+  metadata: ChatReplyResponse["metadata"] | null;
+  documents: unknown[];
+  error: string | null;
+  statusCode: number | null;
+}
+
+/** What a request has shown so far, so a reply picked up later continues from there. */
+export interface ShownReply {
+  reply: string;
+  documents: number;
+  metadata: ChatReplyResponse["metadata"] | null;
+}
+
+export const RUN_POLL_MS = 1_500;
+/** A reply the server never started saving was lost with the request. */
+const RUN_MISSING_POLLS = 8;
+
+function waitFor(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(done, ms);
+    function done() { signal?.removeEventListener("abort", stop); resolve(); }
+    function stop() { clearTimeout(timer); reject(signal?.reason); }
+    signal?.addEventListener("abort", stop, { once: true });
+  });
+}
+
+/** Shows what the saved reply has beyond what this request already showed. */
+function showRun(run: ChatRunSnapshot, shown: ShownReply, onDelta?: (delta: string) => void,
+  onMetadata?: (metadata: ChatReplyResponse["metadata"]) => void, onAgentEvent?: (event: AgentEvent) => void) {
+  if (run.metadata && !shown.metadata) {
+    shown.metadata = { ...run.metadata, execution: normalizeAIExecution(run.metadata.execution) };
+    onMetadata?.(shown.metadata);
+  }
+  if (run.reply.startsWith(shown.reply)) {
+    const rest = run.reply.slice(shown.reply.length);
+    if (rest) onDelta?.(rest);
+    shown.reply = run.reply;
+  } else if (!shown.reply.startsWith(run.reply)) {
+    // An agent withdrew the text it had written and went on to use tools.
+    if (shown.reply) onAgentEvent?.({ type: "retract" });
+    if (run.reply) onDelta?.(run.reply);
+    shown.reply = run.reply;
+  }
+  if (run.documents.length > shown.documents) {
+    const documents = importedWebDocuments(run.documents.slice(shown.documents));
+    shown.documents = run.documents.length;
+    if (documents.length) onAgentEvent?.({ type: "documents", documents });
+  }
+}
+
+/**
+ * Follows a reply whose stream was cut, usually because a phone suspended the
+ * page, by reading what the server saved until the reply ends. `readRun`
+ * returns null while the server has saved nothing for it.
+ */
+export async function pickUpChatRun({ readRun, shown, failure, deadline, onDelta, onMetadata, onAgentEvent, signal, wait = waitFor, now = Date.now }: {
+  readRun: () => Promise<ChatRunSnapshot | null>;
+  shown: ShownReply;
+  /** Thrown when the reply cannot be found: the error that cut the stream. */
+  failure: unknown;
+  deadline: number;
+  onDelta?: (delta: string) => void;
+  onMetadata?: (metadata: ChatReplyResponse["metadata"]) => void;
+  onAgentEvent?: (event: AgentEvent) => void;
+  signal?: AbortSignal;
+  wait?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  now?: () => number;
+}): Promise<ChatReplyResponse> {
+  let found = false;
+  let missing = 0;
+  while (true) {
+    signal?.throwIfAborted();
+    let run: ChatRunSnapshot | null = null;
+    try {
+      run = await readRun();
+    } catch (error) {
+      // Still offline or suspended: try again. A refusal (signed out) is final.
+      if (signal?.aborted || error instanceof ApiError) throw error;
+      if (!(error instanceof TypeError)) throw failure;
+    }
+    signal?.throwIfAborted();
+    if (run) {
+      found = true;
+      showRun(run, shown, onDelta, onMetadata, onAgentEvent);
+      if (run.status === "complete") {
+        if (!shown.metadata || !run.reply.trim()) throw new Error("Backend returned an empty assistant reply.");
+        const metadata = run.metadata ? { ...run.metadata, execution: normalizeAIExecution(run.metadata.execution) } : shown.metadata;
+        return { metadata, reply: run.reply };
+      }
+      if (run.status === "failed") throw new ApiError(run.statusCode ?? 502, run.error || "The model stream ended unexpectedly.");
+      if (run.status === "cancelled") throw failure;
+    } else if (!found && ++missing >= RUN_MISSING_POLLS) {
+      throw failure;
+    }
+    if (now() > deadline) throw failure;
+    await wait(RUN_POLL_MS, signal);
+  }
+}

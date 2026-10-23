@@ -1,6 +1,6 @@
 import { apiFetch, hasApiTransport } from "./apiTransport";
 import { ApiError } from "./apiError";
-import { readChatReplyStream, type AgentEvent, type ChatReplyResponse } from "./chatStream";
+import { pickUpChatRun, readChatReplyStream, type AgentEvent, type ChatReplyResponse, type ChatRunSnapshot, type ShownReply } from "./chatStream";
 import type { ConversationContext } from "./chatContext";
 import type { WorkspaceContextItem } from "./aiContext";
 import type { AISettings } from "../types";
@@ -154,6 +154,87 @@ export async function requestChatReply(args: {
   signal?: AbortSignal;
 }): Promise<ChatReplyResponse> {
   const { onDelta, onMetadata, onAgentEvent, signal, expectedUserId, ...requestBody } = args;
+  signal?.throwIfAborted();
+  const accountHeaders: Record<string, string> = expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {};
+  // The server keeps writing a named reply when this page loses its connection,
+  // as phones do when the user switches tabs or apps, and saves it to pick up.
+  const runId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : null;
+  const deadline = Date.now() + CHAT_RUN_PICKUP_MS;
+  const shown: ShownReply = { reply: "", documents: 0, metadata: null };
+  const transport = new AbortController();
+  const stop = () => {
+    transport.abort(signal?.reason);
+    if (runId) void cancelChatRun(runId, accountHeaders);
+  };
+  signal?.addEventListener("abort", stop, { once: true });
+  const watchdog = watchForDroppedStream(() => transport.abort(new DOMException("The reply stream stalled.", "AbortError")));
+  // A failure while showing the reply is not a lost connection.
+  let callbackFailure: unknown;
+  const shielded = <T,>(callback: ((value: T) => void) | undefined) => (value: T) => {
+    try { callback?.(value); } catch (error) { callbackFailure = error; throw error; }
+  };
+  const showDelta = shielded(onDelta), showMetadata = shielded(onMetadata), showAgentEvent = shielded(onAgentEvent);
+  try {
+    return await streamChatReply({ requestBody, runId, accountHeaders, signal: transport.signal,
+      onDelta: (delta) => { watchdog.heard(); shown.reply += delta; showDelta(delta); },
+      onMetadata: (metadata) => { watchdog.heard(); shown.metadata = metadata; showMetadata(metadata); },
+      onAgentEvent: (event) => {
+        watchdog.heard();
+        if (event.type === "retract") shown.reply = "";
+        if (event.type === "documents") shown.documents += event.documents.length;
+        showAgentEvent(event);
+      } });
+  } catch (error) {
+    // Only a lost connection is picked up again; the reply may still be running.
+    if (!runId || signal?.aborted || error === callbackFailure || !isLostConnection(error)) throw error;
+    watchdog.dispose();
+    return await pickUpChatRun({
+      readRun: () => readChatRun(runId, accountHeaders, signal), shown, failure: error, deadline, signal,
+      onDelta, onMetadata, onAgentEvent,
+    });
+  } finally {
+    watchdog.dispose();
+    signal?.removeEventListener("abort", stop);
+  }
+}
+
+/** Browsers report a dropped connection as a TypeError ("Load failed" in Safari). */
+function isLostConnection(error: unknown) {
+  return error instanceof TypeError || (error instanceof Error && error.name === "AbortError")
+    || (error instanceof Error && error.message === "The assistant stream ended before the reply was complete.");
+}
+
+/** Vercel ends a request after five minutes; a saved reply is looked for a little longer. */
+const CHAT_RUN_PICKUP_MS = 330_000;
+/** A stream that stays silent this long after the page comes back was dropped while it was away. */
+const STALLED_AFTER_RETURN_MS = 5_000;
+
+/** Notices a stream that a phone dropped while the page was hidden but never reported as failed. */
+function watchForDroppedStream(onDropped: () => void) {
+  if (typeof document === "undefined") return { heard() {}, dispose() {} };
+  let lastHeard = Date.now();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const onVisibility = () => {
+    clearTimeout(timer);
+    if (document.visibilityState !== "visible") return;
+    timer = setTimeout(() => { if (Date.now() - lastHeard >= STALLED_AFTER_RETURN_MS) onDropped(); }, STALLED_AFTER_RETURN_MS);
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  return {
+    heard() { lastHeard = Date.now(); },
+    dispose() { clearTimeout(timer); document.removeEventListener("visibilitychange", onVisibility); },
+  };
+}
+
+async function streamChatReply({ requestBody, runId, accountHeaders, signal, onDelta, onMetadata, onAgentEvent }: {
+  requestBody: Omit<Parameters<typeof requestChatReply>[0], "onDelta" | "onMetadata" | "onAgentEvent" | "signal" | "expectedUserId">;
+  runId: string | null;
+  accountHeaders: Record<string, string>;
+  signal: AbortSignal;
+  onDelta: (delta: string) => void;
+  onMetadata: (metadata: ChatReplyResponse["metadata"]) => void;
+  onAgentEvent: (event: AgentEvent) => void;
+}): Promise<ChatReplyResponse> {
   const promptMessage = ({ id, role, content, createdAt }: Message) => ({ id, role, content, createdAt });
   const response = await apiFetch("/api/chat", {
     // Receipts belong in persistence, not a new prompt's transport payload.
@@ -169,7 +250,8 @@ export async function requestChatReply(args: {
     headers: {
       Accept: "application/x-ndjson",
       "Content-Type": "application/json",
-      ...(expectedUserId ? { "X-Margin-Vault-User": expectedUserId } : {}),
+      ...accountHeaders,
+      ...(runId ? { "X-Margin-Chat-Run": runId } : {}),
     },
     method: "POST",
     signal,
@@ -190,8 +272,8 @@ export async function requestChatReply(args: {
       throw new Error("Backend returned an empty assistant reply.");
     }
 
-    onDelta?.(payload.reply);
-    onMetadata?.(payload.metadata);
+    onDelta(payload.reply);
+    onMetadata(payload.metadata);
     return payload;
   }
 
@@ -200,6 +282,21 @@ export async function requestChatReply(args: {
   }
 
   return readChatReplyStream(response.body, onDelta, onMetadata, onAgentEvent);
+}
+
+async function readChatRun(runId: string, accountHeaders: Record<string, string>, signal?: AbortSignal): Promise<ChatRunSnapshot | null> {
+  const response = await apiFetch(`/api/chat/runs/${runId}`, { credentials: "same-origin", headers: accountHeaders, signal, cache: "no-store" });
+  const payload = await readJson(response) as { run?: ChatRunSnapshot } & ErrorPayload | null;
+  if (response.status === 404) return null;
+  ensureOk(response, payload, "Could not read the reply.");
+  if (!payload?.run || typeof payload.run.reply !== "string") throw new Error("Backend returned an invalid reply.");
+  return { ...payload.run, documents: Array.isArray(payload.run.documents) ? payload.run.documents : [] };
+}
+
+/** Stop reaches the server even when the stream had already been cut. */
+function cancelChatRun(runId: string, accountHeaders: Record<string, string>) {
+  return apiFetch(`/api/chat/runs/${runId}`, { credentials: "same-origin", headers: accountHeaders, method: "DELETE", keepalive: true })
+    .then(() => undefined, () => undefined);
 }
 
 export async function requestChatTitle(args: {

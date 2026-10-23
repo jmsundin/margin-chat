@@ -33,16 +33,13 @@ export function createChatExecutionService({ apiKeyService, billingService, chat
     }
     const result = operation === "title"
       ? await chatService.generateTitle(payload, context)
-      : await chatService.requestReplyStream(payload, context, {
-          async onReady(metadata) {
+      : await chatService.requestReplyStream(payload, context, Object.fromEntries(Object.entries({ onReady: undefined, onDelta: undefined, ...handlers }).map(([name, handler]) => [
+          // Agent progress, retractions and saved pages travel with the reply.
+          name, async (...args) => {
             signal?.throwIfAborted();
-            await handlers.onReady?.(metadata);
+            await handler?.(...args);
           },
-          async onDelta(delta) {
-            signal?.throwIfAborted();
-            await handlers.onDelta?.(delta);
-          },
-        });
+        ])));
     signal?.throwIfAborted();
     return result;
   }
