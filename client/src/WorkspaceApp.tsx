@@ -1660,6 +1660,27 @@ function WorkspaceAppContent({
       });
       return;
     }
+    // A side document opened from a passage keeps as much of its parent in view as fits:
+    // the pair is centered, or the side document sits at the right edge with the parent beside it.
+    const parentPanel = activeConversation.parentId ? panelRefs.current[activeConversation.parentId] : null;
+    const parentSlot = parentPanel?.closest("[data-document-id]");
+    const activeSlot = panel?.closest("[data-document-id]");
+    if (parentSlot && activeSlot && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const canvasLeft = canvas.getBoundingClientRect().left;
+      const left = parentSlot.getBoundingClientRect().left;
+      const active = activeSlot.getBoundingClientRect();
+      const groupWidth = active.right - left;
+      if (left < active.left && active.width + 48 <= canvas.clientWidth) {
+        canvas.scrollTo({
+          left: groupWidth <= canvas.clientWidth
+            ? canvas.scrollLeft + left - canvasLeft - (canvas.clientWidth - groupWidth) / 2
+            : canvas.scrollLeft + active.right - canvasLeft - canvas.clientWidth + 24,
+          behavior: "smooth",
+        });
+        return;
+      }
+    }
     panel?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
