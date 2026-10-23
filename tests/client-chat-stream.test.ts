@@ -283,8 +283,9 @@ describe("client chat stream", () => {
     expect(secondDeltas).toEqual(["Second ", "done"]);
     expect(firstResponse.reply).toBe("First done");
     expect(secondResponse.reply).toBe("Second done");
-    expect(requestSignals.get("conversation-1")).toBe(firstController.signal);
-    expect(requestSignals.get("conversation-2")).toBe(secondController.signal);
+    // Each request gets its own transport signal, which the caller's signal stops.
+    expect(requestSignals.get("conversation-1")).toBeInstanceOf(AbortSignal);
+    expect(requestSignals.get("conversation-1")).not.toBe(requestSignals.get("conversation-2"));
   });
 
   test("requests a semantic title independently from the chat stream", async () => {

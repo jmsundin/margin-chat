@@ -13,6 +13,7 @@ import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
 import { MAX_VAULT_FILE_BYTES } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
+import { chatRunId, createChatRunService } from "../chat/runs.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
 import { handleUrlMapRequest } from "./urlMap.mjs";
@@ -92,7 +93,7 @@ const PUBLIC_MAP_ROUTES = ["publicMapStateRead", "publicMapStateWrite", "publicM
 const EXTENSION_WORKSPACE_ROUTES = new Set([
   "authSession", "captureList", "captureGet", "stateRead",
   "vaultStatus", "vaultIndex", "vaultSearch", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultUpload", "vaultUploadCommit", "vaultCommit", "vaultRebuild",
-  "chat", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
+  "chat", "chatRun", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
   "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
   ...PUBLIC_MAP_ROUTES,
   "billingDashboard", "apiKeysRead",
@@ -118,12 +119,14 @@ export function createApiHandler({
   desktopDownloadService,
   dictationService,
   mcpService,
+  chatRunService,
   env = process.env,
   rateLimits,
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
   const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
+  const chatRuns = chatRunService ?? (typeof database?.saveChatRun === "function" ? createChatRunService({ database }) : null);
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
   const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
@@ -493,7 +496,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatRun", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -1090,7 +1093,21 @@ export function createApiHandler({
       }
 
       if (route?.id === "chat") {
-        await handleChatRequest({ request, response, user: authContext.user, executeChatReply });
+        await handleChatRequest({ request, response, user: authContext.user, executeChatReply, chatRuns });
+        return;
+      }
+
+      if (route?.id === "chatRun") {
+        const id = chatRunId(route.params.id);
+        if (!chatRuns || !id) throw new HttpError(404, "That reply is not available.");
+        if (request.method === "DELETE") {
+          await chatRuns.cancel({ id, userId: authContext.user.id });
+          sendJson(response, 200, { ok: true }, { "Cache-Control": "no-store" });
+          return;
+        }
+        const run = await chatRuns.read({ id, userId: authContext.user.id });
+        if (!run) throw new HttpError(404, "That reply is not available.");
+        sendJson(response, 200, { run }, { "Cache-Control": "no-store" });
         return;
       }
 

@@ -58,6 +58,7 @@ export const API_ROUTES = Object.freeze([
   { id: "stateWrite", methods: ["PUT"], path: "/api/state" },
   { id: "chat", methods: ["POST"], path: "/api/chat" },
   { id: "chatTitle", methods: ["POST"], path: "/api/chat/title" },
+  { id: "chatRun", methods: ["GET", "DELETE"], path: "/api/chat/runs/:id", parameters: { id: "[0-9a-f-]{36}" } },
   { id: "dictationTranscribe", methods: ["POST"], path: "/api/dictation/transcribe" },
   { id: "dictationLive", methods: ["POST"], path: "/api/dictation/live" },
   { id: "dictationLiveFinish", methods: ["POST"], path: "/api/dictation/live/finish" },

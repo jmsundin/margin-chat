@@ -34,8 +34,9 @@ describe("shared workspace API transport", () => {
     expect(result.reply).toBe("Hello world");
     expect(deltas).toEqual(["Hello ", "world"]);
     expect(call?.input).toBe("/api/chat");
-    expect(call?.init?.signal).toBe(controller.signal);
+    expect(call?.init?.signal).toBeInstanceOf(AbortSignal);
     expect(new Headers(call?.init?.headers).get("X-Margin-Vault-User")).toBe("real-account");
+    expect(new Headers(call?.init?.headers).get("X-Margin-Chat-Run")).toMatch(/^[0-9a-f-]{36}$/u);
     expect(globalThis.fetch).toBe(nativeFetch);
   });
 

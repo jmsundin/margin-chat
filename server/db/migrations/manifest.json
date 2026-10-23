@@ -105,6 +105,11 @@
       "id": "0021_ai_hidden_documents",
       "file": "0021_ai_hidden_documents.sql",
       "transaction": true
+    },
+    {
+      "id": "0022_chat_runs",
+      "file": "0022_chat_runs.sql",
+      "transaction": true
     }
   ]
 }
