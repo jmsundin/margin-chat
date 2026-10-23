@@ -6260,16 +6260,6 @@ button {
   justify-content: space-between;
 }
 
-.auth-mode-switch {
-  display: flex;
-  gap: 10px;
-}
-
-.auth-mode-switch .secondary-button {
-  flex: 1 1 0;
-  justify-content: center;
-}
-
 .auth-form {
   display: flex;
   flex-direction: column;
@@ -7347,10 +7337,6 @@ button {
 
   .auth-card-head {
     align-items: stretch;
-    flex-direction: column;
-  }
-
-  .auth-mode-switch {
     flex-direction: column;
   }
 }
@@ -12143,17 +12129,6 @@ body,
   border: 1px solid var(--line);
   border-radius: 12px;
   min-height: 164px;
-}
-
-.auth-mode-switch {
-  background: var(--bg);
-  border-radius: 10px;
-  gap: 2px;
-  padding: 3px;
-}
-
-.auth-mode-switch .secondary-button.is-active {
-  background: var(--button-active-surface);
 }
 
 .profile-dialog-summary,
