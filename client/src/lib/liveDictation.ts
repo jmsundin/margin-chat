@@ -23,7 +23,8 @@ export function createTranscriptAssembler() {
         return true;
       }
       if (event.type === "conversation.item.input_audio_transcription.completed" && typeof event.transcript === "string") {
-        item.text = event.transcript;
+        // An empty final for a turn whose words already came in keeps those words, rather than erasing them.
+        if (event.transcript.trim() || !item.text.trim()) item.text = event.transcript;
         item.done = true;
         return true;
       }
@@ -41,6 +42,8 @@ export async function startLiveTranscription(options: {
   onText: (text: string) => void;
   /** The connection broke or OpenAI reported an error before `finish`; the words so far may be incomplete. */
   onDrop?: () => void;
+  /** The connection is up: from here on, what the microphone hears reaches OpenAI. */
+  onOpen?: () => void;
   fetch?: typeof fetch;
 }): Promise<LiveTranscription> {
   const connection = new RTCPeerConnection();
@@ -98,6 +101,7 @@ export async function startLiveTranscription(options: {
       channel.addEventListener("open", () => resolve(true), { once: true });
       channel.addEventListener("close", () => resolve(false), { once: true });
     });
+  void opened.then((open) => { if (open && !closed) options.onOpen?.(); });
 
   return {
     async finish({ timeoutMs = 4000, tailMs = 300 } = {}) {

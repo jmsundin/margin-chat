@@ -372,6 +372,12 @@ export function caretParagraphIn(conversationId: string) {
 export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const latest = useRef(props);
   latest.current = props;
+  /**
+   * Until the next render brings them back as props, the blocks just sent are the ones to compare with,
+   * so a second edit in the same moment that undoes the first, like voice typing swapping its live words
+   * for the same final words, still reaches the document.
+   */
+  function sent(blocks: DocumentBlock[]) { if (latest.current.onChangeBlocks) latest.current = { ...latest.current, blocks }; }
   const mobileKeyboard = useMobileKeyboard();
   const micShown = useDictationButton();
   /** Voice typing at the caret, from the mic beside Ask AI. */
@@ -424,7 +430,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const placeholderText = props.onInvokeAI ? "Write here, or press Space for AI…" : "Write here…";
 
   function emit(next: DocumentBlock[], edit?: DocumentEditOptions) {
-    if (!sameBlockList(latest.current.blocks, next)) latest.current.onChangeBlocks?.(next, edit);
+    if (sameBlockList(latest.current.blocks, next)) return;
+    latest.current.onChangeBlocks?.(next, edit);
+    sent(next);
   }
   function fresh(content: string): DocumentBlock {
     const now = new Date().toISOString();
@@ -485,6 +493,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const head = live.layout.length ? live.layout[blockIndexAt(live.layout, update.state.selection.main.head)]?.id : undefined;
     const group = typed && head ? typed.isUserEvent("input.type") ? `${head}:typing` : typed.isUserEvent("delete") ? `${head}:deleting` : undefined : undefined;
     current.onChangeBlocks(next, { group, beforeFocus: bookmark(update.startState), afterFocus: bookmark(update.state) });
+    sent(next);
   }
 
   function notifySelection(view: EditorView) {
