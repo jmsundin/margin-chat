@@ -33,6 +33,16 @@ Object.defineProperty(globalThis, "MediaRecorder", { configurable: true, value: 
 Object.defineProperty(browser.navigator, "mediaDevices", { configurable: true, value: {
   getUserMedia: async () => { const track = { stop: () => tracksStopped.push("audio") }; return { getTracks: () => [track], getAudioTracks: () => [track] }; },
 } });
+// The mic's loudness meter: silent unless a check says the person is talking.
+let micLoudness = 0;
+class FakeAudioContext {
+  createAnalyser() {
+    return { fftSize: 0, connect() {}, getByteTimeDomainData(samples: Uint8Array) { samples.fill(128 + Math.round(micLoudness * 127)); } };
+  }
+  createMediaStreamSource() { return { connect() {} }; }
+  close() { return Promise.resolve(); }
+}
+Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: FakeAudioContext });
 const requests: { url: string; contentType: string | null; size: number }[] = [];
 const cleanups: { kind: string; prompt: string }[] = [];
 let cleanupReply: (prompt: string) => Response = (prompt) => Response.json({ title: prompt.replace(/^\w/u, (letter) => letter.toUpperCase()).replace(/ (\w+)$/u, ", $1.") });
@@ -217,8 +227,17 @@ assert.equal(assembler.text(), "Hello, later");
 assert.equal(assembler.pending(), true);
 checks.push("assembles live text across turns");
 
+const emptied = createTranscriptAssembler();
+emptied.apply({ type: "conversation.item.input_audio_transcription.delta", item_id: "a", delta: "Words so far" });
+emptied.apply({ type: "conversation.item.input_audio_transcription.completed", item_id: "a", transcript: "" });
+assert.equal(emptied.text(), "Words so far");
+assert.equal(emptied.pending(), false);
+checks.push("an empty final keeps the live words");
+
 let channel: FakeChannel | null = null;
 const sent: string[] = [];
+// What OpenAI answers the stop's commit with.
+let finalTurn = { item_id: "turn-1", transcript: "Hello there, live world." };
 class FakeChannel {
   readyState = "open";
   listeners = new Map<string, ((event: any) => void)[]>();
@@ -226,7 +245,7 @@ class FakeChannel {
   emit(event: unknown) { for (const listener of this.listeners.get("message") ?? []) listener({ data: JSON.stringify(event) }); }
   send(message: string) {
     sent.push(message);
-    setTimeout(() => this.emit({ type: "conversation.item.input_audio_transcription.completed", item_id: "turn-1", transcript: "Hello there, live world." }), 5);
+    setTimeout(() => this.emit({ type: "conversation.item.input_audio_transcription.completed", ...finalTurn }), 5);
   }
   close() { this.readyState = "closed"; }
 }
@@ -335,6 +354,50 @@ await pause(350);
 await act(async () => { window.dispatchEvent(shortcut()); await pause(80); });
 assert.equal(latest, `${typedBeforeDrop} said before and after the drop`);
 checks.push("switches to the recording when live words drop");
+
+// OpenAI can answer the stop with an empty final: the words already shown are typed, not taken away.
+await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pill .dictation-pill-button")?.click(); });
+channel = null;
+finalTurn = { item_id: "turn-5", transcript: "" };
+const typedBeforeEmpty = latest;
+const transcribedBeforeEmpty = requests.length;
+await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
+await act(async () => { channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-5", delta: "kept words" }); await pause(10); });
+await pause(350);
+await act(async () => { window.dispatchEvent(shortcut()); await pause(450); });
+assert.equal(latest, `${typedBeforeEmpty} kept words`);
+assert.equal(document.querySelector(".dictation-pill"), null, "no \"didn't catch anything\"");
+assert.equal(requests.length, transcribedBeforeEmpty);
+checks.push("stopping keeps the live words when the final comes back empty");
+
+// Talking before the live connection is up: the recording heard it all, so it's what gets typed.
+channel = null;
+micLoudness = 0.5;
+finalTurn = { item_id: "turn-6", transcript: "and the rest." };
+transcribeReply = () => Response.json({ text: "First words and the rest." });
+const typedBeforeEarly = latest;
+await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
+micLoudness = 0;
+await act(async () => { channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-6", delta: "and the rest" }); await pause(10); });
+assert.equal(latest, `${typedBeforeEarly} and the rest`);
+await pause(350);
+await act(async () => { window.dispatchEvent(shortcut()); await pause(450); });
+assert.equal(latest, `${typedBeforeEarly} First words and the rest.`);
+checks.push("words said before the live connection opened are kept");
+
+// If that transcription fails, the live words are typed rather than lost.
+channel = null;
+micLoudness = 0.5;
+finalTurn = { item_id: "turn-7", transcript: "only the end." };
+transcribeReply = () => Response.json({ error: "OpenAI is busy." }, { status: 503 });
+const typedBeforeBusy = latest;
+await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
+micLoudness = 0;
+await pause(350);
+await act(async () => { window.dispatchEvent(shortcut()); await pause(450); });
+assert.equal(latest, `${typedBeforeBusy} only the end.`);
+checks.push("falls back to the live words when the recording can't be transcribed");
+finalTurn = { item_id: "turn-1", transcript: "Hello there, live world." };
 
 // Holding plain Space talks, like Claude Code: a tap types its space, a hold takes it back and records until release.
 await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pill .dictation-pill-button")?.click(); });

@@ -645,6 +645,12 @@ type BlockDialog = { blockId: string };
 export default function RichDocumentEditor(props: RichDocumentEditorProps) {
   const latest = useRef(props);
   latest.current = props;
+  /**
+   * Until the next render brings them back as props, the blocks just sent are the ones to compare with,
+   * so a second edit in the same moment that undoes the first, like voice typing swapping its live words
+   * for the same final words, still reaches the document.
+   */
+  function sent(blocks: DocumentBlock[]) { if (latest.current.onChangeBlocks) latest.current = { ...latest.current, blocks }; }
   const mobileKeyboard = useMobileKeyboard();
   const rootRef = useRef<HTMLDivElement>(null);
   const registry = useMemo(() => new SlotRegistry(), []);
@@ -817,6 +823,7 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
     const next = reconcileDocumentBlocks(current.blocks, items, current.sourceMessages);
     if (sameBlockList(current.blocks, next)) return;
     current.onChangeBlocks?.(next, { group, beforeFocus: beforeEditFocus.current, afterFocus: selectionBookmark(editor) ?? undefined });
+    sent(next);
   }
 
   function selectionBookmark(editor: Editor): DocumentEditFocus | null {
@@ -929,7 +936,9 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
   useOutsideDismiss(Boolean(toolbarBlockId) && linkOpen, () => setLinkOpen(false), linkFormRef, linkButtonRef);
 
   function emit(next: DocumentBlock[], edit?: DocumentEditOptions) {
-    if (!sameBlockList(latest.current.blocks, next)) latest.current.onChangeBlocks?.(next, edit);
+    if (sameBlockList(latest.current.blocks, next)) return;
+    latest.current.onChangeBlocks?.(next, edit);
+    sent(next);
   }
   function fresh(content: string): DocumentBlock {
     const now = new Date().toISOString();

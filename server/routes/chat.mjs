@@ -1,4 +1,5 @@
 import { readJsonBody } from "../http/json.mjs";
+import { CHAT_RUN_HEADER, chatRunFailure, chatRunId } from "../chat/runs.mjs";
 
 // A conversation can carry attached documents and long history.
 const CHAT_BODY_LIMIT = 8 * 1024 * 1024;
@@ -26,17 +27,26 @@ export function createRequestAbortScope(request, response) {
   };
 }
 
-export async function handleChatRequest({ request, response, user, executeChatReply }) {
+export async function handleChatRequest({ request, response, user, executeChatReply, chatRuns = null }) {
   const scope = createRequestAbortScope(request, response);
+  // A named request keeps running after its browser disconnects and saves the
+  // reply for the browser to pick up; an unnamed one stops with its connection.
+  const runId = chatRuns ? chatRunId(request.headers?.[CHAT_RUN_HEADER]) : null;
+  let run = null;
+  const connected = () => !scope.signal.aborted && !response.destroyed && !response.writableEnded;
+  const send = (event) => { if (connected()) writeChatStreamEvent(response, event); };
   try {
     scope.signal.throwIfAborted();
     const payload = await readJsonBody(request, CHAT_BODY_LIMIT);
+    run = runId ? chatRuns.start({ id: runId, userId: user.id }) : null;
     const result = await executeChatReply({
       payload,
       user,
-      signal: scope.signal,
+      signal: run?.signal ?? scope.signal,
       handlers: {
         onReady(metadata) {
+          run?.metadata(metadata);
+          if (!connected()) return;
           response.writeHead(200, {
             "Access-Control-Allow-Origin": "*",
             "Cache-Control": "no-store, no-transform",
@@ -47,30 +57,36 @@ export async function handleChatRequest({ request, response, user, executeChatRe
           writeChatStreamEvent(response, { metadata, type: "metadata" });
         },
         onDelta(delta) {
-          writeChatStreamEvent(response, { delta, type: "delta" });
+          run?.delta(delta);
+          send({ delta, type: "delta" });
         },
         onRetract() {
-          writeChatStreamEvent(response, { type: "retract" });
+          run?.retract();
+          send({ type: "retract" });
         },
         onStep({ step, spentMicros }) {
-          writeChatStreamEvent(response, { step, ...(spentMicros === undefined ? {} : { spentMicros }), type: "step" });
+          send({ step, ...(spentMicros === undefined ? {} : { spentMicros }), type: "step" });
         },
         onThinking(delta) {
-          writeChatStreamEvent(response, { delta, type: "thinking" });
+          send({ delta, type: "thinking" });
         },
         onActivity(activity, details = {}) {
-          writeChatStreamEvent(response, { activity, ...(details.label ? { label: details.label } : {}), ...(details.call ? { call: details.call } : {}), type: "activity" });
+          send({ activity, ...(details.label ? { label: details.label } : {}), ...(details.call ? { call: details.call } : {}), type: "activity" });
         },
         onDocuments(documents) {
-          writeChatStreamEvent(response, { documents, type: "documents" });
+          run?.documents(documents);
+          send({ documents, type: "documents" });
         },
       },
     });
+    await run?.finish({ status: "complete", metadata: result.metadata });
+    if (!connected()) return;
     writeChatStreamEvent(response, { metadata: result.metadata, type: "done" });
     response.end();
   } catch (error) {
+    if (run) await run.finish(run.signal.aborted ? null : { status: "failed", ...chatRunFailure(error) });
     // There is no connected client to receive an error after cancellation.
-    if (!scope.signal.aborted) throw error;
+    if (!scope.signal.aborted && !run?.signal.aborted) throw error;
   } finally {
     scope.dispose();
   }

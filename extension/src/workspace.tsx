@@ -9,6 +9,7 @@ import { threadMarkdown, threadTitle, type PageThread } from "./page-ai";
 import { createWorkspaceFetch } from "./workspace-transport";
 import { signOut } from "./network";
 import { mirrorAppTheme, syncExtensionPageTheme } from "./theme";
+import { containWheelScrolling } from "./wheel-containment";
 import type { OverlayDraft, OverlayState, TextQuoteAnchor } from "./overlay-types";
 import "../../client/src/styles.css";
 import "katex/dist/katex.min.css";
@@ -334,4 +335,5 @@ preloadWorkspace();
 // Paint the app's theme before sign-in too, and tell page shells when it changes.
 syncExtensionPageTheme(document);
 mirrorAppTheme(document);
+containWheelScrolling();
 createRoot(document.getElementById("root")!).render(<BrowserWorkspace />);

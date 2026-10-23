@@ -19,6 +19,7 @@ import { useVaultMedia } from "../lib/vaultMedia";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { DocumentEditFocus, DocumentEditOptions } from "../lib/documentEditHistory";
 import { useMobileKeyboard } from "./MobileKeyboard";
+import { allowsDoubleSpaceAI } from "../lib/documentAIInput";
 import { MicIcon, useDictationButton } from "./DictationButton";
 import { dictationShortcutLabel, requestDictation } from "../lib/dictation";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
@@ -371,6 +372,12 @@ export function caretParagraphIn(conversationId: string) {
 export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const latest = useRef(props);
   latest.current = props;
+  /**
+   * Until the next render brings them back as props, the blocks just sent are the ones to compare with,
+   * so a second edit in the same moment that undoes the first, like voice typing swapping its live words
+   * for the same final words, still reaches the document.
+   */
+  function sent(blocks: DocumentBlock[]) { if (latest.current.onChangeBlocks) latest.current = { ...latest.current, blocks }; }
   const mobileKeyboard = useMobileKeyboard();
   const micShown = useDictationButton();
   /** Voice typing at the caret, from the mic beside Ask AI. */
@@ -423,7 +430,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const placeholderText = props.onInvokeAI ? "Write here, or press Space for AI…" : "Write here…";
 
   function emit(next: DocumentBlock[], edit?: DocumentEditOptions) {
-    if (!sameBlockList(latest.current.blocks, next)) latest.current.onChangeBlocks?.(next, edit);
+    if (sameBlockList(latest.current.blocks, next)) return;
+    latest.current.onChangeBlocks?.(next, edit);
+    sent(next);
   }
   function fresh(content: string): DocumentBlock {
     const now = new Date().toISOString();
@@ -484,6 +493,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const head = live.layout.length ? live.layout[blockIndexAt(live.layout, update.state.selection.main.head)]?.id : undefined;
     const group = typed && head ? typed.isUserEvent("input.type") ? `${head}:typing` : typed.isUserEvent("delete") ? `${head}:deleting` : undefined : undefined;
     current.onChangeBlocks(next, { group, beforeFocus: bookmark(update.startState), afterFocus: bookmark(update.state) });
+    sent(next);
   }
 
   function notifySelection(view: EditorView) {
@@ -682,7 +692,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return true;
   }
 
-  /** Space on an empty line, two spaces after a word, or a phone's ". " opens Ask AI. */
+  /** Space on an empty line opens Ask AI; so do two spaces after a word, or iOS's ". ", except on phones and tablets. */
   function aiInput(view: EditorView, from: number, to: number, text: string) {
     if (!latest.current.onInvokeAI || view.composing || view.state.readOnly) return false;
     if (text !== " " && text !== " " && !/^\.[  ]$/.test(text)) { suppressSpace.current = false; literalSpace.current = false; return false; }
@@ -697,15 +707,16 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (live.locked.has(block.id)) return false;
     const line = view.state.doc.lineAt(main.head);
     const preceding = view.state.doc.sliceString(line.from, main.head);
+    const doubleSpace = allowsDoubleSpaceAI();
     if (/^[  ]$/.test(text) && from === main.head && to === main.head) {
       // An empty line, whether it is its own block or a blank line inside one, such as a list just ended.
       if (block.from === block.to || line.from === line.to) return invoke(view, 1);
-      if (/\S[  ]$/.test(preceding)) {
+      if (doubleSpace && /\S[  ]$/.test(preceding)) {
         view.dispatch({ changes: { from: main.head - 1, to: main.head } });
         return invoke(view, 2);
       }
     }
-    if (/^\.[  ]$/.test(text) && from === main.head - 1 && to === main.head && /\S[  ]$/.test(preceding)) {
+    if (doubleSpace && /^\.[  ]$/.test(text) && from === main.head - 1 && to === main.head && /\S[  ]$/.test(preceding)) {
       view.dispatch({ changes: { from, to } });
       return invoke(view, 2);
     }

@@ -51,6 +51,8 @@ const SHORTEST_RECORDING_MS = 300;
 const LIVE_RENEW_MS = 9 * 60 * 1000;
 // Pieces of a long recording transcribed at once.
 const TRANSCRIBE_CONCURRENCY = 2;
+// Meter loudness that counts as talking, well above a quiet room's.
+const SPEECH_LEVEL = 0.12;
 
 /** The document's corner mic, where its recording shows. On phones it's in the screen's button stack. */
 function slotFor(target: HTMLElement): HTMLElement | null {
@@ -114,6 +116,10 @@ interface Pieces {
   /** Stops every piece's request when voice typing is cancelled. */
   controller: AbortController;
   hints: DictationHints;
+  /** Whether the live connection is up, so what the mic hears reaches it. */
+  liveOpen: boolean;
+  /** The person was already talking before the live connection was up, so its words miss the start. */
+  missedStart: boolean;
 }
 
 function formatElapsed(ms: number) {
@@ -204,12 +210,12 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     if (piecesRef.current) switchToPieces(piecesRef.current);
   }, [endCharge, switchToPieces]);
 
-  const beginLive = useCallback((stream: MediaStream, target: HTMLElement, hints: DictationHints): LiveRun => {
+  const beginLive = useCallback((stream: MediaStream, target: HTMLElement, pieces: Pieces): LiveRun => {
     const run: LiveRun = { transcription: null, preview: startDictationPreview(target), token: null, ended: false, renewTimer: 0 };
     if (typeof RTCPeerConnection === "undefined") { run.ended = true; return run; }
     void (async () => {
       try {
-        const session = await requestLiveDictationSession({ expectedUserId: userId, ...hints });
+        const session = await requestLiveDictationSession({ expectedUserId: userId, ...pieces.hints });
         run.token = session.token;
         if (run.ended) { endCharge(run); return; }
         const transcription = await startLiveTranscription({
@@ -220,6 +226,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
             else setLiveText(text);
           },
           onDrop: () => dropLive(run),
+          onOpen: () => { pieces.liveOpen = true; },
         });
         if (run.ended) { transcription.close(); endCharge(run); return; }
         run.transcription = transcription;
@@ -256,8 +263,11 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     setPhase({ kind: "idle" });
   }, [showNotice]);
 
-  /** Turns the recording's pieces into one transcript and types it. Failures keep the audio for another try. */
-  const transcribePieces = useCallback(async (target: HTMLElement, pieces: Pieces, preview: DictationPreview | null) => {
+  /**
+   * Turns the recording's pieces into one transcript and types it. Failures keep the audio for another try,
+   * unless there's a `fallback` transcript, such as the live one, to type instead.
+   */
+  const transcribePieces = useCallback(async (target: HTMLElement, pieces: Pieces, preview: DictationPreview | null, fallback = "") => {
     const { controller } = pieces;
     abortRef.current = controller;
     const total = pieces.audio.length;
@@ -268,7 +278,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     try {
       const texts = await Promise.all(pieces.audio.map((_, index) => transcribePiece(pieces, index)));
       if (controller.signal.aborted) return;
-      const raw = joinTranscripts(texts);
+      const raw = joinTranscripts(texts) || fallback.trim();
       if (!raw) {
         preview?.discard();
         showNotice(target, "Didn't catch anything. Try again a little closer to the mic.");
@@ -277,6 +287,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       deliver(target, raw, preview);
     } catch (error) {
       if (controller.signal.aborted) return;
+      if (fallback.trim()) { deliver(target, fallback, preview); return; }
       preview?.discard();
       const retry = () => { void transcribePieces(target, pieces, null); };
       showNotice(target, `${describeError(error)} Your recording is kept, so you can try again.`, retry);
@@ -319,12 +330,9 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       if (last.size) pieces.audio.push(last);
       setLiveText("");
       if ((phaseRef.current as Phase).kind !== "transcribing") { live?.preview?.discard(); return; }
-      if (text !== null) {
-        if (!text.trim()) {
-          live?.preview?.discard();
-          showNotice(target, "Didn't catch anything. Try again a little closer to the mic.");
-          return;
-        }
+      // The recording holds every word from the moment the mic opened. When the live words missed the start,
+      // or came back empty, the recording is transcribed instead, with the live words to fall back on.
+      if (text !== null && text.trim() && !pieces.missedStart) {
         deliver(target, text, live?.preview ?? null);
         return;
       }
@@ -333,7 +341,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
         showNotice(target, "Didn't catch anything. Try again a little closer to the mic.");
         return;
       }
-      await transcribePieces(target, pieces, live?.preview ?? null);
+      await transcribePieces(target, pieces, live?.preview ?? null, text ?? "");
     } catch (error) {
       if ((phaseRef.current as Phase).kind !== "transcribing") return;
       live?.preview?.discard();
@@ -366,9 +374,12 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     if (phaseRef.current.kind === "starting" || phaseRef.current.kind === "recording" || phaseRef.current.kind === "transcribing") return;
     setPhase({ kind: "starting", target });
     try {
-      const pieces: Pieces = { audio: [], texts: [], batch: false, done: new Set(), controller: new AbortController(), hints: dictationHints(target) };
+      const pieces: Pieces = { audio: [], texts: [], batch: false, done: new Set(), controller: new AbortController(), hints: dictationHints(target), liveOpen: false, missedStart: false };
       const recording = await startDictationRecording({
-        onLevel: setLevel,
+        onLevel: (next) => {
+          setLevel(next);
+          if (!pieces.liveOpen && next >= SPEECH_LEVEL) pieces.missedStart = true;
+        },
         segmentMs,
         onSegment: (audio) => {
           pieces.audio.push(audio);
@@ -379,7 +390,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       if ((phaseRef.current as Phase).kind !== "starting") { recording.cancel(); return; }
       recordingRef.current = recording;
       piecesRef.current = pieces;
-      const live = beginLive(recording.stream, target, pieces.hints);
+      const live = beginLive(recording.stream, target, pieces);
       liveRef.current = live;
       if (live.ended) switchToPieces(pieces);
       setPhase({ kind: "recording", target, startedAt: Date.now() });
