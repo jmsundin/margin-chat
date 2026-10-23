@@ -206,8 +206,7 @@ try {
       assert(container.querySelector('[role="alert"]')?.textContent?.includes("Your session expired"));
       assert.equal(browser.localStorage.getItem(offlineIdentityKey), null);
     } else if (scenario === "reset-request") {
-      await flushUntil(() => Boolean(container.querySelector(".auth-mode-switch")));
-      await click("Log in");
+      await flushUntil(() => [...container.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Forgot password?"));
       await enter("Email", billingUser.email);
       await click("Forgot password?");
       assert.equal(input("Email").value, billingUser.email);
