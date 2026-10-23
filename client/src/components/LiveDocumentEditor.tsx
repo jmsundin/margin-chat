@@ -19,6 +19,7 @@ import { useVaultMedia } from "../lib/vaultMedia";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { DocumentEditFocus, DocumentEditOptions } from "../lib/documentEditHistory";
 import { useMobileKeyboard } from "./MobileKeyboard";
+import { allowsDoubleSpaceAI } from "../lib/documentAIInput";
 import { MicIcon, useDictationButton } from "./DictationButton";
 import { dictationShortcutLabel, requestDictation } from "../lib/dictation";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
@@ -682,7 +683,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return true;
   }
 
-  /** Space on an empty line, two spaces after a word, or a phone's ". " opens Ask AI. */
+  /** Space on an empty line opens Ask AI; so do two spaces after a word, or iOS's ". ", except on phones and tablets. */
   function aiInput(view: EditorView, from: number, to: number, text: string) {
     if (!latest.current.onInvokeAI || view.composing || view.state.readOnly) return false;
     if (text !== " " && text !== " " && !/^\.[  ]$/.test(text)) { suppressSpace.current = false; literalSpace.current = false; return false; }
@@ -697,15 +698,16 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (live.locked.has(block.id)) return false;
     const line = view.state.doc.lineAt(main.head);
     const preceding = view.state.doc.sliceString(line.from, main.head);
+    const doubleSpace = allowsDoubleSpaceAI();
     if (/^[  ]$/.test(text) && from === main.head && to === main.head) {
       // An empty line, whether it is its own block or a blank line inside one, such as a list just ended.
       if (block.from === block.to || line.from === line.to) return invoke(view, 1);
-      if (/\S[  ]$/.test(preceding)) {
+      if (doubleSpace && /\S[  ]$/.test(preceding)) {
         view.dispatch({ changes: { from: main.head - 1, to: main.head } });
         return invoke(view, 2);
       }
     }
-    if (/^\.[  ]$/.test(text) && from === main.head - 1 && to === main.head && /\S[  ]$/.test(preceding)) {
+    if (doubleSpace && /^\.[  ]$/.test(text) && from === main.head - 1 && to === main.head && /\S[  ]$/.test(preceding)) {
       view.dispatch({ changes: { from, to } });
       return invoke(view, 2);
     }
