@@ -116,6 +116,7 @@ export default function GuestApp({ theme, onSetTheme }: { theme: ThemeMode; onSe
           onLogout={goToSignUp}
           onUpdateProfile={needsAccount}
           onChangePassword={needsAccount}
+          onDeleteAccount={needsAccount}
           onUpdateApiKeys={needsAccount}
         />
       </Suspense>

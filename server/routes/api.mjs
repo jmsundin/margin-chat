@@ -54,6 +54,7 @@ export const DEFAULT_AUTH_RATE_LIMITS = Object.freeze({
   signupsByAddress: { max: 20, windowMs: 60 * 60 * 1000 },
   passwordResetsByAddress: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
   passwordChangeFailuresByUser: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
+  accountDeleteFailuresByUser: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
 });
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -160,6 +161,7 @@ export function createApiHandler({
   const signupByAddress = createRateLimiter(limits.signupsByAddress);
   const resetByAddress = createRateLimiter(limits.passwordResetsByAddress);
   const passwordChangeByUser = createRateLimiter(limits.passwordChangeFailuresByUser);
+  const accountDeleteByUser = createRateLimiter(limits.accountDeleteFailuresByUser);
   const clientAddress = (request) =>
     getClientAddress(request, { trustProxyHeaders: runtimeConfig.trustProxyHeaders === true });
 
@@ -514,6 +516,32 @@ export function createApiHandler({
         sendJson(response, 200, { ok: true }, {
           "Cache-Control": "no-store",
           "Set-Cookie": result.cookie,
+        });
+        return;
+      }
+
+      if (route?.id === "accountDelete") {
+        const deleteBody = await readJsonBody(request, AUTH_BODY_LIMIT);
+        if (authContext.user.role === "admin") {
+          throw new HttpError(409, "Admin accounts can't be deleted from Settings.");
+        }
+        accountDeleteByUser.check(authContext.user.id);
+        let passwordHash;
+        try {
+          passwordHash = await authService.verifyAccountDeletion(authContext.user.id, deleteBody);
+          accountDeleteByUser.reset(authContext.user.id);
+        } catch (error) {
+          if (error?.statusCode === 400) accountDeleteByUser.record(authContext.user.id);
+          throw error;
+        }
+        // Billing first, so nothing renews if a later step fails; the account row goes last,
+        // so a failure leaves an account that can try again.
+        await billingService?.deleteCustomer(authContext.user.id);
+        await vaultService?.deleteVault(authContext.user.id);
+        await database.deleteUserAccount({ userId: authContext.user.id, passwordHash });
+        sendJson(response, 200, { ok: true }, {
+          "Cache-Control": "no-store",
+          "Set-Cookie": authService.buildClearedSessionCookie(),
         });
         return;
       }

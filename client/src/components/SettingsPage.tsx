@@ -2,6 +2,7 @@ import VaultPanel from "./VaultPanel";
 import AgentConnectionsPanel from "./AgentConnectionsPanel";
 import BillingDashboard from "./BillingDashboard";
 import PasswordChangeForm from "./PasswordChangeForm";
+import AccountDeletionForm from "./AccountDeletionForm";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AiFeatureSettings, AppearanceSettings, useVoiceTypingEnabled, VoiceTypingSettings, type ThemeMode } from "./AppSettingsSections";
@@ -47,6 +48,7 @@ interface SettingsPageProps {
   ) => Promise<void>;
   onChooseLocalDirectory: () => Promise<void>;
   onChangePassword: (args: { currentPassword: string; password: string }) => Promise<void>;
+  onDeleteAccount: (args: { password: string; confirmation: string }) => Promise<void>;
   onClearLocalDirectory: () => Promise<void>;
   onClose: () => void;
   onLogout: () => void | Promise<void>;
@@ -69,7 +71,7 @@ interface SettingsPageProps {
 }
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; description: string; keywords: string }> = [
-  { id: "account", label: "Account", description: "Your name, email and password.", keywords: "profile name email password log out sign out" },
+  { id: "account", label: "Account", description: "Your name, email and password.", keywords: "profile name email password log out sign out delete account close account remove" },
   { id: "billing", label: "Plan & credit", description: "Your plan, AI balance, payments and receipts.", keywords: "billing balance money payment receipts subscription plus cloud plan budget" },
   { id: "api-keys", label: "AI & privacy", description: "Your own model keys and the AI features that read your vault.", keywords: "api keys openai anthropic claude gemini google hugging face xai meta muse jev search by meaning embeddings" },
   { id: "agents", label: "Connected apps", description: "Let Claude Code, ChatGPT, Gemini, Cursor and other AI apps use your vault.", keywords: "agents mcp tokens claude code cursor chatgpt gemini connect" },
@@ -186,6 +188,7 @@ export default function SettingsPage({
   onBackupToCloud,
   onChooseLocalDirectory,
   onChangePassword,
+  onDeleteAccount,
   onClearLocalDirectory,
   onClose,
   onLogout,
@@ -554,6 +557,8 @@ export default function SettingsPage({
                 </div>
               </form>
               <PasswordChangeForm disabled={isSaving} key={user.id} onChangePassword={changePassword} />
+              {user.role !== "admin" ? <AccountDeletionForm disabled={isSaving || passwordChanging} key={`delete-${user.id}`}
+                cloudVault={user.billing.accessKind === "subscription"} onDeleteAccount={onDeleteAccount} /> : null}
             </>) : null}
 
             {activeTab === "billing" ? (

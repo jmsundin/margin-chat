@@ -137,6 +137,28 @@ export function startFreshVaultCopy(userId: string): boolean {
   catch { return false; }
 }
 
+/**
+ * After the account is deleted: remove this browser's copies of its vault and everything this
+ * site remembers about the account here. A folder the user connected is theirs and is left alone.
+ */
+export async function forgetAccountOnThisDevice(userId: string): Promise<void> {
+  for (const store of [globalThis.localStorage, globalThis.sessionStorage]) {
+    try {
+      for (const key of Object.keys(store ?? {})) if (key.includes(userId)) store.removeItem(key);
+    } catch { /* Storage may be unavailable. */ }
+  }
+  try {
+    const root = await navigator.storage?.getDirectory?.();
+    if (!root) return;
+    // Every copy, including fresh copies started after the browser couldn't read an older one.
+    for await (const [name, handle] of (root as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
+      if (handle.kind === "directory" && name.startsWith("margin-chat-vaults")) {
+        await (handle as FileSystemDirectoryHandle).removeEntry(encodeURIComponent(userId), { recursive: true }).catch(() => undefined);
+      }
+    }
+  } catch { /* Nothing more can be removed in this browser. */ }
+}
+
 const recoveryKey = (userId: string) => `margin-chat-vault-recovery:${userId}`;
 
 /**

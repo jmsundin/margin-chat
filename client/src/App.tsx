@@ -1,5 +1,6 @@
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { rememberLogin } from "./lib/newDeviceNotice";
+import { forgetAccountOnThisDevice } from "./lib/vaultLocal";
 import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
 import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -11,7 +12,7 @@ import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
   requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession,
   requestCreateCheckoutSession, requestUpgradeToPlus, requestLogin, requestLogout, requestPasswordReset,
-  requestPasswordResetConfirm, requestSignup, requestUpdateApiKeys, requestUpdateProfile, requestChangePassword, ApiError,
+  requestPasswordResetConfirm, requestSignup, requestUpdateApiKeys, requestUpdateProfile, requestChangePassword, requestDeleteAccount, ApiError,
 } from "./lib/api";
 import { rememberOfflineUser, loadOfflineUser, forgetOfflineUser } from "./lib/offlineSession";
 import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type ThemeMode } from "./lib/appearance";
@@ -456,6 +457,25 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     }
   }
 
+  async function handleDeleteAccount(args: { password: string; confirmation: string }) {
+    requireWebsiteSettings("account");
+    const userId = authUser?.id;
+    try {
+      await requestDeleteAccount(args);
+    } catch (error) {
+      if (error instanceof ApiError && error.statusCode === 401) handleAuthExpired(error.message);
+      throw error;
+    }
+    forgetOfflineUser();
+    showSignIn();
+    setAuthUser(null);
+    setAuthStatus("unauthenticated");
+    setAuthError(null);
+    setBillingNotice(null);
+    // The workspace has closed; now nothing in this browser writes the account's vault again.
+    if (userId) window.setTimeout(() => { void forgetAccountOnThisDevice(userId); }, 0);
+  }
+
   async function handleUpdateApiKeys(args: {
     keys: Partial<Record<ApiKeyProvider, string | null>>;
   }) {
@@ -633,6 +653,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
       onSetTheme={setTheme}
       onUpdateProfile={handleUpdateProfile}
       onChangePassword={handleChangePassword}
+      onDeleteAccount={handleDeleteAccount}
       onUpdateApiKeys={handleUpdateApiKeys}
       theme={theme}
       user={authUser}
