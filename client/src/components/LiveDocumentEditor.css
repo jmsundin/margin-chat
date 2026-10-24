@@ -66,9 +66,11 @@
 /* Live Preview / Source / Reading, like Obsidian's ⌘E. */
 .live-document-modes { display: flex; gap: 2px; justify-content: flex-end; margin: 0 8px 4px; opacity: .55; transition: opacity .12s ease; }
 .live-document-editor:is(:hover, :focus-within) .live-document-modes { opacity: 1; }
-.live-document-modes button { background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: .74rem; padding: 3px 8px; }
+.live-document-modes button { white-space: nowrap; background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: .74rem; padding: 3px 8px; }
 .live-document-modes button:hover { color: var(--ink); }
 .live-document-modes button[aria-pressed="true"] { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.margin-document-frame .live-document-modes { margin: 0 2px 2px; }
+.margin-document-frame .live-document-modes button { padding: 2px 5px; font-size: .7rem; }
 .live-document-editor[data-mode="reading"] .cm-cursor { display: none; }
 .live-document-editor[data-mode="source"] .cm-line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
 
