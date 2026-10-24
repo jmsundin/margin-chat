@@ -460,6 +460,13 @@ function neonFake() {
       return Response.json({ branch, operations: [operation] });
     }
     if (pathname === "/branches") return Response.json({ branches: branches.filter((branch) => branch.name.includes(url.searchParams.get("search")!)) });
+    if (pathname.startsWith("/branches/") && options.method === "DELETE") {
+      const index = branches.findIndex((branch) => branch.id === pathname.slice(10));
+      const [branch] = branches.splice(index, 1);
+      const operation = { id: `op-delete-${branch.id}`, project_id: config.projectId, status: "finished" };
+      operations.set(operation.id, operation);
+      return Response.json({ branch, operations: [operation] });
+    }
     if (pathname.startsWith("/branches/")) return Response.json({ branch: branches.find((branch) => branch.id === pathname.slice(10)) });
     if (pathname.startsWith("/operations/")) return Response.json({ operation: operations.get(pathname.slice(12)) });
     if (pathname === "/connection_uri") return Response.json({ uri: `postgresql://owner:secret@ep-example${url.searchParams.get("pooled") === "true" ? "-pooler" : ""}.us-east-2.aws.neon.tech/main?sslmode=require` });
@@ -578,6 +585,48 @@ describe("release Neon provider", () => {
     expect(creations).toBe(1);
     expect(fake.branches).toHaveLength(1);
     expect(fake.requests.every((request) => request.method === "GET")).toBe(true);
+  });
+
+  test("never deletes branches unless recovery retention is configured", async () => {
+    const fake = neonFake();
+    fake.branches.push({ id: "br-old-rehearsal", name: "release-rehearsal-old", parent_id: config.productionBranchId, project_id: config.projectId, protected: false, current_state: "ready" });
+    const provider = createNeonReleaseProvider({ config, env: { NEON_API_KEY: "fake" }, fetchImpl: fake.fetchImpl });
+    expect((await provider.pruneReleaseBranches("release-123")).deleted).toEqual([]);
+    expect(fake.requests.every((request) => request.method === "GET")).toBe(true);
+    expect(() => createNeonReleaseProvider({ config: { ...config, keepRecoveryBranches: -1 }, env: { NEON_API_KEY: "fake" } })).toThrow("whole number");
+  });
+
+  test("frees slots by deleting old rehearsals and all but the newest recovery branches", async () => {
+    const fake = neonFake();
+    const branch = (id: string, name: string, created_at: string, extra = {}) =>
+      fake.branches.push({ id, name, created_at, parent_id: config.productionBranchId, project_id: config.projectId, protected: false, current_state: "ready", ...extra });
+    branch("br-rec-1", "release-recovery-a", "2026-10-01T00:00:00Z");
+    branch("br-reh-1", "release-rehearsal-a", "2026-10-01T00:00:00Z");
+    branch("br-rec-2", "release-recovery-b", "2026-10-10T00:00:00Z");
+    branch("br-rec-3", "release-recovery-c", "2026-10-20T00:00:00Z");
+    branch("br-reh-3", "release-rehearsal-c", "2026-10-20T00:00:00Z");
+    branch("br-protected", "release-recovery-p", "2026-09-01T00:00:00Z", { protected: true });
+    branch("br-other-parent", "release-rehearsal-x", "2026-09-01T00:00:00Z", { parent_id: "br-elsewhere" });
+    branch("br-dev", "dev-copy", "2026-09-01T00:00:00Z");
+    const provider = createNeonReleaseProvider({ config: { ...config, keepRecoveryBranches: 2 }, env: { NEON_API_KEY: "fake" }, fetchImpl: fake.fetchImpl });
+    const result = await provider.pruneReleaseBranches("release-123");
+    expect(result.deleted.map(({ id }: any) => id).sort()).toEqual(["br-reh-1", "br-reh-3", "br-rec-1"].sort());
+    expect(result.keptRecovery.map(({ id }: any) => id)).toEqual(["br-rec-3", "br-rec-2"]);
+    expect(fake.branches.map((branch) => branch.id)).toEqual([config.productionBranchId, "br-rec-2", "br-rec-3", "br-protected", "br-other-parent", "br-dev"]);
+    // This release's own branches survive a retry's pruning.
+    const own = await provider.ensureReleaseBranches("release-123");
+    await provider.pruneReleaseBranches("release-123");
+    expect(fake.branches.some((branch) => branch.id === own.recovery.id)).toBe(true);
+    expect(fake.branches.some((branch) => branch.id === own.rehearsal.id)).toBe(true);
+  });
+
+  test("deletes only this release's rehearsal branch after production is verified", async () => {
+    const fake = neonFake();
+    const provider = createNeonReleaseProvider({ config, env: { NEON_API_KEY: "fake" }, fetchImpl: fake.fetchImpl });
+    const { recovery, rehearsal } = await provider.ensureReleaseBranches("release-123");
+    expect(await provider.deleteRehearsalBranch("release-123")).toEqual({ id: rehearsal.id, name: rehearsal.name });
+    expect(fake.branches.map((branch) => branch.id)).toEqual([config.productionBranchId, recovery.id]);
+    expect(await provider.deleteRehearsalBranch("release-123")).toBeNull();
   });
 
   test("keeps unknown JSON error fields out of release reports", async () => {
