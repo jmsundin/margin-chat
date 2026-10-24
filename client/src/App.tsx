@@ -18,6 +18,7 @@ import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type Them
 import { getCheckoutConfirmationNotice, getCheckoutReturn } from "./lib/billing";
 import DictationControl from "./components/DictationControl";
 import DesktopAppPrompt from "./components/DesktopAppPrompt";
+import { isGuestPath } from "./lib/guestMode";
 import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData, BillingPlan } from "./types";
 
 // Documents open in the block editor, so fetch its chunk alongside the workspace rather than after it renders.
@@ -30,6 +31,7 @@ function loadWorkspaceApp() {
   return workspaceModule;
 }
 const WorkspaceApp = lazy(loadWorkspaceApp);
+const GuestApp = lazy(() => import("./components/GuestApp"));
 /** Start loading the workspace code early, e.g. while the extension connects to its page. */
 export function preloadWorkspace() { void loadWorkspaceApp(); }
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
@@ -54,7 +56,23 @@ export interface AppProps {
   onBrowserThreadHandled?: (request: BrowserThreadRequest) => void;
 }
 
-export default function App({ extension, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled }: AppProps = {}) {
+export default function App(props: AppProps = {}) {
+  // The free trial is its own page: links into and out of it load the page fresh,
+  // so the guest's in-browser API never serves a signed-in workspace.
+  const [guest] = useState(() => !props.extension && window.location.protocol !== "margin:" && isGuestPath(window.location.pathname));
+  return guest ? <GuestTrial /> : <MemberApp {...props} />;
+}
+
+function GuestTrial() {
+  const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
+  useEffect(() => {
+    syncTheme(theme);
+    try { window.localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* The theme lasts until the page reloads. */ }
+  }, [theme]);
+  return <Suspense fallback={<div className="app-shell" aria-busy="true" />}><GuestApp theme={theme} onSetTheme={setTheme} /></Suspense>;
+}
+
+function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled }: AppProps) {
   // Removing a used reset token must not restart session hydration and race a new login.
   const [hasPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).has("reset_token"));
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { createDemoVault } from "../lib/demoVault";
 import { AUTH_PATHS, MARKETING_PATHS, type MarketingPage } from "../lib/siteRoutes";
+import { GUEST_PATH } from "../lib/guestMode";
 import {
   detectVisitorPlatform, downloadHref, fetchDesktopRelease, primaryDownload, readDownloadLinks, withDesktopRelease, PLATFORM_LABELS,
   type DownloadLinks, type VisitorPlatform,
@@ -175,7 +176,10 @@ function PrimaryActions({ site }: { site: SiteContext }) {
         ) : (
           <a className="mk-btn mk-btn-primary mk-btn-lg" href={site.webAppPath} onClick={site.go}>{site.signedIn ? "Open Margin Chat" : primary.label}</a>
         )}
-        {primary.kind === "desktop" ? (
+        {/* A plain link: the trial loads as its own page, without the member app around it. */}
+        {!site.signedIn ? (
+          <a className="mk-btn mk-btn-ghost mk-btn-lg" href={GUEST_PATH}>Try it now, no sign-up</a>
+        ) : primary.kind === "desktop" ? (
           <a className="mk-btn mk-btn-ghost mk-btn-lg" href={site.webAppPath} onClick={(event) => { stayInBrowser(); site.go(event); }}>Open in your browser</a>
         ) : (
           <a className="mk-btn mk-btn-ghost mk-btn-lg" href={MARKETING_PATHS.pricing} onClick={site.go}>See pricing</a>

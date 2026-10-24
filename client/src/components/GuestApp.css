@@ -1,0 +1,29 @@
+/* The free trial's one-line bar. The workspace below gives up its height rather than sitting under it. */
+:root.has-guest-bar { --guest-bar-height: 36px; }
+:root.has-guest-bar .app-shell { height: calc(100dvh - var(--guest-bar-height)); min-height: calc(100dvh - var(--guest-bar-height)); }
+
+.guest-bar {
+  display: flex; align-items: center; gap: 10px;
+  height: var(--guest-bar-height, 36px); padding: 0 8px 0 14px;
+  border-bottom: 1px solid var(--line); background: var(--bg); color: var(--muted);
+  font-size: 13px; line-height: 1; white-space: nowrap;
+}
+.guest-bar-label { color: var(--ink); font-weight: 600; }
+.guest-bar-note { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.guest-bar-short { display: none; }
+.guest-bar-link { color: var(--muted); text-decoration: none; }
+.guest-bar-link:hover { color: var(--ink); }
+.guest-bar-button {
+  flex: 0 0 auto; padding: 5px 10px; border: 1px solid var(--line-strong, var(--line)); border-radius: 999px;
+  background: transparent; color: var(--ink); font: inherit; text-decoration: none; cursor: pointer;
+}
+.guest-bar-button.is-primary { border-color: transparent; background: linear-gradient(135deg, rgba(122, 202, 164, 0.92), rgba(255, 141, 109, 0.82)); color: var(--primary-ink); }
+.guest-bar-close { flex: 0 0 28px; width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 18px; cursor: pointer; }
+.guest-bar-close:hover { color: var(--ink); background: var(--button-active-surface); }
+.guest-bar :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+@media (max-width: 720px) {
+  .guest-bar { gap: 8px; padding-left: 12px; }
+  .guest-bar-long, .guest-bar-login { display: none; }
+  .guest-bar-short { display: inline; }
+}
