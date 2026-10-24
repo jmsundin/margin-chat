@@ -11,6 +11,10 @@ const releaseIdentifier = (value) => {
   if (typeof value !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(value)) throw new Error("Invalid release ID.");
   return value;
 };
+const releaseBranchNames = (releaseId) => {
+  const suffix = `${releaseIdentifier(releaseId).slice(0,30)}-${sha256(releaseId).slice(0,12)}`;
+  return { recovery: `release-recovery-${suffix}`, rehearsal: `release-rehearsal-${suffix}` };
+};
 
 /** The REST API is used so CI requires only an explicit project-scoped API key. */
 export function createNeonReleaseProvider({ config, env = process.env, fetchImpl = fetch, sleep = delay, now = Date.now, timeoutMs = 300_000, pollMs = 1_000, onBranch = () => {} }) {
@@ -21,6 +25,8 @@ export function createNeonReleaseProvider({ config, env = process.env, fetchImpl
   }
   if (!env.NEON_API_KEY) throw new Error("NEON_API_KEY is required.");
   if (config.recoveryBranchProtected !== undefined && typeof config.recoveryBranchProtected !== "boolean") throw new Error("recoveryBranchProtected must be a boolean.");
+  const keepRecoveryBranches = config.keepRecoveryBranches;
+  if (keepRecoveryBranches !== undefined && !(Number.isInteger(keepRecoveryBranches) && keepRecoveryBranches >= 0)) throw new Error("keepRecoveryBranches must be a whole number.");
   if (!(timeoutMs > 0) || !(pollMs > 0 && pollMs <= 60_000)) throw new Error("Invalid Neon polling limits.");
   let validated = false;
   async function request(path, { method = "GET", body } = {}) {
@@ -70,21 +76,52 @@ export function createNeonReleaseProvider({ config, env = process.env, fetchImpl
     validated = true;
     return { project: { id: project.id, name: project.name, historyRetentionSeconds: project.history_retention_seconds }, branch };
   }
-  async function findBranch(name) {
+  async function listBranches(search) {
     let cursor;
     const seen = new Set();
-    const matches = [];
+    const branches = [];
     do {
-      const query = new URLSearchParams({ search: name, limit: "1000", ...(cursor ? { cursor } : {}) });
+      const query = new URLSearchParams({ search, limit: "1000", ...(cursor ? { cursor } : {}) });
       const result = await request(`/branches?${query}`);
       if (!Array.isArray(result.branches)) throw new Error("Neon returned an invalid branch list.");
-      matches.push(...result.branches.filter((branch) => branch.name === name));
+      branches.push(...result.branches);
       cursor = result.pagination?.next ?? result.pagination?.cursor;
       if (cursor && seen.has(cursor)) throw new Error("Neon returned a repeated branch cursor.");
       if (cursor) seen.add(cursor);
     } while (cursor);
+    return branches;
+  }
+  async function findBranch(name) {
+    const matches = (await listBranches(name)).filter((branch) => branch.name === name);
     if (matches.length > 1) throw new Error("Neon returned multiple branches for the release name.");
     return matches[0] ?? null;
+  }
+  async function waitForOperations(operations) {
+    const deadline = now() + timeoutMs;
+    const pending = new Set(operations.map((operation) => operation.id));
+    while (pending.size) {
+      for (const operationId of pending) {
+        if (!operationId || !/^[a-zA-Z0-9-]+$/.test(operationId)) throw new Error("Neon returned an invalid operation ID.");
+        const operation = (await request(`/operations/${operationId}`)).operation;
+        if (!operation || operation.id !== operationId || operation.project_id !== projectId) throw new Error("Neon operation identity mismatch.");
+        if (["failed", "cancelled", "canceled", "error"].includes(operation.status)) throw new Error("Neon branch deletion failed; inspect the remaining release branches.");
+        if (["finished", "skipped"].includes(operation.status)) pending.delete(operationId);
+      }
+      if (!pending.size) break;
+      if (now() >= deadline) throw new Error("Timed out waiting for Neon branch deletion.");
+      await sleep(Math.min(pollMs, Math.max(1, deadline - now())));
+    }
+  }
+  /** Only unprotected release branches made from the production branch are ever deleted. */
+  function deletableReleaseBranch(branch) {
+    assertBranch(branch);
+    return branch.id !== productionBranchId && branch.parent_id === productionBranchId && branch.protected === false &&
+      /^release-(recovery|rehearsal)-/.test(branch.name);
+  }
+  async function deleteBranch(branch) {
+    const result = await request(`/branches/${identifier(branch.id, "Neon branch ID")}`, { method: "DELETE" });
+    await waitForOperations(result.operations ?? []);
+    return { id: branch.id, name: branch.name };
   }
   async function waitForBranch(branchId, operations = []) {
     const deadline = now() + timeoutMs;
@@ -134,11 +171,37 @@ export function createNeonReleaseProvider({ config, env = process.env, fetchImpl
   async function ensureReleaseBranches(releaseId) {
     releaseIdentifier(releaseId);
     if (!validated) await validateProduction();
-    const suffix = `${releaseId.slice(0,30)}-${sha256(releaseId).slice(0,12)}`;
-    const recovery = await ensureBranch({ name: `release-recovery-${suffix}`, protected: config.recoveryBranchProtected ?? true, compute: false });
+    const { recovery: recoveryName, rehearsal: rehearsalName } = releaseBranchNames(releaseId);
+    const recovery = await ensureBranch({ name: recoveryName, protected: config.recoveryBranchProtected ?? true, compute: false });
     if (!recovery.parent_lsn) throw new Error("Recovery branch did not expose its production snapshot LSN.");
-    const rehearsal = await ensureBranch({ name: `release-rehearsal-${suffix}`, protected: false, parentLsn: recovery.parent_lsn, compute: true });
+    const rehearsal = await ensureBranch({ name: rehearsalName, protected: false, parentLsn: recovery.parent_lsn, compute: true });
     return { recovery, rehearsal };
+  }
+  /**
+   * Jon's choice (2026-10-24): frees the branch slots earlier releases left, so a
+   * migration release always finds two. Runs under the release lock, before this
+   * release creates its branches. Every earlier rehearsal branch is a throwaway
+   * copy and goes; of the earlier recovery branches, the newest
+   * `keepRecoveryBranches` stay. Without that setting nothing is deleted.
+   */
+  async function pruneReleaseBranches(releaseId) {
+    if (keepRecoveryBranches === undefined) return { deleted: [], keptRecovery: null };
+    if (!validated) await validateProduction();
+    const own = Object.values(releaseBranchNames(releaseId));
+    const candidates = (await listBranches("release-")).filter((branch) => deletableReleaseBranch(branch) && !own.includes(branch.name));
+    const rehearsals = candidates.filter((branch) => branch.name.startsWith("release-rehearsal-"));
+    const recoveries = candidates.filter((branch) => branch.name.startsWith("release-recovery-"))
+      .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+    const deleted = [];
+    for (const branch of [...rehearsals, ...recoveries.slice(keepRecoveryBranches)]) deleted.push(await deleteBranch(branch));
+    return { deleted, keptRecovery: recoveries.slice(0, keepRecoveryBranches).map(({ id, name }) => ({ id, name })) };
+  }
+  /** Deletes this release's rehearsal branch once production is verified; nothing needs it afterward. */
+  async function deleteRehearsalBranch(releaseId) {
+    const branch = await findBranch(releaseBranchNames(releaseId).rehearsal);
+    if (!branch) return null;
+    if (!deletableReleaseBranch(branch)) throw new Error("The rehearsal branch is not a deletable release branch.");
+    return deleteBranch(branch);
   }
   async function connectionUri(branchId, { pooled = false } = {}) {
     await getBranch(branchId);
@@ -151,7 +214,7 @@ export function createNeonReleaseProvider({ config, env = process.env, fetchImpl
         (!pooled && parsed.hostname.split(".")[0].endsWith("-pooler"))) throw new Error("Neon database connection identity mismatch.");
     return uri;
   }
-  return { validateProduction, getBranch, ensureReleaseBranches, connectionUri };
+  return { validateProduction, getBranch, ensureReleaseBranches, pruneReleaseBranches, deleteRehearsalBranch, connectionUri };
 }
 
 function tokenStoreId(token, label) {

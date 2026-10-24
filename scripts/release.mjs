@@ -234,9 +234,11 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         // Jon's choice (2026-10-11): an app-only release does not change the
         // database or stored files, so it skips the backup and rehearsal.
         if (skipCheckpoint) return { skipped: "No pending migrations or data jobs." };
+        const pruned = await neon.pruneReleaseBranches(id);
+        if (pruned.deleted.length) onProgress(`checkpoint: deleted ${pruned.deleted.length} old release branch(es) to free Neon slots`);
         branches = await neon.ensureReleaseBranches(id);
         backup = await backupBlobStore({ releaseId: id, sourceToken: env.BLOB_READ_WRITE_TOKEN, backupToken: env.BACKUP_BLOB_READ_WRITE_TOKEN, onProgress });
-        return { recoveryBranch: branches.recovery.id, rehearsalBranch: branches.rehearsal.id,
+        return { prunedBranches: pruned.deleted, recoveryBranch: branches.recovery.id, rehearsalBranch: branches.rehearsal.id,
           blobInventory: backup.inventoryPathname, blobInventorySha256: backup.inventorySha256, objectCount: backup.objectCount,
           recoveryBoundary: "Database branch and Blob inventory are separate checkpoints; reconcile projections when recovering." };
       },
@@ -346,6 +348,12 @@ export async function releaseProduction({ config, env = process.env, onProgress 
         const result = await runPersistenceSmoke({ baseUrl: config.productionUrl, database: productionContext.database, client: productionClient,
           blobToken: env.BLOB_READ_WRITE_TOKEN, bypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET });
         await inspectMigrations(productionClient, { migrations });
+        // Production is verified, so the rehearsal copy has done its job. A failed
+        // delete doesn't fail the release; the next release's checkpoint removes it.
+        if (branches) {
+          try { result.rehearsalBranchDeleted = Boolean(await neon.deleteRehearsalBranch(id)); }
+          catch (error) { result.rehearsalBranchDeleted = false; onProgress(`verifyProduction: rehearsal branch kept (${describeError(error)})`); }
+        }
         return result;
       },
       async rollback() {

@@ -72,7 +72,7 @@ bun --no-env-file run release:status
 
 Retry a failed release after fixing its reported issue. A retry creates a fresh rehearsal/recovery checkpoint, while already committed SQL migrations and completed data jobs are skipped after checksum verification. New kinds of data transformation need code and verification written alongside the feature; the runner does not infer the intended transformation from a schema diff.
 
-Each fresh release with pending migrations or data jobs needs two free Neon branch slots, one for recovery and one for rehearsal. `BRANCHES_LIMIT_EXCEEDED` (HTTP 422 during checkpoint creation) means retained branches have exhausted the project's capacity. Review the saved release reports and Neon branches, remove only branches that are no longer needed, or increase the project branch limit before retrying. Preserve recovery checkpoints required by your retention policy and branches used by an active release. The runner never deletes branches automatically; if creation of the rehearsal failed, the recovery branch may already exist and is recorded in the report.
+Each fresh release with pending migrations or data jobs needs two free Neon branch slots, one for recovery and one for rehearsal. With `neon.keepRecoveryBranches` set (it is 2), the release frees them itself: at Checkpoint, under the release lock and before creating its own branches, it deletes every earlier `release-rehearsal-*` branch and all but the newest `keepRecoveryBranches` earlier `release-recovery-*` branches. After production is verified it also deletes its own rehearsal branch; if that delete fails the release still succeeds and the next one removes it. Only unprotected `release-*` branches made from the production branch are ever deleted; the production branch, protected branches and any other branch are left alone. Without the setting nothing is deleted. `BRANCHES_LIMIT_EXCEEDED` (HTTP 422 during checkpoint creation) means capacity is still exhausted after that; remove branches by hand or increase the project branch limit before retrying. If creation of the rehearsal failed, the recovery branch may already exist and is recorded in the report.
 
 ## One-time setup
 
@@ -83,6 +83,7 @@ Fill in and commit `release.config.json`:
 | `vercel.projectId`, `vercel.orgId` | Existing project/team IDs, prefilled from the local Vercel link. |
 | `neon.projectId`, `neon.productionBranchId` | Explicit production project and branch IDs. |
 | `neon.databaseName`, `neon.roleName` | Database and role with migration, application, and job permissions. |
+| `neon.keepRecoveryBranches` | How many earlier recovery branches each migration release keeps; older ones and all earlier rehearsal branches are deleted. Leave it out to delete nothing. |
 | `productionUrl` | HTTPS origin already assigned to the current production deployment. |
 | `blob.productionStoreId` | Existing private vault store ID, as encoded in its read/write token. |
 | `blob.backupStoreId`, `blob.rehearsalStoreId` | Two separate private stores for backups and rehearsals. |
