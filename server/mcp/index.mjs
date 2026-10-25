@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { VAULT_TOOL_DEFINITIONS, createVaultTools } from "../chat/agent/vaultTools.mjs";
 import { HttpError } from "../lib/errors.mjs";
 import { WRITE_TOOL_DEFINITIONS, createWriteTools } from "./writeTools.mjs";
+import { vaultQuotaFor } from "../vault/index.mjs";
 
 /**
  * Margin Chat as an MCP server: outside agents (Claude Code, Cursor, ChatGPT and
@@ -103,7 +104,7 @@ export function createMcpService({ database, vaultService, passageService, creat
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new RpcError(-32602, "Tool arguments must be an object.");
     if (!vaultService?.configured) return { ok: false, error: "This Margin Chat server has no cloud vault storage configured." };
-    if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name }).run(name, args);
+    if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name, quotaBytes: vaultQuotaFor(user) }).run(name, args);
     // The agent reaches the whole vault: the member chose that by making the token.
     const tools = createVaultTools({
       chatRequest: { ai: { agentScope: "workspace" }, conversation: { id: "", ancestorContext: [] } },

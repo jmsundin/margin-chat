@@ -9,6 +9,9 @@ const MAX_COMMIT_BYTES = 3 * 1024 * 1024;
 export const MAX_VAULT_FILE_BYTES = 300 * 1024 * 1024;
 /** Above this a file's bytes skip the function (Vercel caps bodies at 4.5 MB). */
 export const DIRECT_TRANSFER_BYTES = 3 * 1024 * 1024;
+/** How much a member's cloud vault may hold, counting each file's current
+ * version. VAULT_QUOTA_BYTES overrides it; admins have no limit. */
+export const DEFAULT_VAULT_QUOTA_BYTES = 5 * 1024 * 1024 * 1024;
 const CONTENT_TYPE = /^[\w.+-]+\/[\w.+-]+(?:; ?charset=[\w-]+)?$/iu;
 // The file list is split into 256 shards by path hash. A save rewrites the
 // shards it touches plus a small root, never the whole list.
@@ -41,6 +44,29 @@ function validUpload(upload) {
   if (typeof contentType !== "string" || contentType.length > 160 || !CONTENT_TYPE.test(contentType)) throw new HttpError(400, "Invalid file content type.");
   if (upload.baseRevision != null && !REVISION.test(upload.baseRevision)) throw new HttpError(400, "Each change needs its actual base revision or null for a new file.");
   return { path, revision, size, contentType };
+}
+
+/** The storage limit for this account: null means unlimited, undefined the service default. */
+export function vaultQuotaFor(user) {
+  return user?.role === "admin" ? null : undefined;
+}
+
+/** Bytes held by the current version of every file that isn't deleted. */
+export function liveBytes(files) {
+  let total = 0;
+  for (const entry of Object.values(files ?? {})) if (!entry.deleted) total += Number.isSafeInteger(entry.size) ? entry.size : 0;
+  return total;
+}
+
+const formatBytes = (bytes) => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1).replace(/\.0$/u, "")} GB` : `${Math.ceil(bytes / 1024 ** 2)} MB`;
+
+export class VaultFullError extends HttpError {
+  constructor(usedBytes, quotaBytes) {
+    super(413, `Your cloud vault is full: ${formatBytes(usedBytes)} of ${formatBytes(quotaBytes)} used. Delete large files, or empty Recently deleted, to keep syncing. Everything stays saved on this device.`);
+    this.name = "VaultFullError";
+    this.usedBytes = usedBytes;
+    this.quotaBytes = quotaBytes;
+  }
 }
 
 export class VaultConflictError extends HttpError {
@@ -86,7 +112,8 @@ function validateRoot(value) {
   }
   for (const [id, shard] of Object.entries(value.shards)) {
     if (!SHARD.test(id) || !shard || !REVISION.test(shard.digest) || !Number.isSafeInteger(shard.count) || shard.count < 1 ||
-        !Number.isSafeInteger(shard.changedAt) || shard.changedAt < 0 || shard.changedAt > value.revision) throw new Error("Invalid stored vault manifest.");
+        !Number.isSafeInteger(shard.changedAt) || shard.changedAt < 0 || shard.changedAt > value.revision ||
+        (shard.bytes !== undefined && (!Number.isSafeInteger(shard.bytes) || shard.bytes < 0))) throw new Error("Invalid stored vault manifest.");
   }
   return value;
 }
@@ -166,6 +193,9 @@ function continueAfterResponse(work, env) {
 
 export function createVaultService({ database, env = process.env, storage = createVaultStorage(env), codec: codecOverride, backgroundProjection = false } = {}) {
   const configured = Boolean(storage);
+  const configuredQuota = Number(env.VAULT_QUOTA_BYTES);
+  const defaultQuotaBytes = Number.isSafeInteger(configuredQuota) && configuredQuota > 0 ? configuredQuota : DEFAULT_VAULT_QUOTA_BYTES;
+  const quotaLimit = (quotaBytes) => quotaBytes === undefined ? defaultQuotaBytes : quotaBytes;
   // File bodies are immutable per revision, so a warm server reuses what it
   // already read instead of downloading every file again for each projection.
   const bodies = byteCache(64 * 1024 * 1024);
@@ -259,7 +289,8 @@ export function createVaultService({ database, env = process.env, storage = crea
   /** Publishes a revision. Returns its root, the revision it was built on (equal
    * to the root's when every change was already in the cloud) and the resulting
    * entries for the changed paths. */
-  async function applyCommit(userId, changes, { trusted = false, onlyInitialize = false } = {}) {
+  async function applyCommit(userId, changes, { trusted = false, onlyInitialize = false, quotaBytes } = {}) {
+    const limit = quotaLimit(quotaBytes);
     if (!storage) throw missingConfiguration();
     const prepared = prepareChanges(changes, trusted);
     const paths = prepared.map((change) => change.path);
@@ -300,6 +331,11 @@ export function createVaultService({ database, env = process.env, storage = crea
       }
       const shards = { ...(current.shards ?? {}) };
       const writes = [];
+      // Each shard records how many bytes its files hold, so the vault's total
+      // is known without reading every shard. Older roots learn it here once.
+      await mapConcurrent(Object.keys(shards).filter((id) => !touched.has(id) && shards[id].bytes === undefined), async (id) => {
+        shards[id] = { ...shards[id], bytes: liveBytes(await loadShard(userId, id, shards[id])) };
+      });
       for (const [id, files] of touched) {
         const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, shard: id, files }));
         if (bytes.length > MAX_SHARD_BYTES) throw new HttpError(413, "This vault's file list has reached the cloud sync size limit. Your local files remain saved and available to export.");
@@ -309,12 +345,23 @@ export function createVaultService({ database, env = process.env, storage = crea
           count += 1;
           changedAt = Math.max(changedAt, entry.changedAt);
         }
-        shards[id] = { digest: digest(bytes), changedAt, count };
+        shards[id] = { digest: digest(bytes), changedAt, count, bytes: liveBytes(files) };
         writes.push({ key: shardKey(userId, shards[id].digest), bytes, files });
       }
       const next = { schemaVersion: 2, revision, count: 0, shards: Object.fromEntries(Object.keys(shards).sort().map((id) => [id, shards[id]])) };
       for (const shard of Object.values(next.shards)) next.count += shard.count;
       if (next.count > MAX_FILES) throw new HttpError(413, "This vault has reached the cloud sync limit of 5,000,000 files.");
+      next.bytes = 0;
+      for (const shard of Object.values(next.shards)) next.bytes += shard.bytes;
+      // Only growth is refused: deleting or shrinking files always works on a full vault.
+      if (limit !== null) {
+        let growth = 0;
+        for (const change of effective) {
+          const before = existing[change.path];
+          growth += (change.entry.deleted ? 0 : change.entry.size) - (before && !before.deleted ? before.size ?? 0 : 0);
+        }
+        if (growth > 0 && next.bytes > limit) throw new VaultFullError(next.bytes - growth, limit);
+      }
       if (!uploaded) {
         await mapConcurrent(prepared.filter((change) => change.bytes), (change) =>
           storage.putImmutable(bodyKey(userId, change.path, change.entry.revision), change.bytes, change.entry.contentType));
@@ -395,7 +442,8 @@ export function createVaultService({ database, env = process.env, storage = crea
     // them even when there is no meaningful server-side conversation to copy.
     const attachments = await database?.listVaultAttachments?.(userId) ?? [];
     for (const attachment of attachments) changes.push(...attachmentChanges(attachment, attachment.bytes));
-    return (await applyCommit(userId, changes, { trusted: true, onlyInitialize: true })).root;
+    // Copying an account's existing workspace in must never be refused for size.
+    return (await applyCommit(userId, changes, { trusted: true, onlyInitialize: true, quotaBytes: null })).root;
   }
 
   /** `tolerant` leaves unreadable files out; only read-only indexing may use it,
@@ -742,10 +790,13 @@ export function createVaultService({ database, env = process.env, storage = crea
     async revision(userId) {
       return configured ? (await readRoot(userId)).root.revision : 0;
     },
-    async status(userId) {
+    async status(userId, { quotaBytes } = {}) {
       if (!configured) return { configured: false, manifest: emptyManifest() };
       const manifest = await assemble(userId, await migrateLegacy(userId));
-      return { configured: true, manifest, projection: await projectLatest(userId, manifest.revision, async () => manifest) };
+      return {
+        configured: true, manifest, projection: await projectLatest(userId, manifest.revision, async () => manifest),
+        usage: { bytes: liveBytes(manifest.files), quotaBytes: quotaLimit(quotaBytes) },
+      };
     },
     /** What changed since a revision this device already synchronized. */
     async changes(userId, since) {
@@ -755,22 +806,29 @@ export function createVaultService({ database, env = process.env, storage = crea
       return { configured: true, revision: root.revision, files: await changesSince(userId, root, since), projection: await projectLatest(userId, root.revision, lazyManifest(userId, root)) };
     },
     /** With `acknowledge`, the receipt lists only the changed paths instead of the whole vault. */
-    async commit(userId, changes, { acknowledge = false } = {}) {
+    async commit(userId, changes, { acknowledge = false, quotaBytes } = {}) {
       // Preserve the server's legacy copy before considering a device's first edit.
       await migrateLegacy(userId);
-      return saved(userId, await applyCommit(userId, changes), acknowledge);
+      return saved(userId, await applyCommit(userId, changes, { quotaBytes }), acknowledge);
     },
-    async commitBinary(userId, { path, baseRevision, bytes, contentType }, { acknowledge = false } = {}) {
+    async commitBinary(userId, { path, baseRevision, bytes, contentType }, { acknowledge = false, quotaBytes } = {}) {
       if (bytes.length > MAX_VAULT_FILE_BYTES) throw new HttpError(413, tooLarge);
       await migrateLegacy(userId);
-      return saved(userId, await applyCommit(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true }), acknowledge);
+      return saved(userId, await applyCommit(userId, [{ path, baseRevision, content: Buffer.from(bytes).toString("base64"), encoding: "base64", contentType }], { trusted: true, quotaBytes }), acknowledge);
     },
     /** Where a browser sends a large file: straight to the store (`direct`), nowhere
      * because the store already holds that revision (`stored`), or through this
      * server (`server`, for development storage on disk). */
-    async prepareUpload(userId, upload) {
+    async prepareUpload(userId, upload, { quotaBytes } = {}) {
       if (!storage) throw missingConfiguration();
-      const { path, revision } = validUpload(upload);
+      const { path, revision, size } = validUpload(upload);
+      // Refuse before the browser sends hundreds of megabytes the commit would refuse anyway.
+      const limit = quotaLimit(quotaBytes);
+      if (limit !== null) {
+        const { root } = await readRoot(userId);
+        const known = root.schemaVersion === 2 && Object.values(root.shards).every((shard) => shard.bytes !== undefined);
+        if (known && Number.isSafeInteger(root.bytes) && root.bytes + size > limit) throw new VaultFullError(root.bytes, limit);
+      }
       if (!storage.direct) return { mode: "server" };
       const key = bodyKey(userId, path, revision);
       return await storage.direct.size(key) !== null ? { mode: "stored" } : { mode: "direct", pathname: storage.direct.pathname(key) };
@@ -786,7 +844,7 @@ export function createVaultService({ database, env = process.env, storage = crea
       return storage.direct.uploadPayload(key, size);
     },
     /** Publishes a file the browser uploaded straight to the store, once its bytes match its revision. */
-    async commitUploaded(userId, upload, { acknowledge = false } = {}) {
+    async commitUploaded(userId, upload, { acknowledge = false, quotaBytes } = {}) {
       if (!storage?.direct) throw new HttpError(400, "This server stores vault files itself; upload them to /api/vault/file.");
       const { path, revision, size, contentType } = validUpload(upload);
       const baseRevision = upload.baseRevision ?? null;
@@ -798,7 +856,7 @@ export function createVaultService({ database, env = process.env, storage = crea
         throw new HttpError(422, "The uploaded file didn't arrive intact. Sync will upload it again.");
       }
       await migrateLegacy(userId);
-      return saved(userId, await applyCommit(userId, [{ path, baseRevision, uploaded: { revision, size, contentType } }], { trusted: true }), acknowledge);
+      return saved(userId, await applyCommit(userId, [{ path, baseRevision, uploaded: { revision, size, contentType } }], { trusted: true, quotaBytes }), acknowledge);
     },
     /** A short-lived link the browser downloads one file revision from when it is
      * too large to pass through a function; null when the server can send it itself. */
@@ -816,12 +874,12 @@ export function createVaultService({ database, env = process.env, storage = crea
       const manifest = await assemble(userId, await migrateLegacy(userId));
       return { manifest, projection: await projectLatest(userId, manifest.revision, async () => manifest, { force: true }) };
     },
-    async persistAttachment({ userId, attachment, bytes }) {
+    async persistAttachment({ userId, attachment, bytes, quotaBytes }) {
       const root = await migrateLegacy(userId);
       const { path, metadataPath } = attachmentPaths(attachment);
       const current = await entriesFor(userId, root, [path, metadataPath]);
       if (current[metadataPath]?.deleted) throw new VaultConflictError([metadataPath], { schemaVersion: 1, revision: root.revision, files: pick(current, [metadataPath]) });
-      const { entries } = await applyCommit(userId, attachmentChanges(attachment, Buffer.from(bytes), current), { trusted: true });
+      const { entries } = await applyCommit(userId, attachmentChanges(attachment, Buffer.from(bytes), current), { trusted: true, quotaBytes });
       return { path, revision: entries[path].revision };
     },
     async readAttachment({ userId, documentId }) {

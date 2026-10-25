@@ -11,7 +11,7 @@ import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
-import { MAX_VAULT_FILE_BYTES } from "../vault/index.mjs";
+import { MAX_VAULT_FILE_BYTES, vaultQuotaFor } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
 import { chatRunId, createChatRunService } from "../chat/runs.mjs";
 import { matchApiRoute } from "./registry.mjs";
@@ -774,8 +774,9 @@ export function createApiHandler({
         }
         if (!vaultService) throw new HttpError(503, "Cloud Markdown storage is not configured.");
         const userId = authContext.user.id;
+        const quotaBytes = vaultQuotaFor(authContext.user);
         if (route?.id === "vaultStatus") {
-          await sendStreamingJson(response, 200, await vaultService.status(userId), { "Cache-Control": "private, no-store" });
+          await sendStreamingJson(response, 200, await vaultService.status(userId, { quotaBytes }), { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultIndex") {
@@ -860,7 +861,7 @@ export function createApiHandler({
             baseRevision: url.searchParams.get("baseRevision") || null,
             contentType: String(request.headers["content-type"] ?? "application/octet-stream"),
             bytes: await readRawBody(request, MAX_VAULT_FILE_BYTES),
-          }, { acknowledge: acknowledgesChanges(url) });
+          }, { acknowledge: acknowledgesChanges(url), quotaBytes });
           await sendStreamingJson(response, 200, acknowledgeVaultCommit(result, [url.searchParams.get("path")], url), { "Cache-Control": "private, no-store" });
           return;
         }
@@ -870,14 +871,14 @@ export function createApiHandler({
           }
           const body = await readJsonBody(request, 64 * 1024);
           if (route.id === "vaultUploadCommit") {
-            const result = await vaultService.commitUploaded(userId, body, { acknowledge: acknowledgesChanges(url) });
+            const result = await vaultService.commitUploaded(userId, body, { acknowledge: acknowledgesChanges(url), quotaBytes });
             await sendStreamingJson(response, 200, acknowledgeVaultCommit(result, [body?.path], url), { "Cache-Control": "private, no-store" });
           } else if (body?.type === "blob.generate-presigned-url") {
             // The Blob SDK in the browser asks here for the signed upload it then performs.
             const presignedUrlPayload = await vaultService.uploadPayload(userId, body.payload ?? {});
             sendJson(response, 200, { type: body.type, presignedUrlPayload }, { "Cache-Control": "private, no-store" });
           } else {
-            sendJson(response, 200, await vaultService.prepareUpload(userId, body), { "Cache-Control": "private, no-store" });
+            sendJson(response, 200, await vaultService.prepareUpload(userId, body, { quotaBytes }), { "Cache-Control": "private, no-store" });
           }
           return;
         }
@@ -888,7 +889,7 @@ export function createApiHandler({
           }
           const body = await readJsonBody(request, 4 * 1024 * 1024);
           const result = route.id === "vaultCommit"
-            ? acknowledgeVaultCommit(await vaultService.commit(userId, body?.changes, { acknowledge: acknowledgesChanges(url) }), body.changes.map((change) => change.path), url)
+            ? acknowledgeVaultCommit(await vaultService.commit(userId, body?.changes, { acknowledge: acknowledgesChanges(url), quotaBytes }), body.changes.map((change) => change.path), url)
             : await vaultService.rebuild(userId);
           await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
@@ -1045,6 +1046,7 @@ export function createApiHandler({
           });
           const document = await documentService.upload({
             context: { ...context, allowedProviders: ai.allowedProviders }, file, userId: authContext.user.id,
+            quotaBytes: vaultQuotaFor(authContext.user),
           });
           sendJson(response, 201, { document });
         } finally {
