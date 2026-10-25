@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { reportError } from "../lib/errorReporting";
 import "./AppErrorBoundary.css";
 
 interface State { error: Error | null; copied: boolean }
@@ -16,6 +17,7 @@ export default class AppErrorBoundary extends Component<{ children: ReactNode },
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("Margin Chat crashed", error, info.componentStack);
+    reportError(error, "render-crash");
   }
 
   private details() {

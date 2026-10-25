@@ -88,3 +88,38 @@ export async function sendPasswordResetEmail({ email, env, token, tokenHash, ttl
   // Acceptance is not confirmation of delivery to the recipient's inbox.
   return { delivered: true, messageId: result.id };
 }
+
+/** Tells the previous address that the account's email changed, so a hijacked session can't quietly take the account. */
+export async function sendEmailChangedNotice({ previousEmail, newEmail, env, noticeId, timeoutMs = 10_000 }) {
+  const config = getPasswordResetEmailConfiguration(env);
+  if (!config.configured) return { delivered: false, reason: config.reason };
+
+  const resetUrl = new URL("/login", config.appUrl).toString();
+  const supportEmail = "support@marginchat.com";
+  let response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      body: JSON.stringify({
+        from: config.from,
+        html: `<p>The email address on your Margin Chat account was changed to <strong>${escapeHtml(newEmail)}</strong>.</p><p>If you made this change, you don't need to do anything.</p><p>If you didn't, write to <a href="mailto:${supportEmail}">${supportEmail}</a> right away so we can lock the account and give it back to you. Signing in at <a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a> with this address will no longer work.</p>`,
+        subject: "Your Margin Chat email address was changed",
+        text: `The email address on your Margin Chat account was changed to ${newEmail}.\n\nIf you made this change, you don't need to do anything.\n\nIf you didn't, write to ${supportEmail} right away so we can lock the account and give it back to you.`,
+        to: [previousEmail],
+      }),
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `email-changed-${noticeId}`,
+        "User-Agent": "margin-chat/1.0",
+      },
+      method: "POST",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw new Error("Email-changed notice request failed or timed out.");
+  }
+  if (!response.ok) {
+    throw new Error(`Email provider rejected the email-changed notice (HTTP ${response.status}).`);
+  }
+  return { delivered: true };
+}

@@ -216,3 +216,9 @@
   .mk-grid4 { grid-template-columns: minmax(0, 1fr); }
   .mk .mk-btn-lg { width: 100%; }
 }
+
+/* Terms and privacy pages */
+.mk-legal { display: grid; gap: 8px; padding-bottom: 96px; }
+.mk-legal-section { display: grid; gap: 12px; padding-top: 24px; }
+.mk-legal .mk-list { margin-bottom: 12px; }
+.mk-legal a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }

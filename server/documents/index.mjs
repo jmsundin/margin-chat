@@ -74,7 +74,7 @@ export function createDocumentService({ database, env, vaultService = null }) {
     });
   }
 
-  async function upload({ context, file, userId }) {
+  async function upload({ context, file, userId, quotaBytes }) {
     if (!file || typeof file.arrayBuffer !== "function") {
       throw new HttpError(400, "A document file is required.");
     }
@@ -103,7 +103,7 @@ export function createDocumentService({ database, env, vaultService = null }) {
     // A feature-index failure must never discard the user's original file.
     // Save the portable bytes and descriptor before creating any derived rows.
     if (vaultService) {
-      await vaultService.persistAttachment({ userId, attachment, bytes: buffer });
+      await vaultService.persistAttachment({ userId, attachment, bytes: buffer, quotaBytes });
     }
 
     let document = null;

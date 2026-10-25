@@ -930,6 +930,7 @@ export async function requestDeleteAccount(args: { password: string; confirmatio
 export async function requestUpdateProfile(args: {
   displayName: string;
   email: string;
+  currentPassword?: string;
 }): Promise<AuthenticatedUser> {
   const response = await apiFetch("/api/auth/profile", {
     body: JSON.stringify(args),

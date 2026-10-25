@@ -105,15 +105,16 @@ export function appendToSource(source, addition) {
   return null;
 }
 
-export function createWriteTools({ userId, vault, agentName, now = () => new Date() }) {
+export function createWriteTools({ userId, vault, agentName, quotaBytes, now = () => new Date() }) {
   const entries = async () => (await vault.index(userId)).entries;
 
   async function commit(change) {
     try {
-      await vault.commit(userId, [change]);
+      await vault.commit(userId, [change], { quotaBytes });
       return null;
     } catch (error) {
       if (error?.statusCode === 409) return fail("That document changed on another device just now. Read it again, then retry.");
+      if (error?.statusCode === 413) return fail(error.message);
       throw error;
     }
   }

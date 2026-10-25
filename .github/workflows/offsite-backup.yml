@@ -38,3 +38,22 @@ jobs:
           OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY }}
           OFFSITE_BACKUP_S3_REGION: ${{ secrets.OFFSITE_BACKUP_S3_REGION }}
         run: bun --no-env-file scripts/offsite-backup.mjs
+      # Runs even when the vault copy failed, so one broken backup never hides the other.
+      - name: Install the Postgres client
+        if: ${{ !cancelled() }}
+        run: |
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          # Match or exceed the production server's major version (Neon: 17).
+          sudo apt-get install -y postgresql-client-17
+          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
+      - name: Copy the database to the off-site bucket
+        if: ${{ !cancelled() }}
+        env:
+          OFFSITE_BACKUP_DATABASE_URL: ${{ secrets.OFFSITE_BACKUP_DATABASE_URL }}
+          OFFSITE_BACKUP_S3_ENDPOINT: ${{ secrets.OFFSITE_BACKUP_S3_ENDPOINT }}
+          OFFSITE_BACKUP_S3_BUCKET: ${{ secrets.OFFSITE_BACKUP_S3_BUCKET }}
+          OFFSITE_BACKUP_S3_ACCESS_KEY_ID: ${{ secrets.OFFSITE_BACKUP_S3_ACCESS_KEY_ID }}
+          OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY: ${{ secrets.OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY }}
+          OFFSITE_BACKUP_S3_REGION: ${{ secrets.OFFSITE_BACKUP_S3_REGION }}
+        run: bun --no-env-file scripts/offsite-postgres-backup.mjs

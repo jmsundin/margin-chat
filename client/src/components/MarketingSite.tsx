@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useState, type MouseEvent, type ReactNode } from "react";
 import { createDemoVault } from "../lib/demoVault";
-import { AUTH_PATHS, MARKETING_PATHS, type MarketingPage } from "../lib/siteRoutes";
+import { AUTH_PATHS, MARKETING_PATHS, SUPPORT_EMAIL, type MarketingPage } from "../lib/siteRoutes";
 import { GUEST_PATH } from "../lib/guestMode";
 import {
   detectVisitorPlatform, downloadHref, fetchDesktopRelease, primaryDownload, readDownloadLinks, withDesktopRelease, PLATFORM_LABELS,
@@ -9,6 +9,7 @@ import {
 import { claimAutoOpen, readDesktopPreference, saveDesktopPreference } from "../lib/desktopHandoff";
 import { apiFetch } from "../lib/apiTransport";
 import ConnectAppsPage from "./landing/ConnectAppsPage";
+import LegalPage from "./landing/LegalPage";
 import SeeItWorking, { Clip } from "./landing/SeeItWorking";
 import "./MarketingSite.css";
 
@@ -94,6 +95,7 @@ export default function MarketingSite({ page, signedIn, onNavigate, downloadLink
         {page === "home" ? <HomePage site={site} />
           : page === "pricing" ? <PricingPage site={site} />
           : page === "connect" ? <ConnectAppsPage webAppPath={site.webAppPath} signedIn={site.signedIn} go={site.go} />
+          : page === "terms" || page === "privacy" ? <LegalPage page={page} go={site.go} />
           : <DownloadPage site={site} />}
       </main>
       <SiteFooter site={site} />
@@ -639,7 +641,11 @@ function SiteFooter({ site }: { site: SiteContext }) {
   return (
     <footer className="mk-footer">
       <div className="mk-wrap mk-footer-grid">
-        <div><strong className="mk-footer-brand">Margin Chat</strong><p className="mk-muted">Think in the margins.</p></div>
+        <div>
+          <strong className="mk-footer-brand">Margin Chat</strong>
+          <p className="mk-muted">Think in the margins.</p>
+          <p className="mk-muted">Help: <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a></p>
+        </div>
         <nav aria-label="Product">
           <strong>Product</strong>
           <a href={MARKETING_PATHS.home} onClick={site.go}>Overview</a>
@@ -655,6 +661,8 @@ function SiteFooter({ site }: { site: SiteContext }) {
               <a href={AUTH_PATHS.signup} onClick={site.go}>Sign up</a>
             </>
           )}
+          <a href={MARKETING_PATHS.terms} onClick={site.go}>Terms</a>
+          <a href={MARKETING_PATHS.privacy} onClick={site.go}>Privacy</a>
         </nav>
       </div>
     </footer>

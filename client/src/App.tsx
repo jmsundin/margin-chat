@@ -438,6 +438,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
   async function handleUpdateProfile(args: {
     displayName: string;
     email: string;
+    currentPassword?: string;
   }) {
     requireWebsiteSettings("account");
     const user = await requestUpdateProfile(args);

@@ -68,6 +68,16 @@ export function resolveSchemaMode(env, requestedMode) {
   return schemaMode;
 }
 
+/**
+ * Connections each server process may hold. Every warm serverless instance has
+ * its own pool, so a busy deployment multiplies this; PG_POOL_MAX overrides it.
+ */
+export function poolSize(env) {
+  const configured = Number(env.PG_POOL_MAX);
+  if (Number.isSafeInteger(configured) && configured > 0) return configured;
+  return env.VERCEL ? 5 : 10;
+}
+
 export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
   const schemaMode = resolveSchemaMode(env, requestedMode);
   const connectionOptions = buildConnectionOptions(env);
@@ -75,7 +85,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
   const pool = new Pool({
     ...connectionOptions,
     connectionTimeoutMillis: 10_000,
-    max: 10,
+    max: poolSize(env),
   });
 
   let initializationError = null;

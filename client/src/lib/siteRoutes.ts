@@ -1,4 +1,4 @@
-export type MarketingPage = "home" | "pricing" | "download" | "connect";
+export type MarketingPage = "home" | "pricing" | "download" | "connect" | "terms" | "privacy";
 export type AuthPageMode = "login" | "signup";
 
 export type SiteRoute =
@@ -8,7 +8,9 @@ export type SiteRoute =
   | { kind: "oauth" }
   | { kind: "app" };
 
-export const MARKETING_PATHS: Record<MarketingPage, string> = { home: "/", pricing: "/pricing", download: "/download", connect: "/connect" };
+export const MARKETING_PATHS: Record<MarketingPage, string> = { home: "/", pricing: "/pricing", download: "/download", connect: "/connect", terms: "/terms", privacy: "/privacy" };
+// Shown on the legal pages, the site footer, Settings and the sign-in screen.
+export const SUPPORT_EMAIL = "support@marginchat.com";
 // Shown on the setup guides. The www host matters: some connectors refuse to follow redirects.
 export const MCP_SERVER_URL = "https://www.marginchat.com/api/mcp";
 export const AUTH_PATHS: Record<AuthPageMode, string> = { login: "/login", signup: "/signup" };
@@ -22,6 +24,8 @@ export function resolveSiteRoute(location: RouteLocation, embedded = false): Sit
   if (path === "/pricing") return { kind: "marketing", page: "pricing" };
   if (path === "/download") return { kind: "marketing", page: "download" };
   if (path === "/connect") return { kind: "marketing", page: "connect" };
+  if (path === "/terms") return { kind: "marketing", page: "terms" };
+  if (path === "/privacy") return { kind: "marketing", page: "privacy" };
   if (path === "/login") return { kind: "auth", mode: "login" };
   if (path === "/signup") return { kind: "auth", mode: "signup" };
   if (path === "/oauth/authorize") return { kind: "oauth" };

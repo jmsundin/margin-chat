@@ -60,3 +60,4 @@
   .auth-layout.auth-signin-layout { gap: 16px; margin: 0 auto; padding-top: 8px; }
   .auth-signin-layout .auth-card { padding: 22px 20px; }
 }
+.auth-signup-note a, .auth-form-copy a { color: inherit; text-decoration: underline; }
