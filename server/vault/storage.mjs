@@ -54,6 +54,11 @@ export function createFileVaultStorage(directory) {
   return {
     kind: "filesystem",
     read,
+    /** Deletes every object whose key starts with `prefix`, a directory ending in /. */
+    async removePrefix(prefix) {
+      if (!prefix.endsWith("/")) throw new Error("Invalid storage prefix.");
+      await rm(filename(prefix.slice(0, -1)), { recursive: true, force: true });
+    },
     async putImmutable(key, bytes) {
       return locked(key, async () => {
         const existing = await read(key);
@@ -120,6 +125,17 @@ export function createBlobVaultStorage(env = process.env, sdkOverride) {
   return {
     kind: "blob",
     read,
+    /** Deletes every object whose key starts with `prefix`, a page of keys at a time. */
+    async removePrefix(prefix) {
+      if (!prefix.endsWith("/")) throw new Error("Invalid storage prefix.");
+      const api = await sdk();
+      let cursor;
+      do {
+        const page = await api.list({ ...options, prefix, limit: 1000, ...(cursor ? { cursor } : {}) });
+        if (page.blobs.length) await api.del(page.blobs.map((blob) => blob.url), options);
+        cursor = page.hasMore ? page.cursor : undefined;
+      } while (cursor);
+    },
     direct: {
       /** The store's own name for a key, which the browser uploads to. */
       pathname: (key) => key,
@@ -214,6 +230,7 @@ export function createVaultStorage(env = process.env) {
     return {
       kind: storage.kind,
       read: (key) => storage.read(prefix + key),
+      removePrefix: (key) => storage.removePrefix(prefix + key),
       putImmutable: (key, bytes, type) => storage.putImmutable(prefix + key, bytes, type),
       compareAndSwap: (key, bytes, etag) => storage.compareAndSwap(prefix + key, bytes, etag),
       direct: {

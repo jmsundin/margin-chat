@@ -180,7 +180,12 @@ export function createBillingService({ database, env, stripeClient = null }) {
     }
     if (!userId) return null;
     const account = await database.getUserBillingAccount(userId);
-    if (!account) throw new HttpError(404, "The Stripe payment's user account was not found.");
+    if (!account) {
+      // A deleted account's customer was deleted with it; its last subscription events need no owner.
+      customer ??= await stripe.customers.retrieve(customerId);
+      if (customer?.deleted) return null;
+      throw new HttpError(404, "The Stripe payment's user account was not found.");
+    }
     if (account.stripeCustomerId && account.stripeCustomerId !== customerId) {
       throw new HttpError(403, "The Stripe customer does not match this account.");
     }
@@ -438,6 +443,20 @@ export function createBillingService({ database, env, stripeClient = null }) {
     return { upgraded: true, plan: "plus", credited: Boolean(credit?.credited), amountMicros: credit ? MONTHLY_PLAN_MICROS : 0 };
   }
 
+  /**
+   * Before an account is deleted: deleting its Stripe customer cancels every subscription at once,
+   * so nothing renews. Stripe keeps the invoices and payments for the books.
+   */
+  async function deleteCustomer(userId) {
+    const account = await database.getUserBillingAccount(userId);
+    if (!account?.stripeCustomerId) return;
+    try {
+      await getClient().customers.del(account.stripeCustomerId);
+    } catch (error) {
+      if (error?.code !== "resource_missing") throw error;
+    }
+  }
+
   async function getBillingDashboard(userId) {
     const dashboard = await database.getBillingDashboard(userId);
     if (!dashboard) throw new HttpError(404, "User account not found.");
@@ -470,7 +489,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   return {
     createBillingPortalSession, createSubscriptionCheckoutSession, createTopUpCheckoutSession,
     createCheckoutSession: createSubscriptionCheckoutSession,
-    confirmCheckout, confirmSubscriptionCheckout: confirmCheckout, upgradeToPlus,
+    confirmCheckout, confirmSubscriptionCheckout: confirmCheckout, upgradeToPlus, deleteCustomer,
     handleWebhook, getBillingDashboard, getHostedUsageLimits,
     reserveHostedRequest, settleHostedRequest, refundHostedRequest,
   };

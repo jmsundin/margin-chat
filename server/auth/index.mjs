@@ -8,6 +8,7 @@ import {
 import { hashPassword, verifyPassword, verifyPasswordAgainstDecoy } from "./passwords.mjs";
 import { getPasswordResetEmailConfiguration, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
 import {
+  normalizeAccountDeletionPayload,
   normalizeLoginPayload,
   normalizePasswordChangePayload,
   normalizePasswordResetConfirmPayload,
@@ -183,6 +184,18 @@ export function createAuthService({
     return { cookie: createAuthSessionCookie(replacementSessionId, runtimeConfig), ok: true };
   }
 
+  /** Checks a request to delete the account; returns the verified password hash for the delete itself. */
+  async function verifyAccountDeletion(userId, payload) {
+    const input = normalizeAccountDeletionPayload(payload);
+    const passwordHash = await database.getUserPasswordHash(userId);
+
+    if (!passwordHash || !(await verifyPassword(input.password, passwordHash))) {
+      throw createStatusError(400, "Password is incorrect.");
+    }
+
+    return passwordHash;
+  }
+
   async function getAuthContext(request) {
     const sessionId = readAuthSessionId(request);
 
@@ -242,6 +255,7 @@ export function createAuthService({
     buildClearedSessionCookie,
     changePassword,
     getAuthContext,
+    verifyAccountDeletion,
     login,
     logout,
     requestPasswordReset,

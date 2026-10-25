@@ -63,6 +63,26 @@ export function normalizePasswordChangePayload(input) {
   };
 }
 
+/** The word the user types to confirm deleting their account. */
+export const ACCOUNT_DELETION_CONFIRMATION = "DELETE";
+
+export function normalizeAccountDeletionPayload(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw createStatusError(400, "Account deletion payload must be a JSON object.");
+  }
+  if (input.confirmation !== ACCOUNT_DELETION_CONFIRMATION) {
+    throw createStatusError(400, `Type ${ACCOUNT_DELETION_CONFIRMATION} to confirm.`);
+  }
+
+  return {
+    password: normalizePassword(input.password, {
+      maxLength: 200,
+      message: "Enter your password.",
+      minLength: 1,
+    }),
+  };
+}
+
 export function normalizePasswordResetRequestPayload(input) {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw createStatusError(400, "Password reset payload must be a JSON object.");

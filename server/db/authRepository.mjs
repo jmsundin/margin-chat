@@ -128,6 +128,36 @@ export async function getUserPasswordHash(client, userId) {
   return result.rows[0]?.password_hash ?? null;
 }
 
+/**
+ * Deletes an account and everything stored for it. Tables keyed to the user cascade from
+ * marginchat_users; workspace sessions, sign-in sessions and reset tokens have no foreign key,
+ * so they go first. Shared map answers and download records keep their rows without an author.
+ */
+export async function deleteUserAccount(client, { passwordHash, userId }) {
+  await client.query("begin");
+
+  try {
+    // The password verified for this request must still be the account's.
+    const result = await client.query(
+      "select id from marginchat_users where id = $1 and password_hash = $2 for update",
+      [userId, passwordHash],
+    );
+
+    if (!result.rowCount) {
+      throw createStatusError(401, "Your password changed. Sign in again before deleting your account.");
+    }
+
+    await client.query("delete from marginchat_app_sessions where user_id = $1", [userId]);
+    await client.query("delete from marginchat_user_sessions where user_id = $1", [userId]);
+    await client.query("delete from marginchat_password_reset_tokens where user_id = $1", [userId]);
+    await client.query("delete from marginchat_users where id = $1", [userId]);
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}
+
 export async function changeUserPassword(
   client,
   { currentPasswordHash, currentSessionId, expiresAt, passwordHash, replacementSessionId, userId },

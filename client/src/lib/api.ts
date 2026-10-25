@@ -906,6 +906,27 @@ export async function requestLogout(): Promise<void> {
   ensureOk(response, payload, "Logout failed.");
 }
 
+/** Deletes the signed-in account for good, after checking its password and the typed confirmation. */
+export async function requestDeleteAccount(args: { password: string; confirmation: string }): Promise<void> {
+  const response = await apiFetch("/api/auth/account/delete", {
+    body: JSON.stringify(args),
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { ok?: boolean } | ErrorPayload | null;
+
+  if (response.status === 404) {
+    throw new ApiError(404, "Deleting an account isn't available on this version of the app yet. Try again after it updates.");
+  }
+
+  ensureOk(response, payload, "Unable to delete your account.");
+
+  if (!payload || typeof payload !== "object" || !("ok" in payload) || payload.ok !== true) {
+    throw new Error("Backend returned an invalid account deletion response.");
+  }
+}
+
 export async function requestUpdateProfile(args: {
   displayName: string;
   email: string;

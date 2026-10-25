@@ -459,6 +459,7 @@ interface WorkspaceAppProps {
     email: string;
   }) => Promise<AuthenticatedUser>;
   onChangePassword: (args: { currentPassword: string; password: string }) => Promise<void>;
+  onDeleteAccount: (args: { password: string; confirmation: string }) => Promise<void>;
   onUpdateApiKeys: (args: {
     keys: Partial<Record<ApiKeyProvider, string | null>>;
   }) => Promise<ApiKeySettings>;
@@ -695,6 +696,7 @@ function WorkspaceAppContent({
   onSetTheme,
   onUpdateProfile,
   onChangePassword,
+  onDeleteAccount,
   onUpdateApiKeys,
   theme,
   user,
@@ -5893,6 +5895,7 @@ function WorkspaceAppContent({
             onLogout={handleWorkspaceLogout}
             onSaveApiKeys={onUpdateApiKeys}
             onChangePassword={onChangePassword}
+            onDeleteAccount={onDeleteAccount}
             onStartSubscription={onStartSubscription}
             onUpgradeToPlus={onUpgradeToPlus}
             onSave={handleSaveProfile}

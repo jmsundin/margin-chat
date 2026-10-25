@@ -2,6 +2,7 @@ import pg from "pg";
 import { assertMigrationsReady, loadMigrations, migrateDatabase } from "./migrations.mjs";
 import {
   changeUserPassword,
+  deleteUserAccount,
   createAuthSession,
   createPasswordResetToken,
   createUser,
@@ -139,6 +140,10 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
 
   async function createAuthSessionRecord(args) {
     return withClient((client) => createAuthSession(client, args));
+  }
+
+  async function deleteUserAccountRecord(args) {
+    return withClient((client) => deleteUserAccount(client, args));
   }
 
   async function changeUserPasswordRecord(args) {
@@ -364,6 +369,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     ])),
     chargeHostedRequest: chargeHostedRequestRecord,
     changeUserPassword: changeUserPasswordRecord,
+    deleteUserAccount: deleteUserAccountRecord,
     settleHostedRequest: (args) => withClient((client) => settleHostedRequest(client, args)),
     getBillingDashboard: (userId) => withClient((client) => getBillingDashboard(client, userId)),
     close,

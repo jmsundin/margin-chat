@@ -715,6 +715,12 @@ export function createVaultService({ database, env = process.env, storage = crea
   return {
     configured,
     storageKind: storage?.kind ?? null,
+    /** Deletes every file, revision and index the account has in cloud storage. */
+    async deleteVault(userId) {
+      if (!configured) return;
+      builtIndexes.delete(userId);
+      await storage.removePrefix(`${prefix(userId)}/`);
+    },
     readFile,
     readWorkspace,
     snapshot,

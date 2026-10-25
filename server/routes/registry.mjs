@@ -34,6 +34,7 @@ export const API_ROUTES = Object.freeze([
   { id: "billingPortal", methods: ["POST"], path: "/api/billing/portal" },
   { id: "authProfile", methods: ["PUT"], path: "/api/auth/profile" },
   { id: "passwordChange", methods: ["POST"], path: "/api/auth/password/change" },
+  { id: "accountDelete", methods: ["POST"], path: "/api/auth/account/delete" },
   { id: "apiKeysRead", methods: ["GET"], path: "/api/settings/api-keys" },
   { id: "apiKeysWrite", methods: ["PUT"], path: "/api/settings/api-keys" },
   { id: "vaultStatus", methods: ["GET"], path: "/api/vault" },
