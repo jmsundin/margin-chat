@@ -34,6 +34,7 @@ import {
   publicOrigin,
 } from "../mcp/oauth.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
+import { createErrorReporter } from "../lib/errorReporting.mjs";
 import {
   createAppStateFromWorkspaceDocument,
   createWorkspaceDocument,
@@ -123,6 +124,7 @@ export function createApiHandler({
   chatRunService,
   env = process.env,
   rateLimits,
+  errorReporter = createErrorReporter({ env }),
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
 
@@ -1186,6 +1188,7 @@ export function createApiHandler({
 
         if (!(error instanceof HttpError) && !hasStatusCode(error)) {
           console.error(error);
+          await errorReporter.report(error, { request });
         }
 
         return;
@@ -1212,6 +1215,7 @@ export function createApiHandler({
       sendJson(response, 500, {
         error: "Unexpected server error.",
       });
+      await errorReporter.report(error, { request });
     }
   };
 }

@@ -4,7 +4,7 @@ Every day at 07:23 UTC, the **Off-site backup** workflow copies the production v
 
 Each run is a complete, verified backup in the same format as a release backup: every user's manifest is captured once, the files it refers to are copied and checked, and an inventory is saved last. A file unchanged since an earlier backup (same Blob ETag) points at that backup's copy instead of being copied again, so a day with few edits uploads little. Nothing is ever deleted or overwritten in the bucket. The workflow only reads the production store.
 
-The Postgres database (accounts, billing, search index) is not part of this backup. Its only copies are Neon's own restore window and the release recovery branches.
+The same run also copies the Postgres database (accounts, billing ledger, chats, search index) with `pg_dump` into `postgres/<timestamp>.dump` in the same bucket, after checking that `pg_restore` can read every table in it. That step runs even if the vault copy failed. Without it, the database's only copies are Neon's own restore window and the release recovery branches.
 
 ## Setting it up (Cloudflare R2)
 
@@ -20,6 +20,7 @@ The Postgres database (accounts, billing, search index) is not part of this back
    | `OFFSITE_BACKUP_S3_ACCESS_KEY_ID` | The Access Key ID |
    | `OFFSITE_BACKUP_S3_SECRET_ACCESS_KEY` | The Secret Access Key |
    | `OFFSITE_BACKUP_S3_REGION` | Optional. Leave unset for R2 (`auto`); set the bucket's region for S3 or B2 |
+   | `OFFSITE_BACKUP_DATABASE_URL` | The production database's **direct** (not `-pooler`) connection string from Neon's **Connect** dialog. A read-only role is best: in Neon, **Roles → New role**, then `GRANT pg_read_all_data TO <role>;` in the SQL editor |
 
 5. Open **Actions → Off-site backup → Run workflow** to make the first copy now. Later runs happen on their own.
 
@@ -28,6 +29,18 @@ Until the secrets are added, the daily run fails with a message naming the missi
 R2 costs nothing to download from. Storage beyond the free 10 GB is about $0.015 per GB-month. Never add a lifecycle rule that deletes objects under `releases/`. A newer backup's inventory points at files saved by older backups, as in the release backup store.
 
 ## Restoring
+
+### The database
+
+Download a dump from the bucket's `postgres/` folder, then restore it into an empty database, such as a new Neon branch:
+
+```sh
+pg_restore --no-owner --no-privileges --dbname="postgresql://…new database…" 20261025072300.dump
+```
+
+Use `pg_restore` 17 or newer. Check a restore once a month: open the restored database and count `marginchat_users`.
+
+### The vault store
 
 Restore into an empty folder on any machine with Bun and this repository:
 
