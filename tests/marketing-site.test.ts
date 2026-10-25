@@ -9,6 +9,8 @@ test("site routes send visitors to marketing, sign-in or the app", () => {
   expect(resolveSiteRoute(at("/pricing"))).toEqual({ kind: "marketing", page: "pricing" });
   expect(resolveSiteRoute(at("/download/"))).toEqual({ kind: "marketing", page: "download" });
   expect(resolveSiteRoute(at("/connect"))).toEqual({ kind: "marketing", page: "connect" });
+  expect(resolveSiteRoute(at("/terms"))).toEqual({ kind: "marketing", page: "terms" });
+  expect(resolveSiteRoute(at("/privacy/"))).toEqual({ kind: "marketing", page: "privacy" });
   expect(resolveSiteRoute(at("/login"))).toEqual({ kind: "auth", mode: "login" });
   expect(resolveSiteRoute(at("/signup"))).toEqual({ kind: "auth", mode: "signup" });
   // Reset links, Stripe returns and capture handoffs carry a query and need the app.

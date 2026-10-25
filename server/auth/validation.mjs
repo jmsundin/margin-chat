@@ -38,7 +38,12 @@ export function normalizeProfileUpdatePayload(input) {
     throw createStatusError(400, "Profile payload must be a JSON object.");
   }
 
+  if (input.currentPassword !== undefined && (typeof input.currentPassword !== "string" || input.currentPassword.length > 200)) {
+    throw createStatusError(400, "Current password is incorrect.");
+  }
+
   return {
+    currentPassword: typeof input.currentPassword === "string" && input.currentPassword ? input.currentPassword : null,
     displayName: normalizeDisplayName(input.displayName),
     email: normalizeEmail(input.email),
   };

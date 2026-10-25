@@ -182,6 +182,29 @@ describe("authentication endpoints", () => {
     expect((await request("/api/auth/login", { body: { email: user.email, password }, headers: cookie, address: "198.51.100.80" })).status).toBe(200);
   });
 
+  test("changing the sign-in email needs the current password; a name change does not", async () => {
+    const user = await account();
+    const login = await request("/api/auth/login", { body: { email: user.email, password }, address: "198.51.100.95" });
+    const cookie = login.headers["Set-Cookie"].split(";")[0];
+    const profile = (body: Record<string, unknown>) => request("/api/auth/profile", { method: "PUT", body, headers: { cookie }, address: "198.51.100.95" });
+    const newEmail = `moved-${crypto.randomUUID()}@example.test`;
+
+    const renamed = await profile({ displayName: "Renamed tester", email: user.email });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.user.displayName).toBe("Renamed tester");
+
+    const missing = await profile({ displayName: "Renamed tester", email: newEmail });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toContain("current password");
+    const wrong = await profile({ displayName: "Renamed tester", email: newEmail, currentPassword: "not-the-password" });
+    expect(wrong.status).toBe(400);
+    expect((await request("/api/auth/login", { body: { email: newEmail, password }, address: "198.51.100.96" })).status).toBe(401);
+
+    const moved = await profile({ displayName: "Renamed tester", email: newEmail, currentPassword: password });
+    expect(moved.status).toBe(200);
+    expect(moved.body.user.email).toBe(newEmail);
+  });
+
   test("a malformed document id is a client error", async () => {
     const user = await account();
     const login = await request("/api/auth/login", { body: { email: user.email, password }, address: "198.51.100.90" });

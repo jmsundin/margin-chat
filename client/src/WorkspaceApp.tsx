@@ -457,6 +457,7 @@ interface WorkspaceAppProps {
   onUpdateProfile: (args: {
     displayName: string;
     email: string;
+    currentPassword?: string;
   }) => Promise<AuthenticatedUser>;
   onChangePassword: (args: { currentPassword: string; password: string }) => Promise<void>;
   onDeleteAccount: (args: { password: string; confirmation: string }) => Promise<void>;
@@ -4678,6 +4679,7 @@ function WorkspaceAppContent({
   async function handleSaveProfile(args: {
     displayName: string;
     email: string;
+    currentPassword?: string;
   }) {
     setProfileSaving(true);
     setProfileSaveError(null);

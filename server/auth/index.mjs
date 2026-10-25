@@ -6,7 +6,7 @@ import {
   readAuthSessionId,
 } from "./cookies.mjs";
 import { hashPassword, verifyPassword, verifyPasswordAgainstDecoy } from "./passwords.mjs";
-import { getPasswordResetEmailConfiguration, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
+import { getPasswordResetEmailConfiguration, sendEmailChangedNotice, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
 import {
   normalizeAccountDeletionPayload,
   normalizeLoginPayload,
@@ -236,14 +236,40 @@ export function createAuthService({
     };
   }
 
-  async function updateProfile(userId, payload) {
+  /**
+   * Changing the sign-in email needs the current password, and the old address
+   * is told, so a stolen session can't move the account to another inbox.
+   */
+  async function updateProfile(userId, payload, { currentEmail } = {}) {
     const input = normalizeProfileUpdatePayload(payload);
+    const emailChanged = typeof currentEmail === "string" && input.email !== currentEmail;
 
-    return decorateUser(await database.updateUserProfile({
+    if (emailChanged) {
+      if (!input.currentPassword) {
+        throw createStatusError(400, "Enter your current password to change your email.");
+      }
+      const passwordHash = await database.getUserPasswordHash(userId);
+      if (!passwordHash || !(await verifyPassword(input.currentPassword, passwordHash))) {
+        throw createStatusError(400, "Current password is incorrect.");
+      }
+    }
+
+    const user = await decorateUser(await database.updateUserProfile({
       displayName: input.displayName,
       email: input.email,
       userId,
     }));
+
+    if (emailChanged) {
+      try {
+        const delivery = await sendEmailChangedNotice({ env, newEmail: input.email, noticeId: randomUUID(), previousEmail: currentEmail });
+        if (!delivery.delivered) console.error(delivery.reason);
+      } catch (error) {
+        console.error("Unable to send the email-changed notice.", error);
+      }
+    }
+
+    return user;
   }
 
   function buildClearedSessionCookie() {

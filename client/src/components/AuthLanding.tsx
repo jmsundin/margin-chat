@@ -1,5 +1,9 @@
 import { useState, type FormEvent } from "react";
+import { SUPPORT_EMAIL } from "../lib/siteRoutes";
 import "./AuthLanding.css";
+
+// Absolute so the desktop app and the extension open the website, not their own app route.
+const SITE_ORIGIN = "https://www.marginchat.com";
 
 type AuthMode = "forgot" | "login" | "reset" | "signup";
 type ThemeMode = "light" | "dark";
@@ -253,6 +257,7 @@ export default function AuthLanding({
               {isSubmitting ? "Creating account..." : "Create account"}
             </button>
             <p className="auth-signup-note">You start with a “Start here” document and a short tour. Writing, notes and the Map are free; AI uses your own API key or credit you add.</p>
+            <p className="auth-signup-note">By creating an account you agree to the <a href={`${SITE_ORIGIN}/terms`} rel="noreferrer" target="_blank">Terms</a> and <a href={`${SITE_ORIGIN}/privacy`} rel="noreferrer" target="_blank">Privacy Policy</a>, and confirm you are at least 16.</p>
             <p className="auth-switch">
               Already have an account?{" "}
               <button className="auth-switch-button" onClick={() => switchMode("login")} type="button">Log in</button>
@@ -309,6 +314,7 @@ export default function AuthLanding({
           <form className="auth-form" onSubmit={handleResetRequestSubmit}>
             <p className="auth-form-copy">
               Enter your account email. Reset links expire after one hour and can only be used once.
+              {" "}No email after a few minutes? Check spam, or write to <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
             </p>
             <label className="auth-field">
               <span>Email</span>

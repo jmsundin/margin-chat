@@ -733,8 +733,16 @@ export function createApiHandler({
       }
 
       if (route?.id === "authProfile") {
-        const body = await readJsonBody(request);
-        const user = await authService.updateProfile(authContext.user.id, body);
+        const body = await readJsonBody(request, AUTH_BODY_LIMIT);
+        // Wrong passwords for an email change count like failed password changes.
+        passwordChangeByUser.check(authContext.user.id);
+        let user;
+        try {
+          user = await authService.updateProfile(authContext.user.id, body, { currentEmail: authContext.user.email });
+        } catch (error) {
+          if (error?.statusCode === 400 && /password/i.test(error.message)) passwordChangeByUser.record(authContext.user.id);
+          throw error;
+        }
 
         sendJson(response, 200, {
           user,

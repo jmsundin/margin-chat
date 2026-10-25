@@ -58,7 +58,7 @@ interface SettingsPageProps {
   }) => Promise<ApiKeySettings>;
   onStartSubscription: (plan?: BillingPlan) => void | Promise<void>;
   onUpgradeToPlus?: () => void | Promise<void>;
-  onSave: (args: { displayName: string; email: string }) => void | Promise<void>;
+  onSave: (args: { displayName: string; email: string; currentPassword?: string }) => void | Promise<void>;
   user: AuthenticatedUser;
   theme?: ThemeMode;
   onSetTheme?: (theme: ThemeMode) => void;
@@ -214,6 +214,7 @@ export default function SettingsPage({
   const [passwordChanging, setPasswordChanging] = useState(false);
   const [displayName, setDisplayName] = useState(user.displayName);
   const [email, setEmail] = useState(user.email);
+  const [emailPassword, setEmailPassword] = useState("");
   const [apiKeyDrafts, setApiKeyDrafts] = useState(EMPTY_API_KEY_DRAFTS);
   const [dirtyApiKeyProviders, setDirtyApiKeyProviders] = useState<
     ApiKeyProvider[]
@@ -244,6 +245,7 @@ export default function SettingsPage({
 
     setDisplayName(user.displayName);
     setEmail(user.email);
+    setEmailPassword("");
     setApiKeyDrafts(EMPTY_API_KEY_DRAFTS);
     setDirtyApiKeyProviders([]);
     setApiKeySettings(user.apiKeys);
@@ -254,6 +256,9 @@ export default function SettingsPage({
     setCloudBackupResult(null);
     setCloudBackupProgress(null);
   }, [isOpen, initialTab, user.id]);
+
+  // A saved email change leaves nothing to confirm; drop the typed password.
+  useEffect(() => { setEmailPassword(""); }, [user.email]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -289,8 +294,9 @@ export default function SettingsPage({
 
   const trimmedDisplayName = displayName.trim();
   const trimmedEmail = email.trim().toLowerCase();
+  const emailChanged = trimmedEmail !== user.email;
   const hasChanges =
-    trimmedDisplayName !== user.displayName || trimmedEmail !== user.email;
+    trimmedDisplayName !== user.displayName || emailChanged;
   const displayedCloudBackupProgress =
     cloudBackupBusy && cloudBackupProgress
       ? cloudBackupProgress
@@ -533,7 +539,7 @@ export default function SettingsPage({
                 onSubmit={(event) => {
                   event.preventDefault();
                   if (passwordChangingRef.current || isSaving) return;
-                  void onSave({ displayName: trimmedDisplayName, email: trimmedEmail });
+                  void onSave({ displayName: trimmedDisplayName, email: trimmedEmail, ...(emailChanged ? { currentPassword: emailPassword } : {}) });
                 }}
               >
                 <label className="thread-dialog-field">
@@ -546,12 +552,18 @@ export default function SettingsPage({
                   <input autoComplete="email" className="thread-dialog-input" disabled={passwordChanging}
                     onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" type="email" value={email} />
                 </label>
+                {emailChanged ? <label className="thread-dialog-field">
+                  <span className="thread-dialog-label">Current password</span>
+                  <input autoComplete="current-password" className="thread-dialog-input" disabled={passwordChanging}
+                    onChange={(event) => setEmailPassword(event.target.value)} placeholder="Needed to change your email" type="password" value={emailPassword} />
+                  <span className="thread-dialog-hint">We'll tell {user.email} about the change.</span>
+                </label> : null}
                 {errorMessage ? <p className="profile-dialog-error" role="alert">{errorMessage}</p> : null}
                 {billingErrorMessage ? <p className="profile-dialog-error" role="alert">{billingErrorMessage}</p> : null}
                 <div className="thread-dialog-actions">
                   {hasChanges ? <button className="thread-dialog-button" disabled={passwordChanging} type="button"
-                    onClick={() => { setDisplayName(user.displayName); setEmail(user.email); }}>Undo changes</button> : null}
-                  <button className="thread-dialog-button is-primary" disabled={isSaving || passwordChanging || !hasChanges} type="submit">
+                    onClick={() => { setDisplayName(user.displayName); setEmail(user.email); setEmailPassword(""); }}>Undo changes</button> : null}
+                  <button className="thread-dialog-button is-primary" disabled={isSaving || passwordChanging || !hasChanges || (emailChanged && !emailPassword)} type="submit">
                     {isSaving ? "Saving..." : "Save changes"}
                   </button>
                 </div>
