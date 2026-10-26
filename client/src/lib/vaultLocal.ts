@@ -61,11 +61,14 @@ type StoredChange = {
   directoryBaselines?: StoredBaselines | null;
 };
 /** The commit point: a complete checkpoint plus the saves made since, one small file each. */
+type Decoder = ((ref: FileRef | null) => Promise<VaultFile | null>) & { prefetch(change: StoredChange): Promise<void> };
 type JournalHead = { schemaVersion: 2; checkpoint: string; from: number; generation: number };
 
 const HEAD = "vault-journal.json";
 const LEGACY_INDEX = "vault-state.json";
 const COMPACT_SEGMENTS = 256;
+/** Browser storage answers many small reads far faster side by side than one after another. */
+const PARALLEL_READS = 16;
 
 async function readText(directory: FileSystemDirectoryHandle, name: string): Promise<string | null> {
   try { return await readFreshText(() => directory.getFileHandle(name)); }
@@ -258,12 +261,23 @@ export function createBrowserVaultStore(userId: string): VaultStore {
 
   /** Decodes references, verifying each object read from disk once per load. */
   function decoder(history: FileSystemDirectoryHandle, known: Map<string, VaultFile>) {
-    return async function decode(ref: FileRef | null): Promise<VaultFile | null> {
+    const reading = new Map<string, Promise<VaultFile>>();
+    async function decode(ref: FileRef | null): Promise<VaultFile | null> {
       if (!ref) return null;
       if (!/^[a-f0-9]{64}\.(md|bin|json|txt)$/u.test(ref.object)) throw new Error("Invalid local vault history reference.");
       const key = refKey(ref);
       const existing = known.get(key);
       if (existing) return existing;
+      let pending = reading.get(key);
+      if (!pending) {
+        pending = readObject(ref, key);
+        reading.set(key, pending);
+        // A failed read is retried, and reported, by whichever decode needs it next.
+        pending.catch(() => reading.delete(key));
+      }
+      return pending;
+    }
+    async function readObject(ref: FileRef, key: string): Promise<VaultFile> {
       step = `reading history/${ref.object}`;
       const bytes = await readFreshBytes(() => history.getFileHandle(ref.object));
       if (await hashBytes(bytes) !== ref.object.slice(0, 64)) {
@@ -275,7 +289,23 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       if (ref.encoding !== "base64" && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) lossy.add(file);
       known.set(key, file);
       return file;
-    };
+    }
+    /**
+     * Reads every object a change refers to a few at a time before it is applied in order. Opening the app
+     * reads each saved document, and one read after another made startup grow with the size of the vault.
+     */
+    async function prefetch(change: StoredChange) {
+      const refs: FileRef[] = [...Object.values(change.files ?? {}), ...Object.values(change.base ?? {}).map((base) => base?.file)]
+        .filter((ref): ref is FileRef => Boolean(ref));
+      for (const { local, remote, base, result } of change.conflicts ?? []) refs.push(...[local, remote, base, result].filter((ref): ref is FileRef => Boolean(ref)));
+      for (const baseline of Object.values(change.directoryBaselines ?? {})) refs.push(...Object.values(baseline.files));
+      let next = 0;
+      // Failures surface from applyChange, in the same order and with the same message as before.
+      await Promise.all(Array.from({ length: Math.min(PARALLEL_READS, refs.length) }, async () => {
+        while (next < refs.length) await decode(refs[next++]).catch(() => undefined);
+      }));
+    }
+    return Object.assign(decode, { prefetch });
   }
 
   /** Files already decoded on this device, by reference, for reuse after another tab compacts. */
@@ -289,7 +319,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
     return known;
   }
 
-  async function applyChange(target: Memo, change: StoredChange, decode: (ref: FileRef | null) => Promise<VaultFile | null>) {
+  async function applyChange(target: Memo, change: StoredChange, decode: Decoder) {
     const { stored, snapshot } = target;
     if (change.remoteRevision !== undefined) stored.remoteRevision = snapshot.remoteRevision = change.remoteRevision;
     if (change.pulledRevision !== undefined) {
@@ -366,6 +396,27 @@ export function createBrowserVaultStore(userId: string): VaultStore {
     return { change: JSON.parse(text) as StoredChange, bytes: text.length };
   }
 
+  /** Reads saves first + 1 through last side by side, then applies them in order with their files already read. */
+  async function applyJournal(target: Memo, journal: FileSystemDirectoryHandle, first: number, last: number, decode: Decoder) {
+    const generations = Array.from({ length: Math.max(0, last - first) }, (_, index) => first + 1 + index);
+    const reads = new Map(generations.map((generation) => [generation, readChange(journal, generation)]));
+    // Settled here, then thrown in order below, so a failure names the first save that could not be read.
+    for (const read of reads.values()) read.catch(() => undefined);
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(PARALLEL_READS, generations.length) }, async () => {
+      while (next < generations.length) {
+        const read = await reads.get(generations[next++])!.catch(() => null);
+        if (read) await decode.prefetch(read.change);
+      }
+    }));
+    for (const generation of generations) {
+      step = `reading journal/${generation}.json`;
+      const { change, bytes } = await reads.get(generation)!;
+      await applyChange(target, change, decode);
+      target.journalBytes += bytes;
+    }
+  }
+
   /** Bring this tab's decoded vault up to date with what is on disk. */
   async function load(): Promise<Memo | null> {
     const root = await directory();
@@ -384,7 +435,10 @@ export function createBrowserVaultStore(userId: string): VaultStore {
       }
       const loaded: Memo = { checkpoint: LEGACY_INDEX, from: 0, generation: 0, stored: emptyStored(), snapshot: emptyVault(),
         checkpointBytes: legacy.length, journalBytes: 0 };
-      await applyChange(loaded, asChange(stored), decoder(history, new Map()));
+      const decode = decoder(history, new Map());
+      const change = asChange(stored);
+      await decode.prefetch(change);
+      await applyChange(loaded, change, decode);
       return memo = loaded;
     }
     if (memo && memo.checkpoint === head.checkpoint && memo.generation === head.generation) return memo;
@@ -393,12 +447,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
     if (memo && memo.checkpoint === head.checkpoint && memo.generation >= head.from && memo.generation < head.generation) {
       // Another tab saved since this one last looked. Apply only those saves.
       const next: Memo = { ...memo, stored: cloneStored(memo.stored), snapshot: view(memo.snapshot) };
-      const decode = decoder(history, knownFiles(memo));
-      for (let generation = memo.generation + 1; generation <= head.generation; generation += 1) {
-        const { change, bytes } = await readChange(journal, generation);
-        await applyChange(next, change, decode);
-        next.journalBytes += bytes;
-      }
+      await applyJournal(next, journal, memo.generation, head.generation, decoder(history, knownFiles(memo)));
       next.generation = head.generation;
       return memo = next;
     }
@@ -410,12 +459,10 @@ export function createBrowserVaultStore(userId: string): VaultStore {
     const decode = decoder(history, knownFiles(memo));
     const loaded: Memo = { checkpoint: head.checkpoint, from: head.from, generation: head.generation, stored: emptyStored(), snapshot: emptyVault(),
       checkpointBytes: text.length, journalBytes: 0 };
-    await applyChange(loaded, asChange(stored), decode);
-    for (let generation = head.from + 1; generation <= head.generation; generation += 1) {
-      const { change, bytes } = await readChange(journal, generation);
-      await applyChange(loaded, change, decode);
-      loaded.journalBytes += bytes;
-    }
+    const checkpoint = asChange(stored);
+    await decode.prefetch(checkpoint);
+    await applyChange(loaded, checkpoint, decode);
+    await applyJournal(loaded, journal, head.from, head.generation, decode);
     return memo = loaded;
   }
 
