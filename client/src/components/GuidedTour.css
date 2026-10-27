@@ -18,6 +18,8 @@
 @media (prefers-reduced-motion: reduce) { .guided-tour-hole, .guided-tour-card { transition: none; } }
 
 .tour-pill { position: fixed; z-index: 1200; left: calc(16px + env(safe-area-inset-left, 0px)); bottom: calc(68px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel); color: var(--ink); box-shadow: 0 8px 22px -10px rgba(0, 0, 0, 0.35); font-size: 13px; }
+/* The pill floats over the sidebar's foot, so the document list can scroll its last rows above it. */
+body:has(.tour-pill) .thread-list { padding-bottom: 56px; }
 .tour-pill button { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .tour-pill-resume { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px; font-weight: 600; color: var(--accent) !important; }
 .tour-pill-close { width: 26px; height: 26px; border-radius: 50%; color: var(--muted) !important; font-size: 16px !important; }

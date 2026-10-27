@@ -22,9 +22,11 @@ export interface OnboardingRecord {
   mapSeen: boolean;
   /** "Keep for now" was chosen on the hide question, so the pill stops asking. */
   keepPill: boolean;
+  /** The free trial's example vault was added, so deleting it doesn't bring it back. */
+  examples: boolean;
 }
 
-const EMPTY: OnboardingRecord = { checked: false, tour: "none", step: 0, mapSeen: false, keepPill: false };
+const EMPTY: OnboardingRecord = { checked: false, tour: "none", step: 0, mapSeen: false, keepPill: false, examples: false };
 const recordKey = (userId: string) => `margin-chat:onboarding:${userId}`;
 const TOUR_STATUSES = new Set<TourStatus>(["none", "active", "paused", "done"]);
 
@@ -39,6 +41,7 @@ export function loadOnboarding(userId: string): OnboardingRecord {
       step: Number.isSafeInteger(value.step) && (value.step as number) >= 0 ? value.step as number : 0,
       mapSeen: value.mapSeen === true,
       keepPill: value.keepPill === true,
+      examples: value.examples === true,
     };
   } catch {
     return { ...EMPTY };

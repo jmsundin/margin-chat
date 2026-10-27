@@ -121,6 +121,7 @@ import { chatImportReminderDue, finishChatImportReminder } from "./lib/chatImpor
 import { NEW_DEVICE_NOTICE, loggedInThisTab } from "./lib/newDeviceNotice";
 import { completedStarterTasks, isPristineWorkspace, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
 import { loadOnboarding, saveOnboarding, type OnboardingRecord } from "./lib/onboarding";
+import { addExampleVault } from "./lib/exampleVault";
 import CaptureInbox from "./components/CaptureInbox";
 import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
@@ -437,6 +438,8 @@ interface WorkspaceAppProps {
   onOpenWebsiteSettings?: (tab: "account" | "billing" | "api-keys" | "agents") => void;
   /** True inside the browser extension, whose document tabs get their own close buttons. */
   inExtension?: boolean;
+  /** The free trial at /try: no account, an example vault, and nothing that needs one. */
+  guest?: boolean;
   billingDashboard: import("./types").BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
@@ -682,7 +685,7 @@ export default function WorkspaceApp(props: WorkspaceAppProps) {
 }
 
 function WorkspaceAppContent({
-  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled, onOpenWebsiteSettings, inExtension = false,
+  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled, onOpenWebsiteSettings, inExtension = false, guest = false,
   billingDashboard, billingDashboardLoading, billingDashboardError, billingOpenRequest, onRefreshBilling, onAddMoney,
   billingNotice,
   onDismissBillingNotice,
@@ -1214,6 +1217,12 @@ function WorkspaceAppContent({
       if (!canSyncWorkspaceToCloud(user) && loggedInThisTab(user.id)) setNewDeviceNotice(true);
     } else updateOnboarding({ checked: true });
   }, [vaultSettled, inExtension, onboarding.checked]);
+  // A trial visitor also gets the example vault, once, so the Map and search have something to show.
+  useEffect(() => {
+    if (!guest || !vaultSettled || onboarding.examples) return;
+    setState((current) => addExampleVault(current));
+    updateOnboarding({ examples: true });
+  }, [guest, vaultSettled, onboarding.examples]);
   useEffect(() => { if (isGraphView && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [isGraphView, onboarding.mapSeen]);
   const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen }),
     [state.conversations, state.sessions, onboarding.mapSeen]);
@@ -1223,7 +1232,7 @@ function WorkspaceAppContent({
     if (starterTasksDone.size) setState((current) => tickStarterTasks(current, starterTasksDone));
   }, [starterTasksKey]);
   // A vault this small belongs to someone new, so the views say what they are for.
-  const newVault = Object.keys(state.conversations).length <= 8;
+  const newVault = guest || Object.keys(state.conversations).length <= 8;
   const threadSummaries = useMemo(
     () => applyJevCategories(buildThreadSummaries(state.conversations), jev.categories).map((thread) => ({
         ...thread,
@@ -5314,7 +5323,7 @@ function WorkspaceAppContent({
               onDeleteThread={handleDeleteThread}
               onNewChat={handleCreateMainConversation}
               onNewNote={handleCreateStandaloneNote}
-              onOpenInbox={() => setCaptureInboxOpen(true)}
+              onOpenInbox={guest ? undefined : () => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
               onTakeTour={inExtension ? undefined : () => {
                 if (isMobileViewport) setLeftSidebarOpen(false);
@@ -5910,6 +5919,7 @@ function WorkspaceAppContent({
             jevStatus={jev.status}
             onSetJevEnabled={setJevEnabled}
             vaultIndex={vault.storageMode === "server" ? vaultIndex : undefined}
+            guest={guest}
           />
           </main>
         </div>

@@ -13,6 +13,9 @@ export const STARTER_TITLE = "Start here";
 export const STARTER_NOTE_ID = "starter-margin-note";
 export const STARTER_SIDE_DOCUMENT_ID = "starter-side-document";
 const ID_PREFIX = "starter-";
+/** The trial's example vault (lib/exampleVault.ts) isn't the person's own work either. */
+const EXAMPLE_PREFIX = "example-";
+const madeByPerson = (id: string) => !id.startsWith(ID_PREFIX) && !id.startsWith(EXAMPLE_PREFIX);
 /** Images ship with the website, so the document reads the same on every device and in other apps. */
 const ASSET_ORIGIN = "https://www.marginchat.com";
 
@@ -109,13 +112,13 @@ export function seedStarterDocument(state: AppState, at = new Date().toISOString
 export function completedStarterTasks(state: AppState, seen: { map?: boolean } = {}): Set<StarterTask> {
   const done = new Set<StarterTask>();
   for (const conversation of Object.values(state.conversations)) {
-    if (conversation.id.startsWith(ID_PREFIX)) continue;
+    if (!madeByPerson(conversation.id)) continue;
     if (conversation.parentId && conversation.document?.marginNote?.display === "compact") done.add("note");
     else if (conversation.parentId && conversation.branchAnchor && !conversation.document?.marginNote) done.add("side");
     if (conversation.document?.generations.length || conversation.messages.some((message) => message.role === "assistant")) done.add("ai");
   }
   if (seen.map) done.add("map");
-  if (Object.keys(state.sessions?.items ?? {}).length > 1) done.add("session");
+  if (Object.keys(state.sessions?.items ?? {}).filter(madeByPerson).length > 1) done.add("session");
   return done;
 }
 

@@ -95,6 +95,7 @@ export default function GuestApp({ theme, onSetTheme }: { theme: ThemeMode; onSe
       <Suspense fallback={<div className="app-shell" aria-busy="true" />}>
         <WorkspaceApp
           storageNamespace={user.id}
+          guest
           user={user}
           theme={theme}
           onSetTheme={onSetTheme}

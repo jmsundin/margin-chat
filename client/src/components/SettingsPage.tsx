@@ -14,6 +14,7 @@ import type {
   BillingPlan,
 } from "../types";
 import { formatCreditBalance } from "../lib/billing";
+import { AUTH_PATHS } from "../lib/siteRoutes";
 import { dictationSupported } from "../lib/dictation";
 import type { JevStatus } from "../lib/jevAssistance";
 import type { VaultPassageIndex } from "../lib/useVaultPassageIndex";
@@ -68,6 +69,8 @@ interface SettingsPageProps {
   jevStatus?: JevStatus;
   onSetJevEnabled?: (enabled: boolean) => void;
   vaultIndex?: VaultPassageIndex;
+  /** The free trial: no account, so only the settings that work in this browser. */
+  guest?: boolean;
 }
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; description: string; keywords: string }> = [
@@ -79,6 +82,9 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; description: string;
   { id: "voice", label: "Voice typing", description: "Talk instead of typing in any text field.", keywords: "dictation mic microphone hold space talk speech" },
   { id: "storage", label: "Vault & storage", description: "Where your Markdown files live and how they sync.", keywords: "markdown vault folder cloud sync download upload files storage deleted backup" },
 ];
+
+/** Sections that only do something with an account. */
+const GUEST_HIDDEN_SECTIONS = new Set<SettingsSection>(["billing", "api-keys", "agents"]);
 
 const PHONE_QUERY = "(max-width: 720px)";
 
@@ -207,6 +213,7 @@ export default function SettingsPage({
   jevStatus,
   onSetJevEnabled,
   vaultIndex,
+  guest = false,
 }: SettingsPageProps) {
   const displayNameInputRef = useRef<HTMLInputElement>(null);
   const profileBodyRef = useRef<HTMLDivElement>(null);
@@ -227,7 +234,7 @@ export default function SettingsPage({
   const [selectedTab, setActiveTab] = useState<SettingsSection | null>(initialTab ?? null);
   const [query, setQuery] = useState("");
   // Phones show the section list until a section is picked; computers always show one section.
-  const activeTab: SettingsSection = selectedTab ?? "account";
+  const activeTab: SettingsSection = selectedTab && !(guest && GUEST_HIDDEN_SECTIONS.has(selectedTab)) ? selectedTab : "account";
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
@@ -426,8 +433,10 @@ export default function SettingsPage({
     storage: cloudSyncEnabled ? "Cloud" : "This device",
   };
   const visibleSections = SECTIONS.filter((section) => section.id !== "voice" || dictationSupported())
+    .filter((section) => !guest || !GUEST_HIDDEN_SECTIONS.has(section.id))
     .filter((section) => matchesSettingsQuery(section, query));
-  const current = SECTIONS.find((section) => section.id === activeTab)!;
+  const found = SECTIONS.find((section) => section.id === activeTab)!;
+  const current = guest && found.id === "account" ? { ...found, description: "You're trying Margin Chat without an account." } : found;
   const showList = !phone || selectedTab === null;
   const showSection = !phone || selectedTab !== null;
 
@@ -463,7 +472,7 @@ export default function SettingsPage({
             <span aria-hidden="true" className="profile-dialog-avatar settings-page-avatar">{getInitials(user.displayName)}</span>
             <span className="settings-page-me-copy">
               <strong>{user.displayName}</strong>
-              <span>{user.email}</span>
+              <span>{guest ? "Free trial" : user.email}</span>
             </span>
           </div>
           <label className="settings-page-search">
@@ -505,7 +514,7 @@ export default function SettingsPage({
           <button className="settings-page-item settings-page-logout" disabled={isSaving || billingSubmitting || passwordChanging}
             onClick={() => { if (!passwordChangingRef.current) void onLogout(); }} type="button">
             <SettingsIcon path="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" />
-            <span className="settings-page-item-label">Log out</span>
+            <span className="settings-page-item-label">{guest ? "Sign up free" : "Log out"}</span>
           </button>
         </nav> : null}
 
@@ -521,7 +530,14 @@ export default function SettingsPage({
               <p>{current.description}</p>
             </div>
 
-            {activeTab === "account" ? (onOpenWebsiteSettings ? <div className="thread-dialog-form">
+            {activeTab === "account" && guest ? <div className="thread-dialog-form">
+              <p className="thread-dialog-copy">Your documents are saved only in this browser, and AI runs on Chrome’s built-in model when this computer can run it.</p>
+              <p className="thread-dialog-copy">Sign up free to keep your work in the cloud, use AI on any device, and connect Claude, ChatGPT or Gemini to your vault.</p>
+              <div className="thread-dialog-actions">
+                <a className="thread-dialog-button" href={AUTH_PATHS.login}>Log in</a>
+                <a className="thread-dialog-button is-primary" href={AUTH_PATHS.signup}>Sign up free</a>
+              </div>
+            </div> : activeTab === "account" ? (onOpenWebsiteSettings ? <div className="thread-dialog-form">
               <p className="thread-dialog-copy">Signed in as {user.email}. Manage your profile and password on the Margin Chat website.</p>
               <div className="thread-dialog-actions">
                 <button className="thread-dialog-button is-primary" type="button" onClick={() => onOpenWebsiteSettings("account")}>Manage account on website</button>
