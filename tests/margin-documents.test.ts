@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createMarginDocument, marginNoteToSideDocument, migrateMarginNotes, normalizeEditableDocument, createWorkspaceDocument, createAppStateFromWorkspaceDocument } from "@margin-chat/workspace-contracts";
+import { canMoveToMargin, createMarginDocument, isCompactDocument, marginNoteToSideDocument, sideDocumentToMarginNote, migrateMarginNotes, normalizeEditableDocument, createWorkspaceDocument, createAppStateFromWorkspaceDocument } from "@margin-chat/workspace-contracts";
 import { createEmptyState, createMainConversation } from "../client/src/initialState";
 import { hydratePersistedState } from "../client/src/lib/appState";
 import { getEditableDocument } from "../client/src/lib/editableDocument";
@@ -72,10 +72,9 @@ describe("margin notes as documents", () => {
       if (path === "workspace.json") expect(JSON.parse(resaved[path].content)).toEqual(JSON.parse(file.content));
       else expect(resaved[path]).toEqual(file);
     }
-    restored.conversations["legacy-note"].document!.marginNote!.display = "full";
     restored.conversations["legacy-note"].document!.marginNote!.size = { width: 410, height: 560 };
     const reopened = vaultToState(stateToVaultFiles(restored, files), restored);
-    expect(reopened.conversations["legacy-note"].document!.marginNote!.display).toBe("full");
+    expect(reopened.conversations["legacy-note"].document!.marginNote!.display).toBe("compact");
     expect(reopened.conversations["legacy-note"].document!.marginNote!.size).toEqual({ width: 410, height: 560 });
     expect(createAppStateFromWorkspaceDocument(createWorkspaceDocument(restored))!.conversations["legacy-note"].document).toEqual(restored.conversations["legacy-note"].document);
   });
@@ -121,5 +120,41 @@ describe("margin notes as documents", () => {
     expect(Object.keys(reopened.conversations).sort()).toEqual(Object.keys(migrated.conversations).sort());
     expect(createAppStateFromWorkspaceDocument(createWorkspaceDocument(state))!.conversations[note.id].document!.marginNote).toBeUndefined();
     expect(() => normalizeAppState(state)).not.toThrow();
+  });
+
+  test("opens notes saved as expanded as side documents, keeping id, text and passage", () => {
+    const migrated = hydratePersistedState(fixture())!;
+    const note = migrated.conversations["legacy-note"];
+    const expanded = { ...note, document: { ...note.document!, marginNote: { ...note.document!.marginNote!, display: "full" as const } } };
+    const reopened = hydratePersistedState({ ...migrated, conversations: { ...migrated.conversations, [note.id]: expanded } })!;
+    const side = reopened.conversations[note.id];
+    expect(side.document!.marginNote).toBeUndefined();
+    expect(side.document!.blocks).toEqual(note.document!.blocks);
+    expect(side.branchAnchor).toEqual({ ...note.branchAnchor!, prompt: "Side document" });
+    expect(side.updatedAt).toBe(note.updatedAt);
+    expect(reopened.conversations[note.parentId!].childIds).toContain(note.id);
+  });
+
+  test("moves a side document back to the margin, and round-trips with Move to side document", () => {
+    const migrated = hydratePersistedState(fixture())!;
+    const note = migrated.conversations["legacy-note"];
+    const side = marginNoteToSideDocument(note, "2026-10-27T00:00:00.000Z");
+    expect(canMoveToMargin(side, migrated.conversations)).toBe(true);
+    expect(canMoveToMargin(note, migrated.conversations)).toBe(false);
+    expect(canMoveToMargin(migrated.conversations[note.parentId!], migrated.conversations)).toBe(false);
+    const back = sideDocumentToMarginNote(side, "2026-10-27T00:01:00.000Z");
+    expect(back.id).toBe(note.id);
+    expect(back.document!.blocks).toEqual(note.document!.blocks);
+    expect(back.document!.marginNote!.display).toBe("compact");
+    expect(back.document!.marginNote!.source).toEqual({ ...note.document!.marginNote!.source,
+      sourceMessageId: note.branchAnchor!.sourceMessageId });
+    expect(back.branchAnchor).toEqual(note.branchAnchor);
+    expect(isCompactDocument(back)).toBe(true);
+    expect(getDocumentKind(back)).toBe("note");
+    expect(sideDocumentToMarginNote(back)).toBe(back);
+    expect(normalizeEditableDocument(back.document)).toEqual(back.document);
+    const unanchored = sideDocumentToMarginNote({ ...side, branchAnchor: null });
+    expect(unanchored.branchAnchor).toBeNull();
+    expect(unanchored.document!.marginNote).toEqual({ display: "compact" });
   });
 });

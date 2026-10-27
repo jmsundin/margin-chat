@@ -35,7 +35,8 @@ test("creating a side document from a selection adds an anchored child", () => {
   expect(side).toBeDefined();
   expect(side.parentId).toBe(DEMO_MAIN_DOCUMENT_ID);
   expect(side.kind).toBe("note");
-  expect(side.document?.marginNote?.display).toBe("full");
+  expect(side.document?.marginNote).toBeUndefined();
+  expect(side.branchAnchor?.prompt).toBe("Side document");
   expect(next.conversations[DEMO_MAIN_DOCUMENT_ID].childIds).toContain("demo-side-1");
   const anchors = Object.values(getAnchorsByMessageId(next.conversations, DEMO_MAIN_DOCUMENT_ID)).flat();
   expect(anchors.some((link) => link.anchor.quote === quote)).toBe(true);

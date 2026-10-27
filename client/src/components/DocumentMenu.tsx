@@ -23,6 +23,7 @@ export interface DocumentMenuProps {
   onNewMarginNote?: (id: string) => void;
   /** Turns a margin note into a side document of its own. */
   onMoveToSideDocument?: (id: string) => void;
+  onMoveToMargin?: (id: string) => void;
   /** Keep this document out of every AI request and connected app, or let AI read it again. */
   onToggleHiddenFromAI?: (id: string) => void;
   maximized?: boolean;
@@ -36,7 +37,7 @@ export interface DocumentMenuProps {
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onToggleHiddenFromAI, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -200,10 +201,12 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
         </button> : null}
       </div> : null}
-      {onNewMarginNote || onMoveToSideDocument ? <div role="group" className="document-menu-section">
+      {onNewMarginNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
         {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
         {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
           onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
+        {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
+          onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
       </div> : null}
       {onToggleHiddenFromAI ? <div role="group" className="document-menu-section">
         <button type="button" role="menuitemcheckbox" aria-checked={conversation.hiddenFromAI === true}

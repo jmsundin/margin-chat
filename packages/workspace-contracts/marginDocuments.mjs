@@ -25,9 +25,17 @@ export function createMarginDocument(parent, note, documentId = note.id, { legac
   };
 }
 
-/** Deterministic, non-mutating migration. Reopening a legacy vault never changes identities. */
+/**
+ * Deterministic, non-mutating migration. Reopening a legacy vault never changes identities.
+ * Margin notes once had an "expanded" display that showed them in their own pane; those are side documents now.
+ */
 export function migrateMarginNotes(conversations) {
   let result = conversations;
+  for (const original of Object.values(conversations)) {
+    if (original.document?.marginNote?.display !== "full") continue;
+    if (result === conversations) result = Object.assign(Object.create(null), conversations);
+    result[original.id] = marginNoteToSideDocument(original, original.updatedAt);
+  }
   for (const original of Object.values(conversations)) {
     const notes = (original.notes ?? []).filter((note) => note.kind !== "standalone");
     if (!notes.length) continue;
@@ -58,6 +66,27 @@ export function marginNoteToSideDocument(conversation, updatedAt = new Date().to
   const { marginNote: _marginNote, ...document } = conversation.document;
   return { ...conversation, updatedAt, document,
     branchAnchor: conversation.branchAnchor ? { ...conversation.branchAnchor, prompt: "Side document" } : conversation.branchAnchor ?? null };
+}
+
+/** Whether a side document can go back into the margin of the document it came from. */
+export function canMoveToMargin(conversation, conversations) {
+  return Boolean(conversation?.document && !conversation.document.marginNote && conversation.parentId
+    && conversations[conversation.parentId] && !conversation.vaultFile && !conversation.publicTopic);
+}
+
+/**
+ * A side document put back in its host's margin: same id, text and children, with the margin-note flag.
+ * A side document on a passage sits level with that passage again.
+ */
+export function sideDocumentToMarginNote(conversation, updatedAt = new Date().toISOString()) {
+  if (!conversation?.document || conversation.document.marginNote) return conversation;
+  const anchor = conversation.branchAnchor;
+  const source = anchor ? { sourceMessageId: anchor.sourceMessageId ?? null,
+    ...(anchor.sourceBlockId ? { sourceBlockId: anchor.sourceBlockId } : {}),
+    startOffset: anchor.startOffset ?? null, endOffset: anchor.endOffset ?? null, quote: anchor.quote ?? null } : undefined;
+  return { ...conversation, updatedAt,
+    document: { ...conversation.document, marginNote: { display: "compact", ...(source ? { source } : {}) } },
+    branchAnchor: anchor ? { ...anchor, prompt: "Margin note" } : anchor ?? null };
 }
 
 export function isCompactDocument(conversation) {

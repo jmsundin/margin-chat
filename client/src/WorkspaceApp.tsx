@@ -16,7 +16,7 @@ import { isMarkdownHighlighted, toggleMarkdownHighlight } from "./lib/selectionH
 import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
-import { createMarginDocument, isCompactDocument, marginNoteToSideDocument, isHiddenFromAI } from "@margin-chat/workspace-contracts";
+import { canMoveToMargin, createMarginDocument, isCompactDocument, marginNoteToSideDocument, sideDocumentToMarginNote, isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
 import "./document-workspace.css";
@@ -3462,24 +3462,6 @@ function WorkspaceAppContent({
     return id;
   }
 
-  function handleToggleMarginPresentation(conversationId: string) {
-    const conversation = state.conversations[conversationId];
-    if (!conversation?.document?.marginNote) return;
-    const display = isCompactDocument(conversation) ? "full" : "compact";
-    setState((current) => {
-      const target = current.conversations[conversationId];
-      if (!target?.document?.marginNote) return current;
-      const next = focusDocument({ ...current, conversations: { ...current.conversations, [conversationId]: {
-        ...target, updatedAt: new Date().toISOString(), document: { ...target.document,
-          marginNote: { ...target.document.marginNote, display } },
-      } } }, conversationId);
-      // A note expanded into a pane opens next to its parent, like any newly opened child.
-      return display === "full" ? placeDocumentAfterParent(next, conversationId) : next;
-    });
-    if (conversation.parentId) setClosedMarginNotes((current) => ({ ...current, [conversation.parentId!]: false }));
-    setDocumentFocusSequence((sequence) => sequence + 1);
-  }
-
   /**
    * A margin note that outgrew the margin becomes a side document: the same document, id and text,
    * minus its margin-note flag. Its passage link carries over, and it opens right after its host, ready to write in.
@@ -3498,6 +3480,20 @@ function WorkspaceAppContent({
     suppressNextChatAutoCenterRef.current = false;
     setDocumentFocusSequence((sequence) => sequence + 1);
     focusNewDocumentEditor(conversationId);
+  }
+
+  /** A side document goes back into its host's margin: the same document, beside its passage again. */
+  function handleMoveSideDocumentToMargin(conversationId: string) {
+    const conversation = state.conversations[conversationId];
+    if (!canMoveToMargin(conversation, state.conversations)) return;
+    setState((current) => {
+      const target = current.conversations[conversationId];
+      if (!canMoveToMargin(target, current.conversations)) return current;
+      return focusDocument({ ...current, conversations: { ...current.conversations,
+        [conversationId]: sideDocumentToMarginNote(target) } }, conversationId);
+    });
+    setClosedMarginNotes((current) => ({ ...current, [conversation.parentId!]: false }));
+    setDocumentFocusSequence((sequence) => sequence + 1);
   }
 
   function handleResizeMarginDocument(conversationId: string, size: MarginDocumentSize) {
@@ -4856,6 +4852,7 @@ function WorkspaceAppContent({
         onMinimize={handleMinimizeDocument} onClose={hasDocumentTab(conversation.id) ? undefined : handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
+        onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
@@ -4879,9 +4876,9 @@ function WorkspaceAppContent({
         Notes <span>{noteCount}</span>
       </button> : null}
       {conversation.document?.marginNote ? <button type="button" className="document-presentation-toggle"
-        aria-label={`${isCompactDocument(conversation) ? "Expand" : "Compact"} margin note ${conversation.title}`}
-        title={isCompactDocument(conversation) ? "Expand to full document" : "Show as a margin note"}
-        onClick={() => handleToggleMarginPresentation(conversation.id)}>{isCompactDocument(conversation) ? "↗" : "↙"}</button> : null}
+        aria-label={`Move margin note ${conversation.title} to a side document`}
+        title="Move to side document"
+        onClick={() => handleMoveMarginNoteToSideDocument(conversation.id)}>↗</button> : null}
     </>;
   }
 
