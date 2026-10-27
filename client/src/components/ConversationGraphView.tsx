@@ -29,6 +29,7 @@ import { documentConnectionGeometry } from "../lib/documentMapConnections";
 import { curvedGraphConnection } from "../lib/graphConnectionCurve";
 import { fitMapDotTitles, mapDotDiameter, mapDotTitleIsBold, measureMapDotTitle, type MapBox, type MapDotTitle } from "../lib/mapDotNodes";
 import { createMapHoverIntent, mapHoverSnippet, placeMapHoverCard, type MapHoverIntent } from "../lib/mapHoverCard";
+import { clampPhoneDockSize, PHONE_DOCK_MIN, PHONE_DOCK_SHARE, usePhoneDockLayout } from "../lib/phoneDock";
 import { buildMapTerritories, centerNodeInCanvas, fitMapTerritories, fitMapTerritory, fitMapTerritoryOverview, getMapScale, layoutMapTerritoryOverview, layoutFocusedMapTerritory, mapLabelsOverlap, OVERVIEW_NODE_FOOTPRINT as GROUP_NODE_FOOTPRINT, readableNodeSize, type MapTerritory } from "../lib/graphPresentation";
 import {
   buildConversationForestGraphScene,
@@ -418,28 +419,38 @@ function getConversationSnippet(conversation: Conversation) {
 const MAP_HOVER_CARD_WIDTH = 264;
 /** Tallest the card draws: two title lines, four snippet lines and the counts. */
 const MAP_HOVER_CARD_HEIGHT = 150;
+/** A tapped card adds a line saying a tap opens the document. */
+const MAP_TAP_CARD_HEIGHT = 172;
 
 /**
- * A resting pointer's quick look at a circle: title, opening lines and counts,
- * beside the circle and clear of its neighbors where it can be. It never takes
- * the pointer, so leaving the circle always closes it.
+ * A quick look at a circle: title, opening lines and counts, beside the circle
+ * and clear of its neighbors where it can be. A resting mouse opens it and it
+ * never takes the pointer, so leaving the circle always closes it. A tap opens
+ * it on touch screens, and tapping the card opens the document (`onOpen`).
  */
-function MapHoverCard({ conversation, anchor, view, obstacles, rightGap, connections, notes }: {
+function MapHoverCard({ conversation, anchor, view, obstacles, rightGap, connections, notes, onOpen }: {
   conversation: Conversation; anchor: MapBox; view: { width: number; height: number }; obstacles: MapBox[];
-  rightGap: number; connections: number; notes: number;
+  rightGap: number; connections: number; notes: number; onOpen?: () => void;
 }) {
   const snippet = useMemo(() => getConversationSnippet(conversation), [conversation]);
-  const placement = placeMapHoverCard(anchor, { width: MAP_HOVER_CARD_WIDTH, height: MAP_HOVER_CARD_HEIGHT }, view, obstacles, rightGap);
+  const width = Math.min(MAP_HOVER_CARD_WIDTH, view.width - 16), height = onOpen ? MAP_TAP_CARD_HEIGHT : MAP_HOVER_CARD_HEIGHT;
+  const placement = placeMapHoverCard(anchor, { width, height }, view, obstacles, rightGap);
   const kind = conversation.publicTopic ? "Topic" : conversation.document?.marginNote ? "Margin note"
     : isStandaloneNoteConversation(conversation) ? "Note" : conversation.document ? "Document" : "Chat";
   const counts = [connections ? `${connections} connection${connections === 1 ? "" : "s"}` : "", notes ? `${notes} margin note${notes === 1 ? "" : "s"}` : ""].filter(Boolean);
-  return <div className="graph-map-hover-card" data-side={placement.side} role="tooltip" aria-hidden="true"
-    style={{ left: placement.left, top: placement.top, width: MAP_HOVER_CARD_WIDTH, maxHeight: MAP_HOVER_CARD_HEIGHT }}>
+  const body = <>
     <span className="graph-map-hover-card-kind">{kind}</span>
     <strong>{conversation.title || "Untitled"}</strong>
-    <p className={snippet ? undefined : "is-empty"}>{snippet || (conversation.document || isStandaloneNoteConversation(conversation) ? "Nothing written yet." : "No messages yet.")}</p>
+    <span className={`graph-map-hover-card-snippet${snippet ? "" : " is-empty"}`}>{snippet || (conversation.document || isStandaloneNoteConversation(conversation) ? "Nothing written yet." : "No messages yet.")}</span>
     {counts.length ? <span className="graph-map-hover-card-counts">{counts.join(" · ")}</span> : null}
-  </div>;
+  </>;
+  const style = { left: placement.left, top: placement.top, width, maxHeight: height };
+  // The map pans from a press, so a press on the card stays with the card.
+  return onOpen ? <button type="button" className="graph-map-hover-card is-tapped" data-side={placement.side} data-graph-ui="true" style={style}
+    aria-label={`Open ${conversation.title || "Untitled"}`} onPointerDown={(event) => event.stopPropagation()} onClick={onOpen}>
+    {body}
+    <span className="graph-map-hover-card-open">Tap to open</span>
+  </button> : <div className="graph-map-hover-card" data-side={placement.side} role="tooltip" aria-hidden="true" style={style}>{body}</div>;
 }
 
 function getSourceQuote(conversation: Conversation) {
@@ -1097,7 +1108,10 @@ export default function ConversationGraphView({
   useEffect(() => () => window.clearTimeout(hoverTimerRef.current), []);
   // The circle whose snippet card is open; see createMapHoverIntent for when it opens.
   const [snippetId, setSnippetId] = useState<string | null>(null);
-  const [hoverIntent] = useState(() => createMapHoverIntent(setSnippetId));
+  // On touch screens a tap opens the card instead of a resting pointer, and the card stays until the next tap.
+  const [snippetTapped, setSnippetTapped] = useState(false);
+  const lastPointerTypeRef = useRef("mouse");
+  const [hoverIntent] = useState(() => createMapHoverIntent((id) => { setSnippetTapped(false); setSnippetId(id); }));
   useEffect(() => () => hoverIntent.dispose(), [hoverIntent]);
   const [conceptSaveError, setConceptSaveError] = useState(false);
   const [inspectedEdge, setInspectedEdge] = useState<GraphAggregatedEdge | null>(null);
@@ -1128,7 +1142,12 @@ export default function ConversationGraphView({
   const dockMoveTriggerRef = useRef<HTMLButtonElement>(null);
   const dockMoveMenuRef = useRef<HTMLDivElement>(null);
   useOutsideDismiss(dockMoveOpen, () => setDockMoveOpen(false), dockMoveMenuRef, dockMoveTriggerRef);
-  const dockVertical = dockSide === "top" || dockSide === "bottom";
+  const phoneDock = usePhoneDockLayout();
+  // A phone's panel fills the bottom half upright and the right half sideways, sized apart from the computer's.
+  const activeDockSide: GraphDockSide = phoneDock === "portrait" ? "bottom" : phoneDock === "landscape" ? "right" : dockSide;
+  const [phoneDockSize, setPhoneDockSize] = useState<number | null>(null);
+  useEffect(() => setPhoneDockSize(null), [phoneDock]);
+  const dockVertical = activeDockSide === "top" || activeDockSide === "bottom";
   const dockResizeRef = useRef<{ pointerId: number; client: number; size: number } | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const viewportStateRef = useRef<GraphViewport>(viewport);
@@ -2962,19 +2981,21 @@ export default function ConversationGraphView({
     return { top: Math.min(anchor.bottom + 4, window.innerHeight - 120), left: Math.max(8, Math.min(anchor.left, window.innerWidth - 248)) };
   }
 
-  const dockMinimum = dockVertical ? 200 : 280;
+  const dockMinimum = phoneDock ? PHONE_DOCK_MIN : dockVertical ? 200 : 280;
   function dockAvailable() {
     return (dockVertical ? workspaceRef.current?.clientHeight : workspaceRef.current?.clientWidth) || 1000;
   }
   // Until the user resizes it, the panel is wide enough for a document and its children.
   function currentDockSize() {
-    if (dockWidth !== null) return dockWidth;
+    if (phoneDock && phoneDockSize !== null) return phoneDockSize;
+    if (dockWidth !== null && !phoneDock) return dockWidth;
     const bounds = dockBodyRef.current?.parentElement?.getBoundingClientRect();
     return (dockVertical ? bounds?.height : bounds?.width) || Math.round(Math.min(DEFAULT_DOCK_SIZE, dockAvailable() * DEFAULT_DOCK_SHARE));
   }
   const dockMaximum = Math.max(dockMinimum, dockAvailable() - MIN_MAP_BESIDE_DOCK);
 
   function resizeDock(size: number) {
+    if (phoneDock) { setPhoneDockSize(clampPhoneDockSize(size, dockAvailable())); return; }
     const next = Math.round(clamp(size, dockMinimum, Math.max(dockMinimum, dockAvailable() - MIN_MAP_BESIDE_DOCK)));
     setDockWidth(next);
     try { localStorage.setItem(DOCK_SIZE_STORAGE_KEY, String(next)); }
@@ -3001,8 +3022,8 @@ export default function ConversationGraphView({
 
   function handleDockResizeKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     // The key pointing away from the panel's edge grows it.
-    const grow = { right: "ArrowLeft", left: "ArrowRight", bottom: "ArrowUp", top: "ArrowDown" }[dockSide];
-    const shrink = { right: "ArrowRight", left: "ArrowLeft", bottom: "ArrowDown", top: "ArrowUp" }[dockSide];
+    const grow = { right: "ArrowLeft", left: "ArrowRight", bottom: "ArrowUp", top: "ArrowDown" }[activeDockSide];
+    const shrink = { right: "ArrowRight", left: "ArrowLeft", bottom: "ArrowDown", top: "ArrowUp" }[activeDockSide];
     if (event.key === grow) resizeDock(currentDockSize() + 24);
     else if (event.key === shrink) resizeDock(currentDockSize() - 24);
     else if (event.key === "Home") resizeDock(0);
@@ -3031,6 +3052,25 @@ export default function ConversationGraphView({
       }
       return !active;
     });
+  }
+
+  /** A tap on a dot shows its card first; the card's own tap opens the document. */
+  function selectFromMap(conversationId: string) {
+    const isDot = dotNodes.has(conversationId) || (showClusterDots && !panelView && clusterPlacements.has(conversationId));
+    if (lastPointerTypeRef.current !== "touch" || !isDot || isMultiSelectActive || connectingConversationId) {
+      selectConversation(conversationId);
+      return;
+    }
+    hoverIntent.cancel();
+    setSnippetTapped(true);
+    setSnippetId(conversationId);
+  }
+
+  function openTappedCard(conversationId: string) {
+    setSnippetTapped(false);
+    setSnippetId(null);
+    if (dockedConversationId === conversationId && selectedConversationId === conversationId) return;
+    selectConversation(conversationId);
   }
 
   function selectConversation(conversationId: string) {
@@ -3699,10 +3739,11 @@ export default function ConversationGraphView({
         </div> : null}
       <div
         className={
-          `conversation-graph-workspace${dockedConversation || inspectedCluster ? " has-docked-chat" : ""}${!dockedConversation || dockSide === "right" ? "" : ` is-dock-${dockSide}`}`
+          `conversation-graph-workspace${dockedConversation || inspectedCluster ? " has-docked-chat" : ""}${!dockedConversation || activeDockSide === "right" ? "" : ` is-dock-${activeDockSide}`}${phoneDock ? ` is-phone-dock-${phoneDock}` : ""}`
         }
         ref={workspaceRef}
-        style={{ "--personal-map-dock-width": dockWidth === null ? `min(${DEFAULT_DOCK_SIZE}px, ${DEFAULT_DOCK_SHARE * 100}%)` : `${dockWidth}px` } as CSSProperties}
+        style={{ "--personal-map-dock-width": dockWidth === null ? `min(${DEFAULT_DOCK_SIZE}px, ${DEFAULT_DOCK_SHARE * 100}%)` : `${dockWidth}px`,
+          "--phone-dock-size": phoneDockSize === null ? `${PHONE_DOCK_SHARE * 100}%` : `${phoneDockSize}px` } as CSSProperties}
       >
         <div
           className={`conversation-graph-viewport${panelView ? " is-analysis-view" : ""}${isPanning ? " is-panning" : ""}${returningFromDocument ? " is-returning-from-document" : ""}${showThemeOverview ? " is-theme-overview" : ""}${movingNodePosition ? " is-moving-nodes" : ""}`}
@@ -3722,7 +3763,14 @@ export default function ConversationGraphView({
           onLostPointerCapture={handleViewportPointerCancel}
           onPointerCancel={handleViewportPointerCancel}
           onPointerDown={startPan}
-          onPointerDownCapture={(event) => { hoverIntent.cancel(); startTouchGesture(event); }}
+          onPointerDownCapture={(event) => {
+            lastPointerTypeRef.current = event.pointerType;
+            if (!(event.target as Element).closest?.(".graph-map-hover-card")) {
+              hoverIntent.cancel();
+              if (snippetTapped) { setSnippetTapped(false); setSnippetId(null); }
+            }
+            startTouchGesture(event);
+          }}
           onWheelCapture={hoverIntent.cancel}
           onPointerMove={handleViewportPointerMove}
           onPointerUp={handleViewportPointerUp}
@@ -3779,12 +3827,12 @@ export default function ConversationGraphView({
             selectedNodeId={selectedConversationId}
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
-          {hoverCardProps ? <MapHoverCard {...hoverCardProps} /> : null}
+          {hoverCardProps ? <MapHoverCard {...hoverCardProps} onOpen={snippetTapped ? () => openTappedCard(hoverCardProps.conversation.id) : undefined} /> : null}
           {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={lensMatches} colorOf={colorOf} /> : null}
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
             connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
-            onOpenCluster={openCluster} onSelectDocument={selectConversation}
+            onOpenCluster={openCluster} onSelectDocument={selectFromMap}
             onSelectCluster={selectCluster} selectedClusterId={inspectedCluster?.id ?? null} matched={lensMatches}
             hoverIntent={isMultiSelectActive || connectingConversationId ? undefined : hoverIntent} cardId={snippetId}
             colorOf={colorOf} bundleBusyLinks={linesMode === "auto"} /> : null}
@@ -3992,7 +4040,7 @@ export default function ConversationGraphView({
                   onBodyPress={isCanvasMode ? pressNodeBody : undefined}
                   onLinkStart={isCanvasMode && onConnectConversation && !isMultiSelectActive ? startLink : undefined}
                   onOpen={onOpenConversation}
-                  onSelect={(id) => connectingConversationId && onConnectConversation ? onConnectConversation(connectingConversationId, id) : selectConversation(id)}
+                  onSelect={(id) => connectingConversationId && onConnectConversation ? onConnectConversation(connectingConversationId, id) : selectFromMap(id)}
                   placement={placement}
                   contentReady={visibleContentSet.has(contentKey) && readyContentKeys.has(contentKey)}
                   renderReader={renderExpandedConversation}
@@ -4232,7 +4280,7 @@ export default function ConversationGraphView({
               const resize = dockResizeRef.current;
               if (resize?.pointerId !== event.pointerId) return;
               const delta = (dockVertical ? event.clientY : event.clientX) - resize.client;
-              resizeDock(resize.size + (dockSide === "right" || dockSide === "bottom" ? -delta : delta));
+              resizeDock(resize.size + (activeDockSide === "right" || activeDockSide === "bottom" ? -delta : delta));
             }}
             onPointerUp={() => { dockResizeRef.current = null; }}
             onPointerCancel={() => { dockResizeRef.current = null; }}
