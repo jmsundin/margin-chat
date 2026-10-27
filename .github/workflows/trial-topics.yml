@@ -1,0 +1,35 @@
+name: Trial topics
+
+on:
+  # Every morning, rewrite the news topics visitors explore at /try.
+  schedule:
+    - cron: "17 10 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: margin-chat-trial-topics
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  topics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Holds the production Blob token; the job writes only trial/topics.json.
+    environment: production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - name: Install pinned dependencies
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts
+      - name: Write and publish today's topics
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: bun --no-env-file scripts/trial-topics.mjs

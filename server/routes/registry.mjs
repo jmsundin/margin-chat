@@ -16,6 +16,7 @@ export const API_ROUTES = Object.freeze([
   { id: "captureConnection", methods: ["GET"], path: CONNECTION_API_PATH },
   { id: "desktopRelease", methods: ["GET"], path: "/api/downloads/desktop" },
   { id: "desktopDownload", methods: ["GET"], path: "/api/downloads/desktop/:target", parameters: { target: "mac|windows|linux|linux-deb" } },
+  { id: "trialTopics", methods: ["GET"], path: "/api/trial/topics" },
   { id: "authSession", methods: ["GET"], path: "/api/auth/session" },
   { id: "authSignup", methods: ["POST"], path: "/api/auth/signup" },
   { id: "authLogin", methods: ["POST"], path: "/api/auth/login" },
