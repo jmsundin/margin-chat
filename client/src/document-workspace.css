@@ -85,7 +85,7 @@
 
 /* One header for the documents. On a computer: the tabs row, and under it the path with the views
    (the chevron puts that row away). On a phone: one row naming the document; tapping it drops the
-   tabs, path and views down over the text, and the row slides away while you read down. */
+   tabs, path and views down over the text. The header stays put, so the text scrolls at an even pace. */
 .document-workspace-header { display: flex; flex: 0 0 auto; flex-direction: column; min-width: 0; background: var(--panel); }
 .document-header-toggle { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .document-header-toggle:hover { background: var(--button-active-surface); color: var(--ink); }
@@ -97,9 +97,8 @@
 .document-breadcrumbs > .document-compass + .document-navigation-switcher { margin-left: 6px; }
 
 @media (max-width: 900px) {
-  .document-workspace-header { position: relative; z-index: 45; transition: margin-top .2s ease; }
+  .document-workspace-header { position: relative; z-index: 45; }
   .document-workspace-header > .document-workspace-toolbar { min-height: 44px; }
-  .document-workspace-header.is-scrolled-away { margin-top: -44px; }
   .document-header-title { display: flex; flex: 1 1 auto; align-items: center; gap: 8px; min-width: 0; height: 40px; padding: 0 8px; border: 0; border-radius: 10px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; font-weight: 600; text-align: left; cursor: pointer; }
   .document-header-title[aria-expanded="true"] { background: var(--button-active-surface); }
   .document-header-title-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
