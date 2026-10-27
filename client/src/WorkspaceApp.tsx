@@ -122,6 +122,7 @@ import { NEW_DEVICE_NOTICE, loggedInThisTab } from "./lib/newDeviceNotice";
 import { completedStarterTasks, isPristineWorkspace, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
 import { loadOnboarding, saveOnboarding, type OnboardingRecord } from "./lib/onboarding";
 import { addExampleVault } from "./lib/exampleVault";
+import { addTrialTopics, loadTrialTopics } from "./lib/trialTopics";
 import CaptureInbox from "./components/CaptureInbox";
 import { createCaptureAIRequest, openCaptureAsNote, readCaptureHandoff } from "./lib/captures";
 import SearchModal from "./components/SearchModal";
@@ -1218,10 +1219,12 @@ function WorkspaceAppContent({
     } else updateOnboarding({ checked: true });
   }, [vaultSettled, inExtension, onboarding.checked]);
   // A trial visitor also gets the example vault, once, so the Map and search have something to show.
+  // Today's news topics come too when they arrive in time; without them the examples alone are enough.
   useEffect(() => {
     if (!guest || !vaultSettled || onboarding.examples) return;
-    setState((current) => addExampleVault(current));
     updateOnboarding({ examples: true });
+    setState((current) => addExampleVault(current));
+    void loadTrialTopics().then((topics) => { if (topics) setState((current) => addTrialTopics(current, topics)); });
   }, [guest, vaultSettled, onboarding.examples]);
   useEffect(() => { if (isGraphView && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [isGraphView, onboarding.mapSeen]);
   const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen }),

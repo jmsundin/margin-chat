@@ -95,12 +95,12 @@ const GROUPS: Array<{ id: string; name: string; ids: string[] }> = [
 ];
 
 /** Children grown from a passage: margin notes, side documents and AI answers. */
-type Child =
+export type ExampleChild =
   | { kind: "note"; id: string; parentId: string; block: number; quote: string; text: string }
   | { kind: "side"; id: string; parentId: string; block: number; quote: string; title: string; blocks: string[]; open?: boolean }
   | { kind: "ai"; id: string; parentId: string; block: number; quote: string; question: string; answer: string; open?: boolean };
 
-const CHILDREN: Child[] = [
+const CHILDREN: ExampleChild[] = [
   { kind: "side", id: "example-antagonistic-pleiotropy", parentId: EXAMPLE_ROOT_ID, block: 1, quote: "antagonistic pleiotropy", title: "Antagonistic pleiotropy", blocks: [
     "A gene with two effects: good early in life, harmful later. Because selection is strong while animals are young and weak once most have died, the early benefit wins.",
     "A classic example is a gene that boosts fertility while also raising cancer risk late in life.",
@@ -128,7 +128,7 @@ const CHILDREN: Child[] = [
     text: "Started this late and it still worked. This is the result that made people take rapamycin seriously." },
 ];
 
-function blocks(id: string, contents: string[], at: string, authorship: DocumentBlock["authorship"] = "user"): DocumentBlock[] {
+export function blocks(id: string, contents: string[], at: string, authorship: DocumentBlock["authorship"] = "user"): DocumentBlock[] {
   return contents.map((content, index) => ({ id: `${id}-block-${index + 1}`, kind: "markdown", content, createdAt: at, updatedAt: at, authorship }));
 }
 
@@ -143,7 +143,8 @@ function anchorIn(parent: Conversation, blockIndex: number, quote: string) {
   return { sourceMessageId: `document:${block.id}`, sourceBlockId: block.id, startOffset, endOffset: startOffset + quote.length, quote };
 }
 
-function addChild(state: AppState, child: Child, at: string): AppState {
+/** Adds a note, side document or AI answer anchored to `quote` in the parent's block. */
+export function addExampleChild(state: AppState, child: ExampleChild, at: string): AppState {
   const parent = state.conversations[child.parentId];
   const source = anchorIn(parent, child.block, child.quote);
   if (child.kind === "note") {
@@ -194,7 +195,7 @@ export function addExampleVault(state: AppState, now = new Date().toISOString())
   let next: AppState = { ...state, conversations, groups };
   for (const child of CHILDREN) {
     const parent = ROOTS.find((root) => root.id === child.parentId);
-    next = addChild(next, child, dated(Math.max(0, (parent?.daysAgo ?? 1) - 1)));
+    next = addExampleChild(next, child, dated(Math.max(0, (parent?.daysAgo ?? 1) - 1)));
   }
   next = welcomeLine(next, now);
   if (next.sessions) {
@@ -214,11 +215,19 @@ const WELCOME = "This trial comes with an example vault: a few weeks of research
 
 /** Points "Start here" at the example documents, right under its first paragraph. */
 function welcomeLine(state: AppState, at: string): AppState {
+  return addStartHereLine(state, "example", WELCOME, at);
+}
+
+/** Adds a paragraph to "Start here" under its first paragraph and any lines added before, once. */
+export function addStartHereLine(state: AppState, key: string, content: string, at: string): AppState {
   const root = Object.values(state.conversations).find((conversation) => conversation.title === STARTER_TITLE
     && conversation.parentId === null && conversation.childIds.includes(STARTER_NOTE_ID));
   const current = root?.document?.blocks;
-  if (!root || !current || current.some((block) => block.content === WELCOME)) return state;
-  const welcome: DocumentBlock = { id: `${root.id}-block-example`, kind: "markdown", content: WELCOME, createdAt: at, updatedAt: at, authorship: "user" };
+  const id = `${root?.id}-block-${key}`;
+  if (!root || !current || current.some((block) => block.id === id || block.content === content)) return state;
+  const line: DocumentBlock = { id, kind: "markdown", content, createdAt: at, updatedAt: at, authorship: "user" };
+  let index = 1;
+  while (index < current.length && current[index].id.startsWith(`${root.id}-block-`) && !/-block-\d+$/.test(current[index].id)) index += 1;
   return { ...state, conversations: { ...state.conversations, [root.id]: { ...root,
-    document: { ...root.document!, blocks: [current[0], welcome, ...current.slice(1)] } } } };
+    document: { ...root.document!, blocks: [...current.slice(0, index), line, ...current.slice(index)] } } } };
 }

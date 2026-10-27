@@ -13,9 +13,9 @@ export const STARTER_TITLE = "Start here";
 export const STARTER_NOTE_ID = "starter-margin-note";
 export const STARTER_SIDE_DOCUMENT_ID = "starter-side-document";
 const ID_PREFIX = "starter-";
-/** The trial's example vault (lib/exampleVault.ts) isn't the person's own work either. */
-const EXAMPLE_PREFIX = "example-";
-const madeByPerson = (id: string) => !id.startsWith(ID_PREFIX) && !id.startsWith(EXAMPLE_PREFIX);
+/** The trial's example vault and news topics (lib/exampleVault.ts, lib/trialTopics.ts) aren't the person's own work either. */
+const NOT_THEIRS = [ID_PREFIX, "example-", "topic-"];
+const madeByPerson = (id: string) => !NOT_THEIRS.some((prefix) => id.startsWith(prefix));
 /** Images ship with the website, so the document reads the same on every device and in other apps. */
 const ASSET_ORIGIN = "https://www.marginchat.com";
 

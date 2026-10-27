@@ -24,6 +24,7 @@ import { handlePublicMapRequest, handleWebSearchRequest } from "./publicMap.mjs"
 import { createWebSearchService } from "../webSearch/index.mjs";
 import { createDictationService, MAX_DICTATION_AUDIO_BYTES } from "../dictation/index.mjs";
 import { createDesktopDownloadService, describeDownloadRequest } from "../downloads/index.mjs";
+import { createTrialTopicsService } from "../trial/topics.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { MCP_BODY_LIMIT, createMcpService } from "../mcp/index.mjs";
 import {
@@ -119,6 +120,7 @@ export function createApiHandler({
   topicEmbeddingService,
   passageService,
   desktopDownloadService,
+  trialTopicsService,
   dictationService,
   mcpService,
   chatRunService,
@@ -138,6 +140,7 @@ export function createApiHandler({
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
   const dictation = dictationService ?? createDictationService({ env, billingService });
   const desktopDownloads = desktopDownloadService ?? createDesktopDownloadService({ database, env });
+  const trialTopics = trialTopicsService ?? createTrialTopicsService({ env });
   const oauth = createOAuthService({ database });
   // Anyone can register an OAuth client, so registrations are budgeted per address.
   const oauthRegistrationsByAddress = createRateLimiter({ max: 30, windowMs: 60 * 60 * 1000 });
@@ -387,6 +390,14 @@ export function createApiHandler({
             "Set-Cookie": authService.buildClearedSessionCookie(),
           }
         : undefined;
+
+      // Public and the same for everyone, so the CDN can hold it for an hour.
+      if (route?.id === "trialTopics") {
+        const topics = await trialTopics.read();
+        if (!topics) throw new HttpError(404, "No trial topics yet.");
+        sendJson(response, 200, topics, { "Cache-Control": "public, max-age=600, s-maxage=3600" });
+        return;
+      }
 
       if (route?.id === "desktopRelease") {
         sendJson(response, 200, await desktopDownloads.describe(), { "Cache-Control": "public, max-age=60" });
