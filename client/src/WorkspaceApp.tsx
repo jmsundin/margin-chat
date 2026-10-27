@@ -51,7 +51,7 @@ import { SessionChips, SessionsPanel } from "./components/Sessions";
 import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
-import { loadDocumentHeaderOpen, saveDocumentHeaderOpen, useScrollAwayHeader } from "./lib/documentHeader";
+import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
 import { getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
@@ -1269,8 +1269,6 @@ function WorkspaceAppContent({
   const [desktopHeaderOpen, setDesktopHeaderOpen] = useState(loadDocumentHeaderOpen);
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
   const headerOpen = isMobileViewport ? mobileHeaderOpen : desktopHeaderOpen;
-  // On a phone the one-row header slides away while you read down a document and returns when you scroll up.
-  const headerScrolledAway = useScrollAwayHeader(documentAreaRef, isMobileViewport && !mobileHeaderOpen && !isTileView && !isGraphView);
   useEffect(() => { setMobileHeaderOpen(false); }, [state.activeConversationId, isMobileViewport, mainViewMode]);
   // Links in text change as you type; the navigator can catch up a moment later.
   const deferredConversations = useDeferredValue(state.conversations);
@@ -5508,7 +5506,7 @@ function WorkspaceAppContent({
               </WorkspaceView>
               <WorkspaceView mode="chat" active={!isTileView && !isGraphView}>
                 <div className="chat-tree-workspace document-workspace" data-from-map={mapReturnId ? "true" : undefined}>
-                  <header className={`document-workspace-header${headerOpen ? " is-open" : ""}${headerScrolledAway ? " is-scrolled-away" : ""}`}
+                  <header className={`document-workspace-header${headerOpen ? " is-open" : ""}`}
                     aria-label="Document navigation" onKeyDown={(event) => {
                       if (event.key === "Escape" && isMobileViewport && mobileHeaderOpen) { event.stopPropagation(); setMobileHeaderOpen(false); }
                     }}>
