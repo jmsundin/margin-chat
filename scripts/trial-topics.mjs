@@ -146,6 +146,9 @@ async function publish(json) {
 async function main(args) {
   const dryRun = args.includes("--dry-run");
   const outIndex = args.indexOf("--out");
+  // GitHub passes a missing secret as an empty string, which the SDK reports only as an auth error per topic.
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is empty. Add it as a secret named exactly ANTHROPIC_API_KEY on the GitHub \"production\" environment (Settings → Environments → production), or as a repository secret.");
+  if (!dryRun && !process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) throw new Error("BLOB_READ_WRITE_TOKEN is empty, so there is nowhere to publish. Use --dry-run to try without publishing.");
   const client = new Anthropic();
   const topics = [];
   for (const topic of TOPICS) {
