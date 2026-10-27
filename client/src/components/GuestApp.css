@@ -1,6 +1,7 @@
 /* The free trial's one-line bar. The workspace below gives up its height rather than sitting under it. */
 :root.has-guest-bar { --guest-bar-height: 36px; }
-:root.has-guest-bar .app-shell { height: calc(100dvh - var(--guest-bar-height)); min-height: calc(100dvh - var(--guest-bar-height)); }
+:root.has-guest-bar .app-shell,
+:root.has-guest-bar .app-chrome { height: calc(100dvh - var(--guest-bar-height)); min-height: calc(100dvh - var(--guest-bar-height)); }
 
 .guest-bar {
   display: flex; align-items: center; gap: 10px;

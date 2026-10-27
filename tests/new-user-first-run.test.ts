@@ -89,9 +89,9 @@ describe("chat import reminder", () => {
 
 describe("onboarding record", () => {
   test("round-trips and ignores unknown values", () => {
-    expect(loadOnboarding("u2")).toEqual({ checked: false, tour: "none", step: 0, mapSeen: false, keepPill: false });
-    saveOnboarding("u2", { checked: true, tour: "paused", step: 3, mapSeen: true, keepPill: false });
-    expect(loadOnboarding("u2")).toEqual({ checked: true, tour: "paused", step: 3, mapSeen: true, keepPill: false });
+    expect(loadOnboarding("u2")).toEqual({ checked: false, tour: "none", step: 0, mapSeen: false, keepPill: false, examples: false });
+    saveOnboarding("u2", { checked: true, tour: "paused", step: 3, mapSeen: true, keepPill: false, examples: false });
+    expect(loadOnboarding("u2")).toEqual({ checked: true, tour: "paused", step: 3, mapSeen: true, keepPill: false, examples: false });
     store.set("margin-chat:onboarding:u3", JSON.stringify({ tour: "dancing", step: -2 }));
     expect(loadOnboarding("u3").tour).toBe("none");
     expect(loadOnboarding("u3").step).toBe(0);

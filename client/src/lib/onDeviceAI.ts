@@ -18,8 +18,11 @@ export type OnDeviceStatus =
 interface LanguageModelSession {
   promptStreaming(input: string, options?: { signal?: AbortSignal }): ReadableStream<string>;
   destroy(): void;
+  /** Tokens the session holds; older Chrome called these inputQuota and inputUsage. */
   contextWindow?: number;
+  contextUsage?: number;
   inputQuota?: number;
+  inputUsage?: number;
 }
 
 interface LanguageModelMonitor extends EventTarget {}
@@ -82,6 +85,15 @@ export function fitOnDevicePrompt(text: string, limit = ON_DEVICE_PROMPT_CHARACT
   return text.slice(0, head) + marker + text.slice(text.length - (limit - head - marker.length));
 }
 
+/** Characters of prompt this session has room for, leaving about a third of its context for the answer. */
+export function onDevicePromptLimit(run: Pick<LanguageModelSession, "contextWindow" | "contextUsage" | "inputQuota" | "inputUsage">) {
+  const window = run.contextWindow ?? run.inputQuota;
+  if (!window) return ON_DEVICE_PROMPT_CHARACTERS;
+  const free = window - (run.contextUsage ?? run.inputUsage ?? 0);
+  // About three characters a token for English, the cautious end.
+  return Math.max(400, Math.min(ON_DEVICE_PROMPT_CHARACTERS, Math.floor(free * 0.6 * 3)));
+}
+
 let session: Promise<LanguageModelSession> | null = null;
 const progressListeners = new Set<(fraction: number) => void>();
 
@@ -119,11 +131,21 @@ export async function* streamOnDevice(prompt: string, { signal, api = languageMo
   const clone = (base as LanguageModelSession & { clone?: (options?: { signal?: AbortSignal }) => Promise<LanguageModelSession> }).clone;
   const run = typeof clone === "function" ? await clone.call(base, { signal }) : base;
   try {
-    const reader = run.promptStreaming(fitOnDevicePrompt(prompt), { signal }).getReader();
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (value) yield value;
+    let limit = onDevicePromptLimit(run);
+    for (let attempt = 0; ; attempt += 1) {
+      const reader = run.promptStreaming(fitOnDevicePrompt(prompt, limit), { signal }).getReader();
+      let started = false;
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) return;
+          if (value) { started = true; yield value; }
+        }
+      } catch (error) {
+        // Token counts vary by text, so a prompt can still be too long; try once more with half of it.
+        if (started || attempt > 0 || (error as Error)?.name !== "QuotaExceededError") throw error;
+        limit = Math.floor(limit / 2);
+      }
     }
   } finally {
     if (run !== base) run.destroy();
