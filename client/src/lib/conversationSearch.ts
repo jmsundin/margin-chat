@@ -139,11 +139,14 @@ export function formatRelativeTime(value: string) {
     return `${elapsedDays}d ago`;
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-  }).format(new Date(value));
+  return shortDateFormat.format(new Date(value));
 }
+
+// Creating a formatter is slow, and every older document in the sidebar asks for one when the app opens.
+const shortDateFormat = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+});
 
 function getMatchPreview(content: string, query: string) {
   const normalizedContent = content.replace(/\s+/g, " ").trim();

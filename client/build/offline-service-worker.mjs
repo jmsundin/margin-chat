@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import { installUpdateProtocol } from "./worker-update-protocol.mjs";
 
 const PUBLIC_FILES = ["/favicon.svg", "/icon.svg", "/manifest.webmanifest"];
+// Excalidraw's Chinese, Japanese and Korean handwriting font is ~200 files and 13 MB, half of every update's
+// download. Drawings fetch the few pieces they use from the network when they first show those characters.
+const ON_DEMAND = /^\/excalidraw\/fonts\/Xiaolai\//u;
 
 export function renderOfflineServiceWorker({ version, files, html }) {
   return `// Generated with the exact HTML and asset list for this build.
@@ -79,6 +82,7 @@ export function offlineAppShellPlugin() {
       const files = Object.keys(bundle)
         .filter((name) => !name.endsWith(".map"))
         .map((name) => `/${name}`)
+        .filter((path) => !ON_DEMAND.test(path))
         .concat(PUBLIC_FILES)
         .sort();
       const digest = createHash("sha256");

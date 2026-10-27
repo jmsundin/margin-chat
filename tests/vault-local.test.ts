@@ -15,6 +15,8 @@ function simulatedOpfs() {
   let failRemovals = false;
   let stale: { remaining: number; matches: (path: string) => boolean } | null = null;
   let brokenDirectory: string | null = null;
+  let slowReads = false;
+  const concurrentReads = { current: 0, most: 0 };
   const missing = () => new DOMException("Missing file", "NotFoundError");
   const toBytes = (contents: string | ArrayBuffer) => typeof contents === "string" ? new TextEncoder().encode(contents) : new Uint8Array(contents).slice();
   function maybeFail(stage: "write" | "close", path: string) {
@@ -47,6 +49,12 @@ function simulatedOpfs() {
           kind: "file", name, path,
           async getFile() {
             reads.push(path);
+            if (slowReads) {
+              concurrentReads.current += 1;
+              concurrentReads.most = Math.max(concurrentReads.most, concurrentReads.current);
+              await new Promise((resolve) => setTimeout(resolve, 1));
+              concurrentReads.current -= 1;
+            }
             const bytes = files.get(path);
             if (!bytes) throw missing();
             if (stale && stale.remaining > 0 && stale.matches(path)) {
@@ -76,6 +84,8 @@ function simulatedOpfs() {
     preventCleanup(value: boolean) { failRemovals = value; },
     staleReads(remaining: number, matches: (path: string) => boolean) { stale = { remaining, matches }; },
     breakDirectory(path: string | null) { brokenDirectory = path; },
+    /** Each read takes a moment, and the most reads in flight at once is recorded. */
+    slowDown() { slowReads = true; return concurrentReads; },
     navigator: {
       storage: { getDirectory: async () => directory() },
       locks: { request(name: string, operation: () => Promise<unknown>) {
@@ -445,6 +455,25 @@ describe("durable OPFS Markdown storage", () => {
     third.remoteRevision = 9;
     await second.write(third);
     expect(await createBrowserVaultStore("alice").read()).toEqual(third);
+  }));
+
+  test("opening reads saved documents and journal entries side by side, and applies them in order", async () => withOpfs(async (opfs) => {
+    const storage = createBrowserVaultStore("alice");
+    const desired = snapshot("First");
+    for (let index = 0; index < 40; index++) desired.files[`Notes/${index}.md`] = { content: `Note ${index}` };
+    await storage.write(desired);
+    for (let index = 0; index < 5; index++) {
+      desired.files["Note.md"] = { content: `Edit ${index}`, contentType: "text/markdown" };
+      desired.files[`Notes/${index}.md`] = { content: `Edited note ${index}` };
+      await storage.write(desired);
+    }
+    const concurrent = opfs.slowDown();
+    expect(await createBrowserVaultStore("alice").read()).toEqual(desired);
+    expect(concurrent.most).toBeGreaterThan(1);
+    expect(concurrent.most).toBeLessThanOrEqual(16);
+    // A damaged document still stops the vault from opening instead of showing other text.
+    opfs.files.set(objectPath("Note 30"), new Uint8Array());
+    await expect(createBrowserVaultStore("alice").read()).rejects.toThrow("incomplete or damaged");
   }));
 
   test("the journal folds into a new checkpoint and removes the entries it replaced", async () => withOpfs(async (opfs) => {

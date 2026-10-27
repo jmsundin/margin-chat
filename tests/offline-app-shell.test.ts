@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
-import { renderOfflineServiceWorker } from "../client/build/offline-service-worker.mjs";
+import { offlineAppShellPlugin, renderOfflineServiceWorker } from "../client/build/offline-service-worker.mjs";
 
 function worker(liveClients: object[] = []) {
   const handlers = new Map<string, (event: any) => void>();
@@ -89,5 +89,15 @@ describe("offline application shell", () => {
     expect(sw.deleted).toEqual([]);
     expect(await sw.request("/assets/lazy-oldhash12.js")).toBe("old lazy chunk");
     expect(sw.networkRequests).toBe(0);
+  });
+  test("updates leave Excalidraw's 13 MB handwriting font for other alphabets to download when a drawing uses it", () => {
+    let emitted = "";
+    const bundle = Object.fromEntries(["index.html", "assets/app-hash.js", "excalidraw/fonts/Virgil/Virgil.woff2", "excalidraw/fonts/Xiaolai/Xiaolai-Regular-abc.woff2"]
+      .map((name) => [name, { type: "asset", source: name === "index.html" ? "<html></html>" : name }]));
+    (offlineAppShellPlugin() as any).generateBundle.call({ emitFile: ({ source }: { source: string }) => { emitted = source; } }, {}, bundle);
+    const files = JSON.parse(/const SHELL_FILES = (\[.*?\]);/u.exec(emitted)![1]);
+    expect(files).toContain("/excalidraw/fonts/Virgil/Virgil.woff2");
+    expect(files).toContain("/assets/app-hash.js");
+    expect(files.some((path: string) => path.includes("Xiaolai"))).toBe(false);
   });
 });
