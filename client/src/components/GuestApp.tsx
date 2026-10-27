@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { setApiTransport } from "../lib/apiTransport";
-import { createGuestTransport, createGuestUser, SIGN_UP_NUDGE } from "../lib/guestMode";
+import { createGuestTransport, createGuestUser, GUEST_USER_ID, SIGN_UP_NUDGE } from "../lib/guestMode";
+import { forgetAccountOnThisDevice } from "../lib/vaultLocal";
 import { onDeviceSession, onDeviceStatus, onDownloadProgress, type OnDeviceStatus } from "../lib/onDeviceAI";
 import { AUTH_PATHS } from "../lib/siteRoutes";
 import type { ThemeMode } from "../lib/appearance";
@@ -8,8 +9,19 @@ import "./GuestApp.css";
 
 const WorkspaceApp = lazy(() => import("../WorkspaceApp"));
 const HIDDEN_KEY = "margin-chat:guest-bar-hidden";
+/** Set just before the reload that starts the trial over; the erasing happens before the workspace opens. */
+const START_OVER_KEY = "margin-chat:trial-start-over";
 const goToSignUp = () => window.location.assign(AUTH_PATHS.signup);
 const needsAccount = () => Promise.reject(new Error(SIGN_UP_NUDGE));
+
+function readStartOver() {
+  try { return window.sessionStorage.getItem(START_OVER_KEY) === "1"; } catch { return false; }
+}
+
+function startOver() {
+  try { window.sessionStorage.setItem(START_OVER_KEY, "1"); } catch { return; }
+  window.location.reload();
+}
 
 function readHidden() {
   try { return window.sessionStorage.getItem(HIDDEN_KEY) === "1"; } catch { return false; }
@@ -28,7 +40,8 @@ function aiNote(status: OnDeviceStatus | "checking", progress: number | null): {
   return { short: "AI on computers only", long: "Writing, notes and the Map work here. AI in the trial needs Chrome on a computer." };
 }
 
-function GuestBar() {
+function GuestBar({ onTakeTour }: { onTakeTour: () => void }) {
+  const [confirmingStartOver, setConfirmingStartOver] = useState(false);
   const [hidden, setHidden] = useState(readHidden);
   const [status, setStatus] = useState<OnDeviceStatus | "checking">("checking");
   const [progress, setProgress] = useState<number | null>(null);
@@ -68,6 +81,20 @@ function GuestBar() {
         <span className="guest-bar-short">{note.short}</span>
       </span>
       {status === "downloadable" && <button type="button" className="guest-bar-button" onClick={setUpAI}>Set up AI</button>}
+      {confirmingStartOver ? (
+        <span className="guest-bar-confirm" role="group" aria-label="Start over">
+          <span>Erase your trial work?</span>
+          <button type="button" className="guest-bar-button" onClick={startOver}>Erase</button>
+          <button type="button" className="guest-bar-link" onClick={() => setConfirmingStartOver(false)}>Cancel</button>
+        </span>
+      ) : (
+        <>
+          <button type="button" className="guest-bar-button is-tour" aria-label="Take the tour" onClick={onTakeTour}>
+            <span className="guest-bar-long">Take the tour</span><span className="guest-bar-short">Tour</span>
+          </button>
+          <button type="button" className="guest-bar-link guest-bar-start-over" onClick={() => setConfirmingStartOver(true)}>Start over</button>
+        </>
+      )}
       <a className="guest-bar-link guest-bar-login" href={AUTH_PATHS.login}>Log in</a>
       <a className="guest-bar-button is-primary" href={AUTH_PATHS.signup}>Sign up free</a>
       <button type="button" className="guest-bar-close" aria-label="Hide the trial bar" onClick={() => {
@@ -84,6 +111,16 @@ function GuestBar() {
  * browser's storage, and Ask AI runs on Chrome's built-in model.
  */
 export default function GuestApp({ theme, onSetTheme }: { theme: ThemeMode; onSetTheme: Dispatch<SetStateAction<ThemeMode>> }) {
+  const [tourRequest, setTourRequest] = useState(0);
+  // Starting over erases this browser's trial copy before the workspace reads it, so nothing writes it back.
+  const [erasing, setErasing] = useState(readStartOver);
+  useEffect(() => {
+    if (!erasing) return;
+    void forgetAccountOnThisDevice(GUEST_USER_ID).finally(() => {
+      try { window.sessionStorage.removeItem(START_OVER_KEY); } catch { /* Already erased. */ }
+      setErasing(false);
+    });
+  }, [erasing]);
   // Installed before the workspace renders, so its first request is answered here too.
   const [user] = useState(() => {
     setApiTransport(createGuestTransport());
@@ -91,9 +128,10 @@ export default function GuestApp({ theme, onSetTheme }: { theme: ThemeMode; onSe
   });
   return (
     <>
-      <GuestBar />
-      <Suspense fallback={<div className="app-shell" aria-busy="true" />}>
+      <GuestBar onTakeTour={() => setTourRequest((count) => count + 1)} />
+      {erasing ? <div className="app-shell" aria-busy="true" /> : <Suspense fallback={<div className="app-shell" aria-busy="true" />}>
         <WorkspaceApp
+          tourRequest={tourRequest}
           storageNamespace={user.id}
           guest
           user={user}
@@ -120,7 +158,7 @@ export default function GuestApp({ theme, onSetTheme }: { theme: ThemeMode; onSe
           onDeleteAccount={needsAccount}
           onUpdateApiKeys={needsAccount}
         />
-      </Suspense>
+      </Suspense>}
     </>
   );
 }

@@ -28,3 +28,12 @@
   .guest-bar-long, .guest-bar-login { display: none; }
   .guest-bar-short { display: inline; }
 }
+
+.guest-bar-link { padding: 0; border: 0; background: transparent; font: inherit; cursor: pointer; }
+.guest-bar-confirm { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); }
+@media (max-width: 720px) {
+  .guest-bar-start-over, .guest-bar-confirm > span { display: none; }
+  .guest-bar-note { display: none; }
+  .guest-bar { gap: 6px; padding-right: 4px; }
+  .guest-bar-button { padding: 5px 9px; }
+}

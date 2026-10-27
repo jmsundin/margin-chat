@@ -441,6 +441,8 @@ interface WorkspaceAppProps {
   inExtension?: boolean;
   /** The free trial at /try: no account, an example vault, and nothing that needs one. */
   guest?: boolean;
+  /** Counts presses of a Take the tour button outside the workspace, such as the trial bar's. */
+  tourRequest?: number;
   billingDashboard: import("./types").BillingDashboardData | null;
   billingDashboardLoading: boolean;
   billingDashboardError: string | null;
@@ -686,7 +688,7 @@ export default function WorkspaceApp(props: WorkspaceAppProps) {
 }
 
 function WorkspaceAppContent({
-  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled, onOpenWebsiteSettings, inExtension = false, guest = false,
+  storageNamespace, browserCaptureRequest, onBrowserCaptureHandled, browserThreadRequests, onBrowserThreadHandled, onOpenWebsiteSettings, inExtension = false, guest = false, tourRequest = 0,
   billingDashboard, billingDashboardLoading, billingDashboardError, billingOpenRequest, onRefreshBilling, onAddMoney,
   billingNotice,
   onDismissBillingNotice,
@@ -1213,7 +1215,8 @@ function WorkspaceAppContent({
     if (!vaultSettled || inExtension || onboarding.checked) return;
     if (isPristineWorkspace(state)) {
       setState((current) => seedStarterDocument(current));
-      updateOnboarding({ checked: true, tour: "active", step: 0 });
+      // A trial visitor starts working straight away; the trial bar's Tour button starts the tour.
+      updateOnboarding({ checked: true, tour: guest ? "done" : "active", step: 0 });
       // An existing Free account on an empty browser has its documents on another device.
       if (!canSyncWorkspaceToCloud(user) && loggedInThisTab(user.id)) setNewDeviceNotice(true);
     } else updateOnboarding({ checked: true });
@@ -1226,6 +1229,13 @@ function WorkspaceAppContent({
     setState((current) => addExampleVault(current));
     void loadTrialTopics().then((topics) => { if (topics) setState((current) => addTrialTopics(current, topics)); });
   }, [guest, vaultSettled, onboarding.examples]);
+  function startTour() {
+    if (isMobileViewport) setLeftSidebarOpen(false);
+    handleSetMainViewMode("chat");
+    updateOnboarding({ tour: "active", step: 0 });
+  }
+  const startTourFromRequest = useEffectEvent(startTour);
+  useEffect(() => { if (tourRequest) startTourFromRequest(); }, [tourRequest]);
   useEffect(() => { if (isGraphView && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [isGraphView, onboarding.mapSeen]);
   const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen }),
     [state.conversations, state.sessions, onboarding.mapSeen]);
@@ -5323,11 +5333,7 @@ function WorkspaceAppContent({
               onNewNote={handleCreateStandaloneNote}
               onOpenInbox={guest ? undefined : () => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
-              onTakeTour={inExtension ? undefined : () => {
-                if (isMobileViewport) setLeftSidebarOpen(false);
-                handleSetMainViewMode("chat");
-                updateOnboarding({ tour: "active", step: 0 });
-              }}
+              onTakeTour={inExtension ? undefined : startTour}
               onOpenProfile={() => {
                 setProfileSaveError(null);
                 setProfileInitialTab(null);
