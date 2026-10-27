@@ -226,19 +226,20 @@ try {
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   checks.push('compact notes resize both dimensions and save their size without changing their content');
 
+  // ↗ moves the note to a side document, and "Move to margin" puts it back: the same document both ways.
+  const noteAnchor = latest.conversations[noteId].branchAnchor;
   await click(notePane(noteId).querySelector('.document-presentation-toggle'));
   assert(panes().includes(noteId));
-  assert.equal(latest.conversations[noteId].document!.marginNote!.display, 'full');
+  assert.equal(latest.conversations[noteId].document!.marginNote, undefined);
   assert(!notePane(noteId).querySelector('.is-compact-document'));
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
-  await click(notePane(noteId).querySelector('.document-presentation-toggle'));
+  await documentAction(noteId, 'Move to margin');
   assert(!panes().includes(noteId));
   assert.equal(latest.conversations[noteId].document!.marginNote!.display, 'compact');
-  assert.equal(notePane(noteId).style.width, '300px');
-  // In the margin a note is as tall as its text, up to its saved height.
-  assert.equal(notePane(noteId).style.maxHeight, '460px');
+  assert(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"] [data-document-id="${noteId}"]`));
+  assert.deepEqual(latest.conversations[noteId].branchAnchor, noteAnchor);
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
-  checks.push('expansion and compact view preserve document identity, content and passage association');
+  checks.push('moving to a side document and back to the margin preserves document identity, content and passage association');
 
   await focusPane(mainId);
   assert.equal(latest.activeConversationId, mainId);

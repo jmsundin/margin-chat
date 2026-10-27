@@ -1,4 +1,4 @@
-import { createMarginDocument, type DocumentBlock } from "@margin-chat/workspace-contracts";
+import { createMarginDocument, marginNoteToSideDocument, type DocumentBlock } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation, ConversationNote, SelectionDraft } from "../types";
 import { getEditableDocument } from "./editableDocument";
 import { addChildConversation } from "./workspaceCommands";
@@ -86,7 +86,7 @@ export function addDemoSideDocument(state: AppState, selection: SelectionDraft, 
     quote: selection.quote, createdAt: now, updatedAt: now,
   };
   const child = createMarginDocument({ ...parent, document: getEditableDocument(parent) }, note);
-  // A side document opens as a full pane beside its parent rather than as a compact margin note.
-  const sideDocument: Conversation = { ...child, kind: "note", document: { ...child.document!, marginNote: { ...child.document!.marginNote!, display: "full" } } };
+  // A side document opens as a full pane beside its parent rather than in its margin.
+  const sideDocument: Conversation = { ...marginNoteToSideDocument(child, now), kind: "note" };
   return addChildConversation(state, sideDocument);
 }

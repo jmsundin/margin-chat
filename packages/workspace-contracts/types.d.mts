@@ -275,6 +275,7 @@ export interface EditableDocument {
   schemaVersion: 1;
   /** Presentation only: margin notes retain the complete document editor and data model. */
   marginNote?: {
+    /** Always "compact" now; "full" is read from older vaults and becomes a side document on load. */
     display: "compact" | "full";
     /** Remember the compact frame size independently of the full document layout. */
     size?: { width: number; height: number };
