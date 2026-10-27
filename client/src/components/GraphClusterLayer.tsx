@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import type { ConversationGraphNodePlacement } from "../lib/conversationGraph";
 import type { GraphViewport } from "../lib/graphInteractions";
 import { rankedHues } from "../lib/graphFamilies";
+import type { MapHoverIntent } from "../lib/mapHoverCard";
 import { formatClusterPeriod, type GravityCluster, type GravityClusterGroup, type GravityClusterLevel } from "../lib/gravityClusters";
 
 /** Below this zoom the Clusters view shows topic labels and dots instead of document cards. */
@@ -76,7 +77,7 @@ function cssVar(element: Element, name: string, fallback: string) {
 
 export default function GraphClusterLayer({ clusters, levels = [], placements, connections, labels, viewport, size, showDots,
   selectedId, titles, onOpenCluster, onSelectDocument, onSelectCluster, selectedClusterId = null, itemLabel = ["document", "documents"], matched = null,
-  colorOf = null, bundleBusyLinks = false }: {
+  colorOf = null, bundleBusyLinks = false, hoverIntent, cardId = null }: {
   clusters: GravityCluster[];
   /** Groups of clusters, smallest first. */
   levels?: GravityClusterLevel[];
@@ -104,12 +105,24 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
   colorOf?: Map<string, string | null> | null;
   /** Sum many document lines into strands between clusters, keeping the selected document's own lines. */
   bundleBusyLinks?: boolean;
+  /** A dot the mouse rests on opens its snippet card. */
+  hoverIntent?: MapHoverIntent;
+  /** The dot whose snippet card is open; its title tip steps aside for the card. */
+  cardId?: string | null;
 }) {
   const { x: panX, y: panY, scale } = viewport;
   const width = size.width || 1000, height = size.height || 700;
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hovered, setHovered] = useState<{ id: string; x: number; y: number } | null>(null);
+  // The dot under the mouse for the snippet card; kept across re-renders so a re-render never closes the card.
+  const overRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (showDots) return;
+    if (overRef.current) hoverIntent?.leave(overRef.current);
+    overRef.current = null;
+  }, [showDots, hoverIntent]);
+  useEffect(() => () => { if (overRef.current) hoverIntent?.leave(overRef.current); }, [hoverIntent]);
   // Visible world rectangle, with a margin so dots don't pop in at the edges.
   const margin = 80 / scale;
   const view = { left: -panX / scale - margin, top: -panY / scale - margin,
@@ -319,6 +332,12 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
   useEffect(() => {
     const host = rootRef.current?.parentElement;
     if (!host || !showDots || !dots.length) { setHovered(null); return; }
+    const hoverDot = (event: PointerEvent, id: string | null) => {
+      if (!hoverIntent || event.pointerType === "touch") return;
+      if (overRef.current && overRef.current !== id) hoverIntent.leave(overRef.current);
+      overRef.current = id;
+      if (id) hoverIntent.move(id, event.clientX, event.clientY);
+    };
     const nearest = (event: MouseEvent) => {
       const bounds = rootRef.current!.getBoundingClientRect();
       const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
@@ -330,10 +349,13 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       }
       return best;
     };
-    let frame = 0;
+    let frame = 0, latest: PointerEvent | null = null;
     const move = (event: PointerEvent) => {
-      if (frame || event.buttons) return;
-      frame = window.setTimeout(() => { frame = 0; setHovered(nearest(event)); }, 16);
+      if (event.buttons) return;
+      // The latest position wins, so a pointer that stops on a dot is always seen there.
+      latest = event;
+      if (frame) return;
+      frame = window.setTimeout(() => { frame = 0; const hit = nearest(latest!); setHovered(hit); hoverDot(latest!, hit?.id ?? null); }, 16);
     };
     const click = (event: MouseEvent) => {
       // Labels and their buttons sit over the dots and handle their own clicks.
@@ -343,7 +365,7 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       event.stopPropagation();
       onSelectDocument(hit.id);
     };
-    const leave = () => setHovered(null);
+    const leave = (event: PointerEvent) => { setHovered(null); hoverDot(event, null); };
     host.addEventListener("pointermove", move);
     host.addEventListener("pointerleave", leave);
     host.addEventListener("click", click);
@@ -353,7 +375,7 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
       host.removeEventListener("pointerleave", leave);
       host.removeEventListener("click", click);
     };
-  }, [showDots, dots, panX, panY, scale, onSelectDocument]);
+  }, [showDots, dots, panX, panY, scale, onSelectDocument, hoverIntent]);
 
   // Larger clusters claim label space first; a smaller label that would collide
   // stays hidden until zooming in gives it room.
@@ -385,7 +407,7 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
     data-cluster-level={showDots ? level : undefined} data-rendered-dot-count={dots.length}
     aria-label={`${itemLabel[0][0].toUpperCase()}${itemLabel[0].slice(1)} clusters`}>
     {showDots ? <canvas ref={canvasRef} className="graph-cluster-canvas" style={{ width, height }} aria-hidden="true" /> : null}
-    {hovered ? <span className="graph-cluster-dot-tip" style={{ left: hovered.x, top: hovered.y }}>{titles(hovered.id)}</span> : null}
+    {hovered && hovered.id !== cardId ? <span className="graph-cluster-dot-tip" style={{ left: hovered.x, top: hovered.y }}>{titles(hovered.id)}</span> : null}
     {placedLabels.map(({ cluster, rect, fontSize }) => {
       const label = labels[cluster.id];
       const clusterHue = hue(cluster.id);

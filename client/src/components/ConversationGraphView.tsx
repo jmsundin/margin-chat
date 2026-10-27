@@ -28,6 +28,7 @@ import { getGraphNeighborhoodIds } from "../lib/graphNeighborhood";
 import { documentConnectionGeometry } from "../lib/documentMapConnections";
 import { curvedGraphConnection } from "../lib/graphConnectionCurve";
 import { fitMapDotTitles, mapDotDiameter, mapDotTitleIsBold, measureMapDotTitle, type MapBox, type MapDotTitle } from "../lib/mapDotNodes";
+import { createMapHoverIntent, mapHoverSnippet, placeMapHoverCard, type MapHoverIntent } from "../lib/mapHoverCard";
 import { buildMapTerritories, centerNodeInCanvas, fitMapTerritories, fitMapTerritory, fitMapTerritoryOverview, getMapScale, layoutMapTerritoryOverview, layoutFocusedMapTerritory, mapLabelsOverlap, OVERVIEW_NODE_FOOTPRINT as GROUP_NODE_FOOTPRINT, readableNodeSize, type MapTerritory } from "../lib/graphPresentation";
 import {
   buildConversationForestGraphScene,
@@ -405,6 +406,42 @@ function getConversationPreview(conversation: Conversation, length = 124) {
     : "This chat does not have any messages yet.";
 }
 
+/** The words a hover card shows: the document's own text, a note's, or a chat's latest answer. */
+function getConversationSnippet(conversation: Conversation) {
+  const standaloneNote = conversation.document ? null : getStandaloneNote(conversation);
+  const message = conversation.document || standaloneNote ? null : getLatestMessage(conversation, "assistant") ?? getLatestMessage(conversation);
+  const text = conversation.document ? getCurrentDocumentText(conversation)
+    : standaloneNote ? standaloneNote.content || conversation.publicTopic?.description || "" : message?.content ?? "";
+  return mapHoverSnippet(text);
+}
+
+const MAP_HOVER_CARD_WIDTH = 264;
+/** Tallest the card draws: two title lines, four snippet lines and the counts. */
+const MAP_HOVER_CARD_HEIGHT = 150;
+
+/**
+ * A resting pointer's quick look at a circle: title, opening lines and counts,
+ * beside the circle and clear of its neighbors where it can be. It never takes
+ * the pointer, so leaving the circle always closes it.
+ */
+function MapHoverCard({ conversation, anchor, view, obstacles, rightGap, connections, notes }: {
+  conversation: Conversation; anchor: MapBox; view: { width: number; height: number }; obstacles: MapBox[];
+  rightGap: number; connections: number; notes: number;
+}) {
+  const snippet = useMemo(() => getConversationSnippet(conversation), [conversation]);
+  const placement = placeMapHoverCard(anchor, { width: MAP_HOVER_CARD_WIDTH, height: MAP_HOVER_CARD_HEIGHT }, view, obstacles, rightGap);
+  const kind = conversation.publicTopic ? "Topic" : conversation.document?.marginNote ? "Margin note"
+    : isStandaloneNoteConversation(conversation) ? "Note" : conversation.document ? "Document" : "Chat";
+  const counts = [connections ? `${connections} connection${connections === 1 ? "" : "s"}` : "", notes ? `${notes} margin note${notes === 1 ? "" : "s"}` : ""].filter(Boolean);
+  return <div className="graph-map-hover-card" data-side={placement.side} role="tooltip" aria-hidden="true"
+    style={{ left: placement.left, top: placement.top, width: MAP_HOVER_CARD_WIDTH, maxHeight: MAP_HOVER_CARD_HEIGHT }}>
+    <span className="graph-map-hover-card-kind">{kind}</span>
+    <strong>{conversation.title || "Untitled"}</strong>
+    <p className={snippet ? undefined : "is-empty"}>{snippet || (conversation.document || isStandaloneNoteConversation(conversation) ? "Nothing written yet." : "No messages yet.")}</p>
+    {counts.length ? <span className="graph-map-hover-card-counts">{counts.join(" · ")}</span> : null}
+  </div>;
+}
+
 function getSourceQuote(conversation: Conversation) {
   if (conversation.publicTopic) return `Wikidata · ${conversation.publicTopic.label}`;
   if (isStandaloneNoteConversation(conversation)) {
@@ -603,6 +640,7 @@ function GraphNode({
   lensDimmed = false,
   lineFocus = false,
   onHover,
+  hoverIntent,
   detailLevel,
   group,
   groups,
@@ -650,6 +688,8 @@ function GraphNode({
   /** Its lines are the ones drawn on a busy map. */
   lineFocus?: boolean;
   onHover?: (conversationId: string | null) => void;
+  /** A circle shows its snippet card when the mouse rests on it. */
+  hoverIntent?: MapHoverIntent;
   detailLevel: ConversationGraphDetail;
   group: ConversationGroup | null;
   groups: Record<string, ConversationGroup>;
@@ -757,8 +797,9 @@ function GraphNode({
       data-graph-detail={detailLevel}
       data-graph-content={isPreview || isReader ? contentReady ? "ready" : "loading" : undefined}
       data-multi-selected={isMultiSelected ? "true" : undefined}
-      onPointerEnter={onHover ? () => onHover(conversation.id) : undefined}
-      onPointerLeave={onHover ? () => onHover(null) : undefined}
+      onPointerEnter={onHover || hoverIntent ? (event) => { onHover?.(conversation.id); if (hoverIntent && event.pointerType !== "touch") hoverIntent.move(conversation.id, event.clientX, event.clientY); } : undefined}
+      onPointerMove={hoverIntent ? (event) => { if (event.pointerType !== "touch" && !event.buttons) hoverIntent.move(conversation.id, event.clientX, event.clientY); } : undefined}
+      onPointerLeave={onHover || hoverIntent ? () => { onHover?.(null); hoverIntent?.leave(conversation.id); } : undefined}
       ref={articleRef}
       style={nodeStyle}
     >
@@ -792,7 +833,7 @@ function GraphNode({
         className="conversation-graph-node-select"
         onClick={() => onSelect(conversation.id)}
         onPointerDown={onBodyPress ? (event) => onBodyPress(event, conversation.id) : undefined}
-        title={dot?.titleMax !== undefined ? conversation.title : undefined}
+        title={dot?.titleMax !== undefined && !hoverIntent ? conversation.title : undefined}
         type="button"
       >
         <span className="conversation-graph-node-head">
@@ -1054,6 +1095,10 @@ export default function ConversationGraphView({
     hoverTimerRef.current = window.setTimeout(() => setHoveredId(id), id ? 60 : 120);
   }, []);
   useEffect(() => () => window.clearTimeout(hoverTimerRef.current), []);
+  // The circle whose snippet card is open; see createMapHoverIntent for when it opens.
+  const [snippetId, setSnippetId] = useState<string | null>(null);
+  const [hoverIntent] = useState(() => createMapHoverIntent(setSnippetId));
+  useEffect(() => () => hoverIntent.dispose(), [hoverIntent]);
   const [conceptSaveError, setConceptSaveError] = useState(false);
   const [inspectedEdge, setInspectedEdge] = useState<GraphAggregatedEdge | null>(null);
   /** A cluster (or group of clusters) whose details fill the side panel. */
@@ -1654,6 +1699,45 @@ export default function ConversationGraphView({
     for (const [id, width] of fitMapDotTitles(titles, obstacles)) dots.get(id)!.titleMax = Math.floor(width / cardScale.get(id)!);
     return dots;
   }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width]);
+  // Only a circle shows a card; one that opened as a preview, is moving or left the map closes it.
+  const hoverCardProps = useMemo(() => {
+    const conversation = snippetId ? conversations[snippetId] : undefined;
+    if (!snippetId || !conversation || movingConversationIds.size || !viewportSize.width) return null;
+    const dot = dotNodes.get(snippetId);
+    // Zoomed-out Clusters draws plain dots on a canvas instead of circles with titles.
+    const clusterDot = !dot && showClusterDots && !panelView ? clusterPlacements.get(snippetId) : undefined;
+    if (!dot && !clusterDot) return null;
+    const toScreen = (bounds: { x: number; y: number; width: number; height: number }): MapBox => ({
+      x0: bounds.x * viewport.scale + viewport.x, y0: bounds.y * viewport.scale + viewport.y,
+      x1: (bounds.x + bounds.width) * viewport.scale + viewport.x, y1: (bounds.y + bounds.height) * viewport.scale + viewport.y,
+    });
+    const dotAt = (placement: { x: number; y: number; width: number; height: number }, radius: number): MapBox => {
+      const x = (placement.x + placement.width / 2) * viewport.scale + viewport.x, y = (placement.y + placement.height / 2) * viewport.scale + viewport.y;
+      return { x0: x - radius, y0: y - radius, x1: x + radius, y1: y + radius };
+    };
+    // Each neighbor's circle and the title under it.
+    const obstacles: MapBox[] = [];
+    if (clusterDot) {
+      const anchor = dotAt(clusterDot, 8);
+      for (const [id, placement] of clusterPlacements) {
+        if (id === snippetId) continue;
+        const box = dotAt(placement, 6);
+        if (Math.abs(box.x0 - anchor.x0) < 600 && Math.abs(box.y0 - anchor.y0) < 400) obstacles.push(box);
+      }
+    }
+    if (dot) for (const [id, other] of dotNodes) {
+      if (id === snippetId) continue;
+      const circle = toScreen(other.bounds), k = (circle.x1 - circle.x0) / other.diameter, center = (circle.x0 + circle.x1) / 2;
+      obstacles.push(circle);
+      const width = other.titleMax ?? measureMapDotTitle(conversations[id]?.title ?? "", other.bold);
+      if (width) obstacles.push({ x0: center - width * k / 2, y0: circle.y1 + 5 * k, x1: center + width * k / 2, y1: circle.y1 + 22 * k });
+    }
+    let notes = 0;
+    for (const child of Object.values(conversations)) if (child.parentId === snippetId && child.document?.marginNote) notes += 1;
+    // Canvas keeps its link handle just right of the circle.
+    return { conversation, anchor: dot ? toScreen(dot.bounds) : dotAt(clusterDot!, 8), view: viewportSize, obstacles, rightGap: isCanvasMode && dot ? 44 : 12,
+      connections: connectionCounts.get(snippetId) ?? 0, notes };
+  }, [snippetId, dotNodes, conversations, movingConversationIds, viewport, viewportSize, isCanvasMode, connectionCounts, showClusterDots, panelView, clusterPlacements]);
   /** Lines meet a circle's edge rather than the card space around it. */
   const lineBounds = useCallback(<T extends { conversationId: string }>(placement: T): T => {
     const dot = dotNodes.get(placement.conversationId);
@@ -3638,7 +3722,8 @@ export default function ConversationGraphView({
           onLostPointerCapture={handleViewportPointerCancel}
           onPointerCancel={handleViewportPointerCancel}
           onPointerDown={startPan}
-          onPointerDownCapture={startTouchGesture}
+          onPointerDownCapture={(event) => { hoverIntent.cancel(); startTouchGesture(event); }}
+          onWheelCapture={hoverIntent.cancel}
           onPointerMove={handleViewportPointerMove}
           onPointerUp={handleViewportPointerUp}
           onDoubleClick={createNoteAtPointer}
@@ -3694,12 +3779,14 @@ export default function ConversationGraphView({
             selectedNodeId={selectedConversationId}
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
+          {hoverCardProps ? <MapHoverCard {...hoverCardProps} /> : null}
           {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={lensMatches} colorOf={colorOf} /> : null}
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
             connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
             onOpenCluster={openCluster} onSelectDocument={selectConversation}
             onSelectCluster={selectCluster} selectedClusterId={inspectedCluster?.id ?? null} matched={lensMatches}
+            hoverIntent={isMultiSelectActive || connectingConversationId ? undefined : hoverIntent} cardId={snippetId}
             colorOf={colorOf} bundleBusyLinks={linesMode === "auto"} /> : null}
           {linkDrag && placementByConversationId.get(linkDrag.sourceId) ? (() => {
             const source = placementByConversationId.get(linkDrag.sourceId)!;
@@ -3875,6 +3962,7 @@ export default function ConversationGraphView({
                   lensDimmed={lensDimmed(conversation.id)}
                   lineFocus={lineFocusNeighbors.has(conversation.id)}
                   onHover={hoverCard}
+                  hoverIntent={dotNodes.has(conversation.id) && !isMultiSelectActive && !connectingConversationId ? hoverIntent : undefined}
                   detailLevel={nodeDetail}
                   group={group}
                   groups={groups}

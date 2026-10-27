@@ -317,3 +317,13 @@
 @media (hover: none), (pointer: coarse) {
   .semantic-map .conversation-graph-node.is-dot:not(.is-selected, .is-moving) .conversation-graph-node-move-handle { opacity: 0; visibility: hidden; pointer-events: none; }
 }
+/* A resting pointer's quick look at a circle. It never takes the pointer, so leaving the circle closes it. */
+.graph-map-hover-card { position: absolute; z-index: 14; display: grid; gap: 4px; align-content: start; box-sizing: border-box; overflow: hidden; padding: 9px 12px 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 8px 24px rgb(0 0 0 / .16); pointer-events: none; animation: graph-map-hover-card-in 90ms ease-out; }
+.graph-map-hover-card-kind { font-size: 11px; color: var(--muted); }
+.graph-map-hover-card > strong { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13px; font-weight: 650; line-height: 17px; }
+.graph-map-hover-card > p { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; margin: 0; font-size: 12px; line-height: 17px; color: color-mix(in srgb, var(--ink) 82%, var(--muted)); }
+.graph-map-hover-card > p.is-empty { color: var(--muted); font-style: italic; }
+.graph-map-hover-card-counts { font-size: 11px; color: var(--muted); }
+@keyframes graph-map-hover-card-in { from { opacity: 0; transform: translateY(2px); } }
+@media (prefers-reduced-motion: reduce) { .graph-map-hover-card { animation: none; } }
+@media (hover: none) { .graph-map-hover-card { display: none; } }
