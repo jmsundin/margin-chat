@@ -1,0 +1,76 @@
+import { useEffect } from "react";
+
+/**
+ * Saves what the workspace looks like, so the next time the app opens, index.html paints it straight away
+ * (client/build/boot-snapshot.mjs) while the app's code loads and the documents are read, instead of a blank
+ * screen. It is a picture only: it can't be clicked, and it goes as soon as the real workspace shows.
+ */
+const KEY = "margin-chat-boot-snapshot";
+// localStorage holds about five million characters per site; leave room for everything else saved there.
+const MAX_LENGTH = 1_500_000;
+// Long documents and lists show only their start on screen.
+const MAX_CHILDREN = 120;
+const SETTLE_MS = 4000;
+const REFRESH_MS = 2 * 60 * 1000;
+const DROP = "script, canvas, video, audio, iframe, object, embed, dialog, [role='dialog'], [role='menu'], [aria-modal], "
+  + ".workspace-notifications, .selection-tooltip, .selection-mobile-composer, .cm-cursorLayer";
+// The picture sits after the app in the page, so the app's own lookups find its real elements first. Until those
+// exist, nothing in the picture may answer for them: ids and the attributes the app looks elements up by go.
+const LOOKUP_ATTRIBUTES = ["id", "autofocus", "data-dictation-slot", "data-testid", "data-document-id", "data-document-tab-id", "data-margin-note-tree-node"];
+
+const keyFor = (userId: string) => `${KEY}:${userId}`;
+const stylesheetStem = (href: string) => href.replace(/^.*\//u, "").replace(/-[A-Za-z0-9_-]{8}\.css$/u, "");
+
+export function captureBootSnapshot(root: ParentNode, stylesheets: readonly string[]) {
+  if (!root.querySelector(".app-shell:not(.is-vault-opening)")) return null;
+  const copy = document.createElement("div");
+  for (const child of Array.from(root.childNodes)) copy.appendChild(child.cloneNode(true));
+  for (const element of Array.from(copy.querySelectorAll(DROP))) element.remove();
+  // Pictures from this session's memory are gone after a restart.
+  for (const image of Array.from(copy.querySelectorAll("img"))) if (/^blob:/u.test(image.getAttribute("src") ?? "")) image.remove();
+  for (const element of Array.from(copy.querySelectorAll("*"))) {
+    while (element.childElementCount > MAX_CHILDREN) element.lastElementChild!.remove();
+    for (const name of LOOKUP_ATTRIBUTES) element.removeAttribute(name);
+  }
+  const html = copy.innerHTML;
+  if (!html || html.length > MAX_LENGTH) return null;
+  const styles = [...new Set(stylesheets.filter((href) => /\/assets\/[^/]+\.css$/u.test(href)).map(stylesheetStem))];
+  return { html, styles };
+}
+
+export function saveBootSnapshot(userId: string) {
+  const root = document.getElementById("root");
+  if (!root) return;
+  const stylesheets = Array.from(document.querySelectorAll<HTMLLinkElement>("link[rel='stylesheet']"), (link) => link.getAttribute("href") ?? "");
+  const snapshot = captureBootSnapshot(root, stylesheets);
+  try {
+    if (snapshot) localStorage.setItem(keyFor(userId), JSON.stringify({ ...snapshot, savedAt: Date.now() }));
+    else localStorage.removeItem(keyFor(userId));
+  } catch {
+    // Full storage: an older picture of the workspace must not stand in for this one.
+    try { localStorage.removeItem(keyFor(userId)); } catch { /* Storage is unavailable. */ }
+  }
+}
+
+export function forgetBootSnapshot(userId: string) {
+  try { localStorage.removeItem(keyFor(userId)); } catch { /* Storage is unavailable. */ }
+}
+
+/** Keeps the saved picture current: shortly after the documents show, now and then, and whenever the app is put away. */
+export function useBootSnapshot(userId: string, ready: boolean, enabled: boolean) {
+  useEffect(() => {
+    if (!ready || !enabled) return;
+    const save = () => saveBootSnapshot(userId);
+    const hidden = () => { if (document.visibilityState === "hidden") save(); };
+    const settle = window.setTimeout(save, SETTLE_MS);
+    const refresh = window.setInterval(() => { if (document.visibilityState === "visible") save(); }, REFRESH_MS);
+    document.addEventListener("visibilitychange", hidden);
+    window.addEventListener("pagehide", save);
+    return () => {
+      window.clearTimeout(settle);
+      window.clearInterval(refresh);
+      document.removeEventListener("visibilitychange", hidden);
+      window.removeEventListener("pagehide", save);
+    };
+  }, [userId, ready, enabled]);
+}

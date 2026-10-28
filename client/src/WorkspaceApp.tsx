@@ -23,6 +23,7 @@ import "./document-workspace.css";
 import { getChatPanelLayout, resizeChatPanel } from "./lib/chatPanelLayout";
 import { getConversationAnnotationPreview, summarizeAnnotationText } from "./lib/annotationPreview";
 import { getAnchorsByMessageId } from "./lib/documentAnchorLinks";
+import { useBootSnapshot } from "./lib/bootSnapshot";
 import {
   Fragment,
   lazy,
@@ -815,6 +816,8 @@ function WorkspaceAppContent({
   const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
   const [chatImportReminder, setChatImportReminder] = useState(false);
+  // The next time the app opens, this picture of the workspace shows while it starts.
+  useBootSnapshot(user.id, vault.ready, !inExtension);
   // Days after the first visit, someone who never brought in old chats is offered it once.
   useEffect(() => {
     if (vault.ready && !inExtension && chatImportReminderDue(storageUserId)) setChatImportReminder(true);
