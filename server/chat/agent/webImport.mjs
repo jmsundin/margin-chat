@@ -1,5 +1,6 @@
 import { HttpError } from "../../lib/errors.mjs";
 import { fetchPublicPage, normalizePublicPageUrl, readPublicPage } from "../../urlMap/page.mjs";
+import { readTweetThread, tweetLocation } from "./tweetThread.mjs";
 
 /** Longest page saved as one document; longer pages are cut with a note. */
 export const IMPORT_DOCUMENT_CHARACTERS = 150_000;
@@ -115,10 +116,19 @@ async function readGitHub(location, fetchPage) {
  * One page for import: its title, its main content as Markdown with links kept,
  * and the links in that content. GitHub repositories, folders and Markdown files
  * are read from their raw README or file, which the GitHub page itself only shows
- * with JavaScript.
+ * with JavaScript. An X (Twitter) post is read with the rest of its author's
+ * thread; if that fails, the post's own page gives at least its first post.
  */
 export async function readImportPage(url, { signal, userAgent, fetchPage, readPage = readPublicPage } = {}) {
-  const fetchRaw = fetchPage ?? ((address) => fetchPublicPage(address, { signal, userAgent }));
+  const fetchRaw = fetchPage ?? ((address, options) => fetchPublicPage(address, { signal, userAgent, ...options }));
+  const tweet = tweetLocation(url);
+  if (tweet) {
+    try {
+      return await readTweetThread(tweet, (address) => fetchRaw(address, { json: true }));
+    } catch (error) {
+      if (signal?.aborted) throw error;
+    }
+  }
   const location = gitHubLocation(url);
   if (location) {
     const page = await readGitHub(location, fetchRaw);

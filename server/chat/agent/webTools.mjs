@@ -1,6 +1,7 @@
 import { HttpError } from "../../lib/errors.mjs";
 import { normalizePublicPageUrl, readPublicPage } from "../../urlMap/page.mjs";
 import { gitHubLocation, importWebSection, readImportPage } from "./webImport.mjs";
+import { tweetLocation } from "./tweetThread.mjs";
 
 /** Characters of page text one run may read, across all its pages, by AI mode. */
 export const WEB_PAGE_BUDGETS = Object.freeze({ fast: 8_000, balanced: 20_000, thorough: 40_000 });
@@ -44,7 +45,7 @@ export function pastedWebAddresses(chatRequest) {
 
 export const WEB_TOOL_DEFINITION = {
   name: "read_webpage",
-  description: "Read a public webpage or PDF that the user pasted into this conversation, or a link listed on a page you already read with this tool. Returns the page's main text as Markdown (headings, lists and tables kept; menus and ads left out), the page title and up to 20 links on it. Pages behind a sign-in, paywalled text, and pages that need JavaScript to show their text can't be read.",
+  description: "Read a public webpage or PDF that the user pasted into this conversation, or a link listed on a page you already read with this tool. Returns the page's main text as Markdown (headings, lists and tables kept; menus and ads left out), the page title and up to 20 links on it. An X (Twitter) post comes back with its author's whole thread, every post in order. Pages behind a sign-in, paywalled text, and pages that need JavaScript to show their text can't be read.",
   parameters: { type: "object", properties: {
     url: { type: "string", description: "The full http or https address, exactly as the user pasted it or as a returned link lists it." },
     keep_links: { type: "boolean", description: "True to keep every link and image inside the Markdown, for when the user wants the page as Markdown. Links take room, so leave false to summarize or explain." },
@@ -53,16 +54,16 @@ export const WEB_TOOL_DEFINITION = {
 
 export const IMPORT_TOOL_DEFINITION = {
   name: "import_webpage",
-  description: "Save a page the user pasted (or a link on a page you read) as a new document in the user's workspace, word for word as Markdown, together with the pages it links to in its own section, each saved as a child document: a book's chapters, a docs site's sections, or a GitHub repository's README and the folders or files it links to. levels 1 saves the page and the pages it links to; 0 saves only the page; 2 or 3 also follow links on those pages, one more level each. Pages already saved under the same document are kept, not saved twice. Returns the titles saved and how many more pages the next level down would add, not the page text.",
+  description: "Save a page the user pasted (or a link on a page you read) as a new document in the user's workspace, word for word as Markdown, together with the pages it links to in its own section, each saved as a child document: a book's chapters, a docs site's sections, or a GitHub repository's README and the folders or files it links to. An X (Twitter) post is saved with its author's whole thread, in order, as one document. levels 1 saves the page and the pages it links to; 0 saves only the page; 2 or 3 also follow links on those pages, one more level each. Pages already saved under the same document are kept, not saved twice. Returns the titles saved and how many more pages the next level down would add, not the page text.",
   parameters: { type: "object", properties: {
     url: { type: "string", description: "The full http or https address, exactly as the user pasted it or as a returned link lists it." },
     levels: { type: "integer", description: "How many levels of linked pages to save under the page: 0 to 3. Use 1 unless the user asked for only the page, or said yes to going deeper." },
   }, required: ["url", "levels"], additionalProperties: false },
 };
 
-/** A page for read_webpage. GitHub repositories and files are read from their raw Markdown. */
+/** A page for read_webpage. GitHub repositories and files are read from their raw Markdown, X posts with their whole thread. */
 async function readForAgent(url, options) {
-  if (!gitHubLocation(url)) return readPublicPage(url, options);
+  if (!gitHubLocation(url) && !tweetLocation(url)) return readPublicPage(url, options);
   const page = await readImportPage(url, { signal: options.signal, userAgent: options.userAgent });
   return { url: page.url, title: page.title, byline: null, text: page.markdown.slice(0, options.textLimit), truncated: page.markdown.length > options.textLimit, links: page.links };
 }
