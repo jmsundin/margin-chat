@@ -51,11 +51,11 @@ function abortable(promise, signal) {
   });
 }
 
-function download(url, address, signal, { pdf = false, userAgent = "MarginChat-URLMap/0.1" } = {}) {
+function download(url, address, signal, { pdf = false, json = false, userAgent = "MarginChat-URLMap/0.1" } = {}) {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
       method: "GET", agent: false, signal,
-      headers: { "User-Agent": userAgent, Accept: `text/html,text/plain;q=0.8${pdf ? ",application/pdf;q=0.7" : ""}`, "Accept-Encoding": "identity" },
+      headers: { "User-Agent": userAgent, Accept: json ? "application/json" : `text/html,text/plain;q=0.8${pdf ? ",application/pdf;q=0.7" : ""}`, "Accept-Encoding": "identity" },
       // Pin the validated address; a second DNS lookup could resolve to a private host.
       lookup(_hostname, options, callback) {
         if (options.all) callback(null, [address]);
@@ -71,7 +71,8 @@ function download(url, address, signal, { pdf = false, userAgent = "MarginChat-U
       }
       const contentType = String(response.headers["content-type"] ?? "").toLowerCase();
       const isPdf = pdf && /^application\/pdf(;|$)/.test(contentType);
-      if (!isPdf && !/^(text\/html|application\/xhtml\+xml|text\/plain)(;|$)/.test(contentType)) {
+      const isJson = json && /^application\/json(;|$)/.test(contentType);
+      if (!isPdf && !isJson && !/^(text\/html|application\/xhtml\+xml|text\/plain)(;|$)/.test(contentType)) {
         response.destroy(); reject(new HttpError(422, pdf ? "Only webpages, plain text and PDFs can be read." : "Choose an HTML webpage or a plain-text page for this first version.")); return;
       }
       const byteLimit = isPdf ? MAX_DOCUMENT_BYTES : PAGE_BYTE_LIMIT;
@@ -212,7 +213,7 @@ async function extractPdfPage(buffer, url, textLimit) {
  * Download a public page, following redirects only to other public addresses, and
  * return its body: `html` for HTML and plain text, `buffer` for a PDF when `pdf` is set.
  */
-export async function fetchPublicPage(input, { signal, lookupImpl = lookup, downloadImpl = download, pdf = false, userAgent } = {}) {
+export async function fetchPublicPage(input, { signal, lookupImpl = lookup, downloadImpl = download, pdf = false, json = false, userAgent } = {}) {
   const timeout = AbortSignal.timeout(20_000);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let url = normalizePublicPageUrl(input);
@@ -221,7 +222,7 @@ export async function fetchPublicPage(input, { signal, lookupImpl = lookup, down
       combined.throwIfAborted();
       const address = await abortable(resolvePublicPageAddress(url, lookupImpl), combined);
       combined.throwIfAborted();
-      const result = await downloadImpl(url, address, combined, { pdf, ...(userAgent ? { userAgent } : {}) });
+      const result = await downloadImpl(url, address, combined, { pdf, json, ...(userAgent ? { userAgent } : {}) });
       combined.throwIfAborted();
       if (result.location) { url = normalizePublicPageUrl(new URL(result.location, url).href); continue; }
       return { ...result, url: url.href };
