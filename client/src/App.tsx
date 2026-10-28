@@ -1,6 +1,7 @@
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { rememberLogin } from "./lib/newDeviceNotice";
 import { forgetAccountOnThisDevice } from "./lib/vaultLocal";
+import { forgetBootSnapshot } from "./lib/bootSnapshot";
 import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
 import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserWorkspace";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
@@ -308,6 +309,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     message = "Your session expired. Sign in again to continue.",
   ) {
     forgetOfflineUser();
+    if (authUser) forgetBootSnapshot(authUser.id);
     showSignIn();
     setAuthUser(null);
     setAuthStatus("unauthenticated");
@@ -405,6 +407,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
 
   async function handleLogout() {
     forgetOfflineUser();
+    if (authUser) forgetBootSnapshot(authUser.id);
     try {
       if (extension) await extension.onLogout();
       else await requestLogout();
