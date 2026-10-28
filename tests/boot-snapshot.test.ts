@@ -7,7 +7,7 @@ const USER = { id: "user-1", email: "a@example.test" };
 const STYLES = ["/assets/index-NEWHASH1.css", "/assets/WorkspaceApp-NEWHASH2.css", "/assets/KnowledgeGraphWorkspace-NEWHASH3.css"];
 
 function page(url = "https://www.marginchat.com/app") {
-  const window = new Window({ url, settings: { enableJavaScriptEvaluation: true, suppressInsecureJavaScriptEnvironmentWarning: true, disableCSSFileLoading: true } as any });
+  const window = new Window({ url, settings: { disableCSSFileLoading: true } });
   window.document.head.innerHTML = '<link rel="stylesheet" href="/assets/index-NEWHASH1.css">';
   window.document.body.innerHTML = '<div id="root"></div>';
   return window;
@@ -15,10 +15,12 @@ function page(url = "https://www.marginchat.com/app") {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
 
+// Runs index.html's inline script against the test page's globals, as the browser would.
 function boot(window: Window) {
-  const script = window.document.createElement("script");
-  script.textContent = bootSnapshotScript(STYLES);
-  window.document.body.appendChild(script);
+  const globals = { window, document: window.document, localStorage: window.localStorage, location: window.location,
+    matchMedia: window.matchMedia.bind(window), MutationObserver: window.MutationObserver,
+    setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) };
+  new Function(...Object.keys(globals), bootSnapshotScript(STYLES))(...Object.values(globals));
 }
 
 const saved = { html: '<div class="app-shell"><main class="workspace-content" id="workspace-main"><h1 data-document-id="doc-1">Second note</h1><div role="menu">Rename</div></main></div>', styles: ["index", "WorkspaceApp"] };
