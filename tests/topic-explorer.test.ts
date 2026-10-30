@@ -4,7 +4,7 @@ import {
   addRoot, aiChildren, aiSubgraphContext, aiSubtopicQuestion, arrange, boundsOf, descendants, explorerStorageKey, fitView, layoutExplorer, readExplorer, removeBranch, wikipediaChildren,
 } from "../client/src/lib/topicExplorer";
 import { keepExploredItems } from "../client/src/lib/keepExplored";
-import { findQuote, passageMarkdown, passageTitle, sanitizeArticleHtml } from "../client/src/lib/wikipediaReader";
+import { findQuote, passageMarkdown, passageTitle, sanitizePageHtml, WIKIPEDIA_STYLESHEETS, wikipediaPageDocument } from "../client/src/lib/wikipediaReader";
 import { parseHTML } from "linkedom";
 import { createEmptyState } from "../client/src/initialState";
 import type { PublicExpansion, PublicTopic } from "../client/src/lib/publicKnowledge";
@@ -164,21 +164,38 @@ describe("explore reading and AI context", () => {
     expect(question.indexOf("Focus on")).toBeLessThan(question.indexOf("Leave out"));
   });
 
-  test("article HTML keeps reading markup only and marks article links", () => {
-    const html = `<html><head><title>Ageing</title><script>alert(1)</script></head><body>
-      <section><h2>Lead</h2><p onclick="steal()">Ageing is <a href="./Cellular_senescence" title="x">senescence</a> and <a href="https://example.org/x">a site</a><sup class="mw-ref reference"><a href="#cite">[1]</a></sup>.</p>
-      <img src="//upload.wikimedia.org/a.png" width="200" onerror="steal()"><img src="https://evil.example/x.png">
-      <a href="./File:Thing.jpg">file</a><a href="javascript:alert(1)">bad</a><iframe src="https://evil.example"></iframe>
-      <div class="navbox">nav</div><table class="infobox wikitable"><tr><td colspan="2" style="color:red">Box</td></tr></table></section>
-      <section><h2>References</h2><p>refs</p></section></body></html>`;
-    const out = sanitizeArticleHtml(html, (text) => parseHTML(text).document as unknown as Document);
+  test("the article page keeps Wikipedia's markup and styling hooks but nothing active", () => {
+    const html = `<body><header><h1 class="pcs-edit-section-title">Ageing</h1></header>
+      <section data-mw-section-id="0" class="pcs-section"><p onclick="steal()" class="lead" style="color:red">Ageing is <a rel="mw:WikiLink" href="./Cellular_senescence" title="Cellular senescence">senescence</a>, <a href="https://example.org/x">a site</a>, <a href="#cite_note-1">[1]</a> and <a href="javascript:alert(1)">bad</a>.</p>
+      <span class="pcs-lazy-load-placeholder pcs-lazy-load-placeholder-pending" data-class="mw-file-element" data-src="//upload.wikimedia.org/a.png" data-width="220" data-height="140" data-alt="Diagram" data-srcset="//upload.wikimedia.org/a2.png 2x, https://evil.example/b.png 3x"><span></span></span>
+      <img src="https://evil.example/x.png"><img src="//upload.wikimedia.org/c.png" onerror="steal()">
+      <span class="pcs-edit-section-link-container"><a href="/edit">edit</a></span>
+      <div style="background:url(https://evil.example/t.png)">styled</div>
+      <script>alert(1)</script><iframe src="https://evil.example"></iframe><form><input></form><link rel="stylesheet" href="https://evil.example/s.css"><style>body{}</style>
+      <table class="infobox"><tr><td colspan="2">Box</td></tr></table></section></body>`;
+    const out = sanitizePageHtml(html, (text) => parseHTML(`<!doctype html><html>${text}</html>`).document as unknown as Document);
     expect(out).toContain('data-wiki-title="Cellular senescence"');
     expect(out).toContain('href="https://en.wikipedia.org/wiki/Cellular_senescence"');
-    expect(out).toMatch(/<a [^>]*target="_blank"[^>]*href="https:\/\/example\.org\/x"|<a [^>]*href="https:\/\/example\.org\/x"[^>]*target="_blank"/);
+    expect(out).toContain('class="lead"');
+    expect(out).toContain('style="color:red"');
+    expect(out).toContain('href="#cite_note-1"');
     expect(out).toContain('src="https://upload.wikimedia.org/a.png"');
-    expect(out).toContain('<td colspan="2">Box</td>');
+    expect(out).toContain('srcset="https://upload.wikimedia.org/a2.png 2x"');
+    expect(out).toContain('alt="Diagram"');
+    expect(out).toContain('src="https://upload.wikimedia.org/c.png"');
     expect(out).toContain('class="infobox"');
-    for (const gone of ["script", "onclick", "onerror", "evil.example", "[1]", "javascript:", "navbox", "refs", "File:", "style="]) expect(out).not.toContain(gone);
+    expect(out).toContain('colspan="2"');
+    expect(out).toMatch(/<a [^>]*target="_blank"[^>]*>a site<\/a>/);
+    for (const gone of ["<script", "onclick", "onerror", "evil.example", "javascript:", "<iframe", "<form", "<input", "<link", "<style", "pcs-lazy-load-placeholder", "/edit", "url("]) expect(out).not.toContain(gone);
+  });
+
+  test("the frame page uses Wikipedia's stylesheets and the app's theme", () => {
+    const page = wikipediaPageDocument({ title: "Ageing", url: "https://en.wikipedia.org/wiki/Ageing", html: "<p>Text</p>" }, "dark");
+    for (const href of WIKIPEDIA_STYLESHEETS) expect(page).toContain(`<link rel="stylesheet" href="${href}">`);
+    expect(page).toContain('class="pcs-theme-dark"');
+    expect(page).toContain("::highlight(explore-passage-notes)");
+    expect(page).not.toContain("<script");
+    expect(wikipediaPageDocument({ title: "A", url: "", html: "" }, "light")).toContain('class="pcs-theme-default"');
   });
 
   test("passages become quoted markdown with their source, and quotes are found loosely", () => {

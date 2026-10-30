@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent }
 import type { PublicMapAccount } from "./PublicTopicInsights";
 import { askAboutNote, type PrivateAnswer } from "../lib/publicMapApi";
 import { ApiError } from "../lib/apiError";
-import { fetchWikipediaArticle, findQuote, passageMarkdown, passageTitle, type PassageNote, type WikipediaArticle } from "../lib/wikipediaReader";
+import { fetchWikipediaArticle, findQuote, passageMarkdown, passageTitle, WIKIPEDIA_BACKGROUND, wikipediaPageDocument, type PassageNote, type WikipediaArticle } from "../lib/wikipediaReader";
 import { SelectionToolbarRow } from "./SelectionToolbar";
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
@@ -37,10 +37,16 @@ function rangeFor(root: HTMLElement, quote: string): Range | null {
   return range;
 }
 
+type FrameWindow = Window & { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...ranges: Range[]) => unknown; ResizeObserver?: typeof ResizeObserver };
+const appTheme = (): "light" | "dark" => typeof document !== "undefined" && (document.documentElement.dataset.theme === "dark"
+  || (!document.documentElement.dataset.theme && window.matchMedia?.("(prefers-color-scheme: dark)").matches)) ? "dark" : "light";
+
 /**
- * A Wikipedia article read inside Margin Chat. Selecting text offers the
- * same toolbar as documents: margin notes and highlights stay with the
- * exploration until saved; a side document goes straight into the vault.
+ * A Wikipedia article read inside Margin Chat, looking like the Wikipedia
+ * page: its own HTML and styles in a frame that runs no scripts but shares
+ * this page's origin, so selecting text offers the same toolbar as
+ * documents. Margin notes and highlights stay with the exploration until
+ * saved; a side document goes straight into the vault.
  */
 export default function WikipediaPane({ title, account, notes, onNotesChange, onNavigate, onClose, onCreateDocument, onExplore, onAddTopics }: {
   title: string;
@@ -63,8 +69,12 @@ export default function WikipediaPane({ title, account, notes, onNotesChange, on
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [marks, setMarks] = useState<Array<{ id: string; top: number; kind: PassageNote["kind"] }>>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  /** The article page inside the frame, once it has loaded. */
+  const [frameDoc, setFrameDoc] = useState<Document | null>(null);
   const answerRef = useRef<Answer | null>(null);
+  const onNavigateRef = useRef(onNavigate);
+  onNavigateRef.current = onNavigate;
   const toolbarRef = useRef<HTMLDivElement>(null);
   const [toolbarWidth, setToolbarWidth] = useState(360);
   answerRef.current = answer;
@@ -72,7 +82,7 @@ export default function WikipediaPane({ title, account, notes, onNotesChange, on
   useEffect(() => {
     const controller = new AbortController();
     answerRef.current?.controller.abort();
-    setArticle(null); setError(""); setSelected(null); setAnswer(null); setOpenNote(null); setAsking(null);
+    setArticle(null); setFrameDoc(null); setError(""); setSelected(null); setAnswer(null); setOpenNote(null); setAsking(null);
     fetchWikipediaArticle(title, controller.signal).then((found) => { if (!controller.signal.aborted) { setArticle(found); scrollRef.current?.scrollTo({ top: 0 }); } })
       .catch((reason) => { if (!controller.signal.aborted) setError(errorMessage(reason, "This article could not be read.")); });
     return () => controller.abort();
@@ -80,57 +90,97 @@ export default function WikipediaPane({ title, account, notes, onNotesChange, on
   useEffect(() => () => answerRef.current?.controller.abort(), []);
 
   const articleNotes = useMemo(() => article ? notes.filter((note) => note.article === article.title) : [], [notes, article]);
-  const html = useMemo(() => ({ __html: article?.html ?? "" }), [article]);
+  const [theme, setTheme] = useState(appTheme);
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
+  // The page starts in the app's theme and follows it when it changes, without reloading.
+  const pageDocument = useMemo(() => article ? wikipediaPageDocument(article, themeRef.current) : "", [article]);
+  useEffect(() => {
+    if (typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => setTheme(appTheme()));
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => { if (frameDoc?.body) frameDoc.body.className = `pcs-theme-${theme === "dark" ? "dark" : "default"}`; }, [frameDoc, theme]);
+
+  // The frame grows to the page's height, so the pane scrolls it like the rest of its content.
+  useEffect(() => {
+    const frame = frameRef.current, doc = frameDoc;
+    if (!frame || !doc) return;
+    const view = doc.defaultView as FrameWindow | null;
+    const fit = () => { frame.style.height = `${Math.max(120, doc.documentElement.scrollHeight)}px`; };
+    fit();
+    const Observer = view?.ResizeObserver ?? (typeof ResizeObserver === "undefined" ? undefined : ResizeObserver);
+    const observer = Observer ? new Observer(fit) : null;
+    observer?.observe(doc.body);
+    // Wikipedia's stylesheets and images arrive after the page itself.
+    doc.addEventListener("load", fit, true);
+    const timer = window.setInterval(fit, 1000);
+    window.setTimeout(() => window.clearInterval(timer), 8000);
+    const onClick = (event: MouseEvent) => {
+      const link = (event.target as Element | null)?.closest?.("a");
+      if (!link) return;
+      const title = link.getAttribute("data-wiki-title");
+      const href = link.getAttribute("href") ?? "";
+      if (title && !event.metaKey && !event.ctrlKey && !event.shiftKey) { event.preventDefault(); onNavigateRef.current(title); return; }
+      if (href.startsWith("#")) {
+        event.preventDefault();
+        const target = doc.getElementById(decodeURIComponent(href.slice(1)));
+        if (target && scrollRef.current) scrollRef.current.scrollTo({ top: frame.offsetTop + target.getBoundingClientRect().top - 12, behavior: "smooth" });
+      }
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { setSelected(null); setOpenNote(null); setAsking(null); } };
+    doc.addEventListener("click", onClick);
+    doc.addEventListener("keydown", onKey);
+    return () => { observer?.disconnect(); window.clearInterval(timer); doc.removeEventListener("load", fit, true); doc.removeEventListener("click", onClick); doc.removeEventListener("keydown", onKey); };
+  }, [frameDoc]);
 
   // Dotted underlines for notes, a wash for highlights, and a marker in the margin for each.
   useLayoutEffect(() => {
-    const body = bodyRef.current, scroll = scrollRef.current;
-    if (!body || !scroll || !article) { setMarks([]); return; }
+    const frame = frameRef.current, body = frameDoc?.body;
+    if (!frame || !body || !article) { setMarks([]); return; }
+    const view = frameDoc!.defaultView as FrameWindow | null;
     const place = () => {
       const ranges = articleNotes.map((note) => ({ note, range: rangeFor(body, note.quote) }));
-      const registry = typeof CSS !== "undefined" && "highlights" in CSS ? (CSS as unknown as { highlights: Map<string, unknown> }).highlights : null;
-      const HighlightClass = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown }).Highlight;
+      const registry = view?.CSS?.highlights, HighlightClass = view?.Highlight;
       if (registry && HighlightClass) {
         registry.set(HIGHLIGHT_NOTES, new HighlightClass(...ranges.flatMap(({ note, range }) => range && note.kind === "note" ? [range] : [])));
         registry.set(HIGHLIGHT_MARKS, new HighlightClass(...ranges.flatMap(({ note, range }) => range && note.kind === "highlight" ? [range] : [])));
       }
-      const origin = scroll.getBoundingClientRect().top - scroll.scrollTop;
-      setMarks(ranges.flatMap(({ note, range }) => range ? [{ id: note.id, kind: note.kind, top: range.getBoundingClientRect().top - origin }] : []));
+      setMarks(ranges.flatMap(({ note, range }) => range ? [{ id: note.id, kind: note.kind, top: frame.offsetTop + range.getBoundingClientRect().top }] : []));
     };
     place();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
+    const Observer = view?.ResizeObserver ?? (typeof ResizeObserver === "undefined" ? undefined : ResizeObserver);
+    const observer = Observer ? new Observer(place) : null;
     observer?.observe(body);
-    return () => {
-      observer?.disconnect();
-      const registry = typeof CSS !== "undefined" && "highlights" in CSS ? (CSS as unknown as { highlights: Map<string, unknown> }).highlights : null;
-      registry?.delete(HIGHLIGHT_NOTES); registry?.delete(HIGHLIGHT_MARKS);
-    };
-  }, [article, articleNotes]);
+    return () => { observer?.disconnect(); view?.CSS?.highlights?.delete(HIGHLIGHT_NOTES); view?.CSS?.highlights?.delete(HIGHLIGHT_MARKS); };
+  }, [article, articleNotes, frameDoc]);
 
-  // The toolbar follows a selection inside the article.
+  // The toolbar follows a selection inside the article page.
   useEffect(() => {
+    const doc = frameDoc;
+    if (!doc) return;
     let timer = 0;
     const read = () => {
-      const selection = document.getSelection();
-      const body = bodyRef.current, scroll = scrollRef.current;
-      if (!selection || selection.isCollapsed || !selection.rangeCount || !body || !scroll) { setSelected(null); return; }
+      const selection = doc.getSelection();
+      const frame = frameRef.current;
+      if (!selection || selection.isCollapsed || !selection.rangeCount || !frame) { setSelected(null); return; }
       const range = selection.getRangeAt(0);
-      if (!body.contains(range.commonAncestorContainer)) return;
       const text = selection.toString().replace(/\s+/g, " ").trim();
       if (text.length < 2) { setSelected(null); return; }
-      const rect = range.getBoundingClientRect(), box = scroll.getBoundingClientRect();
+      const rect = range.getBoundingClientRect();
       const block = (range.startContainer.nodeType === 1 ? range.startContainer as Element : range.startContainer.parentElement)?.closest("p, li, td, dd, blockquote, figcaption");
       setSelected({ text: text.slice(0, 4000), context: (block?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 3000),
-        top: rect.top - box.top + scroll.scrollTop, bottom: rect.bottom - box.top + scroll.scrollTop, left: rect.left - box.left + rect.width / 2 });
+        top: frame.offsetTop + rect.top, bottom: frame.offsetTop + rect.bottom, left: frame.offsetLeft + rect.left + rect.width / 2 });
     };
     const onChange = () => { window.clearTimeout(timer); timer = window.setTimeout(read, 120); };
-    document.addEventListener("selectionchange", onChange);
-    return () => { document.removeEventListener("selectionchange", onChange); window.clearTimeout(timer); };
-  }, []);
+    doc.addEventListener("selectionchange", onChange);
+    return () => { doc.removeEventListener("selectionchange", onChange); window.clearTimeout(timer); };
+  }, [frameDoc]);
 
   useLayoutEffect(() => { if (toolbarRef.current && toolbarRef.current.offsetWidth !== toolbarWidth) setToolbarWidth(toolbarRef.current.offsetWidth); });
 
-  function clearSelection() { document.getSelection()?.removeAllRanges(); setSelected(null); }
+  function clearSelection() { frameDoc?.getSelection()?.removeAllRanges(); setSelected(null); }
 
   function addNote(kind: PassageNote["kind"]) {
     if (!selected || !article) return;
@@ -160,12 +210,6 @@ export default function WikipediaPane({ title, account, notes, onNotesChange, on
       .finally(() => account.onBillingRefresh?.());
   }
 
-  function onBodyClick(event: React.MouseEvent) {
-    const link = (event.target as HTMLElement).closest<HTMLAnchorElement>("a[data-wiki-title]");
-    if (!link || event.metaKey || event.ctrlKey || event.shiftKey) return;
-    event.preventDefault();
-    onNavigate(link.dataset.wikiTitle!);
-  }
 
   const scrollWidth = scrollRef.current?.clientWidth ?? 360;
   const toolbarLeft = selected ? Math.min(Math.max(8, selected.left - toolbarWidth / 2), Math.max(8, scrollWidth - toolbarWidth - 8)) : 0;
@@ -180,9 +224,11 @@ export default function WikipediaPane({ title, account, notes, onNotesChange, on
       <a href={article?.url ?? `https://en.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`} target="_blank" rel="noreferrer noopener" aria-label="Open on wikipedia.org" title="Open on wikipedia.org">↗</a>
       <button type="button" aria-label="Close the article" title="Close" onClick={onClose}>×</button>
     </header>
-    <div className="topic-explorer-pane-scroll" ref={scrollRef}>
+    <div className="topic-explorer-pane-scroll" ref={scrollRef} style={article ? { background: WIKIPEDIA_BACKGROUND[theme] } : undefined}>
       {error ? <p className="topic-explorer-pane-message" role="alert">{error}</p> : !article ? <p className="topic-explorer-pane-message" role="status">Reading {title} on Wikipedia…</p> : null}
-      <div ref={bodyRef} className="wikipedia-article" onClick={onBodyClick} dangerouslySetInnerHTML={html} />
+      {article ? <iframe ref={frameRef} key={article.title} className="wikipedia-page" title={`Wikipedia article: ${article.title}`} srcDoc={pageDocument}
+        sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer"
+        onLoad={(event) => setFrameDoc(event.currentTarget.contentDocument)} /> : null}
       {marks.map((mark) => <button key={mark.id} type="button" className={`wikipedia-passage-mark is-${mark.kind}${openNote === mark.id ? " is-open" : ""}`} style={{ top: mark.top }}
         aria-label={mark.kind === "note" ? "Open margin note" : "Open highlight"} title={mark.kind === "note" ? "Margin note" : "Highlight"}
         onClick={() => setOpenNote(openNote === mark.id ? null : mark.id)}>{mark.kind === "note" ? "m" : ""}</button>)}
