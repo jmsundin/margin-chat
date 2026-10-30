@@ -77,12 +77,16 @@
 .topic-explorer-search.is-compact label { border-radius: 8px; padding: 0 10px; }
 .topic-explorer-results { margin-top: 6px; padding: 5px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 8px 24px #0002; max-height: min(420px, 60vh); overflow: auto; }
 .topic-explorer-search.is-compact .topic-explorer-results { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; min-width: min(320px, calc(100vw - 24px)); }
-.topic-explorer-results > button { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; }
-.topic-explorer-results > button:hover, .topic-explorer-results > button:focus-visible { background: var(--accent-soft); }
-.topic-explorer-results > button strong { font-size: 13px; font-weight: 600; }
-.topic-explorer-results > button span { font-size: 11.5px; color: var(--muted); }
-.topic-explorer-results > p { margin: 8px 9px; font-size: 12px; color: var(--muted); }
+.topic-explorer-results-group > button { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 8px 9px; border: 0; border-radius: 7px; background: transparent; text-align: left; }
+.topic-explorer-results-group > button:hover, .topic-explorer-results-group > button:focus-visible { background: var(--accent-soft); }
+.topic-explorer-results-group > button strong { font-size: 13px; font-weight: 600; }
+.topic-explorer-results-group > button span { font-size: 11.5px; color: var(--muted); }
+.topic-explorer-results-group > p { margin: 8px 9px; font-size: 12px; color: var(--muted); }
 .topic-explorer-results .topic-explorer-suggestions { margin: 4px; }
+.topic-explorer-results-group h3 { margin: 6px 9px 3px; font-size: 10.5px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.topic-explorer-results-group.is-ai h3 { color: var(--accent); }
+.topic-explorer-results-group.is-ai + .topic-explorer-results-group { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.topic-explorer-results-group > p { display: flex; align-items: center; gap: 7px; }
 .topic-explorer-suggestions { margin-top: 18px; }
 .topic-explorer-suggestions h3 { margin: 12px 0 7px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
 .topic-explorer-suggestions h3:first-child { margin-top: 0; }
@@ -122,23 +126,10 @@
 .topic-explorer-pane-message { color: var(--muted); font-size: .85rem; }
 .topic-explorer-pane .conversation-graph-dock-body { flex: 1 1 0%; }
 
-.wikipedia-article { font-size: .92rem; line-height: 1.65; color: var(--ink); overflow-wrap: anywhere; }
-.wikipedia-article h2 { margin: 1.4em 0 .4em; font-size: 1.15rem; font-weight: 650; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
-.wikipedia-article h3 { margin: 1.2em 0 .3em; font-size: 1rem; font-weight: 650; }
-.wikipedia-article h4, .wikipedia-article h5 { margin: 1em 0 .3em; font-size: .92rem; }
-.wikipedia-article p { margin: .6em 0; }
-.wikipedia-article a { color: var(--accent); text-decoration: none; }
-.wikipedia-article a:hover { text-decoration: underline; }
-.wikipedia-article img { max-width: 100%; height: auto; border-radius: 6px; }
-.wikipedia-article figure { margin: 12px 0; }
-.wikipedia-article figcaption { font-size: .78rem; color: var(--muted); line-height: 1.4; }
-.wikipedia-article table { border-collapse: collapse; font-size: .8rem; margin: 10px 0; max-width: 100%; display: block; overflow-x: auto; }
-.wikipedia-article td, .wikipedia-article th { border: 1px solid var(--line); padding: 4px 6px; vertical-align: top; text-align: left; }
-.wikipedia-article table.infobox { float: none; width: 100%; display: table; }
-.wikipedia-article blockquote { margin: .8em 0; padding-left: 12px; border-left: 3px solid var(--line-strong); color: var(--muted); }
-.wikipedia-article ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
-::highlight(explore-passage-notes) { text-decoration: underline dotted var(--accent) 2px; text-underline-offset: 3px; background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
-::highlight(explore-passage-highlights) { background-color: color-mix(in srgb, #ffd479 40%, transparent); }
+/* The article page in its frame: Wikipedia's own look, grown to its full height so the pane scrolls it. */
+.wikipedia-page { display: block; width: 100%; height: 120px; border: 0; background: transparent; color-scheme: normal; }
+.topic-explorer-pane.is-wikipedia .topic-explorer-pane-scroll { padding: 0; }
+.topic-explorer-pane.is-wikipedia .topic-explorer-pane-message { padding: 0 16px; }
 
 .wikipedia-passage-mark { position: absolute; right: 6px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 999px; background: var(--panel-bg); color: var(--accent); font: 600 11px/1 inherit; }
 .wikipedia-passage-mark.is-highlight { width: 12px; height: 12px; right: 11px; margin-top: 4px; border-color: #d4a017; background: color-mix(in srgb, #ffd479 70%, var(--panel-bg)); }
