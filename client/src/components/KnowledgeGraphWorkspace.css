@@ -83,3 +83,10 @@
   .knowledge-map-add { margin-left: auto; }
   .map-source-form label { flex-basis: 100%; }
 }
+/* Explore mode replaces the person's own map until they go back to it. */
+.knowledge-map-panel.is-exploring > .conversation-graph { display: none; }
+.knowledge-map-explore-button { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; min-height: 34px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); color: var(--ink); font: inherit; font-size: .78rem; cursor: pointer; white-space: nowrap; }
+.knowledge-map-explore-button:hover { background: var(--accent-soft); }
+.knowledge-map-explore-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.knowledge-map-explore-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 560px) { .knowledge-map-explore-button span { display: none; } }
