@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { GraphDockControls } from "./ConversationGraphView";
 import WikipediaPane from "./WikipediaPane";
 import { isPassageNote, type PassageNote } from "../lib/wikipediaReader";
@@ -12,7 +12,10 @@ import {
   addRoot, aiChildren, aiSearchQuestion, aiSubgraphContext, aiSubtopicQuestion, arrange, ARRANGEMENTS, boundsOf, childrenIndex, clampScale, descendants, expansionKey, explorerStorageKey, fitView,
   isArrangement, readExplorer, removeBranch, SUGGESTED_TOPICS, wikipediaChildren, type ExplorerArrangement, type ExplorerSource, type ExplorerView,
 } from "../lib/topicExplorer";
+import { githubRepoFromText, readRepoMemory } from "../lib/repoGraph";
 import "./TopicExplorer.css";
+
+const RepoExplorer = lazy(() => import("./RepoExplorer"));
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 const browserStorage = () => { try { return window.localStorage; } catch { return undefined; } };
@@ -50,6 +53,10 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
   /** Makes a document in the vault, under `parentId` when given; returns its id. */
   onCreateDocument?: (args: { title: string; content: string; parentId?: string }) => string | null;
 }) {
+  /** A GitHub repository being explored instead of topics. */
+  const [repoUrl, setRepoUrl] = useState<string | null>(null);
+  const [repoDraft, setRepoDraft] = useState("");
+  const [hasRecentRepos] = useState(() => readRepoMemory(browserStorage()).recent.length > 0);
   const [state, setState] = useState<MapExploration>(() => readExplorer(browserStorage(), workspaceKey));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<ExplorerView>({ x: 0, y: 0, scale: 1 });
@@ -448,12 +455,17 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
     return [{ id: edge.to, ai: item?.via.startsWith("AI"), path: `M${x1} ${y1}C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}` }];
   });
 
+  if (repoUrl !== null) return <Suspense fallback={<section className="topic-explorer" aria-busy="true" />}>
+    <RepoExplorer initialUrl={repoUrl} account={account} onBack={() => setRepoUrl(null)} onClose={onClose}
+      onSaveNote={onCreateDocument ? (note) => Boolean(onCreateDocument(note)) : undefined} />
+  </Suspense>;
+
   return <section className="topic-explorer" aria-label="Explore any topic" onKeyDown={onKeyDown}>
     <header className="topic-explorer-bar">
       <button type="button" className="topic-explorer-back" onClick={onClose} aria-label="Back to my map" title="Back to my map">
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6" /></svg><span>My map</span>
       </button>
-      {empty ? <strong className="topic-explorer-title">Explore</strong> : <TopicSearch compact account={account} onPick={startFrom} onPickTitle={startFromTitle} mapTitles={mapTitles} />}
+      {empty ? <strong className="topic-explorer-title">Explore</strong> : <TopicSearch compact account={account} onPick={startFrom} onPickTitle={startFromTitle} onPickRepo={setRepoUrl} mapTitles={mapTitles} />}
       {!empty ? <label className="topic-explorer-arrangement" title={ARRANGEMENTS.find((item) => item.id === arrangement)?.hint}>
         <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
         <select aria-label="Arrange topics as" value={arrangement} onChange={(event) => chooseArrangement(event.target.value as ExplorerArrangement)}>
@@ -480,7 +492,15 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
       {empty ? <div className="topic-explorer-start">
         <h2>Explore any topic</h2>
         <p>A scratch map that stays out of your workspace. Click a topic to grow it from Wikipedia or AI, and save only what you want.</p>
-        <TopicSearch autoFocus account={account} onPick={startFrom} onPickTitle={startFromTitle} mapTitles={mapTitles} showSuggestions />
+        <TopicSearch autoFocus account={account} onPick={startFrom} onPickTitle={startFromTitle} onPickRepo={setRepoUrl} mapTitles={mapTitles} showSuggestions />
+        <form className="topic-explorer-repo" onSubmit={(event) => { event.preventDefault(); if (repoDraft.trim()) setRepoUrl(repoDraft.trim()); }}>
+          <h3>Or explore a codebase</h3>
+          <div>
+            <input type="text" inputMode="url" value={repoDraft} onChange={(event) => setRepoDraft(event.target.value)} placeholder="github.com/owner/repo" aria-label="GitHub repository to explore" />
+            <button type="submit">Map repo</button>
+          </div>
+          {hasRecentRepos ? <button type="button" className="topic-explorer-repo-recent" onClick={() => setRepoUrl("")}>Recent repositories</button> : null}
+        </form>
       </div> : <>
         <div className={`topic-explorer-world${dragging ? " is-dragging" : ""}`} data-arrangement={arrangement} style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <svg className="topic-explorer-edges" aria-hidden="true">
@@ -632,9 +652,11 @@ const AI_SEARCH_DELAY = 900;
  * The topic search: AI's best matches first (for members), Wikipedia's
  * articles underneath, and starting suggestions before anything is typed.
  */
-function TopicSearch({ compact = false, autoFocus = false, showSuggestions = false, mapTitles, account, onPick, onPickTitle }: {
+function TopicSearch({ compact = false, autoFocus = false, showSuggestions = false, mapTitles, account, onPick, onPickTitle, onPickRepo }: {
   compact?: boolean; autoFocus?: boolean; showSuggestions?: boolean; mapTitles: string[]; account?: PublicMapAccount;
   onPick(topic: PublicTopic): void; onPickTitle(title: string): void;
+  /** A pasted GitHub repository address opens the code explorer. */
+  onPickRepo?(url: string): void;
 }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<PublicTopic[]>([]);
@@ -666,7 +688,8 @@ function TopicSearch({ compact = false, autoFocus = false, showSuggestions = fal
     const search = query.trim();
     const key = search.toLowerCase().replace(/\s+/g, " ");
     const account = accountRef.current;
-    if (!canAsk || !account || search.length < 3) { setAi({ query: "", topics: [], asking: false, error: "" }); return; }
+    // A pasted repository address opens the code explorer, so it is never sent to AI as a topic.
+    if (!canAsk || !account || search.length < 3 || (onPickRepo && githubRepoFromText(search))) { setAi({ query: "", topics: [], asking: false, error: "" }); return; }
     const cached = aiSearchCache.get(key);
     if (cached) { setAi({ query: search, topics: cached, asking: false, error: "" }); return; }
     const controller = new AbortController();
@@ -702,6 +725,8 @@ function TopicSearch({ compact = false, autoFocus = false, showSuggestions = fal
   function pickTitle(title: string) { onPickTitle(title); setQuery(""); setResults([]); setOpen(false); }
   function submit(event: FormEvent) {
     event.preventDefault();
+    const repo = githubRepoFromText(query);
+    if (repo && onPickRepo) { onPickRepo(repo); setQuery(""); setOpen(false); return; }
     const first = (ai.query === query.trim() ? ai.topics[0] : undefined) ?? results[0];
     if (first) pick(first);
     else if (query.trim().length >= 2) pickTitle(query.trim());
@@ -728,6 +753,9 @@ function TopicSearch({ compact = false, autoFocus = false, showSuggestions = fal
     </label>
     {listed && (query.trim().length >= 2 || (compact && open)) ? <div className="topic-explorer-results">
       {query.trim().length >= 2 ? <>
+        {onPickRepo && githubRepoFromText(query) ? <button type="button" onClick={() => { onPickRepo(githubRepoFromText(query)!); setQuery(""); setOpen(false); }}>
+          <strong>Map this GitHub repository</strong><span>{githubRepoFromText(query)!.replace(/^https:\/\//u, "")}</span>
+        </button> : null}
         {showAi ? <section className="topic-explorer-results-group is-ai" aria-label="AI suggestions">
           <h3>AI</h3>
           {ai.topics.map((topic) => <button type="button" key={topic.id} onClick={() => pick(topic)}><strong>{topic.label}</strong>{topic.description ? <span>{topic.description}</span> : null}</button>)}

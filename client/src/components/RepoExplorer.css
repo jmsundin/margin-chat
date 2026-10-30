@@ -1,0 +1,84 @@
+/* Explore a GitHub repository: builds on the topic explorer's bar, canvas, cards and menu. */
+
+.repo-explorer-crumbs { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow: hidden; font-size: .8rem; white-space: nowrap; }
+.repo-explorer-crumbs > span { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.repo-explorer-crumbs i { color: var(--muted); font-style: normal; padding: 0 2px; }
+.repo-explorer-crumbs button { padding: 4px 5px; border: 0; border-radius: 6px; background: transparent; color: var(--accent) !important; }
+.repo-explorer-crumbs button:hover { background: var(--accent-soft); }
+.repo-explorer-crumbs strong { overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.repo-explorer .topic-explorer-bar > button:disabled { opacity: .5; cursor: default; }
+.repo-explorer .topic-explorer-bar > button svg { width: 15px; height: 15px; color: #a77bff; }
+.repo-explorer-search { max-width: 300px; margin-left: auto; }
+
+.repo-explorer-form { display: flex; gap: 8px; }
+.repo-explorer-form label { flex: 1; }
+.repo-explorer-form > button { flex: 0 0 auto; padding: 0 16px; border: 1px solid var(--accent); border-radius: 10px; background: var(--accent); color: var(--accent-ink, #fff) !important; font-weight: 600; }
+.repo-explorer-form > button:disabled { opacity: .55; cursor: default; }
+
+.repo-explorer-node strong { display: flex; align-items: center; gap: 6px; }
+.repo-explorer-node[data-kind="folder"] { background: color-mix(in srgb, var(--accent-soft) 45%, var(--panel-bg)); }
+.repo-explorer-node[data-role] { border-style: dashed; opacity: .92; }
+.repo-explorer-node.is-root { box-shadow: 0 0 0 3px var(--accent-soft); }
+.repo-explorer-icon { flex: 0 0 14px; width: 14px; height: 14px; color: var(--muted); }
+.repo-explorer-kind { flex: 0 0 16px; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 4px; font-size: 10px; font-weight: 700; font-style: normal;
+  background: color-mix(in srgb, #a77bff 22%, transparent); color: #8a5cf0; }
+.repo-explorer-kind.is-class { background: color-mix(in srgb, #e0a030 25%, transparent); color: #b7791f; }
+.repo-explorer-kind.is-type { background: color-mix(in srgb, #3aa6a0 25%, transparent); color: #2c8a85; }
+.repo-explorer-kind.is-method { background: color-mix(in srgb, #5b8def 22%, transparent); color: #3e6fd8; }
+.repo-explorer .topic-explorer-edges path { stroke-linecap: round; transition: opacity .15s ease; }
+.repo-explorer .topic-explorer-edges path.is-lit { stroke: var(--accent); }
+.repo-explorer-legend { position: absolute; left: 12px; bottom: 10px; margin: 0; padding: 4px 8px; border-radius: 6px; background: var(--panel-bg); color: var(--muted); font-size: 11px; pointer-events: none; }
+
+/* An AI note beside the code it explains. */
+.repo-explorer-note { position: absolute; left: 0; top: 0; box-sizing: border-box; display: flex; flex-direction: column; border: 1px dashed color-mix(in srgb, #a77bff 70%, var(--line-strong));
+  border-radius: 10px; background: color-mix(in srgb, #a77bff 7%, var(--panel-bg)); box-shadow: 0 3px 10px #0001; cursor: default; }
+.repo-explorer-note-text { flex: 1; min-height: 0; overflow: auto; padding: 7px 10px 2px; font-size: 11.5px; line-height: 1.45; }
+.repo-explorer-note-text > :first-child { margin-top: 0; }
+.repo-explorer-note-text p, .repo-explorer-note-text ul { margin: 0 0 5px; }
+.repo-explorer-note-text ul { padding-left: 16px; }
+.repo-explorer-note footer { display: flex; gap: 2px; padding: 3px 6px 5px; }
+.repo-explorer-note footer button { padding: 3px 7px; border: 0; border-radius: 5px; background: transparent; font-size: 11px; color: var(--accent) !important; }
+.repo-explorer-note footer button:hover { background: var(--accent-soft); }
+.repo-explorer-note footer .is-quiet { margin-left: auto; color: var(--muted) !important; }
+
+.repo-explorer-menu p { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 10.5px; -webkit-line-clamp: 3; }
+.repo-explorer-menu .topic-explorer-menu-grow button:disabled { opacity: .5; cursor: default; }
+.repo-explorer-menu .topic-explorer-menu-list button:disabled { opacity: .5; cursor: default; }
+.repo-explorer-ask { margin-top: 8px; }
+.repo-explorer-ask input { box-sizing: border-box; width: 100%; min-height: 32px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); color: var(--ink); font: inherit; font-size: 12px; }
+.repo-explorer-used summary { padding: 8px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+.repo-explorer-used summary:hover { background: var(--accent-soft); }
+.repo-explorer-used button { padding-left: 18px !important; font-family: var(--mono, ui-monospace, monospace); font-size: 11px !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The side pane, a function's code or an AI explanation, uses the explorer's reading pane. */
+.topic-explorer-pane.repo-explorer-pane { width: clamp(320px, 42vw, 640px); z-index: 12; }
+.topic-explorer-pane-header.repo-explorer-pane-header { align-items: flex-start; padding: 10px 8px 6px 12px; border-bottom: 0; }
+.repo-explorer-pane-header > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.repo-explorer-pane-header strong { font-size: .95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.repo-explorer-pane-header span { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, ui-monospace, monospace); }
+.repo-explorer-pane-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; border-bottom: 1px solid var(--line); }
+.repo-explorer-pane-actions button, .repo-explorer-pane-actions a { padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); font-size: 11.5px; color: var(--ink); text-decoration: none; }
+.repo-explorer-pane-actions button:hover:not(:disabled), .repo-explorer-pane-actions a:hover { background: var(--accent-soft); }
+.repo-explorer-pane-actions button:disabled { opacity: .5; cursor: default; }
+.repo-explorer-pane-actions .is-quiet { color: var(--muted) !important; }
+.repo-explorer-pane .topic-explorer-pane-scroll, .repo-explorer-code, .repo-explorer-doc { flex: 1 1 0%; min-height: 0; overflow: auto; }
+.repo-explorer-doc { padding: 12px 16px 24px; font-size: .88rem; line-height: 1.55; }
+.repo-explorer-doc > :first-child { margin-top: 0; }
+.repo-explorer-code { padding: 0; }
+.repo-explorer-code > p { padding: 12px 16px; color: var(--muted); font-size: .85rem; }
+/* The gutter and the code share one font and line height so numbers stay level with their lines. */
+.repo-explorer .repo-explorer-code .repo-explorer-pre { display: flex; margin: 0; padding: 10px 0 24px; min-width: max-content; max-width: none; overflow: visible; background: transparent; border: 0; border-radius: 0; }
+.repo-explorer .repo-explorer-code .repo-explorer-pre, .repo-explorer .repo-explorer-code .repo-explorer-pre code, .repo-explorer-gutter {
+  font-family: "SFMono-Regular", "SF Mono", "JetBrains Mono", Menlo, ui-monospace, monospace; font-size: 12.5px; line-height: 19.5px; font-variant-ligatures: none; }
+.repo-explorer-gutter { flex: 0 0 auto; padding: 0 12px 0 10px; text-align: right; color: var(--muted); opacity: .6; white-space: pre; user-select: none; border-right: 1px solid var(--line); }
+.repo-explorer .repo-explorer-code .repo-explorer-pre code { display: block; padding: 0 16px 0 12px; white-space: pre; overflow-wrap: normal; word-break: normal; background: transparent; tab-size: 2; }
+
+@media (max-width: 760px) {
+  .repo-explorer-search { display: none; }
+  .repo-explorer .topic-explorer-bar > button span { display: none; }
+  .topic-explorer-pane.repo-explorer-pane { width: auto; }
+  .repo-explorer-crumbs { flex: 1 1 auto; }
+  .repo-explorer-crumbs > span:not(:nth-last-child(-n+2)) { display: none; }
+  .repo-explorer-crumbs > span:nth-last-child(2) i { display: none; }
+  .repo-explorer-crumbs > span:nth-last-child(2) { flex: 0 0 auto; }
+}
