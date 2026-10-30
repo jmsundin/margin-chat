@@ -6,11 +6,12 @@ import { useEffect } from "react";
  * screen. It is a picture only: it can't be clicked, and it goes as soon as the real workspace shows.
  */
 const KEY = "margin-chat-boot-snapshot";
-// localStorage holds about five million characters per site; leave room for everything else saved there.
-const MAX_LENGTH = 1_500_000;
-// Long documents and lists show only their start on screen.
-const MAX_CHILDREN = 120;
-const SETTLE_MS = 4000;
+// Safari keeps about five megabytes of localStorage per site, two bytes a character, shared with everything
+// else saved there. A big workspace is cut down until it fits rather than not shown at all.
+const MAX_LENGTH = 600_000;
+// Long documents and lists show only their start on screen; a second, smaller try keeps less of each.
+const CHILD_LIMITS = [120, 30];
+const SETTLE_MS = 1500;
 const REFRESH_MS = 2 * 60 * 1000;
 const DROP = "script, canvas, video, audio, iframe, object, embed, dialog, [role='dialog'], [role='menu'], [aria-modal], "
   + ".workspace-notifications, .selection-tooltip, .selection-mobile-composer, .cm-cursorLayer";
@@ -23,19 +24,23 @@ const stylesheetStem = (href: string) => href.replace(/^.*\//u, "").replace(/-[A
 
 export function captureBootSnapshot(root: ParentNode, stylesheets: readonly string[]) {
   if (!root.querySelector(".app-shell:not(.is-vault-opening)")) return null;
-  const copy = document.createElement("div");
-  for (const child of Array.from(root.childNodes)) copy.appendChild(child.cloneNode(true));
-  for (const element of Array.from(copy.querySelectorAll(DROP))) element.remove();
-  // Pictures from this session's memory are gone after a restart.
-  for (const image of Array.from(copy.querySelectorAll("img"))) if (/^blob:/u.test(image.getAttribute("src") ?? "")) image.remove();
-  for (const element of Array.from(copy.querySelectorAll("*"))) {
-    while (element.childElementCount > MAX_CHILDREN) element.lastElementChild!.remove();
-    for (const name of LOOKUP_ATTRIBUTES) element.removeAttribute(name);
-  }
-  const html = copy.innerHTML;
-  if (!html || html.length > MAX_LENGTH) return null;
   const styles = [...new Set(stylesheets.filter((href) => /\/assets\/[^/]+\.css$/u.test(href)).map(stylesheetStem))];
-  return { html, styles };
+  for (const [attempt, limit] of CHILD_LIMITS.entries()) {
+    const copy = document.createElement("div");
+    for (const child of Array.from(root.childNodes)) copy.appendChild(child.cloneNode(true));
+    for (const element of Array.from(copy.querySelectorAll(DROP))) element.remove();
+    // Pictures from this session's memory are gone after a restart.
+    for (const image of Array.from(copy.querySelectorAll("img"))) if (/^blob:/u.test(image.getAttribute("src") ?? "")) image.remove();
+    // Drawings and large Map views are mostly SVG; the smaller try leaves their space empty.
+    if (attempt) for (const drawing of Array.from(copy.querySelectorAll("svg"))) if (drawing.outerHTML.length > 4000) drawing.remove();
+    for (const element of Array.from(copy.querySelectorAll("*"))) {
+      while (element.childElementCount > limit) element.lastElementChild!.remove();
+      for (const name of LOOKUP_ATTRIBUTES) element.removeAttribute(name);
+    }
+    const html = copy.innerHTML;
+    if (html && html.length <= MAX_LENGTH) return { html, styles };
+  }
+  return null;
 }
 
 export function saveBootSnapshot(userId: string) {
@@ -44,11 +49,11 @@ export function saveBootSnapshot(userId: string) {
   const stylesheets = Array.from(document.querySelectorAll<HTMLLinkElement>("link[rel='stylesheet']"), (link) => link.getAttribute("href") ?? "");
   const snapshot = captureBootSnapshot(root, stylesheets);
   try {
+    // The old picture goes first, so its room is free for the new one.
+    localStorage.removeItem(keyFor(userId));
     if (snapshot) localStorage.setItem(keyFor(userId), JSON.stringify({ ...snapshot, savedAt: Date.now() }));
-    else localStorage.removeItem(keyFor(userId));
   } catch {
-    // Full storage: an older picture of the workspace must not stand in for this one.
-    try { localStorage.removeItem(keyFor(userId)); } catch { /* Storage is unavailable. */ }
+    // Full storage: the page shows an outline of the workspace instead.
   }
 }
 
