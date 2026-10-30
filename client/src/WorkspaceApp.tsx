@@ -3765,6 +3765,15 @@ function WorkspaceAppContent({
     setMapEditMessage(existing ? `${existing.title} is already in your map.` : `${topic.label} added to your map.`);
   }
 
+  /** A document Explore makes from a Wikipedia passage or answer, under a saved topic note when there is one. */
+  function handleCreateExploreDocument({ title, content, parentId }: { title: string; content: string; parentId?: string }): string | null {
+    const note = { id: createId("note-conversation"), noteId: createId("note"), createdAt: new Date().toISOString(), title: title.slice(0, 100), content };
+    const next = parentId && state.conversations[parentId] ? addMapChildNote(state, { ...note, parentId, activate: false }) : createMapNote(state, note);
+    if (!next.conversations[note.id]) return null;
+    setState((current) => parentId && current.conversations[parentId] ? addMapChildNote(current, { ...note, parentId, activate: false }) : createMapNote(current, note));
+    return note.id;
+  }
+
   /** Turns map previews into notes, each connected to what it was explored from. Returns the note each became. */
   function handleKeepExplored(exploration: MapExploration, ids: string[], detached: string[] = []): Record<string, string> {
     const identities = new Map<string, { id: string; noteId: string }>();
@@ -5451,6 +5460,7 @@ function WorkspaceAppContent({
                     onAddTopicConnections={handleAddTopicConnections}
                     onSavePrivateAnswer={handleSavePrivateAnswer}
                     onKeepExplored={handleKeepExplored}
+                    onCreateExploreDocument={handleCreateExploreDocument}
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}
                     onSetRelation={handleSetMapRelation}

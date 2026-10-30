@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import KnowledgeGraphWorkspace from "../../client/src/components/KnowledgeGraphWorkspace";
 import { createEmptyState } from "../../client/src/initialState";
-import { createMapNote, setPersonalMapConnection } from "../../client/src/lib/graphWorkspaceEdits";
+import { addMapChildNote, createMapNote, setPersonalMapConnection } from "../../client/src/lib/graphWorkspaceEdits";
 import { keepExploredItems } from "../../client/src/lib/keepExplored";
 import "../../client/src/styles.css";
 
@@ -34,6 +34,14 @@ function Preview() {
           newNote: (id) => ({ id: `kept-${Date.now()}-${++sequence}-${id.length}`, noteId: `kept-${Date.now()}-${sequence}-note` }) });
         setState(next);
         return kept;
+      }}
+      onCreateExploreDocument={({ title, content, parentId }) => {
+        const note = { id: `explore-doc-${Date.now()}`, noteId: `explore-doc-${Date.now()}-note`, createdAt: new Date().toISOString(), title, content };
+        const next = parentId ? addMapChildNote(latest.current, { ...note, parentId, activate: false }) : createMapNote(latest.current, note);
+        if (!next.conversations[note.id]) return null;
+        latest.current = next;
+        setState(next);
+        return note.id;
       }}
       onSavePublicTopic={() => {}} onCreateMapNote={() => {}} onSetMapConnection={() => {}} onRemoveMapNote={() => {}} onUndoMapEdit={() => {}}
       renderDockedConversation={(id) => <div style={{ padding: 20 }}><h2>{state.conversations[id].title}</h2><pre style={{ whiteSpace: "pre-wrap" }}>{state.conversations[id].notes?.[0]?.content}</pre></div>} />
