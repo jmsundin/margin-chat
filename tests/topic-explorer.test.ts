@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { emptyExploration, PREVIEW_CARD, type ExploredBatch } from "../client/src/lib/mapExploration";
 import {
-  addRoot, aiChildren, aiSubgraphContext, aiSubtopicQuestion, arrange, boundsOf, descendants, explorerStorageKey, fitView, layoutExplorer, readExplorer, removeBranch, wikipediaChildren,
+  addRoot, aiChildren, aiSearchQuestion, aiSubgraphContext, aiSubtopicQuestion, arrange, boundsOf, descendants, explorerStorageKey, fitView, layoutExplorer, readExplorer, removeBranch, wikipediaChildren,
 } from "../client/src/lib/topicExplorer";
 import { keepExploredItems } from "../client/src/lib/keepExplored";
 import { findQuote, passageMarkdown, passageTitle, sanitizePageHtml, WIKIPEDIA_STYLESHEETS, wikipediaPageDocument } from "../client/src/lib/wikipediaReader";
@@ -205,4 +205,10 @@ describe("explore reading and AI context", () => {
     expect(findQuote("a  cell\nstops dividing here", "cell stops dividing")).toEqual({ start: 3, end: 22 });
     expect(findQuote("nothing", "cell")).toBeNull();
   });
+});
+
+test("the AI search question names what was typed and stays short", () => {
+  const question = aiSearchQuestion("  how do   cells age?  ");
+  expect(question).toContain('"how do cells age?"');
+  expect(aiSearchQuestion("x".repeat(2000)).length).toBeLessThanOrEqual(500);
 });

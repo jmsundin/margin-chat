@@ -55,6 +55,12 @@ export function aiChildren(state: MapExploration, parentId: string, answer: Priv
   });
 }
 
+/** What to ask AI for the topics that best match a search, which can be a few words or a whole question. */
+export function aiSearchQuestion(query: string) {
+  const wanted = query.replace(/\s+/g, " ").trim().slice(0, 300);
+  return `Someone wants to explore: "${wanted}". Name the topics that best match what they are looking for, most relevant first: the topic itself when it has an article, then the closest specific topics. Give a one-sentence overview.`.slice(0, 500);
+}
+
 /** What to ask AI for a node's subtopics, with the person's own focus first; later asks name what is already there. */
 export function aiSubtopicQuestion(label: string, existing: string[], focus = "") {
   const wanted = focus.replace(/\s+/g, " ").trim().slice(0, 200);
