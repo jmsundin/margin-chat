@@ -17,6 +17,7 @@ import {
 import { useMapExploration } from "../lib/useMapExploration";
 import { MapExploredHistory, MapPreviewBar, MapPreviewDetails, MapPreviewLayer, MapSearchLookFurther, looksLikeQuestion } from "./MapPreviews";
 import { getStandaloneNote } from "../lib/standaloneNotes";
+import TopicExplorer from "./TopicExplorer";
 import type { Conversation } from "../types";
 import "./KnowledgeGraphWorkspace.css";
 
@@ -62,6 +63,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   const [exploration, updateExploration] = useMapExploration(personalProps.workspaceKey ?? "workspace", publicMapAccount?.userId);
   const [selectedPreview, setSelectedPreview] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** Explore mode: a scratch map of any topic in place of the person's own map. */
+  const [exploring, setExploring] = useState(false);
   const [busy, setBusy] = useState<{ label: string; progress: string; controller: AbortController } | null>(null);
   const [exploreMessage, setExploreMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [revealRequest, setRevealRequest] = useState<{ ids: string[]; requestId: number } | null>(null);
@@ -92,6 +95,10 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     }
     return index;
   }, [conversations]);
+  // Recent documents, offered as starting topics in Explore mode.
+  const mapTitles = useMemo(() => Object.values(conversations)
+    .filter((conversation) => !conversation.parentId && !conversation.hiddenFromAI && conversation.title.trim() && !/^(untitled|new chat)\b/i.test(conversation.title.trim()))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 6).map((conversation) => conversation.title.trim().slice(0, 80)), [conversations]);
   const latest = useRef({ conversations, savedTopics, exploration });
   latest.current = { conversations, savedTopics, exploration };
 
@@ -343,6 +350,11 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     </button>
   </div> : null;
   const addActions = <>
+    <button type="button" className="knowledge-map-explore-button" title="Explore any topic in a scratch map that stays out of your workspace"
+      onClick={() => { setExploring(true); setSelectedPreview(null); setHistoryOpen(false); setSourcesFor(null); setConnectingId(null); }}>
+      <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" /></svg>
+      <span>Explore</span>
+    </button>
     <button type="button" className="knowledge-map-history-button" aria-pressed={historyOpen && !previewItem} aria-label={`Explored history${historyCount ? `, ${historyCount} items` : ""}`} title="Explored history: previews you have not kept"
       onClick={() => { setHistoryOpen(!(historyOpen && !previewItem)); setSelectedPreview(null); setSourcesFor(null); }}>
       <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6" /><path d="M3.5 4v4h4M12 7.5V12l3 2" /></svg>
@@ -380,12 +392,16 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     {mapEditMessage ? <div className="map-workspace-notice" role="status">{mapEditMessage}{canUndoMapEdit ? <button type="button" onClick={onUndoMapEdit}>Undo</button> : null}</div> : null}
     {expandingTopicId ? <div className="map-workspace-notice" role="status" aria-live="polite"><span>{topicExpansionProgress || "Building an AI subgraph…"} · {conversations[expandingTopicId]?.title}</span><button type="button" onClick={onCancelTopicExpansion}>Cancel expansion</button></div> : null}
     {topicExpansionError ? <div className="map-workspace-notice is-error" role="alert"><span>{topicExpansionError.message}</span>{conversations[topicExpansionError.conversationId] ? <button type="button" disabled={Boolean(expandingTopicId)} onClick={() => onExpandTopicWithAI?.(topicExpansionError.conversationId)}>Retry AI expansion</button> : null}<button type="button" onClick={onDismissTopicExpansionError}>Dismiss</button></div> : null}
-    <div className="knowledge-map-panel" ref={panelRef}>
-      {busy || exploreMessage ? <div className="map-explore-status" aria-live="polite">
+    <div className={`knowledge-map-panel${exploring ? " is-exploring" : ""}`} ref={panelRef}>
+      {exploring ? <TopicExplorer workspaceKey={personalProps.workspaceKey ?? "workspace"} account={publicMapAccount} savedTopics={savedTopics} mapTitles={mapTitles}
+        onKeep={(state, ids) => onKeepExplored?.(state, ids) ?? {}}
+        onOpenDocument={(id) => { setExploring(false); focusDocument(id); }}
+        onClose={() => setExploring(false)} /> : null}
+      {!exploring && (busy || exploreMessage) ? <div className="map-explore-status" aria-live="polite">
         {busy ? <div className="map-workspace-notice" role="status"><span className="map-explore-spinner" aria-hidden="true" /><span>{busy.progress || busy.label}</span><button type="button" onClick={() => busy.controller.abort()}>Cancel</button></div> : null}
         {exploreMessage ? <div className={`map-workspace-notice${exploreMessage.error ? " is-error" : ""}`} role={exploreMessage.error ? "alert" : "status"}><span>{exploreMessage.text}</span><button type="button" onClick={() => setExploreMessage(null)}>Dismiss</button></div> : null}
       </div> : null}
-      <ConversationGraphView {...personalProps} isVisible={isVisible} renderNodeActions={renderActions}
+      <ConversationGraphView {...personalProps} isVisible={isVisible && !exploring} renderNodeActions={renderActions}
         searchPlaceholder="Search, ask, or paste a link…" searchRequest={searchRequest} onSearchSubmit={submitSearch}
         renderSearchFallback={(query, close, matchedIds) => <MapSearchLookFurther query={query} matchedCount={matchedIds.length} canAsk={Boolean(publicMapAccount?.canAsk)}
           onMapPage={(url) => { close(); mapPage(url, anchorFor(query, matchedIds)); }}
@@ -405,7 +421,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         onConnectConversation={(source, target) => { if (source !== target) { onSetMapConnection(source, target, true); setConnectingId(null); } }}
         onRemoveConnection={(source, target) => onSetMapConnection(source, target, false)}
         onCreateNoteAt={(position) => onCreateMapNote({ position })} />
-      {previewItem ? <MapPreviewDetails key={previewItem.id} item={previewItem} exploration={exploration} account={publicMapAccount}
+      {exploring ? null : previewItem ? <MapPreviewDetails key={previewItem.id} item={previewItem} exploration={exploration} account={publicMapAccount}
         anchorTitle={previewItem.parent?.kind === "document" ? conversations[previewItem.parent.id]?.title ?? null : null}
         onClose={() => setSelectedPreview(null)}
         onKeep={() => keep([previewItem.id])}

@@ -31,3 +31,14 @@ The map has one search box ("Search, ask, or paste a link…") instead of separa
 Run `bun test tests/map-exploration.test.ts tests/map-exploration-interactions.test.ts` and `bun run build`.
 
 For browser checks, `bun tests/helpers/serveUrlMapPreview.ts` serves a fixture workspace at `http://127.0.0.1:5184`. It answers AI questions and keeps the account record in memory, one per `?user=` value. Try `https://example.org/trees` for a page. URLs containing `slow` exercise Cancel, and URLs containing `failure` exercise errors. Wikipedia requests go to the real site unless the browser mocks them.
+
+## Explore mode
+
+**Explore** in the map toolbar swaps the person's own map for a scratch map of any topic. Nothing in it reaches the workspace until a node is saved. **My map** (or Escape) goes back.
+
+- An empty explorer shows a Wikipedia search with suggested topics and recent document titles underneath. A picked topic becomes a starting node; more can be added from the search in the bar.
+- Clicking a node opens a small menu: **Wikipedia subgraph** adds the article's main linked topics (broader topics and topics already on the map are left out; pressing it again reads the next page), **AI subgraph** asks AI for the topic's subtopics (members with AI; each ask names what is already there), **Save to my map**, **Save with its branches**, **Read on Wikipedia** and **Remove**.
+- Saving uses the same code as keeping previews: the node becomes a topic note, along with the nodes that lead to it, each connected to its parent. Saved nodes show "In your map".
+- **Arrange** picks how the same topics are drawn: **Tree** (branches right and left of each starting topic), **Radial** (each branch a cluster around its starting topic), **Network** (force-directed), **Grid** (rows in branch order; only the chosen topic's lines show), **Focus** (TheBrain style: one topic in the middle, parent above, branches below, siblings to the right; clicking a topic moves it to the middle) and **Canvas** (drag cards anywhere; starts from the arrangement on screen).
+- Drag empty space to pan, wheel to scroll, pinch or Ctrl+wheel to zoom.
+- The explorer is kept on the device (`margin-topic-explorer:<workspaceKey>`, plus `:canvas` for dragged spots) until **Start over**. Code: `client/src/lib/topicExplorer.ts`, `client/src/components/TopicExplorer.tsx`. Tests: `tests/topic-explorer.test.ts`.
