@@ -76,4 +76,9 @@
 @media (max-width: 760px) {
   .repo-explorer-search { display: none; }
   .repo-explorer .topic-explorer-bar > button span { display: none; }
+  .topic-explorer-pane.repo-explorer-pane { width: auto; }
+  .repo-explorer-crumbs { flex: 1 1 auto; }
+  .repo-explorer-crumbs > span:not(:nth-last-child(-n+2)) { display: none; }
+  .repo-explorer-crumbs > span:nth-last-child(2) i { display: none; }
+  .repo-explorer-crumbs > span:nth-last-child(2) { flex: 0 0 auto; }
 }

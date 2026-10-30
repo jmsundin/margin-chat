@@ -341,7 +341,7 @@ export default function RepoExplorer({ initialUrl, account, onBack, onClose, onS
         if (symbol) { go({ kind: "file", path }, symbolId(path, symbol.name)); setPane({ kind: "code", path, symbol }); }
         else go({ kind: "file", path }, fileId(path));
       }} />
-      <button type="button" disabled={!account?.canAsk || Boolean(busy)} title={account?.canAsk ? "AI explains how this part of the code is put together. Uses AI credit." : "AI needs a membership with AI turned on"}
+      <button type="button" aria-label={location.kind === "file" ? "Explain file" : "Explain architecture"} disabled={!account?.canAsk || Boolean(busy)} title={account?.canAsk ? "AI explains how this part of the code is put together. Uses AI credit." : "AI needs a membership with AI turned on"}
         onClick={() => explain(location.kind === "file" ? { kind: "file", path: location.path, name: location.path.split("/").at(-1) }
           : location.path === index.root ? { kind: "repo", path: "" } : { kind: "folder", path: location.path, name: `${location.path}/` }, "document")}>
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z" /></svg>
@@ -360,7 +360,9 @@ export default function RepoExplorer({ initialUrl, account, onBack, onClose, onS
           const file = graph.files[index.byPath.get(paneNote.target.path)!];
           setPane({ kind: "code", path: paneNote.target.path, symbol: file?.symbols.find((item) => item.name === paneNote.target.name) });
         } : undefined} /> : null}
-      <div ref={canvasRef} className="topic-explorer-canvas" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+      <div ref={canvasRef} className="topic-explorer-canvas"
+        // Focusing a card off screen scrolls the canvas, which would shift the menu away from its card; the map pans instead.
+        onScroll={(event) => { event.currentTarget.scrollLeft = 0; event.currentTarget.scrollTop = 0; }} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
         <div className="topic-explorer-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}>
           <svg className="topic-explorer-edges" aria-hidden="true">
             {level.edges.map((edge) => {
