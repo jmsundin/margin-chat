@@ -55,10 +55,41 @@ export function aiChildren(state: MapExploration, parentId: string, answer: Priv
   });
 }
 
-/** What to ask AI for a node's subtopics; later asks name what is already there. */
-export function aiSubtopicQuestion(label: string, existing: string[]) {
-  const base = `What are the main subtopics, parts and branches of ${label}? Give a short overview and name the most important subtopics to explore next.`;
+/** What to ask AI for a node's subtopics, with the person's own focus first; later asks name what is already there. */
+export function aiSubtopicQuestion(label: string, existing: string[], focus = "") {
+  const wanted = focus.replace(/\s+/g, " ").trim().slice(0, 200);
+  const base = `What are the main subtopics, parts and branches of ${label}?${wanted ? ` Focus on: ${wanted}.` : ""} Give a short overview and name the most important subtopics to explore next.`;
   return (existing.length ? `${base} Leave out ${existing.slice(0, 12).join(", ")}, which I have already explored.` : base).slice(0, 500);
+}
+
+/**
+ * Where a node sits in the exploration, for AI: the path of parents that led
+ * to it, its siblings and the branches it already has, so the subtopics it
+ * names fit the direction the person is exploring.
+ */
+export function aiSubgraphContext(state: MapExploration, id: string): string {
+  const item = state.items[id];
+  if (!item) return "";
+  const path: ExploredItem[] = [];
+  const seen = new Set<string>();
+  for (let current: ExploredItem | undefined = item; current && !seen.has(current.id); ) {
+    seen.add(current.id); path.unshift(current);
+    current = current.parent?.kind === "item" ? state.items[current.parent.id] : undefined;
+  }
+  const { childrenOf } = childrenIndex(state);
+  const describe = (node: ExploredItem) => node.detail ? `${node.label} (${node.detail.slice(0, 120)})` : node.label;
+  const parentId = item.parent?.kind === "item" && state.items[item.parent.id] ? item.parent.id : null;
+  const siblings = parentId ? childrenOf(parentId).filter((other) => other !== id).map((other) => state.items[other].label) : [];
+  const children = childrenOf(id).map((child) => state.items[child].label);
+  const lines = [
+    "The person is exploring a map of topics and wants subtopics of the last topic in this path.",
+    `Path from the starting topic: ${path.map(describe).join(" → ")}`,
+    item.connection?.label ? `How ${item.label} joins its parent: ${item.connection.label}` : "",
+    siblings.length ? `Other branches beside it: ${siblings.slice(0, 20).join(", ")}` : "",
+    children.length ? `Branches it already has: ${children.slice(0, 30).join(", ")}` : "",
+    path.length > 1 ? `Prefer subtopics that are about ${item.label} in the sense this path implies, not the other topics in the path.` : "",
+  ];
+  return lines.filter(Boolean).join("\n").slice(0, 6000);
 }
 
 export function childrenIndex(state: MapExploration) {

@@ -1,12 +1,15 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import type { GraphDockControls } from "./ConversationGraphView";
+import WikipediaPane from "./WikipediaPane";
+import { isPassageNote, type PassageNote } from "../lib/wikipediaReader";
 import type { PublicTopic } from "../lib/publicKnowledge";
 import type { PublicMapAccount } from "./PublicTopicInsights";
-import { askAboutNote } from "../lib/publicMapApi";
-import { expandWikipediaTopic, resolveWikipediaTitles, searchWikipediaTopics } from "../lib/wikipedia";
+import { askAboutNote, type PrivateAnswer } from "../lib/publicMapApi";
+import { expandWikipediaTopic, resolveWikipediaTitles, searchWikipediaTopics, wikipediaTitle } from "../lib/wikipedia";
 import { ApiError } from "../lib/apiError";
-import { addExplored, setExpansion, type ExploredBatch, type MapExploration } from "../lib/mapExploration";
+import { addExplored, setExpansion, topicItem, type ExploredBatch, type MapExploration } from "../lib/mapExploration";
 import {
-  addRoot, aiChildren, aiSubtopicQuestion, arrange, ARRANGEMENTS, boundsOf, childrenIndex, clampScale, descendants, expansionKey, explorerStorageKey, fitView,
+  addRoot, aiChildren, aiSubgraphContext, aiSubtopicQuestion, arrange, ARRANGEMENTS, boundsOf, childrenIndex, clampScale, descendants, expansionKey, explorerStorageKey, fitView,
   isArrangement, readExplorer, removeBranch, SUGGESTED_TOPICS, wikipediaChildren, type ExplorerArrangement, type ExplorerSource, type ExplorerView,
 } from "../lib/topicExplorer";
 import "./TopicExplorer.css";
@@ -29,7 +32,7 @@ const isPositions = (value: unknown): value is Positions => value !== null && ty
  * node, and grow a subgraph from Wikipedia or AI. Nothing reaches the
  * person's own map until they save a node.
  */
-export default function TopicExplorer({ workspaceKey, account, savedTopics, mapTitles, onKeep, onOpenDocument, onClose }: {
+export default function TopicExplorer({ workspaceKey, account, savedTopics, mapTitles, documents, renderDocument, onCreateDocument, onKeep, onOpenDocument, onClose }: {
   workspaceKey: string;
   account?: PublicMapAccount;
   /** Wikidata ids already in the vault, to the document each became. */
@@ -40,6 +43,12 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
   onKeep(exploration: MapExploration, ids: string[]): Record<string, string>;
   onOpenDocument(id: string): void;
   onClose(): void;
+  /** Documents that can open in a pane beside the explore map. */
+  documents: Array<{ id: string; title: string }>;
+  /** The full document editor, for a document opened beside. */
+  renderDocument?: (id: string, dock: GraphDockControls) => ReactNode;
+  /** Makes a document in the vault, under `parentId` when given; returns its id. */
+  onCreateDocument?: (args: { title: string; content: string; parentId?: string }) => string | null;
 }) {
   const [state, setState] = useState<MapExploration>(() => readExplorer(browserStorage(), workspaceKey));
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -53,6 +62,10 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
   /** The topic in the middle of the Focus arrangement. */
   const [focusId, setFocusId] = useState<string | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  /** Reading panes on the left: a Wikipedia article and one of the person's documents. */
+  const [articleTitle, setArticleTitle] = useState<string | null>(null);
+  const [documentId, setDocumentId] = useState<string | null>(null);
+  const [passageNotes, setPassageNotes] = useState<PassageNote[]>(() => readJson(`${explorerStorageKey(workspaceKey)}:passages`, (value): value is PassageNote[] => Array.isArray(value) && value.every(isPassageNote), []));
   const canvasRef = useRef<HTMLDivElement>(null);
   // New nodes come into view: the whole map when it fits, otherwise the node and its branches.
   const fitted = useRef(false);
@@ -69,6 +82,9 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
   useEffect(() => {
     try { browserStorage()?.setItem(`${explorerStorageKey(workspaceKey)}:canvas`, JSON.stringify(positions)); } catch { /* Canvas spots are optional. */ }
   }, [positions, workspaceKey]);
+  useEffect(() => {
+    try { browserStorage()?.setItem(`${explorerStorageKey(workspaceKey)}:passages`, JSON.stringify(passageNotes.slice(-300))); } catch { /* Unsaved passage notes stay for this visit. */ }
+  }, [passageNotes, workspaceKey]);
   useEffect(() => {
     const timer = window.setTimeout(() => {
       try { browserStorage()?.setItem(explorerStorageKey(workspaceKey), JSON.stringify(state)); }
@@ -208,7 +224,7 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
     });
   }
 
-  function expand(id: string, source: ExplorerSource) {
+  function expand(id: string, source: ExplorerSource, focus = "") {
     const item = latest.current.state.items[id];
     if (item?.source.kind !== "topic") return;
     const topic = item.source.topic;
@@ -237,7 +253,7 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
       try {
         const existing = childrenOf(id).map((child) => latest.current.state.items[child]?.label).filter(Boolean) as string[];
         const answer = await askAboutNote({ userId: account.userId, topic: { label: topic.label.slice(0, 200), description: topic.description.slice(0, 2000) },
-          noteContent: "", question: aiSubtopicQuestion(topic.label, existing), options: account.aiOptions, signal, onProgress: progress });
+          noteContent: aiSubgraphContext(latest.current.state, id), question: aiSubtopicQuestion(topic.label, existing, focus), options: account.aiOptions, signal, onProgress: progress });
         signal.throwIfAborted();
         const children = aiChildren(latest.current.state, id, answer, batch, new Date().toISOString());
         const key = expansionKey("ai", id);
@@ -249,6 +265,90 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
         if (children.length) reveal([id, ...children.map((child) => child.id)]);
         else setMessage({ text: `AI named no new subtopics of ${topic.label}. Try Wikipedia instead.`, error: false });
       } finally { account.onBillingRefresh?.(); }
+    });
+  }
+
+  /** The explore node an article belongs to: the topic it was opened from, or one with its title. */
+  function articleNode(article: string): string | null {
+    const wanted = article.replace(/_/g, " ").toLowerCase();
+    const found = Object.values(latest.current.state.items).find((item) => item.source.kind === "topic"
+      && ((wikipediaTitle(item.source.topic.wikipediaUrl) ?? "").replace(/_/g, " ").toLowerCase() === wanted || item.label.toLowerCase() === wanted));
+    return found?.id ?? null;
+  }
+
+  /** The node for an article, added as a starting topic when the pane wandered to one not on the map. */
+  async function ensureArticleNode(article: string, signal: AbortSignal): Promise<string | null> {
+    const existing = articleNode(article);
+    if (existing) return existing;
+    const topic = (await resolveWikipediaTitles([article], signal)).get(article);
+    signal.throwIfAborted();
+    if (!topic) return null;
+    const next = addRoot(latest.current.state, topic, newBatch(topic.label));
+    latest.current.state = next;
+    setState(next);
+    return `topic:${topic.id}`;
+  }
+
+  // A phone has room for one pane above the map, so opening one closes the other.
+  const narrow = () => typeof window !== "undefined" && window.matchMedia?.("(max-width: 760px)").matches;
+  function openArticle(title: string) {
+    setArticleTitle(title);
+    if (narrow()) setDocumentId(null);
+    setSelectedId(null);
+  }
+  function openDocument(id: string) {
+    setDocumentId(id);
+    if (narrow()) setArticleTitle(null);
+  }
+
+  /** A document made from an article passage, under the article's note when that is saved, and opened beside. */
+  function createDocument(title: string, content: string, article: string) {
+    if (!onCreateDocument) return false;
+    const node = articleNode(article);
+    const item = node ? latest.current.state.items[node] : undefined;
+    const parentId = item?.source.kind === "topic" ? savedTopics[item.source.topic.id] : undefined;
+    const id = onCreateDocument({ title, content, ...(parentId ? { parentId } : {}) });
+    if (!id) { setMessage({ text: "That document could not be made. Try again.", error: true }); return false; }
+    if (renderDocument) openDocument(id);
+    setMessage({ text: `“${title}” is now a document in your map${parentId ? `, under ${item!.label}` : ""}.`, error: false });
+    return true;
+  }
+
+  /** Selected article text as a topic on the map, under the article's node. */
+  function exploreText(text: string, article: string) {
+    void run(null, `Finding “${text.slice(0, 60)}” on Wikipedia…`, async (signal) => {
+      const name = text.slice(0, 200);
+      const topic = (await resolveWikipediaTitles([name], signal)).get(name) ?? (await searchWikipediaTopics(name, signal))[0];
+      signal.throwIfAborted();
+      if (!topic) throw new Error(`Wikipedia has no article for “${text.slice(0, 60)}”. Try selecting fewer words.`);
+      const parent = await ensureArticleNode(article, signal);
+      const id = `topic:${topic.id}`;
+      if (latest.current.state.items[id]) { setSelectedId(id); reveal([id]); return; }
+      const batch = newBatch(topic.label);
+      const item = parent && parent !== id
+        ? topicItem(topic, { parent: { kind: "item", id: parent }, batchId: batch.id, exploredAt: batch.createdAt }, { via: `Wikipedia · from ${latest.current.state.items[parent]?.label ?? article}`, connection: { kind: "related", label: "mentioned in" } })
+        : topicItem(topic, { parent: null, batchId: batch.id, exploredAt: batch.createdAt });
+      const next = addExplored(latest.current.state, batch, [item]);
+      latest.current.state = next;
+      setState(next);
+      setSelectedId(id);
+      reveal(parent ? [parent, id] : [id]);
+    });
+  }
+
+  /** The topics an answer about a passage names, under the article's node. */
+  function addAnswerTopics(answer: PrivateAnswer, article: string) {
+    void run(null, "Adding the answer's topics…", async (signal) => {
+      const parent = await ensureArticleNode(article, signal);
+      if (!parent) throw new Error("This article is not on the explore map yet. Add it from the search first.");
+      const parentItem = latest.current.state.items[parent];
+      const batch = latest.current.state.batches[parentItem.batchId] ?? newBatch(parentItem.label);
+      const children = aiChildren(latest.current.state, parent, answer, batch, new Date().toISOString());
+      const next = addExplored(latest.current.state, batch, children);
+      latest.current.state = next;
+      setState(next);
+      if (children.length) reveal([parent, ...children.map((child) => child.id)]);
+      else setMessage({ text: "Those topics are already on the map.", error: false });
     });
   }
 
@@ -265,7 +365,7 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
 
   function startOver() {
     busyRef.current?.controller.abort();
-    setPositions({}); setFocusId(null);
+    setPositions({}); setFocusId(null); setPassageNotes([]); setArticleTitle(null);
     setState((current) => ({ ...current, items: {}, batches: {}, expansions: {} }));
     setSelectedId(null); setMessage(null);
     fitted.current = false;
@@ -360,12 +460,22 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
           {ARRANGEMENTS.map((item) => <option key={item.id} value={item.id} title={item.hint}>{item.label}</option>)}
         </select>
       </label> : null}
+      {renderDocument && documents.length ? <DocumentPicker documents={documents} openId={documentId} onOpen={openDocument} /> : null}
       {!empty ? <button type="button" className="topic-explorer-reset" onClick={startOver} title="Clear this exploration. Saved notes stay in your map.">Start over</button> : null}
     </header>
     {busy || message ? <div className="topic-explorer-status" aria-live="polite">
       {busy ? <div className="map-workspace-notice" role="status"><span className="map-explore-spinner" aria-hidden="true" /><span>{busy.progress || busy.label}</span><button type="button" onClick={() => busy.controller.abort()}>Cancel</button></div> : null}
       {message ? <div className={`map-workspace-notice${message.error ? " is-error" : ""}`} role={message.error ? "alert" : "status"}><span>{message.text}</span><button type="button" onClick={() => setMessage(null)}>Dismiss</button></div> : null}
     </div> : null}
+    <div className={`topic-explorer-body${articleTitle || documentId ? " has-panes" : ""}`}>
+    {articleTitle ? <WikipediaPane title={articleTitle} account={account} notes={passageNotes} onNotesChange={setPassageNotes}
+      onNavigate={openArticle} onClose={() => setArticleTitle(null)}
+      onCreateDocument={createDocument} onExplore={exploreText} onAddTopics={addAnswerTopics} /> : null}
+    {documentId && renderDocument && documents.some((item) => item.id === documentId) ? <aside className="topic-explorer-pane is-document" aria-label="Document beside the explore map">
+      <div className="conversation-graph-dock-body">
+        {renderDocument(documentId, { leading: null, pinned: false, onTogglePin: () => undefined, onClose: () => setDocumentId(null), onOpenDocument: openDocument })}
+      </div>
+    </aside> : null}
     <div ref={canvasRef} className="topic-explorer-canvas" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
       {empty ? <div className="topic-explorer-start">
         <h2>Explore any topic</h2>
@@ -404,9 +514,11 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
           wikipedia={state.expansions[expansionKey("wikipedia", selected.id)]}
           aiAsked={state.expansions[expansionKey("ai", selected.id)]?.nextOffset ?? 0}
           canAsk={Boolean(account?.canAsk)} busy={busy?.id === selected.id}
-          onExpand={(source) => expand(selected.id, source)}
+          onExpand={(source, focus) => expand(selected.id, source, focus)}
+          onRead={selected.source.kind === "topic" ? () => openArticle((wikipediaTitle(selected.source.kind === "topic" ? selected.source.topic.wikipediaUrl : undefined) ?? selected.label).replace(/_/g, " ")) : undefined}
           onSave={(withBranches) => save(withBranches ? descendants(state, selected.id) : [selected.id])}
-          onOpen={(id) => onOpenDocument(id)}
+          onOpen={(id) => { if (renderDocument) { openDocument(id); setSelectedId(null); } else onOpenDocument(id); }}
+          openLabel={renderDocument ? "Open the note beside" : "Open the note in my map"}
           onRemove={() => remove(selected.id)}
           onClose={() => setSelectedId(null)} /> : null}
         <div className="topic-explorer-zoom" role="group" aria-label="Zoom">
@@ -418,18 +530,22 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
         </div>
       </>}
     </div>
+    </div>
   </section>;
 }
 
 /** The small menu beside a clicked node. */
-function NodeMenu({ box, canvas, label, detail, url, savedAs, branchCount, wikipedia, aiAsked, canAsk, busy, onExpand, onSave, onOpen, onRemove, onClose }: {
+function NodeMenu({ box, canvas, label, detail, url, savedAs, branchCount, wikipedia, aiAsked, canAsk, busy, openLabel, onExpand, onRead, onSave, onOpen, onRemove, onClose }: {
   box: { x: number; y: number; width: number; height: number };
   canvas: { width: number; height: number };
   label: string; detail: string; url?: string; savedAs?: string; branchCount: number;
-  wikipedia?: { nextOffset: number; hasMore: boolean }; aiAsked: number; canAsk: boolean; busy: boolean;
-  onExpand(source: ExplorerSource): void; onSave(withBranches: boolean): void; onOpen(id: string): void; onRemove(): void; onClose(): void;
+  wikipedia?: { nextOffset: number; hasMore: boolean }; aiAsked: number; canAsk: boolean; busy: boolean; openLabel: string;
+  onExpand(source: ExplorerSource, focus?: string): void; onRead?: () => void; onSave(withBranches: boolean): void; onOpen(id: string): void; onRemove(): void; onClose(): void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  /** The AI subgraph's optional prompt: what the person wants this branch to cover. */
+  const [prompting, setPrompting] = useState(false);
+  const [focus, setFocus] = useState("");
   const [height, setHeight] = useState(240);
   useLayoutEffect(() => { if (ref.current) setHeight(ref.current.offsetHeight); });
   useEffect(() => { ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true }); }, []);
@@ -450,20 +566,62 @@ function NodeMenu({ box, canvas, label, detail, url, savedAs, branchCount, wikip
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5l4.5 14L12 8l4.5 11L21 5" /></svg>
         <span>{wikipediaDone ? "All Wikipedia links shown" : wikipedia ? "More from Wikipedia" : "Wikipedia subgraph"}</span>
       </button>
-      <button type="button" role="menuitem" disabled={busy || !canAsk} onClick={() => onExpand("ai")}
+      <button type="button" role="menuitem" aria-expanded={prompting} disabled={busy || !canAsk} onClick={() => setPrompting(!prompting)}
         title={canAsk ? "AI names this topic's main subtopics. Uses AI credit." : "AI subgraphs need a membership with AI turned on"}>
         <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></svg>
         <span>{aiAsked ? "More from AI" : "AI subgraph"}</span>
       </button>
     </div>
     {!canAsk ? <small>AI subgraphs need a membership with AI turned on.</small> : null}
+    {prompting && canAsk ? <form className="topic-explorer-menu-prompt" onSubmit={(event) => {
+      event.preventDefault(); onExpand("ai", focus); setPrompting(false); setFocus("");
+      // The prompt goes away, so focus stays in the menu and Escape still closes it.
+      window.setTimeout(() => ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true }), 0);
+    }}>
+      <textarea autoFocus rows={2} value={focus} maxLength={200} aria-label="What the AI subgraph should focus on"
+        placeholder={`Optional: what about ${label} should it cover?`} onChange={(event) => setFocus(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+          if (event.key === "Escape") { event.stopPropagation(); setPrompting(false); }
+        }} />
+      <div><small>Uses the path that led here and its branches as context.</small><button type="submit" disabled={busy}>Generate</button></div>
+    </form> : null}
     <div className="topic-explorer-menu-list">
-      {savedAs ? <button type="button" role="menuitem" onClick={() => onOpen(savedAs)}>Open the note in my map</button>
+      {savedAs ? <button type="button" role="menuitem" onClick={() => onOpen(savedAs)}>{openLabel}</button>
         : <button type="button" role="menuitem" onClick={() => onSave(false)}>Save to my map</button>}
       {branchCount ? <button type="button" role="menuitem" onClick={() => onSave(true)}>Save with its {branchCount} {branchCount === 1 ? "branch" : "branches"}</button> : null}
-      {url ? <a role="menuitem" href={url} target="_blank" rel="noreferrer noopener">Read on Wikipedia ↗</a> : null}
+      {onRead ? <button type="button" role="menuitem" onClick={onRead}>Read on Wikipedia</button>
+        : url ? <a role="menuitem" href={url} target="_blank" rel="noreferrer noopener">Read on Wikipedia ↗</a> : null}
       <button type="button" role="menuitem" className="is-quiet" onClick={onRemove}>Remove{branchCount ? " with its branches" : ""}</button>
     </div>
+  </div>;
+}
+
+/** Opens one of the person's documents in a pane beside the explore map. */
+function DocumentPicker({ documents, openId, onOpen }: { documents: Array<{ id: string; title: string }>; openId: string | null; onOpen(id: string): void }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [open]);
+  const words = query.toLowerCase().trim();
+  const shown = (words ? documents.filter((item) => item.title.toLowerCase().includes(words)) : documents).slice(0, 40);
+  return <div className="topic-explorer-documents" ref={ref} onKeyDown={(event) => { if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); } }}>
+    <button type="button" aria-expanded={open} aria-haspopup="dialog" title="Open one of your documents beside the explore map" onClick={() => setOpen(!open)}>
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3H6v18h12V7l-4-4ZM14 3v4h4M9 12h6M9 16h6" /></svg><span>Document</span>
+    </button>
+    {open ? <div className="topic-explorer-documents-list" role="dialog" aria-label="Open a document beside">
+      <input autoFocus type="search" value={query} placeholder="Find a document…" aria-label="Find a document" onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter" && shown[0]) { onOpen(shown[0].id); setOpen(false); } }} />
+      <div>
+        {shown.map((item) => <button type="button" key={item.id} aria-pressed={item.id === openId} onClick={() => { onOpen(item.id); setOpen(false); setQuery(""); }}>{item.title || "Untitled"}</button>)}
+        {!shown.length ? <p>No document matches.</p> : null}
+      </div>
+    </div> : null}
   </div>;
 }
 

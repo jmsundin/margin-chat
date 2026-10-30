@@ -107,3 +107,86 @@
 .topic-explorer-world.is-dragging .topic-explorer-node { transition: none; cursor: grabbing; }
 .topic-explorer-world:not([data-arrangement="tree"]) .topic-explorer-edges path { stroke-width: 1.25px; opacity: .8; }
 @media (max-width: 560px) { .topic-explorer-arrangement svg { display: none; } .topic-explorer-reset { padding: 5px 8px !important; } }
+
+/* Reading panes left of the explore map: a Wikipedia article and one of the person's documents. */
+.topic-explorer-body { position: relative; flex: 1 1 0%; min-height: 0; display: flex; }
+.topic-explorer-body > .topic-explorer-canvas { flex: 1 1 0%; min-width: 0; }
+.topic-explorer-pane { position: relative; flex: 0 0 auto; width: clamp(300px, 34vw, 520px); min-width: 0; display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--panel-bg); overflow: hidden; resize: horizontal; }
+.topic-explorer-pane.is-document { width: clamp(320px, 36vw, 560px); }
+.topic-explorer-pane-header { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); }
+.topic-explorer-pane-header strong { flex: 1; min-width: 0; font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topic-explorer-pane-kind { flex: 0 0 22px; height: 22px; display: grid; place-items: center; border-radius: 6px; background: var(--accent-soft); font: 600 12px Georgia, serif; }
+.topic-explorer-pane-header a, .topic-explorer-pane-header button { flex: 0 0 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); text-decoration: none; font-size: 16px; }
+.topic-explorer-pane-header a:hover, .topic-explorer-pane-header button:hover { background: var(--accent-soft); color: var(--ink); }
+.topic-explorer-pane-scroll { position: relative; flex: 1 1 0%; min-height: 0; overflow: auto; padding: 4px 34px 40px 20px; }
+.topic-explorer-pane-message { color: var(--muted); font-size: .85rem; }
+.topic-explorer-pane .conversation-graph-dock-body { flex: 1 1 0%; }
+
+.wikipedia-article { font-size: .92rem; line-height: 1.65; color: var(--ink); overflow-wrap: anywhere; }
+.wikipedia-article h2 { margin: 1.4em 0 .4em; font-size: 1.15rem; font-weight: 650; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.wikipedia-article h3 { margin: 1.2em 0 .3em; font-size: 1rem; font-weight: 650; }
+.wikipedia-article h4, .wikipedia-article h5 { margin: 1em 0 .3em; font-size: .92rem; }
+.wikipedia-article p { margin: .6em 0; }
+.wikipedia-article a { color: var(--accent); text-decoration: none; }
+.wikipedia-article a:hover { text-decoration: underline; }
+.wikipedia-article img { max-width: 100%; height: auto; border-radius: 6px; }
+.wikipedia-article figure { margin: 12px 0; }
+.wikipedia-article figcaption { font-size: .78rem; color: var(--muted); line-height: 1.4; }
+.wikipedia-article table { border-collapse: collapse; font-size: .8rem; margin: 10px 0; max-width: 100%; display: block; overflow-x: auto; }
+.wikipedia-article td, .wikipedia-article th { border: 1px solid var(--line); padding: 4px 6px; vertical-align: top; text-align: left; }
+.wikipedia-article table.infobox { float: none; width: 100%; display: table; }
+.wikipedia-article blockquote { margin: .8em 0; padding-left: 12px; border-left: 3px solid var(--line-strong); color: var(--muted); }
+.wikipedia-article ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+::highlight(explore-passage-notes) { text-decoration: underline dotted var(--accent) 2px; text-underline-offset: 3px; background-color: color-mix(in srgb, var(--accent) 12%, transparent); }
+::highlight(explore-passage-highlights) { background-color: color-mix(in srgb, #ffd479 40%, transparent); }
+
+.wikipedia-passage-mark { position: absolute; right: 6px; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 1px solid var(--accent); border-radius: 999px; background: var(--panel-bg); color: var(--accent); font: 600 11px/1 inherit; }
+.wikipedia-passage-mark.is-highlight { width: 12px; height: 12px; right: 11px; margin-top: 4px; border-color: #d4a017; background: color-mix(in srgb, #ffd479 70%, var(--panel-bg)); }
+.wikipedia-passage-mark.is-open, .wikipedia-passage-mark:hover { background: var(--accent-soft); }
+
+.selection-tooltip.is-toolbar.wikipedia-selection-toolbar { position: absolute; z-index: 5; transform: none; max-width: calc(100% - 16px); min-width: 0; }
+/* Explore keeps its name in the tooltip, so the row fits a narrow pane with Ask AI showing. */
+.wikipedia-selection-toolbar .selection-toolbar-button[aria-label="Explore"] span { display: none; }
+.wikipedia-ask, .wikipedia-answer, .wikipedia-note { position: absolute; left: 12px; right: 30px; z-index: 6; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 10px 28px #0003; font-size: .82rem; }
+.wikipedia-ask blockquote, .wikipedia-note blockquote { margin: 0 0 8px; padding-left: 8px; border-left: 3px solid var(--accent); color: var(--muted); max-height: 4.5em; overflow: hidden; }
+.wikipedia-ask input, .wikipedia-note textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel-bg); color: var(--ink); font: inherit; }
+.wikipedia-note textarea { min-height: 70px; resize: vertical; }
+.wikipedia-ask > div, .wikipedia-note > div, .wikipedia-answer-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.wikipedia-ask button, .wikipedia-note button, .wikipedia-answer button { min-height: 30px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); font-size: .78rem; }
+.wikipedia-ask button.is-primary, .wikipedia-note button.is-primary, .wikipedia-answer-actions button:first-child { border-color: var(--accent); background: var(--accent-soft); }
+.wikipedia-ask button:disabled { opacity: .5; }
+.wikipedia-note small { display: block; margin-top: 6px; color: var(--muted); font-size: .72rem; }
+.wikipedia-answer header { display: flex; align-items: flex-start; gap: 6px; }
+.wikipedia-answer header strong { flex: 1; font-size: .84rem; }
+.wikipedia-answer header button { flex: 0 0 26px; min-height: 26px; padding: 0; border: 0; background: transparent; color: var(--muted); font-size: 16px; }
+.wikipedia-answer p { margin: 6px 0; line-height: 1.55; }
+.wikipedia-answer .is-muted { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+
+/* The AI subgraph's optional prompt. */
+.topic-explorer-menu-prompt { margin-top: 8px; }
+.topic-explorer-menu-prompt textarea { width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel-bg); color: var(--ink); font: inherit; font-size: 12px; resize: none; }
+.topic-explorer-menu-prompt textarea:focus { outline: none; border-color: #a77bff; box-shadow: 0 0 0 3px color-mix(in srgb, #a77bff 22%, transparent); }
+.topic-explorer-menu-prompt > div { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.topic-explorer-menu-prompt small { flex: 1; margin: 0 !important; }
+.topic-explorer-menu-prompt button { min-height: 30px; padding: 4px 12px; border: 1px solid #a77bff; border-radius: 7px; background: color-mix(in srgb, #a77bff 18%, var(--panel-bg)); font-size: 12px; }
+.topic-explorer-menu-grow button[aria-expanded="true"] { border-color: #a77bff; background: color-mix(in srgb, #a77bff 14%, var(--panel-bg)); }
+
+/* Picking a document to open beside. */
+.topic-explorer-documents { position: relative; flex: 0 0 auto; }
+.topic-explorer-documents > button { display: inline-flex; align-items: center; gap: 5px; min-height: 34px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); font-size: .78rem; white-space: nowrap; }
+.topic-explorer-documents > button:hover, .topic-explorer-documents > button[aria-expanded="true"] { background: var(--accent-soft); }
+.topic-explorer-documents > button svg { width: 15px; height: 15px; }
+.topic-explorer-documents-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: min(300px, calc(100vw - 24px)); padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 8px 24px #0003; }
+.topic-explorer-documents-list input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel-bg); color: var(--ink); font: inherit; font-size: .8rem; }
+.topic-explorer-documents-list > div { max-height: 300px; overflow: auto; margin-top: 5px; display: flex; flex-direction: column; }
+.topic-explorer-documents-list > div button { padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topic-explorer-documents-list > div button:hover, .topic-explorer-documents-list > div button[aria-pressed="true"] { background: var(--accent-soft); }
+.topic-explorer-documents-list p { margin: 8px; color: var(--muted); font-size: .78rem; }
+
+@media (max-width: 760px) {
+  .topic-explorer-body.has-panes { flex-direction: column; }
+  .topic-explorer-pane, .topic-explorer-pane.is-document { width: auto; flex: 0 0 52%; border-right: 0; border-bottom: 1px solid var(--line); resize: none; }
+  .topic-explorer-body.has-panes > .topic-explorer-pane ~ .topic-explorer-pane { display: none; }
+  .topic-explorer-documents > button span { display: none; }
+  .wikipedia-selection-toolbar .selection-toolbar-button:not(.is-ai) span { display: none; }
+}

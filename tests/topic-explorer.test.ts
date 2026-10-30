@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { emptyExploration, PREVIEW_CARD, type ExploredBatch } from "../client/src/lib/mapExploration";
 import {
-  addRoot, aiChildren, aiSubtopicQuestion, arrange, boundsOf, descendants, explorerStorageKey, fitView, layoutExplorer, readExplorer, removeBranch, wikipediaChildren,
+  addRoot, aiChildren, aiSubgraphContext, aiSubtopicQuestion, arrange, boundsOf, descendants, explorerStorageKey, fitView, layoutExplorer, readExplorer, removeBranch, wikipediaChildren,
 } from "../client/src/lib/topicExplorer";
 import { keepExploredItems } from "../client/src/lib/keepExplored";
+import { findQuote, passageMarkdown, passageTitle, sanitizeArticleHtml } from "../client/src/lib/wikipediaReader";
+import { parseHTML } from "linkedom";
 import { createEmptyState } from "../client/src/initialState";
 import type { PublicExpansion, PublicTopic } from "../client/src/lib/publicKnowledge";
 import { addExplored, setExpansion } from "../client/src/lib/mapExploration";
@@ -145,5 +147,45 @@ describe("topic explorer arrangements", () => {
     expect(boxes.get("topic:Q3")).toMatchObject({ x: 1000, y: 1000 });
     expect(boxes.get("topic:Q90")!.x).toBe(1000 + PREVIEW_CARD.width + 48);
     expect(overlaps(boxes)).toBe(false);
+  });
+});
+
+describe("explore reading and AI context", () => {
+  test("AI subgraph context names the path, siblings and branches, and the prompt leads the question", () => {
+    const state = explored();
+    const context = aiSubgraphContext(state, "topic:Q2");
+    expect(context).toContain("Path from the starting topic: Aging (Aging description) → Senescence (Senescence description)");
+    expect(context).toContain("Other branches beside it: Longevity, Telomere");
+    expect(context).toContain("Branches it already has: SASP");
+    expect(aiSubgraphContext(state, "topic:Q11455")).not.toContain("Path from the starting topic: Aging (Aging description) →");
+    expect(aiSubgraphContext(state, "missing")).toBe("");
+    const question = aiSubtopicQuestion("Senescence", ["SASP"], "  drugs that\nclear senescent cells ");
+    expect(question).toContain("Focus on: drugs that clear senescent cells.");
+    expect(question.indexOf("Focus on")).toBeLessThan(question.indexOf("Leave out"));
+  });
+
+  test("article HTML keeps reading markup only and marks article links", () => {
+    const html = `<html><head><title>Ageing</title><script>alert(1)</script></head><body>
+      <section><h2>Lead</h2><p onclick="steal()">Ageing is <a href="./Cellular_senescence" title="x">senescence</a> and <a href="https://example.org/x">a site</a><sup class="mw-ref reference"><a href="#cite">[1]</a></sup>.</p>
+      <img src="//upload.wikimedia.org/a.png" width="200" onerror="steal()"><img src="https://evil.example/x.png">
+      <a href="./File:Thing.jpg">file</a><a href="javascript:alert(1)">bad</a><iframe src="https://evil.example"></iframe>
+      <div class="navbox">nav</div><table class="infobox wikitable"><tr><td colspan="2" style="color:red">Box</td></tr></table></section>
+      <section><h2>References</h2><p>refs</p></section></body></html>`;
+    const out = sanitizeArticleHtml(html, (text) => parseHTML(text).document as unknown as Document);
+    expect(out).toContain('data-wiki-title="Cellular senescence"');
+    expect(out).toContain('href="https://en.wikipedia.org/wiki/Cellular_senescence"');
+    expect(out).toMatch(/<a [^>]*target="_blank"[^>]*href="https:\/\/example\.org\/x"|<a [^>]*href="https:\/\/example\.org\/x"[^>]*target="_blank"/);
+    expect(out).toContain('src="https://upload.wikimedia.org/a.png"');
+    expect(out).toContain('<td colspan="2">Box</td>');
+    expect(out).toContain('class="infobox"');
+    for (const gone of ["script", "onclick", "onerror", "evil.example", "[1]", "javascript:", "navbox", "refs", "File:", "style="]) expect(out).not.toContain(gone);
+  });
+
+  test("passages become quoted markdown with their source, and quotes are found loosely", () => {
+    expect(passageMarkdown({ article: "Ageing", url: "https://en.wikipedia.org/wiki/Ageing", quote: "Cells stop\n\ndividing.", text: "Check this" }))
+      .toBe("> Cells stop\n>\n> dividing.\n\n— [Ageing](https://en.wikipedia.org/wiki/Ageing), Wikipedia\n\nCheck this\n");
+    expect(passageTitle("one two three four five six seven eight nine ten")).toBe("one two three four five six seven eight…");
+    expect(findQuote("a  cell\nstops dividing here", "cell stops dividing")).toEqual({ start: 3, end: 22 });
+    expect(findQuote("nothing", "cell")).toBeNull();
   });
 });
