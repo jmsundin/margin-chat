@@ -190,3 +190,12 @@
   .topic-explorer-documents > button span { display: none; }
   .wikipedia-selection-toolbar .selection-toolbar-button:not(.is-ai) span { display: none; }
 }
+
+/* A GitHub repository instead of a topic. */
+.topic-explorer-repo { width: min(560px, 100%); margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line); }
+.topic-explorer-repo h3 { margin: 0 0 8px; font-size: .72rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.topic-explorer-repo > div { display: flex; gap: 8px; }
+.topic-explorer-repo input { flex: 1; min-width: 0; min-height: 38px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel-bg); color: var(--ink); font: inherit; font-size: .88rem; }
+.topic-explorer-repo > div > button { flex: 0 0 auto; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 9px; background: var(--panel-bg); font-size: .82rem; }
+.topic-explorer-repo > div > button:hover { background: var(--accent-soft); }
+.topic-explorer-repo-recent { margin-top: 6px; padding: 4px 0; border: 0; background: transparent; color: var(--accent) !important; font-size: .78rem !important; }

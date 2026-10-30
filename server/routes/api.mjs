@@ -17,6 +17,8 @@ import { chatRunId, createChatRunService } from "../chat/runs.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
 import { handleUrlMapRequest } from "./urlMap.mjs";
+import { createRepoExplainService, createRepoMapService } from "../repoMap/index.mjs";
+import { handleRepoMapRequest } from "./repoMap.mjs";
 import { createTopicExpansionService } from "../topicExpansion/index.mjs";
 import { handleTopicExpansionRequest } from "./topicExpansion.mjs";
 import { createPublicMapService } from "../publicMap/index.mjs";
@@ -97,7 +99,7 @@ const EXTENSION_WORKSPACE_ROUTES = new Set([
   "authSession", "captureList", "captureGet", "stateRead",
   "vaultStatus", "vaultIndex", "vaultSearch", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultUpload", "vaultUploadCommit", "vaultCommit", "vaultRebuild",
   "chat", "chatRun", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
-  "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
+  "urlMap", "repoMap", "repoExplain", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
   ...PUBLIC_MAP_ROUTES,
   "billingDashboard", "apiKeysRead",
 ]);
@@ -114,6 +116,8 @@ export function createApiHandler({
   vaultService,
   semanticService,
   urlMapService,
+  repoMapService,
+  repoExplainService,
   topicExpansionService,
   publicMapService,
   webSearchService,
@@ -133,6 +137,8 @@ export function createApiHandler({
   const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
   const chatRuns = chatRunService ?? (typeof database?.saveChatRun === "function" ? createChatRunService({ database }) : null);
   const mapUrl = urlMapService ?? createUrlMapService({ executeChatReply });
+  const mapRepo = repoMapService ?? createRepoMapService();
+  const explainCode = repoExplainService ?? createRepoExplainService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
   const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
@@ -511,7 +517,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatRun", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatRun", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "repoMap", "repoExplain", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -561,6 +567,16 @@ export function createApiHandler({
 
       if (route?.id === "urlMap") {
         await handleUrlMapRequest({ request, response, user: authContext.user, mapUrl, workspaceCredential });
+        return;
+      }
+
+      if (route?.id === "repoMap") {
+        await handleRepoMapRequest({ request, response, user: authContext.user, run: mapRepo, resultKey: "graph", bodyLimit: 4096, workspaceCredential });
+        return;
+      }
+
+      if (route?.id === "repoExplain") {
+        await handleRepoMapRequest({ request, response, user: authContext.user, run: explainCode, resultKey: "explanation", bodyLimit: 80_000, workspaceCredential });
         return;
       }
 
