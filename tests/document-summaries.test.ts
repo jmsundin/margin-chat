@@ -43,4 +43,27 @@ describe("independent document summaries", () => {
     expect(summaries.find(({ id }) => id === "note")).toMatchObject({ kind: "note", preview: "Current note document text" });
     expect(JSON.stringify(summaries)).not.toContain("Historical");
   });
+
+  test("after an edit, the edited document and its thread show the new text and the rest stay as they were", () => {
+    const main = createMainConversation({ id: "main", createdAt: "2026-01-01T00:00:00Z" });
+    const side = createChildConversation({ id: "side", parentConversation: main, createdAt: "2026-01-02T00:00:00Z" });
+    side.messages = [{ id: "response", role: "assistant", content: "First words", createdAt: side.createdAt }];
+    main.childIds = [side.id];
+    const other = createStandaloneNoteConversation({ id: "other", noteId: "body" });
+    other.notes![0].content = "Untouched note";
+    const before = { main, side, other };
+    const firstDocuments = buildDocumentSummaries(before);
+    const firstThreads = buildThreadSummaries(before);
+
+    const edited = { ...updateDocumentBlock(side, "message:response", "Words typed since"), updatedAt: "2026-03-01T00:00:00Z" };
+    const after = { ...before, side: edited };
+    const documents = buildDocumentSummaries(after);
+    const threads = buildThreadSummaries(after);
+
+    expect(documents.find(({ id }) => id === "side")).toMatchObject({ preview: "Words typed since", updatedAt: "2026-03-01T00:00:00Z" });
+    expect(documents.find(({ id }) => id === "other")).toEqual(firstDocuments.find(({ id }) => id === "other")!);
+    expect(threads.find(({ id }) => id === "main")).toMatchObject({ updatedAt: "2026-03-01T00:00:00Z" });
+    expect(threads.find(({ id }) => id === "main")!.updatedAt).not.toBe(firstThreads.find(({ id }) => id === "main")!.updatedAt);
+    expect(threads.find(({ id }) => id === "other")).toEqual(firstThreads.find(({ id }) => id === "other")!);
+  });
 });

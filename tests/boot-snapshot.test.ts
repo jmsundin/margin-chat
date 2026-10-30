@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Window } from "happy-dom";
-import { bootSnapshotScript } from "../client/build/boot-snapshot.mjs";
+import { bootSnapshotPlugin, bootSnapshotScript } from "../client/build/boot-snapshot.mjs";
 import { forgetBootSnapshot, saveBootSnapshot } from "../client/src/lib/bootSnapshot";
 
 const USER = { id: "user-1", email: "a@example.test" };
@@ -135,4 +135,15 @@ describe("workspace picture at startup", () => {
     expect(stored.html.length).toBeLessThan(600_000);
     expect(stored.html.split("<p>").length - 1).toBe(30);
   });
+});
+
+test("the page fetches the app's code while it draws the first picture, which the app starts after", () => {
+  const bundle = {
+    "assets/index-AAAAAAAA.js": { type: "chunk", isEntry: true, isDynamicEntry: false, moduleIds: ["/repo/client/src/main.tsx"], fileName: "assets/index-AAAAAAAA.js" },
+    "assets/start-BBBBBBBB.js": { type: "chunk", isEntry: false, isDynamicEntry: true, moduleIds: ["/repo/client/src/start.tsx", "/repo/client/src/App.tsx"], fileName: "assets/start-BBBBBBBB.js" },
+    "assets/index-CCCCCCCC.css": { type: "asset", fileName: "assets/index-CCCCCCCC.css" },
+  };
+  const tags = (bootSnapshotPlugin().transformIndexHtml as any).handler("", { bundle });
+  expect(tags[0]).toEqual({ tag: "link", attrs: { rel: "modulepreload", crossorigin: "", href: "/assets/start-BBBBBBBB.js" }, injectTo: "head" });
+  expect(tags.map((tag: any) => tag.tag)).toEqual(["link", "style", "script"]);
 });

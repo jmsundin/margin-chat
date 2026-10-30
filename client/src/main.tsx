@@ -1,22 +1,16 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
-import App from "./App";
 import "./styles.css";
 import "katex/dist/katex.min.css";
 import "./components/MathEquation.css";
-import { Analytics } from "@vercel/analytics/react"
-import AppUpdateNotice from "./components/AppUpdateNotice";
-import AppErrorBoundary from "./components/AppErrorBoundary";
-import { startErrorReporting } from "./lib/errorReporting";
 
-startErrorReporting();
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <Analytics />
-    <AppErrorBoundary>
-      <App />
-    </AppErrorBoundary>
-    {import.meta.env.PROD && <AppUpdateNotice commit={import.meta.env.VITE_APP_COMMIT} />}
-  </React.StrictMode>,
-);
+// The page draws an outline or the saved picture of the workspace before this runs (client/build/boot-snapshot.mjs).
+// The app's code takes a second or more to start on a phone, and starting it here at once would keep the screen
+// blank until it finished, so it starts once that picture is on screen. A hidden page draws no frames: the timer
+// starts it then.
+let started = false;
+function start() {
+  if (started) return;
+  started = true;
+  void import("./start");
+}
+requestAnimationFrame(() => setTimeout(start, 0));
+setTimeout(start, 100);

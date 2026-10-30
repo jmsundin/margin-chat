@@ -42,6 +42,8 @@ const RECENT_DOCUMENT_COUNT = 12;
 /** Families downloading at once while recent documents stream in. */
 const STREAM_WIDTH = 3;
 const MANUAL_SYNC_MIN_MS = 800;
+/** How long keys typed together wait to be saved on this device as one. */
+const LOCAL_SAVE_DELAY_MS = 400;
 
 export interface VaultFetchStatus {
   label: string;
@@ -66,7 +68,10 @@ export function useMarkdownVault(args: {
   const [matchesCloud, setMatchesCloud] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
-  const [conflicts, setConflicts] = useState<VaultConflict[]>([]);
+  const [conflicts, setVaultConflicts] = useState<VaultConflict[]>([]);
+  // Every save reports the conflicts again; the same ones keep their list, so the workspace doesn't draw itself again.
+  const setConflicts = (next: VaultConflict[]) => setVaultConflicts((current) =>
+    current.length === next.length && current.every((conflict, index) => conflict === next[index]) ? current : next);
   const [saving, setSaving] = useState(false);
   const [localSaveError, setLocalSaveError] = useState<string | null>(null);
   const [localDirectoryStatus, setDirectoryStatus] = useState<LocalDirectoryStatus>({
@@ -725,15 +730,32 @@ export function useMarkdownVault(args: {
     if (!pendingFocus.current) saveLastFocusedDocument(storageUserId, args.state.activeConversationId);
   }, [args.state.activeConversationId, ready, storageUserId]);
 
-  useEffect(() => {
-    if (!ready || args.state === displayedState.current) return;
-    setMatchesCloud(false);
+  // Typing changes the state on every key. Each save writes out the whole workspace, so the keys typed within
+  // a moment share one save instead of each waiting behind its own. Putting the app away saves at once.
+  const localSaveTimer = useRef<number | undefined>(undefined);
+  function saveSoon() {
+    if (localSaveTimer.current !== undefined) return;
+    if (mounted.current) setSaving(true);
+    localSaveTimer.current = window.setTimeout(saveNow, LOCAL_SAVE_DELAY_MS);
+  }
+  function saveNow() {
+    window.clearTimeout(localSaveTimer.current);
+    localSaveTimer.current = undefined;
     // Queue the local write without a network dependency. Remote uploads are separately debounced.
     void (async () => {
       if (mounted.current) setSaving(true);
       try { await saveAppState(); } catch (error) { report(error); }
-      finally { if (mounted.current) setSaving(false); }
+      finally { if (mounted.current && localSaveTimer.current === undefined) setSaving(false); }
     })();
+  }
+  const saveNowRef = useRef(saveNow);
+  saveNowRef.current = saveNow;
+  useEffect(() => () => { if (localSaveTimer.current !== undefined) saveNowRef.current(); }, []);
+
+  useEffect(() => {
+    if (!ready || args.state === displayedState.current) return;
+    setMatchesCloud(false);
+    saveSoon();
     const timer = window.setTimeout(scheduleAutomaticRefresh, 900);
     return () => window.clearTimeout(timer);
   }, [args.state, ready]);
@@ -741,10 +763,10 @@ export function useMarkdownVault(args: {
   useEffect(() => {
     if (!ready) return;
     const refresh = () => {
-      if (document.visibilityState === "hidden") return;
+      if (document.visibilityState === "hidden") { if (localSaveTimer.current !== undefined) saveNow(); return; }
       scheduleAutomaticRefresh();
     };
-    const flush = () => { void saveAppState().catch(report); };
+    const flush = () => saveNow();
     const beforeUnload = (event: BeforeUnloadEvent) => {
       if (localInFlight.current || stateRef.current !== displayedState.current) { event.preventDefault(); event.returnValue = ""; }
     };

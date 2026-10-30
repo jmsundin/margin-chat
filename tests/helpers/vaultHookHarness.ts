@@ -74,7 +74,9 @@ function directory(name: string, onWrite?: (file: string) => void): any {
     },
   };
 }
-const opfs = directory("root");
+// Saves on this device, counted by the journal each one appends to.
+let journalWrites = 0;
+const opfs = directory("root", (file) => { if (file === "vault-journal.json") journalWrites++; });
 const connectedFolder = directory("Connected preview folder");
 // Browsers forget folder access between visits until the user allows it again.
 let folderPermission: PermissionState = "granted";
@@ -136,12 +138,13 @@ const workingSetScenario = process.argv.includes("--working-set");
 const folderDeletionScenario = process.argv.includes("--folder-mass-delete");
 const onlyCopyScenario = process.argv.includes("--only-copy");
 const desktopGateScenario = process.argv.includes("--desktop-gate");
+const typingBatchScenario = process.argv.includes("--typing-batch");
 let projectionPending = projectionScenario;
 let commitRequests = 0;
 function vaultResponse(result: any) {
   return Response.json(projectionPending ? { ...result, projection: { status: "pending", revision: result.manifest?.revision ?? result.revision } } : result);
 }
-if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario && !folderDeletionScenario && !onlyCopyScenario && !desktopGateScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
+if (!emptySettingsScenario && !historyScenario && !focusScenario && !partialScenario && !workingSetScenario && !folderDeletionScenario && !onlyCopyScenario && !desktopGateScenario && !typingBatchScenario) await remote.commit(user.id, [{ path: "Notes/phone.md", content: "# From phone\n\nCloud Markdown arrived.", baseRevision: null }]);
 const initialNetwork = deferred();
 const networkEntered = deferred();
 let networkReleased = false;
@@ -199,6 +202,36 @@ function type(content: string) {
       { id: "typed-message", role: "user", createdAt: "2026-09-13T00:00:00.000Z", content },
     ] },
   } }));
+}
+async function checkTypingBatch() {
+  networkReleased = true;
+  initialNetwork.resolve();
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready && !current.vault.saving, "The vault did not open.");
+  const savedText = async () => Object.values((await local.read())?.files ?? {}).map((file: any) => file.content).join("\n");
+  const before = journalWrites;
+  const words = "Keys typed one after another";
+  for (let length = 10; length <= words.length; length += 3) {
+    await act(async () => { type(words.slice(0, length)); await new Promise((done) => setTimeout(done, 25)); });
+  }
+  await act(async () => { type(words); });
+  await until(async () => !current.vault.saving && (await savedText()).includes(words), "The typed words were not saved.");
+  const saves = journalWrites - before;
+  assert(saves >= 1 && saves <= 2, `Keys typed within a moment were saved ${saves} times instead of together.`);
+
+  // Putting the app away saves what was just typed at once, without waiting for the moment to pass.
+  await act(async () => { type("Put away mid-sentence"); });
+  Object.defineProperty(browser.document, "visibilityState", { configurable: true, value: "hidden" });
+  await act(async () => { browser.document.dispatchEvent(new browser.Event("visibilitychange")); });
+  await until(async () => (await savedText()).includes("Put away mid-sentence"), "Hiding the app did not save the last words at once.", 250);
+  Object.defineProperty(browser.document, "visibilityState", { configurable: true, value: "visible" });
+
+  // Closing the workspace saves the last words too.
+  await act(async () => { type("Typed just before closing"); });
+  await act(async () => { root.unmount(); });
+  await until(async () => (await savedText()).includes("Typed just before closing"), "Closing the workspace lost the last words.", 250);
+  root = createRoot(container as unknown as Element);
+  console.log(JSON.stringify({ checks: ["keys typed together share one save", "hiding the app saves at once", "closing the workspace saves at once"] }));
 }
 async function checkProjectionPending() {
   const { pendingVaultChanges } = await import("../../client/src/lib/vaultSync");
@@ -1098,7 +1131,8 @@ async function checkDesktopGate() {
   console.log(JSON.stringify({ checks }));
 }
 try {
-  if (desktopGateScenario) await checkDesktopGate();
+  if (typingBatchScenario) await checkTypingBatch();
+  else if (desktopGateScenario) await checkDesktopGate();
   else if (onlyCopyScenario) await checkOnlyCopy();
   else if (folderDeletionScenario) await checkFolderMassDeletion();
   else if (partialScenario) await checkPartialLoad();
