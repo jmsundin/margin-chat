@@ -433,6 +433,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     listUnneighbouredTopicDocuments: (args) => withClient((client) => topics.listUnneighbouredTopicDocuments(client, args)),
     refreshTopicNeighbours: (args) => withClient((client) => topics.refreshTopicNeighbours(client, args)),
     readTopicNeighbours: (args) => withClient((client) => topics.readTopicNeighbours(client, args)),
+    readLandscape: (args) => withClient((client) => topics.readLandscape(client, args)),
+    writeLandscape: (args) => withClient((client) => topics.writeLandscape(client, args)),
     writeTopicPlacement: (args) => withClient((client) => topics.writeTopicPlacement(client, args)),
     listStalePassageSources: (args) => withClient((client) => passages.listStalePassageSources(client, args)),
     listStaleFilePassageSources: (args) => withClient((client) => passages.listStaleFilePassageSources(client, args)),

@@ -7,6 +7,7 @@ import { writeState } from "../server/db/repository.mjs";
 import { normalizeAppState } from "../server/db/validation.mjs";
 import * as topics from "../server/db/topicRepository.mjs";
 import { createTopicEmbeddingService, quantizeEmbedding, TOPIC_EMBEDDING_DIMENSIONS } from "../server/documents/topics.mjs";
+import { createLandscapeService } from "../server/documents/landscape.mjs";
 
 const at = "2026-10-01T10:00:00.000Z";
 const databases: PGlite[] = [];
@@ -30,6 +31,8 @@ async function setup() {
     listUnneighbouredTopicDocuments: (args: any) => topics.listUnneighbouredTopicDocuments(client, args),
     refreshTopicNeighbours: (args: any) => topics.refreshTopicNeighbours(client, args),
     readTopicNeighbours: (args: any) => topics.readTopicNeighbours(client, args),
+    readLandscape: (args: any) => topics.readLandscape(client, args),
+    writeLandscape: (args: any) => topics.writeLandscape(client, args),
   };
   return { client, database };
 }
@@ -175,6 +178,30 @@ describe("topic embeddings", () => {
     const result = await service.sync({ userId: "u1", context, since: null });
     expect(result.neighbours.map((entry: any) => entry.id).sort()).toEqual(["angular", "viewchild"]);
     expect(result.pending).toBe(0);
+  });
+
+  test("the landscape is laid out from stored neighbours, stored, and read back", async () => {
+    const { client, database } = await setup();
+    const value = state();
+    for (let index = 0; index < 4; index++) {
+      const note = createStandaloneNoteConversation({ id: `react-${index}`, noteId: `react-${index}-body`, createdAt: at });
+      note.title = `React ${index}`;
+      note.notes![0].content = `React hooks note ${index}`;
+      value.conversations[note.id] = note;
+    }
+    await writeState(client, "u1", normalizeAppState(value));
+    const direction = (text: string) => Array.from({ length: TOPIC_EMBEDDING_DIMENSIONS }, (_, index) =>
+      (text.startsWith("React") ? Math.cos(index) : Math.sin(index)) + (text.length % 7) * 0.01 * Math.sin(index * 3));
+    const service = createTopicEmbeddingService({ database, env: { OPENAI_API_KEY: "test" }, embed: async ({ inputs }: any) => inputs.map(direction) });
+    await service.sync({ userId: "u1", context: { allowHosted: true, apiKeys: {}, usageMeter: null }, since: null });
+    const landscape = createLandscapeService({ database });
+    expect((await landscape.read({ userId: "u1" })).stale).toBe(true);
+    const laid = await landscape.relayout({ userId: "u1" });
+    expect(laid.positions.map((entry: any) => entry.id).sort()).toEqual(["angular", "react-0", "react-1", "react-2", "react-3", "viewchild"]);
+    expect(laid.computedAt).not.toBeNull();
+    expect(laid.stale).toBe(false);
+    const stored = await topics.readLandscape(client, { userId: "u1" });
+    expect(stored.positions).toEqual([...laid.positions].sort((a: any, b: any) => (a.id < b.id ? -1 : 1)));
   });
 
   test("quantizing keeps the direction of a vector", () => {

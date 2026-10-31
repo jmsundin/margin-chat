@@ -5,6 +5,7 @@ export const GRAPH_VIEW_MODES = [
   { id: "canvas", label: "Canvas", description: "Place documents, compare passages, and edit in place." },
   { id: "focus", label: "Focus", description: "Explore the selected document and its immediate connections." },
   { id: "clusters", label: "Clusters", description: "See documents gather around their most connected hubs, labeled by topic." },
+  { id: "landscape", label: "Landscape", description: "Every document on one plane, close in meaning sits close together; zoom in to read." },
   { id: "lineage", label: "Lineage", description: "Follow branch ancestry from parent to child." },
   { id: "network", label: "Network", description: "Find hubs and bridges among explicit relationships." },
   { id: "evidence", label: "Evidence", description: "Organize claims and exact passages by their evidence roles." },

@@ -434,6 +434,36 @@ export async function requestTopicEmbeddings(args: { since: string | null; expec
   return payload;
 }
 
+export interface LandscapeResponse {
+  /** A position in map pixels and a region (-1 for none) per document with neighbours. */
+  positions: Array<{ id: string; x: number; y: number; region: number }>;
+  regions: number;
+  computedAt: string | null;
+  /** Enough changed since the layout that a fresh one is worth asking for. */
+  stale: boolean;
+  /** Documents placed beside their neighbours since the last layout. */
+  unplaced: number;
+  /** Too many documents for the server to lay out in one request. */
+  tooLarge?: boolean;
+}
+
+/** The vault's landscape; `relayout` asks the server to lay it out again first. */
+export async function requestLandscape(args: { relayout?: boolean; expectedUserId?: string; signal?: AbortSignal }): Promise<LandscapeResponse> {
+  const response = await apiFetch("/api/vault/landscape", {
+    body: JSON.stringify({ relayout: !!args.relayout }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as LandscapeResponse | ErrorPayload | null;
+  ensureOk(response, payload, "Loading the landscape failed.");
+  if (!payload || typeof payload !== "object" || !("positions" in payload) || !Array.isArray(payload.positions)) {
+    throw new Error("Backend returned an invalid landscape.");
+  }
+  return payload;
+}
+
 export interface VaultPassageIndexStatus {
   /** The server can index this vault. */
   available: boolean;

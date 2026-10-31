@@ -50,6 +50,7 @@ export const API_ROUTES = Object.freeze([
   { id: "vaultRebuild", methods: ["POST"], path: "/api/vault/rebuild" },
   { id: "vaultTopics", methods: ["POST"], path: "/api/vault/topics" },
   { id: "vaultTopicPlacement", methods: ["PUT"], path: "/api/vault/topics/placement" },
+  { id: "vaultLandscape", methods: ["POST"], path: "/api/vault/landscape" },
   { id: "vaultPassageStatus", methods: ["GET"], path: "/api/vault/passages" },
   { id: "vaultPassageSync", methods: ["POST"], path: "/api/vault/passages" },
   { id: "vaultPassageSettings", methods: ["PUT"], path: "/api/vault/passages/settings" },

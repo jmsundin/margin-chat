@@ -10,6 +10,7 @@ import { createNdjsonResponse, sendStreamingJson } from "../http/streamingJson.m
 import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createTopicEmbeddingService } from "../documents/topics.mjs";
+import { createLandscapeService } from "../documents/landscape.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
 import { MAX_VAULT_FILE_BYTES, vaultQuotaFor } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
@@ -141,6 +142,7 @@ export function createApiHandler({
   const explainCode = repoExplainService ?? createRepoExplainService({ executeChatReply });
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
   const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
+  const landscape = createLandscapeService({ database });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
@@ -930,6 +932,16 @@ export function createApiHandler({
           }
           const body = await readJsonBody(request, 4 * 1024);
           sendJson(response, 200, await topicEmbeddings.place({ userId, id: body?.id, anchorId: body?.anchorId ?? null }), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (route?.id === "vaultLandscape") {
+          if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+              !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+            throw new HttpError(403, "Open the landscape from Margin Chat.");
+          }
+          const body = await readJsonBody(request, 1024);
+          const result = body?.relayout === true ? await landscape.relayout({ userId }) : await landscape.read({ userId });
+          await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultTopics") {

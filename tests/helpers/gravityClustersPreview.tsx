@@ -6,6 +6,7 @@ import type { Conversation } from "../../client/src/types";
 import "../../client/src/styles.css";
 import "../../client/src/components/KnowledgeGraphWorkspace.css";
 import { buildSyntheticVault } from "./syntheticVault";
+import { layoutLandscape } from "../../server/documents/landscape.mjs";
 
 /** Synthetic fixture only: linked notes around a few hubs, with a fake Luna. */
 const createdAt = "2026-10-08T12:00:00.000Z";
@@ -54,7 +55,40 @@ if (syntheticCount > 0) {
 }
 const firstId = Object.keys(conversations)[0];
 
+// Stand-in meaning neighbours: linked documents are close, documents two links away less so,
+// unlinked ones near the documents created beside them.
+function previewNeighbours() {
+  const ids = Object.keys(conversations);
+  const linked = new Map(ids.map((id) => [id, new Set<string>()]));
+  for (const id of ids) for (const target of conversations[id].linkedConversationIds ?? []) {
+    if (!linked.has(target)) continue;
+    linked.get(id)!.add(target); linked.get(target)!.add(id);
+  }
+  const lists = new Map<string, Array<{ id: string; similarity: number }>>();
+  ids.forEach((id, index) => {
+    const near = new Map<string, number>();
+    for (const one of linked.get(id)!) near.set(one, 0.8);
+    for (const one of linked.get(id)!) for (const two of linked.get(one)!) if (two !== id && !near.has(two)) near.set(two, 0.5);
+    if (!near.size) for (const step of [-2, -1, 1, 2]) { const other = ids[index + step]; if (other) near.set(other, 0.4); }
+    lists.set(id, [...near].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([other, similarity]) => ({ id: other, similarity })));
+  });
+  return lists;
+}
+let previewLandscape: Array<{ id: string; x: number; y: number; region: number }> | null = null;
+
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  if (String(input).endsWith("/api/vault/topics")) {
+    return Response.json({ model: "preview", dimensions: 512, embeddings: [], cursor: "2026-10-31T00:00:00.000Z", pending: 0, placements: [],
+      neighbours: [...previewNeighbours()].map(([id, neighbours]) => ({ id, neighbours })) });
+  }
+  if (String(input).endsWith("/api/vault/landscape")) {
+    if (!previewLandscape) {
+      const { positions } = layoutLandscape({ neighbours: previewNeighbours() });
+      previewLandscape = [...positions].map(([id, at]) => ({ id, ...at }));
+    }
+    const regions = new Set(previewLandscape.map((entry) => entry.region)).size;
+    return Response.json({ positions: previewLandscape, regions, computedAt: "2026-10-31T00:00:00.000Z", stale: false, unplaced: 0 });
+  }
   if (String(input).endsWith("/api/chat/title")) {
     const prompt = JSON.parse(String(init?.body)).prompt as string;
     const match = topics.find(([hubTitle]) => prompt.includes(hubTitle));
