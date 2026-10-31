@@ -60,6 +60,7 @@ import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, clusterHues, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getMapFamilyStyles, type MapFamilyStyle } from "../lib/graphFamilies";
+import { EMPTY_MEANING_RING, focusMeaningRing } from "../lib/focusMeaningRing";
 import MapLensBar from "./MapLensBar";
 import CanvasGroupBoxes from "./CanvasGroupBoxes";
 import { canvasBoxAt, canvasGroupDropChanges, layoutCanvasGroupBoxes, type CanvasGroupBox } from "../lib/canvasGroupBoxes";
@@ -1365,7 +1366,9 @@ export default function ConversationGraphView({
       linkedConversationIds: showLinks ? conversation.linkedConversationIds : [],
       relations: showLinks ? conversation.relations : undefined,
     }])), [conversations, showBranches, showLinks]);
-  const scopedIds = useMemo(() => {
+  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && (isClustersMode || scope.kind === "focus") });
+  const [showMeaningRing, setShowMeaningRing] = useState(true);
+  const linkScopedIds = useMemo(() => {
     const ids = scope.kind === "focus"
       ? getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections, scope.conversationId, scope.depth)
       : getGraphScopeConversationIds({ scope, conversations, groups, threads: categorizedThreads, concepts });
@@ -1374,6 +1377,13 @@ export default function ConversationGraphView({
     }
     return ids;
   }, [scope, conversations, groups, categorizedThreads, concepts, showRelated, relatedItems, activeConversationId, allDocumentConnections]);
+  // Focus draws a last ring of documents close in meaning but not linked: what you might have forgotten to connect.
+  const meaningRing = useMemo(() => scope.kind === "focus" && showMeaningRing
+    ? focusMeaningRing(scope.conversationId, topicEmbeddings.neighbours.get(scope.conversationId), linkScopedIds, conversations)
+    : EMPTY_MEANING_RING, [scope, showMeaningRing, topicEmbeddings.neighbours, topicEmbeddings.revision, linkScopedIds, conversations]);
+  const scopedIds = useMemo(() => meaningRing.length ? new Set([...linkScopedIds, ...meaningRing.map((item) => item.id)]) : linkScopedIds,
+    [linkScopedIds, meaningRing]);
+  const meaningRingIds = useMemo(() => meaningRing.map((item) => item.id), [meaningRing]);
   const canExpandNeighborhood = useMemo(() => scope.kind === "focus" && getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections,
     scope.conversationId, scope.depth + 1).size > scopedIds.size, [scope, conversations, allDocumentConnections, scopedIds]);
   const scopedConversations = useMemo(() => Object.fromEntries(Object.entries(conversations).filter(([id]) => scopedIds.has(id))), [conversations, scopedIds]);
@@ -1458,7 +1468,6 @@ export default function ConversationGraphView({
     networkCache.current.layout = { ...networkCache.current.layout, nodes };
     return { ...networkCache.current.layout, nodes };
   }, [isNetworkMode, unfocusedScene.nodes, viewportSize, documentConnections, navigation.state.networkIteration, navigation.state.networkPins]);
-  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && isClustersMode });
   const groupBySubject = !!jev?.enabled && topicEmbeddings.vectors.size > 0;
   // Clusters by meaning before naming, so the AI can name them all in one pass.
   const subjectCache = useRef<{ key: string; subjects: SubjectCluster[] } | null>(null);
@@ -1561,8 +1570,8 @@ export default function ConversationGraphView({
   const documentLayout = useMemo(() => forceLayout ? { ...forceLayout, arranged: true, centerNodeId: null }
     : documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 },
-    { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }) : null,
-  [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId]);
+    { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }) : null,
+  [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId, meaningRingIds]);
   const documentFootprint = useMemo(() => getDocumentNodeFootprint(viewport.scale), [viewport.scale]);
   // Canvas shows only the groups you made, each as a box that owns its space; no category names are guessed for it.
   const showCanvasGroupBoxes = isCanvasMode && !panelView && !documentsOnly && canvasGroupFramesOn && Object.keys(groups).length > 0;
@@ -1961,6 +1970,17 @@ export default function ConversationGraphView({
       return [{ id: item.id, ...geometry }];
     });
   }, [showRelated, relatedStatus, activeConversationId, relatedItems, placementByConversationId, hiddenConversationIds, documentsOnly, documentLayoutMode, isLineageMode, lineBounds]);
+  const meaningEdges = useMemo(() => {
+    if (!focusedNodeId || !meaningRing.length) return [];
+    const originFound = placementByConversationId.get(focusedNodeId);
+    if (!originFound || hiddenConversationIds.has(focusedNodeId)) return [];
+    const origin = lineBounds(originFound);
+    return meaningRing.flatMap((item) => {
+      const targetFound = placementByConversationId.get(item.id);
+      if (!targetFound || hiddenConversationIds.has(item.id)) return [];
+      return [{ ...item, ...documentConnectionGeometry(origin, lineBounds(targetFound), documentLayoutMode) }];
+    });
+  }, [focusedNodeId, meaningRing, placementByConversationId, hiddenConversationIds, lineBounds, documentLayoutMode]);
   const conversationGroupByConversationId = useMemo(() => {
     const groupByConversationId = new Map<string, ConversationGroup>();
 
@@ -2254,7 +2274,7 @@ export default function ConversationGraphView({
     }
     if (forceLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
-      applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }).viewport);
+      applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }).viewport);
       fitAsOverviewRef.current = false;
       return;
     }
@@ -3889,7 +3909,9 @@ export default function ConversationGraphView({
         onDeleteSaved={(id) => setSavedLenses(savedLenses.filter((item) => item.id !== id))} /> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
-          <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
+          <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away{meaningRing.length ? ` · ${meaningRing.length} close in meaning` : ""}</span></div>
+        {topicEmbeddings.neighbours.has(scope.conversationId) ? <button type="button" aria-pressed={showMeaningRing} onClick={() => setShowMeaningRing(!showMeaningRing)}
+          title="An outer ring of documents close in meaning that are not linked">{showMeaningRing ? "Hide similar in meaning" : "Show similar in meaning"}</button> : null}
         <button type="button" disabled={!canExpandNeighborhood} onClick={() => focusConnections(scope.conversationId, scope.depth + 1, documentLayoutMode)}>Show more connections</button>
         <button type="button" onClick={showDocuments}>All documents</button>
       </div> : null}
@@ -4120,6 +4142,8 @@ export default function ConversationGraphView({
                   <text x={geometry.labelX} y={geometry.labelY - 8}>{edge.count} branch{edge.count === 1 ? "" : "es"}</text>
                 </g>;
               })}
+              {meaningEdges.map((edge) => <g key={`meaning-${edge.id}`} className="graph-map-meaning-edge" data-lens-dimmed={lensDimmed(edge.id) || undefined}>
+                <path d={edge.path ?? buildConnectorPath(edge)} /><title>Close in meaning, not linked: {conversations[edge.id].title} ({Math.round(edge.similarity * 100)}% similar)</title></g>)}
               {relatedEdges.map((edge) => <g key={`related-${edge.id}`} className="graph-map-related-edge"><path d={edge.path ?? buildConnectorPath(edge)} /><title>Possibly related: {conversations[edge.id].title}</title></g>)}
               {(showBranches ? renderedEdges : []).map((edge) => (
                 <g key={`${edge.parentConversationId}-${edge.childConversationId}`} data-lens-dimmed={lensDimmed(edge.parentConversationId) || lensDimmed(edge.childConversationId) || undefined}>
