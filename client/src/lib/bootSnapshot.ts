@@ -53,7 +53,7 @@ export function saveBootSnapshot(userId: string) {
     localStorage.removeItem(keyFor(userId));
     if (snapshot) localStorage.setItem(keyFor(userId), JSON.stringify({ ...snapshot, savedAt: Date.now() }));
   } catch {
-    // Full storage: the page shows an outline of the workspace instead.
+    // Full storage: the page shows the splash screen instead.
   }
 }
 
