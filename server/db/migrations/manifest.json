@@ -110,6 +110,11 @@
       "id": "0022_chat_runs",
       "file": "0022_chat_runs.sql",
       "transaction": true
+    },
+    {
+      "id": "0023_topic_neighbours",
+      "file": "0023_topic_neighbours.sql",
+      "transaction": true
     }
   ]
 }

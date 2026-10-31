@@ -9,6 +9,8 @@ export const TOPIC_EMBEDDING_MODEL = `${DOCUMENT_EMBEDDING_MODEL}@${TOPIC_EMBEDD
 const TOPIC_TEXT_CHARACTERS = 2_000;
 /** Documents embedded per request; the map asks again while more are waiting. */
 const DOCUMENTS_PER_REQUEST = 256;
+/** Documents whose nearest neighbours are found per request, for documents embedded before neighbours were kept. */
+const NEIGHBOUR_CATCH_UP_PER_REQUEST = 256;
 
 /** Signed bytes scaled to the largest component; cosine similarity survives the rounding. */
 export function quantizeEmbedding(values) {
@@ -25,7 +27,7 @@ export function createTopicEmbeddingService({ database, env = process.env, embed
    * OpenAI key the stored embeddings are still returned.
    */
   async function sync({ userId, context, since }) {
-    if (!database?.listStaleTopicSources) return { model: TOPIC_EMBEDDING_MODEL, dimensions: TOPIC_EMBEDDING_DIMENSIONS, embeddings: [], cursor: null, pending: 0, placements: [] };
+    if (!database?.listStaleTopicSources) return { model: TOPIC_EMBEDDING_MODEL, dimensions: TOPIC_EMBEDDING_DIMENSIONS, embeddings: [], neighbours: [], cursor: null, pending: 0, placements: [] };
     const stale = await database.listStaleTopicSources({ userId, model: TOPIC_EMBEDDING_MODEL, limit: DOCUMENTS_PER_REQUEST, maxCharacters: TOPIC_TEXT_CHARACTERS });
     const apiKey = getEmbeddingApiKey(context, env);
     let pending = stale.remaining;
@@ -46,11 +48,21 @@ export function createTopicEmbeddingService({ database, env = process.env, embed
         id: source.id, contentHash: source.contentHash, embedding: quantizeEmbedding(vectors[index]),
       })) });
       pending -= stale.sources.length;
+      await database.refreshTopicNeighbours?.({ userId, ids: stale.sources.map((source) => source.id) });
     }
     const stored = await database.readTopicEmbeddings({ userId, model: TOPIC_EMBEDDING_MODEL, since });
+    // Documents embedded before neighbours were kept get theirs a batch at a time.
+    let neighbours = { neighbours: [], cursor: null };
+    if (database.readTopicNeighbours) {
+      const unneighboured = await database.listUnneighbouredTopicDocuments({ userId, limit: NEIGHBOUR_CATCH_UP_PER_REQUEST });
+      if (unneighboured.ids.length) await database.refreshTopicNeighbours({ userId, ids: unneighboured.ids });
+      pending += Math.max(0, unneighboured.remaining - unneighboured.ids.length);
+      neighbours = await database.readTopicNeighbours({ userId, since });
+    }
     const placements = database.readTopicPlacements ? await database.readTopicPlacements({ userId }) : [];
-    return { model: TOPIC_EMBEDDING_MODEL, dimensions: TOPIC_EMBEDDING_DIMENSIONS, embeddings: stored.embeddings, cursor: stored.cursor,
-      pending: Math.max(0, pending), placements, ...(unavailable ? { unavailable } : {}) };
+    const cursor = [stored.cursor, neighbours.cursor].filter(Boolean).sort().at(-1) ?? null;
+    return { model: TOPIC_EMBEDDING_MODEL, dimensions: TOPIC_EMBEDDING_DIMENSIONS, embeddings: stored.embeddings, neighbours: neighbours.neighbours,
+      cursor, pending: Math.max(0, pending), placements, ...(unavailable ? { unavailable } : {}) };
   }
 
   /** Remembers that the user moved `id` to the cluster of `anchorId`; null returns it to automatic placement. */

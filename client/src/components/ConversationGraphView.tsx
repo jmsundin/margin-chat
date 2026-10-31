@@ -139,6 +139,12 @@ const LANDMARK_CARD_WIDTH = 64;
 const CANVAS_TITLE_MIN_WIDTH = 56;
 const MINIMAP_STORAGE_KEY = "margin-map-minimap";
 const LINES_STORAGE_KEY = "margin-map-lines";
+/**
+ * While the camera is moved by hand, React learns its place at most this often
+ * and as soon as it rests; the stage itself moves every pointer tick.
+ * Re-rendering every card per tick dropped frames on big maps.
+ */
+const CAMERA_COMMIT_MS = 64;
 /** How long the camera must rest before a long move goes into Back. */
 const CAMERA_SETTLE_MS = 700;
 
@@ -330,6 +336,16 @@ function readDockSize(): number | null {
 }
 
 /** The documents a map search found, best first, each once. */
+function stageTransform(viewport: GraphViewport) {
+  return `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
+}
+function gridPosition(viewport: GraphViewport) {
+  return `${viewport.x}px ${viewport.y}px`;
+}
+function gridSize(viewport: GraphViewport) {
+  return `${GRAPH_GRID_SIZE * viewport.scale}px ${GRAPH_GRID_SIZE * viewport.scale}px`;
+}
+
 function matchedConversationIds(items: Array<{ evidence: { conversationId: string } }>) {
   return [...new Set(items.map((item) => item.evidence.conversationId))];
 }
@@ -635,20 +651,21 @@ function familyStyle(styles: Map<string, MapFamilyStyle>, clusterHueById: Map<st
   return { ...style, hue: clusterHueById.get(id)! };
 }
 
-function GraphNode({
+function GraphNodeBase({
   zoomScale,
   screenFootprint,
   isConnectionCenter = false,
   isPinned = false,
   isSpaced,
-  menuActions,
-  actions,
+  renderMenuActions,
+  renderActions,
   activeConversationId,
   categoryLabel,
   conversation,
   family,
   color,
   lensDimmed = false,
+  searchMatch = false,
   lineFocus = false,
   onHover,
   hoverIntent,
@@ -680,8 +697,9 @@ function GraphNode({
   zoomThroughProgress,
   dot,
 }: {
-  actions?: ReactNode;
-  menuActions?: ReactNode;
+  /** Extra buttons on the card's toolbar and in its ••• menu, drawn here so a card only redraws when its own props change. */
+  renderActions?: (conversation: Conversation) => ReactNode;
+  renderMenuActions?: (conversation: Conversation) => ReactNode;
   zoomScale: number;
   screenFootprint?: { width: number; height: number; titleFontSize?: number; titleLines?: number };
   isConnectionCenter?: boolean;
@@ -696,6 +714,8 @@ function GraphNode({
   color?: string | null;
   /** Outside the map's filters: drawn grey but kept for orientation, and skipped by Tab. */
   lensDimmed?: boolean;
+  /** Found by the map search: lit so the eye finds it among the rest. */
+  searchMatch?: boolean;
   /** Its lines are the ones drawn on a busy map. */
   lineFocus?: boolean;
   onHover?: (conversationId: string | null) => void;
@@ -711,7 +731,7 @@ function GraphNode({
   multiSelectionSize: number;
   onAddChild: (conversationId: string) => void;
   onAssignGroup: (conversationId: string, groupId: string | null) => void;
-  onCollapse: () => void;
+  onCollapse: (conversationId: string) => void;
   onDock: (conversationId: string) => void;
   onExpand: (conversationId: string) => void;
   onMakeMain: (conversationId: string) => void;
@@ -792,6 +812,7 @@ function GraphNode({
         isMultiSelected ? "is-multi-selected" : "",
         isNote ? "is-note" : "",
         lensDimmed ? "is-lens-dimmed" : "",
+        searchMatch ? "is-search-match" : "",
         lineFocus ? "is-line-focus" : "",
         `is-semantic-${semanticLevel}`,
         conversation.id === activeConversationId ? "is-current-main" : "",
@@ -876,11 +897,11 @@ function GraphNode({
         role="toolbar"
       >
         <GraphNodeAction icon="open" label={`Open ${conversation.title} in chat view`} onClick={() => onOpen(conversation.id)} primary />
-        {actions}
+        {renderActions?.(conversation)}
         <DismissibleDetails className="graph-node-more" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }} onClick={(event) => event.stopPropagation()}>
           <summary aria-label={`More actions for ${conversation.title}`} title="More actions">•••</summary>
           <div>
-        {menuActions}
+        {renderMenuActions?.(conversation)}
         {!isNote ? (
           <GraphNodeAction
             icon="add"
@@ -897,7 +918,7 @@ function GraphNode({
               : `Expand ${conversation.title}`
           }
           onClick={
-            isReader ? onCollapse : () => onExpand(conversation.id)
+            () => (isReader ? onCollapse(conversation.id) : onExpand(conversation.id))
           }
         />
         <GraphNodeAction
@@ -947,6 +968,52 @@ function GraphNode({
 }
 
 export interface MapDotStyle { diameter: number; bold: boolean; titleMax?: number }
+
+type GraphNodeProps = Parameters<typeof GraphNodeBase>[0];
+
+/** The per-card callbacks the map hands every card; see nodeHandlersRef. */
+type GraphNodeHandlers = {
+  addChild: (id: string) => void;
+  dock: (id: string) => void;
+  expand: (id: string) => void;
+  moveStart: (event: ReactPointerEvent<HTMLButtonElement>, id: string) => void;
+  bodyPress: (event: ReactPointerEvent<HTMLButtonElement>, id: string) => void;
+  linkStart: (event: ReactPointerEvent<HTMLButtonElement>, id: string) => void;
+  focus: (id: string) => void;
+  source: (id: string) => void;
+  select: (id: string) => void;
+  collapse: (id: string) => void;
+};
+
+/** Props the map rebuilds every render; equal when their fields are. */
+const GRAPH_NODE_VALUE_PROPS = new Set<keyof GraphNodeProps>(["dot", "family", "screenFootprint"]);
+
+function sameFields(a: Record<string, unknown> | undefined, b: Record<string, unknown> | undefined) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+/**
+ * A pan or a zoom step redraws the map, but a card whose own props are unchanged keeps
+ * its DOM. Dots are compared without their bounds, which the card does not draw.
+ */
+function areGraphNodePropsEqual(previous: GraphNodeProps, next: GraphNodeProps) {
+  const keys = Object.keys(next) as (keyof GraphNodeProps)[];
+  if (keys.length !== Object.keys(previous).length) return false;
+  for (const key of keys) {
+    if (key === "dot") {
+      const a = previous.dot, b = next.dot;
+      if (a !== b && !(a && b && a.diameter === b.diameter && a.bold === b.bold && a.titleMax === b.titleMax)) return false;
+    } else if (GRAPH_NODE_VALUE_PROPS.has(key)) {
+      if (!sameFields(previous[key] as Record<string, unknown> | undefined, next[key] as Record<string, unknown> | undefined)) return false;
+    } else if (previous[key] !== next[key]) return false;
+  }
+  return true;
+}
+
+const GraphNode = memo(GraphNodeBase, areGraphNodePropsEqual);
 
 function GraphGroupRegion({
   collapsed,
@@ -1057,7 +1124,17 @@ export default function ConversationGraphView({
     ready: !!jev?.ready && isVisible, conversations, groups });
   const territoryGroups = useMemo(() => Object.fromEntries(groupSemantics.orderedGroupIds
     .filter((id) => groups[id]).map((id) => [id, groups[id]])), [groups, groupSemantics.orderedGroupIds]);
-  const navigation = useGraphExplorationNavigation(workspaceKey);
+  const navigationHook = useGraphExplorationNavigation(workspaceKey);
+  // A camera moved by hand reaches React a little later (see setCamera); a
+  // step into history must not record where React thought the camera was.
+  const cameraCommitRef = useRef({ frame: 0, at: 0, pending: false, moved: false });
+  const flushCameraRef = useRef<() => void>(() => {});
+  const navigation = useMemo(() => ({
+    ...navigationHook,
+    navigate: (...args: Parameters<typeof navigationHook.navigate>) => { flushCameraRef.current(); navigationHook.navigate(...args); },
+    back: () => { flushCameraRef.current(); navigationHook.back(); },
+    forward: () => { flushCameraRef.current(); navigationHook.forward(); },
+  }), [navigationHook]);
   const { scope, selectedConversationId, detailLevel, dockedConversationId, viewport, source, query, expandedGroups, showRelated, focusedTerritoryId, focusedTerritoryScale } = navigation.state;
   const viewMode = getGraphViewMode(navigation.state);
   const isCanvasMode = navigation.state.viewMode === "canvas";
@@ -1106,6 +1183,19 @@ export default function ConversationGraphView({
     hoverTimerRef.current = window.setTimeout(() => setHoveredId(id), id ? 60 : 120);
   }, []);
   useEffect(() => () => window.clearTimeout(hoverTimerRef.current), []);
+  const nodeHandlersRef = useRef<GraphNodeHandlers>(null!);
+  const nodeHandlers = useMemo<GraphNodeHandlers>(() => ({
+    addChild: (id) => nodeHandlersRef.current.addChild(id),
+    dock: (id) => nodeHandlersRef.current.dock(id),
+    expand: (id) => nodeHandlersRef.current.expand(id),
+    moveStart: (event, id) => nodeHandlersRef.current.moveStart(event, id),
+    bodyPress: (event, id) => nodeHandlersRef.current.bodyPress(event, id),
+    linkStart: (event, id) => nodeHandlersRef.current.linkStart(event, id),
+    focus: (id) => nodeHandlersRef.current.focus(id),
+    source: (id) => nodeHandlersRef.current.source(id),
+    select: (id) => nodeHandlersRef.current.select(id),
+    collapse: (id) => nodeHandlersRef.current.collapse(id),
+  }), []);
   // The circle whose snippet card is open; see createMapHoverIntent for when it opens.
   const [snippetId, setSnippetId] = useState<string | null>(null);
   // On touch screens a tap opens the card instead of a resting pointer, and the card stays until the next tap.
@@ -1150,8 +1240,13 @@ export default function ConversationGraphView({
   const dockVertical = activeDockSide === "top" || activeDockSide === "bottom";
   const dockResizeRef = useRef<{ pointerId: number; client: number; size: number } | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const viewportStateRef = useRef<GraphViewport>(viewport);
-  viewportStateRef.current = viewport;
+  // The camera React knows. A viewport set from elsewhere (Back, a restored
+  // location) replaces the live one; one this component committed itself may
+  // already be behind the stage, which moved on since.
+  const committedViewportRef = useRef<GraphViewport>(viewport);
+  if (committedViewportRef.current !== viewport) { committedViewportRef.current = viewport; viewportStateRef.current = viewport; }
   const positionedInitialSceneRef = useRef(navigation.restored);
   const [initialSceneFitted, setInitialSceneFitted] = useState(navigation.restored);
   const revealedSelectionKeyRef = useRef<string | null>(navigation.restored && selectedConversationId ? `${selectedConversationId}:${detailLevel}` : null);
@@ -1308,7 +1403,17 @@ export default function ConversationGraphView({
     [lensIds, deferredLens, conversations, groups, connectionCounts, lensNeighborhood]);
   const coloring = useMemo(() => mapColoring(lensIds, colorBy, { conversations, groups, connectionCounts }), [lensIds, colorBy, conversations, groups, connectionCounts]);
   const colorOf = coloring?.colorOf ?? null;
-  const lensDimmed = useCallback((id: string) => !!lensMatches && !lensMatches.has(id), [lensMatches]);
+  // A search lights its matches on the map the way a lens does; both at once keep only what passes both.
+  const searchMatches = useMemo(() => {
+    if (!deferredQuery.trim()) return null;
+    return new Set(matchedConversationIds(searchGraphSources(conversations, deferredQuery)).filter((id) => scopedIds.has(id)));
+  }, [conversations, deferredQuery, scopedIds]);
+  const mapMatches = useMemo(() => {
+    if (lensMatches && searchMatches) return new Set([...lensMatches].filter((id) => searchMatches.has(id)));
+    return lensMatches ?? searchMatches;
+  }, [lensMatches, searchMatches]);
+  const lensDimmed = useCallback((id: string) => !!mapMatches && !mapMatches.has(id), [mapMatches]);
+  const isSearchMatch = useCallback((id: string) => !!searchMatches?.has(id), [searchMatches]);
   const territories = useMemo(() => buildMapTerritories(unfocusedScene, territoryGroups), [unfocusedScene, territoryGroups]);
   const focusedTerritory = territories.find((territory) => territory.id === focusedTerritoryId) ?? null;
   // Views with their own document layout (Clusters, Network, Lineage) never
@@ -1361,7 +1466,9 @@ export default function ConversationGraphView({
     if (!isClustersMode || !groupBySubject) return EMPTY_SUBJECTS;
     const ids = unfocusedScene.nodes.map((node) => node.conversationId);
     const key = JSON.stringify([[...ids].sort(), documentConnections, topicEmbeddings.revision]);
-    if (subjectCache.current?.key !== key) subjectCache.current = { key, subjects: groupSubjects(ids, documentConnections, (id) => topicEmbeddings.vectors.get(id)) };
+    if (subjectCache.current?.key !== key) {
+      subjectCache.current = { key, subjects: groupSubjects(ids, documentConnections, (id) => topicEmbeddings.vectors.get(id), (id) => topicEmbeddings.neighbours.get(id)) };
+    }
     return subjectCache.current.subjects;
   }, [isClustersMode, groupBySubject, unfocusedScene.nodes, documentConnections, topicEmbeddings.revision]);
   const subjectCategories = useSubjectCategories({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
@@ -1382,7 +1489,7 @@ export default function ConversationGraphView({
     if (clusterCache.current?.key !== key) {
       const fresh = layoutGravityClusters(unfocusedScene.nodes, canvas, documentConnections,
         { createdAt: (id) => { const time = Date.parse(conversations[id]?.createdAt ?? ""); return Number.isNaN(time) ? undefined : time; },
-          ...(groupBySubject ? { topicVector: (id: string) => topicEmbeddings.vectors.get(id),
+          ...(groupBySubject ? { topicVector: (id: string) => topicEmbeddings.vectors.get(id), neighboursOf: (id: string) => topicEmbeddings.neighbours.get(id),
             subjects: finishSubjectClusters(baseSubjects, { names: names ?? undefined, placements }) } : {}),
           ...(placements ? { placements } : {}) });
       // Only the whole map is remembered; a focused or filtered scope is laid out on its own.
@@ -1903,20 +2010,52 @@ export default function ConversationGraphView({
     : null;
   const dockPinned = Boolean(dockedConversationId) && navigation.pinnedDockId === dockedConversationId;
   const showMinimap = scene.nodes.length > 4 && !focusedLayout?.arranged && !browsingGroups && !documentsOnly;
+  // Styles follow the live camera, so a render in the middle of a pan never puts the stage back.
+  const liveViewport = viewportStateRef.current;
   const stageStyle = {
     height: `${scene.height}px`,
-    transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
+    transform: stageTransform(liveViewport),
     width: `${scene.width}px`,
   } as CSSProperties;
   const viewportStyle = {
-    backgroundPosition: `${viewport.x}px ${viewport.y}px`,
-    backgroundSize: `${GRAPH_GRID_SIZE * viewport.scale}px ${GRAPH_GRID_SIZE * viewport.scale}px`,
+    backgroundPosition: gridPosition(liveViewport),
+    backgroundSize: gridSize(liveViewport),
   } as CSSProperties;
 
-  const setCamera = useCallback((nextViewport: GraphViewport) => {
-    viewportStateRef.current = nextViewport;
-    setViewport({ viewport: nextViewport });
+  /** Tells React where the camera is now, if it does not know yet. */
+  const flushCamera = useCallback(() => {
+    const commit = cameraCommitRef.current;
+    window.cancelAnimationFrame(commit.frame);
+    commit.frame = 0; commit.moved = false;
+    if (!commit.pending) return;
+    commit.pending = false; commit.at = performance.now();
+    committedViewportRef.current = viewportStateRef.current;
+    setViewport({ viewport: viewportStateRef.current });
   }, [setViewport]);
+  flushCameraRef.current = flushCamera;
+  useEffect(() => () => window.cancelAnimationFrame(cameraCommitRef.current.frame), []);
+  /**
+   * Moves the camera. The stage moves at once, outside React. A move by hand
+   * (`deferred`) reaches React once a frame passes with no further move, or
+   * every CAMERA_COMMIT_MS while the hand keeps moving; any other move at once.
+   */
+  const setCamera = useCallback((nextViewport: GraphViewport, deferred = false) => {
+    viewportStateRef.current = nextViewport;
+    const stage = stageRef.current, element = viewportRef.current;
+    if (stage) stage.style.transform = stageTransform(nextViewport);
+    if (element) { element.style.backgroundPosition = gridPosition(nextViewport); element.style.backgroundSize = gridSize(nextViewport); }
+    const commit = cameraCommitRef.current;
+    commit.pending = true;
+    if (!deferred) { flushCamera(); return; }
+    commit.moved = true;
+    if (commit.frame) return;
+    const tick = () => {
+      commit.frame = 0;
+      if (commit.moved && performance.now() - commit.at < CAMERA_COMMIT_MS) { commit.moved = false; commit.frame = window.requestAnimationFrame(tick); return; }
+      flushCamera();
+    };
+    commit.frame = window.requestAnimationFrame(tick);
+  }, [flushCamera]);
   // Where the camera was when Back last had a place for it. Panning and zooming
   // by hand away from it, far enough, puts it into Back once the camera rests.
   const cameraAnchorRef = useRef<GraphViewport>(viewport);
@@ -1929,7 +2068,7 @@ export default function ConversationGraphView({
   }, [setCamera]);
   const moveCameraByHand = useCallback((nextViewport: GraphViewport) => {
     window.cancelAnimationFrame(flightRef.current);
-    setCamera(nextViewport);
+    setCamera(nextViewport, true);
     window.clearTimeout(cameraSettleRef.current);
     cameraSettleRef.current = window.setTimeout(() => {
       const element = viewportRef.current, anchor = cameraAnchorRef.current, current = viewportStateRef.current;
@@ -2599,7 +2738,7 @@ export default function ConversationGraphView({
     const direction = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[event.key];
     if (onCard && !direction && event.key !== "n" && event.key !== "N") return;
     if (direction) applyManualViewport({ ...current, x: current.x + direction[0], y: current.y + direction[1] });
-    else if ((event.key === "n" || event.key === "N") && lensMatches?.size) stepMatch(event.shiftKey ? -1 : 1);
+    else if ((event.key === "n" || event.key === "N") && mapMatches?.size) stepMatch(event.shiftKey ? -1 : 1);
     else if (event.key === "+" || event.key === "=") zoomByStep("in");
     else if (event.key === "-" || event.key === "_") zoomByStep("out");
     else if (event.key === "Home" || event.key === "0") { if (isCanvasMode) fitGraph(); else showAllGroups(); }
@@ -3430,8 +3569,8 @@ export default function ConversationGraphView({
     if (next) goToDocument(next);
   }
   function matchOrder() {
-    if (!lensMatches?.size) return [];
-    const items = scene.nodes.filter((node) => lensMatches.has(node.conversationId))
+    if (!mapMatches?.size) return [];
+    const items = scene.nodes.filter((node) => mapMatches.has(node.conversationId))
       .map((node) => ({ id: node.conversationId, x: node.x + node.width / 2, y: node.y + node.height / 2 }));
     return readingOrder(items, Math.max(80, typicalCardWidth * 0.75));
   }
@@ -3570,7 +3709,7 @@ export default function ConversationGraphView({
   // Circles keep their titles until they hide, so their signposts wait until then too.
   const landmarks = mapOverlaysShown && landmarkPool.length && typicalCardWidth * viewport.scale < (drawsDots ? CANVAS_TITLE_MIN_WIDTH : LANDMARK_CARD_WIDTH)
     ? placeLandmarks(landmarkPool, viewport, viewportSize) : [];
-  const matchPosition = lensOpen && selectedConversationId && lensMatches?.has(selectedConversationId)
+  const matchPosition = (lensOpen || searchMatches) && selectedConversationId && mapMatches?.has(selectedConversationId)
     ? matchOrder().findIndex((item) => item.id === selectedConversationId) + 1 || null : null;
 
   function openExplorer() {
@@ -3646,6 +3785,28 @@ export default function ConversationGraphView({
       <span>Every document, laid out by its connections. Use Layout at the bottom of the map to change the shape.</span>
       {selectedConversation ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selectedConversation.id, 1, documentLayoutMode); }}>Focus on {selectedConversation.title}</button> : null}
     </div> : null;
+
+  // Cards are memoized, so the handlers they receive stay the same between renders
+  // and reach the latest closure through this ref.
+  nodeHandlersRef.current = {
+    addChild: addChildConversation,
+    dock: dockConversation,
+    expand: expandConversation,
+    moveStart: startNodeMove,
+    bodyPress: pressNodeBody,
+    linkStart: startLink,
+    focus: (id) => changeScope({ kind: "focus", conversationId: id, depth: 1 }),
+    source: (id) => { const evidence = branchEvidence(conversations[id]); if (evidence) openEvidence(evidence); },
+    select: (id) => connectingConversationId && onConnectConversation ? onConnectConversation(connectingConversationId, id) : selectFromMap(id),
+    collapse: (id) => {
+      const detail = renderedNodeDetails.find((item) => item.placement.conversationId === id);
+      const canvas = viewportRef.current;
+      if (detail?.screenFootprint) {
+        if (canvas) applyManualViewport(centerNodeInCanvas(detail.placement,
+          { width: canvas.clientWidth, height: canvas.clientHeight }, viewport.scale * 200 / detail.screenFootprint.width));
+      } else setDetailLevel("preview");
+    },
+  };
 
   return (
     <section ref={sectionRef} className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
@@ -3828,12 +3989,12 @@ export default function ConversationGraphView({
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
           {hoverCardProps ? <MapHoverCard {...hoverCardProps} onOpen={snippetTapped ? () => openTappedCard(hoverCardProps.conversation.id) : undefined} /> : null}
-          {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={lensMatches} colorOf={colorOf} /> : null}
+          {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={mapMatches} colorOf={colorOf} /> : null}
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
             connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
             onOpenCluster={openCluster} onSelectDocument={selectFromMap}
-            onSelectCluster={selectCluster} selectedClusterId={inspectedCluster?.id ?? null} matched={lensMatches}
+            onSelectCluster={selectCluster} selectedClusterId={inspectedCluster?.id ?? null} matched={mapMatches}
             hoverIntent={isMultiSelectActive || connectingConversationId ? undefined : hoverIntent} cardId={snippetId}
             colorOf={colorOf} bundleBusyLinks={linesMode === "auto"} /> : null}
           {linkDrag && placementByConversationId.get(linkDrag.sourceId) ? (() => {
@@ -3852,6 +4013,7 @@ export default function ConversationGraphView({
               onClick={() => openCluster(circle)}>{clusterLabels.labels[circle.id]?.label ?? "Cluster"}</button></li>)}
           </ol></nav> : null}
           <div
+            ref={stageRef}
             className="conversation-graph-stage"
             data-group-layout={focusedLayout?.arranged ? "spaced" : undefined}
             data-document-layout={documentsOnly ? documentLayout?.arranged ? "spaced" : "authored" : undefined}
@@ -4000,14 +4162,15 @@ export default function ConversationGraphView({
                   isConnectionCenter={documentsOnly && documentLayout?.centerNodeId === placement.conversationId}
                   isPinned={isNetworkMode && Boolean(navigation.state.networkPins[placement.conversationId])}
                   isSpaced={documentsOnly || browsingGroups || focusedLayout?.arranged}
-                  actions={renderNodeActions?.(conversation)}
-                  menuActions={renderNodeMenuActions?.(conversation)}
+                  renderActions={renderNodeActions}
+                  renderMenuActions={renderNodeMenuActions}
                   activeConversationId={activeConversationId}
                   categoryLabel={isCanvasMode ? undefined : categoryLabels.get(getConversationRootId(conversations, conversation.id) ?? conversation.id)}
                   conversation={conversation}
                   family={familyStyle(familyStyles, cardHues, conversation.id)}
                   color={colorOf ? colorOf.get(conversation.id) ?? null : undefined}
                   lensDimmed={lensDimmed(conversation.id)}
+                  searchMatch={isSearchMatch(conversation.id)}
                   lineFocus={lineFocusNeighbors.has(conversation.id)}
                   onHover={hoverCard}
                   hoverIntent={dotNodes.has(conversation.id) && !isMultiSelectActive && !connectingConversationId ? hoverIntent : undefined}
@@ -4022,25 +4185,19 @@ export default function ConversationGraphView({
                   isSelectionMode={isMultiSelectActive}
                   key={conversation.id}
                   multiSelectionSize={multiSelectedConversationIds.size}
-                  onAddChild={addChildConversation}
+                  onAddChild={nodeHandlers.addChild}
                   onAssignGroup={onAssignGroup}
-                  onCollapse={() => {
-                    if (screenFootprint) {
-                      const canvas = viewportRef.current;
-                      if (canvas) applyManualViewport(centerNodeInCanvas(placement,
-                        { width: canvas.clientWidth, height: canvas.clientHeight }, viewport.scale * 200 / screenFootprint.width));
-                    } else setDetailLevel("preview");
-                  }}
-                  onDock={dockConversation}
-                  onExpand={expandConversation}
+                  onCollapse={nodeHandlers.collapse}
+                  onDock={nodeHandlers.dock}
+                  onExpand={nodeHandlers.expand}
                   onMakeMain={onActivateConversation}
-                  onFocus={(id) => changeScope({ kind: "focus", conversationId: id, depth: 1 })}
-                  onSource={(id) => { const evidence = branchEvidence(conversations[id]); if (evidence) openEvidence(evidence); }}
-                  onMoveStart={startNodeMove}
-                  onBodyPress={isCanvasMode ? pressNodeBody : undefined}
-                  onLinkStart={isCanvasMode && onConnectConversation && !isMultiSelectActive ? startLink : undefined}
+                  onFocus={nodeHandlers.focus}
+                  onSource={nodeHandlers.source}
+                  onMoveStart={nodeHandlers.moveStart}
+                  onBodyPress={isCanvasMode ? nodeHandlers.bodyPress : undefined}
+                  onLinkStart={isCanvasMode && onConnectConversation && !isMultiSelectActive ? nodeHandlers.linkStart : undefined}
                   onOpen={onOpenConversation}
-                  onSelect={(id) => connectingConversationId && onConnectConversation ? onConnectConversation(connectingConversationId, id) : selectFromMap(id)}
+                  onSelect={nodeHandlers.select}
                   placement={placement}
                   contentReady={visibleContentSet.has(contentKey) && readyContentKeys.has(contentKey)}
                   renderReader={renderExpandedConversation}
@@ -4103,7 +4260,7 @@ export default function ConversationGraphView({
               : detailLevel === "preview"
                 ? "Expand to read here · Dock to keep the graph interactive"
                 : "Scroll inside the chat · Minimize or dock when ready"}</span>
-            <span>{selectedConversation ? "Arrow keys go to the nearest document that way · Shift+arrows pan" : "Arrow keys pan"} · + / − zoom · Home shows all groups · Tab explores chats{lensMatches?.size ? " · N / Shift+N step through matches" : ""} · ⌘[ / ⌘] back and forward</span>
+            <span>{selectedConversation ? "Arrow keys go to the nearest document that way · Shift+arrows pan" : "Arrow keys pan"} · + / − zoom · Home shows all groups · Tab explores chats{mapMatches?.size ? " · N / Shift+N step through matches" : ""} · ⌘[ / ⌘] back and forward</span>
           </MapHelp>
 
           <div

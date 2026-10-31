@@ -27,6 +27,9 @@ async function setup() {
     readTopicEmbeddings: (args: any) => topics.readTopicEmbeddings(client, args),
     readTopicPlacements: (args: any) => topics.readTopicPlacements(client, args),
     writeTopicPlacement: (args: any) => topics.writeTopicPlacement(client, args),
+    listUnneighbouredTopicDocuments: (args: any) => topics.listUnneighbouredTopicDocuments(client, args),
+    refreshTopicNeighbours: (args: any) => topics.refreshTopicNeighbours(client, args),
+    readTopicNeighbours: (args: any) => topics.readTopicNeighbours(client, args),
   };
   return { client, database };
 }
@@ -118,6 +121,60 @@ describe("topic embeddings", () => {
     await expect(service.place({ userId: "u1", id: "viewchild", anchorId: "viewchild" })).rejects.toThrow();
     await service.place({ userId: "u1", id: "viewchild", anchorId: null });
     expect((await service.sync({ userId: "u1", context, since: null })).placements).toEqual([]);
+  });
+
+  test("keeps each document's nearest documents by meaning, both ways, and sends only changed lists", async () => {
+    const { client, database } = await setup();
+    const value = state();
+    for (let index = 0; index < 4; index++) {
+      const note = createStandaloneNoteConversation({ id: `react-${index}`, noteId: `react-${index}-body`, createdAt: at });
+      note.title = `React ${index}`;
+      note.notes![0].content = `React hooks note ${index}`;
+      value.conversations[note.id] = note;
+    }
+    await writeState(client, "u1", normalizeAppState(value));
+    // Angular and ViewChild point one way, the React notes another.
+    const direction = (text: string) => Array.from({ length: TOPIC_EMBEDDING_DIMENSIONS }, (_, index) =>
+      (text.startsWith("React") ? Math.cos(index) : Math.sin(index)) + (text.length % 7) * 0.01 * Math.sin(index * 3));
+    const service = createTopicEmbeddingService({ database, env: { OPENAI_API_KEY: "test" }, embed: async ({ inputs }: any) => inputs.map(direction) });
+    const context = { allowHosted: true, apiKeys: {}, usageMeter: null };
+    const first = await service.sync({ userId: "u1", context, since: null });
+    expect(first.neighbours.map((entry: any) => entry.id).sort()).toEqual(["angular", "react-0", "react-1", "react-2", "react-3", "viewchild"]);
+    const angular = first.neighbours.find((entry: any) => entry.id === "angular")!;
+    expect(angular.neighbours[0].id).toBe("viewchild");
+    expect(angular.neighbours[0].similarity).toBeGreaterThan(angular.neighbours[1].similarity);
+    expect(angular.neighbours.every((entry: any) => entry.id !== "angular")).toBe(true);
+    // Nothing changed: no lists come back, and the cursor holds.
+    const again = await service.sync({ userId: "u1", context, since: first.cursor });
+    expect(again.neighbours).toEqual([]);
+    expect(again.cursor).toBe(first.cursor);
+    // A new React note lands in the lists of the notes it is near, not only its own.
+    const more = state();
+    Object.assign(more.conversations, value.conversations);
+    const note = createStandaloneNoteConversation({ id: "react-9", noteId: "react-9-body", createdAt: at });
+    note.title = "React 9"; note.notes![0].content = "React suspense";
+    more.conversations["react-9"] = note;
+    await writeState(client, "u1", normalizeAppState(more));
+    const changed = await service.sync({ userId: "u1", context, since: first.cursor });
+    expect(changed.embeddings.map((entry: any) => entry.id)).toEqual(["react-9"]);
+    const changedIds = changed.neighbours.map((entry: any) => entry.id);
+    expect(changedIds).toContain("react-9");
+    expect(changedIds).toContain("react-0");
+    expect(changed.neighbours.find((entry: any) => entry.id === "react-0")!.neighbours.some((entry: any) => entry.id === "react-9")).toBe(true);
+    // Lists never outgrow the limit.
+    for (const entry of changed.neighbours) expect(entry.neighbours.length).toBeLessThanOrEqual(topics.TOPIC_NEIGHBOURS_PER_DOCUMENT);
+  });
+
+  test("documents embedded before neighbours were kept get theirs on the next sync", async () => {
+    const { client, database } = await setup();
+    await writeState(client, "u1", normalizeAppState(state()));
+    const service = createTopicEmbeddingService({ database, env: { OPENAI_API_KEY: "test" }, embed: async ({ inputs }: any) => inputs.map(fakeVector) });
+    const context = { allowHosted: true, apiKeys: {}, usageMeter: null };
+    await service.sync({ userId: "u1", context, since: null });
+    await client.query("delete from marginchat_topic_neighbours");
+    const result = await service.sync({ userId: "u1", context, since: null });
+    expect(result.neighbours.map((entry: any) => entry.id).sort()).toEqual(["angular", "viewchild"]);
+    expect(result.pending).toBe(0);
   });
 
   test("quantizing keeps the direction of a vector", () => {

@@ -7,8 +7,12 @@ const REFRESH_MS = 2 * 60_000;
 /** Requests per sync; each embeds a batch of new or changed documents. */
 const MAX_ROUNDS = 40;
 
+export type TopicNeighbour = { id: string; similarity: number };
+
 interface TopicCache {
   vectors: Map<string, Float32Array>;
+  /** Each document's nearest documents by meaning, found on the server, nearest first. */
+  neighbours: Map<string, TopicNeighbour[]>;
   /** Documents moved by hand, each to the cluster of its anchor document. */
   placements: Map<string, string>;
   cursor: string | null;
@@ -20,11 +24,12 @@ const caches = new Map<string, TopicCache>();
 
 function cacheFor(userId: string) {
   let cache = caches.get(userId);
-  if (!cache) caches.set(userId, cache = { vectors: new Map(), placements: new Map(), cursor: null, syncedAt: 0 });
+  if (!cache) caches.set(userId, cache = { vectors: new Map(), neighbours: new Map(), placements: new Map(), cursor: null, syncedAt: 0 });
   return cache;
 }
 
 const EMPTY_VECTORS = new Map<string, Float32Array>();
+const EMPTY_NEIGHBOURS = new Map<string, TopicNeighbour[]>();
 const EMPTY_PLACEMENTS = new Map<string, string>();
 
 /**
@@ -58,13 +63,16 @@ export function useTopicEmbeddings({ userId, enabled, active }: {
             const vector = decodeTopicEmbedding(entry.embedding);
             if (vector) cache.vectors.set(entry.id, vector);
           }
+          for (const entry of result.neighbours ?? []) {
+            cache.neighbours.set(entry.id, entry.neighbours.filter((near) => near && typeof near.id === "string" && Number.isFinite(near.similarity)));
+          }
           const placements = new Map((result.placements ?? []).map((entry) => [entry.id, entry.anchorId] as const));
           const placementsChanged = placements.size !== cache.placements.size
             || [...placements].some(([id, anchorId]) => cache.placements.get(id) !== anchorId);
           cache.placements = placements;
           cache.cursor = result.cursor;
           cache.warning = result.unavailable;
-          if (result.embeddings.length || placementsChanged) setRevision((value) => value + 1);
+          if (result.embeddings.length || result.neighbours?.length || placementsChanged) setRevision((value) => value + 1);
           if (!result.pending || result.unavailable) break;
         }
         if (!controller.signal.aborted) cache.syncedAt = Date.now();
@@ -102,6 +110,6 @@ export function useTopicEmbeddings({ userId, enabled, active }: {
   }, [userId]);
 
   const cache = userId && enabled ? caches.get(userId) : undefined;
-  return { vectors: cache?.vectors ?? EMPTY_VECTORS, placements: cache?.placements ?? EMPTY_PLACEMENTS,
+  return { vectors: cache?.vectors ?? EMPTY_VECTORS, neighbours: cache?.neighbours ?? EMPTY_NEIGHBOURS, placements: cache?.placements ?? EMPTY_PLACEMENTS,
     revision, loading, warning: cache?.warning, moveDocument };
 }

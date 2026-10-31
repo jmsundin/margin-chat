@@ -402,6 +402,8 @@ export interface TopicEmbeddingsResponse {
   unavailable?: string;
   /** Documents the user moved to another cluster, each with the document whose cluster it joins. */
   placements?: Array<{ id: string; anchorId: string }>;
+  /** Each changed document's nearest documents by meaning, nearest first; the whole list each time it changes. */
+  neighbours?: Array<{ id: string; neighbours: Array<{ id: string; similarity: number }> }>;
 }
 
 /** Moves a document to the cluster of `anchorId`, or back to automatic placement with null. */

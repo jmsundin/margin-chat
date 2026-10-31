@@ -61,6 +61,10 @@
 
 /* On the map: documents outside the filters fade to grey but stay where they are. */
 .conversation-graph-node.is-lens-dimmed { opacity: .28; filter: grayscale(1); }
+/* Search matches glow, so the eye finds them before reading a title. */
+.conversation-graph-node.is-search-match:not(.is-lens-dimmed) { box-shadow: 0 0 0 2px var(--accent), 0 0 18px color-mix(in srgb, var(--accent) 55%, transparent); }
+.conversation-graph-node.is-dot.is-search-match:not(.is-lens-dimmed) { box-shadow: none; }
+.conversation-graph-node.is-dot.is-search-match:not(.is-lens-dimmed) .conversation-graph-node-dot { box-shadow: 0 0 0 2px var(--accent), 0 0 12px color-mix(in srgb, var(--accent) 65%, transparent); }
 .conversation-graph-node.is-lens-dimmed:is(:hover, :focus-within, .is-selected) { opacity: .85; }
 .conversation-graph-edges [data-lens-dimmed] { opacity: .15; }
 
