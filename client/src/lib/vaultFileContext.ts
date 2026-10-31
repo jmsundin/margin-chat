@@ -4,11 +4,11 @@ import type { VaultMedia } from "./vaultMedia";
 import { getConversationPath } from "./tree";
 import { pdfPageFromSourceId, pdfTextForAI, vaultFileTitle } from "./vaultFileDocuments";
 
-/** What the server receives about the PDF or image a conversation is about. */
+/** What the server receives about the PDF, image or HTML page a conversation is about. */
 export interface VaultFileContext {
   name: string;
   kind: VaultFileReference["kind"];
-  /** A PDF's text page by page, or an SVG image's source. */
+  /** A PDF's text page by page, an HTML page's readable text, or an SVG image's source. */
   text?: string;
   /** A picture, in a format every image-reading model accepts. */
   image?: { mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp"; data: string };
@@ -29,7 +29,7 @@ export function nearestVaultFile(conversations: Record<string, Conversation>, co
   for (let index = path.length - 1; index >= 0; index -= 1) {
     const file = path[index].vaultFile;
     if (!file) continue;
-    // A PDF or image the user hid from AI is never read for it.
+    // A file the user hid from AI is never read for it.
     if (isHiddenFromAI(path[index])) return null;
     // A passage selected on a PDF page, by this conversation or the branch between.
     const anchored = path.slice(index + 1).find((item) => item.branchAnchor?.sourceConversationId === path[index].id);
@@ -94,10 +94,15 @@ export async function loadVaultFileContext(media: VaultMedia | null, found: { fi
       const text = pdfTextForAI(await readPdfPages(file.path, blob));
       return { ...base, text: text.slice(0, MAX_TEXT) };
     }
+    if (file.kind === "html") {
+      const { htmlTextForAI } = await import("./htmlDocuments");
+      return { ...base, text: htmlTextForAI(await blob.text()).slice(0, MAX_TEXT) };
+    }
     if (/svg/iu.test(blob.type) || /\.svg$/iu.test(file.path)) return { ...base, text: (await blob.text()).slice(0, 40_000) };
     const image = await sendableImage(blob);
     return image ? { ...base, image } : { ...base, note: "The image was too large to send, so only its name was sent." };
   } catch {
-    return { ...base, note: file.kind === "pdf" ? "The PDF's text couldn't be read, so only its name was sent." : "The image couldn't be read, so only its name was sent." };
+    return { ...base, note: file.kind === "pdf" ? "The PDF's text couldn't be read, so only its name was sent."
+      : file.kind === "html" ? "The page's text couldn't be read, so only its name was sent." : "The image couldn't be read, so only its name was sent." };
   }
 }

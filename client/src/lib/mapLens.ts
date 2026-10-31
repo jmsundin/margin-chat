@@ -57,7 +57,7 @@ export const MAP_DOCUMENT_TYPES: Array<{ value: MapDocumentType; label: string }
   { value: "branch", label: "Branches" },
   { value: "marginNote", label: "Margin notes" },
   { value: "note", label: "Notes" },
-  { value: "file", label: "PDFs and images" },
+  { value: "file", label: "PDFs, images and pages" },
   { value: "topic", label: "Saved topics" },
 ];
 

@@ -12,7 +12,7 @@ import { isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import { getConversationPath } from "./tree";
 import { getCurrentDocumentText } from "./documentSources";
 import type { VaultFileContext } from "./vaultFileContext";
-import { vaultFileTitle } from "./vaultFileDocuments";
+import { vaultFileKindLabel, vaultFileTitle } from "./vaultFileDocuments";
 
 export interface ConversationContext {
   ancestorContext: Array<{
@@ -86,10 +86,10 @@ export function getConversationRequestPayload(
   };
 }
 
-/** A document's text for its branches; a PDF or image is named, since its content travels separately. */
+/** A document's text for its branches; a PDF, image or HTML page is named, since its content travels separately. */
 function documentContextText(conversation: Conversation) {
   const text = getCurrentDocumentText(conversation);
   if (!conversation.vaultFile) return text;
-  const kind = conversation.vaultFile.kind === "pdf" ? "PDF" : "image";
+  const kind = vaultFileKindLabel(conversation.vaultFile.kind);
   return [`The ${kind} “${vaultFileTitle(conversation.vaultFile.path)}”.`, text.trim() ? `The user's notes on it:\n${text}` : ""].filter(Boolean).join("\n\n");
 }
