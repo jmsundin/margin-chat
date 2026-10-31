@@ -87,3 +87,6 @@
   .graph-map-scope { order: 5; flex-basis: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .graph-map-exploration .conversation-graph-workspace { transition: none; } }
+/* Focus: documents close in meaning that are not linked, on the outer ring. */
+.graph-map-meaning-edge path { fill: none; stroke: var(--muted, currentColor); stroke-width: 1.5px; stroke-dasharray: 2 5; stroke-linecap: round; opacity: .55; }
+.graph-map-meaning-edge[data-lens-dimmed] { opacity: .3; }

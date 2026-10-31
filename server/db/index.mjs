@@ -51,6 +51,7 @@ import * as mcpTokens from "./mcpTokenRepository.mjs";
 import * as chatRuns from "./chatRunRepository.mjs";
 import * as publicMap from "./publicMapRepository.mjs";
 import * as topics from "./topicRepository.mjs";
+import * as library from "./libraryRepository.mjs";
 import * as passages from "./passageRepository.mjs";
 import { recordDesktopDownload } from "./downloadRepository.mjs";
 
@@ -433,6 +434,21 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     listUnneighbouredTopicDocuments: (args) => withClient((client) => topics.listUnneighbouredTopicDocuments(client, args)),
     refreshTopicNeighbours: (args) => withClient((client) => topics.refreshTopicNeighbours(client, args)),
     readTopicNeighbours: (args) => withClient((client) => topics.readTopicNeighbours(client, args)),
+    readLandscape: (args) => withClient((client) => topics.readLandscape(client, args)),
+    writeLandscape: (args) => withClient((client) => topics.writeLandscape(client, args)),
+    listLibraryFields: (args) => withClient((client) => library.listLibraryFields(client, args)),
+    readLibraryField: (args) => withClient((client) => library.readLibraryField(client, args)),
+    createLibraryField: (args) => withClient((client) => library.createLibraryField(client, args)),
+    deleteLibraryField: (args) => withClient((client) => library.deleteLibraryField(client, args)),
+    saveLibraryWorks: (args) => withClient((client) => library.saveLibraryWorks(client, args)),
+    linkLibraryWorks: (args) => withClient((client) => library.linkLibraryWorks(client, args)),
+    listUnembeddedLibraryWorks: (args) => withClient((client) => library.listUnembeddedLibraryWorks(client, args)),
+    saveLibraryVectors: (args) => withClient((client) => library.saveLibraryVectors(client, args)),
+    readLibraryNeighbours: (args) => withClient((client) => library.readLibraryNeighbours(client, args)),
+    writeLibraryLayout: (args) => withClient((client) => library.writeLibraryLayout(client, args)),
+    readLibraryMap: (args) => withClient((client) => library.readLibraryMap(client, args)),
+    readLibraryWork: (args) => withClient((client) => library.readLibraryWork(client, args)),
+    readLibraryWorkTopics: (args) => withClient((client) => library.readLibraryWorkTopics(client, args)),
     writeTopicPlacement: (args) => withClient((client) => topics.writeTopicPlacement(client, args)),
     listStalePassageSources: (args) => withClient((client) => passages.listStalePassageSources(client, args)),
     listStaleFilePassageSources: (args) => withClient((client) => passages.listStaleFilePassageSources(client, args)),

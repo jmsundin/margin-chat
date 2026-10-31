@@ -434,6 +434,97 @@ export async function requestTopicEmbeddings(args: { since: string | null; expec
   return payload;
 }
 
+export interface LandscapeResponse {
+  /** A position in map pixels and a region (-1 for none) per document with neighbours. */
+  positions: Array<{ id: string; x: number; y: number; region: number }>;
+  regions: number;
+  computedAt: string | null;
+  /** Enough changed since the layout that a fresh one is worth asking for. */
+  stale: boolean;
+  /** Documents placed beside their neighbours since the last layout. */
+  unplaced: number;
+  /** Too many documents for the server to lay out in one request. */
+  tooLarge?: boolean;
+}
+
+/** The vault's landscape; `relayout` asks the server to lay it out again first. */
+export async function requestLandscape(args: { relayout?: boolean; expectedUserId?: string; signal?: AbortSignal }): Promise<LandscapeResponse> {
+  const response = await apiFetch("/api/vault/landscape", {
+    body: JSON.stringify({ relayout: !!args.relayout }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as LandscapeResponse | ErrorPayload | null;
+  ensureOk(response, payload, "Loading the landscape failed.");
+  if (!payload || typeof payload !== "object" || !("positions" in payload) || !Array.isArray(payload.positions)) {
+    throw new Error("Backend returned an invalid landscape.");
+  }
+  return payload;
+}
+
+export interface LibraryField {
+  id: string;
+  /** The PubMed search the field was imported from. */
+  query: string;
+  target: number;
+  /** Papers PubMed has for the search. */
+  available: number | null;
+  fetched: number;
+  works: number;
+  embedded: number;
+  regions: Array<{ index: number; label: string | null; size: number }>;
+  laidOutAt: string | null;
+}
+export interface LibraryMap {
+  field: LibraryField;
+  works: Array<{ id: string; title: string; year: number | null; x: number; y: number; region: number }>;
+  /** Your documents close to a paper of the field, placed beside their nearest papers. */
+  own: Array<{ id: string; x: number; y: number; region: number; nearest: string }>;
+}
+export interface LibraryWork {
+  id: string;
+  title: string;
+  abstract: string;
+  year: number | null;
+  journal: string | null;
+  doi: string | null;
+  authors: string | null;
+  topics: string[];
+}
+
+async function libraryRequest<T>(path: string, args: { method?: string; body?: unknown; expectedUserId?: string; signal?: AbortSignal }, failure: string): Promise<T> {
+  const response = await apiFetch(path, {
+    method: args.method ?? (args.body === undefined ? "GET" : "POST"),
+    ...(args.body === undefined ? {} : { body: JSON.stringify(args.body) }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: { ...(args.body === undefined ? {} : { "Content-Type": "application/json" }), ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
+  });
+  const payload = await readJson(response);
+  ensureOk(response, payload as T | ErrorPayload | null, failure);
+  if (!payload || typeof payload !== "object") throw new Error(failure);
+  return payload as T;
+}
+
+/** The literature library: PubMed fields kept beside the vault (server/library). */
+export const libraryApi = {
+  list: (expectedUserId?: string) => libraryRequest<{ fields: LibraryField[] }>("/api/library/fields", { expectedUserId }, "Loading your library failed."),
+  create: (query: string, size: number, expectedUserId?: string) =>
+    libraryRequest<{ field: LibraryField }>("/api/library/fields", { body: { query, size }, expectedUserId }, "Adding the field failed."),
+  remove: (fieldId: string, expectedUserId?: string) =>
+    libraryRequest<{ ok: true }>(`/api/library/fields/${encodeURIComponent(fieldId)}`, { method: "DELETE", expectedUserId }, "Removing the field failed."),
+  importStep: (fieldId: string, signal?: AbortSignal, expectedUserId?: string) =>
+    libraryRequest<{ field: LibraryField; done: boolean }>(`/api/library/fields/${encodeURIComponent(fieldId)}/import`, { body: {}, signal, expectedUserId }, "Importing papers failed."),
+  layout: (fieldId: string, signal?: AbortSignal, expectedUserId?: string) =>
+    libraryRequest<LibraryMap>(`/api/library/fields/${encodeURIComponent(fieldId)}/layout`, { body: {}, signal, expectedUserId }, "Laying out the field failed."),
+  map: (fieldId: string, signal?: AbortSignal, expectedUserId?: string) =>
+    libraryRequest<LibraryMap>(`/api/library/fields/${encodeURIComponent(fieldId)}/map`, { body: {}, signal, expectedUserId }, "Loading the field failed."),
+  work: (workId: string, expectedUserId?: string) =>
+    libraryRequest<{ work: LibraryWork }>(`/api/library/works/${encodeURIComponent(workId)}`, { expectedUserId }, "Loading the paper failed."),
+};
+
 export interface VaultPassageIndexStatus {
   /** The server can index this vault. */
   available: boolean;

@@ -407,7 +407,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         {busy ? <div className="map-workspace-notice" role="status"><span className="map-explore-spinner" aria-hidden="true" /><span>{busy.progress || busy.label}</span><button type="button" onClick={() => busy.controller.abort()}>Cancel</button></div> : null}
         {exploreMessage ? <div className={`map-workspace-notice${exploreMessage.error ? " is-error" : ""}`} role={exploreMessage.error ? "alert" : "status"}><span>{exploreMessage.text}</span><button type="button" onClick={() => setExploreMessage(null)}>Dismiss</button></div> : null}
       </div> : null}
-      <ConversationGraphView {...personalProps} isVisible={isVisible && !exploring} renderNodeActions={renderActions}
+      <ConversationGraphView {...personalProps} isVisible={isVisible && !exploring} renderNodeActions={renderActions} onCreateDocument={onCreateExploreDocument}
         searchPlaceholder="Search, ask, or paste a link…" searchRequest={searchRequest} onSearchSubmit={submitSearch}
         renderSearchFallback={(query, close, matchedIds) => <MapSearchLookFurther query={query} matchedCount={matchedIds.length} canAsk={Boolean(publicMapAccount?.canAsk)}
           onMapPage={(url) => { close(); mapPage(url, anchorFor(query, matchedIds)); }}

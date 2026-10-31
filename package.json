@@ -49,6 +49,7 @@
     "fflate": "^0.8.3",
     "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
+    "graphology-layout-forceatlas2": "0.10.1",
     "graphology-metrics": "^2.4.2",
     "ipaddr.js": "^2.5.0",
     "linkedom": "^0.18.13",
