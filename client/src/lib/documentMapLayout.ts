@@ -140,7 +140,7 @@ function packedTreeNodes(nodes: ConversationGraphNodePlacement[], graph: ReturnT
   return nodes.map((node) => byId.get(node.conversationId)!);
 }
 
-function connectedNodes(nodes: ConversationGraphNodePlacement[], neighbors: Map<string, string[]>, centerNodeId?: string) {
+function connectedNodes(nodes: ConversationGraphNodePlacement[], neighbors: Map<string, string[]>, centerNodeId?: string, outerRingIds: readonly string[] = []) {
   const hub = nodes.find((node) => node.conversationId === centerNodeId)
     ?? nodes.reduce((best, node) => neighbors.get(node.conversationId)!.length > neighbors.get(best.conversationId)!.length ? node : best);
   const levels: string[][] = [[hub.conversationId]];
@@ -162,13 +162,18 @@ function connectedNodes(nodes: ConversationGraphNodePlacement[], neighbors: Map<
   if (hub.conversationId === centerNodeId) {
     // A focused neighborhood is a compact cluster. Breadth-first order keeps
     // nearby connections first without spending a whole ring on each chain link.
-    const ordered = rings.flat();
+    // Documents close in meaning but not linked go on a ring of their own, outside every link.
+    const outer = new Set(outerRingIds);
+    const ordered = rings.flat().filter((id) => !outer.has(id));
     rings = [];
     for (let offset = 0, ring = 1; offset < ordered.length; ring++) {
       const capacity = 6 * ring;
       rings.push(ordered.slice(offset, offset + capacity));
       offset += capacity;
     }
+    const present = new Set(nodes.map((node) => node.conversationId));
+    const outerRing = outerRingIds.filter((id) => id !== hub.conversationId && present.has(id));
+    if (outerRing.length) rings.push(outerRing);
   }
   let radius = 0;
   for (const level of rings) {
@@ -183,7 +188,7 @@ function connectedNodes(nodes: ConversationGraphNodePlacement[], neighbors: Map<
 
 /** A temporary document view: saved positions are input, never mutated. */
 export function layoutDocumentMap(nodes: ConversationGraphNodePlacement[], canvas: { width: number; height: number },
-  options: { mode?: DocumentLayoutMode; connections?: DocumentConnection[]; centerNodeId?: string } = {}) {
+  options: { mode?: DocumentLayoutMode; connections?: DocumentConnection[]; centerNodeId?: string; outerRingIds?: readonly string[] } = {}) {
   const width = Math.max(1, canvas.width);
   const height = Math.max(1, canvas.height);
   const padding = Math.min(24, width / 10, height / 10);
@@ -196,7 +201,7 @@ export function layoutDocumentMap(nodes: ConversationGraphNodePlacement[], canva
   const mode = options.mode ?? "auto";
   if (mode !== "auto") {
     const graph = connectionGraph(authored, options.connections ?? []);
-    const layout = mode === "connections" ? connectedNodes(authored, graph.neighbors, options.centerNodeId)
+    const layout = mode === "connections" ? connectedNodes(authored, graph.neighbors, options.centerNodeId, options.outerRingIds)
       : { nodes: packedTreeNodes(authored, graph, mode === "tree-down", availableWidth, availableHeight), centerNodeId: null };
     const extent = nodeBounds(layout.nodes);
     const fitWidth = layout.centerNodeId ? Math.max(Math.abs(extent.x), Math.abs(extent.x + extent.width)) * 2 : extent.width;

@@ -242,3 +242,43 @@ export async function readTopicNeighbours(client, { userId, since }) {
     cursor: rows.length ? new Date(rows.at(-1).updated_at).toISOString() : since ?? null,
   };
 }
+
+/** The stored landscape: a position and region per document (see server/documents/landscape.mjs). */
+export async function readLandscape(client, { userId }) {
+  const sessionId = await sessionIdFor(client, userId);
+  if (!sessionId) return { positions: [], regions: 0, computedAt: null };
+  const meta = await client.query("select computed_at, regions from marginchat_landscapes where session_id = $1", [sessionId]);
+  const rows = await client.query("select conversation_id, x, y, region from marginchat_landscape_positions where session_id = $1 order by conversation_id", [sessionId]);
+  return {
+    positions: rows.rows.map((row) => ({ id: fromWorkspaceEntityId(sessionId, row.conversation_id), x: Number(row.x), y: Number(row.y), region: Number(row.region) })),
+    regions: meta.rowCount ? Number(meta.rows[0].regions) : 0,
+    computedAt: meta.rowCount ? new Date(meta.rows[0].computed_at).toISOString() : null,
+  };
+}
+
+/** Replaces the whole landscape in one transaction. */
+export async function writeLandscape(client, { userId, positions, regions }) {
+  const sessionId = await sessionIdFor(client, userId);
+  if (!sessionId) return;
+  await client.query("begin");
+  try {
+    await client.query("delete from marginchat_landscape_positions where session_id = $1", [sessionId]);
+    for (let start = 0; start < positions.length; start += 5000) {
+      const batch = positions.slice(start, start + 5000);
+      await client.query(
+        `insert into marginchat_landscape_positions (session_id, conversation_id, x, y, region)
+         select $1, id, x, y, region from unnest($2::text[], $3::real[], $4::real[], $5::int[]) as p(id, x, y, region)`,
+        [sessionId, batch.map((entry) => toWorkspaceEntityId(sessionId, entry.id)), batch.map((entry) => entry.x), batch.map((entry) => entry.y), batch.map((entry) => entry.region)],
+      );
+    }
+    await client.query(
+      `insert into marginchat_landscapes (session_id, computed_at, documents, regions) values ($1, now(), $2, $3)
+       on conflict (session_id) do update set computed_at = excluded.computed_at, documents = excluded.documents, regions = excluded.regions`,
+      [sessionId, positions.length, regions],
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  }
+}

@@ -60,6 +60,13 @@ import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, clusterHues, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getMapFamilyStyles, type MapFamilyStyle } from "../lib/graphFamilies";
+import { EMPTY_MEANING_RING, focusMeaningRing } from "../lib/focusMeaningRing";
+import { buildLandscapeScene, landscapeRegionHue, libraryFieldLabels } from "../lib/landscapeScene";
+import { useLandscape } from "../lib/useLandscape";
+import { useLibrary } from "../lib/useLibrary";
+import { GraphLibraryBar, GraphLibraryWorkCard, libraryWorkMarkdown } from "./GraphLibrary";
+import { GraphLandscapeLayer, type LandscapeLabel } from "./GraphLandscapeLayer";
+import { fitNetworkMapViewport } from "../lib/networkMapLayout";
 import MapLensBar from "./MapLensBar";
 import CanvasGroupBoxes from "./CanvasGroupBoxes";
 import { canvasBoxAt, canvasGroupDropChanges, layoutCanvasGroupBoxes, type CanvasGroupBox } from "../lib/canvasGroupBoxes";
@@ -161,6 +168,8 @@ function writeStoredJson(key: string | false | undefined, value: unknown) {
 export const MAX_GRAPH_CARDS = 400;
 /** Below this zoom, large maps draw documents as dots rather than cards. */
 const MIN_CARD_SCALE = 0.05;
+/** Landscape: below this zoom only points and region names are drawn. */
+const LANDSCAPE_CARD_SCALE = 0.2;
 const PRE_FIT_GRAPH_CARDS = 40;
 /** Most document links drawn at once. */
 const MAX_GRAPH_CONNECTIONS = 1_200;
@@ -244,6 +253,8 @@ export interface ConversationGraphViewProps {
   onFocusCanvas?: () => void;
   isVisible?: boolean;
   renderNodeActions?: (conversation: Conversation) => ReactNode;
+  /** Creates a vault document; the Landscape's library keeps a paper with it. */
+  onCreateDocument?: (args: { title: string; content: string }) => string | null;
   renderNodeMenuActions?: (conversation: Conversation) => ReactNode;
   connectingConversationId?: string | null;
   onConnectConversation?: (sourceId: string, targetId: string) => void;
@@ -1092,6 +1103,7 @@ export default function ConversationGraphView({
   onFocusCanvas,
   isVisible = true,
   renderNodeActions,
+  onCreateDocument,
   renderNodeMenuActions,
   connectingConversationId,
   onConnectConversation,
@@ -1141,11 +1153,12 @@ export default function ConversationGraphView({
   const isNetworkMode = navigation.state.viewMode === "network";
   const isClustersMode = navigation.state.viewMode === "clusters";
   const isLineageMode = navigation.state.viewMode === "lineage";
+  const isLandscapeMode = navigation.state.viewMode === "landscape";
   const panelView = isGraphPanelMode(viewMode) || navigation.state.contentLens === "concepts";
   const showBranches = isLineageMode || navigation.state.relationKinds.includes("branch");
   const showLinks = !isLineageMode && navigation.state.relationKinds.includes("link");
   const focusedNodeId = scope.kind === "focus" ? scope.conversationId : null;
-  const documentsOnly = !isCanvasMode && (navigation.state.overviewPresentation === "documents" || !!focusedNodeId || isNetworkMode || isClustersMode || isLineageMode);
+  const documentsOnly = !isCanvasMode && (navigation.state.overviewPresentation === "documents" || !!focusedNodeId || isNetworkMode || isClustersMode || isLineageMode || isLandscapeMode);
   // Tidy up rewrites saved positions, so it only appears where they are shown.
   // Views that compute their own positions offer a Layout choice instead,
   // except Clusters and Network, whose layouts can't be reshaped.
@@ -1365,7 +1378,9 @@ export default function ConversationGraphView({
       linkedConversationIds: showLinks ? conversation.linkedConversationIds : [],
       relations: showLinks ? conversation.relations : undefined,
     }])), [conversations, showBranches, showLinks]);
-  const scopedIds = useMemo(() => {
+  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && (isClustersMode || isLandscapeMode || scope.kind === "focus") });
+  const [showMeaningRing, setShowMeaningRing] = useState(true);
+  const linkScopedIds = useMemo(() => {
     const ids = scope.kind === "focus"
       ? getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections, scope.conversationId, scope.depth)
       : getGraphScopeConversationIds({ scope, conversations, groups, threads: categorizedThreads, concepts });
@@ -1374,6 +1389,13 @@ export default function ConversationGraphView({
     }
     return ids;
   }, [scope, conversations, groups, categorizedThreads, concepts, showRelated, relatedItems, activeConversationId, allDocumentConnections]);
+  // Focus draws a last ring of documents close in meaning but not linked: what you might have forgotten to connect.
+  const meaningRing = useMemo(() => scope.kind === "focus" && showMeaningRing
+    ? focusMeaningRing(scope.conversationId, topicEmbeddings.neighbours.get(scope.conversationId), linkScopedIds, conversations)
+    : EMPTY_MEANING_RING, [scope, showMeaningRing, topicEmbeddings.neighbours, topicEmbeddings.revision, linkScopedIds, conversations]);
+  const scopedIds = useMemo(() => meaningRing.length ? new Set([...linkScopedIds, ...meaningRing.map((item) => item.id)]) : linkScopedIds,
+    [linkScopedIds, meaningRing]);
+  const meaningRingIds = useMemo(() => meaningRing.map((item) => item.id), [meaningRing]);
   const canExpandNeighborhood = useMemo(() => scope.kind === "focus" && getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections,
     scope.conversationId, scope.depth + 1).size > scopedIds.size, [scope, conversations, allDocumentConnections, scopedIds]);
   const scopedConversations = useMemo(() => Object.fromEntries(Object.entries(conversations).filter(([id]) => scopedIds.has(id))), [conversations, scopedIds]);
@@ -1458,7 +1480,6 @@ export default function ConversationGraphView({
     networkCache.current.layout = { ...networkCache.current.layout, nodes };
     return { ...networkCache.current.layout, nodes };
   }, [isNetworkMode, unfocusedScene.nodes, viewportSize, documentConnections, navigation.state.networkIteration, navigation.state.networkPins]);
-  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && isClustersMode });
   const groupBySubject = !!jev?.enabled && topicEmbeddings.vectors.size > 0;
   // Clusters by meaning before naming, so the AI can name them all in one pass.
   const subjectCache = useRef<{ key: string; subjects: SubjectCluster[] } | null>(null);
@@ -1505,17 +1526,56 @@ export default function ConversationGraphView({
     return { ...clusterCache.current.layout, nodes };
   }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, jev?.enabled, topicEmbeddings.revision,
     baseSubjects, subjectCategories.names, placesRevision, scope.kind, placesKey]);
-  const forceLayout = networkLayout ?? clusterLayout;
+  // Landscape: the server's positions for every document, close in meaning close on the map.
+  const library = useLibrary({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && isLandscapeMode });
+  // A PubMed field from the library replaces the vault's landscape; your documents near it are pinned among its papers.
+  const libraryMap = isLandscapeMode && library.selectedId ? library.map : null;
+  const showingLibrary = isLandscapeMode && !!library.selectedId;
+  const [openWorkId, setOpenWorkId] = useState<string | null>(null);
+  useEffect(() => { if (!showingLibrary) setOpenWorkId(null); }, [showingLibrary]);
+  const landscape = useLandscape({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
+    active: isVisible && isLandscapeMode && !showingLibrary && !topicEmbeddings.loading, revision: topicEmbeddings.revision });
+  const landscapeScene = useMemo(() => !isLandscapeMode ? null
+    : showingLibrary ? buildLandscapeScene(unfocusedScene.nodes.map((node) => node.conversationId), libraryMap?.own ?? [], { unplacedRow: false })
+    : buildLandscapeScene(unfocusedScene.nodes.map((node) => node.conversationId), landscape.positions),
+  [isLandscapeMode, showingLibrary, libraryMap, unfocusedScene.nodes, landscape.positions]);
+  const libraryOwnIds = useMemo(() => libraryMap ? new Set(libraryMap.own.map((entry) => entry.id)) : null, [libraryMap]);
+  const libraryWorkTitles = useMemo(() => new Map((libraryMap?.works ?? []).map((work) => [work.id, work.year ? `${work.title} (${work.year})` : work.title])), [libraryMap]);
+  const landscapeLayout = useMemo(() => landscapeScene ? { nodes: landscapeScene.nodes,
+    viewport: fitNetworkMapViewport(landscapeScene.nodes, viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }) } : null,
+  [landscapeScene, viewportSize]);
+  const landscapeRegionClusters = useMemo(() => (landscapeScene?.regions ?? []).map((region) => ({ ...region, hubId: region.hubId as string | null })), [landscapeScene]);
+  const landscapeRegionLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
+    active: !!jev?.ready && isVisible && isLandscapeMode && !showingLibrary, clusters: landscapeRegionClusters as unknown as GravityCluster[], conversations });
+  const landscapePoints = useMemo(() => {
+    if (!landscapeScene) return [];
+    const own = landscapeScene.nodes.filter((node) => !landscapeScene.unplacedIds.includes(node.conversationId))
+      .map((node) => ({ id: node.conversationId, x: node.x + node.width / 2, y: node.y + node.height / 2, hue: landscapeRegionHue(landscapeScene.regionOf.get(node.conversationId) ?? -1) }));
+    // Papers first, so your documents draw over them.
+    return libraryMap ? [...libraryMap.works.map((work) => ({ id: work.id, x: work.x, y: work.y, hue: landscapeRegionHue(work.region) })), ...own] : own;
+  }, [landscapeScene, libraryMap]);
+  const landscapeLabels = useMemo<LandscapeLabel[]>(() => {
+    if (libraryMap) return libraryFieldLabels(libraryMap);
+    return (landscapeScene?.regions ?? []).map((region) => ({ id: region.id,
+      label: landscapeRegionLabels.labels[region.id]?.label ?? conversations[region.hubId]?.title ?? "Region", x: region.center.x, y: region.center.y,
+      radius: region.radius, count: region.memberIds.length }));
+  }, [libraryMap, landscapeScene, landscapeRegionLabels, conversations]);
+  const selectLandscapePoint = useCallback((id: string) => {
+    if (id.startsWith("pubmed:")) setOpenWorkId(id);
+    else nodeHandlers.select(id);
+  }, [nodeHandlers]);
+  const forceLayout = networkLayout ?? clusterLayout ?? landscapeLayout;
   const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
   // Parents are drawn larger than their children, and each family shares a hue
   // (in Clusters, the hue of the cluster the card sits in, matching its circle).
   const familyStyles = useMemo(() => getMapFamilyStyles(conversations), [conversations]);
   const cardHues = useMemo(() => {
+    if (landscapeScene) return new Map([...landscapeScene.regionOf].map(([id, region]) => [id, landscapeRegionHue(region)]));
     if (!clusterLayout) return null;
     const hues = clusterHues(clusterLayout.clusters);
     return new Map([...clusterLayout.clusterByDocumentId].map(([id, clusterId]) => [id, hues.get(clusterId) ?? null]));
-  }, [clusterLayout]);
+  }, [clusterLayout, landscapeScene]);
   // The widest groups are named first, since they are what a zoomed-out map shows.
   const labelTargets = useMemo(() => {
     if (!clusterLayout) return EMPTY_CLUSTERS;
@@ -1561,8 +1621,8 @@ export default function ConversationGraphView({
   const documentLayout = useMemo(() => forceLayout ? { ...forceLayout, arranged: true, centerNodeId: null }
     : documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 },
-    { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }) : null,
-  [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId]);
+    { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }) : null,
+  [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId, meaningRingIds]);
   const documentFootprint = useMemo(() => getDocumentNodeFootprint(viewport.scale), [viewport.scale]);
   // Canvas shows only the groups you made, each as a box that owns its space; no category names are guessed for it.
   const showCanvasGroupBoxes = isCanvasMode && !panelView && !documentsOnly && canvasGroupFramesOn && Object.keys(groups).length > 0;
@@ -1718,6 +1778,8 @@ export default function ConversationGraphView({
   const canvasCards = isCanvasMode && !panelView;
   const cardBudget = canvasCards && viewport.scale * Math.max(...scene.nodes.slice(0, 50).map((node) => node.width), 0) < MIN_CANVAS_CARD_WIDTH ? 0
     : largeMap && viewport.scale < MIN_CARD_SCALE ? 0
+    // Far out, the landscape's points are the map; cards come once there is room to read them.
+    : isLandscapeMode && landscapePoints.length && viewport.scale < LANDSCAPE_CARD_SCALE ? 0
     : largeMap && (!viewportSize.width || !initialSceneFitted) ? PRE_FIT_GRAPH_CARDS
     : viewport.scale >= 0.9 || !viewportSize.width || canvasCards ? MAX_GRAPH_CARDS
     : Math.min(MAX_GRAPH_CARDS, Math.max(60, Math.round(3 * viewportSize.width * viewportSize.height / (180 * 96))));
@@ -1961,6 +2023,17 @@ export default function ConversationGraphView({
       return [{ id: item.id, ...geometry }];
     });
   }, [showRelated, relatedStatus, activeConversationId, relatedItems, placementByConversationId, hiddenConversationIds, documentsOnly, documentLayoutMode, isLineageMode, lineBounds]);
+  const meaningEdges = useMemo(() => {
+    if (!focusedNodeId || !meaningRing.length) return [];
+    const originFound = placementByConversationId.get(focusedNodeId);
+    if (!originFound || hiddenConversationIds.has(focusedNodeId)) return [];
+    const origin = lineBounds(originFound);
+    return meaningRing.flatMap((item) => {
+      const targetFound = placementByConversationId.get(item.id);
+      if (!targetFound || hiddenConversationIds.has(item.id)) return [];
+      return [{ ...item, ...documentConnectionGeometry(origin, lineBounds(targetFound), documentLayoutMode) }];
+    });
+  }, [focusedNodeId, meaningRing, placementByConversationId, hiddenConversationIds, lineBounds, documentLayoutMode]);
   const conversationGroupByConversationId = useMemo(() => {
     const groupByConversationId = new Map<string, ConversationGroup>();
 
@@ -2022,6 +2095,12 @@ export default function ConversationGraphView({
     backgroundSize: gridSize(liveViewport),
   } as CSSProperties;
 
+  /** Layers drawn outside React (the landscape's points) follow the camera through these. */
+  const cameraListenersRef = useRef(new Set<(viewport: GraphViewport) => void>());
+  const subscribeCamera = useCallback((listener: (viewport: GraphViewport) => void) => {
+    cameraListenersRef.current.add(listener);
+    return () => { cameraListenersRef.current.delete(listener); };
+  }, []);
   /** Tells React where the camera is now, if it does not know yet. */
   const flushCamera = useCallback(() => {
     const commit = cameraCommitRef.current;
@@ -2041,6 +2120,7 @@ export default function ConversationGraphView({
    */
   const setCamera = useCallback((nextViewport: GraphViewport, deferred = false) => {
     viewportStateRef.current = nextViewport;
+    for (const listener of cameraListenersRef.current) listener(nextViewport);
     const stage = stageRef.current, element = viewportRef.current;
     if (stage) stage.style.transform = stageTransform(nextViewport);
     if (element) { element.style.backgroundPosition = gridPosition(nextViewport); element.style.backgroundSize = gridSize(nextViewport); }
@@ -2098,6 +2178,24 @@ export default function ConversationGraphView({
   }, [applyViewport, navigation.recordCamera]);
   // Back and Forward land somewhere new; long moves are measured from there.
   useLayoutEffect(() => { cameraAnchorRef.current = viewportStateRef.current; }, [restoreRevision]);
+  /** Landscape: a region's name flies the camera to frame the region. */
+  const openLandscapeRegion = useCallback((regionId: string) => {
+    const region = landscapeLabels.find((item) => item.id === regionId);
+    const element = viewportRef.current;
+    if (!region || !element) return;
+    const width = element.clientWidth, height = element.clientHeight;
+    const scale = Math.max(LANDSCAPE_CARD_SCALE * 1.05, Math.min(1, Math.min(width, height) / (region.radius * 2.4)));
+    flyTo({ scale, x: width / 2 - region.x * scale, y: height / 2 - region.y * scale });
+  }, [landscapeLabels, flyTo]);
+  const landscapeStatus = !isLandscapeMode ? null
+    : !jev?.enabled ? "The landscape places documents by meaning, which needs AI assistance. Turn it on in Settings to see it."
+    // The library bar reports its own progress and errors.
+    : showingLibrary ? (libraryMap && !libraryMap.works.length ? "None of these papers could be placed yet." : null)
+    : landscape.status === "error" ? landscape.error ?? "Loading the landscape failed."
+    : !landscapePoints.length ? (landscape.status === "ready" ? "No document has a place yet. Documents get one once they are embedded." : "Placing your documents by meaning…")
+    : landscape.status === "laying-out" ? "Laying the landscape out again with your newest documents…"
+    : landscape.tooLarge ? "Too many documents to lay out again at once; new documents are placed beside their nearest ones."
+    : null;
 
   // Canvas landmarks for a zoomed-out board: families of 3+ documents as regions, well-linked documents as places.
   const landmarkPool = useMemo<Landmark[]>(() => {
@@ -2252,9 +2350,16 @@ export default function ConversationGraphView({
       fitAsOverviewRef.current = false;
       return;
     }
+    if (showingLibrary && landscapePoints.length) {
+      // A field's papers are points, not cards; frame all of them with your pinned documents.
+      const nodes = landscapePoints.map((point) => ({ x: point.x - 40, y: point.y - 40, width: 80, height: 80 })) as unknown as ConversationGraphScene["nodes"];
+      applyViewport(calculateFitViewport({ ...scene, nodes, groups: [] }, viewportElement));
+      fitAsOverviewRef.current = false;
+      return;
+    }
     if (forceLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
-      applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined }).viewport);
+      applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }).viewport);
       fitAsOverviewRef.current = false;
       return;
     }
@@ -2273,7 +2378,23 @@ export default function ConversationGraphView({
         { maxScale: Math.min(0.69, groupScaleThreshold - 0.01) }) : standardFit);
     }
     fitAsOverviewRef.current = false;
-  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout, canvasGroupBoxes]);
+  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout, canvasGroupBoxes, showingLibrary, landscapePoints]);
+  // The landscape arrives after the view opens; frame it once when its points first come.
+  // Opening it with points already loaded keeps the camera the view had.
+  // Switching between your vault and a PubMed field (or a field's papers arriving) frames the new set too.
+  const landscapeWaitingRef = useRef(false);
+  const landscapeSourceRef = useRef<string | null>(null);
+  const landscapeSource = !isLandscapeMode ? null : showingLibrary ? `library:${library.selectedId}:${libraryMap ? "map" : "loading"}` : "vault";
+  useEffect(() => {
+    const previous = landscapeSourceRef.current;
+    landscapeSourceRef.current = landscapeSource;
+    if (!landscapeSource) { landscapeWaitingRef.current = false; return; }
+    if (previous && previous !== landscapeSource) landscapeWaitingRef.current = true;
+    if (!landscapePoints.length) { landscapeWaitingRef.current = true; return; }
+    if (!landscapeWaitingRef.current || !viewportSize.width) return;
+    landscapeWaitingRef.current = false;
+    fitGraph();
+  }, [landscapeSource, landscapePoints.length, viewportSize.width, fitGraph]);
 
   const fitLensMatches = useCallback(() => {
     const viewportElement = viewportRef.current;
@@ -3679,7 +3800,8 @@ export default function ConversationGraphView({
   // A busy map draws only the selected or hovered document's links, sharp,
   // and sums the rest into strands between regions (clusters, or patches of
   // the screen elsewhere), so thousands of lines don't become a hairball.
-  const busyLines = linesMode === "auto" && drawnPersonalLinks.length + drawnRelationEdges.length > BUSY_LINK_COUNT;
+  // The landscape places documents by meaning, not by links, so it draws only the selected or hovered document's.
+  const busyLines = isLandscapeMode || (linesMode === "auto" && drawnPersonalLinks.length + drawnRelationEdges.length > BUSY_LINK_COUNT);
   busyLinesRef.current = busyLines;
   const lineFocusIds = new Set([selectedConversationId, busyLines ? hoveredId : null].filter((id): id is string => !!id && !!conversations[id]));
   // While a busy map hides lines, the hovered or selected document's linked cards light up.
@@ -3695,7 +3817,8 @@ export default function ConversationGraphView({
     const regionOf = clusterLayout ? (id: string) => clusterLayout.clusterByDocumentId.get(id)
       : (id: string) => { const point = placementCenter(id); return point && cell(point); };
     // Single stray lines are left out; hovering or selecting a document brings its own back.
-    linkBundles = bundleLinks(hidden, regionOf, placementCenter, 48).filter((bundle) => bundle.count >= 2);
+    // The landscape's regions already say what belongs together, so it sums no strands.
+    if (!isLandscapeMode) linkBundles = bundleLinks(hidden, regionOf, placementCenter, 48).filter((bundle) => bundle.count >= 2);
     drawnPersonalLinks = drawnPersonalLinks.filter(([sourceId, targetId]) => touchesFocus(sourceId, targetId));
     drawnRelationEdges = drawnRelationEdges.filter((edge) => touchesFocus(edge.sourceId, edge.targetId));
   }
@@ -3889,7 +4012,9 @@ export default function ConversationGraphView({
         onDeleteSaved={(id) => setSavedLenses(savedLenses.filter((item) => item.id !== id))} /> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
-          <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away</span></div>
+          <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away{meaningRing.length ? ` · ${meaningRing.length} close in meaning` : ""}</span></div>
+        {topicEmbeddings.neighbours.has(scope.conversationId) ? <button type="button" aria-pressed={showMeaningRing} onClick={() => setShowMeaningRing(!showMeaningRing)}
+          title="An outer ring of documents close in meaning that are not linked">{showMeaningRing ? "Hide similar in meaning" : "Show similar in meaning"}</button> : null}
         <button type="button" disabled={!canExpandNeighborhood} onClick={() => focusConnections(scope.conversationId, scope.depth + 1, documentLayoutMode)}>Show more connections</button>
         <button type="button" onClick={showDocuments}>All documents</button>
       </div> : null}
@@ -3989,7 +4114,17 @@ export default function ConversationGraphView({
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
           {hoverCardProps ? <MapHoverCard {...hoverCardProps} onOpen={snippetTapped ? () => openTappedCard(hoverCardProps.conversation.id) : undefined} /> : null}
-          {overflowNodePlacements.length ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={mapMatches} colorOf={colorOf} /> : null}
+          {landscapeScene && landscapePoints.length ? <GraphLandscapeLayer points={landscapePoints} matched={mapMatches} glowing={searchMatches}
+            emphasized={libraryOwnIds} selectedId={openWorkId ?? selectedConversationId} viewport={viewport} size={viewportSize} subscribeCamera={subscribeCamera}
+            labels={landscapeLabels} showLabels={viewport.scale < LANDSCAPE_CARD_SCALE * 1.5} hostRef={viewportRef}
+            titleOf={(id) => libraryWorkTitles.get(id) ?? (conversations[id]?.title || "Untitled")} onSelect={selectLandscapePoint} onOpenLabel={openLandscapeRegion} /> : null}
+          {isLandscapeMode && !panelView && jev?.enabled ? <GraphLibraryBar fields={library.fields} selectedId={library.selectedId} progress={library.progress}
+            error={library.error} onShowVault={library.showVault} onOpen={(field) => { void library.open(field); }}
+            onAdd={(query, size) => { void library.add(query, size); }} onRemove={(fieldId) => { void library.remove(fieldId); }} /> : null}
+          {showingLibrary && openWorkId ? <GraphLibraryWorkCard key={openWorkId} workId={openWorkId} expectedUserId={jev?.userId} onClose={() => setOpenWorkId(null)}
+            onKeep={onCreateDocument ? (work) => Boolean(onCreateDocument({ title: work.title, content: libraryWorkMarkdown(work) })) : undefined} /> : null}
+          {isLandscapeMode && !panelView && landscapeStatus ? <p className="graph-landscape-status" role="status" data-graph-ui="true">{landscapeStatus}</p> : null}
+          {overflowNodePlacements.length && !(landscapeScene && landscapePoints.length) ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={mapMatches} colorOf={colorOf} /> : null}
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
             connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}
@@ -4120,6 +4255,8 @@ export default function ConversationGraphView({
                   <text x={geometry.labelX} y={geometry.labelY - 8}>{edge.count} branch{edge.count === 1 ? "" : "es"}</text>
                 </g>;
               })}
+              {meaningEdges.map((edge) => <g key={`meaning-${edge.id}`} className="graph-map-meaning-edge" data-lens-dimmed={lensDimmed(edge.id) || undefined}>
+                <path d={edge.path ?? buildConnectorPath(edge)} /><title>Close in meaning, not linked: {conversations[edge.id].title} ({Math.round(edge.similarity * 100)}% similar)</title></g>)}
               {relatedEdges.map((edge) => <g key={`related-${edge.id}`} className="graph-map-related-edge"><path d={edge.path ?? buildConnectorPath(edge)} /><title>Possibly related: {conversations[edge.id].title}</title></g>)}
               {(showBranches ? renderedEdges : []).map((edge) => (
                 <g key={`${edge.parentConversationId}-${edge.childConversationId}`} data-lens-dimmed={lensDimmed(edge.parentConversationId) || lensDimmed(edge.childConversationId) || undefined}>
