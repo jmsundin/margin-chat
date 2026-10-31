@@ -2,17 +2,18 @@ import type { AppState, Conversation, VaultFileReference } from "../types";
 import { MAX_VAULT_MEDIA_BYTES, mediaContentType } from "./documentMedia";
 import { isVaultFileDocumentPath, vaultFileDocumentId, vaultFileKind, vaultFileTitle } from "@margin-chat/workspace-contracts";
 
-// Shared with the server, which indexes the PDFs' text under the same document IDs.
+// Shared with the server, which indexes the PDFs' and pages' text under the same document IDs.
 export { isVaultFileDocumentPath, vaultFileDocumentId, vaultFileKind, vaultFileTitle };
 
 /**
- * PDFs and images in the vault open as documents, like Obsidian shows them.
+ * PDFs, images and HTML pages in the vault open as documents, like Obsidian shows them.
  * The file itself is never changed. Until someone writes a note, asks AI or
  * links it, its document exists only on screen; the first change saves a
  * Markdown companion (`Paper.pdf.md`) that holds the notes and conversation.
  */
 
 const PDF = /\.pdf$/iu;
+const HTML = /\.html?$/iu;
 
 export type VaultFileKind = VaultFileReference["kind"];
 
@@ -61,7 +62,7 @@ export function isSyncableVaultFileSize(size: number) {
 }
 
 export function vaultFileContentType(path: string) {
-  return PDF.test(path) ? "application/pdf" : mediaContentType(path);
+  return PDF.test(path) ? "application/pdf" : HTML.test(path) ? "text/html" : mediaContentType(path);
 }
 
 function referencedIds(state: Pick<AppState, "conversations">) {
@@ -183,4 +184,9 @@ export function pdfPageText(items: Iterable<{ str?: string; hasEOL?: boolean }>)
 export function pdfTextForAI(pages: string[]) {
   return pages.map((text, index) => `[Page ${index + 1}]\n${text.replace(/[ \t]+\n/gu, "\n").replace(/\n{3,}/gu, "\n\n").trim()}`)
     .filter((page) => !/^\[Page \d+\]\n?$/u.test(page)).join("\n\n");
+}
+
+/** What a file is called in lists and in what AI is told. */
+export function vaultFileKindLabel(kind: VaultFileKind) {
+  return kind === "pdf" ? "PDF" : kind === "html" ? "HTML page" : "image";
 }

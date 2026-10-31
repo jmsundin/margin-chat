@@ -7,6 +7,7 @@ import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
 import { publishPdfNavigation } from "../lib/pdfNavigation";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
+import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect } from "../lib/htmlDocuments";
 import {
   imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, pdfPageFromSourceId, pdfPageSourceId, pdfPageText, vaultFileTitle,
   type ImageArea,
@@ -44,7 +45,7 @@ function useVaultFile(path: string): Loaded {
   return state;
 }
 
-/** Shows a PDF or image from the vault, with passages and areas people can select, note and ask about. */
+/** Shows a PDF, image or HTML page from the vault, with passages and areas people can select, note and ask about. */
 export default function VaultFileViewer(props: VaultFileViewerProps) {
   const file = useVaultFile(props.file.path);
   const name = vaultFileTitle(props.file.path);
@@ -53,6 +54,7 @@ export default function VaultFileViewer(props: VaultFileViewerProps) {
   if (file.status === "error") return <div className="vault-file-status" role="alert">{file.message}</div>;
   return props.file.kind === "pdf"
     ? <PdfView {...props} blob={file.blob} />
+    : props.file.kind === "html" ? <HtmlView {...props} blob={file.blob} />
     : <ImageView {...props} blob={file.blob} />;
 }
 
@@ -656,6 +658,97 @@ function ImageView(props: VaultFileViewerProps & { blob: Blob }) {
           style={{ left: `${area.x * 100}%`, top: `${area.y * 100}%`, width: `${area.width * 100}%`, height: `${area.height * 100}%` }} />)}
         {box ? <span className="vault-image-area is-drawing" style={{ left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%` }} /> : null}
       </div> : null}
+    </div>
+  </section>;
+}
+
+/* ---------- HTML pages ---------- */
+
+/** A page that keeps growing a little each time its frame grows (one sized by `100vh` plus a margin) is held at this many steps. */
+const MAX_CREEPING_GROWTHS = 6;
+const MAX_FRAME_HEIGHT = 60_000;
+const FRAME_BORDERS = 2;
+
+function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
+  const [html, setHtml] = useState<string | null>(null);
+  const [height, setHeight] = useState<number | null>(null);
+  const [marks, setMarks] = useState<Array<HtmlRect & { id: string }>>([]);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const growth = useRef({ count: 0, at: 0 });
+  const latest = useRef(props);
+  latest.current = props;
+
+  useEffect(() => {
+    let cancelled = false;
+    setHtml(null); setHeight(null); setMarks([]);
+    props.blob.text().then((text) => { if (!cancelled) setHtml(text); }, () => { if (!cancelled) setHtml(""); });
+    return () => { cancelled = true; };
+  }, [props.blob]);
+
+  const source = useMemo(() => html === null ? null : htmlFrameDocument(html), [html]);
+  const anchors = useMemo<HtmlAnchor[]>(() => props.anchors.filter((link) => link.anchor.sourceMessageId === HTML_SOURCE_ID)
+    .map((link) => ({ id: link.branchConversationId, quote: link.anchor.quote, start: link.anchor.startOffset, end: link.anchor.endOffset })), [props.anchors]);
+  const anchorsRef = useRef(anchors);
+  anchorsRef.current = anchors;
+  const sendAnchors = () => frameRef.current?.contentWindow?.postMessage({ marginHtml: 1, type: "anchors", anchors: anchorsRef.current }, "*");
+  useEffect(sendAnchors, [anchors]);
+
+  useEffect(() => {
+    function receive(event: MessageEvent) {
+      const frame = frameRef.current;
+      // Only the bridge in this page's own frame is listened to.
+      if (!frame || event.source !== frame.contentWindow) return;
+      const message = readHtmlFrameMessage(event.data);
+      if (!message) return;
+      const current = latest.current;
+      if (message.type === "size") {
+        setHeight((shown) => {
+          // The frame's border is outside the page.
+          const next = Math.min(MAX_FRAME_HEIGHT, Math.max(120, message.height + FRAME_BORDERS));
+          if (shown !== null && next > shown && next - shown <= 64) {
+            const now = Date.now();
+            growth.current = now - growth.current.at < 2_000 ? { count: growth.current.count + 1, at: now } : { count: 1, at: now };
+            if (growth.current.count > MAX_CREEPING_GROWTHS) return shown;
+          }
+          return next;
+        });
+      } else if (message.type === "marks") {
+        setMarks(message.marks.filter((mark) => anchorsRef.current.some((anchor) => anchor.id === mark.id)));
+      } else if (message.type === "open") {
+        if (anchorsRef.current.some((anchor) => anchor.id === message.id)) current.onOpenBranch(message.id);
+      } else if (message.type === "clear") {
+        current.onClearSelection?.();
+      } else if (message.type === "selection") {
+        const box = frame.getBoundingClientRect();
+        current.onSelection({
+          conversationId: current.conversation.id, messageId: HTML_SOURCE_ID, quote: message.quote,
+          startOffset: message.start, endOffset: message.end, prompt: "", sourceKind: "message", sourceContent: message.context,
+          rect: { left: box.left + message.rect.left, top: box.top + message.rect.top, width: message.rect.width, height: message.rect.height },
+        });
+      }
+    }
+    window.addEventListener("message", receive);
+    return () => window.removeEventListener("message", receive);
+  }, []);
+
+  const name = vaultFileTitle(props.file.path);
+  if (source === null) return <div className="vault-file-status" role="status">Opening {name}…</div>;
+  const firstOfEach = new Set<string>();
+  return <section className="vault-file-viewer vault-file-html" aria-label={`HTML page: ${props.file.path}`}>
+    <div className="vault-html-stage">
+      {/* No same-origin access: the page's scripts run, but can't reach the app, its sign-in or its storage. */}
+      <iframe ref={frameRef} className="vault-html-frame" title={name} srcDoc={source} sandbox={HTML_FRAME_SANDBOX}
+        allow="fullscreen; clipboard-write" referrerPolicy="no-referrer" style={height ? { height } : undefined}
+        onLoad={() => { growth.current = { count: 0, at: 0 }; sendAnchors(); }} />
+      <div className="vault-file-highlights" aria-hidden="true">
+        {marks.map((mark, index) => {
+          const first = !firstOfEach.has(mark.id);
+          firstOfEach.add(mark.id);
+          return <span key={`${mark.id}-${index}`} className="vault-file-highlight"
+            style={{ left: mark.left, top: mark.top, width: mark.width, height: mark.height }}
+            {...(first ? { "data-annotation-branches": JSON.stringify([mark.id]) } : {})} />;
+        })}
+      </div>
     </div>
   </section>;
 }

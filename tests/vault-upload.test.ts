@@ -36,7 +36,7 @@ describe("planVaultUpload", () => {
     expect(plan.skipped.map((item) => item.name)).toEqual(["Huge.pdf", "Song.mp3", "Broken.md"]);
     expect(plan.createdAtByPath["Paper.pdf"]).toBe("2026-10-22T17:00:00.000Z");
     expect(describeVaultUpload(plan)).toBe("Added 2 files to your vault. Not added: “Huge.pdf” is larger than 300 MB, the most a vault file can sync; "
-      + "“Song.mp3” isn’t a note, PDF, image or zip; “Broken.md” isn’t readable text.");
+      + "“Song.mp3” isn’t a note, PDF, image, HTML page or zip; “Broken.md” isn’t readable text.");
   });
 
   test("unpacks a zipped phone folder at the top of the vault without Mac junk", () => {

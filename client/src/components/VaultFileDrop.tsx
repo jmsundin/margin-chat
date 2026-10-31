@@ -67,7 +67,7 @@ export default function VaultFileDrop({ vault }: { vault: Vault }) {
     {over ? createPortal(<div className="vault-file-drop" aria-hidden="true">
       <div className="vault-file-drop-card">
         <strong>Drop to add to your vault</strong>
-        <span>Notes, text, PDFs, images or a zipped vault folder</span>
+        <span>Notes, text, PDFs, images, HTML pages or a zipped vault folder</span>
       </div>
     </div>, document.body) : null}
     <NotificationToast message={notice?.message ?? null} kind={notice?.kind} duration={notice?.kind === "info" ? 120000 : 10000}

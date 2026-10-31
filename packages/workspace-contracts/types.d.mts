@@ -170,7 +170,7 @@ export interface ConversationDocument {
 export interface VaultFileReference {
   /** The file's path in the vault, such as `Papers/Attention.pdf`. */
   path: string;
-  kind: "pdf" | "image";
+  kind: "pdf" | "image" | "html";
 }
 
 export interface ConversationNote {

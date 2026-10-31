@@ -869,7 +869,7 @@ export default function ThreadSidebar({
           type="button"
         >
           <span className="thread-item-title">
-            {thread.fileKind ? <span className="thread-item-file-kind" title={thread.fileKind === "pdf" ? "PDF" : "Image"}>{thread.fileKind === "pdf" ? "PDF" : "IMG"}</span> : null}
+            {thread.fileKind ? <span className="thread-item-file-kind" title={{ pdf: "PDF", html: "HTML page", image: "Image" }[thread.fileKind]}>{{ pdf: "PDF", html: "HTML", image: "IMG" }[thread.fileKind]}</span> : null}
             <span>{thread.title}</span>
           </span>
           {isStreaming ? (

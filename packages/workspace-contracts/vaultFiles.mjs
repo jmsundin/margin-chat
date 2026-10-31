@@ -1,18 +1,19 @@
 /**
- * PDFs and images in the vault open as documents. The client lists them and the
+ * PDFs, images and HTML pages in the vault open as documents. The client lists them and the
  * server indexes their text, so both name a file's document the same way.
  */
 
 const PDF = /\.pdf$/iu;
 const IMAGE = /\.(?:png|jpe?g|gif|webp|avif|svg|bmp)$/iu;
+const HTML = /\.html?$/iu;
 /** Margin Chat's own folders: pasted media, upload originals, recovery copies. */
 const MANAGED = /^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/iu;
 
 export function vaultFileKind(path) {
-  return PDF.test(path) ? "pdf" : IMAGE.test(path) ? "image" : null;
+  return PDF.test(path) ? "pdf" : IMAGE.test(path) ? "image" : HTML.test(path) ? "html" : null;
 }
 
-/** A PDF or image outside Margin Chat's own folders and hidden folders. */
+/** A PDF, image or HTML page outside Margin Chat's own folders and hidden folders. */
 export function isVaultFileDocumentPath(path) {
   return vaultFileKind(path) !== null && !MANAGED.test(path) && !path.split("/").some((segment) => segment.startsWith("."));
 }

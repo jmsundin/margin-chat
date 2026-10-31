@@ -26,6 +26,8 @@ type MobileSelectionActionsProps = {
   onHighlight?: () => void;
   highlighted?: boolean;
   marginNoteLabel?: string;
+  /** The passage, copied when the selection is inside a page's own frame, which the app's selection can't see. */
+  quote?: string;
   onClose: () => void;
   disabled?: boolean;
 };
@@ -35,7 +37,7 @@ type MobileSelectionActionsProps = {
  * everyday actions first, Ask AI near the end, and More for the rest. More also holds the
  * system's Cut / Paste / Select all, which the workspace hides on phones.
  */
-export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onSideDocument, onMarginNote, onLink, onFindRelated, onHighlight, highlighted = false, marginNoteLabel = "Margin note", onClose, disabled = false }: MobileSelectionActionsProps) {
+export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onSideDocument, onMarginNote, onLink, onFindRelated, onHighlight, highlighted = false, marginNoteLabel = "Margin note", quote, onClose, disabled = false }: MobileSelectionActionsProps) {
   const viewport = useVisualViewport(true);
   const [selectionRect, setSelectionRect] = useState(rect);
   const [height, setHeight] = useState(64);
@@ -124,7 +126,7 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
     role="group" aria-label="Selected text actions" style={{ top, left, width }}
     onSubmit={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()}>
     <div className="mobile-selection-actions-row">
-      {item("copy", copied ? "Copied" : "Copy", () => { void copySelection().then((done) => setCopied(done)); })}
+      {item("copy", copied ? "Copied" : "Copy", () => { void copySelection(quote).then((done) => setCopied(done)); })}
       {onHighlight ? item("highlight", "Highlight", onHighlight, { ariaLabel: highlighted ? "Remove highlight" : "Highlight selected text", pressed: highlighted }) : null}
       {item("note", "Note", onMarginNote, { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note" : "Create a side note" })}
       {item("side", "Side doc", onSideDocument, { ariaLabel: "Create a side document from this passage" })}
