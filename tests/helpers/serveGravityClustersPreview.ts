@@ -1,12 +1,14 @@
 import { basename } from "node:path";
 
 // Dedicated, loopback-only fixture server. It has no app API or auth routes.
+const production = process.env.NODE_ENV === "production";
 const build = await Bun.build({
   entrypoints: [new URL("./gravityClustersPreview.tsx", import.meta.url).pathname],
   target: "browser",
-  minify: false,
-  sourcemap: "inline",
-  define: { "process.env.NODE_ENV": '"development"' },
+  // NODE_ENV=production serves the app the way users get it, for timing; the default keeps names and stacks for debugging.
+  minify: production,
+  sourcemap: production ? "none" : "inline",
+  define: { "process.env.NODE_ENV": production ? '"production"' : '"development"' },
 });
 if (!build.success) {
   for (const log of build.logs) console.error(log);

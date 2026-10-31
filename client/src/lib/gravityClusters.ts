@@ -2,7 +2,8 @@ import type { ConversationGraphNodePlacement } from "./conversationGraph";
 import { getDocumentNodeFootprint } from "./documentMapLayout";
 import type { GraphViewport } from "./graphInteractions";
 import { fitNetworkMapViewport } from "./networkMapLayout";
-import { groupByTopicEmbedding, nearestTopicGroup } from "./topicEmbeddings";
+import { findCommunities, rankByLinks } from "./graphCommunities";
+import { groupByTopicEmbedding, nearestTopicGroup, type NeighboursOf } from "./topicEmbeddings";
 
 const CARD = getDocumentNodeFootprint(1);
 /** A document card's size in the Clusters layout. */
@@ -154,6 +155,7 @@ function computeClusterCells(count: number) {
 }
 
 type WeightedLink = { a: string; b: string; weight: number };
+type WeightedPair = WeightedLink;
 
 /** Sums document links into links between the groups that hold them. */
 function groupLinks(connections: Connection[], groupOf: (documentId: string) => string | undefined): WeightedLink[] {
@@ -206,7 +208,7 @@ export type SubjectCluster = FoundCluster & { fingerprint: string };
  * most linked member, or the one closest to its meaning when nothing links.
  */
 export function groupDocumentsByMeaning(ids: string[], connections: Connection[],
-  vectorOf: (id: string) => Float32Array | undefined): FoundCluster[] {
+  vectorOf: (id: string) => Float32Array | undefined, neighboursOf?: NeighboursOf): FoundCluster[] {
   const position = new Map(ids.map((id, index) => [id, index]));
   const neighbors = new Map<string, Set<string>>(ids.map((id) => [id, new Set()]));
   const links: Array<[number, number]> = [];
@@ -217,7 +219,7 @@ export function groupDocumentsByMeaning(ids: string[], connections: Connection[]
     neighbors.get(targetId)!.add(sourceId);
     links.push([a, b]);
   }
-  const groups = groupByTopicEmbedding(ids.map((id) => ({ documentIds: [id] })), vectorOf, undefined, { links });
+  const groups = groupByTopicEmbedding(ids.map((id) => ({ documentIds: [id] })), vectorOf, undefined, { links, neighbours: neighboursOf });
   const clusters: string[][] = [];
   const alone: string[] = [];
   for (const group of groups) {
@@ -226,7 +228,7 @@ export function groupDocumentsByMeaning(ids: string[], connections: Connection[]
   }
   const clusterOf = new Map<string, number>();
   clusters.forEach((members, index) => { for (const id of members) clusterOf.set(id, index); });
-  const nearest = nearestTopicGroup(alone, clusters, vectorOf);
+  const nearest = nearestTopicGroup(alone, clusters, vectorOf, undefined, neighboursOf);
   const unfiled: string[] = [];
   const joining = clusters.map(() => [] as string[]);
   alone.forEach((id, index) => {
@@ -245,10 +247,14 @@ export function groupDocumentsByMeaning(ids: string[], connections: Connection[]
   const found: FoundCluster[] = clusters.map((members, index) => {
     const all = [...members, ...joining[index]];
     const inside = new Set(all);
-    const insideDegree = (id: string) => { let count = 0; for (const neighbor of neighbors.get(id)!) if (inside.has(neighbor)) count++; return count; };
+    // The hub is the member the cluster's links lead to most (PageRank), so a
+    // document many others cite outranks one that merely links out a lot.
+    const pairs: Array<{ a: string; b: string; weight: number }> = [];
+    for (const id of all) for (const neighbor of neighbors.get(id)!) if (inside.has(neighbor) && id < neighbor) pairs.push({ a: id, b: neighbor, weight: 1 });
+    const rank = rankByLinks(all, pairs);
     // `all` runs closest to the cluster's meaning first, so ties go to the most typical member.
-    let hubId = all[0], hubDegree = insideDegree(all[0]);
-    for (const id of all) { const degree = insideDegree(id); if (degree > hubDegree) { hubId = id; hubDegree = degree; } }
+    let hubId = all[0], hubRank = rank.get(all[0]) ?? 0;
+    for (const id of all) { const score = rank.get(id) ?? 0; if (score > hubRank + 1e-9) { hubId = id; hubRank = score; } }
     return { hubId, memberIds: orderByLinksThenMeaning(hubId, all, neighbors) };
   });
   if (unfiled.length) found.push({ hubId: null, memberIds: unfiled.sort() });
@@ -310,8 +316,8 @@ export function applyClusterPlacements(found: FoundCluster[], placements: Readon
  * otherwise. Their fingerprints key the names the AI gives them.
  */
 export function groupSubjects(ids: string[], connections: Connection[],
-  topicVector?: (id: string) => Float32Array | undefined): SubjectCluster[] {
-  const found = topicVector ? groupDocumentsByMeaning(ids, connections, topicVector) : findGravityClusters(ids, connections).clusters;
+  topicVector?: (id: string) => Float32Array | undefined, neighboursOf?: NeighboursOf): SubjectCluster[] {
+  const found = topicVector ? groupDocumentsByMeaning(ids, connections, topicVector, neighboursOf) : findGravityClusters(ids, connections).clusters;
   return found.map((cluster) => ({ ...cluster, fingerprint: clusterFingerprint(cluster.memberIds) }));
 }
 
@@ -359,10 +365,11 @@ export function finishSubjectClusters(clusters: SubjectCluster[], options: {
  */
 export function findSubjectClusters(ids: string[], connections: Connection[], options: {
   topicVector?: (id: string) => Float32Array | undefined;
+  neighboursOf?: NeighboursOf;
   placements?: ReadonlyMap<string, string>;
   names?: ReadonlyMap<string, string>;
 } = {}): SubjectCluster[] {
-  return finishSubjectClusters(groupSubjects(ids, connections, options.topicVector), options);
+  return finishSubjectClusters(groupSubjects(ids, connections, options.topicVector, options.neighboursOf), options);
 }
 
 /** A group of clusters, or of groups; level 1 groups clusters, level 2 groups level 1, and so on. */
@@ -404,6 +411,8 @@ export function layoutGravityClusters(
     createdAt?: (id: string) => number | undefined;
     /** Each document's embedding; when given, clusters about the same subject merge. */
     topicVector?: (id: string) => Float32Array | undefined;
+    /** Each document's nearest documents by meaning, from the server; lifts the cap on documents grouped by meaning. */
+    neighboursOf?: NeighboursOf;
     /** Documents the user moved by hand, each to the cluster of its anchor document. */
     placements?: ReadonlyMap<string, string>;
     /** Clusters already found (finishSubjectClusters); when given, documents are not grouped again. */
@@ -441,7 +450,7 @@ export function layoutGravityClusters(
   if (islands.length <= CLUSTER_GROUPING_THRESHOLD) {
     for (const [id, center] of settleIslands(islands, islandLinks, CLUSTER_GAP)) centers.set(id, center);
   } else {
-    layoutGroupedIslands(islands, islandLinks, connections, clusterByDocumentId, options.createdAt, centers, levels, options.topicVector);
+    layoutGroupedIslands(islands, islandLinks, connections, clusterByDocumentId, options.createdAt, centers, levels, options.topicVector, options.neighboursOf);
   }
   const placed = nodes.map((node) => {
     const center = centers.get(clusterByDocumentId.get(node.conversationId)!)!;
@@ -467,7 +476,7 @@ type Item = { id: string; radius: number; memberIds: string[]; hubId: string | n
  */
 function layoutGroupedIslands(islands: Item[], islandLinks: WeightedLink[], connections: Connection[],
   clusterOf: Map<string, string>, createdAt: ((id: string) => number | undefined) | undefined,
-  centers: Map<string, Point>, levels: GravityClusterLevel[], topicVector?: (id: string) => Float32Array | undefined) {
+  centers: Map<string, Point>, levels: GravityClusterLevel[], topicVector?: (id: string) => Float32Array | undefined, neighboursOf?: NeighboursOf) {
   const timeOf = (memberIds: string[]) => createdAt ? median(memberIds.flatMap((id) => createdAt(id) ?? [])) : undefined;
   let items: Item[] = islands.map((island) => ({ ...island, time: island.period ? island.period.start : timeOf(island.memberIds) }));
   let links = islandLinks;
@@ -479,8 +488,10 @@ function layoutGroupedIslands(islands: Item[], islandLinks: WeightedLink[], conn
   const parentOf = new Map<string, string>();
   for (let level = 1; level <= MAX_GROUP_LEVELS && items.length > TOP_LEVEL_TARGET; level++) {
     const byId = new Map(items.map((item) => [item.id, item]));
-    const { clusters } = topicVector ? groupItemsByMeaning(items, links, topicVector, level)
-      : findGravityClusters(items.map((item) => item.id), links.map(({ a, b }) => ({ sourceId: a, targetId: b })));
+    // Regions are communities of the graph of links and meaning neighbours
+    // between items; without neighbours but with embeddings, average meaning decides.
+    const { clusters } = topicVector && !neighboursOf ? groupItemsByMeaning(items, links, topicVector, level)
+      : groupItemsByCommunity(items, links, level, neighboursOf);
     const made: Array<{ childIds: string[]; hubChild: string | null; period?: { start: number; end: number } }> = [];
     for (const cluster of clusters) {
       if (cluster.hubId !== null) { made.push({ childIds: cluster.memberIds, hubChild: cluster.hubId }); continue; }
@@ -549,7 +560,49 @@ const REGION_THRESHOLDS = [0.28, 0.22, 0.17, 0.12];
  * development, say), loosening the bar until most clusters have a region.
  * Items that join nothing come back as one hubless set, which is split by date.
  */
-function groupItemsByMeaning(items: Item[], links: WeightedLink[], topicVector: (id: string) => Float32Array | undefined, level: number) {
+/** Resolution per level: lower makes broader regions, so each level groups the one below. */
+const COMMUNITY_RESOLUTIONS = [1, 0.8, 0.6, 0.5];
+/** Documents of each item whose meaning neighbours count toward links between items. */
+const COMMUNITY_SAMPLE = 40;
+
+/**
+ * Groups items into regions as Louvain communities of the graph whose edges
+ * are the links between items plus, when the server has found them, the
+ * meaning neighbours between their documents. Items in a community of their
+ * own come back as one hubless set, which is split by date.
+ */
+function groupItemsByCommunity(items: Item[], links: WeightedLink[], level: number, neighboursOf?: NeighboursOf) {
+  const pairs: WeightedPair[] = links.map(({ a, b, weight }) => ({ a, b, weight }));
+  if (neighboursOf) {
+    const itemOf = new Map<string, string>();
+    for (const item of items) for (const id of item.memberIds) itemOf.set(id, item.id);
+    const weights = new Map<string, number>();
+    for (const item of items) for (const id of item.memberIds.slice(0, COMMUNITY_SAMPLE)) {
+      for (const near of neighboursOf(id) ?? []) {
+        const other = itemOf.get(near.id);
+        if (other === undefined || other === item.id || near.similarity <= 0) continue;
+        const key = item.id < other ? `${item.id}\n${other}` : `${other}\n${item.id}`;
+        weights.set(key, (weights.get(key) ?? 0) + near.similarity);
+      }
+    }
+    for (const [key, weight] of weights) { const [a, b] = key.split("\n"); pairs.push({ a, b, weight }); }
+  }
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const clusters: FoundCluster[] = [];
+  const alone: string[] = [];
+  for (const community of findCommunities(items.map((item) => item.id), pairs, { resolution: COMMUNITY_RESOLUTIONS[Math.min(level - 1, COMMUNITY_RESOLUTIONS.length - 1)] })) {
+    if (community.length === 1) { alone.push(community[0]); continue; }
+    const children = community.map((id) => byId.get(id)!);
+    const lead = [...children].sort((a, b) => (a.hubId === null ? 1 : 0) - (b.hubId === null ? 1 : 0) || b.memberIds.length - a.memberIds.length || (a.id < b.id ? -1 : 1))[0];
+    clusters.push({ hubId: lead.id, memberIds: [lead.id, ...children.filter((child) => child !== lead).map((child) => child.id)] });
+  }
+  clusters.sort((a, b) => b.memberIds.length - a.memberIds.length || (a.hubId! < b.hubId! ? -1 : 1));
+  if (alone.length) clusters.push({ hubId: null, memberIds: alone });
+  return { clusters };
+}
+
+function groupItemsByMeaning(items: Item[], links: WeightedLink[], topicVector: (id: string) => Float32Array | undefined, level: number,
+  neighboursOf?: NeighboursOf) {
   const position = new Map(items.map((item, index) => [item.id, index]));
   const pairs = links.flatMap(({ a, b }): Array<[number, number]> => {
     const first = position.get(a), second = position.get(b);
@@ -559,7 +612,7 @@ function groupItemsByMeaning(items: Item[], links: WeightedLink[], topicVector: 
   const sampled = items.map((item) => ({ documentIds: item.memberIds.slice(0, 40) }));
   let groups: ReturnType<typeof groupByTopicEmbedding> = [];
   for (const threshold of REGION_THRESHOLDS.slice(Math.min(level - 1, REGION_THRESHOLDS.length - 1))) {
-    groups = groupByTopicEmbedding(sampled, topicVector, threshold, { links: pairs });
+    groups = groupByTopicEmbedding(sampled, topicVector, threshold, { links: pairs, neighbours: neighboursOf });
     if (groups.filter((group) => group.itemIndices.length === 1).length <= items.length * 0.3) break;
   }
   const clusters: FoundCluster[] = [];

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { applyClusterPlacements, findGravityClusters, finishSubjectClusters, groupDocumentsByMeaning, groupSubjects, layoutGravityClusters, UNLINKED_CLUSTER_ID } from "../client/src/lib/gravityClusters";
 import { buildCategoriesPrompt, carryCategoryNames } from "../client/src/lib/useSubjectCategories";
-import { decodeTopicEmbedding, groupByTopicEmbedding } from "../client/src/lib/topicEmbeddings";
+import { decodeTopicEmbedding, groupByTopicEmbedding, MAX_TOPIC_ITEMS, nearestTopicGroup } from "../client/src/lib/topicEmbeddings";
 
 const link = (sourceId: string, targetId: string) => ({ sourceId, targetId });
 const node = (conversationId: string) => ({ conversationId, depth: 0, x: 0, y: 0, width: 180, height: 96 });
@@ -95,6 +95,55 @@ describe("grouping clusters by subject", () => {
   });
 });
 
+describe("neighbours found on the server", () => {
+  /** Each document's nearest others, as the server would send them: same subject first. */
+  function neighboursFrom(vectors: Map<string, Float32Array>, limit = 12) {
+    const ids = [...vectors.keys()];
+    const lists = new Map(ids.map((id) => {
+      const vector = vectors.get(id)!;
+      const near = ids.filter((other) => other !== id)
+        .map((other) => ({ id: other, similarity: vector.reduce((total, value, index) => total + value * vectors.get(other)![index], 0) }))
+        .sort((a, b) => b.similarity - a.similarity).slice(0, limit);
+      return [id, near] as const;
+    }));
+    return (id: string) => lists.get(id);
+  }
+
+  test("with neighbours, documents group by subject without comparing every pair", () => {
+    const vectors = subjectVectors({ angular: ANGULAR, react: REACT, bread: BREAD, marathon: ["marathon"], budget: ["budget"], trip: ["trip"] });
+    const neighbours = neighboursFrom(vectors);
+    const vectorOf = (id: string) => vectors.get(id);
+    const merged = groupDocumentsByMeaning(ids, connections, vectorOf, neighbours);
+    expect([...merged.find((cluster) => cluster.memberIds.includes("viewchild"))!.memberIds].sort()).toEqual([...ANGULAR].sort());
+    expect(merged.find((cluster) => cluster.memberIds.includes("react"))!.memberIds.sort()).toEqual([...REACT].sort());
+    expect(merged.at(-1)).toEqual({ hubId: null, memberIds: [...LONE].sort() });
+  });
+
+  test("more documents than the all-pairs cap still group when neighbours are known", () => {
+    const subjects: Record<string, string[]> = { a: [], b: [], c: [] };
+    for (let index = 0; index < MAX_TOPIC_ITEMS + 600; index++) subjects[["a", "b", "c"][index % 3]].push(`doc-${index}`);
+    const vectors = subjectVectors(subjects, 0.2);
+    const all = Object.values(subjects).flat();
+    // Neighbours as the server would find them: a dozen from the same subject.
+    const neighbours = (id: string) => {
+      const list = subjects[["a", "b", "c"][Number(id.slice(4)) % 3]];
+      const at = list.indexOf(id);
+      return Array.from({ length: 12 }, (_, offset) => ({ id: list[(at + offset + 1) % list.length], similarity: 0.6 - offset * 0.01 }));
+    };
+    const started = performance.now();
+    const groups = groupByTopicEmbedding(all.map((id) => ({ documentIds: [id] })), (id) => vectors.get(id), undefined, { neighbours });
+    expect(performance.now() - started).toBeLessThan(3_000);
+    expect(groups.filter((group) => group.itemIndices.length > 1)).toHaveLength(3);
+    expect(groups.every((group) => group.itemIndices.length > 1)).toBe(true);
+  });
+
+  test("a document left alone joins the group of its nearest neighbour", () => {
+    const groups = [["angular", "viewchild"], ["react", "react-memo"]];
+    const neighbours = (id: string) => id === "inputs" ? [{ id: "trip", similarity: 0.5 }, { id: "react-memo", similarity: 0.4 }] : id === "trip" ? [{ id: "inputs", similarity: 0.2 }] : undefined;
+    expect(nearestTopicGroup(["inputs", "trip"], groups, () => undefined, undefined, neighbours)).toEqual([1, -1]);
+  });
+});
+
 describe("filing and moving documents", () => {
   test("an unlinked note that matches nothing closely still joins its nearest cluster", () => {
     const vectors = subjectVectors({ angular: ANGULAR, react: REACT, bread: BREAD }, 0.35);
@@ -152,6 +201,29 @@ describe("regions by meaning", () => {
     expect(pure.length).toBeGreaterThanOrEqual(regions.length - 1);
     expect(pure.length).toBeGreaterThanOrEqual(15);
     expect(regions.some((region) => region.childIds.length === 2)).toBe(true);
+  });
+
+  test("with neighbours from the server, regions are communities of linked and related clusters", () => {
+    const vectors = new Map<string, Float32Array>();
+    const fieldOf = new Map<string, number>();
+    const subjectOf = new Map<string, number>();
+    for (let subject = 0; subject < 40; subject++) for (let note = 0; note < 3; note++) {
+      const id = `s${subject}-${note}`;
+      const vector = new Float32Array(96);
+      vector[subject] = 1;
+      vectors.set(id, vector);
+      fieldOf.set(id, Math.floor(subject / 2));
+      subjectOf.set(id, subject);
+    }
+    // Each note's neighbours: its own subject's notes, then the other subject of its field.
+    const neighboursOf = (id: string) => [...vectors.keys()].filter((other) => other !== id && fieldOf.get(other) === fieldOf.get(id))
+      .map((other) => ({ id: other, similarity: subjectOf.get(other) === subjectOf.get(id) ? 0.9 : 0.45 }))
+      .sort((a, b) => b.similarity - a.similarity);
+    const layout = layoutGravityClusters([...vectors.keys()].map(node), { width: 1200, height: 800 }, [], { topicVector: (id) => vectors.get(id), neighboursOf });
+    expect(layout.clusters).toHaveLength(40);
+    const regions = layout.levels[0].groups;
+    expect(regions).toHaveLength(20);
+    for (const region of regions) expect(new Set(region.memberIds.map((id) => fieldOf.get(id))).size).toBe(1);
   });
 });
 
