@@ -61,8 +61,10 @@ import { useClusterLabels } from "../lib/useClusterLabels";
 import GraphClusterLayer, { CLUSTER_DOT_SCALE, clusterHues, GraphOverflowDots, labelClusterGroups } from "./GraphClusterLayer";
 import { getMapFamilyStyles, type MapFamilyStyle } from "../lib/graphFamilies";
 import { EMPTY_MEANING_RING, focusMeaningRing } from "../lib/focusMeaningRing";
-import { buildLandscapeScene, landscapeRegionHue } from "../lib/landscapeScene";
+import { buildLandscapeScene, landscapeRegionHue, libraryFieldLabels } from "../lib/landscapeScene";
 import { useLandscape } from "../lib/useLandscape";
+import { useLibrary } from "../lib/useLibrary";
+import { GraphLibraryBar, GraphLibraryWorkCard, libraryWorkMarkdown } from "./GraphLibrary";
 import { GraphLandscapeLayer, type LandscapeLabel } from "./GraphLandscapeLayer";
 import { fitNetworkMapViewport } from "../lib/networkMapLayout";
 import MapLensBar from "./MapLensBar";
@@ -251,6 +253,8 @@ export interface ConversationGraphViewProps {
   onFocusCanvas?: () => void;
   isVisible?: boolean;
   renderNodeActions?: (conversation: Conversation) => ReactNode;
+  /** Creates a vault document; the Landscape's library keeps a paper with it. */
+  onCreateDocument?: (args: { title: string; content: string }) => string | null;
   renderNodeMenuActions?: (conversation: Conversation) => ReactNode;
   connectingConversationId?: string | null;
   onConnectConversation?: (sourceId: string, targetId: string) => void;
@@ -1099,6 +1103,7 @@ export default function ConversationGraphView({
   onFocusCanvas,
   isVisible = true,
   renderNodeActions,
+  onCreateDocument,
   renderNodeMenuActions,
   connectingConversationId,
   onConnectConversation,
@@ -1522,23 +1527,43 @@ export default function ConversationGraphView({
   }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, jev?.enabled, topicEmbeddings.revision,
     baseSubjects, subjectCategories.names, placesRevision, scope.kind, placesKey]);
   // Landscape: the server's positions for every document, close in meaning close on the map.
+  const library = useLibrary({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && isLandscapeMode });
+  // A PubMed field from the library replaces the vault's landscape; your documents near it are pinned among its papers.
+  const libraryMap = isLandscapeMode && library.selectedId ? library.map : null;
+  const showingLibrary = isLandscapeMode && !!library.selectedId;
+  const [openWorkId, setOpenWorkId] = useState<string | null>(null);
+  useEffect(() => { if (!showingLibrary) setOpenWorkId(null); }, [showingLibrary]);
   const landscape = useLandscape({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
-    active: isVisible && isLandscapeMode && !topicEmbeddings.loading, revision: topicEmbeddings.revision });
-  const landscapeScene = useMemo(() => isLandscapeMode
-    ? buildLandscapeScene(unfocusedScene.nodes.map((node) => node.conversationId), landscape.positions) : null,
-  [isLandscapeMode, unfocusedScene.nodes, landscape.positions]);
+    active: isVisible && isLandscapeMode && !showingLibrary && !topicEmbeddings.loading, revision: topicEmbeddings.revision });
+  const landscapeScene = useMemo(() => !isLandscapeMode ? null
+    : showingLibrary ? buildLandscapeScene(unfocusedScene.nodes.map((node) => node.conversationId), libraryMap?.own ?? [], { unplacedRow: false })
+    : buildLandscapeScene(unfocusedScene.nodes.map((node) => node.conversationId), landscape.positions),
+  [isLandscapeMode, showingLibrary, libraryMap, unfocusedScene.nodes, landscape.positions]);
+  const libraryOwnIds = useMemo(() => libraryMap ? new Set(libraryMap.own.map((entry) => entry.id)) : null, [libraryMap]);
+  const libraryWorkTitles = useMemo(() => new Map((libraryMap?.works ?? []).map((work) => [work.id, work.year ? `${work.title} (${work.year})` : work.title])), [libraryMap]);
   const landscapeLayout = useMemo(() => landscapeScene ? { nodes: landscapeScene.nodes,
     viewport: fitNetworkMapViewport(landscapeScene.nodes, viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 }) } : null,
   [landscapeScene, viewportSize]);
   const landscapeRegionClusters = useMemo(() => (landscapeScene?.regions ?? []).map((region) => ({ ...region, hubId: region.hubId as string | null })), [landscapeScene]);
   const landscapeRegionLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
-    active: !!jev?.ready && isVisible && isLandscapeMode, clusters: landscapeRegionClusters as unknown as GravityCluster[], conversations });
-  const landscapePoints = useMemo(() => landscapeScene ? landscapeScene.nodes.filter((node) => !landscapeScene.unplacedIds.includes(node.conversationId))
-    .map((node) => ({ id: node.conversationId, x: node.x + node.width / 2, y: node.y + node.height / 2, hue: landscapeRegionHue(landscapeScene.regionOf.get(node.conversationId) ?? -1) })) : [],
-  [landscapeScene]);
-  const landscapeLabels = useMemo<LandscapeLabel[]>(() => (landscapeScene?.regions ?? []).map((region) => ({ id: region.id,
-    label: landscapeRegionLabels.labels[region.id]?.label ?? conversations[region.hubId]?.title ?? "Region", x: region.center.x, y: region.center.y,
-    radius: region.radius, count: region.memberIds.length })), [landscapeScene, landscapeRegionLabels, conversations]);
+    active: !!jev?.ready && isVisible && isLandscapeMode && !showingLibrary, clusters: landscapeRegionClusters as unknown as GravityCluster[], conversations });
+  const landscapePoints = useMemo(() => {
+    if (!landscapeScene) return [];
+    const own = landscapeScene.nodes.filter((node) => !landscapeScene.unplacedIds.includes(node.conversationId))
+      .map((node) => ({ id: node.conversationId, x: node.x + node.width / 2, y: node.y + node.height / 2, hue: landscapeRegionHue(landscapeScene.regionOf.get(node.conversationId) ?? -1) }));
+    // Papers first, so your documents draw over them.
+    return libraryMap ? [...libraryMap.works.map((work) => ({ id: work.id, x: work.x, y: work.y, hue: landscapeRegionHue(work.region) })), ...own] : own;
+  }, [landscapeScene, libraryMap]);
+  const landscapeLabels = useMemo<LandscapeLabel[]>(() => {
+    if (libraryMap) return libraryFieldLabels(libraryMap);
+    return (landscapeScene?.regions ?? []).map((region) => ({ id: region.id,
+      label: landscapeRegionLabels.labels[region.id]?.label ?? conversations[region.hubId]?.title ?? "Region", x: region.center.x, y: region.center.y,
+      radius: region.radius, count: region.memberIds.length }));
+  }, [libraryMap, landscapeScene, landscapeRegionLabels, conversations]);
+  const selectLandscapePoint = useCallback((id: string) => {
+    if (id.startsWith("pubmed:")) setOpenWorkId(id);
+    else nodeHandlers.select(id);
+  }, [nodeHandlers]);
   const forceLayout = networkLayout ?? clusterLayout ?? landscapeLayout;
   const clusterDots = isClustersMode && !panelView && viewport.scale < CLUSTER_DOT_SCALE;
   const clusterPlacements = useMemo(() => new Map((clusterLayout?.nodes ?? []).map((node) => [node.conversationId, node])), [clusterLayout]);
@@ -2155,15 +2180,17 @@ export default function ConversationGraphView({
   useLayoutEffect(() => { cameraAnchorRef.current = viewportStateRef.current; }, [restoreRevision]);
   /** Landscape: a region's name flies the camera to frame the region. */
   const openLandscapeRegion = useCallback((regionId: string) => {
-    const region = landscapeScene?.regions.find((item) => item.id === regionId);
+    const region = landscapeLabels.find((item) => item.id === regionId);
     const element = viewportRef.current;
     if (!region || !element) return;
     const width = element.clientWidth, height = element.clientHeight;
     const scale = Math.max(LANDSCAPE_CARD_SCALE * 1.05, Math.min(1, Math.min(width, height) / (region.radius * 2.4)));
-    flyTo({ scale, x: width / 2 - region.center.x * scale, y: height / 2 - region.center.y * scale });
-  }, [landscapeScene, flyTo]);
+    flyTo({ scale, x: width / 2 - region.x * scale, y: height / 2 - region.y * scale });
+  }, [landscapeLabels, flyTo]);
   const landscapeStatus = !isLandscapeMode ? null
     : !jev?.enabled ? "The landscape places documents by meaning, which needs AI assistance. Turn it on in Settings to see it."
+    // The library bar reports its own progress and errors.
+    : showingLibrary ? (libraryMap && !libraryMap.works.length ? "None of these papers could be placed yet." : null)
     : landscape.status === "error" ? landscape.error ?? "Loading the landscape failed."
     : !landscapePoints.length ? (landscape.status === "ready" ? "No document has a place yet. Documents get one once they are embedded." : "Placing your documents by meaning…")
     : landscape.status === "laying-out" ? "Laying the landscape out again with your newest documents…"
@@ -2323,6 +2350,13 @@ export default function ConversationGraphView({
       fitAsOverviewRef.current = false;
       return;
     }
+    if (showingLibrary && landscapePoints.length) {
+      // A field's papers are points, not cards; frame all of them with your pinned documents.
+      const nodes = landscapePoints.map((point) => ({ x: point.x - 40, y: point.y - 40, width: 80, height: 80 })) as unknown as ConversationGraphScene["nodes"];
+      applyViewport(calculateFitViewport({ ...scene, nodes, groups: [] }, viewportElement));
+      fitAsOverviewRef.current = false;
+      return;
+    }
     if (forceLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
       applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }).viewport);
@@ -2344,17 +2378,23 @@ export default function ConversationGraphView({
         { maxScale: Math.min(0.69, groupScaleThreshold - 0.01) }) : standardFit);
     }
     fitAsOverviewRef.current = false;
-  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout, canvasGroupBoxes]);
+  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout, canvasGroupBoxes, showingLibrary, landscapePoints]);
   // The landscape arrives after the view opens; frame it once when its points first come.
   // Opening it with points already loaded keeps the camera the view had.
+  // Switching between your vault and a PubMed field (or a field's papers arriving) frames the new set too.
   const landscapeWaitingRef = useRef(false);
+  const landscapeSourceRef = useRef<string | null>(null);
+  const landscapeSource = !isLandscapeMode ? null : showingLibrary ? `library:${library.selectedId}:${libraryMap ? "map" : "loading"}` : "vault";
   useEffect(() => {
-    if (!isLandscapeMode) { landscapeWaitingRef.current = false; return; }
+    const previous = landscapeSourceRef.current;
+    landscapeSourceRef.current = landscapeSource;
+    if (!landscapeSource) { landscapeWaitingRef.current = false; return; }
+    if (previous && previous !== landscapeSource) landscapeWaitingRef.current = true;
     if (!landscapePoints.length) { landscapeWaitingRef.current = true; return; }
     if (!landscapeWaitingRef.current || !viewportSize.width) return;
     landscapeWaitingRef.current = false;
     fitGraph();
-  }, [isLandscapeMode, landscapePoints.length, viewportSize.width, fitGraph]);
+  }, [landscapeSource, landscapePoints.length, viewportSize.width, fitGraph]);
 
   const fitLensMatches = useCallback(() => {
     const viewportElement = viewportRef.current;
@@ -4075,9 +4115,14 @@ export default function ConversationGraphView({
             onOpen={fitTerritory} /> : null}
           {hoverCardProps ? <MapHoverCard {...hoverCardProps} onOpen={snippetTapped ? () => openTappedCard(hoverCardProps.conversation.id) : undefined} /> : null}
           {landscapeScene && landscapePoints.length ? <GraphLandscapeLayer points={landscapePoints} matched={mapMatches} glowing={searchMatches}
-            selectedId={selectedConversationId} viewport={viewport} size={viewportSize} subscribeCamera={subscribeCamera}
+            emphasized={libraryOwnIds} selectedId={openWorkId ?? selectedConversationId} viewport={viewport} size={viewportSize} subscribeCamera={subscribeCamera}
             labels={landscapeLabels} showLabels={viewport.scale < LANDSCAPE_CARD_SCALE * 1.5} hostRef={viewportRef}
-            titleOf={(id) => conversations[id]?.title || "Untitled"} onSelect={nodeHandlers.select} onOpenLabel={openLandscapeRegion} /> : null}
+            titleOf={(id) => libraryWorkTitles.get(id) ?? (conversations[id]?.title || "Untitled")} onSelect={selectLandscapePoint} onOpenLabel={openLandscapeRegion} /> : null}
+          {isLandscapeMode && !panelView && jev?.enabled ? <GraphLibraryBar fields={library.fields} selectedId={library.selectedId} progress={library.progress}
+            error={library.error} onShowVault={library.showVault} onOpen={(field) => { void library.open(field); }}
+            onAdd={(query, size) => { void library.add(query, size); }} onRemove={(fieldId) => { void library.remove(fieldId); }} /> : null}
+          {showingLibrary && openWorkId ? <GraphLibraryWorkCard key={openWorkId} workId={openWorkId} expectedUserId={jev?.userId} onClose={() => setOpenWorkId(null)}
+            onKeep={onCreateDocument ? (work) => Boolean(onCreateDocument({ title: work.title, content: libraryWorkMarkdown(work) })) : undefined} /> : null}
           {isLandscapeMode && !panelView && landscapeStatus ? <p className="graph-landscape-status" role="status" data-graph-ui="true">{landscapeStatus}</p> : null}
           {overflowNodePlacements.length && !(landscapeScene && landscapePoints.length) ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={mapMatches} colorOf={colorOf} /> : null}
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}

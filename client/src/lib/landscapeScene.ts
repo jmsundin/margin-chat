@@ -31,7 +31,8 @@ export interface LandscapeScene {
  * documents the server has not placed. Regions get a middle, a radius and a
  * representative member for their label.
  */
-export function buildLandscapeScene(ids: string[], positions: ReadonlyArray<{ id: string; x: number; y: number; region: number }>): LandscapeScene {
+export function buildLandscapeScene(ids: string[], positions: ReadonlyArray<{ id: string; x: number; y: number; region: number }>,
+  { unplacedRow = true }: { unplacedRow?: boolean } = {}): LandscapeScene {
   const shown = new Set(ids);
   const at = new Map(positions.filter((entry) => shown.has(entry.id)).map((entry) => [entry.id, entry]));
   const nodes: ConversationGraphNodePlacement[] = [];
@@ -48,7 +49,7 @@ export function buildLandscapeScene(ids: string[], positions: ReadonlyArray<{ id
       (groups.get(point.region) ?? groups.set(point.region, []).get(point.region)!).push(id);
     }
   }
-  const unplacedIds = ids.filter((id) => !at.has(id));
+  const unplacedIds = unplacedRow ? ids.filter((id) => !at.has(id)) : [];
   if (unplacedIds.length) {
     const left = Number.isFinite(minX) ? minX : 0, top = Number.isFinite(maxY) ? maxY + CARD.height * 3 : 0;
     const columns = Math.max(4, Math.floor((Number.isFinite(maxX) ? maxX - left : 0) / (CARD.width + ROW_GAP)) + 1);
@@ -71,4 +72,17 @@ export function buildLandscapeScene(ids: string[], positions: ReadonlyArray<{ id
 /** A hue per region, spread by the golden angle so neighbouring numbers differ. */
 export function landscapeRegionHue(index: number) {
   return index < 0 ? null : Math.round((index * 137.508 + 150) % 360);
+}
+
+/** Region names of a PubMed field, each at the middle of its papers. */
+export function libraryFieldLabels(map: { field: { regions: Array<{ index: number; label: string | null }> }; works: Array<{ x: number; y: number; region: number }> }) {
+  const byRegion = new Map<number, Array<{ x: number; y: number }>>();
+  for (const work of map.works) if (work.region >= 0) (byRegion.get(work.region) ?? byRegion.set(work.region, []).get(work.region)!).push(work);
+  return map.field.regions.flatMap((region) => {
+    const points = byRegion.get(region.index);
+    if (!region.label || !points?.length) return [];
+    const x = points.reduce((sum, point) => sum + point.x, 0) / points.length, y = points.reduce((sum, point) => sum + point.y, 0) / points.length;
+    const distances = points.map((point) => Math.hypot(point.x - x, point.y - y)).sort((a, b) => a - b);
+    return [{ id: `library-region-${region.index}`, label: region.label, x, y, radius: distances[Math.floor((distances.length - 1) * 0.8)] + CARD.width / 2, count: points.length }];
+  });
 }

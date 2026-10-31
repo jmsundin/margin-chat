@@ -120,6 +120,11 @@
       "id": "0024_landscape",
       "file": "0024_landscape.sql",
       "transaction": true
+    },
+    {
+      "id": "0025_literature_library",
+      "file": "0025_literature_library.sql",
+      "transaction": true
     }
   ]
 }

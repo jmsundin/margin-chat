@@ -11,6 +11,7 @@ import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
 import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createLandscapeService } from "../documents/landscape.mjs";
+import { createLibraryService } from "../library/index.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
 import { MAX_VAULT_FILE_BYTES, vaultQuotaFor } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
@@ -143,6 +144,7 @@ export function createApiHandler({
   const expandTopic = topicExpansionService ?? createTopicExpansionService({ executeChatReply });
   const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
   const landscape = createLandscapeService({ database });
+  const library = createLibraryService({ database, env });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
@@ -932,6 +934,30 @@ export function createApiHandler({
           }
           const body = await readJsonBody(request, 4 * 1024);
           sendJson(response, 200, await topicEmbeddings.place({ userId, id: body?.id, anchorId: body?.anchorId ?? null }), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (route?.id?.startsWith("library")) {
+          if (request.method !== "GET" && ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+              (request.method === "POST" && !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")))) {
+            throw new HttpError(403, "Use the library from Margin Chat.");
+          }
+          const fieldId = route.params?.id ? decodePathParameter(route.params.id) : undefined;
+          let result;
+          if (route.id === "libraryFields" && request.method === "GET") result = await library.list({ userId });
+          else if (route.id === "libraryFields") {
+            const body = await readJsonBody(request, 4 * 1024);
+            result = await library.create({ userId, query: body?.query, size: body?.size });
+          } else if (route.id === "libraryField") result = await library.remove({ userId, fieldId });
+          else if (route.id === "libraryImport") {
+            const scope = createRequestAbortScope(request, response);
+            try {
+              const context = await executeChatReply.createUsageContext({ user: authContext.user, signal: scope.signal, operation: "library-import" });
+              result = await library.importStep({ userId, fieldId, context });
+            } finally { scope.dispose(); }
+          } else if (route.id === "libraryLayout") result = await library.layout({ userId, fieldId });
+          else if (route.id === "libraryMap") result = await library.read({ userId, fieldId });
+          else result = await library.work({ userId, workId: fieldId });
+          await sendStreamingJson(response, 200, result, { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultLandscape") {

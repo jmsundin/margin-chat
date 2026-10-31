@@ -81,12 +81,14 @@ const CELL = 400;
  * the camera outside React through `subscribeCamera`. Cards drawn by the map
  * sit on top up close.
  */
-export function GraphLandscapeLayer({ points, matched, glowing, selectedId, viewport, size, subscribeCamera, labels, showLabels, hostRef, titleOf, onSelect, onOpenLabel }: {
+export function GraphLandscapeLayer({ points, matched, glowing, emphasized = null, selectedId, viewport, size, subscribeCamera, labels, showLabels, hostRef, titleOf, onSelect, onOpenLabel }: {
   points: LandscapePoint[];
   /** Documents that pass the map's filters; the rest are drawn faint. Null is every document. */
   matched: Set<string> | null;
   /** Found by the map search: drawn larger and bright. */
   glowing: Set<string> | null;
+  /** Your documents among a field's papers: drawn larger and brighter than the papers around them. */
+  emphasized?: Set<string> | null;
   selectedId: string | null;
   viewport: GraphViewport;
   size: { width: number; height: number };
@@ -120,13 +122,15 @@ export function GraphLandscapeLayer({ points, matched, glowing, selectedId, view
     const positions = new Float32Array(points.length * 2), colors = new Float32Array(points.length * 4), sizes = new Float32Array(points.length);
     points.forEach((point, at) => {
       positions[at * 2] = point.x; positions[at * 2 + 1] = point.y;
-      const dim = matched ? !matched.has(point.id) : false, glow = glowing?.has(point.id) ?? false, selected = point.id === selectedId;
-      const [r, g, b] = selected || glow ? hslToRgb(point.hue ?? 160, 0.75, 0.55) : point.hue === null ? [0.55, 0.55, 0.55] : hslToRgb(point.hue, 0.5, 0.52);
-      colors.set([r, g, b, dim ? 0.18 : glow || selected ? 1 : 0.78], at * 4);
-      sizes[at] = selected ? 2.2 : glow ? 1.8 : dim ? 0.8 : 1;
+      const own = emphasized?.has(point.id) ?? false, background = !!emphasized && !own;
+      const dim = matched && !background ? !matched.has(point.id) : false, glow = glowing?.has(point.id) ?? false, selected = point.id === selectedId;
+      const [r, g, b] = own ? hslToRgb(point.hue ?? 160, 0.85, 0.7) : selected || glow ? hslToRgb(point.hue ?? 160, 0.75, 0.55)
+        : point.hue === null ? [0.55, 0.55, 0.55] : hslToRgb(point.hue, 0.5, 0.52);
+      colors.set([r, g, b, dim ? 0.18 : glow || selected || own ? 1 : background ? 0.68 : 0.78], at * 4);
+      sizes[at] = selected ? 2.2 : own ? 2 : glow ? 1.8 : dim ? 0.8 : 1;
     });
     return { positions, colors, sizes };
-  }, [points, matched, glowing, selectedId]);
+  }, [points, matched, glowing, emphasized, selectedId]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
