@@ -173,6 +173,66 @@ function getMatchPreview(content: string, query: string) {
   return `${prefix}${normalizedContent.slice(startIndex, endIndex)}${suffix}`;
 }
 
+// A summary reads a document's whole text, so on every key typed only the edited document's is made again.
+// The relative time is left out of the cache: it changes as time passes, not with the document.
+type CachedSummary = Omit<ThreadSummary, "updatedLabel" | "createdLabel">;
+const threadSummaryCache = new WeakMap<Conversation, { members: Conversation[]; summary: CachedSummary }>();
+const documentSummaryCache = new WeakMap<Conversation, CachedSummary>();
+const sameMembers = (left: Conversation[], right: Conversation[]) =>
+  left.length === right.length && left.every((conversation, index) => conversation === right[index]);
+
+function summarizeThread(rootConversation: Conversation, threadConversations: Conversation[]): CachedSummary {
+  const latestConversation = threadConversations[0] ?? rootConversation;
+  const standaloneNote = getStandaloneNote(rootConversation);
+  const preview = standaloneNote
+    ? excerpt(rootConversation.document ? getCurrentDocumentText(rootConversation) : standaloneNote.content, 108) || "Empty note"
+    : getThreadPreviewFromConversations(threadConversations);
+  const categoryId = categorizeThread({
+    context: getThreadCategoryContext(threadConversations),
+    preview,
+    title: rootConversation.title,
+  });
+
+  return {
+    categoryId,
+    categoryLabel: getThreadCategoryLabel(categoryId),
+    conversationCount: threadConversations.length,
+    id: rootConversation.id,
+    kind: standaloneNote ? ("note" as const) : ("chat" as const),
+    ...(rootConversation.vaultFile ? { fileKind: rootConversation.vaultFile.kind } : {}),
+    preview,
+    title: rootConversation.title,
+    updatedAt: latestConversation.updatedAt,
+  };
+}
+
+function summarizeDocument(conversation: Conversation): CachedSummary {
+  const standaloneNote = getStandaloneNote(conversation);
+  const preview = conversation.document
+    ? excerpt(getCurrentDocumentText(conversation), 108) || (conversation.vaultFile ? { pdf: "PDF", html: "HTML page", image: "Image" }[conversation.vaultFile.kind] : "Empty document")
+    : standaloneNote
+      ? excerpt(standaloneNote.content, 108) || "Empty note"
+      : getThreadPreviewFromConversations([conversation]);
+  const categoryId = categorizeThread({
+    context: getThreadCategoryContext([conversation]),
+    preview,
+    title: conversation.title,
+  });
+
+  return {
+    categoryId,
+    categoryLabel: getThreadCategoryLabel(categoryId),
+    conversationCount: 1,
+    id: conversation.id,
+    kind: conversation.kind === "note" ? ("note" as const) : ("chat" as const),
+    ...(conversation.vaultFile ? { fileKind: conversation.vaultFile.kind } : {}),
+    preview,
+    title: conversation.title,
+    createdAt: conversation.createdAt,
+    updatedAt: conversation.updatedAt,
+  };
+}
+
 export function buildThreadSummaries(
   conversations: Record<string, Conversation>,
 ): ThreadSummary[] {
@@ -181,29 +241,13 @@ export function buildThreadSummaries(
   return getRootConversations(conversations)
     .map((rootConversation) => {
       const threadConversations = threads.get(rootConversation.id) ?? [];
-      const latestConversation = threadConversations[0] ?? rootConversation;
-      const standaloneNote = getStandaloneNote(rootConversation);
-      const preview = standaloneNote
-        ? excerpt(rootConversation.document ? getCurrentDocumentText(rootConversation) : standaloneNote.content, 108) || "Empty note"
-        : getThreadPreviewFromConversations(threadConversations);
-      const categoryId = categorizeThread({
-        context: getThreadCategoryContext(threadConversations),
-        preview,
-        title: rootConversation.title,
-      });
-
-      return {
-        categoryId,
-        categoryLabel: getThreadCategoryLabel(categoryId),
-        conversationCount: threadConversations.length,
-        id: rootConversation.id,
-        kind: standaloneNote ? ("note" as const) : ("chat" as const),
-        ...(rootConversation.vaultFile ? { fileKind: rootConversation.vaultFile.kind } : {}),
-        preview,
-        title: rootConversation.title,
-        updatedAt: latestConversation.updatedAt,
-        updatedLabel: formatRelativeTime(latestConversation.updatedAt),
-      };
+      const cached = threadSummaryCache.get(rootConversation);
+      let summary = cached?.summary;
+      if (!cached || !sameMembers(cached.members, threadConversations)) {
+        summary = summarizeThread(rootConversation, threadConversations);
+        threadSummaryCache.set(rootConversation, { members: threadConversations, summary });
+      }
+      return { ...summary!, updatedLabel: formatRelativeTime(summary!.updatedAt) };
     })
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
@@ -214,30 +258,11 @@ export function buildDocumentSummaries(
 ): ThreadSummary[] {
   return Object.values(conversations)
     .map((conversation) => {
-      const standaloneNote = getStandaloneNote(conversation);
-      const preview = conversation.document
-        ? excerpt(getCurrentDocumentText(conversation), 108) || (conversation.vaultFile ? { pdf: "PDF", html: "HTML page", image: "Image" }[conversation.vaultFile.kind] : "Empty document")
-        : standaloneNote
-          ? excerpt(standaloneNote.content, 108) || "Empty note"
-          : getThreadPreviewFromConversations([conversation]);
-      const categoryId = categorizeThread({
-        context: getThreadCategoryContext([conversation]),
-        preview,
-        title: conversation.title,
-      });
-
+      let summary = documentSummaryCache.get(conversation);
+      if (!summary) documentSummaryCache.set(conversation, summary = summarizeDocument(conversation));
       return {
-        categoryId,
-        categoryLabel: getThreadCategoryLabel(categoryId),
-        conversationCount: 1,
-        id: conversation.id,
-        kind: conversation.kind === "note" ? ("note" as const) : ("chat" as const),
-        ...(conversation.vaultFile ? { fileKind: conversation.vaultFile.kind } : {}),
-        preview,
-        title: conversation.title,
-        createdAt: conversation.createdAt,
+        ...summary,
         createdLabel: formatRelativeTime(conversation.createdAt),
-        updatedAt: conversation.updatedAt,
         updatedLabel: formatRelativeTime(conversation.updatedAt),
       };
     })

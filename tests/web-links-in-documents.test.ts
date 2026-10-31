@@ -25,6 +25,14 @@ describe("a title made from text never cuts a web address", () => {
     expect(excerpt(`See https://x.com/a and then some more words after it`, 30)).toBe("See https://x.com/a and then...");
     expect(excerpt("short", 52)).toBe("short");
   });
+
+  test("a long document gives the same excerpt as its start, even with a long link or wide gaps at the cut", () => {
+    const rest = "\n\nMore paragraphs follow. ".repeat(20_000);
+    expect(excerpt(`Opening words of a long document${rest}`, 108)).toBe(excerpt(`Opening words of a long document${rest.slice(0, 400)}`, 108));
+    const link = `https://example.com/${"path/".repeat(400)}`;
+    expect(excerpt(`${link}${rest}`, 52)).toBe(`${link} ...`);
+    expect(excerpt(`Start${" ".repeat(5000)}\n${"\t".repeat(5000)}end of the first line${rest}`, 20)).toBe("Start end of the fi...");
+  });
 });
 
 describe("links in a document open in a new tab", () => {

@@ -45,7 +45,8 @@ export function MobileCreateMenu({ slot, prepare, onNewDocument, onSideDocument,
   }, [open]);
 
   const run = (action: () => void) => () => { setTarget(null); action(); };
-  const row = slot.parentElement?.getBoundingClientRect();
+  // Read only while the menu is open: during typing it would make the browser lay out the whole page on every key.
+  const row = open ? slot.parentElement?.getBoundingClientRect() : undefined;
 
   return <>
     {createPortal(<button ref={buttonRef} type="button" className="mobile-create-button" aria-label="Create" title="Create"

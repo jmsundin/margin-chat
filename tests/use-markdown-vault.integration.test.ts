@@ -134,3 +134,16 @@ test("the desktop app asks for a vault folder, opens a remembered one at launch 
   if (exitCode !== 0) throw new Error(`Desktop vault folder integration failed:\n${stdout}\n${stderr}`);
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(9);
 }, 15000);
+
+test("keys typed together share one save on this device, and hiding or closing the app saves at once", async () => {
+  const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--typing-batch"], {
+    cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
+  });
+  const timeout = setTimeout(() => child.kill(), 10000);
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+  ]);
+  clearTimeout(timeout);
+  if (exitCode !== 0) throw new Error(`Typing save integration failed:\n${stdout}\n${stderr}`);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(3);
+}, 15000);

@@ -115,7 +115,11 @@ export function bootSnapshotPlugin() {
       order: "post",
       handler(_html, context) {
         const styles = Object.keys(context.bundle ?? {}).filter((name) => name.endsWith(".css")).map((name) => `/${name}`).sort();
+        // src/main.tsx starts the app (src/start.tsx) only after the first picture is drawn; its code downloads meanwhile.
+        const start = Object.values(context.bundle ?? {}).find((item) => item.type === "chunk" && item.isDynamicEntry
+          && item.moduleIds.some((id) => /[\\/]src[\\/]start\.tsx$/u.test(id)));
         return [
+          ...(start ? [{ tag: "link", attrs: { rel: "modulepreload", crossorigin: "", href: `/${start.fileName}` }, injectTo: "head" }] : []),
           { tag: "style", children: BOOT_SNAPSHOT_STYLE, injectTo: "head" },
           { tag: "script", children: bootSnapshotScript(styles), injectTo: "body" },
         ];

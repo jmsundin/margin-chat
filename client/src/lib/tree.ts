@@ -234,7 +234,14 @@ export function getAllBranches(
 }
 
 export function excerpt(value: string, maxLength = 52): string {
-  const compact = value.replace(/\s+/g, " ").trim();
+  // Whole documents come through here, and only their start shows, so only the start is tidied.
+  let compact = "";
+  for (let length = maxLength * 4 + 256; ; length *= 2) {
+    if (length >= value.length) { compact = value.replace(/\s+/g, " ").trim(); break; }
+    compact = value.slice(0, length).replace(/\s+/g, " ").trimStart();
+    // A space after the cut ends the word there, so the rest of the text can't change what is shown.
+    if (compact.indexOf(" ", maxLength) >= 0) break;
+  }
 
   if (compact.length <= maxLength) {
     return compact;
