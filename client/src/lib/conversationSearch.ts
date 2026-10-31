@@ -209,7 +209,7 @@ function summarizeThread(rootConversation: Conversation, threadConversations: Co
 function summarizeDocument(conversation: Conversation): CachedSummary {
   const standaloneNote = getStandaloneNote(conversation);
   const preview = conversation.document
-    ? excerpt(getCurrentDocumentText(conversation), 108) || (conversation.vaultFile ? conversation.vaultFile.kind === "pdf" ? "PDF" : "Image" : "Empty document")
+    ? excerpt(getCurrentDocumentText(conversation), 108) || (conversation.vaultFile ? { pdf: "PDF", html: "HTML page", image: "Image" }[conversation.vaultFile.kind] : "Empty document")
     : standaloneNote
       ? excerpt(standaloneNote.content, 108) || "Empty note"
       : getThreadPreviewFromConversations([conversation]);

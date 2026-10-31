@@ -145,7 +145,7 @@ export interface ThreadSummary {
   id: string;
   kind?: "chat" | "note";
   /** Set when the document shows a PDF or image from the vault. */
-  fileKind?: "pdf" | "image";
+  fileKind?: "pdf" | "image" | "html";
   groupId?: string | null;
   preview: string;
   title: string;

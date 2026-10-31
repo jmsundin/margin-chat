@@ -105,3 +105,8 @@
 .chat-outline .vault-pdf-outline-label { color: var(--muted); font-size: .66rem; letter-spacing: .05em; text-transform: uppercase; margin: 10px 6px 4px; }
 .chat-outline .vault-pdf-outline-empty { padding: 4px 6px; font-size: .72rem; }
 @media (pointer: coarse), (max-width: 600px) { .chat-outline .vault-pdf-outline-title { min-height: 40px; align-items: center; } .chat-outline .vault-pdf-outline-toggle { height: 40px; } }
+
+/* HTML pages: live in a sandboxed frame as tall as the page, so the document scrolls as one. Pages stay white like paper. */
+.vault-html-stage { position: relative; width: 100%; }
+.vault-html-frame { display: block; box-sizing: border-box; width: 100%; height: min(70vh, 640px); border: 1px solid var(--line); border-radius: 6px; background: #fff; color-scheme: light; }
+.vault-html-stage > .vault-file-highlights { inset: 1px; overflow: hidden; }

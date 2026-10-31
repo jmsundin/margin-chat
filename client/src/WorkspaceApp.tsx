@@ -5658,7 +5658,7 @@ function WorkspaceAppContent({
             onFindRelated={() => handleFindRelatedToSelection(caretMenu.paragraph)} /> : null}
           {!isTileView && selectionDraft ? (
             mobileKeyboard.mobile && !selectionActionsExpanded ? <MobileSelectionActions
-              rect={selectionDraft.rect} formRef={toolbarRef}
+              rect={selectionDraft.rect} formRef={toolbarRef} quote={selectionDraft.quote}
               disabled={Boolean(pendingConversationIds[selectionDraft.conversationId])}
               onExplain={() => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT)}
               onRewrite={selectionIsDiagram ? undefined : () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
@@ -5729,7 +5729,7 @@ function WorkspaceAppContent({
                     onSelect: () => { setSelectionLinkError(null); setSelectionIntent((intent) => intent === "link" ? "actions" : "link"); } },
                 ]}
                 more={[
-                  { icon: "copy", label: "Copy", hint: "⌘C", onSelect: () => { void copySelection(); } },
+                  { icon: "copy", label: "Copy", hint: "⌘C", onSelect: () => { void copySelection(selectionDraft.quote); } },
                   { icon: "find", label: "Find related", onSelect: () => handleFindRelatedToSelection() },
                   { icon: "explain", label: "Explain", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT) },
                   ...(selectionIsDiagram ? [] : [{ icon: "rewrite" as const, label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) }]),

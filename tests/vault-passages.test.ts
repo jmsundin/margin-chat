@@ -345,4 +345,27 @@ describe("vault passage index", () => {
     expect(await service.readFile({ userId: "u1", fileId: bread })).toBeNull();
     expect(extracted.filter((name) => name === "Bread science.pdf")).toHaveLength(2);
   }, 30_000);
+
+  test("indexes HTML pages in the cloud vault by their readable text, without scripts or styles", async () => {
+    const { client, database } = await setup();
+    await writeState(client, "u1", normalizeAppState(state()));
+    const page = "<!doctype html><html><head><title>Kiln</title><style>.x{color:red}</style><script>const secret = 'tokens';</script></head>"
+      + "<body><h1>Firing schedule</h1><p>Bisque firing ramps slowly to cone 04.</p><button onclick=\"go()\">Start</button></body></html>";
+    const manifest = { revision: 1, files: { "Pottery/Kiln.html": { revision: "h1", encoding: "base64" } } };
+    const vault = {
+      configured: true,
+      revision: async () => manifest.revision,
+      snapshot: async () => ({ manifest }),
+      readFile: async () => ({ bytes: Buffer.from(page) }),
+    };
+    const service = createVaultPassageService({ database, env: { OPENAI_API_KEY: "test" }, embed: recordingEmbed().embed, vault });
+    await indexAll(service);
+    const id = vaultFileDocumentId("Pottery/Kiln.html");
+    const found = await service.search({ userId: "u1", query: "bisque cone", context });
+    expect(found.results[0]).toMatchObject({ id, sourceKind: "vault-file", kind: "file", title: "Kiln.html" });
+    const text = (await service.readFile({ userId: "u1", fileId: id }))!.passages.map((passage: any) => passage.content ?? passage.text).join(" ");
+    expect(text).toContain("Bisque firing ramps slowly");
+    expect(text).not.toContain("secret");
+    expect(text).not.toContain("color:red");
+  }, 30_000);
 });

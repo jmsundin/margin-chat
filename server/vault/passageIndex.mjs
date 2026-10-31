@@ -93,7 +93,7 @@ export function createVaultPassageService({ database, env = process.env, vault =
   }
 
   /**
-   * PDFs synced to the cloud vault whose passages are missing or were made from
+   * PDFs and HTML pages synced to the cloud vault whose passages are missing or were made from
    * an older revision, up to `limit` with their bytes; and how many there are.
    * Indexed PDFs that left the vault are forgotten. Each file's document ID is
    * the one the app gives it, so a match opens that document.
@@ -109,9 +109,10 @@ export function createVaultPassageService({ database, env = process.env, vault =
     const hidden = new Set(database.listAIHiddenIds ? await database.listAIHiddenIds({ userId }) : []);
     const current = new Map();
     for (const [path, entry] of Object.entries(manifest.files)) {
-      if (entry.deleted || vaultFileKind(path) !== "pdf" || !isVaultFileDocumentPath(path)) continue;
+      const kind = vaultFileKind(path);
+      if (entry.deleted || (kind !== "pdf" && kind !== "html") || !isVaultFileDocumentPath(path)) continue;
       if (hidden.has(vaultFileDocumentId(path))) continue;
-      current.set(vaultFileDocumentId(path), { path, revision: entry.revision, size: Number.isSafeInteger(entry.size) ? entry.size : 0 });
+      current.set(vaultFileDocumentId(path), { path, kind, revision: entry.revision, size: Number.isSafeInteger(entry.size) ? entry.size : 0 });
     }
     const gone = [...indexed.keys()].filter((id) => !current.has(id));
     if (gone.length) await database.deleteVaultFilePassageSources({ userId, ids: gone });
@@ -130,9 +131,9 @@ export function createVaultPassageService({ database, env = process.env, vault =
       batchBytes += bytes;
     }
     const sources = (await Promise.all(batch.map(async ([id, file]) => {
-      const source = { kind: "vault-file", id, itemKind: "file", title: vaultFileTitle(file.path), mimeType: "application/pdf",
+      const source = { kind: "vault-file", id, itemKind: "file", title: vaultFileTitle(file.path), mimeType: file.kind === "html" ? "text/html" : "application/pdf",
         fingerprint: file.revision, updatedAt: null };
-      if (file.size > MAX_INDEXED_PDF_BYTES) return { ...source, readError: "This PDF is too large to search inside (over 100 MB). It still syncs and opens." };
+      if (file.size > MAX_INDEXED_PDF_BYTES) return { ...source, readError: `This ${file.kind === "html" ? "page" : "PDF"} is too large to search inside (over 100 MB). It still syncs and opens.` };
       try {
         return { ...source, bytes: (await vault.readFile({ userId, path: file.path, revision: file.revision })).bytes };
       } catch (failure) {

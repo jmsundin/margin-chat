@@ -5,7 +5,7 @@ import type { VaultFile } from "./vaultTypes";
 
 /**
  * Files picked on any device, a phone included, become vault files: notes and
- * text as Markdown documents, PDFs and images as file documents, and a zip of
+ * text as Markdown documents, PDFs, images and HTML pages as file documents, and a zip of
  * a vault folder as everything in it. Names already in the vault get a number,
  * so an upload never replaces or conflicts with an existing document.
  */
@@ -63,7 +63,7 @@ export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<
         const archive = importVault(upload.bytes, (path) => !ZIP_JUNK.test(path));
         const files = archive["vault-export.json"] || archive["workspace.json"] ? archive : withoutSharedFolder(archive);
         if (!Object.keys(files).some((path) => MARKDOWN.test(path) || isVaultFileDocumentPath(path))) {
-          plan.skipped.push({ name: upload.name, reason: "has no notes, PDFs or images" });
+          plan.skipped.push({ name: upload.name, reason: "has no notes, PDFs, images or HTML pages" });
           continue;
         }
         // A zip keeps no dates we can read, so its notes count from the upload (a note's own `created` still wins).
@@ -87,7 +87,7 @@ export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<
         plan.createdAtByPath[path] = createdAt(upload.lastModified);
         plan.added.push(upload.name);
       } else {
-        plan.skipped.push({ name: upload.name, reason: "isn’t a note, PDF, image or zip" });
+        plan.skipped.push({ name: upload.name, reason: "isn’t a note, PDF, image, HTML page or zip" });
       }
     } catch (error) {
       plan.skipped.push({ name: upload.name, reason: error instanceof TypeError ? "isn’t readable text" : error instanceof Error ? error.message : "couldn’t be read" });

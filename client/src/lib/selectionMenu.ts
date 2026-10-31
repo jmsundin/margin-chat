@@ -99,10 +99,16 @@ export function hideNativeSelectionMenu(): () => void {
   };
 }
 
-/** Copy the selection the way the system menu would, keeping rich text where the editor provides it. */
-export async function copySelection(): Promise<boolean> {
+/**
+ * Copy the selection the way the system menu would, keeping rich text where the editor provides it.
+ * `fallback` is copied when the selection is in a frame the app can't read, such as an HTML page.
+ */
+export async function copySelection(fallback?: string): Promise<boolean> {
   const range = appSelection();
-  if (!range) return false;
+  if (!range) {
+    if (!fallback) return false;
+    try { await navigator.clipboard.writeText(fallback); return true; } catch { return false; }
+  }
   try { if (document.execCommand("copy")) return true; } catch { /* fall back to the async clipboard */ }
   try { await navigator.clipboard.writeText(range.toString()); return true; } catch { return false; }
 }
