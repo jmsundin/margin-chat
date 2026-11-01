@@ -69,6 +69,8 @@ describe("workspace picture at startup", () => {
     expect(links.map((link) => link.getAttribute("href"))).toEqual(STYLES.slice(0, 2));
     await settle();
     expect(document.getElementById("boot-snapshot")?.textContent).toContain("Second note");
+    // The picture can't be used yet, and says so.
+    expect(document.querySelector("#boot-snapshot .boot-pill")?.textContent).toBe("Opening your vault\u2026");
     const root = document.getElementById("root")!;
     // The empty starting shell, then the workspace while its documents are read: the picture stays.
     root.innerHTML = '<div class="app-shell" aria-busy="true"></div>';
@@ -83,13 +85,13 @@ describe("workspace picture at startup", () => {
     await window.happyDOM.abort();
   });
 
-  test("a stylesheet that can't be loaded keeps the outline instead of an unstyled picture", async () => {
+  test("a stylesheet that can't be loaded keeps the splash screen instead of an unstyled picture", async () => {
     const window = page(undefined, true);
     window.localStorage.setItem("margin-chat-offline-identity", JSON.stringify(USER));
     window.localStorage.setItem(`margin-chat-boot-snapshot:${USER.id}`, JSON.stringify(saved));
     boot(window);
     await settle();
-    expect(window.document.querySelector("#boot-snapshot .boot-outline")).not.toBeNull();
+    expect(window.document.querySelector("#boot-snapshot .boot-splash")?.textContent).toContain("Opening your vault");
     expect(window.document.getElementById("boot-snapshot")?.textContent).not.toContain("Second note");
     await window.happyDOM.abort();
   });
@@ -106,7 +108,7 @@ describe("workspace picture at startup", () => {
     }
   });
 
-  test("without a saved picture, an outline of the workspace shows at once", async () => {
+  test("without a saved picture, a splash screen with the app's name shows at once, saying the vault is opening for a saved account", async () => {
     for (const [url, identity] of [["https://www.marginchat.com/", { ...USER, id: "user-2" }], ["https://www.marginchat.com/app", null],
       ["https://www.marginchat.com/app", { ...USER, id: "someone-else" }]] as const) {
       const window = page(url);
@@ -115,7 +117,9 @@ describe("workspace picture at startup", () => {
       window.localStorage.setItem(`margin-chat-boot-snapshot:${USER.id}`, JSON.stringify(saved));
       boot(window);
       const view = window.document.getElementById("boot-snapshot")!;
-      expect(view.querySelector(".boot-outline-bar")).not.toBeNull();
+      expect(view.querySelector(".boot-splash .boot-mark")).not.toBeNull();
+      expect(view.textContent).toContain("Margin Chat");
+      expect(view.textContent?.includes("Opening your vault")).toBe(Boolean(identity));
       expect(view.textContent).not.toContain("Second note");
       // A sign-in or "checking your session" screen replaces it.
       window.document.getElementById("root")!.innerHTML = '<div class="app-shell"><div class="auth-chrome"></div></div>';

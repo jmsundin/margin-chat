@@ -1,35 +1,35 @@
-// What a signed-in visitor sees before the app's code has loaded: the last workspace this device showed,
-// painted from saved HTML, or when there is none, an outline of the workspace (header, sidebar and lines
-// standing in for a document). client/src/lib/bootSnapshot.ts saves the picture.
+// What a signed-in visitor sees before the app's code has loaded and the vault is open: the last workspace this
+// device showed, painted from saved HTML with a note that it is still opening, or when there is none, a splash
+// screen with the app's mark and name. client/src/lib/bootSnapshot.ts saves the picture.
 
 export const BOOT_SNAPSHOT_KEY = "margin-chat-boot-snapshot";
 export const OFFLINE_IDENTITY_KEY = "margin-chat-offline-identity";
 
-// Drawn by the page itself, so it needs no stylesheet but the one already in the page's head.
-const OUTLINE = `<div class="boot-outline">
-<div class="boot-outline-bar"><i class="boot-outline-button"></i><i class="boot-outline-search"></i><i class="boot-outline-button"></i><i class="boot-outline-button"></i></div>
-<div class="boot-outline-body">
-<div class="boot-outline-side">${'<i class="boot-outline-line"></i>'.repeat(8)}</div>
-<div class="boot-outline-page"><i class="boot-outline-title"></i>${'<i class="boot-outline-line"></i>'.repeat(9)}</div>
-</div></div>`;
+// Drawn by the page itself, so it needs no stylesheet but the one already in the page's head. The mark's three
+// dots light up in turn while the app starts.
+const MARK = (className) => `<svg class="${className}" viewBox="0 0 64 64" aria-hidden="true">`
+  + '<path d="M14 42V26a9 9 0 0 1 18 0v16M32 26a9 9 0 0 1 18 0v16" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/>'
+  + '<circle class="boot-dot" cx="14" cy="42" r="5.5" fill="#7acaa4"/><circle class="boot-dot" cx="32" cy="42" r="5.5" fill="#c9b8ff"/>'
+  + '<circle class="boot-dot" cx="50" cy="42" r="5.5" fill="#ff8d6d"/></svg>';
+const STATUS = "Opening your vault\u2026";
+// With no saved picture of the workspace: the app's mark and name, and what it is doing.
+const splash = (status) => `<div class="boot-splash">${MARK("boot-mark")}<div class="boot-name">Margin Chat</div>`
+  + (status ? `<div class="boot-status" role="status">${STATUS}</div>` : "") + "</div>";
+// Over a saved picture, which can't be used yet: a small note that the workspace is still opening.
+const PILL = `<div class="boot-pill" role="status">${MARK("boot-pill-mark")}<span>${STATUS}</span></div>`;
 
 export const BOOT_SNAPSHOT_STYLE = `#boot-snapshot{position:fixed;inset:0;z-index:2147483000;overflow:hidden;pointer-events:none}
-.boot-outline{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg,#ece4d6)}
-.boot-outline i{display:block;border-radius:8px;background:var(--line,rgba(127,127,127,.14));animation:boot-outline-pulse 1.4s ease-in-out infinite}
-.boot-outline-bar{display:flex;gap:8px;align-items:center;padding:8px 10px;flex:none}
-.boot-outline-button{width:36px;height:36px;flex:none}
-.boot-outline-search{height:36px;flex:1;max-width:420px}
-.boot-outline-body{display:flex;flex:1;min-height:0}
-.boot-outline-side{display:none;width:260px;padding:16px 12px;flex:none}
-.boot-outline-side .boot-outline-line{margin:0 0 14px;width:80%}
-.boot-outline-page{flex:1;max-width:760px;margin:0 auto;padding:28px 20px}
-.boot-outline-title{height:30px;width:55%;margin:0 0 26px}
-.boot-outline-line{height:14px;margin:0 0 14px}
-.boot-outline-line:nth-child(3n){width:88%}
-.boot-outline-line:nth-child(4n){width:72%}
-@media (min-width:900px){.boot-outline-side{display:block}}
-@media (prefers-reduced-motion:reduce){.boot-outline i{animation:none}}
-@keyframes boot-outline-pulse{50%{opacity:.45}}`;
+.boot-splash{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:var(--bg,#ece4d6);color:var(--ink,#1f2a24);font:inherit;padding-bottom:6vh}
+.boot-mark{width:72px;height:72px}
+.boot-name{font-size:20px;font-weight:600;letter-spacing:.01em}
+.boot-status{font-size:14px;color:var(--muted,#6b7a72)}
+.boot-pill{position:absolute;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:7px 14px 7px 10px;border-radius:999px;background:var(--panel-strong,rgba(255,255,255,.96));border:1px solid var(--line,rgba(127,127,127,.2));color:var(--ink,#1f2a24);font-size:13px;white-space:nowrap;box-shadow:0 4px 18px rgba(0,0,0,.14)}
+.boot-pill-mark{width:22px;height:22px;flex:none}
+.boot-dot{animation:boot-dot 1.2s ease-in-out infinite}
+.boot-dot:nth-of-type(2){animation-delay:.2s}
+.boot-dot:nth-of-type(3){animation-delay:.4s}
+@media (prefers-reduced-motion:reduce){.boot-dot{animation:none}}
+@keyframes boot-dot{0%,60%,100%{opacity:1}30%{opacity:.25}}`;
 
 /**
  * Runs inline in index.html. `styles` lists this build's stylesheets, so a snapshot saved by an older
@@ -59,15 +59,15 @@ export function bootSnapshotScript(styles) {
     var view = document.createElement("div");
     view.id = "boot-snapshot";
     view.setAttribute("aria-hidden", "true");
-    view.innerHTML = ${JSON.stringify(OUTLINE)};
+    view.innerHTML = user ? ${JSON.stringify(splash(true))} : ${JSON.stringify(splash(false))};
     document.body.appendChild(view);
     if (saved) {
-      // The picture replaces the outline once the stylesheets it needs have arrived, never unstyled.
+      // The picture replaces the splash screen once the stylesheets it needs have arrived, never unstyled.
       var waiting = 1;
       var failed = false;
       var arrived = function (event) {
         if (event && event.type === "error") failed = true;
-        if (--waiting === 0 && !failed && view.parentNode) view.innerHTML = saved.html;
+        if (--waiting === 0 && !failed && view.parentNode) view.innerHTML = saved.html + ${JSON.stringify(PILL)};
       };
       var styles = ${JSON.stringify(styles)};
       var linked = {};
