@@ -12,8 +12,7 @@ export function GraphViewModeTabs({ mode, lens, onModeChange }: Pick<Props, "mod
   return <div className="graph-view-mode-tabs" role="group" aria-label="Map mode">
     {GRAPH_VIEW_TABS.map((tab) => {
       const item = GRAPH_VIEW_MODES.find((candidate) => candidate.id === tab)!;
-      // Clusters keeps its group-by choice when you click it again.
-      const target = tab === "clusters" && mode === "topics" ? "topics" : tab;
+      const target = tab;
       return <button key={tab} type="button" aria-label={`${item.label} view`}
         aria-pressed={getGraphViewTab(mode) === tab && lens === "documents"} title={item.description}
         onClick={() => onModeChange(target)}>{item.label}</button>;

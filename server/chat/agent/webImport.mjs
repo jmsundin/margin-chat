@@ -9,6 +9,8 @@ export const IMPORT_MAX_PAGES = 80;
 /** Linked pages followed from any one page. */
 const CHILDREN_PER_PAGE = 60;
 const CONCURRENCY = 4;
+/** The first page's other links listed back to the agent, to pick relevant ones from. */
+const OTHER_LINKS_RETURNED = 30;
 const MARKDOWN_FILE = /\.(md|markdown|mdx|txt)$/iu;
 const NOT_A_PAGE = /\.(png|jpe?g|gif|svg|webp|ico|bmp|avif|zip|gz|tgz|tar|7z|rar|exe|dmg|pkg|deb|mp3|wav|mp4|mov|webm|avi|woff2?|ttf|otf|css|js|mjs|json|xml|csv|ya?ml|toml|lock|ipynb|py|ts|tsx|jsx|java|c|h|cpp|go|rs|rb|php|sh)$/iu;
 const GITHUB_RESERVED = new Set(["orgs", "settings", "topics", "features", "marketplace", "sponsors", "explore", "login", "about", "pricing", "collections", "search", "notifications", "apps"]);
@@ -134,7 +136,7 @@ export async function readImportPage(url, { signal, userAgent, fetchPage, readPa
     const page = await readGitHub(location, fetchRaw);
     if (page) return page;
   }
-  const page = await readPage(url, { signal, userAgent, markdown: true, markdownLinks: true, pdf: true, textLimit: IMPORT_DOCUMENT_CHARACTERS + 1, linkLimit: 200 });
+  const page = await readPage(url, { signal, userAgent, markdown: true, markdownLinks: true, images: true, pdf: true, textLimit: IMPORT_DOCUMENT_CHARACTERS + 1, linkLimit: 200 });
   return { url: page.url, title: page.title, markdown: page.text, links: page.links };
 }
 
@@ -194,12 +196,49 @@ function documentMarkdown(page) {
 }
 
 /**
- * Import a page and the pages under it, `levels` deep: level 1 is the pages the
- * first page links to in its own section, level 2 the pages those link to, and so
- * on. Pages already seen are not imported twice. Returns the documents, parents
- * first, and how many more pages the next level down would add.
+ * The pages to save under one page: its section links, then what it points at
+ * that belongs with it (`page.related`, such as the posts an X thread quotes),
+ * then for the first page any of its links the agent picked (`chosen`).
  */
-export async function importWebSection(url, { levels = 1, signal, userAgent, readImport = readImportPage, maxPages = IMPORT_MAX_PAGES } = {}) {
+function childLinks(page, root, chosen = []) {
+  const section = sectionLinks(page, root).slice(0, CHILDREN_PER_PAGE);
+  const keys = new Set(section.map((link) => link.url));
+  const extra = [];
+  for (const link of [...(page.related ?? []).map((item) => ({ ...item, named: true })), ...chosen]) {
+    let key;
+    try { key = pageKey(link.url); } catch { continue; }
+    if (keys.has(key) || key === pageKey(page.url)) continue;
+    keys.add(key);
+    extra.push({ ...link, url: key });
+  }
+  return [...section, ...extra.slice(0, CHILDREN_PER_PAGE)];
+}
+
+/** The first page's links that are not saved under it, for the agent to pick from. */
+function otherLinks(page, saved) {
+  const out = [];
+  const seen = new Set(saved);
+  for (const link of page.links ?? []) {
+    let key;
+    try { key = pageKey(link.url); } catch { continue; }
+    if (seen.has(key) || NOT_A_PAGE.test(new URL(key).pathname)) continue;
+    seen.add(key);
+    out.push({ url: key, label: link.label });
+    if (out.length === OTHER_LINKS_RETURNED) break;
+  }
+  return out;
+}
+
+/**
+ * Import a page and the pages under it, `levels` deep: level 1 is the pages the
+ * first page links to in its own section, plus what it points at that belongs
+ * with it (an X thread's quoted posts and shared links) and any of its links in
+ * `links` (addresses the agent picked as relevant); level 2 the same for those
+ * pages, and so on. Pages already seen are not imported twice. Returns the
+ * documents, parents first, how many more pages the next level down would add,
+ * and the first page's other links.
+ */
+export async function importWebSection(url, { levels = 1, links = [], signal, userAgent, readImport = readImportPage, maxPages = IMPORT_MAX_PAGES } = {}) {
   const read = (address) => readImport(address, { signal, userAgent });
   const rootPage = await read(url);
   const seen = new Set([pageKey(url), pageKey(rootPage.url)]);
@@ -207,12 +246,23 @@ export async function importWebSection(url, { levels = 1, signal, userAgent, rea
   const rootDocument = documentMarkdown(root);
   const documents = [{ url: root.url, parentUrl: null, level: 0, title: root.title, ...rootDocument }];
   const failed = [];
+  // Only links on the first page can be picked; anything else is reported, not read.
+  const onPage = new Set((root.links ?? []).flatMap((link) => { try { return [pageKey(link.url)]; } catch { return []; } }));
+  const chosen = [];
+  for (const address of links) {
+    let key;
+    try { key = pageKey(normalizePublicPageUrl(address).href); } catch { failed.push({ url: String(address), error: "That is not a public web address." }); continue; }
+    if (onPage.has(key)) chosen.push({ url: key, label: "", named: true });
+    else failed.push({ url: key, error: "That address is not a link on the saved page." });
+  }
   let skipped = 0;
   let frontier = [root];
-  for (let level = 1; level <= levels && frontier.length; level += 1) {
+  for (let level = 1; level <= Math.max(levels, chosen.length ? 1 : 0) && frontier.length; level += 1) {
     const candidates = [];
     for (const page of frontier) {
-      for (const link of sectionLinks(page, root.url).slice(0, CHILDREN_PER_PAGE)) {
+      // With levels 0, only the links the agent picked are saved under the page.
+      const picks = page === root ? chosen : [];
+      for (const link of level > levels ? picks : childLinks(page, root.url, picks)) {
         if (seen.has(link.url)) continue;
         seen.add(link.url);
         candidates.push({ ...link, parentUrl: page.url });
@@ -230,7 +280,8 @@ export async function importWebSection(url, { levels = 1, signal, userAgent, rea
         return;
       }
       const page = { ...result.value, url: link.url };
-      const label = link.label && link.label.length <= 120 ? link.label : null;
+      // A section link's text names its page (a chapter title); a quoted post's "@name" does not.
+      const label = !link.named && link.label && link.label.length <= 120 ? link.label : null;
       documents.push({ url: page.url, parentUrl: link.parentUrl, level, title: label ?? page.title, ...documentMarkdown(page) });
       next.push(page);
     });
@@ -239,9 +290,9 @@ export async function importWebSection(url, { levels = 1, signal, userAgent, rea
   const deeper = new Set();
   let deeperFrom = 0;
   for (const page of frontier) {
-    const links = sectionLinks(page, root.url).filter((link) => !seen.has(link.url));
-    if (links.length) deeperFrom += 1;
-    for (const link of links) deeper.add(link.url);
+    const pending = childLinks(page, root.url).filter((link) => !seen.has(link.url));
+    if (pending.length) deeperFrom += 1;
+    for (const link of pending) deeper.add(link.url);
   }
-  return { documents, failed, skipped, deeper: { pages: deeper.size, fromDocuments: deeperFrom } };
+  return { documents, failed, skipped, deeper: { pages: deeper.size, fromDocuments: deeperFrom }, otherLinks: otherLinks(root, seen) };
 }

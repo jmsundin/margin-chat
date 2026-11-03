@@ -82,6 +82,8 @@ import { buildDiagramAIMessage, buildDocumentAIMessage, type DiagramAIRequest, t
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
+import { collectExpiredEmptyDocuments, EMPTY_DOCUMENT_CLEANUP_CHECK_MS, noteDocumentFocusChange, readLeftEmptyDocuments,
+  writeLeftEmptyDocuments, type LeftEmptyDocuments } from "./lib/emptyDocumentCleanup";
 import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
 import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
@@ -164,6 +166,7 @@ import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
 import { applyTextEdit, canUndoProposal, undoEditArguments, withProposalUpdate } from "./lib/agentProposals";
 import { addImportedWebDocuments } from "./lib/webImportDocuments";
+import { fetchImportImage, importedImageSources, saveImportedImages, type ImportedImageSource } from "./lib/webImportImages";
 import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument, retractMessageText } from "./lib/workspaceCommands";
 import { buildDocumentSummaries, buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
@@ -1089,6 +1092,44 @@ function WorkspaceAppContent({
   const createSlot = useMobileDockSlot("create");
   const isGraphView = mainViewMode === "graph";
   const visibleDocumentIds = new Set([...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]);
+  // A new document you leave without writing in is removed a few minutes later, unless you come back to it.
+  const cleanupStartedAtRef = useRef(Date.now());
+  const leftEmptyDocumentsRef = useRef<LeftEmptyDocuments | null>(null);
+  const previousActiveDocumentIdRef = useRef(activeConversation.id);
+  const visibleDocumentIdsRef = useRef(visibleDocumentIds);
+  visibleDocumentIdsRef.current = visibleDocumentIds;
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const deleteEmptyDocumentRef = useRef<(id: string) => void>(() => undefined);
+  deleteEmptyDocumentRef.current = handleDeleteThread;
+  useEffect(() => {
+    const previousId = previousActiveDocumentIdRef.current;
+    previousActiveDocumentIdRef.current = activeConversation.id;
+    if (!vault.ready) return;
+    const left = leftEmptyDocumentsRef.current ??= readLeftEmptyDocuments();
+    const next = noteDocumentFocusChange(left, currentStateRef.current, previousId, activeConversation.id, {
+      createdSince: cleanupStartedAtRef.current - 1_000, now: Date.now(), draft: draftsRef.current[previousId],
+    });
+    if (next === left) return;
+    leftEmptyDocumentsRef.current = next;
+    writeLeftEmptyDocuments(next);
+  }, [activeConversation.id]);
+  useEffect(() => {
+    if (!vault.ready) return;
+    const sweep = () => {
+      const left = leftEmptyDocumentsRef.current ??= readLeftEmptyDocuments();
+      if (!Object.keys(left).length) return;
+      const { remove, left: next } = collectExpiredEmptyDocuments(left, currentStateRef.current, {
+        now: Date.now(), visibleIds: visibleDocumentIdsRef.current, drafts: draftsRef.current,
+      });
+      leftEmptyDocumentsRef.current = next;
+      writeLeftEmptyDocuments(next);
+      for (const id of remove) deleteEmptyDocumentRef.current(id);
+    };
+    sweep();
+    const timer = window.setInterval(sweep, EMPTY_DOCUMENT_CLEANUP_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [vault.ready]);
   const maximizedDocument = !isTileView && !isGraphView && maximizedDocumentId && visibleDocumentIds.has(maximizedDocumentId)
     ? state.conversations[maximizedDocumentId] : undefined;
   const maximizedIsPinned = Boolean(maximizedDocument && pinnedDocumentIds.includes(maximizedDocument.id));
@@ -2499,11 +2540,31 @@ function WorkspaceAppContent({
         // Pages agent mode imports become documents beside the one the user asked from.
         onAgentEvent: (event) => {
           if (event.type !== "documents") { onAgentEvent(event); return; }
+          let created: ImportedImageSource[] | null = null;
+          // The same ids on every run of the updater, so the pictures land in the documents React keeps.
+          const ids: string[] = [];
           setState((current) => {
-            const next = addImportedWebDocuments(current, source.id, event.documents, { createId }).state;
-            currentStateRef.current = next;
-            return next;
+            let used = 0;
+            const imported = addImportedWebDocuments(current, source.id, event.documents, { createId: (prefix) => (ids[used++] ??= createId(prefix)) });
+            created = importedImageSources(imported.state, imported.createdIds);
+            currentStateRef.current = imported.state;
+            return imported.state;
           });
+          // The pages' pictures are saved into the vault beside their text, once React has created the documents.
+          const saveImages = (tries: number) => window.setTimeout(() => {
+            if (!created) { if (tries < 40) saveImages(tries + 1); return; }
+            if (!created.length) return;
+            void saveImportedImages({
+              documents: created, media: vault.media,
+              fetchImage: (url) => fetchImportImage(url, { expectedUserId: user.id }),
+              update: (change) => setState((current) => {
+                const next = change(current);
+                currentStateRef.current = next;
+                return next;
+              }),
+            }).catch(() => undefined);
+          }, tries ? 50 : 0);
+          saveImages(0);
         },
       }),
       onError(error) {

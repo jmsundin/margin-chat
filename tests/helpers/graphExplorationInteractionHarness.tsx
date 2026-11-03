@@ -1124,7 +1124,7 @@ async function checkCanvasCardDrag() {
     }));
   });
   await flushFrames();
-  await click(element('[aria-label="Canvas view"]'));
+  await click(element('[aria-label="Map view"]'));
   const viewport = element(".conversation-graph-viewport");
   const body = () => element('[aria-label="Preview Drag left"]');
   async function press(moves: number[], pointerId: number) {

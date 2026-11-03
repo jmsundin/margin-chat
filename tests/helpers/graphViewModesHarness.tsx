@@ -121,8 +121,10 @@ async function settle() {
   }
   assert.equal(frames.size, 0, "Switching views settles without animation loops");
 }
-function groupsSwitch(): any {
-  return [...container.querySelectorAll(".conversation-graph-zoom button")].find((item: any) => item.textContent === "Groups");
+function groupingChip(): any { return container.querySelector(".graph-map-navigation > .graph-map-grouping > summary"); }
+async function groupBy(label: string) {
+  await click(groupingChip());
+  await click([...container.querySelectorAll('.graph-map-grouping [role="radio"]')].find((item: any) => item.textContent.startsWith(label)));
 }
 async function click(target: any) { await act(async () => target.click()); await settle(); }
 async function choose(label: string, value: string) {
@@ -134,12 +136,9 @@ async function choose(label: string, value: string) {
   await settle();
 }
 async function show(mode: string) {
-  if (["canvas", "focus", "clusters"].includes(mode)) await click(element(`[aria-label="${mode[0].toUpperCase()}${mode.slice(1)} view"]`));
-  else if (mode === "topics") {
-    // Topics is Clusters grouped by your groups.
-    await click(element('[aria-label="Clusters view"]'));
-    await click([...container.querySelectorAll('[aria-label="Group documents by"] button')].find((item: any) => item.textContent === "My groups"));
-  } else await choose("More graph views", mode);
+  if (mode === "canvas") await click(element('[aria-label="Map view"]'));
+  else if (mode === "focus") await click(element('[aria-label="Focus view"]'));
+  else await choose("More graph views", mode);
   assert.equal(element("section[data-view-mode]").dataset.viewMode, mode);
 }
 async function fresh(name: string, patch: Record<string, unknown> = {}) {
@@ -183,7 +182,7 @@ try {
   await fresh("mode-retention", { selectedConversationId: "root", dockedConversationId: "root", detailLevel: "preview", query: "evidence", readerScroll: 211, source });
   const authored = positions();
   const canvasViewport = state().viewport;
-  for (const next of ["focus", "topics", "lineage", "network", "canvas"]) {
+  for (const next of ["focus", "lineage", "network", "canvas"]) {
     await show(next);
     assert.equal(state().selectedConversationId, "root", `${next} retains the selected source`);
     assert.equal(state().dockedConversationId, "root", `${next} retains the docked reader`);
@@ -314,9 +313,9 @@ try {
   // positions on Canvas, Layout reshapes computed views, and the rest have none.
   const bottomMenus = () => [...container.querySelectorAll(".graph-map-layout-options > summary")].map((summary: any) => summary.textContent.trim());
   await fresh("arrange-menus");
-  assert.deepEqual(bottomMenus(), [], "Canvas group boxes arrange themselves, so Tidy up waits until Groups is off");
-  await click(groupsSwitch());
-  assert.deepEqual(bottomMenus(), ["Tidy up"], "Canvas offers Tidy up for your free arrangement");
+  assert.deepEqual(bottomMenus(), [], "Map boxes arrange themselves, so Tidy up waits until grouping is off");
+  await groupBy("None");
+  assert.deepEqual(bottomMenus(), ["Tidy up"], "The Map offers Tidy up for your free arrangement");
   await show("focus");
   assert.deepEqual(bottomMenus(), ["Layout"], "Focus offers a Layout choice");
   assert(element('[aria-label="Focus view"]').getAttribute("aria-pressed") === "true");
@@ -324,23 +323,16 @@ try {
   assert.equal(mode(), "documents");
   assert.equal(element('[aria-label="Focus view"]').getAttribute("aria-pressed"), "true", "All documents stays under the Focus tab");
   assert.deepEqual(bottomMenus(), ["Layout"]);
-  for (const next of ["clusters", "topics", "network"]) {
-    await show(next);
-    assert.deepEqual(bottomMenus(), [], `${next} has no Arrange menu, because nothing in it would change the view`);
-  }
-  assert.equal(element('[aria-label="Clusters view"]').getAttribute("aria-pressed"), "false");
-  await show("topics");
-  assert.equal(element('[aria-label="Clusters view"]').getAttribute("aria-pressed"), "true", "Topics stays under the Clusters tab");
-  await click(button("Links"));
-  assert.equal(mode(), "clusters", "Group by Links switches to gravity clusters");
-  await click(element('[aria-label="Clusters view"]'));
-  assert.equal(mode(), "clusters");
+  await show("network");
+  assert.deepEqual(bottomMenus(), [], "Network has no Arrange menu, because nothing in it would change the view");
+  assert.equal(container.querySelector('[aria-label="Clusters view"]'), null, "Clusters is part of the Map now, not a tab of its own");
+  assert(![...container.querySelectorAll('select[aria-label="More graph views"] option')].some((item: any) => item.value === "clusters" || item.value === "topics"));
   await show("lineage");
   assert.deepEqual(bottomMenus(), ["Layout"], "Lineage keeps its tree choices");
   const lastView = JSON.parse(browser.localStorage.getItem("margin-graph-last-view:arrange-menus")!);
   assert.equal(lastView.viewMode, "lineage", "The last view is saved for the next session");
   assert.equal(lastView.dockedConversationId, null);
-  checks.push("Arrange shows Tidy up on Canvas, Layout on Focus and Lineage, and nothing on Clusters, Topics or Network");
+  checks.push("Arrange shows Tidy up on the free Map, Layout on Focus and Lineage, and nothing on Network");
 
   browser.localStorage.setItem("margin-map-canvas-groups:tidy-undo", "false");
   await fresh("tidy-undo");
@@ -363,6 +355,7 @@ try {
   layoutWrites = 0;
   checks.push("Tidy up on Canvas can be undone, restoring hand-placed positions");
 
+  browser.localStorage.setItem("margin-map-canvas-grouping:canvas-group-boxes", JSON.stringify("groups"));
   await fresh("canvas-group-boxes");
   const boxNames = () => [...container.querySelectorAll(".canvas-group-box-name strong")].map((item: any) => item.textContent);
   assert.deepEqual(boxNames().slice(0, 2), ["Research", "Notes"], "Canvas puts each of your groups in its own box");
@@ -372,13 +365,28 @@ try {
     assert(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, "Group boxes never overlap");
   }
   assert.equal((await wheel(element(".canvas-group-box-name"))).defaultPrevented, true, "Scrolling over a group's name keeps panning the map");
-  assert.equal(groupsSwitch()?.getAttribute("aria-pressed"), "true");
-  await click(groupsSwitch());
-  assert.deepEqual(boxNames(), [], "The Groups switch hides the boxes");
-  assert.equal(groupsSwitch().getAttribute("aria-pressed"), "false");
+  {
+    // Mid-pan, before React hears where the camera went, the boxes must already move with the cards.
+    const stageX = () => Number(/translate\(([-\d.]+)px/.exec(element(".conversation-graph-stage").style.transform)![1]);
+    const boxX = () => parseFloat(element(".canvas-group-box").style.left);
+    const [stageBefore, boxBefore] = [stageX(), boxX()];
+    const event = new browser.WheelEvent("wheel", { deltaX: 120, bubbles: true, cancelable: true });
+    Object.defineProperties(event, { clientX: { value: 350 }, clientY: { value: 220 } });
+    await act(async () => { element(".conversation-graph-viewport").dispatchEvent(event); });
+    assert.notEqual(stageX(), stageBefore, "The wheel pans the map");
+    assert(Math.abs((boxX() - boxBefore) - (stageX() - stageBefore)) < 0.5, "Group boxes pan in step with the cards, not after React catches up");
+    await settle();
+  }
+  assert.equal(groupingChip()?.getAttribute("aria-label"), "Group documents by: My groups");
+  await groupBy("Topics");
+  assert(boxNames().length > 0, "Topics puts the documents in boxes found from their links");
+  assert(!boxNames().includes("Research"), "Topic boxes are not your groups");
+  await groupBy("None");
+  assert.deepEqual(boxNames(), [], "Group: None hides the boxes");
   await fresh("canvas-group-boxes");
-  assert.deepEqual(boxNames(), [], "The Groups switch is remembered");
-  checks.push("Canvas boxes your groups without overlap, and the Groups switch turns them off");
+  assert.deepEqual(boxNames(), [], "The grouping is remembered");
+  assert.equal(groupingChip()?.getAttribute("aria-label"), "Group documents by: None");
+  checks.push("The Map boxes your groups without overlap, switches to topics, and Group: None turns boxes off");
   process.stdout.write(`${JSON.stringify({ checks })}\n`);
 } finally {
   await act(async () => reactRoot.unmount());
