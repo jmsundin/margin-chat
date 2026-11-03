@@ -58,8 +58,9 @@ export const IMPORT_TOOL_DEFINITION = {
   parameters: { type: "object", properties: {
     url: { type: "string", description: "The full http or https address, exactly as the user pasted it or as a returned link lists it." },
     levels: { type: "integer", description: "How many levels of linked pages to save under the page: 0 to 3. Use 1 unless the user asked for only the page, or said yes to going deeper." },
-    links: { type: "array", items: { type: "string" }, description: "Optional: addresses of links on this page, from other_links of an earlier import of it or from read_webpage's links, that its content depends on (an article or paper it discusses, a thread it answers), to save as child documents too. Leave empty unless you know the page's links. At most 10." },
-  }, required: ["url", "levels"], additionalProperties: false },
+    // Strict tool schemas (OpenAI, xAI, Meta) need every property in required, so "none" is null.
+    links: { type: ["array", "null"], items: { type: "string" }, description: "Addresses of links on this page, from other_links of an earlier import of it or from read_webpage's links, that its content depends on (an article or paper it discusses, a thread it answers), to save as child documents too. null unless you know the page's links. At most 10." },
+  }, required: ["url", "levels", "links"], additionalProperties: false },
 };
 
 /** A page for read_webpage. GitHub repositories and files are read from their raw Markdown, X posts with their whole thread. */
