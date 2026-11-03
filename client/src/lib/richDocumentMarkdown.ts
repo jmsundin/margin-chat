@@ -2,7 +2,7 @@ import type { JSONContent } from "@tiptap/core";
 import { Fragment, Slice, type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import diff from "fast-diff";
 import { marked } from "marked";
-import { findLatexStart, latexMarkdownLexer } from "./latex";
+import { findLatexStart, latexMarkdownLexer } from "./latexSyntax";
 import { findObsidianCalloutBlocks, findObsidianInlineTokens } from "./obsidianMarkdown";
 
 /** Keep raw slices, including separators, so splitting never rewrites source text. */

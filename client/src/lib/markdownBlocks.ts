@@ -1,4 +1,4 @@
-import { readLatexAtStart } from "./latex";
+import { readLatexAtStart } from "./latexSyntax";
 
 export type MarkdownBlockKind =
   | "blank"

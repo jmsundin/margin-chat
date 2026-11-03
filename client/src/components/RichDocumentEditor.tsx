@@ -1,3 +1,4 @@
+import "../lib/dictationEditors";
 import { Extension, Node as TiptapNode, type Editor, type EditorEvents, type JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";

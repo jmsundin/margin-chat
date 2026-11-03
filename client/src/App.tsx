@@ -7,7 +7,6 @@ import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserW
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
 import OAuthConsent from "./components/OAuthConsent";
-import MarketingSite from "./components/MarketingSite";
 import { AUTH_PATHS, resolveSiteRoute, type SiteRoute } from "./lib/siteRoutes";
 import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
@@ -34,6 +33,8 @@ function loadWorkspaceApp() {
 }
 const WorkspaceApp = lazy(loadWorkspaceApp);
 const GuestApp = lazy(() => import("./components/GuestApp"));
+// Signed-in people go straight to the workspace, so the public pages load only when shown.
+const MarketingSite = lazy(() => import("./components/MarketingSite"));
 /** Start loading the workspace code early, e.g. while the extension connects to its page. */
 export function preloadWorkspace() { void loadWorkspaceApp(); }
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
@@ -557,7 +558,9 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
   }
 
   const marketingSite = route.kind === "marketing" && (
-    <MarketingSite page={route.page} signedIn={authStatus === "authenticated" && Boolean(authUser)} onNavigate={navigate} />
+    <Suspense fallback={null}>
+      <MarketingSite page={route.page} signedIn={authStatus === "authenticated" && Boolean(authUser)} onNavigate={navigate} />
+    </Suspense>
   );
   if (route.kind === "marketing" && route.page !== "home") return marketingSite;
 

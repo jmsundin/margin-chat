@@ -3,7 +3,7 @@ import type {
 } from "@margin-chat/workspace-contracts";
 import { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
 import { getStandaloneNote, getStandaloneNoteContextMessageId } from "./standaloneNotes";
-import { latexMarkdownLexer } from "./latex";
+import { latexMarkdownLexer } from "./latexSyntax";
 
 export type { DocumentBlock, DocumentGeneration, DocumentInsertion, DocumentPrompt, EditableDocument } from "@margin-chat/workspace-contracts";
 export { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
