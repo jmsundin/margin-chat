@@ -214,3 +214,16 @@
   /* A phone has no room beside the document, so full screen leaves its margin notes out; they open on their own. */
   .app-shell.is-document-maximized .document-margin-notes.is-maximized-document { display: none; }
 }
+
+/* A phone has no room beside the text: the margin notes column used to push the document off to the
+   left, leaving a cut-off strip of it on screen. There the notes open as a page over the document;
+   their close button brings the document back. */
+@media (max-width: 900px) {
+  .conversation-canvas.is-tree-browser.is-document-workspace:has(> .document-margin-notes) { position: relative; }
+  .conversation-canvas.is-tree-browser.is-document-workspace > .document-margin-notes {
+    position: absolute; z-index: 5; inset: 0 0 10px; width: auto; margin: 0; padding: 0 12px;
+    background: var(--panel); flex: none;
+  }
+  /* Each note uses the page's width; the corner handle still sets its height. */
+  .conversation-canvas.is-tree-browser.is-document-workspace > .document-margin-notes .margin-document-frame { width: 100% !important; }
+}

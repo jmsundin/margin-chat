@@ -1002,11 +1002,12 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
       ...(selection.joinBlockIds?.length ? { joinBlockIds: selection.joinBlockIds } : {}) });
   }
 
-  function invoke(editor: Editor, spaces = 0, blockId?: string) {
+  function invoke(editor: Editor, spaces = 0, blockId?: string, afterBlock = false) {
     const current = latest.current;
     if (!current.onInvokeAI) return false;
     let selection = currentSelection(editor);
-    if (blockId && selection?.id !== blockId) {
+    // The touch "Ask AI" under a block answers after it unless part of the block is selected.
+    if (blockId && (selection?.id !== blockId || (afterBlock && selection.from === selection.to))) {
       const found = findBlock(editor.state.doc, blockId);
       if (!found) return false;
       const markdown = markdownOf(blockId) ?? "";
@@ -1461,7 +1462,7 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
       : <div className="rich-document-preserved"><div className="rich-document-preserved-preview">{props.renderBlockPreview?.(block) ?? (typeof window === "undefined" ? <pre>{content}</pre> : <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(content) }} />)}</div><button type="button" className="rich-document-source-action" disabled={readOnly} onClick={() => openSource(id)}>Edit {(fallback ?? "Markdown").toLowerCase()} source</button></div>) : null;
     const after = <>
       {!readOnly && !slot.raw && !sourceMode && editor && <div className="rich-document-touch-actions">
-        {props.onInvokeAI && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Ask AI" data-label="✦ Ask AI" onClick={() => invoke(editor, 0, id)} />}
+        {props.onInvokeAI && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Ask AI" data-label="✦ Ask AI" onClick={() => invoke(editor, 0, id, true)} />}
         {content && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Select block" data-label="Select block" onClick={() => {
           const found = findBlock(editor.state.doc, id);
           if (!found) return;

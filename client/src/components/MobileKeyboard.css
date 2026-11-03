@@ -32,3 +32,9 @@
 .mobile-composer-viewport .selection-tooltip-head, .mobile-composer-viewport .selection-composer-entry { flex: 0 0 auto; }
 .mobile-composer-viewport .selection-composer-fields { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .mobile-composer-viewport .selection-composer-entry.is-note { padding-right: 52px; }
+/* The +, microphone and keyboard buttons float over the document only. They sat on top of the open
+   sidebar (over its theme button), over the header's drop-down, and the selection bar docked at the
+   bottom hid the keyboard button under it. That bar carries its own actions, so the stack steps aside. */
+body:has(.workspace-sidebar-pane:not(.is-collapsed)) .mobile-dock,
+body:has(.document-header-backdrop) .mobile-dock,
+body:has(.mobile-selection-actions[data-placement="bottom"]) .mobile-dock { visibility: hidden; }

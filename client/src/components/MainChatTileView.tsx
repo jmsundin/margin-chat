@@ -171,7 +171,7 @@ export default function MainChatTileView({
           <input
             id="thread-tile-search"
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search chats and notes"
+            placeholder="Search documents"
             type="search"
             value={query}
           />

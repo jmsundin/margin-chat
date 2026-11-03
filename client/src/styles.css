@@ -9232,6 +9232,11 @@ button {
   color: var(--ink);
 }
 
+/* Zoom, Fit and Select are finger-sized on touch screens. */
+@media (pointer: coarse) {
+  .conversation-graph-zoom button { height: 44px; min-width: 44px; }
+}
+
 .conversation-graph-zoom .conversation-graph-auto-arrange {
   gap: 6px;
   padding: 0 9px;
@@ -13076,4 +13081,11 @@ body .live-markdown-editor {
 
 .settings-page.is-phone .settings-page-heading h2 {
   font-size: 1.6rem;
+}
+
+/* On a phone the tile search and New group sat in a narrower box inset twice from the edges
+   (the view's padding plus the toolbar's own 48px), with the search placeholder cut off. */
+@media (max-width: 760px) {
+  .thread-tile-toolbar { width: 100%; padding: 0; border: 0; background: transparent; }
+  .thread-tile-toolbar .thread-tile-search { border: 1px solid var(--line); }
 }

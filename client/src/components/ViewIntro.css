@@ -6,3 +6,5 @@
 .view-intro.is-map { position: absolute; z-index: 6; left: 50%; bottom: 72px; transform: translateX(-50%); width: min(440px, calc(100% - 32px)); }
 .view-intro.is-tiles { margin: 0 0 12px; max-width: 640px; }
 .view-intro.is-sessions { margin: 8px 0 12px; box-shadow: none; }
+/* A finger needs a bigger close target than a pointer. */
+@media (pointer: coarse) { .view-intro-close { width: 44px; height: 44px; margin: -10px -10px -10px 0; font-size: 20px; } }
