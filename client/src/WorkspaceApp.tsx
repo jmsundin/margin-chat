@@ -82,6 +82,8 @@ import { buildDiagramAIMessage, buildDocumentAIMessage, type DiagramAIRequest, t
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
+import { collectExpiredEmptyDocuments, EMPTY_DOCUMENT_CLEANUP_CHECK_MS, noteDocumentFocusChange, readLeftEmptyDocuments,
+  writeLeftEmptyDocuments, type LeftEmptyDocuments } from "./lib/emptyDocumentCleanup";
 import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
 import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
@@ -1090,6 +1092,44 @@ function WorkspaceAppContent({
   const createSlot = useMobileDockSlot("create");
   const isGraphView = mainViewMode === "graph";
   const visibleDocumentIds = new Set([...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]);
+  // A new document you leave without writing in is removed a few minutes later, unless you come back to it.
+  const cleanupStartedAtRef = useRef(Date.now());
+  const leftEmptyDocumentsRef = useRef<LeftEmptyDocuments | null>(null);
+  const previousActiveDocumentIdRef = useRef(activeConversation.id);
+  const visibleDocumentIdsRef = useRef(visibleDocumentIds);
+  visibleDocumentIdsRef.current = visibleDocumentIds;
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const deleteEmptyDocumentRef = useRef<(id: string) => void>(() => undefined);
+  deleteEmptyDocumentRef.current = handleDeleteThread;
+  useEffect(() => {
+    const previousId = previousActiveDocumentIdRef.current;
+    previousActiveDocumentIdRef.current = activeConversation.id;
+    if (!vault.ready) return;
+    const left = leftEmptyDocumentsRef.current ??= readLeftEmptyDocuments();
+    const next = noteDocumentFocusChange(left, currentStateRef.current, previousId, activeConversation.id, {
+      createdSince: cleanupStartedAtRef.current - 1_000, now: Date.now(), draft: draftsRef.current[previousId],
+    });
+    if (next === left) return;
+    leftEmptyDocumentsRef.current = next;
+    writeLeftEmptyDocuments(next);
+  }, [activeConversation.id]);
+  useEffect(() => {
+    if (!vault.ready) return;
+    const sweep = () => {
+      const left = leftEmptyDocumentsRef.current ??= readLeftEmptyDocuments();
+      if (!Object.keys(left).length) return;
+      const { remove, left: next } = collectExpiredEmptyDocuments(left, currentStateRef.current, {
+        now: Date.now(), visibleIds: visibleDocumentIdsRef.current, drafts: draftsRef.current,
+      });
+      leftEmptyDocumentsRef.current = next;
+      writeLeftEmptyDocuments(next);
+      for (const id of remove) deleteEmptyDocumentRef.current(id);
+    };
+    sweep();
+    const timer = window.setInterval(sweep, EMPTY_DOCUMENT_CLEANUP_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, [vault.ready]);
   const maximizedDocument = !isTileView && !isGraphView && maximizedDocumentId && visibleDocumentIds.has(maximizedDocumentId)
     ? state.conversations[maximizedDocumentId] : undefined;
   const maximizedIsPinned = Boolean(maximizedDocument && pinnedDocumentIds.includes(maximizedDocument.id));
