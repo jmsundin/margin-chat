@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
 import type { CanvasGroupBox } from "../lib/canvasGroupBoxes";
 import type { GraphViewport } from "../lib/graphInteractions";
 
@@ -38,30 +38,69 @@ export function planCollapsedLabels(boxes: CanvasGroupBox[], viewport: GraphView
   return plan;
 }
 
+/** Where a box sits on screen for a camera. */
+function boxFrame(box: CanvasGroupBox, viewport: GraphViewport) {
+  return { left: viewport.x + box.x * viewport.scale, top: viewport.y + box.y * viewport.scale,
+    width: box.width * viewport.scale, height: box.height * viewport.scale };
+}
+
 /**
  * The Map draws each topic, or each of your groups, as a box that owns its space. Zoomed out too far
  * to read the cards, a box is just its colored space with its name and count, and the cards are hidden.
+ *
+ * While you pan or zoom by hand, the map moves its cards outside React every frame and tells React
+ * only now and then. The boxes follow the same camera through `subscribeCamera`, so they move with
+ * the cards instead of jumping to catch up each time React hears where the camera is.
  */
-export default function CanvasGroupBoxes({ boxes, viewport, collapsed, onOpen }: {
+export default function CanvasGroupBoxes({ boxes, viewport, collapsed, onOpen, subscribeCamera, liveCamera }: {
   boxes: CanvasGroupBox[];
   viewport: GraphViewport;
+  /** The camera right now; a render that React commits late must not put the boxes back where the camera was. */
+  liveCamera?: () => GraphViewport;
   collapsed: boolean;
   onOpen: (box: CanvasGroupBox) => void;
+  subscribeCamera?: (listener: (viewport: GraphViewport) => void) => () => void;
 }) {
-  const labels = useMemo(() => collapsed ? planCollapsedLabels(boxes, viewport) : null, [collapsed, boxes, viewport]);
-  return <div className={`canvas-group-boxes${collapsed ? " is-collapsed" : ""}`} aria-label="Map boxes">
+  const hostRef = useRef<HTMLDivElement>(null);
+  const cameraRef = useRef(viewport);
+  const propsRef = useRef({ boxes, collapsed });
+  propsRef.current = { boxes, collapsed };
+  /** Moves every box, and sizes or hides the zoomed-out names, for this camera. */
+  const place = useCallback((camera: GraphViewport) => {
+    cameraRef.current = camera;
+    const host = hostRef.current;
+    if (!host) return;
+    const { boxes: current, collapsed: isCollapsed } = propsRef.current;
+    const labels = isCollapsed ? planCollapsedLabels(current, camera) : null;
+    const elements = host.children;
+    current.forEach((box, index) => {
+      const element = elements[index] as HTMLElement | undefined;
+      if (!element) return;
+      const frame = boxFrame(box, camera);
+      element.style.left = `${frame.left}px`; element.style.top = `${frame.top}px`;
+      element.style.width = `${frame.width}px`; element.style.height = `${frame.height}px`;
+      const name = element.firstElementChild as HTMLElement | null;
+      if (!name) return;
+      const label = labels?.get(box.id);
+      name.classList.toggle("is-unlabeled", !!labels && !label);
+      name.classList.toggle("hides-count", !!label && !label.showCount);
+      if (label) { name.style.setProperty("--label-width", `${label.width}px`); name.style.setProperty("--label-size", `${label.fontSize}px`); }
+      else { name.style.removeProperty("--label-width"); name.style.removeProperty("--label-size"); }
+    });
+  }, []);
+  // Every commit re-places the boxes for the camera as it is now, not as it was when React rendered.
+  useLayoutEffect(() => { place(liveCamera?.() ?? viewport); });
+  useEffect(() => subscribeCamera?.(place), [subscribeCamera, place]);
+  return <div ref={hostRef} className={`canvas-group-boxes${collapsed ? " is-collapsed" : ""}`} aria-label="Map boxes">
     {boxes.map((box) => {
       const count = countOf(box);
-      const label = labels?.get(box.id);
       return <div key={box.id} className={`canvas-group-box is-${box.kind}`} data-group-id={box.id} title={collapsed ? `${box.label} · ${count}` : undefined}
-        style={{ left: viewport.x + box.x * viewport.scale, top: viewport.y + box.y * viewport.scale,
-          width: box.width * viewport.scale, height: box.height * viewport.scale, "--group-color": box.color } as CSSProperties}>
-        <button type="button" data-graph-ui="true" className={`canvas-group-box-name${labels && !label ? " is-unlabeled" : ""}`}
+        style={{ "--group-color": box.color } as CSSProperties}>
+        <button type="button" data-graph-ui="true" className="canvas-group-box-name"
           aria-label={`Zoom to ${box.label}, ${count}`} title={`Zoom to ${box.label}`}
-          style={label ? { "--label-width": `${label.width}px`, "--label-size": `${label.fontSize}px` } as CSSProperties : undefined}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => { event.stopPropagation(); onOpen(box); }}>
-          {labels && !label ? null : <><strong>{box.label}</strong>{label && !label.showCount ? null : <span>{count}</span>}</>}
+          <strong>{box.label}</strong><span>{count}</span>
         </button>
       </div>;
     })}

@@ -2138,6 +2138,7 @@ export default function ConversationGraphView({
     cameraListenersRef.current.add(listener);
     return () => { cameraListenersRef.current.delete(listener); };
   }, []);
+  const readLiveCamera = useCallback(() => viewportStateRef.current, []);
   /** Tells React where the camera is now, if it does not know yet. */
   const flushCamera = useCallback(() => {
     const commit = cameraCommitRef.current;
@@ -4155,7 +4156,7 @@ export default function ConversationGraphView({
             })}
           </nav>
 
-          {canvasGroupBoxes.length ? <CanvasGroupBoxes boxes={canvasGroupBoxes} viewport={viewport} collapsed={canvasGroupsCollapsed} onOpen={fitCanvasGroupBox} /> : null}
+          {canvasGroupBoxes.length ? <CanvasGroupBoxes boxes={canvasGroupBoxes} viewport={liveViewport} collapsed={canvasGroupsCollapsed} onOpen={fitCanvasGroupBox} subscribeCamera={subscribeCamera} liveCamera={readLiveCamera} /> : null}
           {!showThemeOverview && !documentsOnly && !isCanvasMode ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={relationshipConversations} viewport={viewport}
             semanticLabels={groupSemantics.categoryLabels}
             mode={browsingGroups || showTerritories ? "overview" : "canvas"} activeTerritoryId={focusedTerritory?.id}

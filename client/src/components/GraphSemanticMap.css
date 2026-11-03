@@ -262,6 +262,7 @@
 /* Zoomed out: the name sits in the middle of the box at full length, wider than the box if it must be. */
 .canvas-group-boxes.is-collapsed .canvas-group-box-name { left: 50%; top: 50%; width: var(--label-width, auto); max-width: none; height: auto; transform: translate(-50%, -50%); flex-direction: column; justify-content: center; gap: 1px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; text-align: center; overflow: visible; text-shadow: 0 1px 3px color-mix(in srgb, var(--panel-bg) 80%, transparent); }
 .canvas-group-boxes.is-collapsed .canvas-group-box-name.is-unlabeled { inset: 0; width: auto; transform: none; border-radius: inherit; }
+.canvas-group-boxes.is-collapsed .canvas-group-box-name.is-unlabeled > *, .canvas-group-boxes.is-collapsed .canvas-group-box-name.hides-count > span { display: none; }
 .canvas-group-boxes.is-collapsed .canvas-group-box-name::before { display: none; }
 .canvas-group-boxes.is-collapsed .canvas-group-box-name strong { max-width: none; overflow: visible; white-space: normal; overflow-wrap: normal; text-wrap: balance; font-size: var(--label-size, 15px); line-height: 1.25; }
 .canvas-group-boxes.is-collapsed .canvas-group-box-name span { max-width: none; overflow: visible; color: var(--ink); opacity: .75; }
