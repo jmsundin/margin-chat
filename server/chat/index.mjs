@@ -288,6 +288,18 @@ export function createChatService({ database, documentService, env, runtimeConfi
     // Titles and credential preflight remain deterministic. A reply has one
     // semantic pass, shared by every eligible provider attempt.
     const automatic = chatRequest.serviceId === "backend-services";
+    // Context lookups don't depend on routing, so they run while the router
+    // decides instead of after it. The vault search starts early only when
+    // nothing but the router could still turn on Agent mode, which searches
+    // the vault itself.
+    const documentContextWork = getDocumentContext(initialContext.chatRequest, context);
+    documentContextWork.catch(() => undefined);
+    let vaultContextWork = null;
+    const startVaultContext = () => (vaultContextWork ??= getVaultPassageContext(initialContext.chatRequest, context));
+    if (!instructionOverride && chatRequest.ai.agent !== true && chatRequest.serviceId !== "openai-agent"
+      && !chatRequest.agentAnswer && !agentNeedFromPrompt(chatRequest, { web: webReachable })) {
+      startVaultContext().catch(() => undefined);
+    }
     if (!instructionOverride && (automatic || chatRequest.ai.jevEnabled === true)) {
       const analyzerLabel = automatic ? AUTO_ROUTER_LABEL : "Jev";
       const workspaceCandidates = scopedWorkspaceCandidates(chatRequest);
@@ -352,8 +364,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
     if (automatic) routes = agentRequested ? preferAgentModel(routes, autoAgentReason) : withoutAgentOnlyRoutes(routes);
     // Agent mode searches the vault itself; a plain reply gets the best passages up front.
     const [attachedContext, vaultContext] = await Promise.all([
-      getDocumentContext(initialContext.chatRequest, context),
-      agentRequested || instructionOverride ? null : getVaultPassageContext(initialContext.chatRequest, context),
+      documentContextWork,
+      agentRequested || instructionOverride ? null : startVaultContext(),
     ]);
     context.signal?.throwIfAborted();
     // The PDF or image the conversation is about comes first: it is what the user is looking at.

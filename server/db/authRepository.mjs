@@ -275,9 +275,11 @@ export async function findUserForLogin(client, email) {
   };
 }
 
-export async function getUserByAuthSession(client, sessionId) {
-  await client.query("delete from marginchat_user_sessions where expires_at <= now()");
+// How often a session's last-seen time is written. Every API request checks the
+// session, so writing it each time doubled the database work per request.
+const SESSION_TOUCH_INTERVAL = "5 minutes";
 
+export async function getUserByAuthSession(client, sessionId) {
   const result = await client.query(
     `
       select
@@ -293,7 +295,8 @@ export async function getUserByAuthSession(client, sessionId) {
         marginchat_users.billing_cancel_at_period_end,
         marginchat_users.trial_api_calls_used,
         marginchat_users.trial_api_calls_limit,
-        marginchat_users.hosted_credit_balance_micros
+        marginchat_users.hosted_credit_balance_micros,
+        marginchat_user_sessions.last_seen_at < now() - interval '${SESSION_TOUCH_INTERVAL}' as needs_touch
       from marginchat_user_sessions
       join marginchat_users on marginchat_users.id = marginchat_user_sessions.user_id
       where marginchat_user_sessions.id = $1
@@ -306,14 +309,12 @@ export async function getUserByAuthSession(client, sessionId) {
     return null;
   }
 
-  await client.query(
-    `
-      update marginchat_user_sessions
-      set last_seen_at = now()
-      where id = $1
-    `,
-    [sessionId],
-  );
+  if (result.rows[0].needs_touch) {
+    await client.query("update marginchat_user_sessions set last_seen_at = now() where id = $1", [sessionId]);
+    // Expired sessions never match the query above; clearing them out is
+    // housekeeping, so it runs with the occasional touch, not every request.
+    await client.query("delete from marginchat_user_sessions where expires_at <= now()");
+  }
 
   return {
     sessionId,

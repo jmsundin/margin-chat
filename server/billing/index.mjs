@@ -1,4 +1,3 @@
-import Stripe from "stripe";
 import { randomUUID } from "node:crypto";
 import { HttpError } from "../lib/errors.mjs";
 import { billingStatusHasAccess, normalizeBillingStatus } from "./status.mjs";
@@ -78,12 +77,16 @@ function getRequestOrigin(request, env) {
   return `${protocol}://${host}`;
 }
 
+// Stripe's SDK takes about 0.1 s to load; only billing requests need it.
+let stripeModule;
+
 export function createBillingService({ database, env, stripeClient = null }) {
   const configuredPriceId = env.STRIPE_PRICE_ID || null;
   const cloudPriceId = env.STRIPE_CLOUD_PRICE_ID?.trim() || null;
-  function getClient() {
+  async function getClient() {
     if (stripeClient) return stripeClient;
     if (!env.STRIPE_SECRET_KEY) throw new HttpError(503, "Stripe billing is not configured. Add STRIPE_SECRET_KEY first.");
+    const { default: Stripe } = await (stripeModule ??= import("stripe"));
     return new Stripe(env.STRIPE_SECRET_KEY);
   }
 
@@ -127,7 +130,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   }
 
   async function ensureCustomerForUser(user) {
-    const stripe = getClient();
+    const stripe = await getClient();
     const account = await database.getUserBillingAccount(user.id);
     if (!account) throw new HttpError(404, "User account not found.");
     const details = { email: account.email, name: account.displayName, metadata: { userId: account.id } };
@@ -142,13 +145,13 @@ export function createBillingService({ database, env, stripeClient = null }) {
 
   async function retrieveMonthlyPrice(priceId, requireActive = false) {
     if (!priceId || (configuredPriceId && priceId !== configuredPriceId)) return null;
-    const price = await getClient().prices.retrieve(priceId, { expand: ["product"] });
+    const price = await (await getClient()).prices.retrieve(priceId, { expand: ["product"] });
     return isMonthlyPrice(price, configuredPriceId, { requireActive }) ? price : null;
   }
 
   async function retrieveCloudPrice(priceId, requireActive = false) {
     if (!cloudPriceId || priceId !== cloudPriceId) return null;
-    const price = await getClient().prices.retrieve(priceId, { expand: ["product"] });
+    const price = await (await getClient()).prices.retrieve(priceId, { expand: ["product"] });
     return isCloudPrice(price, cloudPriceId, { requireActive }) ? price : null;
   }
 
@@ -171,7 +174,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
     if (expectedUserId && metadataUserId && expectedUserId !== metadataUserId) {
       throw new HttpError(403, "This Stripe payment belongs to another account.");
     }
-    const stripe = getClient();
+    const stripe = await getClient();
     let customer;
     let userId = expectedUserId ?? metadataUserId;
     if (!userId) {
@@ -201,7 +204,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   }
 
   async function syncCurrentSubscription(subscription, account, attempt = 0) {
-    const stripe = getClient();
+    const stripe = await getClient();
     let current = subscription;
     // A late cancellation of an older subscription must not replace a newer one.
     if (account.stripeSubscriptionId && account.stripeSubscriptionId !== current.id) {
@@ -232,14 +235,14 @@ export function createBillingService({ database, env, stripeClient = null }) {
   }
 
   async function retrieveAndSyncSubscription(subscriptionId, expectedUserId = null) {
-    let subscription = await getClient().subscriptions.retrieve(subscriptionId);
+    let subscription = await (await getClient()).subscriptions.retrieve(subscriptionId);
     const account = await resolveOwner({
       customerId: stripeId(subscription.customer), metadataUserId: subscription.metadata?.userId, expectedUserId,
     });
     if (account) {
       // Read Stripe after the account revision snapshot. Otherwise a concurrent
       // cancellation could commit before we read the revision and escape CAS.
-      subscription = await getClient().subscriptions.retrieve(subscriptionId);
+      subscription = await (await getClient()).subscriptions.retrieve(subscriptionId);
       if (stripeId(subscription.customer) !== account.stripeCustomerId
         || (subscription.metadata?.userId && subscription.metadata.userId !== account.id)) {
         throw new HttpError(403, "Subscription ownership changed while syncing.");
@@ -252,7 +255,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   async function createSubscriptionCheckoutSession({ request, user, plan = "plus" }) {
     requireSubscriptionPlan(plan);
     if (user.role === "admin") throw new HttpError(409, "Admin accounts do not require a subscription.");
-    const stripe = getClient();
+    const stripe = await getClient();
     let lineItem;
     if (plan === "cloud") {
       if (!cloudPriceId || !await retrieveCloudPrice(cloudPriceId, true)) {
@@ -290,7 +293,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
 
   async function createTopUpCheckoutSession({ request, user, amountCents }) {
     validateTopUpCents(amountCents);
-    const stripe = getClient();
+    const stripe = await getClient();
     const { customerId, email } = await ensureCustomerForUser(user);
     const origin = getRequestOrigin(request, env);
     const metadata = { purchaseKind: "hosted_credits", userId: user.id, amountCents: String(amountCents), creditAmountMicros: String(amountCents * 10_000) };
@@ -310,7 +313,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   }
 
   async function creditPaidInvoice(invoiceId, expectedUserId = null, expectedSubscriptionId = null) {
-    const stripe = getClient();
+    const stripe = await getClient();
     const invoice = await stripe.invoices.retrieve(invoiceId, { expand: ["payments.data.payment.payment_intent"] });
     const line = monthlyInvoiceLine(invoice);
     const subscriptionId = invoiceSubscriptionId(invoice);
@@ -361,7 +364,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
     }
     const amountCents = topUpAmount(session);
     if (!amountCents) return { confirmed: false, status: session.payment_status ?? "unpaid" };
-    const payment = await verifyPaymentIntent(getClient(), session.payment_intent, { customerId, amountCents, exact: true });
+    const payment = await verifyPaymentIntent((await getClient()), session.payment_intent, { customerId, amountCents, exact: true });
     if (!payment || payment.intent.metadata?.userId !== account.id
       || payment.intent.metadata?.purchaseKind !== "hosted_credits"
       || payment.intent.metadata?.creditAmountMicros !== String(amountCents * 10_000)) {
@@ -376,7 +379,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   }
 
   async function retrieveCheckout(sessionId) {
-    return getClient().checkout.sessions.retrieve(sessionId, { expand: ["line_items.data.price.product", "payment_intent.latest_charge"] });
+    return (await getClient()).checkout.sessions.retrieve(sessionId, { expand: ["line_items.data.price.product", "payment_intent.latest_charge"] });
   }
 
   async function confirmCheckout({ sessionId, user }) {
@@ -391,7 +394,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
     const account = await database.getUserBillingAccount(user.id);
     if (!account?.stripeCustomerId) throw new HttpError(409, "No Stripe customer exists for this account yet. Start a plan or add money first.");
     const configuration = env.STRIPE_PORTAL_CONFIGURATION_ID?.trim();
-    const session = await getClient().billingPortal.sessions.create({
+    const session = await (await getClient()).billingPortal.sessions.create({
       customer: account.stripeCustomerId,
       return_url: `${getRequestOrigin(request, env)}/?billing=return`,
       ...(configuration ? { configuration } : {}),
@@ -414,7 +417,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
     if (!account.stripeSubscriptionId || !billingStatusHasAccess(account.billingStatus)) {
       throw new HttpError(409, "You don't have an active plan to upgrade. Subscribe to Plus instead.");
     }
-    const stripe = getClient();
+    const stripe = await getClient();
     const current = await stripe.subscriptions.retrieve(account.stripeSubscriptionId);
     if (stripeId(current.customer) !== account.stripeCustomerId) throw new HttpError(403, "Subscription customer mismatch.");
     const plan = await subscriptionPlan(current);
@@ -451,7 +454,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
     const account = await database.getUserBillingAccount(userId);
     if (!account?.stripeCustomerId) return;
     try {
-      await getClient().customers.del(account.stripeCustomerId);
+      await (await getClient()).customers.del(account.stripeCustomerId);
     } catch (error) {
       if (error?.code !== "resource_missing") throw error;
     }
@@ -466,7 +469,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   async function handleWebhook({ rawBody, signature }) {
     if (!env.STRIPE_WEBHOOK_SECRET) throw new HttpError(503, "Stripe webhooks are not configured. Add STRIPE_WEBHOOK_SECRET first.");
     if (!signature) throw new HttpError(400, "Stripe-Signature header is required.");
-    const stripe = getClient();
+    const stripe = await getClient();
     let event;
     try { event = await stripe.webhooks.constructEventAsync(rawBody, signature, env.STRIPE_WEBHOOK_SECRET); }
     catch { throw new HttpError(400, "Unable to verify the Stripe webhook signature."); }
