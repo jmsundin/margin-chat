@@ -5,7 +5,9 @@ import { runAgent } from "../server/chat/agent/runner.mjs";
 import { buildAgentInstruction } from "../server/chat/systemPrompt.mjs";
 import { HttpError } from "../server/lib/errors.mjs";
 import { createEmptyState, createMainConversation } from "../client/src/initialState";
-import { addImportedWebDocuments, importedSourceUrl } from "../client/src/lib/webImportDocuments";
+import { addImportedWebDocuments, documentWikiTarget, importedSourceUrl } from "../client/src/lib/webImportDocuments";
+import { importedImageSources, remoteImages, replaceRemoteImages, saveImportedImages } from "../client/src/lib/webImportImages";
+import { createDocumentLinkResolver } from "../client/src/lib/documentRelations";
 import { getDocumentKind, getPresentedParentId } from "../client/src/lib/documentBreadcrumbs";
 import { getEditableDocument } from "../client/src/lib/editableDocument";
 import { readChatReplyStream } from "../client/src/lib/chatStream";
@@ -186,6 +188,11 @@ describe("imported pages in the workspace", () => {
     expect(getDocumentKind(chapter)).toBe("branch");
     expect(getPresentedParentId(state.conversations, chapterId)).toBe(rootId);
     expect(chapter.branchAnchor?.quote).toBe("Chapter 1 - Scaling");
+    // The page's link now opens the saved chapter, by its file name, in Margin Chat and Obsidian.
+    const rootText = getEditableDocument(root).blocks.map((block) => block.content).join("\n");
+    expect(rootText).toContain(`[[${documentWikiTarget(chapter)}|Chapter 1 - Scaling]]`);
+    expect(rootText).not.toContain("01.%20Scaling");
+    expect(createDocumentLinkResolver(state.conversations)(documentWikiTarget(chapter))).toBe(chapterId);
     expect(getEditableDocument(chapter).blocks.map((block) => block.content).join("\n")).toContain("Start with one server.");
   });
 
@@ -195,6 +202,62 @@ describe("imported pages in the workspace", () => {
     const second = addImportedWebDocuments(first.state, "main", (await importWebSection(REPO, { levels: 2, readImport })).documents, { createId, now: date });
     expect(second.createdIds).toHaveLength(2);
     expect(second.createdIds.map((id) => second.state.conversations[id].parentId)).toEqual([chapterId, chapterId]);
+  });
+});
+
+describe("an imported X thread in the workspace", () => {
+  const date = "2026-11-03T00:00:00.000Z";
+  let counter = 0;
+  const createId = (prefix: string) => `${prefix}-${++counter}`;
+  const workspace = () => {
+    const main = createMainConversation({ id: "main", createdAt: date });
+    main.document = getEditableDocument(main);
+    return { ...createEmptyState(), rootId: main.id, activeConversationId: main.id, conversations: { [main.id]: main } };
+  };
+  const thread = {
+    url: "https://x.com/hesamation/status/1", parentUrl: null, title: "Hesam: a visual explainer",
+    markdown: "Source: <https://x.com/hesamation/status/1>\n\nA visual explainer:\n\n![](https://pbs.twimg.com/media/a.jpg?name=orig)\n\n> Quoting [@DeepSeekHarness](https://x.com/DeepSeekHarness/status/2):\n>\n> Article: **Super-agent**",
+  };
+  const article = {
+    url: "https://x.com/DeepSeekHarness/status/2", parentUrl: "https://x.com/hesamation/status/1", title: "Super-agent",
+    markdown: "Source: <https://x.com/DeepSeekHarness/status/2>\n\n## Super-agent\n\n![The two levels](https://pbs.twimg.com/media/b.jpg)\n\n*The two levels*\n\n![badge](https://img.shields.io/badge/x.svg)",
+  };
+
+  test("the quoted post becomes a child document the thread links to with a wiki link", () => {
+    const { state, createdIds } = addImportedWebDocuments(workspace(), "main", [thread, article], { createId, now: date });
+    const [threadId, articleId] = createdIds;
+    const saved = state.conversations[articleId];
+    expect(saved.parentId).toBe(threadId);
+    const text = getEditableDocument(state.conversations[threadId]).blocks.map((block) => block.content).join("\n\n");
+    expect(text).toContain(`> Quoting [[${documentWikiTarget(saved)}|@DeepSeekHarness]]:`);
+    expect(saved.branchAnchor?.quote).toBe("@DeepSeekHarness");
+    // A second import of the thread under another link reuses the saved copy.
+    const again = addImportedWebDocuments(state, "main", [{ ...thread, url: "https://twitter.com/hesamation/status/1/" }, { ...article, url: "https://x.com/i/status/2" }], { createId, now: date });
+    expect(again.createdIds).toEqual([]);
+  });
+
+  test("pictures are saved into the vault and the documents show the saved copies", async () => {
+    const { state, createdIds } = addImportedWebDocuments(workspace(), "main", [thread, article], { createId, now: date });
+    expect(remoteImages(article.markdown).map((image) => image.url)).toEqual(["https://pbs.twimg.com/media/b.jpg"]);
+    const savedFiles: File[] = [];
+    let current = state;
+    const result = await saveImportedImages({
+      documents: importedImageSources(state, createdIds),
+      update: (change) => { current = change(current); },
+      media: { save: async (file: File) => { savedFiles.push(file); return `![[${file.name}]]`; } },
+      fetchImage: async (url: string) => {
+        if (url.includes("a.jpg")) throw new Error("offline");
+        return new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" });
+      },
+    });
+    expect(result).toEqual({ saved: 1, failed: 1 });
+    expect(savedFiles.map((file) => [file.name, file.type])).toEqual([["Super-agent 1.jpg", "image/jpeg"]]);
+    const text = (id: string) => getEditableDocument(current.conversations[id]).blocks.map((block) => block.content).join("\n\n");
+    expect(text(createdIds[1])).toContain("![[Super-agent 1.jpg|The two levels]]");
+    expect(text(createdIds[1])).toContain("![badge](https://img.shields.io/badge/x.svg)");
+    // A picture that couldn't be downloaded keeps its web link.
+    expect(text(createdIds[0])).toContain("![](https://pbs.twimg.com/media/a.jpg?name=orig)");
+    expect(replaceRemoteImages("![](https://a.example/x.png)", new Map([["https://a.example/x.png", "![[x.png]]"]]))).toBe("![[x.png]]");
   });
 });
 

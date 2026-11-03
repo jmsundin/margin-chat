@@ -46,7 +46,7 @@ function cachedFileMetadata(path, source) {
     });
 }
 export { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown, markedBlockIds } from "./markdownReadable.mjs";
-export { markdownIdentitySuffix } from "./markdownPaths.mjs";
+export { markdownIdentitySuffix, titleMarkdownPath } from "./markdownPaths.mjs";
 export const MARKDOWN_WORKSPACE_FORMAT_VERSION = 5;
 
 function decodeWorkspace(workspace) {

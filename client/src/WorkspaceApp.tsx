@@ -164,6 +164,7 @@ import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
 import { applyTextEdit, canUndoProposal, undoEditArguments, withProposalUpdate } from "./lib/agentProposals";
 import { addImportedWebDocuments } from "./lib/webImportDocuments";
+import { fetchImportImage, importedImageSources, saveImportedImages, type ImportedImageSource } from "./lib/webImportImages";
 import { addChildConversation, addRootConversation, appendMessage, appendMessageDelta, deleteThread, removeConversationDocument, retractMessageText } from "./lib/workspaceCommands";
 import { buildDocumentSummaries, buildSearchResults, buildThreadSummaries } from "./lib/conversationSearch";
 import {
@@ -2497,11 +2498,31 @@ function WorkspaceAppContent({
         // Pages agent mode imports become documents beside the one the user asked from.
         onAgentEvent: (event) => {
           if (event.type !== "documents") { onAgentEvent(event); return; }
+          let created: ImportedImageSource[] | null = null;
+          // The same ids on every run of the updater, so the pictures land in the documents React keeps.
+          const ids: string[] = [];
           setState((current) => {
-            const next = addImportedWebDocuments(current, source.id, event.documents, { createId }).state;
-            currentStateRef.current = next;
-            return next;
+            let used = 0;
+            const imported = addImportedWebDocuments(current, source.id, event.documents, { createId: (prefix) => (ids[used++] ??= createId(prefix)) });
+            created = importedImageSources(imported.state, imported.createdIds);
+            currentStateRef.current = imported.state;
+            return imported.state;
           });
+          // The pages' pictures are saved into the vault beside their text, once React has created the documents.
+          const saveImages = (tries: number) => window.setTimeout(() => {
+            if (!created) { if (tries < 40) saveImages(tries + 1); return; }
+            if (!created.length) return;
+            void saveImportedImages({
+              documents: created, media: vault.media,
+              fetchImage: (url) => fetchImportImage(url, { expectedUserId: user.id }),
+              update: (change) => setState((current) => {
+                const next = change(current);
+                currentStateRef.current = next;
+                return next;
+              }),
+            }).catch(() => undefined);
+          }, tries ? 50 : 0);
+          saveImages(0);
         },
       }),
       onError(error) {
