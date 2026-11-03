@@ -365,6 +365,18 @@ try {
     assert(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, "Group boxes never overlap");
   }
   assert.equal((await wheel(element(".canvas-group-box-name"))).defaultPrevented, true, "Scrolling over a group's name keeps panning the map");
+  {
+    // Mid-pan, before React hears where the camera went, the boxes must already move with the cards.
+    const stageX = () => Number(/translate\(([-\d.]+)px/.exec(element(".conversation-graph-stage").style.transform)![1]);
+    const boxX = () => parseFloat(element(".canvas-group-box").style.left);
+    const [stageBefore, boxBefore] = [stageX(), boxX()];
+    const event = new browser.WheelEvent("wheel", { deltaX: 120, bubbles: true, cancelable: true });
+    Object.defineProperties(event, { clientX: { value: 350 }, clientY: { value: 220 } });
+    await act(async () => { element(".conversation-graph-viewport").dispatchEvent(event); });
+    assert.notEqual(stageX(), stageBefore, "The wheel pans the map");
+    assert(Math.abs((boxX() - boxBefore) - (stageX() - stageBefore)) < 0.5, "Group boxes pan in step with the cards, not after React catches up");
+    await settle();
+  }
   assert.equal(groupingChip()?.getAttribute("aria-label"), "Group documents by: My groups");
   await groupBy("Topics");
   assert(boxNames().length > 0, "Topics puts the documents in boxes found from their links");
