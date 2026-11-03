@@ -2303,9 +2303,11 @@ function WorkspaceAppContent({
   function replaceDocumentConversation(current: AppState, updated: Conversation): AppState {
     const before = current.conversations[updated.id];
     if (!before) return current;
+    const keptBlockIds = new Set(updated.document?.blocks.map((item) => item.id));
+    const messageIds = new Set(updated.messages.map((message) => message.id));
     const archived = getEditableDocument(before).blocks
-      .filter((block) => !block.sourceMessageId && !updated.document?.blocks.some((item) => item.id === block.id)
-        && block.content.trim() && !updated.messages.some((message) => message.id === `document:${block.id}`))
+      .filter((block) => !block.sourceMessageId && !keptBlockIds.has(block.id)
+        && block.content.trim() && !messageIds.has(`document:${block.id}`))
       .map((block) => ({ id: `document:${block.id}`, role: "user" as const, content: block.content, createdAt: block.createdAt }));
     const conversation = remapDocumentLinks(before, { ...updated, messages: [...updated.messages, ...archived] });
     const conversations = { ...current.conversations, [updated.id]: {

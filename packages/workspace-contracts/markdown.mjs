@@ -17,14 +17,23 @@ import { DOCUMENT_RELATION_TYPES, EDGE_META_KEY, HIDE_FROM_AI_KEY, RESERVED_DOCU
 const PARSE_CACHE_LIMIT = 200_000;
 const metadataCache = new Map();
 const fileParseCache = new Map();
+// Each path keeps its two latest versions: a save reads both the text the
+// editor last showed and the edited text, so one slot would parse each twice.
 function cached(cache, path, source, key, parse) {
     const hit = cache.get(path);
-    if (hit && hit.key === key && hit.source === source)
-        return hit.value;
+    if (hit) {
+        if (hit.key === key && hit.source === source)
+            return hit.value;
+        const older = hit.previous;
+        if (older && older.key === key && older.source === source) {
+            cache.set(path, { ...older, previous: { source: hit.source, key: hit.key, value: hit.value } });
+            return older.value;
+        }
+    }
     const value = parse();
     if (cache.size >= PARSE_CACHE_LIMIT && !hit)
         cache.clear();
-    cache.set(path, { source, key, value });
+    cache.set(path, { source, key, value, previous: hit ? { source: hit.source, key: hit.key, value: hit.value } : undefined });
     return value;
 }
 function cachedCopy(cache, path, source, key, parse) {

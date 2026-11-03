@@ -34,13 +34,24 @@ export interface DocumentGraphEdge {
 type TextLink = MarkdownWikiLink & { sourceBlockId?: string; sourceMessageId?: string };
 const linkCache = new WeakMap<Conversation, TextLink[]>();
 
+// Typing changes one block; the document's other blocks reuse their links.
+const blockLinkCache = new Map<string, MarkdownWikiLink[]>();
+function blockWikiLinks(content: string): MarkdownWikiLink[] {
+  let links = blockLinkCache.get(content);
+  if (links) return links;
+  links = extractMarkdownWikiLinks(content);
+  if (blockLinkCache.size >= 20000) blockLinkCache.clear();
+  blockLinkCache.set(content, links);
+  return links;
+}
+
 /** Wiki links in every authored part of a document, remembered per immutable conversation. */
 function conversationTextLinks(conversation: Conversation): TextLink[] {
   const cached = linkCache.get(conversation);
   if (cached) return cached;
   const links: TextLink[] = [];
   for (const block of conversation.document?.blocks ?? []) {
-    for (const link of extractMarkdownWikiLinks(block.content)) links.push({ ...link, sourceBlockId: block.id });
+    for (const link of blockWikiLinks(block.content)) links.push({ ...link, sourceBlockId: block.id });
   }
   // Messages superseded by an editable document are history, not the current text.
   if (!conversation.document?.blocks.length) {

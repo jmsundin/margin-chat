@@ -77,6 +77,21 @@ export function buildChatOutline(conversation: Conversation): ChatOutlineItem[] 
   return outline;
 }
 
+// Headings of a block's Markdown, kept per content: typing changes one block,
+// so the rest of the outline reuses its earlier lexing.
+const blockHeadingCache = new Map<string, Array<{ depth: number; text: string }>>();
+function blockHeadings(content: string) {
+  let headings = blockHeadingCache.get(content);
+  if (headings) return headings;
+  headings = [];
+  outlineMarkdown.walkTokens(outlineMarkdown.lexer(content), (token) => {
+    if (token.type === "heading" && token.depth <= 3) headings!.push({ depth: token.depth, text: token.text });
+  });
+  if (blockHeadingCache.size >= 5000) blockHeadingCache.clear();
+  blockHeadingCache.set(content, headings);
+  return headings;
+}
+
 /** Match the editable renderer, including the lazy projection of older chats. */
 export function buildEditableDocumentOutline(conversation: Conversation): ChatOutlineItem[] {
   const document = getEditableDocument(conversation);
@@ -86,6 +101,7 @@ export function buildEditableDocumentOutline(conversation: Conversation): ChatOu
   const visiblePromptIds = new Set(document.blocks.length ? document.prompts
     .filter((prompt) => !document.generations.some((generation) => generation.promptId === prompt.id && generation.alternativeOf))
     .map((prompt) => prompt.id) : []);
+  const assistantMessageIds = new Set(conversation.messages.filter((message) => message.role === "assistant").map((message) => message.id));
   const seenPrompts = new Set<string>();
   const responseNumbers = new Map<string, number>();
   let authoredNumber = 0;
@@ -112,7 +128,7 @@ export function buildEditableDocumentOutline(conversation: Conversation): ChatOu
     const generation = block.generationId ? generations.get(block.generationId) : undefined;
     if (generation) addPrompt(originalGeneration(generation).promptId);
     const messageId = `document:${block.id}`;
-    const responseKey = generation?.id ?? (conversation.messages.some((message) => message.id === block.sourceMessageId && message.role === "assistant") ? block.sourceMessageId : undefined);
+    const responseKey = generation?.id ?? (block.sourceMessageId && assistantMessageIds.has(block.sourceMessageId) ? block.sourceMessageId : undefined);
     if (responseKey && responseKey === previousResponseKey && currentResponse) {
       currentResponse.memberIds!.push(getMessageOutlineId(messageId));
     } else {
@@ -127,12 +143,11 @@ export function buildEditableDocumentOutline(conversation: Conversation): ChatOu
     }
     previousResponseKey = responseKey;
     let headingIndex = 0;
-    outlineMarkdown.walkTokens(outlineMarkdown.lexer(block.content), (token) => {
-      if (token.type !== "heading" || token.depth > 3) return;
+    for (const token of blockHeadings(block.content)) {
       const id = getHeadingOutlineId(messageId, headingIndex++);
       const heading = cleanOutlineLabel(token.text);
       if (heading) outline.push({ id, messageId: currentResponse!.messageId, kind: "heading", label: excerpt(heading, 58), level: token.depth });
-    });
+    }
   }
   // Pending prompts and prompts whose generated text was removed still have a
   // saved margin control, so their navigation target remains useful.
