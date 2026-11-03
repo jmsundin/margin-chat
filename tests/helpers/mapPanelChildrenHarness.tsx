@@ -88,7 +88,7 @@ try {
   await act(async () => root.render(createElement(WorkspaceApp, props)));
   await settle();
   await click([...container.querySelectorAll('.workspace-mode-control [role="radio"]')].find((item: any) => item.getAttribute("aria-label") === "Map View"));
-  await click(element('[aria-label="Canvas view"]'));
+  await click(element('[aria-label="Map view"]'));
   await click(element(`[data-conversation-id="${mainId}"] .conversation-graph-node-select`));
   assert.equal(dock()?.getAttribute("aria-label"), "Docked chat: Main research", "Clicking a document opens it in the side panel");
   assert.equal(dock()!.querySelector(".document-panel-breadcrumbs"), null, "A top-level document has no parents to show");

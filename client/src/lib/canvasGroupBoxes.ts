@@ -46,10 +46,12 @@ export function canvasGroupOf(conversations: Record<string, Conversation>, group
  * a main document with its children to its right, so a box's size follows what it holds. Boxes
  * are packed in rows in sidebar order, with documents in no group last, so they never overlap.
  */
-export function layoutCanvasGroupBoxes({ nodes, conversations, groups }: {
+export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLabel = "No group" }: {
   nodes: ConversationGraphNodePlacement[];
   conversations: Record<string, Conversation>;
   groups: Record<string, ConversationGroup>;
+  /** What the box of documents in no group is called: "No group", or "Unfiled" when boxes are topics. */
+  noGroupLabel?: string;
 }): { boxes: CanvasGroupBox[]; nodes: ConversationGraphNodePlacement[] } {
   const index = groupIndex(groups);
   const byId = new Map(nodes.map((node) => [node.conversationId, node]));
@@ -74,7 +76,7 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups }: {
   // Empty groups keep a box too, so cards can be dropped into them.
   const order = [...Object.values(groups)
     .map((group) => ({ id: group.id, label: group.name, color: group.color, kind: "group" as const })),
-  ...(members.has(NO_GROUP_BOX_ID) ? [{ id: NO_GROUP_BOX_ID, label: "No group", color: "var(--muted)", kind: "none" as const }] : [])];
+  ...(members.has(NO_GROUP_BOX_ID) ? [{ id: NO_GROUP_BOX_ID, label: noGroupLabel, color: "var(--muted)", kind: "none" as const }] : [])];
   const sized = order.map((box) => {
     const ids = members.get(box.id) ?? [];
     const { cells, columns, rows } = layoutFamilyTrees(ids, conversations, cellHeight / cellWidth);
@@ -172,4 +174,46 @@ export function canvasGroupDropChanges({ ids, conversations, groups, target }: {
     if (canvasGroupOf(conversations, groups, id, index) !== next) changes.push([id, next]);
   }
   return changes;
+}
+
+/** A topic found on the map: its members, the document that anchors it, and its name. */
+export interface CanvasTopic {
+  id: string;
+  label: string;
+  /** CSS color for the box. */
+  color: string;
+  /** The most connected document, or null for documents the map couldn't file. */
+  hubId: string | null;
+  memberIds: string[];
+}
+
+/**
+ * Topics as Map groups, so each topic gets a box like one of your groups. Boxes go in name order,
+ * not size, so filing a card under another topic doesn't shuffle the boxes around.
+ * Documents the map couldn't file (no hub) are left out and land in the "Unfiled" box.
+ */
+export function topicCanvasGroups(topics: CanvasTopic[]): Record<string, ConversationGroup> {
+  return Object.fromEntries(topics.filter((topic) => topic.hubId !== null && topic.memberIds.length)
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true, sensitivity: "base" }) || a.id.localeCompare(b.id))
+    .map((topic) => [topic.id, { id: topic.id, name: topic.label, color: topic.color, collapsed: false, conversationIds: [...topic.memberIds] }]));
+}
+
+/**
+ * Cards dropped into another topic's box are filed under it: each moved document is tied to a
+ * document that stays in that topic (its hub, or else any member that isn't moving). Dropping into
+ * the Unfiled box, or into the box a card is already in, changes nothing.
+ */
+export function canvasTopicDropMoves({ ids, topics, target }: {
+  ids: string[];
+  topics: CanvasTopic[];
+  target: Pick<CanvasGroupBox, "id" | "kind">;
+}): Array<[string, string]> {
+  if (target.kind !== "group") return [];
+  const topic = topics.find((item) => item.id === target.id);
+  if (!topic) return [];
+  const moving = new Set(ids);
+  const anchorId = topic.hubId && !moving.has(topic.hubId) ? topic.hubId : topic.memberIds.find((id) => !moving.has(id));
+  if (!anchorId) return [];
+  const members = new Set(topic.memberIds);
+  return ids.filter((id) => !members.has(id)).map((id) => [id, anchorId]);
 }

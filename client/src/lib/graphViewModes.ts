@@ -2,15 +2,16 @@ import type { GraphScope } from "./graphExploration";
 import type { GraphViewport } from "./graphInteractions";
 
 export const GRAPH_VIEW_MODES = [
-  { id: "canvas", label: "Canvas", description: "Place documents, compare passages, and edit in place." },
+  { id: "canvas", label: "Map", description: "Your documents in boxes by topic or by your groups. Drag, link, and edit in place." },
   { id: "focus", label: "Focus", description: "Explore the selected document and its immediate connections." },
+  // Retired: Clusters became the Map's "Group: Topics". Kept so older saved views can be read and moved to the Map.
   { id: "clusters", label: "Clusters", description: "See documents gather around their most connected hubs, labeled by topic." },
   { id: "landscape", label: "Landscape", description: "Every document on one plane, close in meaning sits close together; zoom in to read." },
   { id: "lineage", label: "Lineage", description: "Follow branch ancestry from parent to child." },
   { id: "network", label: "Network", description: "Find hubs and bridges among explicit relationships." },
   { id: "evidence", label: "Evidence", description: "Organize claims and exact passages by their evidence roles." },
-  // Reached from a tab rather than listed: Topics is Clusters grouped by your
-  // groups, and Document layouts is Focus showing every document.
+  // Reached from a tab rather than listed: Topics is the group overview behind
+  // the Map tab, and Document layouts is Focus showing every document.
   { id: "topics", label: "Topics", description: "Browse your groups, then zoom into their documents." },
   { id: "documents", label: "All documents", description: "Lay out every document using its explicit connections." },
 ] as const;
@@ -26,16 +27,16 @@ export interface GraphModeCamera {
 }
 export type GraphModeCameras = Partial<Record<GraphViewMode, GraphModeCamera>>;
 
-/** The three toolbar tabs; each answers a different question about the map. */
-export const GRAPH_VIEW_TABS = ["canvas", "focus", "clusters"] as const;
+/** The toolbar tabs: the whole Map, and one document's connections. */
+export const GRAPH_VIEW_TABS = ["canvas", "focus"] as const;
 export type GraphViewTab = typeof GRAPH_VIEW_TABS[number];
 /** Views listed under More views. Evidence is reached from the Content picker instead. */
 export const MORE_GRAPH_VIEW_MODES = GRAPH_VIEW_MODES.filter((mode) =>
-  !(GRAPH_VIEW_TABS as readonly string[]).includes(mode.id) && mode.id !== "topics" && mode.id !== "documents" && mode.id !== "evidence");
+  !(GRAPH_VIEW_TABS as readonly string[]).includes(mode.id) && mode.id !== "clusters" && mode.id !== "topics" && mode.id !== "documents" && mode.id !== "evidence");
 
 /** The toolbar tab a mode belongs to, or null for views under More views. */
 export function getGraphViewTab(mode: GraphViewMode): GraphViewTab | null {
-  if (mode === "topics") return "clusters";
+  if (mode === "topics" || mode === "clusters") return "canvas";
   if (mode === "documents") return "focus";
   return (GRAPH_VIEW_TABS as readonly string[]).includes(mode) ? mode as GraphViewTab : null;
 }
@@ -43,6 +44,11 @@ export function getGraphViewTab(mode: GraphViewMode): GraphViewTab | null {
 
 export function isGraphViewMode(value: unknown): value is GraphViewMode {
   return GRAPH_VIEW_MODES.some((mode) => mode.id === value);
+}
+
+/** Clusters is now the Map grouped by topic, so a saved Clusters view opens the Map. */
+export function currentGraphViewMode<T extends GraphViewMode | null>(mode: T): T | "canvas" {
+  return mode === "clusters" ? "canvas" : mode;
 }
 
 /** Older saved maps retain their layout until the user explicitly changes modes. */

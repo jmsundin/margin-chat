@@ -36,8 +36,8 @@ export default function ClusterMoveMenu({ documentTitle, currentClusterId, targe
   };
   return (
     <label className="graph-cluster-move">
-      <span>Cluster</span>
-      <select aria-label={`Cluster for ${documentTitle}`} value={currentClusterId ?? ""} onChange={(event) => void choose(event.target.value)}>
+      <span>Topic</span>
+      <select aria-label={`Topic for ${documentTitle}`} value={currentClusterId ?? ""} onChange={(event) => void choose(event.target.value)}>
         {currentClusterId && !options.some((option) => option.id === currentClusterId) ? <option value={currentClusterId}>Unfiled</option> : null}
         {options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         {movedByHand ? <option value="__automatic__">Put back automatically</option> : null}

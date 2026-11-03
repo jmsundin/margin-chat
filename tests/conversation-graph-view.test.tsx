@@ -471,7 +471,8 @@ describe("conversation graph view", () => {
 
     expect(markup).toContain("Click a chat for a preview");
     expect(markup).not.toContain('aria-label="Select multiple chats"');
-    expect(markup).toContain('aria-label="Group documents by"');
+    expect(markup).toContain('aria-label="Map view"');
+    expect(markup).not.toContain('aria-label="Clusters view"');
     expect(markup).toContain('aria-pressed="false"');
     expect(markup).not.toContain("conversation-graph-header");
     expect(markup).not.toContain("conversation-graph-toolbar");
