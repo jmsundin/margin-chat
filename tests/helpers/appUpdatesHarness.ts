@@ -137,8 +137,8 @@ assert.equal(toasts()[0].parentElement, workspaceNotifications, "Toasts join the
 assert.match(body.textContent!, /Update ready · currently loaded version bbbbbbb/, "Waiting worker never changes loaded version");
 assert.equal([...body.querySelectorAll("button")].some((button) => button.textContent === "Restart now"), true);
 await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-assert.deepEqual(restartRequests, [{ type: "MARGIN_RESTART", auto: true }], "A just-opened, untouched tab applies a waiting update on its own");
-assert.equal(toasts().length, 1, "A declined automatic update shows no error");
+assert.deepEqual(restartRequests, [], "A just-opened tab is not reloaded; the update waits until the app is hidden");
+assert.equal(toasts().length, 1, "The waiting update is offered");
 assert.match(body.textContent!, /Update ready/);
 await dismissToast();
 await act(async () => { registration.dispatchEvent(new browser.Event("updatefound")); });
