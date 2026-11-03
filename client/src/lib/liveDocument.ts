@@ -2,7 +2,7 @@ import { parser as markdownParser, GFM } from "@lezer/markdown";
 import { getRichDocumentFallbackReason } from "./richDocumentMarkdown";
 import { parseMediaBlock } from "./documentMedia";
 import { isDrawingMarkdown } from "./documentDrawing";
-import { readBlockLatex } from "./latex";
+import { readBlockLatex } from "./latexSyntax";
 import { freshDocumentBlockId, isDraftBlockId } from "./continuousDocument";
 
 /**

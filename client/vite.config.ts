@@ -67,6 +67,18 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: "../dist",
       emptyOutDir: true,
+      rollupOptions: {
+        output: {
+          // One chunk per library: a deploy that changes only app code keeps
+          // library file names, so updates reuse what devices already cached.
+          manualChunks(id) {
+            const match = /[\\/]node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)/u.exec(id);
+            // Libraries that split themselves into parts loaded on demand keep their own chunks.
+            if (!match || /\.css(?:\?|$)/u.test(id) || /^(?:mermaid|@mermaid-js[\\/].*|@excalidraw[\\/].*)$/u.test(match[1])) return undefined;
+            return `lib-${match[1].replace(/[\\/@]/gu, "-").replace(/^-/u, "")}`;
+          },
+        },
+      },
     },
   };
 });

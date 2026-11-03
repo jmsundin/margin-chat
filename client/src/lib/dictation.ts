@@ -1,9 +1,3 @@
-import { isolateHistory } from "@codemirror/commands";
-import { Transaction as CodeMirrorTransaction } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { closeHistory } from "@tiptap/pm/history";
-import { TextSelection, type Transaction } from "@tiptap/pm/state";
 import { isApplePlatform } from "./workspaceViewShortcuts";
 
 /**
@@ -47,22 +41,8 @@ export function joinDictation(before: string, text: string): string {
   return before && !/\s/u.test(before) && !/^[.,!?;:)\]}'"…]/u.test(trimmed) ? ` ${trimmed}` : trimmed;
 }
 
-interface TiptapLike {
-  isDestroyed?: boolean;
-  state: { selection: { to: number }; doc: ProseMirrorNode; tr: Transaction };
-  view: { dispatch(transaction: Transaction): void; focus(): void };
-}
-
-function findTiptap(target: HTMLElement): TiptapLike | null {
-  for (let node: HTMLElement | null = target; node; node = node.parentElement) {
-    const editor = (node as HTMLElement & { editor?: TiptapLike }).editor;
-    if (editor?.view && editor.state) return editor.isDestroyed ? null : editor;
-  }
-  return null;
-}
-
 /** A field's own editor, seen as positions to read and replace plain text at. */
-interface TextSurface {
+export interface TextSurface {
   caret(): number;
   read(from: number, to: number): string;
   /**
@@ -73,6 +53,13 @@ interface TextSurface {
   focus(): void;
 }
 
+// Rich and code editors register how to reach their text (./dictationEditors).
+// Their libraries stay out of the startup code that dictation is part of.
+const editorSurfaces: Array<(target: HTMLElement) => TextSurface | null> = [];
+export function registerDictationSurface(find: (target: HTMLElement) => TextSurface | null) {
+  if (!editorSurfaces.includes(find)) editorSurfaces.push(find);
+}
+
 function setNativeValue(target: HTMLInputElement | HTMLTextAreaElement, value: string, caret: number, data: string) {
   // Through the prototype, so React's change tracking still sees an edit.
   Object.getOwnPropertyDescriptor(Object.getPrototypeOf(target), "value")?.set?.call(target, value);
@@ -81,41 +68,9 @@ function setNativeValue(target: HTMLInputElement | HTMLTextAreaElement, value: s
 }
 
 function surfaceFor(target: HTMLElement): TextSurface | null {
-  const tiptap = findTiptap(target);
-  if (tiptap) {
-    return {
-      caret: () => tiptap.state.selection.to,
-      read: (from, to) => tiptap.state.doc.textBetween(from, to, "\n", " "),
-      replace(from, to, text, history) {
-        const plain = text.replace(/\s+/gu, " ");
-        const tr = tiptap.state.tr;
-        if (plain) tr.insertText(plain, from, to);
-        else tr.delete(from, to);
-        tr.setSelection(TextSelection.create(tr.doc, from + plain.length));
-        tr.setMeta("addToHistory", history);
-        // Its own undo step, even right after typing or another dictation edit.
-        if (history) closeHistory(tr);
-        tiptap.view.dispatch(tr.scrollIntoView());
-        return plain;
-      },
-      focus: () => tiptap.view.focus(),
-    };
-  }
-  const codeMirrorRoot = target.closest<HTMLElement>(".cm-editor");
-  const codeMirror = codeMirrorRoot ? EditorView.findFromDOM(codeMirrorRoot) : null;
-  if (codeMirror) {
-    return {
-      caret: () => codeMirror.state.selection.main.to,
-      read: (from, to) => codeMirror.state.sliceDoc(from, to),
-      replace(from, to, text, history) {
-        codeMirror.dispatch({
-          changes: { from, to, insert: text }, selection: { anchor: from + text.length }, scrollIntoView: true,
-          annotations: history ? isolateHistory.of("full") : CodeMirrorTransaction.addToHistory.of(false),
-        });
-        return text;
-      },
-      focus: () => codeMirror.focus(),
-    };
+  for (const find of editorSurfaces) {
+    const surface = find(target);
+    if (surface) return surface;
   }
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
     return {

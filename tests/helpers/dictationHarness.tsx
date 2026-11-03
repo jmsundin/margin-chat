@@ -77,6 +77,7 @@ const { EditorState } = await import("@codemirror/state");
 const { history, undo } = await import("@codemirror/commands");
 const { Editor } = await import("@tiptap/core");
 const { default: StarterKit } = await import("@tiptap/starter-kit");
+await import("../../client/src/lib/dictationEditors");
 const { insertDictation, startDictationPreview, joinDictation, findDictationTarget, isDictationShortcut } = await import("../../client/src/lib/dictation");
 const { isApplePlatform } = await import("../../client/src/lib/workspaceViewShortcuts");
 const { default: DictationControl } = await import("../../client/src/components/DictationControl");

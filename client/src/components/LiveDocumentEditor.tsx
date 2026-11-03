@@ -1,3 +1,4 @@
+import "../lib/dictationEditors";
 import { Annotation, Compartment, EditorSelection, EditorState, MapMode, StateEffect, StateField, Transaction, type Extension, type Range, type Text } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, drawSelection, keymap, layer, type DecorationSet, type LayerMarker, type ViewUpdate } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@codemirror/commands";

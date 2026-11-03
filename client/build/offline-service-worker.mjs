@@ -19,8 +19,24 @@ const SHELL_HTML = ${JSON.stringify(html)};
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE_NAME);
-    await cache.addAll(SHELL_FILES.filter((path) => path !== '/index.html')
-      .map((path) => new Request(path, { cache: 'reload' })));
+    // Build assets are named by their content, so a file an earlier build
+    // already cached is copied instead of downloaded again. Most of a
+    // deploy's 16 MB is unchanged libraries.
+    const earlier = [];
+    for (const name of await caches.keys()) {
+      if (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME) earlier.push(await caches.open(name));
+    }
+    const download = [];
+    await Promise.all(SHELL_FILES.filter((path) => path !== '/index.html').map(async (path) => {
+      if (path.startsWith('/assets/') && /-[A-Za-z0-9_-]{8,}\\.[^/]+$/.test(path)) {
+        for (const old of earlier) {
+          const hit = await old.match(path);
+          if (hit) { await cache.put(path, hit); return; }
+        }
+      }
+      download.push(path);
+    }));
+    await cache.addAll(download.map((path) => new Request(path, { cache: 'reload' })));
     // Embed this build's HTML so a deployment during installation cannot pair
     // newer HTML with the previous build's precached JavaScript.
     await cache.put('/index.html', new Response(SHELL_HTML, {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import NotificationToast from "./NotificationToast";
-import { acknowledgeVersion, clearRestartForUpdate, markRestartForUpdate, onQuietMoment, readAcknowledgedVersion, readRestartForUpdate, trackFreshStart, watchAppUpdates } from "../lib/appUpdates";
+import { acknowledgeVersion, clearRestartForUpdate, markRestartForUpdate, onQuietMoment, readAcknowledgedVersion, readRestartForUpdate, watchAppUpdates } from "../lib/appUpdates";
 import { listenForAppRestart, listenForDesktopUpdate, reloadForDesktopUpdate, requestAppRestart, type DesktopUpdateKind } from "../lib/appUpdateRestart";
 
 export default function AppUpdateNotice({ commit }: { commit: string }) {
@@ -16,19 +16,12 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
   const [restartStatus, setRestartStatus] = useState<string | null>(null);
   const [restartError, setRestartError] = useState<string | null>(null);
   const [notificationHost, setNotificationHost] = useState<HTMLElement | null>(null);
-  const [startedAt] = useState(Date.now);
-  const freshStart = useRef<{ isFresh(): boolean } | null>(null);
   const busy = useRef(false);
   const version = commit === "unknown" ? "unavailable" : commit.slice(0, 7);
 
   useEffect(() => watchAppUpdates(setWaiting), []);
   useEffect(() => listenForAppRestart(setRestartStatus, setRestartError), []);
   useEffect(() => listenForDesktopUpdate((kind) => setDesktopReady((current) => (current === "app" ? current : kind))), []);
-  useEffect(() => {
-    const tracker = trackFreshStart(Date.now, startedAt);
-    freshStart.current = tracker;
-    return tracker.stop;
-  }, [startedAt]);
   // The loaded-version toast shows once per version, so a reload before it fades does not bring it back.
   useEffect(() => {
     if (previous !== commit) acknowledgeVersion(commit);
@@ -84,7 +77,7 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
   const latestRestart = useRef(restart);
   latestRestart.current = restart;
   const updateReady = Boolean(waiting) || desktopReady !== null;
-  useEffect(() => updateReady ? onQuietMoment(() => freshStart.current?.isFresh() ?? false, () => void latestRestart.current(true)) : undefined, [updateReady]);
+  useEffect(() => updateReady ? onQuietMoment(() => void latestRestart.current(true)) : undefined, [updateReady]);
 
   if (!notificationHost) return null;
   return createPortal(

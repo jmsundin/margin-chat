@@ -1,7 +1,7 @@
 import type { Tokens } from "marked";
 import type { AppState, Conversation } from "../types";
 import type { DocumentBlock, DocumentGeneration, EditableDocument } from "./editableDocument";
-import { latexMarkdownLexer } from "./latex";
+import { latexMarkdownLexer } from "./latexSyntax";
 import { getEditableDocument, splitDocumentMarkdown } from "./editableDocument";
 import { addChildConversation } from "./workspaceCommands";
 import { closeDocument } from "./documentWorkspace";

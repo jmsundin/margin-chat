@@ -100,7 +100,27 @@ function blockEnd(source, contentStart, ending, length, unique = true, hintOnly 
     return candidates[0];
 }
 
+/** Applies non-overlapping replacements in one pass. Insertions at the same
+ * position keep the order the previous right-to-left splicing gave them (the
+ * later one first). Copying the whole source once per replacement made every
+ * save quadratic in a document's block count. */
 function replaceRanges(source, replacements) {
+    const ordered = replacements.map((replacement, index) => ({ replacement, index }))
+        .sort((a, b) => a.replacement.start - b.replacement.start || b.index - a.index)
+        .map(({ replacement }) => replacement);
+    const parts = [];
+    let cursor = 0;
+    for (const replacement of ordered) {
+        if (replacement.start < cursor) return spliceRanges(source, replacements);
+        parts.push(source.slice(cursor, replacement.start), replacement.text ?? "");
+        cursor = replacement.end;
+    }
+    parts.push(source.slice(cursor));
+    return parts.join("");
+}
+
+/** The original right-to-left splice, kept for overlapping ranges. */
+function spliceRanges(source, replacements) {
     let result = source;
     for (const replacement of [...replacements].sort((a, b) => b.start - a.start)) {
         result = result.slice(0, replacement.start) + (replacement.text ?? "") + result.slice(replacement.end);
