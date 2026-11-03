@@ -18,6 +18,7 @@ import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from
 import { chatRunId, createChatRunService } from "../chat/runs.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
+import { fetchPublicImage, normalizePublicPageUrl } from "../urlMap/page.mjs";
 import { handleUrlMapRequest } from "./urlMap.mjs";
 import { createRepoExplainService, createRepoMapService } from "../repoMap/index.mjs";
 import { handleRepoMapRequest } from "./repoMap.mjs";
@@ -93,6 +94,8 @@ function acknowledgeVaultCommit(result, paths, url) {
   return { ...result, manifest: { schemaVersion: result.manifest.schemaVersion, revision: result.manifest.revision, files } };
 }
 
+const WEB_IMAGE_USER_AGENT = "Mozilla/5.0 (compatible; MarginChat/1.0; +https://www.marginchat.com)";
+
 const PUBLIC_MAP_ROUTES = ["publicMapStateRead", "publicMapStateWrite", "publicMapAnswers", "publicMapAnswerDelete", "publicMapAsk", "graphAsk", "webSearch"];
 
 // The extension can operate on workspace content, but account administration
@@ -101,7 +104,7 @@ const EXTENSION_WORKSPACE_ROUTES = new Set([
   "authSession", "captureList", "captureGet", "stateRead",
   "vaultStatus", "vaultIndex", "vaultSearch", "vaultChanges", "vaultFileRead", "vaultFileWrite", "vaultUpload", "vaultUploadCommit", "vaultCommit", "vaultRebuild",
   "chat", "chatRun", "chatTitle", "documentUpload", "documentOriginal", "documentDelete",
-  "urlMap", "repoMap", "repoExplain", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch",
+  "urlMap", "repoMap", "repoExplain", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", "webImage",
   ...PUBLIC_MAP_ROUTES,
   "billingDashboard", "apiKeysRead",
 ]);
@@ -123,6 +126,7 @@ export function createApiHandler({
   topicExpansionService,
   publicMapService,
   webSearchService,
+  webImageReader = fetchPublicImage,
   topicEmbeddingService,
   passageService,
   desktopDownloadService,
@@ -177,6 +181,8 @@ export function createApiHandler({
   const resetByAddress = createRateLimiter(limits.passwordResetsByAddress);
   const passwordChangeByUser = createRateLimiter(limits.passwordChangeFailuresByUser);
   const accountDeleteByUser = createRateLimiter(limits.accountDeleteFailuresByUser);
+  // One import saves at most a few hundred pictures; this only stops a runaway loop.
+  const webImagesByUser = createRateLimiter({ max: 1_000, windowMs: 60 * 60 * 1000 });
   const clientAddress = (request) =>
     getClientAddress(request, { trustProxyHeaders: runtimeConfig.trustProxyHeaders === true });
 
@@ -521,7 +527,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatRun", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "repoMap", "repoExplain", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
+      if (["stateRead", "documentUpload", "documentDelete", "chat", "chatRun", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "repoMap", "repoExplain", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", "webImage", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
       }
 
@@ -566,6 +572,30 @@ export function createApiHandler({
           "Cache-Control": "no-store",
           "Set-Cookie": authService.buildClearedSessionCookie(),
         });
+        return;
+      }
+
+      // Agent mode's imports save a page's pictures into the vault; the browser
+      // fetches them here because most image hosts don't allow other sites to.
+      if (route?.id === "webImage") {
+        webImagesByUser.check(authContext.user.id);
+        webImagesByUser.record(authContext.user.id);
+        const scope = createRequestAbortScope(request, response);
+        let image;
+        try {
+          image = await webImageReader(normalizePublicPageUrl(url.searchParams.get("url") ?? "").href, { signal: scope.signal, userAgent: WEB_IMAGE_USER_AGENT });
+        } finally {
+          scope.dispose();
+        }
+        response.writeHead(200, {
+          "Cache-Control": "private, no-store",
+          "Content-Type": image.contentType,
+          "Content-Length": image.buffer.length,
+          "Content-Disposition": "attachment",
+          "Content-Security-Policy": "default-src 'none'; sandbox",
+          "X-Content-Type-Options": "nosniff",
+        });
+        response.end(image.buffer);
         return;
       }
 

@@ -9,6 +9,10 @@ import { MAX_DOCUMENT_BYTES, extractDocumentText } from "../documents/extraction
 
 export const PAGE_BYTE_LIMIT = 1_500_000;
 export const PAGE_TEXT_LIMIT = 12_000;
+/** Largest image an import saves; it must fit in one function response (Vercel allows 4.5 MB). */
+export const IMAGE_BYTE_LIMIT = 4_000_000;
+/** Pictures a browser shows in an <img>. SVG is left out: it can carry scripts. */
+export const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"];
 
 export function isPublicPageAddress(address) {
   try {
@@ -51,11 +55,11 @@ function abortable(promise, signal) {
   });
 }
 
-function download(url, address, signal, { pdf = false, json = false, userAgent = "MarginChat-URLMap/0.1" } = {}) {
+function download(url, address, signal, { pdf = false, json = false, image = false, userAgent = "MarginChat-URLMap/0.1" } = {}) {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
       method: "GET", agent: false, signal,
-      headers: { "User-Agent": userAgent, Accept: json ? "application/json" : `text/html,text/plain;q=0.8${pdf ? ",application/pdf;q=0.7" : ""}`, "Accept-Encoding": "identity" },
+      headers: { "User-Agent": userAgent, Accept: image ? "image/avif,image/webp,image/png,image/jpeg,image/gif;q=0.9" : json ? "application/json" : `text/html,text/plain;q=0.8${pdf ? ",application/pdf;q=0.7" : ""}`, "Accept-Encoding": "identity" },
       // Pin the validated address; a second DNS lookup could resolve to a private host.
       lookup(_hostname, options, callback) {
         if (options.all) callback(null, [address]);
@@ -70,6 +74,23 @@ function download(url, address, signal, { pdf = false, json = false, userAgent =
         response.destroy(); reject(new HttpError(422, `The webpage returned ${status}. Try another public page.`)); return;
       }
       const contentType = String(response.headers["content-type"] ?? "").toLowerCase();
+      if (image) {
+        const type = IMAGE_TYPES.find((candidate) => contentType.split(";")[0].trim() === candidate);
+        if (!type) { response.destroy(); reject(new HttpError(422, "That address is not a PNG, JPEG, GIF, WebP or AVIF image.")); return; }
+        if (response.headers["content-encoding"] && response.headers["content-encoding"] !== "identity") {
+          response.destroy(); reject(new HttpError(422, "This image could not be read in a supported format.")); return;
+        }
+        let size = 0;
+        const chunks = [];
+        response.on("data", (chunk) => {
+          size += chunk.length;
+          if (size > IMAGE_BYTE_LIMIT) response.destroy(new HttpError(413, "This image is too large to save."));
+          else chunks.push(chunk);
+        });
+        response.on("error", reject);
+        response.on("end", () => resolve({ status, contentType: type, buffer: Buffer.concat(chunks) }));
+        return;
+      }
       const isPdf = pdf && /^application\/pdf(;|$)/.test(contentType);
       const isJson = json && /^application\/json(;|$)/.test(contentType);
       if (!isPdf && !isJson && !/^(text\/html|application\/xhtml\+xml|text\/plain)(;|$)/.test(contentType)) {
@@ -98,6 +119,8 @@ function download(url, address, signal, { pdf = false, json = false, userAgent =
 }
 
 const clean = (text) => String(text ?? "").replace(/\s+/gu, " ").trim();
+/** The first address in a srcset. */
+const srcsetFirst = (value) => String(value ?? "").trim().split(/\s*,\s*/u)[0]?.split(/\s+/u)[0] || null;
 
 function absoluteWebUrl(value, base) {
   try {
@@ -107,7 +130,7 @@ function absoluteWebUrl(value, base) {
 }
 
 /** Readable HTML as Markdown: headings, paragraphs, lists, quotes, code, tables, links and images. */
-export function htmlToMarkdown(root, baseUrl, { links = true } = {}) {
+export function htmlToMarkdown(root, baseUrl, { links = true, images = false } = {}) {
   const inline = (node) => [...node.childNodes].map((child) => render(child, 0)).join("").replace(/[ \t]*\n[ \t]*/gu, " ");
   const block = (text) => `\n\n${text.trim()}\n\n`;
   const list = (node, depth) => {
@@ -143,9 +166,15 @@ export function htmlToMarkdown(root, baseUrl, { links = true } = {}) {
       return text && href && links ? `[${text}](${href})` : text;
     }
     if (tag === "img") {
-      const src = absoluteWebUrl(node.getAttribute("src"), baseUrl);
-      const alt = clean(node.getAttribute("alt"));
-      return src && alt && links ? `![${alt}](${src})` : "";
+      // Lazy-loading pages keep the real address in data-src and a placeholder in src.
+      const lazy = node.getAttribute("data-src") || node.getAttribute("data-original") || srcsetFirst(node.getAttribute("data-srcset"));
+      const raw = images && lazy ? lazy : node.getAttribute("src") || (images ? srcsetFirst(node.getAttribute("srcset")) : null);
+      const src = raw && !/^data:/iu.test(raw) ? absoluteWebUrl(raw, baseUrl) : null;
+      const alt = clean(node.getAttribute("alt")).replace(/[[\]]/gu, " ");
+      // Imports keep every picture; reading keeps only described ones, which say what they show.
+      if (!src || !links || !(alt || images)) return "";
+      const image = `![${alt}](${src})`;
+      return images ? `\n\n${image}\n\n` : image;
     }
     if (tag === "table") {
       const rows = [...node.querySelectorAll("tr")].map((row) => [...row.children]
@@ -162,7 +191,7 @@ export function htmlToMarkdown(root, baseUrl, { links = true } = {}) {
   return render(root, 0).split("\n").map((line) => line.trimEnd()).join("\n").replace(/\n{3,}/gu, "\n\n").trim();
 }
 
-export function extractPage(html, url, contentType = "text/html", { markdown = false, markdownLinks = true, textLimit = PAGE_TEXT_LIMIT, linkLimit = 24 } = {}) {
+export function extractPage(html, url, contentType = "text/html", { markdown = false, markdownLinks = true, images = false, textLimit = PAGE_TEXT_LIMIT, linkLimit = 24 } = {}) {
   let text = html, title = new URL(url).hostname, byline = null;
   const links = [];
   if (!contentType.startsWith("text/plain")) {
@@ -178,7 +207,7 @@ export function extractPage(html, url, contentType = "text/html", { markdown = f
     title = clean(article?.title) || title;
     byline = clean(article?.byline) || null;
     const source = article?.content ? parseHTML(`<html><body>${article.content}</body></html>`).document.body : fallback;
-    if (markdown) text = source ? htmlToMarkdown(source.cloneNode(true), url, { links: markdownLinks }) : "";
+    if (markdown) text = source ? htmlToMarkdown(source.cloneNode(true), url, { links: markdownLinks, images }) : "";
     const seen = new Set([url]);
     for (const link of source?.querySelectorAll("a[href]") ?? []) {
       try {
@@ -213,7 +242,7 @@ async function extractPdfPage(buffer, url, textLimit) {
  * Download a public page, following redirects only to other public addresses, and
  * return its body: `html` for HTML and plain text, `buffer` for a PDF when `pdf` is set.
  */
-export async function fetchPublicPage(input, { signal, lookupImpl = lookup, downloadImpl = download, pdf = false, json = false, userAgent } = {}) {
+export async function fetchPublicPage(input, { signal, lookupImpl = lookup, downloadImpl = download, pdf = false, json = false, image = false, userAgent } = {}) {
   const timeout = AbortSignal.timeout(20_000);
   const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let url = normalizePublicPageUrl(input);
@@ -222,7 +251,7 @@ export async function fetchPublicPage(input, { signal, lookupImpl = lookup, down
       combined.throwIfAborted();
       const address = await abortable(resolvePublicPageAddress(url, lookupImpl), combined);
       combined.throwIfAborted();
-      const result = await downloadImpl(url, address, combined, { pdf, json, ...(userAgent ? { userAgent } : {}) });
+      const result = await downloadImpl(url, address, combined, { pdf, json, ...(image ? { image } : {}), ...(userAgent ? { userAgent } : {}) });
       combined.throwIfAborted();
       if (result.location) { url = normalizePublicPageUrl(new URL(result.location, url).href); continue; }
       return { ...result, url: url.href };
@@ -240,8 +269,23 @@ export async function fetchPublicPage(input, { signal, lookupImpl = lookup, down
  * Download a public page and return its readable text. `markdown` keeps headings,
  * lists and links as Markdown (link addresses only with `markdownLinks`); `pdf` also accepts PDF files.
  */
-export async function readPublicPage(input, { markdown = false, markdownLinks = true, textLimit = PAGE_TEXT_LIMIT, linkLimit, ...options } = {}) {
+export async function readPublicPage(input, { markdown = false, markdownLinks = true, images = false, textLimit = PAGE_TEXT_LIMIT, linkLimit, ...options } = {}) {
   const result = await fetchPublicPage(input, options);
   if (result.buffer) return extractPdfPage(result.buffer, result.url, textLimit);
-  return extractPage(result.html, result.url, result.contentType, { markdown, markdownLinks, textLimit, ...(linkLimit ? { linkLimit } : {}) });
+  return extractPage(result.html, result.url, result.contentType, { markdown, markdownLinks, images, textLimit, ...(linkLimit ? { linkLimit } : {}) });
+}
+
+/**
+ * Download a public image for an import to save in the vault: its bytes and type.
+ * X's image host serves a smaller copy when the original is over the limit.
+ */
+export async function fetchPublicImage(input, options = {}) {
+  try {
+    return await fetchPublicPage(input, { ...options, image: true });
+  } catch (error) {
+    const url = new URL(input);
+    if (error?.statusCode !== 413 || url.hostname !== "pbs.twimg.com" || url.searchParams.get("name") === "large") throw error;
+    url.searchParams.set("name", "large");
+    return fetchPublicPage(url.href, { ...options, image: true });
+  }
 }
