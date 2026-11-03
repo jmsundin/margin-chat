@@ -1,4 +1,5 @@
 import DismissibleDetails from "./DismissibleDetails";
+import { MapGroupingButtons, MapGroupingMenu, type MapGrouping } from "./MapGroupingMenu";
 import MapHelp from "./MapHelp";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { getDocumentDockDropEdge } from "../lib/documentDock";
@@ -69,7 +70,7 @@ import { GraphLandscapeLayer, type LandscapeLabel } from "./GraphLandscapeLayer"
 import { fitNetworkMapViewport } from "../lib/networkMapLayout";
 import MapLensBar from "./MapLensBar";
 import CanvasGroupBoxes from "./CanvasGroupBoxes";
-import { canvasBoxAt, canvasGroupDropChanges, layoutCanvasGroupBoxes, type CanvasGroupBox } from "../lib/canvasGroupBoxes";
+import { canvasBoxAt, canvasGroupDropChanges, canvasTopicDropMoves, layoutCanvasGroupBoxes, topicCanvasGroups, type CanvasGroupBox, type CanvasTopic } from "../lib/canvasGroupBoxes";
 import { countConnections, EMPTY_MAP_LENS, matchMapLens, newLensFilter, readMapLens, type MapLens, type SavedMapLens } from "../lib/mapLens";
 import { mapColoring, MAP_COLOR_BY_OPTIONS, readMapColorBy, type MapColorBy } from "../lib/mapColorBy";
 import { bundleLinks, edgeSignposts, interpolateViewport, isBigCameraMove, nextInDirection, placeLandmarks, readingOrder, screenGridRegion,
@@ -195,6 +196,24 @@ const EMPTY_SUBJECTS: SubjectCluster[] = [];
 const EMPTY_PLACEMENTS: ConversationGraphNodePlacement[] = [];
 const EMPTY_TERRITORY_LAYOUT: ReturnType<typeof layoutMapTerritoryOverview> = [];
 const EMPTY_GROUP_BOXES: CanvasGroupBox[] = [];
+const EMPTY_CANVAS_TOPICS: CanvasTopic[] = [];
+const EMPTY_BOX_GROUPS: Record<string, ConversationGroup> = {};
+
+type CanvasGrouping = MapGrouping;
+const CANVAS_GROUPING_KEY = "margin-map-canvas-grouping";
+/** A hue that belongs to a document for good, spread around the color wheel by the golden angle. */
+function topicHue(id: string) {
+  let hash = 0;
+  for (let index = 0; index < id.length; index++) hash = (hash * 31 + id.charCodeAt(index)) >>> 0;
+  return Math.round((hash % 997) * 137.508) % 360;
+}
+
+function readCanvasGrouping(workspaceKey?: string): CanvasGrouping {
+  const saved = readStoredJson<CanvasGrouping | null>(workspaceKey && `${CANVAS_GROUPING_KEY}:${workspaceKey}`,
+    (value) => value === "topics" || value === "groups" || value === "none" ? value : null, null);
+  // Before topics, Canvas had one switch for your group boxes; switched off, it was a free canvas.
+  return saved ?? readStoredJson<CanvasGrouping>(workspaceKey && `margin-map-canvas-groups:${workspaceKey}`, (value) => value === false ? "none" : "topics", "topics");
+}
 /** A group box as a placement, so the camera can fit it like a card. */
 function groupBoxPlacement(box: CanvasGroupBox): ConversationGraphNodePlacement {
   return { conversationId: box.id, depth: 0, x: box.x, y: box.y, width: box.width, height: box.height };
@@ -1152,6 +1171,12 @@ export default function ConversationGraphView({
   const isCanvasMode = navigation.state.viewMode === "canvas";
   const isNetworkMode = navigation.state.viewMode === "network";
   const isClustersMode = navigation.state.viewMode === "clusters";
+  // The Map puts documents in boxes by topic, by your groups, or not at all; the setting is per device.
+  const [canvasGrouping, setCanvasGroupingState] = useState<CanvasGrouping>(() => readCanvasGrouping(workspaceKey));
+  const setCanvasGrouping = useCallback((next: CanvasGrouping) => { setCanvasGroupingState(next); writeStoredJson(workspaceKey && `${CANVAS_GROUPING_KEY}:${workspaceKey}`, next); }, [workspaceKey]);
+  // Topics on the Map are the clusters found from links and meaning, drawn as boxes.
+  const canvasTopics = isCanvasMode && navigation.state.contentLens !== "concepts" && canvasGrouping === "topics";
+  const findsTopics = isClustersMode || canvasTopics;
   const isLineageMode = navigation.state.viewMode === "lineage";
   const isLandscapeMode = navigation.state.viewMode === "landscape";
   const panelView = isGraphPanelMode(viewMode) || navigation.state.contentLens === "concepts";
@@ -1177,9 +1202,6 @@ export default function ConversationGraphView({
   const setSavedLenses = useCallback((next: SavedMapLens[]) => { setSavedLensesState(next); writeStoredJson(workspaceKey && `margin-map-saved-lenses:${workspaceKey}`, next); }, [workspaceKey]);
   const [colorBy, setColorByState] = useState<MapColorBy>(() => readStoredJson(workspaceKey && `margin-map-color-by:${workspaceKey}`, readMapColorBy, "family"));
   const setColorBy = useCallback((next: MapColorBy) => { setColorByState(next); writeStoredJson(workspaceKey && `margin-map-color-by:${workspaceKey}`, next); }, [workspaceKey]);
-  // Canvas draws your groups as frames unless you switch them off; the setting is per device.
-  const [canvasGroupFramesOn, setCanvasGroupFramesState] = useState(() => readStoredJson(workspaceKey && `margin-map-canvas-groups:${workspaceKey}`, (value) => value !== false, true));
-  const setCanvasGroupFrames = useCallback((next: boolean) => { setCanvasGroupFramesState(next); writeStoredJson(workspaceKey && `margin-map-canvas-groups:${workspaceKey}`, next); }, [workspaceKey]);
   // The minimap is off until someone asks for it; the setting is per device.
   const [minimapEnabled, setMinimapEnabledState] = useState(() => readStoredJson(MINIMAP_STORAGE_KEY, (value) => value === true, false));
   const setMinimapEnabled = (next: boolean) => { setMinimapEnabledState(next); writeStoredJson(MINIMAP_STORAGE_KEY, next); };
@@ -1378,7 +1400,7 @@ export default function ConversationGraphView({
       linkedConversationIds: showLinks ? conversation.linkedConversationIds : [],
       relations: showLinks ? conversation.relations : undefined,
     }])), [conversations, showBranches, showLinks]);
-  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && (isClustersMode || isLandscapeMode || scope.kind === "focus") });
+  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && (findsTopics || isLandscapeMode || scope.kind === "focus") });
   const [showMeaningRing, setShowMeaningRing] = useState(true);
   const linkScopedIds = useMemo(() => {
     const ids = scope.kind === "focus"
@@ -1484,24 +1506,24 @@ export default function ConversationGraphView({
   // Clusters by meaning before naming, so the AI can name them all in one pass.
   const subjectCache = useRef<{ key: string; subjects: SubjectCluster[] } | null>(null);
   const baseSubjects = useMemo(() => {
-    if (!isClustersMode || !groupBySubject) return EMPTY_SUBJECTS;
+    if (!findsTopics || !groupBySubject) return EMPTY_SUBJECTS;
     const ids = unfocusedScene.nodes.map((node) => node.conversationId);
     const key = JSON.stringify([[...ids].sort(), documentConnections, topicEmbeddings.revision]);
     if (subjectCache.current?.key !== key) {
       subjectCache.current = { key, subjects: groupSubjects(ids, documentConnections, (id) => topicEmbeddings.vectors.get(id), (id) => topicEmbeddings.neighbours.get(id)) };
     }
     return subjectCache.current.subjects;
-  }, [isClustersMode, groupBySubject, unfocusedScene.nodes, documentConnections, topicEmbeddings.revision]);
+  }, [findsTopics, groupBySubject, unfocusedScene.nodes, documentConnections, topicEmbeddings.revision]);
   const subjectCategories = useSubjectCategories({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
-    active: !!jev?.ready && isVisible && isClustersMode && groupBySubject, clusters: baseSubjects, conversations });
+    active: !!jev?.ready && isVisible && findsTopics && groupBySubject, clusters: baseSubjects, conversations });
   const clusterCache = useRef<{ key: string; layout: GravityClusterLayout } | null>(null);
   // Where clusters sat last time, so the map keeps its places as the vault grows (see lib/mapPlaces).
   const placesKey = workspaceKey && `margin-map-places:${workspaceKey}`;
   const placesRef = useRef<MapPlaces | null | undefined>(undefined);
   if (placesRef.current === undefined) placesRef.current = readStoredJson(placesKey, readMapPlaces, null);
   const [placesRevision, setPlacesRevision] = useState(0);
-  const clusterLayout = useMemo(() => {
-    if (!isClustersMode) return null;
+  const topicLayout = useMemo(() => {
+    if (!findsTopics) return null;
     const names = groupBySubject ? subjectCategories.names : null;
     const key = JSON.stringify([unfocusedScene.nodes.map((node) => node.conversationId).sort(), documentConnections,
       jev?.enabled ? topicEmbeddings.revision : -1, names ? [...names].sort() : null, placesRevision]);
@@ -1524,8 +1546,10 @@ export default function ConversationGraphView({
       return { ...node, x: placed.x, y: placed.y, width: placed.width, height: placed.height };
     });
     return { ...clusterCache.current.layout, nodes };
-  }, [isClustersMode, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, jev?.enabled, topicEmbeddings.revision,
+  }, [findsTopics, unfocusedScene.nodes, viewportSize, documentConnections, groupBySubject, jev?.enabled, topicEmbeddings.revision,
     baseSubjects, subjectCategories.names, placesRevision, scope.kind, placesKey]);
+  // Only Clusters lays cards out by its circles; the Map keeps its own boxes.
+  const clusterLayout = isClustersMode ? topicLayout : null;
   // Landscape: the server's positions for every document, close in meaning close on the map.
   const library = useLibrary({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && isLandscapeMode });
   // A PubMed field from the library replaces the vault's landscape; your documents near it are pinned among its papers.
@@ -1578,21 +1602,31 @@ export default function ConversationGraphView({
   }, [clusterLayout, landscapeScene]);
   // The widest groups are named first, since they are what a zoomed-out map shows.
   const labelTargets = useMemo(() => {
-    if (!clusterLayout) return EMPTY_CLUSTERS;
-    const levels = clusterLayout.levels;
+    if (!topicLayout) return EMPTY_CLUSTERS;
+    // The Map's boxes are single clusters, so only those need names there.
+    if (!isClustersMode) return topicLayout.clusters.filter((cluster) => !cluster.name);
+    const levels = topicLayout.levels;
     // Clusters the AI already filed under a subject need no label of their own.
-    return [...(levels.at(-1)?.groups ?? []), ...clusterLayout.clusters.filter((cluster) => !cluster.name),
+    return [...(levels.at(-1)?.groups ?? []), ...topicLayout.clusters.filter((cluster) => !cluster.name),
       ...levels.slice(0, -1).reverse().flatMap((level) => level.groups)];
-  }, [clusterLayout]);
+  }, [topicLayout, isClustersMode]);
   const generatedClusterLabels = useClusterLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
-    active: !!jev?.ready && isVisible && isClustersMode, clusters: labelTargets, conversations });
+    active: !!jev?.ready && isVisible && findsTopics, clusters: labelTargets, conversations });
   const clusterLabels = useMemo(() => {
-    if (!clusterLayout) return generatedClusterLabels;
+    if (!topicLayout) return generatedClusterLabels;
     const named = { ...generatedClusterLabels.labels };
-    for (const cluster of clusterLayout.clusters) if (cluster.name) named[cluster.id] = { label: cluster.name, generated: true };
+    for (const cluster of topicLayout.clusters) if (cluster.name) named[cluster.id] = { label: cluster.name, generated: true };
     return { ...generatedClusterLabels, loading: generatedClusterLabels.loading || subjectCategories.loading,
-      labels: labelClusterGroups(named, clusterLayout.clusters, clusterLayout.levels, groupBySubject ? "Unfiled" : "Unlinked") };
-  }, [generatedClusterLabels, clusterLayout, groupBySubject, subjectCategories.loading]);
+      labels: labelClusterGroups(named, topicLayout.clusters, topicLayout.levels, groupBySubject ? "Unfiled" : "Unlinked") };
+  }, [generatedClusterLabels, topicLayout, groupBySubject, subjectCategories.loading]);
+  // Each topic as a box on the Map, named the way Clusters named it. Its color comes from its hub
+  // document, so a box keeps its color when cards are filed in or out of it.
+  const canvasTopicList = useMemo<CanvasTopic[]>(() => {
+    if (!canvasTopics || !topicLayout) return EMPTY_CANVAS_TOPICS;
+    return topicLayout.clusters.map((cluster) => ({ id: cluster.id, hubId: cluster.hubId, memberIds: cluster.memberIds,
+      label: clusterLabels.labels[cluster.id]?.label ?? (cluster.hubId ? conversations[cluster.hubId]?.title : null) ?? "Topic",
+      color: cluster.hubId ? `hsl(${topicHue(cluster.hubId)} 58% 52%)` : "var(--muted)" }));
+  }, [canvasTopics, topicLayout, clusterLabels.labels, conversations]);
   const clusterCircles = useMemo(() => new Map<string, GravityCluster | GravityClusterGroup>(clusterLayout
     ? [...clusterLayout.clusters, ...clusterLayout.levels.flatMap((level) => level.groups)].map((circle) => [circle.id, circle]) : []),
   [clusterLayout]);
@@ -1624,10 +1658,13 @@ export default function ConversationGraphView({
     { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }) : null,
   [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId, meaningRingIds]);
   const documentFootprint = useMemo(() => getDocumentNodeFootprint(viewport.scale), [viewport.scale]);
-  // Canvas shows only the groups you made, each as a box that owns its space; no category names are guessed for it.
-  const showCanvasGroupBoxes = isCanvasMode && !panelView && !documentsOnly && canvasGroupFramesOn && Object.keys(groups).length > 0;
-  const canvasGroupLayout = useMemo(() => showCanvasGroupBoxes ? layoutCanvasGroupBoxes({ nodes: unfocusedScene.nodes, conversations, groups }) : null,
-    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, groups]);
+  // The Map puts each topic, or each group you made, in a box that owns its space.
+  const boxGroups = useMemo(() => canvasGrouping === "topics" ? topicCanvasGroups(canvasTopicList) : canvasGrouping === "groups" ? groups : EMPTY_BOX_GROUPS,
+    [canvasGrouping, canvasTopicList, groups]);
+  const showCanvasGroupBoxes = isCanvasMode && !panelView && !documentsOnly && Object.keys(boxGroups).length > 0;
+  const canvasGroupLayout = useMemo(() => showCanvasGroupBoxes ? layoutCanvasGroupBoxes({ nodes: unfocusedScene.nodes, conversations, groups: boxGroups,
+    noGroupLabel: canvasGrouping === "topics" ? groupBySubject ? "Unfiled" : "Unlinked" : "No group" }) : null,
+    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, canvasGrouping, groupBySubject]);
   const canvasGroupBoxes = canvasGroupLayout?.boxes ?? EMPTY_GROUP_BOXES;
   const displayScene = useMemo(() => documentLayout
     ? replaceConversationGraphNodes(unfocusedScene, documentLayout.nodes)
@@ -3063,7 +3100,10 @@ export default function ConversationGraphView({
     if (canvasGroupBoxes.length) {
       const anchor = placementByConversationId.get(move.conversationId);
       const target = anchor && canvasBoxAt(canvasGroupBoxes, { x: anchor.x + anchor.width / 2 + move.deltaX, y: anchor.y + anchor.height / 2 + move.deltaY });
-      if (target) for (const [id, groupId] of canvasGroupDropChanges({ ids: move.conversationIds, conversations, groups, target })) onAssignGroup(id, groupId);
+      if (!target) return;
+      // A topic is filed by meaning on the server, so moving into one is remembered there; without Jev, topics come from links alone and can't be changed by hand.
+      if (canvasTopics) { if (jev?.enabled) for (const [id, anchorId] of canvasTopicDropMoves({ ids: move.conversationIds, topics: canvasTopicList, target })) void topicEmbeddings.moveDocument(id, anchorId).catch(() => {}); }
+      else for (const [id, groupId] of canvasGroupDropChanges({ ids: move.conversationIds, conversations, groups, target })) onAssignGroup(id, groupId);
       return;
     }
     // Focus spacing is transient. A deliberate drag starts at the displayed
@@ -3529,7 +3569,15 @@ export default function ConversationGraphView({
   }
 
   /** A frame's name zooms the Canvas to that group, staying on the Canvas. */
-  function fitCanvasGroupBox(box: CanvasGroupBox) {
+  function chooseCanvasGrouping(next: CanvasGrouping) {
+    interactions.cancel();
+    setMultiSelectedConversationIds(new Set());
+    setIsMultiSelectActive(false);
+    setCanvasGrouping(next);
+    setFitAfterArrange(true);
+  }
+
+    function fitCanvasGroupBox(box: CanvasGroupBox) {
     const canvas = viewportRef.current;
     if (!canvas?.clientWidth || !canvas.clientHeight) return;
     interactions.cancel();
@@ -3871,7 +3919,7 @@ export default function ConversationGraphView({
     : MORE_GRAPH_VIEW_MODES.find((item) => item.id === viewMode)?.label;
   function closeViewOptions() { sectionRef.current?.querySelector(".graph-map-view-options")?.removeAttribute("open"); }
   // How the current view is arranged and what it is doing lives in the view options menu, not a row under the toolbar.
-  const clusterStatus = !isClustersMode || !jev?.enabled ? null
+  const clusterStatus = !findsTopics || !jev?.enabled ? null
     : topicEmbeddings.loading ? "Grouping by subject…"
     : topicEmbeddings.warning ? topicEmbeddings.warning
     : clusterLabels.loading ? "Naming clusters…" : null;
@@ -3885,11 +3933,6 @@ export default function ConversationGraphView({
       }}>{navigation.state.networkPins[selectedConversationId] ? "Unpin selected" : "Pin selected"}</button> : null}
       {Object.keys(navigation.state.networkPins).length ? <button type="button" onClick={() => navigation.update({ networkPins: {} })}>Clear pins ({Object.keys(navigation.state.networkPins).length})</button> : null}
     </div> : isClustersMode || viewMode === "topics" ? <div className="graph-mode-context" aria-label="Cluster view status">
-      <div className="graph-mode-segmented" role="group" aria-label="Group documents by">
-        <span>Group by</span>
-        <button type="button" aria-pressed={isClustersMode} onClick={() => { if (!isClustersMode) chooseViewMode("clusters"); }}>Links</button>
-        <button type="button" aria-pressed={!isClustersMode} onClick={() => { if (isClustersMode) chooseViewMode("topics"); }}>My groups</button>
-      </div>
       {isClustersMode ? <>
         <span>{groupBySubject ? "Documents gather around their most connected hub, and clusters on the same subject join."
           : "Documents gather around their most connected hub."} Zoom out for topics and dots, zoom in to read.</span>
@@ -3902,8 +3945,12 @@ export default function ConversationGraphView({
         <span>Documents sit in the groups you made. Zoom into a group to see its documents.</span>
         <button type="button" onClick={() => { closeViewOptions(); showAllGroups(); }}>Show all groups</button>
       </>}
-    </div> : isCanvasMode ? <div className="graph-mode-context" aria-label="Canvas status">
-      <span>Your own board: documents stay where you put them. Drag a card to move it{onCreateNoteAt ? ", double-click empty space to add a note" : ""}{onConnectConversation ? ", drag from a card's edge to link it" : ""}.</span>
+    </div> : isCanvasMode ? <div className="graph-mode-context" aria-label="Map status">
+      <span>{canvasGrouping === "topics" ? `Documents sit in boxes by topic, found from their links${groupBySubject ? " and meaning" : ""}. Drop a card in another box to file it there.`
+        : canvasGrouping === "groups" ? "Documents sit in the groups you made. Drop a card in another box to move it to that group."
+        : "Your own board: documents stay where you put them."} Drag a card to move it{onCreateNoteAt ? ", double-click empty space to add a note" : ""}{onConnectConversation ? ", drag from a card's edge to link it" : ""}.</span>
+      {canvasTopics && !jev?.enabled ? <span>Turn on Jev to group topics by meaning and name them; hub titles are shown until then.</span>
+        : canvasTopics && clusterStatus ? <span>{clusterStatus}</span> : null}
     </div> : viewMode === "documents" ? <div className="graph-mode-context" aria-label="All documents status">
       <span>Every document, laid out by its connections. Use Layout at the bottom of the map to change the shape.</span>
       {selectedConversation ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selectedConversation.id, 1, documentLayoutMode); }}>Focus on {selectedConversation.title}</button> : null}
@@ -3957,6 +4004,7 @@ export default function ConversationGraphView({
           </div> : null}
         </div>
         <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={chooseViewMode} />
+        {isCanvasMode && !panelView ? <MapGroupingMenu value={canvasGrouping} onChange={chooseCanvasGrouping} /> : null}
         <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
           onClick={() => setLensOpen(!lensOpen)}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
         {toolbarTrailing}
@@ -3972,6 +4020,7 @@ export default function ConversationGraphView({
             {/* Phones keep only search and a few icons in the bar; the views and Filter move in here. */}
             <div className="graph-map-menu-compact" role="group" aria-label="Map views">
               <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }} />
+              {isCanvasMode && !panelView ? <MapGroupingButtons value={canvasGrouping} onChange={(next) => { closeViewOptions(); chooseCanvasGrouping(next); }} /> : null}
               <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
                 onClick={() => { closeViewOptions(); setLensOpen(!lensOpen); }}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
             </div>
@@ -4433,20 +4482,6 @@ export default function ConversationGraphView({
                   : "Select"}
               </span>
             </button> : null}
-            {isCanvasMode && !panelView ? <button
-              aria-pressed={canvasGroupFramesOn}
-              className="conversation-graph-multi-select-toggle"
-              data-graph-ui="true"
-              onClick={() => { setCanvasGroupFrames(!canvasGroupFramesOn); setFitAfterArrange(true); }}
-              title={canvasGroupFramesOn ? "Hide your groups and arrange cards freely" : "Put each group's documents in its own box"}
-              type="button"
-            >
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <rect x="3.5" y="5.5" width="17" height="14" rx="3" />
-                <path d="M3.5 9.5h7" />
-              </svg>
-              <span>Groups</span>
-            </button> : null}
             {showTidyUp && !showCanvasGroupBoxes ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Tidy up</summary><div>
             <button
               aria-label="Auto-arrange graph with ELK"
@@ -4598,11 +4633,11 @@ export default function ConversationGraphView({
                 ×
               </button>
             </div>}
-            {isClustersMode && jev?.enabled && clusterLayout?.clusterByDocumentId.has(dockedConversation.id) ? <div className="graph-dock-cluster-move">
+            {findsTopics && jev?.enabled && topicLayout?.clusterByDocumentId.has(dockedConversation.id) ? <div className="graph-dock-cluster-move">
               <ClusterMoveMenu
                 documentTitle={dockedConversation.title}
-                currentClusterId={clusterLayout.clusterByDocumentId.get(dockedConversation.id) ?? null}
-                targets={clusterLayout.clusters.flatMap((cluster) => {
+                currentClusterId={topicLayout.clusterByDocumentId.get(dockedConversation.id) ?? null}
+                targets={topicLayout.clusters.flatMap((cluster) => {
                   const anchorId = cluster.hubId ?? cluster.memberIds.find((id) => id !== dockedConversation.id);
                   return anchorId && anchorId !== dockedConversation.id
                     ? [{ id: cluster.id, label: clusterLabels.labels[cluster.id]?.label ?? "Cluster", anchorId }] : [];

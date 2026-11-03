@@ -3,7 +3,7 @@ import type { ConversationGraphDetail } from "./conversationGraph";
 import { normalizeEvidence, type GraphEvidenceRef, type GraphScope } from "./graphExploration";
 import type { GraphViewport } from "./graphInteractions";
 import type { DocumentLayoutMode } from "./documentMapLayout";
-import { isGraphViewMode, normalizeGraphModeCameras, normalizeNetworkPins, type GraphContentLens, type GraphModeCameras, type GraphRelationKind, type GraphViewMode } from "./graphViewModes";
+import { currentGraphViewMode, isGraphViewMode, normalizeGraphModeCameras, normalizeNetworkPins, type GraphContentLens, type GraphModeCameras, type GraphRelationKind, type GraphViewMode } from "./graphViewModes";
 
 export interface GraphExplorationLocation {
   viewMode: GraphViewMode | null;
@@ -45,9 +45,9 @@ export const defaultGraphLocation = (): GraphExplorationLocation => ({
   documentLayoutMode: "auto",
 });
 
-/** Where Map view opens the first time: Clusters, grouped by links. */
+/** Where Map view opens the first time: the Map, its documents in boxes by topic. */
 export const firstVisitGraphLocation = (): GraphExplorationLocation => ({
-  ...defaultGraphLocation(), viewMode: "clusters", documentViewMode: "clusters", overviewPresentation: "documents", documentLayoutMode: "connections",
+  ...defaultGraphLocation(), viewMode: "canvas", documentViewMode: "canvas", overviewPresentation: "canvas",
 });
 
 const lastViewKey = (key: string) => `margin-graph-last-view:${key}`;
@@ -64,9 +64,9 @@ function normalizeLocation(value: any): GraphExplorationLocation | null {
     if (!validScope) return null;
     return {
       ...defaultGraphLocation(), scope, viewport: value.viewport,
-      viewMode: isGraphViewMode(value.viewMode) ? value.viewMode : null,
+      viewMode: isGraphViewMode(value.viewMode) ? currentGraphViewMode(value.viewMode) : null,
       contentLens: value.contentLens === "concepts" ? "concepts" : "documents",
-      documentViewMode: isGraphViewMode(value.documentViewMode) && ["canvas", "focus", "topics", "lineage", "clusters", "network", "documents"].includes(value.documentViewMode) ? value.documentViewMode : "topics",
+      documentViewMode: isGraphViewMode(value.documentViewMode) && ["canvas", "focus", "topics", "lineage", "clusters", "network", "documents"].includes(value.documentViewMode) ? currentGraphViewMode(value.documentViewMode) : "topics",
       relationKinds: Array.isArray(value.relationKinds) ? [...new Set(value.relationKinds.filter((kind: unknown) => kind === "branch" || kind === "link"))] as GraphRelationKind[] : ["branch", "link"],
       modeCameras: normalizeGraphModeCameras(value.modeCameras),
       scopeBeforeFocus: value.scopeBeforeFocus && value.scopeBeforeFocus.kind !== "focus"
@@ -95,15 +95,24 @@ function normalizeLocation(value: any): GraphExplorationLocation | null {
   } catch { return null; }
 }
 
+/** A saved Clusters view, or the Clusters tab's group overview, reopens as the Map. */
+function onTheMap(location: GraphExplorationLocation, saved: any): GraphExplorationLocation {
+  if (saved?.viewMode !== "clusters" && saved?.viewMode !== "topics") return location;
+  return { ...location, viewMode: "canvas", documentViewMode: "canvas", overviewPresentation: "canvas", documentLayoutMode: "auto",
+    focusedTerritoryId: null, focusedTerritoryScale: null };
+}
+
 interface GraphHistory { past: GraphExplorationLocation[]; present: GraphExplorationLocation; future: GraphExplorationLocation[] }
 function readHistory(key?: string): GraphHistory | null {
   if (!key) return null;
   try {
     const value = JSON.parse(sessionStorage.getItem(`margin-graph-location:${key}`) ?? "null");
-    const present = normalizeLocation(value?.present ?? value);
+    const savedPresent = value?.present ?? value;
+    const present = normalizeLocation(savedPresent);
     if (!present) return null;
-    const locations = (values: unknown) => Array.isArray(values) ? values.slice(-50).map(normalizeLocation).filter((item): item is GraphExplorationLocation => Boolean(item)) : [];
-    return { present, past: locations(value?.past), future: locations(value?.future) };
+    const fromClusters = (saved: any) => { const location = normalizeLocation(saved); return location && saved?.viewMode === "clusters" ? onTheMap(location, saved) : location; };
+    const locations = (values: unknown) => Array.isArray(values) ? values.slice(-50).map(fromClusters).filter((item): item is GraphExplorationLocation => Boolean(item)) : [];
+    return { present: savedPresent?.viewMode === "clusters" ? onTheMap(present, savedPresent) : present, past: locations(value?.past), future: locations(value?.future) };
   } catch { return null; }
 }
 
@@ -111,8 +120,9 @@ function readHistory(key?: string): GraphHistory | null {
 function readLastView(key?: string): GraphHistory | null {
   if (!key) return null;
   try {
-    const present = normalizeLocation(JSON.parse(localStorage.getItem(lastViewKey(key)) ?? "null"));
-    return present ? { present, past: [], future: [] } : null;
+    const saved = JSON.parse(localStorage.getItem(lastViewKey(key)) ?? "null");
+    const present = normalizeLocation(saved);
+    return present ? { present: onTheMap(present, saved), past: [], future: [] } : null;
   } catch { return null; }
 }
 

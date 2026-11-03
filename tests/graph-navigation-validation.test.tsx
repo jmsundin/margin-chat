@@ -145,10 +145,23 @@ describe("where Map view opens", () => {
     return restoreLocation(session);
   }
 
-  test("a first visit opens Clusters grouped by links", () => {
+  test("a first visit opens the Map", () => {
     const navigation = open(null, null);
-    expect(navigation.state.viewMode).toBe("clusters");
+    expect(navigation.state.viewMode).toBe("canvas");
     expect(navigation.restored).toBe(false);
+  });
+
+  test("a last view on Clusters, which is now the Map grouped by topic, reopens on the Map", () => {
+    for (const viewMode of ["clusters", "topics"]) {
+      const navigation = open(null, { ...defaultGraphLocation(), viewMode, documentViewMode: viewMode, overviewPresentation: "documents", viewport: { x: 0, y: 0, scale: 1 } });
+      expect(navigation.state.viewMode).toBe("canvas");
+      expect(navigation.state.overviewPresentation).toBe("canvas");
+    }
+  });
+
+  test("Clusters in this session's map history comes back as the Map", () => {
+    const navigation = open({ present: { ...defaultGraphLocation(), viewMode: "clusters", overviewPresentation: "documents" } }, null);
+    expect(navigation.state.viewMode).toBe("canvas");
   });
 
   test("a later session reopens the last view, refitted and without its history", () => {
