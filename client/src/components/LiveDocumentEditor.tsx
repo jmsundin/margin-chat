@@ -592,14 +592,16 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     diagramSelection.current = null;
   }
 
-  function invoke(view: EditorView, spaces = 0, blockId?: string) {
+  function invoke(view: EditorView, spaces = 0, blockId?: string, afterBlock = false) {
     const current = latest.current;
     if (!current.onInvokeAI) return false;
     const live = stateOf(view);
     const main = view.state.selection.main;
     let selection = blockSelection(textOf(view.state.doc), live.layout, main.from, main.to);
     if (selection?.joinBlockIds.length) selection = null;
-    if (blockId && selection?.id !== blockId) {
+    // The touch "Ask AI" under a block answers after it; only a real selection keeps its range, so the
+    // caret a tap leaves mid-word no longer splits the paragraph.
+    if (blockId && (selection?.id !== blockId || (afterBlock && selection.from === selection.to))) {
       const block = live.layout.find((item) => item.id === blockId);
       if (!block) return false;
       const markdown = view.state.doc.sliceString(block.from, block.to);
@@ -1268,7 +1270,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       const touch = mobileKeyboard.mobile && editable && mode !== "reading" && focusedBlockId === id && !readOnlyIds.has(id);
       return createPortal(<>
         {touch && <div className="rich-document-touch-actions live-document-touch-actions">
-          {props.onInvokeAI && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Ask AI" data-label="✦ Ask AI" onClick={() => { const view = viewRef.current; if (view) invoke(view, 0, id); }} />}
+          {props.onInvokeAI && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Ask AI" data-label="✦ Ask AI" onClick={() => { const view = viewRef.current; if (view) invoke(view, 0, id, true); }} />}
           {props.onCaretMenu && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="More actions here" data-label="⋯ More" onClick={() => {
             const view = viewRef.current;
             if (view) openCaretMenu(view, view.state.selection.main.empty && stateOf(view).layout[blockIndexAt(stateOf(view).layout, view.state.selection.main.head)]?.id === id ? undefined : id);

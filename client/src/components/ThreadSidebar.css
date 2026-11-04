@@ -268,6 +268,7 @@
 .thread-sidebar-section.is-date:first-child .thread-date-heading { padding-top: 2px; }
 .thread-sidebar-section.is-date { display: flex; flex-direction: column; gap: 2px; }
 .thread-sidebar-section.is-date > .thread-item { contain-intrinsic-size: auto 32px; content-visibility: auto; }
+@media (pointer: coarse) { .thread-sidebar.is-simplified .thread-sidebar-section.is-date > .thread-item { contain-intrinsic-size: auto 44px; } }
 
 .thread-sidebar.is-simplified .thread-item-meta {
   flex: 0 0 auto;
@@ -305,11 +306,15 @@
     padding-right: 46px;
   }
 
+  /* A row as tall as its 44px buttons, so the chevron and dots sit level with the title
+     instead of hanging below it. */
+  .thread-sidebar.is-simplified .thread-item-main { min-height: 44px; }
+
   .thread-sidebar.is-simplified .thread-item-expand-trigger,
   .thread-sidebar.is-simplified .thread-item-menu-trigger {
     height: 44px;
     opacity: 1;
-    top: 4px;
+    top: 0;
     width: 40px;
   }
 

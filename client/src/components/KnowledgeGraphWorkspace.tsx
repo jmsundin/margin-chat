@@ -408,7 +408,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         {exploreMessage ? <div className={`map-workspace-notice${exploreMessage.error ? " is-error" : ""}`} role={exploreMessage.error ? "alert" : "status"}><span>{exploreMessage.text}</span><button type="button" onClick={() => setExploreMessage(null)}>Dismiss</button></div> : null}
       </div> : null}
       <ConversationGraphView {...personalProps} isVisible={isVisible && !exploring} renderNodeActions={renderActions} onCreateDocument={onCreateExploreDocument}
-        searchPlaceholder="Search, ask, or paste a link…" searchRequest={searchRequest} onSearchSubmit={submitSearch}
+        searchPlaceholder={narrowScreen() ? "Search or ask…" : "Search, ask, or paste a link…"} searchRequest={searchRequest} onSearchSubmit={submitSearch}
         renderSearchFallback={(query, close, matchedIds) => <MapSearchLookFurther query={query} matchedCount={matchedIds.length} canAsk={Boolean(publicMapAccount?.canAsk)}
           onMapPage={(url) => { close(); mapPage(url, anchorFor(query, matchedIds)); }}
           onSaveSource={(url) => { close(); onCreateMapNote({ url }); }}
@@ -468,4 +468,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         onPreviewConnections={(noteId) => { setSourcesFor(null); showAround(noteId); }} /> : null}
     </div>
   </section>;
+}
+
+/** A phone-width search box cuts the long placeholder off mid-word. */
+function narrowScreen() {
+  return typeof window !== "undefined" && window.matchMedia?.("(max-width: 480px)").matches === true;
 }
