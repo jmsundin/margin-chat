@@ -29,6 +29,7 @@ import MathEquationDialog from "./MathEquationDialog";
 import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource, type TextSpan } from "../lib/liveDocument";
 import { livePreviewInline, type LivePreviewMode } from "../lib/livePreviewMarkdown";
 import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
+import { listenForEditorCommands, type EditorCommand } from "../lib/editorCommands";
 import { findWikiLinkQuery, type WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import WikiLinkMenu, { type WikiLinkMenuState } from "./WikiLinkMenu";
 import "./LiveDocumentEditor.css";
@@ -908,6 +909,15 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     });
   }
 
+  /** The phone keyboard bar's buttons: the same edits as typing `[[`, ⌘D, Tab and Shift+Tab. */
+  function editorCommand(view: EditorView, command: EditorCommand) {
+    if (view.state.readOnly) return false;
+    if (command === "indent") return indentMore(view);
+    if (command === "outdent") return indentLess(view);
+    view.dispatch(view.state.replaceSelection(command === "wiki-link" ? "[[" : formatDocumentDateTime()), { userEvent: "input", scrollIntoView: true });
+    return true;
+  }
+
   /** Puts `[[Title]]` in place of what was typed, closing the brackets, with the caret after them. */
   function pickLink(view: EditorView, item: WikiLinkSuggestion) {
     const menu = linkMenuRef.current;
@@ -1059,8 +1069,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey });
-  handlers.current = { commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey };
+  const handlers = useRef({ commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey });
+  handlers.current = { commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey };
   useEffect(() => {
     let frame = 0;
     const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
@@ -1232,7 +1242,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const view = new EditorView({ state, parent: host });
     viewRef.current = view;
     widgets.view = view;
+    const stopCommands = listenForEditorCommands(view.contentDOM, (command) => proxy.current.editorCommand(view, command));
     return () => {
+      stopCommands();
       widgets.view = null;
       viewRef.current = null;
       clearTimeout(typingTimer.current);
