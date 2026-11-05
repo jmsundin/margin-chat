@@ -126,3 +126,17 @@ export function createMemoryVaultFs(initial = {}, { name = "vault", now = () => 
     setAvailability(next) { state = next; },
   };
 }
+
+/** Folders whose contents are never vault content or drop-ins. `.margin-chat` is the app's own. */
+const IGNORED_FOLDERS = new Set([".git", ".obsidian", ".trash", ".margin-chat", "node_modules", ".Trash", "$RECYCLE.BIN"]);
+/** Files other apps leave behind while they work, or that the system makes by itself. */
+const IGNORED_FILE = /^(?:\.DS_Store|Thumbs\.db|desktop\.ini|4913|\.~lock\..*#|~\$.*|\._.*|.*\.(?:tmp|temp|swp|swo|swx|crdownload|part|partial|download|icloud))$/iu;
+const TEMPORARY_WRITE = /^\.margin-write-[0-9a-f]{12}\.tmp$/u;
+
+/** Noise in a vault folder: never taken in, never synced, never counted by the deletion guard. Kept the same as desktop/vaultWatcher.mjs. */
+export function isIgnoredVaultPath(path) {
+  const segments = path.split("/");
+  const name = segments.at(-1) ?? "";
+  if (segments.slice(0, -1).some((segment) => IGNORED_FOLDERS.has(segment))) return true;
+  return IGNORED_FOLDERS.has(name) || IGNORED_FILE.test(name) || TEMPORARY_WRITE.test(name);
+}

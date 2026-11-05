@@ -89,3 +89,6 @@ export interface MemoryVaultFs extends VaultFs {
 
 /** A folder held in memory, for tests and as the reference behaviour every adapter matches. */
 export function createMemoryVaultFs(initial?: Record<string, Uint8Array | string>, options?: { name?: string; now?: () => number }): MemoryVaultFs;
+
+/** Noise in a vault folder (system files, editor swap and lock files, partial downloads, .git, .obsidian, the app's own .margin-chat): never taken in or synced. */
+export function isIgnoredVaultPath(path: string): boolean;

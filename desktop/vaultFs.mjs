@@ -14,6 +14,12 @@ const UNSAFE_PATH_CHARACTERS = /[\\\u0000-\u001f\u007f]/u;
 const UNSAFE_WINDOWS_CHARACTERS = /[:*?"<>|]/u;
 const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com\d|lpt\d)(?:\..*)?$/iu;
 
+/** A file changed this recently is checked twice before it is read, so another app's half-written save isn't taken in. */
+export const RECENT_CHANGE_MS = 2_000;
+export const STABLE_READ_MS = 500;
+/** How long this app's own changes are remembered, so the folder watcher doesn't report them back. */
+const OWN_CHANGE_MS = 30_000;
+
 /** Temporary files this adapter writes before renaming them into place; scans skip names starting with a dot. */
 export const TEMPORARY_FILE = /^\.margin-write-[0-9a-f]{12}\.tmp$/u;
 
@@ -50,9 +56,22 @@ export function isVaultFsPath(relativePath, platform = process.platform) {
  * @param {string} root Absolute path of the vault folder.
  * @param {{ name?: string, platform?: string }} [options]
  */
-export function nodeVaultFs(root, { name = path.basename(root), platform = process.platform } = {}) {
+export function nodeVaultFs(root, {
+  name = path.basename(root), platform = process.platform, recentChangeMs = RECENT_CHANGE_MS, stableReadMs = STABLE_READ_MS, now = () => Date.now(),
+} = {}) {
   if (!path.isAbsolute(root)) throw new TypeError("The vault folder must be an absolute path.");
   const base = path.resolve(root);
+  // What this app last left at each path it wrote, moved or removed (null: removed), and when.
+  const ownChanges = new Map();
+  function remember(relativePath, stat) {
+    ownChanges.set(relativePath, { stat, at: now() });
+    if (ownChanges.size > 10_000) for (const [key, value] of ownChanges) if (now() - value.at > OWN_CHANGE_MS) ownChanges.delete(key);
+  }
+  function isOwn(relativePath, stat) {
+    const own = ownChanges.get(relativePath);
+    if (!own || now() - own.at > OWN_CHANGE_MS) return false;
+    return own.stat === null ? stat === null : !!stat && stat.size === own.stat.size && stat.modifiedMs === own.stat.modifiedMs;
+  }
 
   function check(relativePath, allowRoot = false) {
     if (allowRoot && relativePath === "") return [];
@@ -135,15 +154,27 @@ export function nodeVaultFs(root, { name = path.basename(root), platform = proce
         if (error?.code === "ENOENT" || error?.code === "ENOTDIR" || error?.code === "EISDIR") return null;
         throw named(error, relativePath);
       }
+      let read;
       try {
         const info = await handle.stat();
         if (!info.isFile()) return null;
         const bytes = new Uint8Array(await handle.readFile());
         // The size and time are from the open file, the same snapshot as its bytes.
-        return { bytes, stat: { size: bytes.length, modifiedMs: Math.floor(info.mtimeMs) } };
+        read = { bytes, stat: { size: bytes.length, modifiedMs: Math.floor(info.mtimeMs) } };
       } finally {
         await handle.close();
       }
+      // A file another app changed a moment ago may still be arriving (a copy, a download, a chunked
+      // save): it must hold still across a second look, or the read is refused as the folder changing,
+      // which the caller already treats as "read it again shortly" without changing anything.
+      if (now() - read.stat.modifiedMs < recentChangeMs && !isOwn(relativePath, read.stat)) {
+        await new Promise((resolve) => setTimeout(resolve, stableReadMs));
+        const again = await fileStat(absolute, relativePath);
+        if (!again || again.size !== read.stat.size || again.modifiedMs !== read.stat.modifiedMs) {
+          throw vaultFsError("InvalidStateError", `${relativePath} is still being written.`);
+        }
+      }
+      return read;
     },
     async writeAtomic(relativePath, contents) {
       const segments = check(relativePath);
@@ -160,6 +191,7 @@ export function nodeVaultFs(root, { name = path.basename(root), platform = proce
         await handle.close();
         handle = undefined;
         await rename(temporary, target);
+        remember(relativePath, await fileStat(target, relativePath));
       } catch (error) {
         await handle?.close().catch(() => undefined);
         await unlink(temporary).catch(() => undefined);
@@ -185,6 +217,8 @@ export function nodeVaultFs(root, { name = path.basename(root), platform = proce
       } catch (error) {
         throw named(error, from);
       }
+      remember(from, null);
+      remember(to, info);
     },
     async delete(relativePath) {
       const absolute = await resolve(check(relativePath), relativePath);
@@ -195,6 +229,7 @@ export function nodeVaultFs(root, { name = path.basename(root), platform = proce
       } catch (error) {
         throw named(error, relativePath);
       }
+      remember(relativePath, null);
     },
     async availability() {
       try {
@@ -207,7 +242,7 @@ export function nodeVaultFs(root, { name = path.basename(root), platform = proce
         return "missing";
       }
     },
-    // Phase 2 adds the native watcher; until then the page checks the folder itself.
-    watch: () => null,
+    /** Whether `stat` (null: no file) is what this app itself last left at `relativePath`. */
+    isOwnChange: isOwn,
   };
 }

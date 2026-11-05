@@ -32,3 +32,9 @@ describe("reading a connected folder that is changing", () => {
     expect(scans).toBe(1);
   });
 });
+
+test("a file the desktop app says is still being written is read again too", async () => {
+  let scans = 0;
+  const writing = Object.assign(new Error("Note.md is still being written."), { name: "InvalidStateError" });
+  expect(await scanWhileFolderSettles("Vault", async () => { scans += 1; if (scans < 2) throw writing; return "ok"; }, noWait)).toBe("ok");
+});

@@ -82,6 +82,8 @@ export function useMarkdownVault(args: {
   const [localDirectories, setLocalDirectories] = useState<RememberedLocalDirectory[]>([]);
   /** The remembered folder itself can't be opened (moved, deleted, or on a drive that isn't connected). */
   const [folderUnavailable, setFolderUnavailable] = useState(false);
+  /** Files in the desktop app's vault folder that Margin Chat leaves alone and doesn't sync. */
+  const [unsyncedFiles, setUnsyncedFiles] = useState<string[]>([]);
   const [folderPromptSnoozed, setFolderPromptSnoozed] = useState(() => isVaultFolderPromptSnoozed(storageUserId));
   /** A folder scan that would delete many documents waits here for the user's answer. */
   const [heldFolderDeletion, setHeldFolderDeletion] = useState<HeldFolderDeletion | null>(null);
@@ -290,6 +292,7 @@ export function useMarkdownVault(args: {
 
   function forgetFolder() {
     folderId.current = null; folder.current = null; folderCompanions.current = {}; folderStats.current = {}; localFiles.current = [];
+    if (mounted.current) setUnsyncedFiles([]);
   }
 
   /**
@@ -332,8 +335,11 @@ export function useMarkdownVault(args: {
     // Files still the size and date they were read at keep the text read then; the rest are read now.
     const incoming = await readLocalDirectoryWorkspace(storageUserId, folder.current?.manifest, folder.current?.files, status.directoryId, folderStats.current);
     if (!incoming) return;
-    const listing = await listLocalDirectoryFiles(storageUserId, status.directoryId);
+    // The desktop app's folder also lists the files Margin Chat leaves alone, for Vault settings.
+    const unsynced = desktopVaultBridge() ? [] as string[] : undefined;
+    const listing = await listLocalDirectoryFiles(storageUserId, status.directoryId, unsynced);
     if (!listing) return;
+    if (unsynced && mounted.current) setUnsyncedFiles((current) => current.join("\n") === unsynced.sort().join("\n") ? current : unsynced);
     const read = await readLocalDirectoryCompanions(storageUserId, folderCompanions.current, status.directoryId, listing, folderStats.current);
     if (!read) return;
     const companions = read.files;
@@ -899,6 +905,8 @@ export function useMarkdownVault(args: {
     },
     /** The remembered folder can't be found or opened; nothing is read from or written to it until it is back. */
     folderUnavailable,
+    /** Files in the vault folder Margin Chat leaves alone and doesn't sync (desktop app only). */
+    unsyncedFiles,
     /** Cloud documents downloading right now, such as before a folder receives the whole vault. */
     downloadProgress,
     /** Counts syncs that uploaded changes since the workspace opened; search indexes them soon after. */

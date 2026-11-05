@@ -384,7 +384,8 @@ if (!app.requestSingleInstanceLock()) {
         // A new vault is offered a place in Documents; the person can choose anywhere.
         defaultLocation: () => app.getPath("documents"),
       });
-      registerVaultBridge({ ipcMain, folders, isAppUrl });
+      const watchers = registerVaultBridge({ ipcMain, folders, isAppUrl });
+      app.on("will-quit", () => watchers.closeAll());
     }
 
     registerDeepLinks();

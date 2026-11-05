@@ -6759,6 +6759,35 @@ button {
   min-width: 0;
 }
 
+.vault-panel-unsynced {
+  gap: 8px;
+}
+
+.vault-panel-unsynced summary {
+  cursor: pointer;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.vault-panel-unsynced summary > span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.vault-panel-unsynced ul {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
 .profile-storage-directory-card strong,
 .profile-storage-directory-card small {
   overflow-wrap: anywhere;
