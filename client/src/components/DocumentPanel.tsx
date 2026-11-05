@@ -39,6 +39,7 @@ export interface DocumentPanelProps {
   minimizedSideDocuments?: Conversation[];
   moveTargets?: RichDocumentEditorProps["moveTargets"];
   onMoveBlock?: RichDocumentEditorProps["onMoveBlock"];
+  linkSuggestions?: RichDocumentEditorProps["linkSuggestions"];
   isActive: boolean;
   isSubmitting: boolean;
   aiControls: ReactNode;
@@ -537,7 +538,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </> : null}
       {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
-        moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} onAskDiagram={props.onAskDiagram}
+        moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions} onAskDiagram={props.onAskDiagram}
         toolbarStart={historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
           modal={mobileKeyboard.mobile}>{renderPromptHistory()}</PromptHistory> : null}
         onChangeBlocks={changeBlocks}

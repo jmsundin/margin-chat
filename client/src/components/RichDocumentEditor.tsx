@@ -35,6 +35,7 @@ import { useMobileKeyboard } from "./MobileKeyboard";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
 import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
+import type { WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import { openableHref, openLinkInNewTab, shouldOpenLink } from "../lib/documentLinkOpening";
 import "./RichDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
@@ -104,6 +105,8 @@ export interface RichDocumentEditorProps {
   /** Right-click, Alt+Enter or the ⋯ beside Ask AI at the caret. */
   onCaretMenu?: (menu: RichDocumentCaretMenu) => void;
   readOnlyBlockIds?: string[];
+  /** Documents to offer after `[[`, best match first. Without it `[[` is plain text. */
+  linkSuggestions?: (query: string) => WikiLinkSuggestion[];
   decorations?: Record<string, RichDocumentDecoration[]>;
   renderAfterBlock?: (block: DocumentBlock) => ReactNode;
   renderBlockPreview?: (block: DocumentBlock) => ReactNode;
