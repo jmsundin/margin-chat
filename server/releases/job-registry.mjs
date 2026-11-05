@@ -34,8 +34,27 @@ const vaultProjectionV1 = definePersistenceJob({
   },
 });
 
+/**
+ * Line authorship backfill: every existing document and note gets a genesis
+ * authorship sidecar inferred from its block wrappers (user blocks are the
+ * member's, AI blocks "AI", edited AI blocks and plain files "Unknown", which
+ * agents can't change). Skips documents that already have one, so it is safe to
+ * repeat; it writes no Markdown and changes no file's revision or dates.
+ */
+const lineAuthorshipBackfillV1 = definePersistenceJob({
+  id: "line-authorship-backfill-v1",
+  version: 1,
+  requiresVault: true,
+  async execute({ userId, vaultService }) {
+    const totals = await vaultService.backfillAuthorship(userId);
+    // Counts only: never document text or titles.
+    console.log(JSON.stringify({ type: "line_authorship_backfill", userId, ...totals }));
+  },
+});
+
 export const PERSISTENCE_JOB_REGISTRY = Object.freeze({
   [vaultProjectionV1.id]: vaultProjectionV1,
+  [lineAuthorshipBackfillV1.id]: lineAuthorshipBackfillV1,
 });
 
 // Normal deployments never trigger a content rebuild implicitly.
