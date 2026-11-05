@@ -1,6 +1,16 @@
 /* The landscape's points sit under the map's cards; its names sit over the points. */
 .graph-landscape { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 .graph-landscape-points { position: absolute; left: 0; top: 0; }
+/* Region outlines: a wide round stroke pads each hull by the same screen distance at any zoom.
+   The group's opacity applies once, so the rim and the paler inside don't add up where they overlap. */
+.graph-landscape-hulls { position: absolute; left: 0; top: 0; overflow: visible; }
+.graph-landscape-hull { opacity: .2; }
+.graph-landscape-hull path { stroke-linejoin: round; stroke-linecap: round; }
+.graph-landscape-hull-rim { fill: none; stroke: var(--hull-color); stroke-width: 41px; }
+.graph-landscape-hull-fill {
+  --hull-inside: color-mix(in srgb, var(--hull-color) 38%, var(--graph-canvas-bg, var(--bg-deep, #fff)));
+  fill: var(--hull-inside); stroke: var(--hull-inside); stroke-width: 38px;
+}
 .graph-landscape-labels { position: absolute; inset: 0; }
 .graph-landscape-label {
   position: absolute; left: 0; top: 0; pointer-events: auto; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

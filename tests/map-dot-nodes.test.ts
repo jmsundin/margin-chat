@@ -49,4 +49,11 @@ describe("map dot nodes", () => {
   test("a short title that fits is never hidden", () => {
     expect(fitMapDotTitles([node("a", 0, 0, 30), node("b", 50, 26, 30)]).size).toBe(0);
   });
+  test("the selected or hovered title goes first and is never cut, even beside a busier neighbor", () => {
+    const widths = fitMapDotTitles([node("busy", 0, 0, 200, 5), { ...node("picked", 160, 0, 200, 0), keep: true }],
+      [{ x0: 200, y0: 0, x1: 400, y1: 60 }]);
+    expect(widths.has("picked")).toBe(false);
+    // the busy title now stops before the kept one (60) instead
+    expect(widths.get("busy")! / 2).toBeLessThanOrEqual(60 - 6);
+  });
 });

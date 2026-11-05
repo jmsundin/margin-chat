@@ -25,6 +25,8 @@ export interface MapDotTitle {
   titleHeight: number;
   /** Higher claims space first. */
   priority: number;
+  /** The selected, hovered or found document: placed before all others and never cut. */
+  keep?: boolean;
 }
 
 export interface MapBox { x0: number; y0: number; x1: number; y1: number }
@@ -38,7 +40,8 @@ const MIN_TITLE_WIDTH = 48;
  * Widths for the titles that must be cut, keyed by id; 0 hides a title with no room. Titles are centered
  * under their circle; each one may grow until it meets another circle, a
  * title already placed, or one of `obstacles` (such as an open preview card).
- * More connected documents are placed first, so they keep their full title.
+ * Kept titles (the selected, hovered or found document) go first and are never
+ * cut; then more connected documents, so they keep their full title.
  */
 export function fitMapDotTitles(nodes: MapDotTitle[], obstacles: MapBox[] = []) {
   const boxes: MapBox[] = [...obstacles, ...nodes.map((node) => ({
@@ -46,12 +49,12 @@ export function fitMapDotTitles(nodes: MapDotTitle[], obstacles: MapBox[] = []) 
   }))];
   const ownCircle = new Map(nodes.map((node, index) => [node.id, obstacles.length + index]));
   const widths = new Map<string, number>();
-  const order = [...nodes].sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id));
+  const order = [...nodes].sort((a, b) => Number(!!b.keep) - Number(!!a.keep) || b.priority - a.priority || a.id.localeCompare(b.id));
   for (const node of order) {
     const top = node.y + node.radius + node.gap, bottom = top + node.titleHeight;
     let half = node.titleWidth / 2;
     boxes.forEach((box, index) => {
-      if (index === ownCircle.get(node.id) || box.y1 <= top || box.y0 >= bottom) return;
+      if (node.keep || index === ownCircle.get(node.id) || box.y1 <= top || box.y0 >= bottom) return;
       if (box.x0 >= node.x) half = Math.min(half, box.x0 - node.x - TITLE_MARGIN);
       else if (box.x1 <= node.x) half = Math.min(half, node.x - box.x1 - TITLE_MARGIN);
       else half = 0;

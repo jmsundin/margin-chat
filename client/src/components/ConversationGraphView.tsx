@@ -147,6 +147,9 @@ const LANDMARK_CARD_WIDTH = 64;
 const CANVAS_TITLE_MIN_WIDTH = 56;
 const MINIMAP_STORAGE_KEY = "margin-map-minimap";
 const LINES_STORAGE_KEY = "margin-map-lines";
+const LINK_LENS_STORAGE_KEY = "margin-map-link-lens";
+/** Screen radius of the link lens. */
+const LINK_LENS_RADIUS = 120;
 /**
  * While the camera is moved by hand, React learns its place at most this often
  * and as soon as it rests; the stage itself moves every pointer tick.
@@ -697,6 +700,7 @@ function GraphNodeBase({
   lensDimmed = false,
   searchMatch = false,
   lineFocus = false,
+  relationFaded = false,
   onHover,
   hoverIntent,
   detailLevel,
@@ -748,6 +752,8 @@ function GraphNodeBase({
   searchMatch?: boolean;
   /** Its lines are the ones drawn on a busy map. */
   lineFocus?: boolean;
+  /** Not linked to the hovered or selected circle, so it fades back. */
+  relationFaded?: boolean;
   onHover?: (conversationId: string | null) => void;
   /** A circle shows its snippet card when the mouse rests on it. */
   hoverIntent?: MapHoverIntent;
@@ -844,6 +850,7 @@ function GraphNodeBase({
         lensDimmed ? "is-lens-dimmed" : "",
         searchMatch ? "is-search-match" : "",
         lineFocus ? "is-line-focus" : "",
+        dot && relationFaded ? "is-relation-faded" : "",
         `is-semantic-${semanticLevel}`,
         conversation.id === activeConversationId ? "is-current-main" : "",
         zoomThroughProgress !== undefined ? "is-zooming-through" : "",
@@ -1209,12 +1216,16 @@ export default function ConversationGraphView({
   const [linesMode, setLinesModeState] = useState<"auto" | "all">(() => readStoredJson(LINES_STORAGE_KEY, (value) => value === "all" ? "all" : "auto", "auto"));
   const setLinesMode = (next: "auto" | "all") => { setLinesModeState(next); writeStoredJson(LINES_STORAGE_KEY, next); };
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // The link lens: a circle that follows the mouse and shows only the lines inside it, with their names.
+  const [linkLensEnabled, setLinkLensEnabledState] = useState(() => readStoredJson(LINK_LENS_STORAGE_KEY, (value) => value === true, false));
+  const setLinkLensEnabled = (next: boolean) => { setLinkLensEnabledState(next); writeStoredJson(LINK_LENS_STORAGE_KEY, next); };
+  const [linkLensPoint, setLinkLensPoint] = useState<{ x: number; y: number } | null>(null);
   const hoverTimerRef = useRef(0);
-  const busyLinesRef = useRef(false);
-  // Hovering only matters while a busy map hides lines, so it re-renders nothing otherwise.
+  const tracksHoverRef = useRef(false);
+  // Hovering only matters while circles fade around it or a busy map hides lines, so it re-renders nothing otherwise.
   const hoverCard = useCallback((id: string | null) => {
     window.clearTimeout(hoverTimerRef.current);
-    if (!busyLinesRef.current && id) return;
+    if (!tracksHoverRef.current && id) return;
     hoverTimerRef.current = window.setTimeout(() => setHoveredId(id), id ? 60 : 120);
   }, []);
   useEffect(() => () => window.clearTimeout(hoverTimerRef.current), []);
@@ -1437,6 +1448,25 @@ export default function ConversationGraphView({
   const lensIds = useMemo(() => unfocusedScene.nodes.map((node) => node.conversationId), [unfocusedScene.nodes]);
   // Outside Evidence, closed documents are circles sized by their connections, titled below.
   const drawsDots = viewMode !== "evidence";
+  // The link lens works on the circles map with a mouse; the landscape has no lines to sweep.
+  const linkLensAvailable = drawsDots && !panelView && !isLandscapeMode;
+  const linkLensActive = linkLensEnabled && linkLensAvailable;
+  useEffect(() => {
+    const host = viewportRef.current;
+    if (!linkLensActive || !host) { setLinkLensPoint(null); return; }
+    let frame = 0, next: { x: number; y: number } | null = null;
+    const flush = () => { frame = 0; setLinkLensPoint(next); };
+    const schedule = (point: { x: number; y: number } | null) => { next = point; if (!frame) frame = requestAnimationFrame(flush); };
+    const move = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse" || event.buttons) return;
+      const rect = host.getBoundingClientRect();
+      schedule({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    };
+    const leave = () => schedule(null);
+    host.addEventListener("pointermove", move);
+    host.addEventListener("pointerleave", leave);
+    return () => { cancelAnimationFrame(frame); host.removeEventListener("pointermove", move); host.removeEventListener("pointerleave", leave); };
+  }, [linkLensActive]);
   const needsCounts = drawsDots || colorBy === "connections" || lens.filters.some((filter) => filter.kind === "connections");
   const needsEdges = needsCounts || lens.filters.some((filter) => filter.kind === "near");
   const analysisEdges = useMemo(() => needsEdges ? getGraphAnalysisEdges(conversations) : EMPTY_EDGES, [needsEdges, conversations]);
@@ -1574,9 +1604,10 @@ export default function ConversationGraphView({
   const landscapePoints = useMemo(() => {
     if (!landscapeScene) return [];
     const own = landscapeScene.nodes.filter((node) => !landscapeScene.unplacedIds.includes(node.conversationId))
-      .map((node) => ({ id: node.conversationId, x: node.x + node.width / 2, y: node.y + node.height / 2, hue: landscapeRegionHue(landscapeScene.regionOf.get(node.conversationId) ?? -1) }));
+      .map((node) => { const region = landscapeScene.regionOf.get(node.conversationId) ?? -1;
+        return { id: node.conversationId, x: node.x + node.width / 2, y: node.y + node.height / 2, hue: landscapeRegionHue(region), region }; });
     // Papers first, so your documents draw over them.
-    return libraryMap ? [...libraryMap.works.map((work) => ({ id: work.id, x: work.x, y: work.y, hue: landscapeRegionHue(work.region) })), ...own] : own;
+    return libraryMap ? [...libraryMap.works.map((work) => ({ id: work.id, x: work.x, y: work.y, hue: landscapeRegionHue(work.region), region: work.region })), ...own] : own;
   }, [landscapeScene, libraryMap]);
   const landscapeLabels = useMemo<LandscapeLabel[]>(() => {
     if (libraryMap) return libraryFieldLabels(libraryMap);
@@ -1919,11 +1950,13 @@ export default function ConversationGraphView({
       dots.set(placement.conversationId, { diameter, bold, bounds: { x: x - radius, y: y - radius, width: radius * 2, height: radius * 2 } });
       cardScale.set(placement.conversationId, k);
       titles.push({ id: placement.conversationId, x: x * scale, y: y * scale, radius: diameter / 2 * k, gap: 5 * k,
-        titleWidth: shrunk?.titleLines === 0 ? 0 : measureMapDotTitle(conversation.title, bold) * k, titleHeight: 17 * k, priority: connections });
+        titleWidth: shrunk?.titleLines === 0 ? 0 : measureMapDotTitle(conversation.title, bold) * k, titleHeight: 17 * k, priority: connections,
+        keep: placement.conversationId === selectedConversationId || placement.conversationId === hoveredId || isSearchMatch(placement.conversationId) });
     }
     for (const [id, width] of fitMapDotTitles(titles, obstacles)) dots.get(id)!.titleMax = Math.floor(width / cardScale.get(id)!);
     return dots;
-  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width]);
+  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width,
+    selectedConversationId, hoveredId, isSearchMatch]);
   // Only a circle shows a card; one that opened as a preview, is moving or left the map closes it.
   const hoverCardProps = useMemo(() => {
     const conversation = snippetId ? conversations[snippetId] : undefined;
@@ -2898,6 +2931,7 @@ export default function ConversationGraphView({
     if (onCard && !direction && event.key !== "n" && event.key !== "N") return;
     if (direction) applyManualViewport({ ...current, x: current.x + direction[0], y: current.y + direction[1] });
     else if ((event.key === "n" || event.key === "N") && mapMatches?.size) stepMatch(event.shiftKey ? -1 : 1);
+    else if ((event.key === "l" || event.key === "L") && !onCard && linkLensAvailable) setLinkLensEnabled(!linkLensEnabled);
     else if (event.key === "+" || event.key === "=") zoomByStep("in");
     else if (event.key === "-" || event.key === "_") zoomByStep("out");
     else if (event.key === "Home" || event.key === "0") { if (isCanvasMode) fitGraph(); else showAllGroups(); }
@@ -3851,13 +3885,27 @@ export default function ConversationGraphView({
   // the screen elsewhere), so thousands of lines don't become a hairball.
   // The landscape places documents by meaning, not by links, so it draws only the selected or hovered document's.
   const busyLines = isLandscapeMode || (linesMode === "auto" && drawnPersonalLinks.length + drawnRelationEdges.length > BUSY_LINK_COUNT);
-  busyLinesRef.current = busyLines;
+  // Documents whose circle sits under the link lens; their lines show, named, and every other line fades.
+  const linkLens = linkLensActive && linkLensPoint ? linkLensPoint : null;
+  const inLinkLens = (id: string) => {
+    const point = linkLens && placementCenter(id);
+    return !!point && Math.hypot(viewport.x + point.x * viewport.scale - linkLens.x, viewport.y + point.y * viewport.scale - linkLens.y) <= LINK_LENS_RADIUS;
+  };
+  const touchesLens = (sourceId: string, targetId: string) => inLinkLens(sourceId) || inLinkLens(targetId);
+  tracksHoverRef.current = busyLines || drawsDots;
   const lineFocusIds = new Set([selectedConversationId, busyLines ? hoveredId : null].filter((id): id is string => !!id && !!conversations[id]));
   // While a busy map hides lines, the hovered or selected document's linked cards light up.
   const lineFocusNeighbors = new Set(busyLines ? [...lineFocusIds].flatMap(linkedIdsOf) : []);
+  // Hovering or selecting a circle fades every circle and line not linked to it, so its neighbourhood stands out.
+  const relationFocusIds = new Set(drawsDots && !zoomThrough && !linkLens ? [selectedConversationId, hoveredId]
+    .filter((id): id is string => !!id && !!conversations[id] && dotNodes.has(id)) : []);
+  const relationNeighbors = new Set([...relationFocusIds].flatMap(linkedIdsOf));
+  const relationFaded = (id: string) => relationFocusIds.size > 0 && !relationFocusIds.has(id) && !relationNeighbors.has(id);
+  const lineFaded = (sourceId: string, targetId: string) => linkLens ? !touchesLens(sourceId, targetId)
+    : relationFocusIds.size > 0 && !relationFocusIds.has(sourceId) && !relationFocusIds.has(targetId);
   let linkBundles: ReturnType<typeof bundleLinks> = [];
   if (busyLines) {
-    const touchesFocus = (sourceId: string, targetId: string) => lineFocusIds.has(sourceId) || lineFocusIds.has(targetId);
+    const touchesFocus = (sourceId: string, targetId: string) => lineFocusIds.has(sourceId) || lineFocusIds.has(targetId) || touchesLens(sourceId, targetId);
     const hidden = [
       ...drawnPersonalLinks.filter(([sourceId, targetId]) => !touchesFocus(sourceId, targetId)),
       ...drawnRelationEdges.filter((edge) => !touchesFocus(edge.sourceId, edge.targetId)).map((edge) => [edge.sourceId, edge.targetId] as [string, string]),
@@ -4042,6 +4090,7 @@ export default function ConversationGraphView({
               <label><input type="checkbox" checked={linesMode === "auto"} onChange={(event) => setLinesMode(event.target.checked ? "auto" : "all")} /> Busy maps: only the selected or hovered document's lines</label>
               <small>Other lines are summed into strands between areas.</small>
               {showMinimap ? <label><input type="checkbox" checked={minimapEnabled} onChange={(event) => setMinimapEnabled(event.target.checked)} /> Minimap</label> : null}
+              {linkLensAvailable ? <label title="Press L on the map to turn it on or off"><input type="checkbox" checked={linkLensEnabled} onChange={(event) => setLinkLensEnabled(event.target.checked)} /> Link lens: show only the lines under the mouse, with their names</label> : null}
             </div>}
             {scope.kind === "all" && !selectedConversation && !focusedTerritory ? <button type="button" onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); setInspectedOverviewSources([]); navigation.navigate({ viewMode: "topics", contentLens: "documents", modeCameras: rememberModeCamera(), overviewPresentation: showThemeOverview ? "map" : "themes", focusedTerritoryId: null, focusedTerritoryScale: null }); }}>{showThemeOverview ? "Show map" : "Show themes"}</button> : null}
             {hasMapFilters ? <fieldset className="graph-map-filters"><legend>Lines</legend><div className="graph-map-context-controls" data-graph-ui="true">
@@ -4163,6 +4212,8 @@ export default function ConversationGraphView({
             selectedNodeId={selectedConversationId}
             nodeFootprint={showTerritories ? GROUP_NODE_FOOTPRINT : nodeScreenFootprint}
             onOpen={fitTerritory} /> : null}
+          {linkLens ? <div className="map-link-lens" aria-hidden="true" style={{ left: linkLens.x - LINK_LENS_RADIUS, top: linkLens.y - LINK_LENS_RADIUS,
+            width: LINK_LENS_RADIUS * 2, height: LINK_LENS_RADIUS * 2 }} /> : null}
           {hoverCardProps ? <MapHoverCard {...hoverCardProps} onOpen={snippetTapped ? () => openTappedCard(hoverCardProps.conversation.id) : undefined} /> : null}
           {landscapeScene && landscapePoints.length ? <GraphLandscapeLayer points={landscapePoints} matched={mapMatches} glowing={searchMatches}
             emphasized={libraryOwnIds} selectedId={openWorkId ?? selectedConversationId} viewport={viewport} size={viewportSize} subscribeCamera={subscribeCamera}
@@ -4253,7 +4304,7 @@ export default function ConversationGraphView({
               width={scene.width}
             >
               <title>Chat branch relationships</title>
-              {linkBundles.map((bundle) => <g key={bundle.id} className="graph-map-bundle" data-bundle-count={bundle.count}>
+              {linkBundles.map((bundle) => <g key={bundle.id} className="graph-map-bundle" data-bundle-count={bundle.count} data-relation-faded={relationFocusIds.size > 0 || !!linkLens || undefined}>
                 <path d={curvedGraphConnection({ startX: bundle.from.x, startY: bundle.from.y, endX: bundle.to.x, endY: bundle.to.y }).path}
                   style={{ strokeWidth: Math.min(14, 1.5 + Math.log2(bundle.count) * 1.6) / viewport.scale }} />
               </g>)}
@@ -4268,7 +4319,7 @@ export default function ConversationGraphView({
                 const y2 = target.y + target.height / 2;
                 const geometry = documentsOnly ? documentConnectionGeometry(placement, target, documentLayoutMode)
                   : curvedGraphConnection({ startX: x1, startY: y1, endX: x2, endY: y2 });
-                return [<g key={`personal-${placement.conversationId}-${targetId}`} className="graph-personal-connection" data-lens-dimmed={lensDimmed(sourceId) || lensDimmed(targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0} aria-label={`My connection: ${conversations[placement.conversationId].title} and ${conversations[targetId].title}`} onClick={() => setInspectedPersonalConnection([placement.conversationId, targetId])} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedPersonalConnection([placement.conversationId, targetId]); } }}>
+                return [<g key={`personal-${placement.conversationId}-${targetId}`} className="graph-personal-connection" data-lens-dimmed={lensDimmed(sourceId) || lensDimmed(targetId) || undefined} data-relation-faded={lineFaded(sourceId, targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0} aria-label={`My connection: ${conversations[placement.conversationId].title} and ${conversations[targetId].title}`} onClick={() => setInspectedPersonalConnection([placement.conversationId, targetId])} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedPersonalConnection([placement.conversationId, targetId]); } }}>
                   <path className="graph-map-edge-hit" d={geometry.path} />
                   <path className="graph-personal-connection-line" d={geometry.path} />
                   <text x={geometry.labelX} y={geometry.labelY - 8}>My connection</text>
@@ -4288,7 +4339,7 @@ export default function ConversationGraphView({
                 const label = documentGraphEdgeLabel(edge);
                 const typeClass = edge.type ?? "mention";
                 const open = () => { setInspectedPersonalConnection(null); setInspectedRelationId(edge.id); };
-                return [<g key={edge.id} className={`graph-relation-edge is-${typeClass} is-${edge.kind}${edge.origin === "ai" ? " is-ai" : ""}`} data-lens-dimmed={lensDimmed(edge.sourceId) || lensDimmed(edge.targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0}
+                return [<g key={edge.id} className={`graph-relation-edge is-${typeClass} is-${edge.kind}${edge.origin === "ai" ? " is-ai" : ""}${linkLens && touchesLens(edge.sourceId, edge.targetId) ? " is-in-link-lens" : ""}`} data-lens-dimmed={lensDimmed(edge.sourceId) || lensDimmed(edge.targetId) || undefined} data-relation-faded={lineFaded(edge.sourceId, edge.targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0}
                   aria-label={`${label}: ${conversations[edge.sourceId].title} ${edge.directed ? "to" : "and"} ${conversations[edge.targetId].title}`}
                   onClick={open} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } }}>
                   <path className="graph-map-edge-hit" d={geometry.path} />
@@ -4309,7 +4360,8 @@ export default function ConversationGraphView({
                 <path d={edge.path ?? buildConnectorPath(edge)} /><title>Close in meaning, not linked: {conversations[edge.id].title} ({Math.round(edge.similarity * 100)}% similar)</title></g>)}
               {relatedEdges.map((edge) => <g key={`related-${edge.id}`} className="graph-map-related-edge"><path d={edge.path ?? buildConnectorPath(edge)} /><title>Possibly related: {conversations[edge.id].title}</title></g>)}
               {(showBranches ? renderedEdges : []).map((edge) => (
-                <g key={`${edge.parentConversationId}-${edge.childConversationId}`} data-lens-dimmed={lensDimmed(edge.parentConversationId) || lensDimmed(edge.childConversationId) || undefined}>
+                <g key={`${edge.parentConversationId}-${edge.childConversationId}`} data-lens-dimmed={lensDimmed(edge.parentConversationId) || lensDimmed(edge.childConversationId) || undefined}
+                  data-relation-faded={lineFaded(edge.parentConversationId, edge.childConversationId) || undefined}>
                   <path className="graph-map-edge-hit" data-graph-ui="true" d={edge.path ?? buildConnectorPath(edge)} role="button" tabIndex={0} aria-label={`Show branch source for ${conversations[edge.childConversationId]?.title}`} onClick={() => { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); }} onKeyDown={(event) => { if (event.key === "Enter") { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); } }} />
                   <path
                     className={
@@ -4359,6 +4411,7 @@ export default function ConversationGraphView({
                   lensDimmed={lensDimmed(conversation.id)}
                   searchMatch={isSearchMatch(conversation.id)}
                   lineFocus={lineFocusNeighbors.has(conversation.id)}
+                  relationFaded={relationFaded(conversation.id)}
                   onHover={hoverCard}
                   hoverIntent={dotNodes.has(conversation.id) && !isMultiSelectActive && !connectingConversationId ? hoverIntent : undefined}
                   detailLevel={nodeDetail}
