@@ -100,6 +100,15 @@ Still behind `MARGIN_DESKTOP_NATIVE_VAULT=1`, and off under a `DEV_URL` dev serv
 
 Tests: `tests/desktop-vault-sync.test.ts` runs the app's sync against the real vault service in memory: drop-ins reaching a phone, no re-upload of pulled changes, offline edits on both sides converging with no conflict markers, a commit whose answer was lost followed by a relaunch, held deletions, a missing folder, pause, signed-out, the manager across page reloads, the bridge (and an older app without sync), and the bundle loading in Node.
 
+## Phase 4: the desktop-first pass
+
+- **Desktop-web notice (§7.3):** already shipped in #170 (`DesktopAppPrompt`): a non-blocking bar in the signed-in web workspace on Mac, Windows and Linux, only once a Desktop release is published, saying “Margin Chat works best in the desktop app on this computer…”, with Open the app, Download and **Use the browser** (remembered). It never shows on phones, tablets, in the extension, or on URLs with a query, so billing returns and password resets keep working. Nothing to change.
+- **Drag and drop from the OS (§7.4):** already shipped (`VaultFileDrop` → `uploadFiles`): with a folder connected, a dropped file is imported and written into the folder, which the app's sync takes to the cloud. Electron refuses navigation to `file://`, so a drop the page doesn't take can't replace the workspace.
+- **Reveal in Finder/Explorer and Open vault folder (§7.4), new:** a `reveal(folderId, path)` bridge call (`revealInFolder` in `desktop/vaultBridge.mjs`) resolves the path inside the vault folder with the same checks as every other call (`absolutePath` in `vaultFs.mjs`: no `..`, no absolute paths, no links), then `shell.showItemInFolder`; "" or a file not written yet opens the folder, and a folder that can't be found says so. The document menu shows **Show in Finder** (Explorer, Files) only in a desktop app that has the call and a folder connected; the app's File menu adds **Open Vault Folder** and **Show Document in Finder**, which the page answers for the document on screen. Vault settings → Sync's **Open vault folder** uses the same call, so it works while sync is paused or stopped.
+- **Phone-width pass (§7.2, §9.9):** the new menu item, File menu and toasts exist only with the desktop bridge, so the website and phones render exactly as before. Checked at iPhone 13 and at 1440×920 in the preview harness: document menu, Cmd/Ctrl+K search and the workspace show no desktop-only controls and no new errors.
+
+Still behind `MARGIN_DESKTOP_NATIVE_VAULT=1`: turning the native vault on by default (and then removing `desktop/permissions.mjs`'s folder check) is the remaining step, for Jon to decide once he has tried phases 1-4 on his Mac.
+
 ## Phase plan
 
 1. **Native vault in the main process.** `node:fs` `VaultFs` adapter (root containment, symlink checks, temp file + fsync + rename), a preload bridge, native first-run dialogs and a remembered folder with zero clicks. The renderer uses the bridge when it's there. Off by default behind a shell flag.

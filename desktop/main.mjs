@@ -236,11 +236,28 @@ function showWorkspaceView(window, mode) {
   );
 }
 
+/** Finder on a Mac, Explorer on Windows; the page uses the same names (client/src/lib/vaultFsDesktop.ts). */
+function fileManagerName(platform = process.platform) {
+  return platform === "darwin" ? "Finder" : platform === "win32" ? "Explorer" : "Files";
+}
+
+/** Asks the page to open its vault folder, or show the open document in it; the page knows which folder is its own. */
+function vaultMenuAction(window, action) {
+  void window?.webContents.executeJavaScript(
+    `window.dispatchEvent(new CustomEvent("margin:vault-folder", { detail: ${JSON.stringify(action)} }))`,
+  );
+}
+
 function buildAppMenu() {
   const isMac = process.platform === "darwin";
+  const vaultItems = NATIVE_VAULT ? [
+    { label: "Open Vault Folder", accelerator: "CmdOrCtrl+Shift+O", click: (_item, window) => vaultMenuAction(window, "open-folder") },
+    { label: `Show Document in ${fileManagerName()}`, accelerator: "CmdOrCtrl+Alt+R", click: (_item, window) => vaultMenuAction(window, "reveal-document") },
+    { type: "separator" },
+  ] : [];
   const template = [
     ...(isMac ? [{ role: "appMenu" }] : []),
-    { role: "fileMenu" },
+    { label: "File", submenu: [...vaultItems, isMac ? { role: "close" } : { role: "quit" }] },
     { role: "editMenu" },
     {
       label: "View",
@@ -408,7 +425,7 @@ if (!app.requestSingleInstanceLock()) {
         folderWritten: (folderId, paths) => watchers.broadcast(folderId, paths),
         openPath: (folderPath) => shell.openPath(folderPath),
       });
-      registerVaultBridge({ ipcMain, folders, isAppUrl, watchers, sync });
+      registerVaultBridge({ ipcMain, folders, isAppUrl, watchers, sync, shell });
       if (sync) {
         const focusChanged = () => setImmediate(() => sync.setFocused(BrowserWindow.getFocusedWindow() !== null));
         app.on("browser-window-focus", focusChanged);

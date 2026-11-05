@@ -127,6 +127,10 @@ export function nodeVaultFs(root, {
   return {
     name,
     root: base,
+    /** Where a vault path is on disk (the folder itself for ""), refusing links like every other call. */
+    async absolutePath(relativePath) {
+      return resolve(check(relativePath, true), relativePath);
+    },
     async *list(directory) {
       const absolute = await resolve(check(directory, true), directory);
       let entries;

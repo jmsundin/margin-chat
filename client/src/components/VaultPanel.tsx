@@ -42,7 +42,7 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
         <small className="vault-panel-sync-path" title={vault.desktopSync.folderPath}>{vault.desktopSync.folderPath}</small>
         <small>The app keeps this folder and your cloud vault in step, also while this window reloads or is in the background.</small></div>
       <div className="profile-storage-directory-actions">
-        <button className="thread-dialog-button" disabled={busy} onClick={() => void run(() => vault.controlDesktopSync("openFolder"))}>Open vault folder</button>
+        <button className="thread-dialog-button" disabled={busy} onClick={() => void run(() => vault.revealInFolder ? vault.revealInFolder() : vault.controlDesktopSync("openFolder"))}>Open vault folder</button>
         <button className="thread-dialog-button" disabled={busy} onClick={() => void run(() => vault.controlDesktopSync(vault.desktopSync?.paused ? "resume" : "pause"))}>
           {vault.desktopSync.paused ? "Resume sync" : "Pause sync"}</button>
       </div>

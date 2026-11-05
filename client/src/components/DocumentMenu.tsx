@@ -37,6 +37,10 @@ export interface DocumentMenuProps {
   maximized?: boolean;
   onToggleMaximize?: (id: string) => void;
   onRename?: (id: string, title: string) => void;
+  /** Desktop app with its own vault folder: show this document's file in Finder or Explorer. */
+  onRevealInFolder?: (id: string) => void;
+  /** What that's called here: Finder, Explorer or Files. */
+  fileManager?: string;
   groups?: Record<string, ConversationGroup>;
   onAssignGroup?: (conversationId: string, groupId: string | null) => void;
   className?: string;
@@ -51,7 +55,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, onRevealInFolder, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -197,7 +201,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         if (event.key === "Tab") close(true);
       }}>
       {/* About the document, then making from it, then what AI may read, then its pane on screen. */}
-      {onTogglePin || onRename || onAssignGroup ? <div role="group" className="document-menu-section">
+      {onTogglePin || onRename || onAssignGroup || onRevealInFolder ? <div role="group" className="document-menu-section">
         {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
           {pinned ? "Unpin document" : "Pin document"}
         </button> : null}
@@ -215,6 +219,8 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           onClick={() => { close(true); setGroupOpen(true); }}>
           <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
         </button> : null}
+        {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
+          onClick={() => action(onRevealInFolder)}>{`Show in ${fileManager}`}</button> : null}
       </div> : null}
       {onNewMarginNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
         {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}

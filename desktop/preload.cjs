@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("marginDesktop", {
     syncStatus: call("syncStatus"),
     syncStart: call("syncStart"),
     syncControl: call("syncControl"),
+    reveal: call("reveal"),
     /** Calls `listener({ id, paths })` when a watched folder changes; returns a function that stops. */
     onChange(listener) {
       const forward = (_event, change) => listener(change);
