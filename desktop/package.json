@@ -7,11 +7,11 @@
   "type": "module",
   "main": "main.mjs",
   "scripts": {
-    "start": "bun run --cwd .. build && electron .",
+    "start": "bun run --cwd .. build && bun run --cwd .. desktop:engine && electron .",
     "dev": "MARGIN_DESKTOP_DEV_URL=http://localhost:5173 electron .",
-    "dist:mac": "bun run --cwd .. build && electron-builder --mac",
-    "dist:win": "bun run --cwd .. build && electron-builder --win",
-    "dist:linux": "bun run --cwd .. build && electron-builder --linux"
+    "dist:mac": "bun run --cwd .. build && bun run --cwd .. desktop:engine && electron-builder --mac",
+    "dist:win": "bun run --cwd .. build && bun run --cwd .. desktop:engine && electron-builder --win",
+    "dist:linux": "bun run --cwd .. build && bun run --cwd .. desktop:engine && electron-builder --linux"
   },
   "devDependencies": {
     "electron": "44.7.0",
@@ -35,6 +35,8 @@
       "vaultFolders.mjs",
       "vaultFs.mjs",
       "vaultWatcher.mjs",
+      "vaultSync.mjs",
+      "vaultSyncEngine.mjs",
       "package.json",
       "!node_modules/**/*"
     ],

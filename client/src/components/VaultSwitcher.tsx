@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
+import { desktopSyncLabel } from "../lib/desktopSyncLabel";
 import "./VaultSwitcher.css";
 
 type Vault = ReturnType<typeof useMarkdownVault>;
@@ -102,8 +103,17 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
     }
   }
 
+  const sync = vault.desktopSync;
   return (
     <div className="vault-switcher">
+      {/* The desktop app's own sync: one quiet line, which opens Vault settings → Sync. */}
+      {sync ? (
+        <button type="button" className="vault-sync-indicator" data-state={sync.state} onClick={onOpenSettings}
+          title={sync.attention?.message ?? sync.message ?? undefined}>
+          <span className="vault-sync-indicator-dot" aria-hidden="true" />
+          <span className="vault-sync-indicator-label">{desktopSyncLabel(sync)}</span>
+        </button>
+      ) : null}
       <button ref={triggerRef} type="button" className={`vault-switcher-trigger${vault.folderAccessMessage ? " needs-access" : ""}`}
         aria-haspopup="menu" aria-expanded={open} aria-controls={open ? "vault-switcher-menu" : undefined}
         aria-label={`Vault: ${name}. ${where}. Switch vault`} title={`${name} · ${where}`}

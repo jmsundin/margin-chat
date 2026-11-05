@@ -30,6 +30,7 @@
     "build:extension": "bun run --cwd extension build",
     "release:extension": "bun run --cwd extension release",
     "desktop:install": "bun install --cwd desktop",
+    "desktop:engine": "bun scripts/build-desktop-engine.mjs",
     "desktop:dev": "bun run --cwd desktop dev",
     "desktop:start": "bun run --cwd desktop start",
     "desktop:dist": "bun run --cwd desktop dist:mac",

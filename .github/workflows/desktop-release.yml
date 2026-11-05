@@ -44,10 +44,19 @@ jobs:
       - name: Build client
         # Every installer bundles this same build; version.json records its commit.
         run: bun run build
+      - name: Build the app's vault sync
+        # The page's own sync code, bundled for the app's main process (it ships without node_modules).
+        run: bun run desktop:engine
       - uses: actions/upload-artifact@v6
         with:
           name: client
           path: dist
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@v6
+        with:
+          name: desktop-engine
+          path: desktop/vaultSyncEngine.mjs
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v6
@@ -83,6 +92,10 @@ jobs:
         with:
           name: client
           path: dist
+      - uses: actions/download-artifact@v6
+        with:
+          name: desktop-engine
+          path: desktop
       - name: Install desktop dependencies
         run: bun --no-env-file install --frozen-lockfile
         working-directory: desktop

@@ -79,7 +79,9 @@ export function moveDeletionsToTrash(snapshot: VaultSnapshot, before: Record<str
   const kept = deleted.filter((path) => {
     const id = beforeIds.get(path);
     if (id && keptIds.has(id)) return false;
-    return !(before[path].encoding && added.some((other) => sameVaultFile(snapshot.files[other], before[path])));
+    // A moved PDF or image, or a document already copied to the trash by whoever deleted it (such as the
+    // page, before the desktop app's sync reads the folder), needs no second copy.
+    return !added.some((other) => (before[path].encoding || other.startsWith(TRASH_PREFIX)) && sameVaultFile(snapshot.files[other], before[path]));
   });
   if (!kept.length) return null;
   const key = newKey(now);

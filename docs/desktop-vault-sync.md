@@ -83,7 +83,22 @@ Still behind `MARGIN_DESKTOP_NATIVE_VAULT=1`:
 
 Drop-in classification (spec §5.2) needs no new code: a Markdown file with a known `id` in its frontmatter updates that document, one without becomes a new document, as on the web, and PDFs and images become file documents. These go through the same folder scan and merge as before.
 
-Still to come: sync in the main process and the device copy outside the browser (phase 3, which also moves echo detection to content hashes in the main process's journal), and removing `desktop/permissions.mjs`'s folder check once the native vault is the default.
+Still to come: removing `desktop/permissions.mjs`'s folder check once the native vault is the default.
+
+## Phase 3: sync in the main process
+
+Still behind `MARGIN_DESKTOP_NATIVE_VAULT=1`, and off under a `DEV_URL` dev server (the page syncs as on the web there):
+
+- **Same code, two places.** The folder scan, take-in (with the deletion guard) and folder write moved out of `useMarkdownVault` into `client/src/lib/vaultFolderSync.ts`, unchanged. `desktop/sync/vaultSyncDaemon.ts` runs them with the client's own `VaultSync` (merge, trash, history, conflicts, `/api/vault/*` transport). `bun run desktop:engine` bundles it for Node into `desktop/vaultSyncEngine.mjs` (gitignored, built by `npm start`, `npm run dist` and the Desktop release workflow). No codec, merge or manifest code is forked.
+- **Device copy.** The app keeps its own copy of the vault in the browser's journal format (`createJournalVaultStore` over `desktop/sync/nodeDirectoryHandle.ts`: temp file, fsync, rename) at `userData/vault-sync/<hash of account>/<folder id>/`, with `sync-settings.json` (paused, last synced). Requests go through Electron's `net.fetch` with the session's sign-in cookie; nothing reaches the page.
+- **Hand-over.** The page syncs the folder itself first. Once a sync finishes with nothing waiting to upload, it asks the app (`syncStart`) to take over; from then on the app keeps folder and cloud in step and the page only reads and writes the folder and its own copy. At the next launch, `syncStatus` says the folder was handed over before and the page hands over straight away. Choosing another folder or disconnecting stops the app's sync for the old one. One folder syncs at a time.
+- **When it syncs.** At start; 0.75 s after the page writes the folder or the watcher reports another app's change; every 15 s while a window is focused and every 60 s in the background; on wake from sleep and when the network comes back. Failures retry after 5 s, doubling to at most 5 min; three in a row show "Needs attention". With every window closed (macOS) sync waits until one opens (spec §11 default).
+- **Echoes.** Page and app share one `VaultFs`, so neither's watcher reports the other's writes. Instead a page write tells the app (`folderChanged`) and an app write tells the page which files changed, which it reads again. The page and the app both move a deletion to `.margin-chat/trash/`; `moveDeletionsToTrash` skips a deletion whose trash copy is already there with the same bytes.
+- **Held deletions.** A scan that would delete many files holds as before; the page's existing prompt shows the app's held list too and sends the answer to the app.
+- **Status.** `DesktopSyncStatus` reaches every window on `margin-vault-sync`. The sidebar shows "Synced · 2:07 PM", "Syncing…", "Offline — changes saved locally", "Paused" or "Needs attention" above the vault switcher (click opens Vault settings). Vault settings → Sync shows the same, the folder path, how many changes wait, and Open vault folder / Pause sync / Resume sync next to the existing Sync now. Pausing is remembered across launches.
+- **Plain files.** A Markdown file with no identity header that the vault wrote into the folder is now changed (or deleted) from the vault's own copy, with no header added, when edited in the folder. Before, the edit was merged against a headed copy the vault never held, which the Markdown merge reports as a conflict, so an edit made in the folder while the same file changed elsewhere ended up only in history. This is in the shared code, so the page benefits too.
+
+Tests: `tests/desktop-vault-sync.test.ts` runs the app's sync against the real vault service in memory: drop-ins reaching a phone, no re-upload of pulled changes, offline edits on both sides converging with no conflict markers, a commit whose answer was lost followed by a relaunch, held deletions, a missing folder, pause, signed-out, the manager across page reloads, the bridge (and an older app without sync), and the bundle loading in Node.
 
 ## Phase plan
 

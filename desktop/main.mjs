@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerMonitor, protocol, session, shell } from "electron";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,8 +6,9 @@ import { createClientBundles } from "./clientBundles.mjs";
 import { DEEP_LINK_SCHEME, findDeepLink, pathForDeepLink, pathForWebsiteLink } from "./deepLinks.mjs";
 import { createPermissionHandlers } from "./permissions.mjs";
 import { createShellUpdater, DEFAULT_FEED } from "./shellUpdater.mjs";
-import { registerVaultBridge } from "./vaultBridge.mjs";
+import { createVaultWatchers, registerVaultBridge } from "./vaultBridge.mjs";
 import { createVaultFolders } from "./vaultFolders.mjs";
+import { createVaultSyncManager } from "./vaultSync.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
 // /api to the hosted backend, so the client keeps its same-origin relative fetches.
@@ -384,8 +385,47 @@ if (!app.requestSingleInstanceLock()) {
         // A new vault is offered a place in Documents; the person can choose anywhere.
         defaultLocation: () => app.getPath("documents"),
       });
-      const watchers = registerVaultBridge({ ipcMain, folders, isAppUrl });
-      app.on("will-quit", () => watchers.closeAll());
+      const watchers = createVaultWatchers({ folders });
+      // The app keeps the folder and the cloud vault in step itself (desktop/vaultSync.mjs). A dev server
+      // signs in on its own origin, so there the page syncs as on the web.
+      const sync = DEV_URL ? null : createVaultSyncManager({
+        folders,
+        loadEngine: () => import("./vaultSyncEngine.mjs").catch((error) => {
+          console.error("Margin Chat couldn't load its vault sync", error);
+          return null;
+        }),
+        stateRoot: path.join(app.getPath("userData"), "vault-sync"),
+        // Through the default session, as page requests are: the sign-in cookie stays in Electron's jar.
+        fetch: (input, init) => input instanceof Request
+          ? net.fetch(input, { credentials: "include" })
+          : net.fetch(new URL(String(input), API_ORIGIN).href, { ...init, credentials: "include" }),
+        serverUrl: API_ORIGIN,
+        broadcast(channel, payload) {
+          for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.webContents.isDestroyed() && isAppUrl(window.webContents.getURL())) window.webContents.send(channel, payload);
+          }
+        },
+        folderWritten: (folderId, paths) => watchers.broadcast(folderId, paths),
+        openPath: (folderPath) => shell.openPath(folderPath),
+      });
+      registerVaultBridge({ ipcMain, folders, isAppUrl, watchers, sync });
+      if (sync) {
+        const focusChanged = () => setImmediate(() => sync.setFocused(BrowserWindow.getFocusedWindow() !== null));
+        app.on("browser-window-focus", focusChanged);
+        app.on("browser-window-blur", focusChanged);
+        powerMonitor.on("resume", () => sync.wake());
+        // Sync waits while no window is open (macOS keeps the app running), and picks up when one opens.
+        app.on("window-all-closed", () => sync.suspend());
+        app.on("browser-window-created", () => sync.resume());
+        // The network coming back is looked for now and then; there is no event for it.
+        let online = net.isOnline();
+        setInterval(() => {
+          const now = net.isOnline();
+          if (now && !online) sync.wake();
+          online = now;
+        }, 15_000).unref();
+      }
+      app.on("will-quit", () => { watchers.closeAll(); sync?.closeAll(); });
     }
 
     registerDeepLinks();
