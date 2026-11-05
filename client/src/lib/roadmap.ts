@@ -1,5 +1,5 @@
 import { createEmptyRoadmap, normalizeRoadmap, ROADMAP_NODE_TYPE } from "@margin-chat/workspace-contracts";
-import type { AppState, Conversation, Roadmap, RoadmapNode, RoadmapStatus } from "../types";
+import type { AgentRoadmapProposal, AppState, Conversation, Roadmap, RoadmapNode, RoadmapStatus } from "../types";
 import { setDocumentRelation } from "./documentRelations";
 
 /** A prerequisite: `from` needs `to` first. `source` says where the edge is stored. */
@@ -327,4 +327,57 @@ export function makeRoadmapDocument(conversation: Conversation, updatedAt: strin
 export function unmakeRoadmapDocument(conversation: Conversation, updatedAt: string): Conversation {
   const { nodeType: _nodeType, ...rest } = conversation;
   return { ...rest, updatedAt };
+}
+
+export interface RoadmapDraftIds { stages: string[]; nodes: Record<string, string> }
+
+/** IDs made once per approval, so the state update gives the same roadmap however often it runs. */
+export function roadmapDraftIds(proposal: AgentRoadmapProposal): RoadmapDraftIds {
+  return { stages: proposal.stages.map(() => newRoadmapId("stage")),
+    nodes: Object.fromEntries(proposal.stages.flatMap((stage) => stage.steps).map((step) => [step.key, newRoadmapId("node")])) };
+}
+
+/**
+ * Add an approved AI draft to a roadmap: its stages after any already there, its steps, then its
+ * prerequisites (written as `depends-on` like any other). Steps citing a document this vault doesn't
+ * have are left out, and so is any prerequisite that would loop with what the roadmap already has.
+ */
+export function applyRoadmapDraft(state: AppState, proposal: AgentRoadmapProposal, ids: RoadmapDraftIds,
+  options: { updatedAt: string; known?: (id: string) => boolean }): { state: AppState; added: number; skipped: number } | null {
+  const conversation = state.conversations[proposal.roadmapId];
+  if (!conversation) return null;
+  const { updatedAt } = options;
+  const known = (id: string) => Boolean(state.conversations[id]) || (options.known?.(id) ?? false);
+  let next: AppState = conversation.nodeType === ROADMAP_NODE_TYPE ? state
+    : { ...state, conversations: { ...state.conversations, [conversation.id]: makeRoadmapDocument(conversation, updatedAt) } };
+  // A roadmap made just now has one empty placeholder stage, which the draft's stages replace.
+  const current = getRoadmap(next.conversations[conversation.id]);
+  const placeholder = current.nodes.length === 0 ? current.stages.map((stage) => stage.id) : [];
+  const keyed = new Map<string, string>();
+  let skipped = 0;
+  proposal.stages.forEach((stage, index) => {
+    const steps = stage.steps.filter((step) => {
+      if (known(step.documentId) && step.documentId !== conversation.id) return true;
+      skipped += 1;
+      return false;
+    });
+    if (!steps.length) return;
+    next = applyRoadmapChange(next, conversation.id, { kind: "add-stage", title: stage.title, stageId: ids.stages[index] }, updatedAt).state;
+    for (const step of steps) {
+      const nodeId = ids.nodes[step.key];
+      next = applyRoadmapChange(next, conversation.id, { kind: "add-node", stageId: ids.stages[index], target: { docId: step.documentId }, nodeId }, updatedAt).state;
+      if (step.title) next = applyRoadmapChange(next, conversation.id, { kind: "rename-node", nodeId, title: step.title }, updatedAt).state;
+      keyed.set(step.key, nodeId);
+    }
+  });
+  if (keyed.size) for (const stageId of placeholder) next = applyRoadmapChange(next, conversation.id, { kind: "remove-stage", stageId }, updatedAt).state;
+  for (const step of proposal.stages.flatMap((stage) => stage.steps)) {
+    const nodeId = keyed.get(step.key);
+    if (!nodeId) continue;
+    for (const need of step.needs) {
+      const prerequisiteId = keyed.get(need);
+      if (prerequisiteId) next = applyRoadmapChange(next, conversation.id, { kind: "add-prerequisite", nodeId, prerequisiteId }, updatedAt).state;
+    }
+  }
+  return { state: next, added: keyed.size, skipped };
 }

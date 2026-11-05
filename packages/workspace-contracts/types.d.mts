@@ -67,7 +67,15 @@ export interface AgentDocumentProposal extends AgentProposalBase {
   content: string;
   createdId?: string;
 }
-export type AgentProposal = AgentEditProposal | AgentDocumentProposal;
+/** A learning roadmap drafted from the user's documents; approving adds its stages and steps to `roadmapId`. */
+export interface AgentRoadmapProposal extends AgentProposalBase {
+  kind: "roadmap";
+  roadmapId: string;
+  roadmapTitle: string;
+  goal: string;
+  stages: { title: string; steps: { key: string; documentId: string; title?: string; why?: string; needs: string[] }[] }[];
+}
+export type AgentProposal = AgentEditProposal | AgentDocumentProposal | AgentRoadmapProposal;
 export interface AgentWebSource {
   url: string;
   title: string;

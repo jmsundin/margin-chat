@@ -119,3 +119,10 @@ span.roadmap-node-mark { cursor: default; font-size: .8rem; }
   .roadmap-picker-card { border-radius: 14px 14px 0 0; max-width: none; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 }
 .roadmap-node.is-pending { opacity: .65; }
+.roadmap-draft { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
+.roadmap-draft input { background: var(--input-bg, transparent); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); flex: 1 1 220px; font-size: .8rem; min-height: 34px; min-width: 0; padding: 4px 10px; }
+.roadmap-draft button { background: transparent; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); cursor: pointer; font-size: .76rem; min-height: 34px; padding: 4px 12px; }
+.roadmap-draft button[type="submit"] { background: var(--accent-soft); border-color: var(--accent); }
+.roadmap-draft button:disabled { opacity: .5; }
+.roadmap-draft p { color: var(--muted); flex-basis: 100%; font-size: .72rem; margin: 0; }
+.roadmap .roadmap-edit-toggle:disabled { opacity: .6; }

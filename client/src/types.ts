@@ -10,6 +10,7 @@ export type {
   AgentProposal,
   AgentEditProposal,
   AgentDocumentProposal,
+  AgentRoadmapProposal,
   AIContextSource,
   AIRetrievalPassage,
   AIRetrievalRecord,

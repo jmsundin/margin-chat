@@ -17,6 +17,8 @@ export interface DocumentAIRequest extends DocumentInsertion {
   rerunGenerationId?: string;
   /** The prompt answers the question an agent run stopped with, asked about `request`. */
   agentAnswer?: { question: string; request: string };
+  /** Run this one request in Agent mode, whatever the document's setting (a roadmap's Draft with AI). */
+  agent?: true;
 }
 
 /** Keep the complete current document in the required latest message. The server

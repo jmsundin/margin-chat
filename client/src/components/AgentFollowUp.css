@@ -136,3 +136,6 @@
   color: var(--accent);
   font-size: 12px;
 }
+.agent-proposal-roadmap { display: flex; flex-direction: column; gap: 4px; list-style: none; margin: 4px 0 0; padding: 0; }
+.agent-proposal-roadmap li { display: flex; flex-direction: column; font-size: .76rem; gap: 1px; line-height: 1.45; }
+.agent-proposal-roadmap li > span { color: var(--muted); overflow-wrap: anywhere; }

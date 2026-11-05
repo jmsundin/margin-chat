@@ -32,6 +32,19 @@ function ProposalBody({ proposal, documentTitle, currentDocumentId, onOpen }: {
   currentDocumentId: string;
   onOpen?: (id: string) => void;
 }) {
+  if (proposal.kind === "roadmap") {
+    const into = proposal.roadmapId === currentDocumentId ? "" : ` in “${documentTitle?.(proposal.roadmapId) || proposal.roadmapTitle || "a roadmap"}”`;
+    const count = proposal.stages.reduce((sum, stage) => sum + stage.steps.length, 0);
+    return <>
+      <p className="agent-proposal-what">Roadmap for <strong>{`“${proposal.goal}”`}</strong>{into}: {proposal.stages.length} {proposal.stages.length === 1 ? "stage" : "stages"}, {count} {count === 1 ? "step" : "steps"}</p>
+      <ol className="agent-proposal-roadmap">{proposal.stages.map((stage, index) => <li key={index}>
+        <strong>{stage.title}</strong>
+        <span>{stage.steps.map((step, stepIndex) => <span key={step.key} title={step.why}>
+          {stepIndex ? " · " : ""}{step.title || documentTitle?.(step.documentId) || "Missing document"}
+        </span>)}</span>
+      </li>)}</ol>
+    </>;
+  }
   if (proposal.kind === "create") {
     const parent = documentTitle?.(proposal.parentId) || proposal.parentTitle;
     return <>
@@ -92,6 +105,7 @@ export default function AgentFollowUp({ agent, asking, disabled, currentDocument
           </> : <>
             <span className="agent-proposal-status" role="status">{proposal.status === "approved" ? "Approved" : "Dismissed"}</span>
             {canUndoProposal(proposal) ? <button type="button" disabled={disabled} onClick={() => act(proposal.id, "undo")}>Undo</button> : null}
+            {proposal.kind === "roadmap" && proposal.status === "approved" && proposal.roadmapId !== currentDocumentId && onOpen ? <button type="button" onClick={() => onOpen(proposal.roadmapId)}>Open roadmap</button> : null}
             {proposal.kind === "create" && proposal.createdId && onOpen ? <button type="button" onClick={() => onOpen(proposal.createdId!)}>Open</button> : null}
           </>}
         </div>
