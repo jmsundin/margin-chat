@@ -11,6 +11,9 @@ import { createVaultWatchers, VAULT_CHANGED_CHANNEL } from "../desktop/vaultBrid
 // Short waits so the tests run quickly; the app uses 500 ms each.
 const TIMING = { debounceMs: 60, stabilityMs: 60, missingCheckMs: 150, platform: "linux" };
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+// Bun's fs.watch (which runs these tests) can drop inotify events that arrive in the same instant;
+// Node's, which the app runs on, doesn't. Spacing the steps a little tests the watcher, not Bun.
+const gap = () => sleep(40);
 const closers: Array<() => void> = [];
 afterEach(() => { while (closers.length) closers.pop()!(); });
 
@@ -44,7 +47,10 @@ describe("desktop folder watcher", () => {
     const { watcher, reports, paths } = watch(root);
     await watcher.started;
     expect(watcher.active).toBe(true);
-    for (const name of ["Plain.md", "Known.md", "Paper.pdf", "Sheet.xlsx"]) await copyFile(path.join(source, name), path.join(root, name));
+    for (const name of ["Plain.md", "Known.md", "Paper.pdf", "Sheet.xlsx"]) {
+      await copyFile(path.join(source, name), path.join(root, name));
+      await gap();
+    }
     await until(() => paths().length >= 4);
     await sleep(300);
     // Every path the page might care about is named (the page decides what it syncs), and each only once.
@@ -74,6 +80,7 @@ describe("desktop folder watcher", () => {
     await writeFile(path.join(root, "Paper.pdf.crdownload"), "partial");
     await sleep(30);
     await writeFile(path.join(root, "Paper.pdf.crdownload"), "partial, then the rest");
+    await gap();
     await rename(path.join(root, "Paper.pdf.crdownload"), path.join(root, "Paper.pdf"));
     await until(() => paths().length > 0);
     await sleep(300);
@@ -91,6 +98,7 @@ describe("desktop folder watcher", () => {
     await writeFile(path.join(root, "~$Report.docx"), "x");
     await writeFile(path.join(root, ".obsidian", "workspace.json"), "{}");
     await writeFile(path.join(root, ".git", "index"), "x");
+    await gap();
     await writeFile(path.join(root, "Real.md"), "# Real\n");
     await until(() => paths().length > 0);
     await sleep(300);
@@ -120,6 +128,7 @@ describe("desktop folder watcher", () => {
     await fs.writeAtomic("Mine.md", "# Written by Margin Chat\n");
     await fs.writeAtomic("Moved.md", "x");
     await fs.move("Moved.md", "Folder/Moved.md");
+    await gap();
     await writeFile(path.join(root, "Theirs.md"), "two, longer");
     await until(() => paths().includes("Theirs.md"));
     await rm(path.join(root, "Theirs.md"));
