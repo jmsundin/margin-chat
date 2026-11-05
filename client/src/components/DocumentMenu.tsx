@@ -26,6 +26,8 @@ export interface DocumentMenuProps {
   onMoveToMargin?: (id: string) => void;
   /** Keep this document out of every AI request and connected app, or let AI read it again. */
   onToggleHiddenFromAI?: (id: string) => void;
+  /** Draw this document as a roadmap of stages and steps, or as a plain document again. */
+  onToggleRoadmap?: (id: string) => void;
   maximized?: boolean;
   onToggleMaximize?: (id: string) => void;
   onRename?: (id: string, title: string) => void;
@@ -37,7 +39,7 @@ export interface DocumentMenuProps {
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -208,13 +210,19 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
           onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
       </div> : null}
-      {onToggleHiddenFromAI ? <div role="group" className="document-menu-section">
-        <button type="button" role="menuitemcheckbox" aria-checked={conversation.hiddenFromAI === true}
+      {onToggleHiddenFromAI || onToggleRoadmap ? <div role="group" className="document-menu-section">
+        {onToggleRoadmap ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.nodeType === "roadmap"}
+          title="Lay out steps from your documents in stages, and track what you've learned."
+          onClick={() => action(onToggleRoadmap)}>
+          <span>Roadmap</span>
+          <span className="document-menu-check" aria-hidden="true">{conversation.nodeType === "roadmap" ? "✓" : ""}</span>
+        </button> : null}
+        {onToggleHiddenFromAI ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.hiddenFromAI === true}
           title="AI and connected apps can't read a hidden document, even when you search your whole workspace."
           onClick={() => action(onToggleHiddenFromAI)}>
           <span>Hide from AI</span>
           <span className="document-menu-check" aria-hidden="true">{conversation.hiddenFromAI ? "✓" : ""}</span>
-        </button>
+        </button> : null}
       </div> : null}
       {onToggleMaximize || onMinimize || onRestore || onClose ? <div role="group" className="document-menu-section">
         {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>

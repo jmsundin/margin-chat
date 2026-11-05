@@ -17,6 +17,8 @@ interface DocumentLinkPickerProps {
   onCancel: () => void;
   error?: string;
   disabled?: boolean;
+  /** Replaces "Connect to a document or block" where the picker chooses something else. */
+  heading?: string;
 }
 
 /** Plain text only: previews never render a target's HTML or interactive Markdown. */
@@ -32,7 +34,7 @@ function blockPreview(content: string): string {
 }
 
 export default function DocumentLinkPicker({
-  conversations, sourceConversationId, sourceBlockId, onSelect, onCancel, error, disabled = false,
+  conversations, sourceConversationId, sourceBlockId, onSelect, onCancel, error, disabled = false, heading = "Connect to a document or block",
 }: DocumentLinkPickerProps) {
   const [query, setQuery] = useState("");
   const [blockQuery, setBlockQuery] = useState("");
@@ -96,7 +98,7 @@ export default function DocumentLinkPicker({
       {selectedDocument ? <button type="button" className="document-link-picker-back" aria-label="Back to documents" onClick={() => setDocumentId(null)}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6" /></svg>
       </button> : null}
-      <div className="document-link-picker-heading"><h3 id={headingId}>{selectedDocument ? selectedDocument.title : "Connect to a document or block"}</h3>
+      <div className="document-link-picker-heading"><h3 id={headingId}>{selectedDocument ? selectedDocument.title : heading}</h3>
         <p>{selectedDocument ? "Choose a block" : "Choose a document, or browse its blocks"}</p>
       </div>
       <button type="button" className="document-link-picker-close" aria-label="Cancel connection" onClick={onCancel}>

@@ -110,6 +110,8 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
+import { applyRoadmapChange, makeRoadmapDocument, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
+import RoadmapView from "./components/RoadmapView";
 import type { DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
@@ -4610,6 +4612,25 @@ function WorkspaceAppContent({
   }
 
   /** The user decides which notes and documents AI may read; nothing is hidden by default. */
+  /** Apply one roadmap edit; returns why it was refused (a prerequisite loop), or null. */
+  function handleRoadmapChange(roadmapId: string, change: RoadmapChange): string | null {
+    const now = new Date().toISOString();
+    const result = applyRoadmapChange(currentStateRef.current, roadmapId, change, now);
+    if (result.error) return result.error;
+    setState((current) => applyRoadmapChange(current, roadmapId, change, now).state);
+    return null;
+  }
+
+  function handleToggleRoadmap(conversationId: string) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      const now = new Date().toISOString();
+      return { ...current, conversations: { ...current.conversations,
+        [conversationId]: conversation.nodeType === "roadmap" ? unmakeRoadmapDocument(conversation, now) : makeRoadmapDocument(conversation, now) } };
+    });
+  }
+
   function handleToggleHiddenFromAI(conversationId: string) {
     setState((current) => {
       const conversation = current.conversations[conversationId];
@@ -4938,7 +4959,7 @@ function WorkspaceAppContent({
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
-        onToggleHiddenFromAI={handleToggleHiddenFromAI}
+        onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
@@ -5024,6 +5045,10 @@ function WorkspaceAppContent({
       childNavigation={renderChildrenMenu(conversation, view, view === "graph" ? dock : undefined)}
       marginNotes={getMarginItems(conversation, view)} marginWidth={getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       activeMarginNoteId={activeConversation.id}
+      roadmap={conversation.nodeType === "roadmap" ? <RoadmapView conversation={conversation} conversations={state.conversations}
+        cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
+        onChange={(change) => handleRoadmapChange(conversation.id, change)}
+        onOpen={(target) => handleNavigateDocumentConnector({ conversationId: target.docId, blockId: target.blockId })} /> : undefined}
       bodyFooter={view === "chat" && navigationStyle === "reading" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
       fullScreenToggle={view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}

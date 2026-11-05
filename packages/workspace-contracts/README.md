@@ -54,3 +54,10 @@ tests/editable-document.test.ts tests/incremental-workspace.test.ts
 tests/vault-merge-anchors.test.ts` after changes.
 The contract tests include native Node loading, malformed input, read-policy
 differences, and browser/server byte preservation parity.
+
+Roadmaps (`roadmap.mjs`) are ordinary documents with frontmatter `type: "roadmap"`
+and a `roadmap: { version: 1, stages, nodes }` entry in the registry. Nodes point
+at a document or block (`target: { docId, blockId? }`) and carry personal
+`status`/`proof`; prerequisites come from `depends-on` relations between target
+documents plus a node's own `dependsOn` for block targets. Readers keep valid
+entries and drop malformed ones (`normalizeRoadmap`). Run `bun test tests/roadmap.test.ts`.
