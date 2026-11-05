@@ -42,6 +42,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.132.1",
     "@margin-chat/capture-contracts": "workspace:*",
+    "@margin-chat/vault-sync": "workspace:*",
     "@margin-chat/workspace-contracts": "workspace:*",
     "@mozilla/readability": "^0.6.0",
     "@neondatabase/serverless": "^1.1.0",

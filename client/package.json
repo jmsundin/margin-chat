@@ -17,6 +17,7 @@
     "@excalidraw/excalidraw": "^0.18.1",
     "@lezer/markdown": "^1.7.2",
     "@margin-chat/capture-contracts": "workspace:*",
+    "@margin-chat/vault-sync": "workspace:*",
     "@margin-chat/workspace-contracts": "workspace:*",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-code-block-lowlight": "^3.31.3",

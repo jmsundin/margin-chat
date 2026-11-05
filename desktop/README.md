@@ -107,6 +107,16 @@ A .deb install, a Mac app opened straight from the disk image, or an app in a
 folder it can't write to can't replace itself; it shows a "download the new
 version" prompt once per version instead.
 
+## Vault folder watching (planned)
+
+The native vault (docs/desktop-vault-sync.md) watches the folder with
+`node:fs.watch`: recursive on macOS and Windows, one watcher per folder on
+Linux, where Node's recursive mode is a JavaScript layer that has crashed on
+unreadable folders. Events only say where to look; the app stats and re-reads
+files before taking them in, and a slow full scan catches anything missed.
+chokidar was not used because the app ships without `node_modules` and its
+native recursive backend is a brand-new rewrite (v6, October 2026).
+
 ## Not done yet
 
 - Signing and notarization: the installers are unsigned. macOS blocks the app
