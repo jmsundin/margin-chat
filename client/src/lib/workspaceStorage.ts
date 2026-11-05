@@ -10,7 +10,9 @@ import {
 } from "./workspaceMarkdown";
 import { createWorkspaceDocument } from "./workspaceModel";
 import { validVaultPath, type DirectoryFileStat, type DirectoryStats, type VaultFile } from "./vaultTypes";
-import { readFreshBytes, readFreshFile, readFreshText, scanWhileFolderSettles } from "./fileSnapshot";
+import { scanWhileFolderSettles } from "./fileSnapshot";
+import { decodeVaultFsText, joinVaultFsPath, type VaultFs, type VaultFsStat } from "@margin-chat/vault-sync";
+import { toVaultFs } from "./vaultFsAccess";
 import { isSyncableVaultFileSize, isVaultFileDocumentPath, vaultFileContentType, type VaultFileListing } from "./vaultFileDocuments";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
@@ -47,6 +49,9 @@ export interface LocalWorkspaceRecord {
   savedAt: string;
   state: AppState;
 }
+
+/** A connected folder: the browser's folder handle, or any other VaultFs (the desktop app's native folder, a test folder). */
+export type ConnectedFolder = FileSystemDirectoryHandle | VaultFs;
 
 let directoryWriteQueue = Promise.resolve();
 const observedDirectoryWorkspaces = new Map<string, MarkdownWorkspace>();
@@ -238,26 +243,28 @@ export async function reconnectLocalDirectory(userId: string, directoryId: strin
  * Names, sizes and modification times of the folder's Markdown files, PDFs and images, without
  * reading their text, so the folder can be checked for new files often.
  */
-export async function localDirectorySignature(handle: FileSystemDirectoryHandle, prefix = ""): Promise<string> {
+export async function localDirectorySignature(folder: ConnectedFolder, prefix = ""): Promise<string> {
+  const fs = toVaultFs(folder);
   const parts: string[] = [];
-  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
-  for await (const [name, entry] of entries.entries()) {
+  for await (const { name, kind } of fs.list(prefix)) {
     if (name.startsWith(".")) continue;
-    const path = prefix ? `${prefix}/${name}` : name;
+    const path = joinVaultFsPath(prefix, name);
     if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
-    if (entry.kind === "directory") parts.push(await localDirectorySignature(entry as FileSystemDirectoryHandle, path));
+    if (kind === "directory") parts.push(await localDirectorySignature(fs, path));
     else if (isSafeMarkdownPath(path) || isVaultFileDocumentPath(path)) {
-      const file = await (entry as FileSystemFileHandle).getFile();
-      parts.push(`${path}\t${file.size}\t${file.lastModified}`);
+      const stat = await fs.stat(path);
+      if (!stat) throw missingFile(path);
+      parts.push(`${path}\t${stat.size}\t${stat.modifiedMs}`);
     }
   }
   return parts.sort().join("\n");
 }
 
-type FileSystemObserverConstructor = new (callback: () => void) => {
-  observe(handle: FileSystemHandle, options?: { recursive?: boolean }): Promise<void>;
-  disconnect(): void;
-};
+function missingFile(path: string) {
+  const error = new Error(`${path} is no longer in the folder.`);
+  error.name = "NotFoundError";
+  return error;
+}
 
 /** Checks between folder scans; a scan that takes longer spaces the next one out. */
 const FOLDER_WATCH_MIN_MS = 2_500;
@@ -272,7 +279,7 @@ const FOLDER_WATCH_MAX_MS = 60_000;
 export function watchLocalDirectory(userId: string, directoryId: string, onChange: () => void): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let observer: InstanceType<FileSystemObserverConstructor> | null = null;
+  let stopWatching: (() => void) | null = null;
   let last: string | null = null;
   let scanning = false;
 
@@ -302,20 +309,16 @@ export function watchLocalDirectory(userId: string, directoryId: string, onChang
     timer = setTimeout(() => void scan(), delay);
   }
 
-  const Observer = (globalThis as { FileSystemObserver?: FileSystemObserverConstructor }).FileSystemObserver;
-  if (Observer) {
-    void getStoredDirectoryHandle(userId, directoryId).then((handle) => {
-      if (!handle || stopped) return;
-      // Changes arrive in bursts while another app saves; one check covers them.
-      observer = new Observer(() => schedule(300));
-      return observer.observe(handle, { recursive: true });
-    }).catch(() => { observer = null; });
-  }
+  void getStoredDirectoryHandle(userId, directoryId).then((handle) => {
+    if (!handle || stopped) return;
+    // Changes arrive in bursts while another app saves; one check covers them.
+    stopWatching = toVaultFs(handle).watch?.(() => schedule(300)) ?? null;
+  }).catch(() => { stopWatching = null; });
   void scan();
   return () => {
     stopped = true;
     clearTimeout(timer);
-    observer?.disconnect();
+    stopWatching?.();
   };
 }
 
@@ -415,10 +418,11 @@ export interface DirectoryWrite {
  * .margin-chat/history/) is on disk before the document leaves or changes. Returns the companions now in the
  * folder and the stats of the files it left as they were.
  */
-export async function writeConnectedDirectory(handle: FileSystemDirectoryHandle, userId: string, write: DirectoryWrite) {
+export async function writeConnectedDirectory(folder: ConnectedFolder, userId: string, write: DirectoryWrite) {
+  const fs = toVaultFs(folder);
   let companions: { files: Record<string, VaultFile>; stats: DirectoryStats } | undefined;
-  const markdownStats = await writeConnectedDirectoryWorkspace(handle, userId, write.workspace, write.expectedWorkspace, write.stats, async () => {
-    companions = await syncConnectedDirectoryCompanions(handle, write.files, write.expectedFiles, write.stats);
+  const markdownStats = await writeConnectedDirectoryWorkspace(fs, userId, write.workspace, write.expectedWorkspace, write.stats, async () => {
+    companions = await syncConnectedDirectoryCompanions(fs, write.files, write.expectedFiles, write.stats);
   });
   return { companions: companions!.files, stats: { ...markdownStats, ...companions!.stats } };
 }
@@ -443,12 +447,13 @@ export function writeLocalDirectory(userId: string, write: DirectoryWrite, direc
  * date `knownStats` holds for it keeps its text from `previousFiles` instead of being read again.
  */
 export async function readDirectoryWorkspace(
-  handle: FileSystemDirectoryHandle,
+  folder: ConnectedFolder,
   userId: string,
   fallbackManifest?: MarkdownWorkspaceManifest,
   previousFiles?: Record<string, string>,
   knownStats?: DirectoryStats,
 ): Promise<LocalDirectoryWorkspace> {
+  const handle = toVaultFs(folder);
   const manifestRaw = await readDirectoryFileOrNull(handle, getLocalWorkspaceFileName(userId));
   let manifest = fallbackManifest;
   let legacy: LocalWorkspaceRecord | null = null;
@@ -485,13 +490,14 @@ export async function readDirectoryWorkspace(
  * `beforeChanges` runs once the folder's Markdown checks out, before any of it changes.
  */
 export async function writeConnectedDirectoryWorkspace(
-  handle: FileSystemDirectoryHandle,
+  folder: ConnectedFolder,
   userId: string,
   workspace: MarkdownWorkspace,
   expectedWorkspace: MarkdownWorkspace | null,
   knownStats?: DirectoryStats,
   beforeChanges?: () => Promise<void>,
 ): Promise<DirectoryStats> {
+  const handle = toVaultFs(folder);
   for (const path of Object.keys(workspace.files)) {
     if (!isSafeMarkdownPath(path)) throw new Error(`Invalid Markdown path: ${path}`);
   }
@@ -575,18 +581,20 @@ export async function listLocalDirectoryFiles(userId: string, directoryId?: stri
   return scanWhileFolderSettles(handle.name, () => listConnectedDirectoryFiles(handle));
 }
 
-export async function listConnectedDirectoryFiles(handle: FileSystemDirectoryHandle, prefix = ""): Promise<VaultFileListing[]> {
+export async function listConnectedDirectoryFiles(folder: ConnectedFolder, prefix = ""): Promise<VaultFileListing[]> {
+  const fs = toVaultFs(folder);
   const listings: VaultFileListing[] = [];
-  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
-  for await (const [name, entry] of entries.entries()) {
+  for await (const { name, kind } of fs.list(prefix)) {
     if (name.startsWith(".")) continue;
-    const path = prefix ? `${prefix}/${name}` : name;
+    const path = joinVaultFsPath(prefix, name);
     if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
-    if (entry.kind === "directory") listings.push(...await listConnectedDirectoryFiles(entry as FileSystemDirectoryHandle, path));
+    if (kind === "directory") listings.push(...await listConnectedDirectoryFiles(fs, path));
     else if (isVaultFileDocumentPath(path) && validVaultPath(path)) {
       try {
-        const file = await (entry as FileSystemFileHandle).getFile();
-        listings.push({ path, size: file.size, ...(file.lastModified > 0 ? { modifiedAt: new Date(file.lastModified).toISOString() } : {}),
+        const file = await fs.stat(path);
+        // A file removed mid-scan is picked up by the next one.
+        if (!file) continue;
+        listings.push({ path, size: file.size, ...(file.modifiedMs > 0 ? { modifiedAt: new Date(file.modifiedMs).toISOString() } : {}),
           ...(isSyncableVaultFileSize(file.size) ? {} : { localOnly: true }) });
       } catch { /* A file removed mid-scan is picked up by the next one. */ }
     }
@@ -601,17 +609,7 @@ export async function listConnectedDirectoryFiles(handle: FileSystemDirectoryHan
 export async function localDirectoryAvailability(userId: string, directoryId?: string): Promise<"available" | "missing" | "refused"> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle) return "missing";
-  const entries = (handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }).entries();
-  try {
-    await entries.next();
-    return "available";
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError")) return "missing";
-    if (isDomExceptionNamed(error, "NotAllowedError") || isDomExceptionNamed(error, "SecurityError")) return "refused";
-    throw error;
-  } finally {
-    await entries.return?.().catch(() => undefined);
-  }
+  return toVaultFs(handle).availability();
 }
 
 /** A file read straight from the connected folder, for one too large to sync. */
@@ -619,13 +617,8 @@ export async function readLocalDirectoryFile(userId: string, path: string, direc
   if (!validVaultPath(path)) return null;
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  try {
-    const file = await (await getNestedFileHandle(handle, path)).getFile();
-    return new Blob([file], { type: vaultFileContentType(path) });
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError")) return null;
-    throw error;
-  }
+  const read = await toVaultFs(handle).read(path);
+  return read ? new Blob([new Uint8Array(read.bytes)], { type: vaultFileContentType(path) }) : null;
 }
 
 const CONFLICT_NOTE = /^(?:_conflicts|\.margin-chat\/history)\/[^/]+\/conflict\.json$/i;
@@ -636,21 +629,21 @@ const CONFLICT_NOTE = /^(?:_conflicts|\.margin-chat\/history)\/[^/]+\/conflict\.
  * and, for those read or kept, the size and date of their bytes.
  */
 export async function readConnectedDirectoryCompanions(
-  handle: FileSystemDirectoryHandle,
+  folder: ConnectedFolder,
   knownFiles?: Record<string, VaultFile>,
   listing?: VaultFileListing[],
   knownStats?: DirectoryStats,
 ): Promise<{ files: Record<string, VaultFile>; stats: DirectoryStats }> {
+  const handle = toVaultFs(folder);
   const known = knownFiles ? companionFiles(knownFiles) : null;
   const files = listing ?? await listConnectedDirectoryFiles(handle);
   // A file too large to sync stays in the folder; it opens from there on this device.
   const localOnly = new Set(files.filter((file) => file.localOnly).map((file) => file.path));
   const paths: string[] = [...Object.keys(known ?? {}), "workspace.json", ...files.filter((file) => !file.localOnly).map((file) => file.path)]
     .filter((path) => !localOnly.has(path));
-  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
-  for await (const [name, entry] of entries.entries()) {
-    if (entry.kind === "directory" && /^(?:attachments|_conflicts|\.margin-chat)$/i.test(name)) {
-      await collectCompanionPaths(entry as FileSystemDirectoryHandle, name, paths);
+  for await (const { name, kind } of handle.list("")) {
+    if (kind === "directory" && /^(?:attachments|_conflicts|\.margin-chat)$/i.test(name)) {
+      await collectCompanionPaths(handle, name, paths);
     }
   }
   const bytesByPath = new Map<string, Uint8Array>();
@@ -721,11 +714,12 @@ const sameCompanion = (a: VaultFile | undefined, b: VaultFile | undefined) =>
  * and date each expected file was read at; returns the same for the files this sync left as they were.
  */
 export async function syncConnectedDirectoryCompanions(
-  handle: FileSystemDirectoryHandle,
+  folder: ConnectedFolder,
   nextFiles: Record<string, VaultFile>,
   expectedFiles: Record<string, VaultFile>,
   knownStats?: DirectoryStats,
 ): Promise<{ files: Record<string, VaultFile>; stats: DirectoryStats }> {
+  const handle = toVaultFs(folder);
   const next = companionFiles(nextFiles);
   const expected = companionFiles(expectedFiles);
   const all = [...new Set([...Object.keys(next), ...Object.keys(expected)])];
@@ -765,12 +759,11 @@ export async function syncConnectedDirectoryCompanions(
   return { files: Object.fromEntries(Object.entries(next).map(([path, file]) => [path, { ...file }])), stats };
 }
 
-async function collectCompanionPaths(handle: FileSystemDirectoryHandle, prefix: string, paths: string[]) {
-  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
-  for await (const [name, entry] of entries.entries()) {
+async function collectCompanionPaths(fs: VaultFs, prefix: string, paths: string[]) {
+  for await (const { name, kind } of fs.list(prefix)) {
     const path = `${prefix}/${name}`;
     if (!validVaultPath(path)) throw new Error(`Invalid vault companion path: ${path}`);
-    if (entry.kind === "directory") await collectCompanionPaths(entry as FileSystemDirectoryHandle, path, paths);
+    if (kind === "directory") await collectCompanionPaths(fs, path, paths);
     else paths.push(path);
   }
 }
@@ -792,22 +785,12 @@ function sameBytes(left: Uint8Array | null, right: Uint8Array | null) {
     : left.length === right.length && left.every((byte, index) => byte === right[index]);
 }
 
-async function directoryFileInfoOrNull(handle: FileSystemDirectoryHandle, path: string): Promise<File | null> {
-  try {
-    return await (await getNestedFileHandle(handle, path)).getFile();
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError")) return null;
-    throw error;
-  }
+function directoryFileInfoOrNull(fs: VaultFs, path: string): Promise<VaultFsStat | null> {
+  return fs.stat(path);
 }
 
-async function readDirectoryBytesOrNull(handle: FileSystemDirectoryHandle, path: string): Promise<Uint8Array | null> {
-  try {
-    return await readFreshBytes(() => getNestedFileHandle(handle, path));
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError")) return null;
-    throw error;
-  }
+async function readDirectoryBytesOrNull(fs: VaultFs, path: string): Promise<Uint8Array | null> {
+  return (await fs.read(path))?.bytes ?? null;
 }
 
 /**
@@ -817,89 +800,68 @@ async function readDirectoryBytesOrNull(handle: FileSystemDirectoryHandle, path:
 const SAME_DATE_MS = 3_000;
 
 /** The size and date of the bytes just read from this snapshot, or null when they couldn't tell a later change apart. */
-function statWhenRead(file: File, readStartedAt: number): DirectoryFileStat | null {
-  return file.lastModified > 0 && readStartedAt - file.lastModified >= SAME_DATE_MS ? [file.size, file.lastModified] : null;
+function statWhenRead(file: VaultFsStat, readStartedAt: number): DirectoryFileStat | null {
+  return file.modifiedMs > 0 && readStartedAt - file.modifiedMs >= SAME_DATE_MS ? [file.size, file.modifiedMs] : null;
 }
 
 /** Whether a file is still the size and date it had when its saved bytes were read. */
-function unchangedSince(file: File, stat: DirectoryFileStat | undefined) {
-  return !!stat && stat[1] > 0 && file.size === stat[0] && file.lastModified === stat[1];
+function unchangedSince(file: VaultFsStat, stat: DirectoryFileStat | undefined) {
+  return !!stat && stat[1] > 0 && file.size === stat[0] && file.modifiedMs === stat[1];
 }
 
 /** A file's bytes with, from the same snapshot, their size and date; null when the file doesn't exist. */
-async function readDirectoryBytesWithStat(handle: FileSystemDirectoryHandle, path: string) {
+async function readDirectoryBytesWithStat(fs: VaultFs, path: string) {
   const readStartedAt = Date.now();
-  try {
-    return await readFreshFile(() => getNestedFileHandle(handle, path),
-      async (file) => ({ bytes: new Uint8Array(await file.arrayBuffer()), stat: statWhenRead(file, readStartedAt) }));
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError")) return null;
-    throw error;
-  }
+  const read = await fs.read(path);
+  return read ? { bytes: read.bytes, stat: statWhenRead(read.stat, readStartedAt) } : null;
 }
 
-async function writeDirectoryBytes(handle: FileSystemDirectoryHandle, path: string, bytes: Uint8Array) {
-  const segments = path.split("/");
-  const name = segments.pop()!;
-  let directory = handle;
-  for (const segment of segments) directory = await directory.getDirectoryHandle(segment, { create: true });
-  const file = await directory.getFileHandle(name, { create: true });
-  const writer = await file.createWritable();
-  try {
-    await writer.write(new Uint8Array(bytes).buffer);
-    await writer.close();
-  } catch (error) {
-    await writer.abort?.().catch(() => undefined);
-    throw error;
-  }
+function writeDirectoryBytes(fs: VaultFs, path: string, bytes: Uint8Array) {
+  return fs.writeAtomic(path, bytes);
 }
 
-async function readDirectoryFileOrNull(handle: FileSystemDirectoryHandle, path: string) {
-  try {
-    return await readFreshText(() => getNestedFileHandle(handle, path));
-  } catch (error) {
-    if (isDomExceptionNamed(error, "NotFoundError")) return null;
-    throw error;
-  }
+async function readDirectoryFileOrNull(fs: VaultFs, path: string) {
+  const read = await fs.read(path);
+  return read ? decodeVaultFsText(read.bytes) : null;
 }
 
 /**
  * Reads the folder's Markdown files. A file still the size and date `known.stats` holds for it keeps its text from
  * `known.files`, so an unchanged folder costs its listing and file sizes and dates, not its files' text.
  */
-async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, known?: { files: Record<string, string>; stats: DirectoryStats }, prefix = "") {
+async function scanMarkdownDirectory(fs: VaultFs, known?: { files: Record<string, string>; stats: DirectoryStats }, prefix = "") {
   const files: Record<string, string> = {};
   const modifiedAt: Record<string, string> = {};
   const stats: DirectoryStats = {};
   let latestModified = 0;
-  const entries = handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
-  for await (const [name, entry] of entries.entries()) {
+  for await (const { name, kind } of fs.list(prefix)) {
     if (name.startsWith(".")) continue;
-    const path = prefix ? `${prefix}/${name}` : name;
+    const path = joinVaultFsPath(prefix, name);
     if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
-    if (entry.kind === "directory") {
-      const child = await scanMarkdownDirectory(entry as FileSystemDirectoryHandle, known, path);
+    if (kind === "directory") {
+      const child = await scanMarkdownDirectory(fs, known, path);
       Object.assign(files, child.files);
       Object.assign(modifiedAt, child.modifiedAt);
       Object.assign(stats, child.stats);
       latestModified = Math.max(latestModified, child.latestModified);
     } else if (isSafeMarkdownPath(path)) {
-      const fileHandle = entry as FileSystemFileHandle;
       const saved = known && Object.hasOwn(known.files, path) ? known.files[path] : undefined;
       const stat = known && Object.hasOwn(known.stats, path) ? known.stats[path] : undefined;
-      const current = saved !== undefined && stat ? await fileHandle.getFile() : null;
+      const current = saved !== undefined && stat ? await fs.stat(path) : null;
+      if (saved !== undefined && stat && !current) throw missingFile(path);
       let lastModified: number;
       if (current && unchangedSince(current, stat)) {
         files[path] = saved!;
         stats[path] = stat!;
-        lastModified = current.lastModified;
+        lastModified = current.modifiedMs;
       } else {
         const readStartedAt = Date.now();
-        const read = await readFreshFile(async () => fileHandle, async (file) => ({ text: await file.text(), file }));
-        files[path] = read.text;
-        const readStat = statWhenRead(read.file, readStartedAt);
+        const read = await fs.read(path);
+        if (!read) throw missingFile(path);
+        files[path] = decodeVaultFsText(read.bytes);
+        const readStat = statWhenRead(read.stat, readStartedAt);
         if (readStat) stats[path] = readStat;
-        lastModified = read.file.lastModified;
+        lastModified = read.stat.modifiedMs;
       }
       if (lastModified > 0) modifiedAt[path] = new Date(lastModified).toISOString();
       latestModified = Math.max(latestModified, lastModified);
@@ -908,12 +870,8 @@ async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, known?: 
   return { files, modifiedAt, stats, latestModified };
 }
 
-async function removeDirectoryFile(handle: FileSystemDirectoryHandle, path: string) {
-  const segments = path.split("/");
-  const name = segments.pop()!;
-  let directory = handle;
-  for (const segment of segments) directory = await directory.getDirectoryHandle(segment);
-  await directory.removeEntry(name);
+function removeDirectoryFile(fs: VaultFs, path: string) {
+  return fs.delete(path);
 }
 
 function supportsDirectoryPicker() {
@@ -1043,54 +1001,7 @@ function stableSerialize(value: unknown): string {
   return JSON.stringify(value) ?? "null";
 }
 
-async function writeDirectoryFile(
-  handle: FileSystemDirectoryHandle,
-  path: string,
-  contents: string,
-) {
-  const segments = path.split("/");
-  const fileName = segments.pop();
-  if (!fileName) throw new Error("Local workspace file path is invalid.");
-
-  let directory = handle;
-  for (const segment of segments) {
-    directory = await directory.getDirectoryHandle(segment, { create: true });
-  }
-
-  const fileHandle = await directory.getFileHandle(fileName, { create: true });
-  const writable = await fileHandle.createWritable();
-
-  try {
-    await writable.write(contents);
-    await writable.close();
-  } catch (error) {
-    // Aborting leaves the file as it was; closing would replace it with whatever was written before the failure.
-    await writable.abort?.().catch(() => undefined);
-    throw error;
-  }
-}
-
-async function getNestedFileHandle(
-  handle: FileSystemDirectoryHandle,
-  path: string,
-) {
-  const segments = path.split("/");
-  const fileName = segments.pop();
-  if (!fileName) throw new Error("Local workspace file path is invalid.");
-
-  let directory = handle;
-  for (const segment of segments) {
-    directory = await directory.getDirectoryHandle(segment);
-  }
-
-  return directory.getFileHandle(fileName);
-}
-
-function isDomExceptionNamed(error: unknown, name: string) {
-  return (
-    (typeof DOMException !== "undefined" &&
-      error instanceof DOMException &&
-      error.name === name) ||
-    (error instanceof Error && error.name === name)
-  );
+function writeDirectoryFile(fs: VaultFs, path: string, contents: string) {
+  if (!path.split("/").pop()) throw new Error("Local workspace file path is invalid.");
+  return fs.writeAtomic(path, contents);
 }
