@@ -68,6 +68,8 @@ export interface DocumentPanelProps {
   /** Horizontal tabs of this document and its siblings, above its header. */
   /** Shown after the document's text, such as where to keep reading. */
   bodyFooter?: ReactNode;
+  /** A roadmap document's stages and steps, drawn above its notes. */
+  roadmap?: ReactNode;
   /** The full path of parents in the header, as in Map View's side panel. */
   parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
@@ -533,6 +535,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
+      {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} onAskDiagram={props.onAskDiagram}
         toolbarStart={historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}

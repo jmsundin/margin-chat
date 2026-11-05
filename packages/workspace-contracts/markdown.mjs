@@ -3,6 +3,7 @@ import { normalizeAIExecution } from "./ai.mjs";
 import { normalizePublicTopicSource, normalizeLinkedConversationIds } from "./exploration.mjs";
 import { normalizeEditableDocument } from "./editableDocument.mjs";
 import { normalizeDocumentLayout } from "./documentLayout.mjs";
+import { normalizeRoadmap } from "./roadmap.mjs";
 import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
 import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown, markedBlockIds } from "./markdownReadable.mjs";
 import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
@@ -722,8 +723,9 @@ function parseConversationFile(source, record, workspace) {
             content: isNote ? parseNoteBody(source) : "",
         }
         : null;
-    const { publicTopic: rawPublicTopic, linkedConversationIds, document: rawDocument,
+    const { publicTopic: rawPublicTopic, linkedConversationIds, document: rawDocument, roadmap: rawRoadmap,
         relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, ...conversationMetadata } = metadata.conversation;
+    const roadmap = normalizeRoadmap(rawRoadmap);
     const graph = readDocumentGraphProperties(readFrontmatterValues(source));
     const documentSection = editableDocumentSection(source);
     const document = rawDocument === undefined ? undefined : documentSection && normalizeEditableDocument({
@@ -741,6 +743,7 @@ function parseConversationFile(source, record, workspace) {
             ...graphConversationFields(graph),
             ...(document ? { document } : {}),
             ...(publicTopic ? { publicTopic } : {}),
+            ...(roadmap ? { roadmap } : {}),
             ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds } : {}),
             childIds: [],
             messages,

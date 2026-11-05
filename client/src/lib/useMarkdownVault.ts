@@ -937,6 +937,17 @@ export function useMarkdownVault(args: {
       ? (query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void) =>
         engine.transport.search!(query, options, onEvent)
       : undefined,
+    /** Download documents still only in the cloud, by id, without changing what is shown (a roadmap's steps). */
+    async loadCloudDocuments(ids: string[]) {
+      const wanted = new Set(ids);
+      const listed = vaultIndexRef.current ?? vaultIndex;
+      const paths = listed?.entries.filter((entry) => wanted.has(entry.id)).map((entry) => entry.path) ?? [];
+      if (!paths.length) return;
+      await enqueue(async () => {
+        if (!mounted.current) return;
+        if (await hydratePaths(paths)) await saveAndRefresh(true);
+      });
+    },
     /** Download a document that is still only in the cloud, then show it. */
     async openCloudDocument(path: string) {
       // While the index is still arriving, the newest entries listed so far can be opened.

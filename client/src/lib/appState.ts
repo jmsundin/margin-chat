@@ -1,5 +1,5 @@
 import { createEmptyState } from "../initialState";
-import { migrateMarginNotes, normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock, normalizeWorkspaceSessions, normalizeConversationGraphFields } from "@margin-chat/workspace-contracts";
+import { migrateMarginNotes, normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock, normalizeWorkspaceSessions, normalizeConversationGraphFields, normalizeRoadmap } from "@margin-chat/workspace-contracts";
 import type { AppState, Conversation } from "../types";
 import { normalizeConversationGroups } from "./conversationGroups";
 import { normalizeGraphLayouts } from "./graphLayout";
@@ -88,7 +88,8 @@ export function hydratePersistedState(input: unknown): AppState | null {
               const serviceId = isBackendServiceId(conversation.serviceId)
                 ? conversation.serviceId
                 : DEFAULT_BACKEND_SERVICE_ID;
-              const { publicTopic, linkedConversationIds, document, documentLayout, relations, nodeType, tags, hiddenFromAI, ...base } = conversation;
+              const { publicTopic, linkedConversationIds, document, documentLayout, relations, nodeType, tags, hiddenFromAI, roadmap: rawRoadmap, ...base } = conversation;
+              const roadmap = normalizeRoadmap(rawRoadmap);
               const source = normalizePublicTopicSource(publicTopic);
               const layout = normalizeDocumentLayout(documentLayout, conversationId, parsed.conversations);
               const editableDocument = document === undefined ? undefined : normalizeEditableDocument(document);
@@ -98,6 +99,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
                 ...base,
                 ...(editableDocument ? { document: editableDocument } : {}),
                 ...(layout ? { documentLayout: layout } : {}),
+                ...(roadmap ? { roadmap } : {}),
                 ...(source ? { publicTopic: source } : {}),
                 ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(linkedConversationIds, conversationId, parsed.conversations) } : {}),
                 ...normalizeConversationGraphFields({ relations, nodeType, tags, hiddenFromAI }, conversationId, parsed.conversations),
