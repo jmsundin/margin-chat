@@ -36,6 +36,7 @@ import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
 import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
 import type { WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
+import { listenForEditorCommands } from "../lib/editorCommands";
 import { openableHref, openLinkInNewTab, shouldOpenLink } from "../lib/documentLinkOpening";
 import { describeAge, describeRun, type AuthorshipMode, type AuthorshipRun } from "../lib/documentAuthorship";
 import "./RichDocumentEditor.css";
@@ -1015,6 +1016,19 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
   useEffect(() => {
     if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(authorshipKey, true).setMeta("addToHistory", false));
   }, [editor, authorshipKeyValue]);
+  // The phone keyboard bar's buttons: the same edits as typing `[[`, ⌘D, Tab and Shift+Tab.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    return listenForEditorCommands(editor.view.dom, (command) => {
+      if (!editor.isEditable) return false;
+      const block = blockAt(editor.state.doc, editor.state.selection.from);
+      if (block && readOnlyRef.current.has(block.node.attrs.id)) return false;
+      if (command === "wiki-link") return editor.commands.insertContent({ type: "text", text: "[[" });
+      if (command === "date-time") return editor.commands.insertContent({ type: "text", text: formatDocumentDateTime() });
+      const list = editor.isActive("taskItem") ? "taskItem" : "listItem";
+      return command === "indent" ? editor.commands.sinkListItem(list) || true : editor.commands.liftListItem(list) || true;
+    });
+  }, [editor]);
   // Only mine hides text, so nothing can be typed into what can't be seen.
   const onlyMine = Boolean(props.authorship?.onlyMine);
   useEffect(() => { editor?.setEditable(editable && !onlyMine, false); }, [editor, editable, onlyMine]);
