@@ -4642,6 +4642,17 @@ function WorkspaceAppContent({
     });
   }
 
+  /** What connected apps may edit in a document; the app is the only place this changes. */
+  function handleSetAgentEdit(conversationId: string, policy: "locked" | "open" | null) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation || (conversation.agentEdit ?? null) === policy) return current;
+      const { agentEdit: _agentEdit, ...rest } = conversation;
+      return { ...current, conversations: { ...current.conversations,
+        [conversationId]: { ...rest, ...(policy ? { agentEdit: policy } : {}), updatedAt: new Date().toISOString() } } };
+    });
+  }
+
   function handleDeleteThread(conversationId: string) {
     const rootConversation = state.conversations[conversationId];
 
@@ -4961,6 +4972,7 @@ function WorkspaceAppContent({
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
+        onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]

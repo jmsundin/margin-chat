@@ -1,0 +1,60 @@
+/* One quiet line above the text: the share you wrote, and the authorship view. */
+.document-authorship-bar { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; flex:1 1 auto; min-width:0; margin-right:auto; font-size:12px; color:var(--muted); }
+.document-authorship-summary { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.document-authorship-controls { display:inline-flex; align-items:center; gap:6px; flex:none; }
+.document-authorship-modes { display:inline-flex; padding:1px; border:1px solid var(--line); border-radius:7px; }
+.document-panel .document-authorship-bar button { height:22px; padding:0 7px; border:0; border-radius:5px; background:transparent; color:var(--muted); font-size:11px; line-height:22px; }
+.document-panel .document-authorship-modes button[aria-checked="true"] { background:var(--accent-soft); color:var(--ink); }
+.document-panel .document-authorship-only-mine { border:1px solid var(--line) !important; }
+.document-panel .document-authorship-only-mine[aria-pressed="true"] { background:var(--sage-soft); border-color:var(--sage) !important; color:var(--ink); }
+.document-panel .document-authorship-bar button:focus-visible { outline:2px solid var(--focus-ring, var(--accent)); outline-offset:1px; }
+.rich-document-top-tools:has(.document-authorship-bar) { justify-content:space-between; align-items:center; gap:8px; margin-left:40px; }
+
+/* Mine: a rule and a faint wash on what you wrote; a dashed rule where only part is yours. */
+.rich-document-content > :is(.authorship-mine, .authorship-partly-mine, .authorship-blame) { position:relative; }
+.rich-document-content > :is(.authorship-mine, .authorship-partly-mine, .authorship-blame)::before {
+  content:""; position:absolute; top:2px; bottom:2px; left:-9px; width:3px; border-radius:2px; pointer-events:none;
+}
+.rich-document-content > .authorship-mine { background:color-mix(in srgb, var(--sage) 9%, transparent); border-radius:3px; }
+.rich-document-content > .authorship-mine::before { background:var(--sage); }
+.rich-document-content > .authorship-partly-mine::before { background:repeating-linear-gradient(to bottom, var(--sage) 0 4px, transparent 4px 7px); }
+
+/* Blame: a label where each author's run of lines starts. Colour helps; the label always says who. */
+.authorship-label { margin:6px 0 1px; font-size:11px; line-height:1.3; color:var(--muted); user-select:none; cursor:default; }
+.authorship-label::before { content:""; display:inline-block; width:7px; height:7px; margin-right:6px; border-radius:50%; background:var(--authorship-color); vertical-align:1px; }
+.rich-document-content > .authorship-blame::before { background:var(--authorship-color); opacity:.75; }
+.authorship-by-human { --authorship-color:var(--sage); }
+.authorship-by-ai { --authorship-color:#8b6fd6; }
+.authorship-by-agent { --authorship-color:#e07a5f; }
+.authorship-by-import { --authorship-color:#4f8fc0; }
+.authorship-by-system, .authorship-by-unknown { --authorship-color:var(--muted); }
+.rich-document-content > .authorship-blame.authorship-by-unknown::before { background:repeating-linear-gradient(to bottom, var(--muted) 0 4px, transparent 4px 7px); }
+
+/* Only mine: what you didn't write folds to one line. */
+.authorship-is-folded { display:none !important; }
+.authorship-folded { margin:4px 0 4px 34px; font-size:12px; color:var(--muted); user-select:none; }
+.rich-document-content > .authorship-folded { margin-left:0; }
+.authorship-folded::before, .authorship-folded::after { content:"—"; margin:0 6px; }
+
+@media (max-width: 720px) {
+  .rich-document-top-tools:has(.document-authorship-bar) { margin-left:8px; }
+  .document-authorship-summary { white-space:normal; }
+}
+
+/* The Live Preview editor marks each line of the file on its own, in the gutter left of the text. */
+.live-document-host .cm-line.authorship-mine {
+  background:
+    linear-gradient(var(--sage), var(--sage)) 30px 0 / 3px 100% no-repeat,
+    linear-gradient(color-mix(in srgb, var(--sage) 10%, transparent), color-mix(in srgb, var(--sage) 10%, transparent)) 36px 0 / calc(100% - 36px) 100% no-repeat;
+}
+.live-document-host .cm-line.authorship-blame { background: linear-gradient(var(--authorship-color), var(--authorship-color)) 30px 0 / 3px 100% no-repeat; }
+.live-document-host .cm-line.authorship-blame.authorship-by-unknown { background: repeating-linear-gradient(to bottom, var(--muted) 0 4px, transparent 4px 7px) 30px 0 / 3px 100% no-repeat; }
+.live-document-host .authorship-label { padding:0 8px 0 40px; margin:8px 0 1px; }
+.live-document-host .authorship-folded { padding:0 8px 0 40px; margin:6px 0; }
+@media (max-width: 720px) {
+  .live-document-host .cm-line.authorship-mine { background:
+    linear-gradient(var(--sage), var(--sage)) 0 0 / 3px 100% no-repeat,
+    linear-gradient(color-mix(in srgb, var(--sage) 10%, transparent), color-mix(in srgb, var(--sage) 10%, transparent)) 6px 0 / calc(100% - 6px) 100% no-repeat; }
+  .live-document-host .cm-line.authorship-blame { background-position: 0 0; }
+  .live-document-host :is(.authorship-label, .authorship-folded) { padding-left:8px; }
+}

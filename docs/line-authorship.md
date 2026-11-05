@@ -81,3 +81,31 @@ A document's frontmatter may hold `agent-edit: locked` (connected apps can only
 append) or `agent-edit: open` (they may also edit the member's lines). Absent
 means the default: only lines the member didn't write. Only the app sets it;
 no MCP tool can.
+It's set in the document's ••• menu under **Agent editing**: *Only what I
+didn't write* (the default), *Locked* or *Open*.
+
+## In the app
+
+Above a document's text, one line says how much of it the member wrote
+(`62% written by you · 214 lines · last edited by Muse`), next to the
+authorship view:
+
+- **Off**: no marks.
+- **Mine**: the member's lines get a rule and a faint wash.
+- **Blame**: each run of lines by one author gets a label with the author and
+  how long ago it was written (`claude-sonnet · 3d`); the tooltip gives the
+  date. Lines from before tracking began say `earlier`. Colour helps, but the
+  label always names the author.
+- **Only mine** folds every run of lines the member didn't write into one line
+  (`— 12 lines by Ask AI —`). Editing pauses while it's on.
+
+The browser reads `GET /api/vault/authorship?id=<document id>`
+(`server/vault/provenance/appView.mjs`): the document's current sidecar as a
+short hash, author and origin per line. It matches those to the lines on
+screen by their text (`client/src/lib/documentAuthorship.ts`), so lines not
+saved yet show as they'll be recorded: a new line in an untouched AI block is
+the model's, any other is the member's. It reads again a few seconds after
+edits settle. The view and the "Only mine" choice are remembered per device.
+
+Authorship is recorded for cloud vaults only, so documents on a device-only
+vault show no summary. Public maps and search show no per-line authorship.

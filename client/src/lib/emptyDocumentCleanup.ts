@@ -37,7 +37,7 @@ export function isUntouchedEmptyDocument(state: AppState, id: string, draft = ""
   if (conversation.documents?.length) return false;
   if (conversation.vaultFile || conversation.publicTopic) return false;
   if (conversation.linkedConversationIds?.length || conversation.relations?.length) return false;
-  if (conversation.tags?.length || conversation.nodeType || conversation.hiddenFromAI) return false;
+  if (conversation.tags?.length || conversation.nodeType || conversation.hiddenFromAI || conversation.agentEdit) return false;
   if (conversation.notes?.some((note) => note.content.trim() || note.kind !== "standalone")) return false;
   const document = conversation.document;
   if (document && (document.prompts.length || document.generations.length || document.links?.length || document.marginNote)) return false;

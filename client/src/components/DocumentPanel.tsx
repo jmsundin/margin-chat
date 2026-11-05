@@ -26,6 +26,8 @@ import AgentFollowUp, { type AgentProposalAction } from "./AgentFollowUp";
 import DocumentMargin, { type DocumentMarginItem } from "./DocumentMargin";
 import BackToTopButton from "./BackToTopButton";
 import PromptHistory from "./PromptHistory";
+import DocumentAuthorshipBar from "./DocumentAuthorshipBar";
+import { useAuthorshipMode, useDocumentAuthorship } from "../lib/documentAuthorship";
 import type { AgentProgress } from "../lib/useChatStreams";
 import { MobileComposerViewport, useMobileKeyboard } from "./MobileKeyboard";
 import { defaultSelectionDestination } from "../lib/selectionDestination";
@@ -165,6 +167,12 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     setPrompt("");
   }, composerRef);
   useEffect(() => { if (invocation && !mobileKeyboard.mobile) promptRef.current?.focus(); }, [invocation, mobileKeyboard.mobile]);
+  // Who wrote which lines, where the vault records it (§9). Margin notes and file viewers don't show it.
+  const authorshipView = useAuthorshipMode();
+  const generationModels = useMemo(() => new Map(document.generations.map((generation) => [generation.id, generation.modelId])), [document.generations]);
+  const authorship = useDocumentAuthorship(conversation.id, document.blocks, conversation.messages,
+    (block) => (block.generationId && generationModels.get(block.generationId)) || null,
+    editorMounted && !props.compact && !conversation.vaultFile);
   const hasPrompts = document.prompts.length > 0;
   useEffect(() => {
     const body = bodyRef.current;
@@ -539,8 +547,13 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions} onAskDiagram={props.onAskDiagram}
-        toolbarStart={historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
-          modal={mobileKeyboard.mobile}>{renderPromptHistory()}</PromptHistory> : null}
+        authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
+        toolbarStart={historyPrompts.length || authorship?.summary.totalLines ? <>
+          {authorship ? <DocumentAuthorshipBar summary={authorship.summary} mode={authorshipView.mode} onlyMine={authorshipView.onlyMine}
+            onModeChange={authorshipView.setMode} onOnlyMineChange={authorshipView.setOnlyMine}/> : null}
+          {historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
+            modal={mobileKeyboard.mobile}>{renderPromptHistory()}</PromptHistory> : null}
+        </> : null}
         onChangeBlocks={changeBlocks}
         onHistory={historyAction}
         onReorderBlock={(id,beforeId) => {const current=latestDocument.current;const block=current.blocks.find((item)=>item.id===id);if(!block||id===beforeId)return;const blocks=current.blocks.filter((item)=>item.id!==id);const index=blocks.findIndex((item)=>item.id===beforeId);blocks.splice(index<0?blocks.length:index,0,block);change({...current,blocks}, { beforeFocus: { blockId: id, from: 0, to: 0 }, afterFocus: { blockId: id, from: 0, to: 0 } });}}
