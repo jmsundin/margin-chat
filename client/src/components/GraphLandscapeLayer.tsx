@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { GraphViewport } from "../lib/graphInteractions";
+import { groupHulls } from "../lib/mapHulls";
 import "./GraphLandscapeLayer.css";
 
 export interface LandscapePoint {
@@ -8,6 +9,8 @@ export interface LandscapePoint {
   y: number;
   /** Region hue, or null for the neutral color. */
   hue: number | null;
+  /** Region the point belongs to, outlined with its neighbours; -1 or missing for none. */
+  region?: number;
 }
 
 export interface LandscapeLabel {
@@ -102,6 +105,7 @@ export function GraphLandscapeLayer({ points, matched, glowing, emphasized = nul
   onOpenLabel: (id: string) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const hullsRef = useRef<SVGGElement>(null);
   const labelsRef = useRef<HTMLDivElement>(null);
   const cameraRef = useRef(viewport);
   const drawRef = useRef<() => void>(() => {});
@@ -116,6 +120,14 @@ export function GraphLandscapeLayer({ points, matched, glowing, emphasized = nul
     });
     return cells;
   }, [points]);
+
+  // A soft outline around each region's core, behind its points.
+  const hulls = useMemo(() => groupHulls(points.map((point) => ({ x: point.x, y: point.y, hue: point.hue, group: point.region ?? -1 }))), [points]);
+  const moveHulls = useRef<() => void>(() => {});
+  moveHulls.current = () => {
+    const camera = cameraRef.current;
+    hullsRef.current?.setAttribute("transform", `translate(${camera.x} ${camera.y}) scale(${camera.scale})`);
+  };
 
   // Buffers: position, then color and size, rebuilt only when points or highlights change.
   const buffers = useMemo(() => {
@@ -239,15 +251,18 @@ export function GraphLandscapeLayer({ points, matched, glowing, emphasized = nul
   };
   useLayoutEffect(() => { labelSizes.current = new WeakMap(); placeLabels.current(); }, [labels, showLabels, width, height]);
 
+  useLayoutEffect(() => moveHulls.current(), [hulls, showLabels]);
   useEffect(() => {
     cameraRef.current = viewport;
     drawRef.current();
     placeLabels.current();
+    moveHulls.current();
   }, [viewport]);
   useEffect(() => subscribeCamera((next) => {
     cameraRef.current = next;
     drawRef.current();
     placeLabels.current();
+    moveHulls.current();
     setHover(null);
   }), [subscribeCamera]);
 
@@ -298,6 +313,15 @@ export function GraphLandscapeLayer({ points, matched, glowing, emphasized = nul
   }, [hostRef, index, points, onSelect]);
 
   return <div className="graph-landscape">
+    {showLabels && hulls.length ? <svg className="graph-landscape-hulls" aria-hidden="true" width={width} height={height}>
+      <g ref={hullsRef}>
+        {hulls.map((hull) => <g key={hull.group} className="graph-landscape-hull" data-region={hull.group}
+          style={{ "--hull-color": hull.hue === null ? "var(--muted, #888)" : `hsl(${hull.hue} 50% 52%)` } as CSSProperties}>
+          <path className="graph-landscape-hull-rim" d={hull.path} vectorEffect="non-scaling-stroke" />
+          <path className="graph-landscape-hull-fill" d={hull.path} vectorEffect="non-scaling-stroke" />
+        </g>)}
+      </g>
+    </svg> : null}
     <canvas ref={canvasRef} className="graph-landscape-points" aria-hidden="true" style={{ width, height }} data-landscape-points={points.length} />
     <div ref={labelsRef} className="graph-landscape-labels" data-graph-ui="true">
       {labels.map((label) => <button key={label.id} type="button" className="graph-landscape-label" data-x={label.x} data-y={label.y} data-radius={label.radius}

@@ -34,6 +34,17 @@
 .graph-map-focus-line { fill: none; stroke: var(--accent); stroke-width: 2; opacity: .9; pointer-events: none; }
 .conversation-graph-node.is-line-focus { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
 
+/* Hovering or selecting a circle: circles and lines not linked to it fade back. */
+.conversation-graph-node.is-dot, .semantic-map .conversation-graph-node.is-dot { transition: opacity 140ms ease, border-color 150ms ease, box-shadow 150ms ease; }
+.conversation-graph-node.is-dot.is-relation-faded:not(:hover, :focus-within) { opacity: .22; }
+.conversation-graph-edges [data-relation-faded] { opacity: .1; transition: opacity 140ms ease; }
+/* Link lens: lines under the circle show with their names; the rest fade. */
+.map-link-lens { position: absolute; z-index: 6; border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 5%, transparent); pointer-events: none; }
+.conversation-graph-edges .graph-relation-edge.is-in-link-lens text { display: block; }
+.conversation-graph-edges .graph-relation-edge.is-in-link-lens .graph-relation-edge-line { stroke-width: 2.5px; }
+@media (prefers-reduced-motion: reduce) { .conversation-graph-node.is-dot, .semantic-map .conversation-graph-node.is-dot, .conversation-graph-edges [data-relation-faded] { transition: none; } }
+
 .graph-map-display-options { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .graph-map-display-options label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .graph-map-display-options select { flex: 1; height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-bg); color: var(--ink); font: inherit; }
