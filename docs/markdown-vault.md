@@ -120,6 +120,14 @@ The desktop app is local first: the vault is a folder on the computer, as in Obs
 
 Connecting downloads any documents still only in the cloud, then copies the vault into the folder, with progress shown (“Copying your vault into “Name”…”). Desktop apps released before the permission check handler forget access at each launch; they show a single **Allow access to “Name”** button, and edits made before allowing save in the app and reach the folder afterwards. A remembered folder that can't be found at launch says so, offers to choose it again or another folder, and writes nothing. These screens only come before the workspace: a folder that goes missing while the workspace is open, such as on a drive that was unplugged, shows a notice instead and the workspace stays. In the browser the folder stays optional, as before.
 
+Started with `MARGIN_DESKTOP_NATIVE_VAULT=1` (being tested; see docs/desktop-vault-sync.md), the app reads and writes the folder itself rather than through the browser's folder access, and also:
+
+- **Keeps the folder and the cloud vault in step on its own**, with the window in the background and across reloads. Files saved or dropped into the folder by Finder, Explorer or another editor such as Obsidian are taken in once they stop changing; files it doesn't sync are listed in Vault settings and left as they are.
+- **Shows how syncing is going** above the vault switcher: “Synced · 2:07 PM”, “Syncing…”, “Offline — changes saved locally”, “Paused” or “Needs attention”. Clicking it opens Vault settings → Sync, with the folder's path, how many changes are waiting, and **Open vault folder**, **Pause sync** and **Sync now**.
+- **Shows a document's file in Finder or Explorer** from its menu (**Show in Finder**), or from the app's File menu (**Show Document in Finder**, Cmd/Ctrl+Alt+R), which also has **Open Vault Folder** (Cmd/Ctrl+Shift+O).
+
+Files dragged from Finder or Explorer onto the window are added to the vault as Upload files does, in the app as in the browser; with a vault folder they are written into it like any other new document. On a computer, the website offers the desktop app in a bar above the workspace (“Margin Chat works best in the desktop app…”) once a release is published; **Use the browser** puts it away for good, the workspace underneath always works, and links with a query (billing returns, password resets) never offer it.
+
 ## Offline use, export, and limits
 
 Production builds include a service worker that caches only the application shell and built assets. It never caches `/api` responses. HTML is paired with its exact asset generation; an update waits until older controlled tabs close. Development mode does not register this worker. First load must finish online before the application can reopen offline.

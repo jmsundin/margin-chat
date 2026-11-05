@@ -57,6 +57,13 @@ export interface DesktopVaultBridge {
   syncStart?(userId: string, folderId: string): Promise<Answer<DesktopSyncStatus>>;
   syncControl?(userId: string, folderId: string, action: DesktopSyncAction): Promise<Answer<DesktopSyncStatus>>;
   onSyncStatus?(listener: (status: DesktopSyncStatus) => void): () => void;
+  /** Newer apps (phase 4): shows a vault file selected in Finder or Explorer; "" or a missing file opens the folder. */
+  reveal?(id: string, path: string): Promise<Answer<"file" | "folder">>;
+}
+
+/** What the computer's file manager is called, for "Show in Finder" and the like. */
+export function fileManagerName(platform = typeof navigator === "undefined" ? "" : navigator.platform || navigator.userAgent) {
+  return /mac/i.test(platform) ? "Finder" : /win/i.test(platform) ? "Explorer" : "Files";
 }
 
 /** The desktop app's bridge when it syncs the vault itself; null in browsers and older apps. */

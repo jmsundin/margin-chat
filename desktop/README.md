@@ -144,6 +144,18 @@ the page's own, bundled for Node by `bun run desktop:engine` into
 of the vault lives in the app's data folder under `vault-sync/`. Under
 `DEV_URL` the page syncs by itself as on the web.
 
+## Finder and Explorer
+
+With the native vault on, the File menu has **Open Vault Folder**
+(Cmd/Ctrl+Shift+O) and **Show Document in Finder** (Explorer on Windows,
+Cmd/Ctrl+Alt+R), and each document's menu has **Show in Finder**. The page
+asks by vault path (`reveal` in `vaultBridge.mjs`); the main process resolves
+it inside the vault folder, refusing links and paths outside it, and calls
+`shell.showItemInFolder`, or opens the folder when the file isn't there yet.
+Files dragged onto the window go through the page's Upload files, so they are
+written into the vault folder and synced like any other new document; a file
+dropped where the page doesn't take it never navigates the window away.
+
 ## Not done yet
 
 - Signing and notarization: the installers are unsigned. macOS blocks the app

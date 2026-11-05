@@ -88,6 +88,7 @@ import { collectExpiredEmptyDocuments, EMPTY_DOCUMENT_CLEANUP_CHECK_MS, noteDocu
 import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
 import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
+import { fileManagerName } from "./lib/vaultFsDesktop";
 import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
@@ -1704,6 +1705,25 @@ function WorkspaceAppContent({
       document.removeEventListener("keydown", handleViewShortcut, true);
       window.removeEventListener("margin:set-view", handleViewRequest);
     };
+  }, []);
+
+  const [revealNotice, setRevealNotice] = useState<string | null>(null);
+  /** Desktop app with its own vault folder: show a document's file in Finder or Explorer (none: open the folder). */
+  function handleRevealInFolder(id?: string) {
+    const conversation = id ? state.conversations[id] : undefined;
+    void vault.revealInFolder?.(conversation).catch((error: unknown) => {
+      setRevealNotice(error instanceof Error && error.message ? error.message : "The vault folder couldn’t be opened.");
+    });
+  }
+  // The app's File menu: Open Vault Folder, and Show Document in Finder for the document on screen.
+  const handleVaultFolderMenu = useEffectEvent((action: unknown) => {
+    if (action === "open-folder") handleRevealInFolder();
+    else if (action === "reveal-document") handleRevealInFolder(activeConversation.id);
+  });
+  useEffect(() => {
+    const listener = (event: Event) => handleVaultFolderMenu((event as CustomEvent).detail);
+    window.addEventListener("margin:vault-folder", listener);
+    return () => window.removeEventListener("margin:vault-folder", listener);
   }, []);
 
   const toggleSidebarFromShortcut = useEffectEvent(() => handleToggleLeftSidebar());
@@ -4998,6 +5018,7 @@ function WorkspaceAppContent({
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
+        onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined} fileManager={fileManagerName()}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
@@ -5063,6 +5084,7 @@ function WorkspaceAppContent({
       pinned={dock?.pinned} onTogglePin={dock ? () => dock.onTogglePin() : undefined}
       onClose={dock ? () => dock.onClose() : undefined} onRename={handleRenameThread}
       onToggleHiddenFromAI={handleToggleHiddenFromAI}
+      onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined} fileManager={fileManagerName()}
       groups={state.groups} onAssignGroup={handleAssignConversationGroup} />;
   }
 
@@ -5376,6 +5398,7 @@ function WorkspaceAppContent({
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />
           <NotificationToast message={vault.recoveryNotice} onDismiss={vault.dismissRecoveryNotice} duration={120000} />
+          <NotificationToast message={revealNotice} kind="error" onDismiss={() => setRevealNotice(null)} />
           <NotificationToast
             message={chatImportReminder ? "Have chats in ChatGPT? Bring them into Margin Chat to keep working on them here." : null}
             duration={30000}

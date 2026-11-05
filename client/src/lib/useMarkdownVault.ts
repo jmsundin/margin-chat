@@ -833,6 +833,9 @@ export function useMarkdownVault(args: {
 
   // Without cloud sync or a folder, the browser's copy is the only one: say so until the vault is downloaded.
   // A folder counts only while Margin Chat can actually write to it.
+  // Only the desktop app's own folders can be shown in Finder or Explorer; a browser can't open one.
+  const revealFolderId = desktopVaultBridge()?.reveal && localDirectoryStatus.permission === "granted" && !folderUnavailable
+    ? localDirectoryStatus.directoryId : undefined;
   const folderChosen = Boolean(localDirectoryStatus.directoryName) && localDirectoryStatus.permission === "granted" && !folderUnavailable;
   useEffect(() => {
     if (!ready) return;
@@ -1109,6 +1112,18 @@ export function useMarkdownVault(args: {
     async controlDesktopSync(action: "pause" | "resume" | "openFolder") {
       await controlDesktopSync(action);
     },
+    /**
+     * In the desktop app with its own vault folder: shows a document's file selected in Finder or Explorer, or
+     * opens the vault folder (no document, or one not saved to the folder yet). Undefined everywhere else.
+     */
+    revealInFolder: revealFolderId ? async (document?: { id: string; vaultFile?: { path: string } }) => {
+      const bridge = desktopVaultBridge();
+      if (!bridge?.reveal) return;
+      const path = document?.vaultFile?.path
+        ?? (document ? workspaceFromVault(displayedFiles.current).manifest.files.find((record) => record.id === document.id)?.path : undefined)
+        ?? "";
+      await unwrap(bridge.reveal(revealFolderId, path));
+    } : undefined,
     async download() {
       await enqueue(async () => {
         await saveAndRefresh(false);

@@ -12,6 +12,7 @@ const { default: DocumentMenu } = await import("../../client/src/components/Docu
 const { createMainConversation } = await import("../../client/src/initialState");
 const changes: string[][] = [];
 const policies: Array<[string, string | null]> = [];
+const revealed: string[] = [];
 let toggleRename: (enabled: boolean) => void;
 function Host() {
   const [conversation, setConversation] = useState({ ...createMainConversation({ id: "main" }), title: "Research notes" });
@@ -19,6 +20,8 @@ function Host() {
   toggleRename = setEnabled;
   return createElement(DocumentMenu, {
     conversation,
+    onRevealInFolder: enabled ? (id: string) => { revealed.push(id); } : undefined,
+    fileManager: "Explorer",
     onRename: enabled ? (id, title) => { changes.push([id, title]); setConversation((current) => ({ ...current, title })); } : undefined,
     onSetAgentEdit: (id: string, policy: "locked" | "open" | null) => {
       policies.push([id, policy]);
@@ -114,10 +117,17 @@ try {
   assert.deepEqual(policies.at(-1), ["main", null]);
   checks.push("agent editing is chosen in the menu, and only there");
 
+  await click(trigger());
+  await click(button("Show in Explorer"));
+  assert.deepEqual(revealed, ["main"]);
+  assert.equal(browser.document.querySelector('[role="menu"]'), null);
+  checks.push("the desktop app's menu shows the document's file in its folder");
+
   await act(async () => toggleRename(false));
   await click(trigger());
   assert(![...browser.document.querySelectorAll('[role="menuitem"]')].some((node) => node.textContent === "Rename document"));
-  checks.push("read-only menus omit renaming");
+  assert(![...browser.document.querySelectorAll('[role="menuitem"]')].some((node) => node.textContent?.startsWith("Show in")));
+  checks.push("read-only menus omit renaming, and browsers have no Show in Finder");
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

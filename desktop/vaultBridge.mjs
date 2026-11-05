@@ -10,7 +10,7 @@ export const VAULT_CHANNEL = "margin-vault";
 export const VAULT_CHANGED_CHANNEL = "margin-vault-changed";
 /** What the page can call; preload.cjs exposes the same list. */
 export const VAULT_OPERATIONS = ["selection", "choose", "createVault", "connect", "forget", "list", "stat", "read", "writeAtomic", "move", "delete", "availability", "watch", "unwatch",
-  "syncStatus", "syncStart", "syncControl"];
+  "syncStatus", "syncStart", "syncControl", "reveal"];
 /** Operations that change the folder's files; the app's sync takes them to the cloud. */
 const FOLDER_WRITES = new Set(["writeAtomic", "move", "delete"]);
 
@@ -117,8 +117,26 @@ export function createVaultWatchers({ folders, watcherOptions = {} }) {
   };
 }
 
+/**
+ * Shows a vault file in Finder or Explorer, selected in its folder; "" (or a file that isn't there any more)
+ * opens the vault folder itself.
+ * @param {{ showItemInFolder: (fullPath: string) => void, openPath: (fullPath: string) => Promise<unknown> }} shell
+ */
+export async function revealInFolder(folders, shell, id, relativePath) {
+  const fs = typeof id === "string" ? await folders.fs(id) : null;
+  if (!fs) throw Object.assign(new Error("Choose the vault folder again."), { name: "NotFoundError" });
+  if (typeof relativePath !== "string") throw new TypeError("Not a path inside the vault folder.");
+  if (relativePath && await fs.stat(relativePath)) {
+    shell.showItemInFolder(await fs.absolutePath(relativePath));
+    return "file";
+  }
+  if (await fs.availability() !== "available") throw Object.assign(new Error(`“${fs.name}” can't be found.`), { name: "NotFoundError" });
+  await shell.openPath(fs.root);
+  return "folder";
+}
+
 /** Registers the bridge's handler; only the app's own pages get answers. */
-export function registerVaultBridge({ ipcMain, folders, isAppUrl, watchers = createVaultWatchers({ folders }), sync = null }) {
+export function registerVaultBridge({ ipcMain, folders, isAppUrl, watchers = createVaultWatchers({ folders }), sync = null, shell = null }) {
   ipcMain.handle(VAULT_CHANNEL, async (event, operation, args) => {
     const url = event.senderFrame?.url ?? "";
     if (!isAppUrl(url)) return { ok: false, error: { name: "NotAllowedError", message: "Only Margin Chat's own pages can use the vault folder." } };
@@ -130,6 +148,15 @@ export function registerVaultBridge({ ipcMain, folders, isAppUrl, watchers = cre
         if (operation === "syncStatus") return { ok: true, value: await sync.status(userId, folderId) };
         if (operation === "syncStart") return { ok: true, value: await sync.start(userId, folderId) };
         return { ok: true, value: await sync.control(userId, folderId, action) };
+      } catch (error) {
+        return { ok: false, error: serializeError(error) };
+      }
+    }
+    if (operation === "reveal") {
+      try {
+        if (!shell) throw Object.assign(new Error("This copy of the app can't show files in their folder."), { name: "NotSupportedError" });
+        const [id, relativePath] = Array.isArray(args) ? args : [];
+        return { ok: true, value: await revealInFolder(folders, shell, id, relativePath) };
       } catch (error) {
         return { ok: false, error: serializeError(error) };
       }
