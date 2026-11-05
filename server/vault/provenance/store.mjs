@@ -22,6 +22,9 @@ const digest = (value) => createHash("sha256").update(value).digest("hex");
 
 export const ownerActor = (userId) => ({ type: "human", id: String(userId), label: "You" });
 
+// How long to wait, in turn, for a parent sidecar another server is still writing.
+const PARENT_WAITS = [150, 300, 600];
+
 export function createProvenanceStore({ storage, prefix, database, readFile }) {
   const base = (userId, documentId) => `${prefix(userId)}/provenance/${digest(String(documentId))}`;
   const headKey = (userId, documentId) => `${base(userId, documentId)}/head.json`;
@@ -79,7 +82,25 @@ export function createProvenanceStore({ storage, prefix, database, readFile }) {
    * the revision; `context.authorFor` decides who wrote its new lines (by
    * default the app's rule: AI blocks are the model's, the rest are Jon's).
    */
-  async function recordFile(userId, { path, content, baseRevision, revision, vaultRevision }, context) {
+  /**
+   * The sidecar of the save this one was built on, when the document's head
+   * hasn't reached it yet: another server may still be recording it (saves
+   * record after responding). Waits briefly rather than reading the parent's
+   * wrappers, which would mark lines it can't place as unknown.
+   */
+  async function awaitParent(userId, documentId, baseRevision, parentVaultRevision, head) {
+    if (!baseRevision || !Number.isSafeInteger(parentVaultRevision)) return null;
+    if (head && head.vaultRevision >= parentVaultRevision) return null;
+    const key = `${parentVaultRevision}-${baseRevision}`;
+    for (let attempt = 0; attempt <= PARENT_WAITS.length; attempt += 1) {
+      const sidecar = await readSidecar(userId, documentId, key).catch(() => null);
+      if (sidecar) return sidecar;
+      if (attempt < PARENT_WAITS.length) await new Promise((resolve) => setTimeout(resolve, PARENT_WAITS[attempt]));
+    }
+    return null;
+  }
+
+  async function recordFile(userId, { path, content, baseRevision, revision, vaultRevision, parentVaultRevision = null }, context) {
     const file = documentLines(path, content);
     if (!file) return null;
     const owner = ownerActor(userId);
@@ -92,6 +113,14 @@ export function createProvenanceStore({ storage, prefix, database, readFile }) {
     // A new path for a known document id is a rename or a re-created file: it continues that document.
     if (head && (head.revisionId === baseRevision || baseRevision === null)) {
       const sidecar = await readSidecar(userId, file.documentId, head.revisionKey);
+      if (sidecar) {
+        parent = sidecar.blocks;
+        parentRevisionId = sidecar.revisionId;
+        parentRevisionKey = sidecar.revisionKey;
+      }
+    }
+    if (!parent) {
+      const sidecar = await awaitParent(userId, file.documentId, baseRevision, parentVaultRevision, head);
       if (sidecar) {
         parent = sidecar.blocks;
         parentRevisionId = sidecar.revisionId;

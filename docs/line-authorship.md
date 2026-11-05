@@ -39,6 +39,25 @@ parent revision with a Myers line diff over SHA-256 line hashes:
   block), and the member for everything else. Editing one word of an AI line
   makes that line the member's; the rest of the block keeps its author.
 
+### Merges and concurrent saves
+
+A device that saved against an older revision merges as it always has
+(`client/src/lib/vaultMerge.ts`) and saves the result on top of the newer
+revision. The forward pass then attributes the merge like any save. A line
+that survived from the other side, such as an agent's edit, is already in the
+parent and keeps its author. A line from the device's side is new and belongs
+to the member. When both sides changed one line, the merged line is the
+agent's only if it is the agent's text exactly. If any of the member's words
+survive, it is a new line and the member's. `tests/line-authorship-merge.test.ts`
+covers both cases (spec §8, test 10).
+
+Saves record authorship after responding. The next save can reach another
+server before the previous save's sidecar is written. A save whose parent
+sidecar isn't there yet waits briefly for it (up to about a second), using the
+revision at which the manifest last changed that file. If the sidecar still
+isn't there, the save reads the parent's wrappers, so the member's lines and
+lines nobody can place stay protected.
+
 The `<ai>`, `<user>` and `<ai edited-by="user">` wrappers are unchanged. They
 summarize a block's lines: all the member's → `<user>`, none → `<ai>`, both → mixed.
 
