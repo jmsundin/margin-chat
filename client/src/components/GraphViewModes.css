@@ -5,7 +5,8 @@
 .graph-view-mode-select select { max-width: 190px; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-bg); color: var(--ink); font: inherit; padding: 5px 22px 5px 7px; }
 .graph-view-purpose { color: var(--muted); font-size: .72rem; margin: 0; flex: 1 1 260px; line-height: 1.45; }
 .graph-mode-panel { position: absolute; inset: 0; overflow: auto; background: var(--panel-bg); color: var(--ink); cursor: auto; touch-action: pan-x pan-y; container-type: inline-size; }
-.semantic-map .conversation-graph-viewport.is-analysis-view { background-image: none; touch-action: auto; }
+.semantic-map .conversation-graph-viewport.is-analysis-view { touch-action: auto; }
+.semantic-map .conversation-graph-viewport.is-analysis-view > .conversation-graph-grid { display: none; }
 .graph-mode-context { border-bottom: 1px solid var(--line); padding: 7px 14px; color: var(--muted); background: var(--panel-bg); font-size: .75rem; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .graph-mode-context button { border: 1px solid var(--line); background: var(--panel-bg); color: var(--ink); padding: 4px 8px; border-radius: 6px; cursor: pointer; }
 .semantic-map[data-view-mode="network"] .conversation-graph-node.is-group-spread .conversation-graph-node-move-handle { display: flex; }
