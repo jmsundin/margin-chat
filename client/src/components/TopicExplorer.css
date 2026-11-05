@@ -167,10 +167,11 @@
 .topic-explorer-documents > button { display: inline-flex; align-items: center; gap: 5px; min-height: 34px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); font-size: .78rem; white-space: nowrap; }
 .topic-explorer-documents > button:hover, .topic-explorer-documents > button[aria-expanded="true"] { background: var(--accent-soft); }
 .topic-explorer-documents > button svg { width: 15px; height: 15px; }
-.topic-explorer-documents-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: min(300px, calc(100vw - 24px)); padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 8px 24px #0003; }
+.topic-explorer-documents-list { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: min(300px, calc(100vw - 24px)); padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(var(--panel-strong, var(--panel-bg)), var(--panel-strong, var(--panel-bg))), var(--bg); box-shadow: 0 8px 24px #0003; }
 .topic-explorer-documents-list input { width: 100%; box-sizing: border-box; min-height: 34px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--panel-bg); color: var(--ink); font: inherit; font-size: .8rem; }
-.topic-explorer-documents-list > div { max-height: 300px; overflow: auto; margin-top: 5px; display: flex; flex-direction: column; }
-.topic-explorer-documents-list > div button { padding: 7px 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topic-explorer-documents-list > div { max-height: min(300px, 60vh); overflow: auto; overscroll-behavior: contain; margin-top: 5px; display: flex; flex-direction: column; }
+/* Rows keep their height: a flex child with overflow hidden can otherwise shrink to nothing in the scroll box. */
+.topic-explorer-documents-list > div button { flex: 0 0 auto; display: block; width: 100%; min-height: 32px; line-height: 1.35; padding: 7px 8px; color: var(--ink); border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .topic-explorer-documents-list > div button:hover, .topic-explorer-documents-list > div button[aria-pressed="true"] { background: var(--accent-soft); }
 .topic-explorer-documents-list p { margin: 8px; color: var(--muted); font-size: .78rem; }
 
@@ -179,6 +180,8 @@
   .topic-explorer-pane, .topic-explorer-pane.is-document { width: auto; flex: 0 0 52%; border-right: 0; border-bottom: 1px solid var(--line); resize: none; }
   .topic-explorer-body.has-panes > .topic-explorer-pane ~ .topic-explorer-pane { display: none; }
   .topic-explorer-documents > button span { display: none; }
+  .topic-explorer-documents-list > div button { min-height: 40px; font-size: .88rem; }
+  .topic-explorer-documents-list input { font-size: 16px; }
   .wikipedia-selection-toolbar .selection-toolbar-button:not(.is-ai) span { display: none; }
 }
 
