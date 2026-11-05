@@ -27,7 +27,27 @@ export const PROPOSE_DOCUMENT_DEFINITION = {
   }, required: ["title", "content", "parent_id", "summary"], additionalProperties: false },
 };
 
-export const PROPOSAL_TOOL_DEFINITIONS = [PROPOSE_EDIT_DEFINITION, PROPOSE_DOCUMENT_DEFINITION];
+export const PROPOSE_ROADMAP_DEFINITION = {
+  name: "propose_roadmap",
+  description: "Draft a learning roadmap for the user to approve: ordered stages of steps, each step pointing at one of the user's own documents that teaches it, with the steps it needs first. Search the vault before calling this and cite only documents your tools returned. Nothing is saved until the user approves it; approving adds the stages and steps to the roadmap document.",
+  parameters: { type: "object", properties: {
+    roadmap_id: documentRef("The roadmap document the stages are added to"),
+    goal: { type: "string", description: "What the roadmap is for, in a few words, such as \"Understand the biology of aging\"." },
+    stages: { type: "array", description: "Stages in learning order, from where to start to the most advanced.", items: { type: "object", properties: {
+      title: { type: "string", description: "A short stage name." },
+      steps: { type: "array", description: "The stage's steps, in a sensible order.", items: { type: "object", properties: {
+        key: { type: "string", description: "A short ID for this step, unique in the roadmap, used in needs." },
+        document_id: { type: "string", description: "The document that teaches this step: an ID from search_vault, read_document or list_related." },
+        title: { type: "string", description: "A short name for the step, or an empty string to use the document's title." },
+        why: { type: "string", description: "One short line on what the step covers or why it is here." },
+        needs: { type: "array", items: { type: "string" }, description: "Keys of steps that must come first. Only real prerequisites; never a loop." },
+      }, required: ["key", "document_id", "title", "why", "needs"], additionalProperties: false } },
+    }, required: ["title", "steps"], additionalProperties: false } },
+    summary: { type: "string", description: "One short line on the roadmap, shown to the user beside it." },
+  }, required: ["roadmap_id", "goal", "stages", "summary"], additionalProperties: false },
+};
+
+export const PROPOSAL_TOOL_DEFINITIONS = [PROPOSE_EDIT_DEFINITION, PROPOSE_DOCUMENT_DEFINITION, PROPOSE_ROADMAP_DEFINITION];
 const NAMES = new Set(PROPOSAL_TOOL_DEFINITIONS.map((tool) => tool.name));
 
 const MAX_PROPOSALS = 8;
@@ -36,6 +56,9 @@ const REPLACE_CHARACTERS = 20_000;
 const CONTENT_CHARACTERS = 40_000;
 /** Text one run may propose across all its proposals, so a saved answer stays a reasonable size. */
 const RUN_CHARACTERS = 80_000;
+const ROADMAP_STAGES = 12;
+const ROADMAP_STEPS = 60;
+const STEP_KEY = /^[A-Za-z0-9_.-]{1,60}$/u;
 const NOTE = "Shown to the user under your answer for approval; nothing has changed yet.";
 
 const line = (value, maximum) => {
@@ -113,9 +136,59 @@ export function createProposalTools({ chatRequest, snapshots, reachable = () => 
     return add({ kind: "create", parentId, parentTitle: line(titleOf(parentId), 300), title, content, summary: line(args.summary, 200) }, content.length);
   }
 
+  function roadmap(args) {
+    const roadmapId = resolve(args.roadmap_id);
+    const goal = line(args.goal, 200);
+    if (!allowed(roadmapId)) return { ok: false, error: "That roadmap document isn't one you can reach. Use an ID from your tools, or an empty string for the document in the user's message." };
+    if (!goal) return { ok: false, error: "Say in a few words what the roadmap is for, in goal." };
+    const inputStages = Array.isArray(args.stages) ? args.stages : [];
+    if (!inputStages.length || inputStages.length > ROADMAP_STAGES) return { ok: false, error: `Give between 1 and ${ROADMAP_STAGES} stages.` };
+    const keys = new Set();
+    const stages = [];
+    let size = goal.length;
+    for (const input of inputStages) {
+      const title = line(input?.title, 200);
+      if (!title) return { ok: false, error: "Every stage needs a title." };
+      const steps = [];
+      for (const step of Array.isArray(input?.steps) ? input.steps : []) {
+        const key = String(step?.key ?? "").trim();
+        if (!STEP_KEY.test(key)) return { ok: false, error: `Step keys are short IDs of letters, digits, dots, dashes or underscores; "${line(key, 40)}" isn't one.` };
+        if (keys.has(key)) return { ok: false, error: `The key "${key}" is used twice. Give every step its own key.` };
+        keys.add(key);
+        const documentId = String(step?.document_id ?? "").trim();
+        // A step cites the user's own material, so only documents the run could read.
+        if (!documentId || !allowed(documentId) || documentId === roadmapId) return { ok: false, error: `Step "${key}" doesn't point at a document you can reach. Cite a document ID your tools returned, other than the roadmap itself.` };
+        const stepTitle = line(step?.title, 200);
+        const why = line(step?.why, 300);
+        const needs = [...new Set((Array.isArray(step?.needs) ? step.needs : []).map((value) => String(value).trim()).filter(Boolean))];
+        size += stepTitle.length + why.length + 80;
+        steps.push({ key, documentId, ...(stepTitle ? { title: stepTitle } : {}), ...(why ? { why } : {}), needs });
+      }
+      if (!steps.length) return { ok: false, error: `The stage "${title}" has no steps. Give each stage at least one step, or leave it out.` };
+      stages.push({ title, steps });
+    }
+    if (keys.size > ROADMAP_STEPS) return { ok: false, error: `Keep a roadmap to ${ROADMAP_STEPS} steps or fewer.` };
+    const all = stages.flatMap((stage) => stage.steps);
+    for (const step of all) {
+      const unknown = step.needs.find((key) => !keys.has(key) || key === step.key);
+      if (unknown) return { ok: false, error: `Step "${step.key}" needs "${unknown}", which isn't another step's key.` };
+    }
+    // Prerequisites must not loop: peel off steps whose needs are all placed.
+    const placed = new Set();
+    for (let progress = true; progress;) {
+      progress = false;
+      for (const step of all) if (!placed.has(step.key) && step.needs.every((key) => placed.has(key))) { placed.add(step.key); progress = true; }
+    }
+    if (placed.size < all.length) {
+      const stuck = all.filter((step) => !placed.has(step.key)).map((step) => step.key).slice(0, 6);
+      return { ok: false, error: `These steps' needs loop back on each other: ${stuck.join(", ")}. A roadmap can't loop; remove one of the needs.` };
+    }
+    return add({ kind: "roadmap", roadmapId, roadmapTitle: line(titleOf(roadmapId), 300), goal, stages, summary: line(args.summary, 200) }, size);
+  }
+
   return {
     has: (name) => NAMES.has(name),
-    run: (name, args = {}) => name === PROPOSE_EDIT_DEFINITION.name ? edit(args) : create(args),
+    run: (name, args = {}) => name === PROPOSE_EDIT_DEFINITION.name ? edit(args) : name === PROPOSE_ROADMAP_DEFINITION.name ? roadmap(args) : create(args),
     list: () => proposals.map((proposal) => ({ ...proposal })),
   };
 }
@@ -125,6 +198,11 @@ const quoted = (value) => `“${line(value, 80) || "Untitled"}”`;
 /** A run-log line for a proposal; never includes the proposed text. */
 export function describeProposalStep(name, args = {}, output = {}) {
   if (output?.ok === false) return { label: name === PROPOSE_EDIT_DEFINITION.name ? "Couldn't propose an edit" : "Couldn't propose a new document", detail: line(output.error, 160) || null, ok: false };
+  if (name === PROPOSE_ROADMAP_DEFINITION.name) {
+    if (output?.ok === false) return { label: "Couldn't propose a roadmap", detail: line(output.error, 160) || null, ok: false };
+    const steps = (Array.isArray(args.stages) ? args.stages : []).reduce((sum, stage) => sum + (Array.isArray(stage?.steps) ? stage.steps.length : 0), 0);
+    return { label: `Proposed a roadmap for ${quoted(args.goal)}`, detail: `${steps} step${steps === 1 ? "" : "s"} for you to approve`, ok: true };
+  }
   return name === PROPOSE_EDIT_DEFINITION.name
     ? { label: "Proposed an edit for you to approve", detail: line(args.summary, 160) || null, ok: true }
     : { label: `Proposed a new document ${quoted(args.title)}`, detail: line(args.summary, 160) || null, ok: true };

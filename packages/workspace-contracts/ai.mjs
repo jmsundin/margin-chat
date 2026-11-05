@@ -163,6 +163,19 @@ function proposalsOf(input) {
       return [{ ...base, kind: "create", parentId: idText(proposal.parentId), parentTitle: text(proposal.parentTitle, 300), title: text(proposal.title, 200),
         content: proposal.content, ...(idText(proposal.createdId) ? { createdId: idText(proposal.createdId) } : {}) }];
     }
+    if (proposal.kind === "roadmap" && idText(proposal.roadmapId) && text(proposal.goal, 200).trim() && Array.isArray(proposal.stages)) {
+      const stages = proposal.stages.filter(record).slice(0, 12).map((stage) => ({ title: text(stage.title, 200),
+        steps: (Array.isArray(stage.steps) ? stage.steps : []).filter(record).slice(0, 60).flatMap((step) => {
+          const key = text(step.key, 60).trim();
+          const documentId = idText(step.documentId);
+          if (!key || !documentId) return [];
+          return [{ key, documentId, ...(text(step.title, 200).trim() ? { title: text(step.title, 200) } : {}),
+            ...(text(step.why, 300).trim() ? { why: text(step.why, 300) } : {}),
+            needs: (Array.isArray(step.needs) ? step.needs : []).map((value) => text(value, 60).trim()).filter(Boolean).slice(0, 60) }];
+        }) })).filter((stage) => stage.title.trim() && stage.steps.length);
+      if (stages.length) return [{ ...base, kind: "roadmap", roadmapId: idText(proposal.roadmapId), roadmapTitle: text(proposal.roadmapTitle, 300),
+        goal: text(proposal.goal, 200), stages }];
+    }
     return [];
   }).slice(0, 8);
   return proposals.length ? { proposals } : {};

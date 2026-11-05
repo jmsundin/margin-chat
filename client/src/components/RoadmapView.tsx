@@ -17,6 +17,10 @@ export interface RoadmapViewProps {
   cloudDocuments?: { id: string; title: string }[];
   /** Download steps' documents that are still only in the cloud. */
   onLoadTargets?: (ids: string[]) => void;
+  /** Ask AI to draft stages and steps from the vault; returns why it couldn't start, or null. */
+  onDraft?: (goal: string) => string | null;
+  /** AI is writing in this document. */
+  drafting?: boolean;
 }
 
 const STATUSES: RoadmapStatus[] = ["not-started", "learning", "done", "skipped"];
@@ -39,13 +43,15 @@ function StatusMark({ status }: { status: RoadmapStatus }) {
   </svg>;
 }
 
-export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets }: RoadmapViewProps) {
+export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets, onDraft, drafting = false }: RoadmapViewProps) {
   const roadmap = useMemo(() => getRoadmap(conversation), [conversation]);
   const graph = useMemo(() => buildRoadmapGraph(roadmap, conversations), [roadmap, conversations]);
   const [editing, setEditing] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [draftOpen, setDraftOpen] = useState(false);
+  const [goal, setGoal] = useState("");
   const [edges, setEdges] = useState<EdgePath[]>([]);
   const spineRef = useRef<HTMLDivElement>(null);
   const selected = selectedId ? graph.nodesById.get(selectedId) ?? null : null;
@@ -140,10 +146,27 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
         <span className="roadmap-bar" aria-hidden="true"><span style={{ width: `${percent(graph.finished, graph.total)}%` }} /></span>
         {graph.nextUp.size ? <span className="roadmap-progress-next">{graph.nextUp.size} next up</span> : null}
       </div>
+      {onDraft && !draftOpen ? <button type="button" className="roadmap-edit-toggle" disabled={drafting}
+        title="AI searches your documents and proposes stages and steps for you to approve" onClick={() => { setDraftOpen(true); setMessage(null); }}>
+        {drafting ? "Drafting…" : "Draft with AI"}
+      </button> : null}
       {!empty ? <button type="button" className="roadmap-edit-toggle" aria-pressed={editing} onClick={() => { setEditing(!editing); setMessage(null); }}>
         {editing ? "Done" : "Edit"}
       </button> : null}
     </header>
+    {draftOpen && onDraft ? <form className="roadmap-draft" onSubmit={(event) => {
+      event.preventDefault();
+      if (!goal.trim()) return;
+      const error = onDraft(goal.trim());
+      setMessage(error);
+      if (!error) { setDraftOpen(false); setGoal(""); }
+    }}>
+      <input autoFocus value={goal} maxLength={200} aria-label="What do you want to learn?" placeholder="What do you want to learn?"
+        onChange={(event) => setGoal(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setDraftOpen(false); }} />
+      <button type="submit" disabled={!goal.trim()}>Draft</button>
+      <button type="button" onClick={() => setDraftOpen(false)}>Cancel</button>
+      <p>AI searches your documents and proposes stages and steps below the roadmap. Nothing is added until you approve it.</p>
+    </form> : null}
     {message ? <p className="roadmap-message" role="alert">{message}<button type="button" aria-label="Dismiss" onClick={() => setMessage(null)}>×</button></p> : null}
     {graph.cycleEdges.length ? <p className="roadmap-message" role="note">
       Some prerequisites loop back on each other, so {graph.cycleEdges.length === 1 ? "one is" : `${graph.cycleEdges.length} are`} ignored:{" "}

@@ -111,7 +111,7 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
-import { applyRoadmapChange, makeRoadmapDocument, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
+import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import RoadmapView from "./components/RoadmapView";
 import type { DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
@@ -2534,7 +2534,7 @@ function WorkspaceAppContent({
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
       request: async (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
-        ai: withJevConsent(target.ai, jevEnabled), expectedUserId: user.id,
+        ai: withJevConsent(request.agent ? { ...normalizeAISettings(target.ai), agent: true } : target.ai, jevEnabled), expectedUserId: user.id,
         conversation: await conversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
         modelId: target.modelId, serviceId: target.serviceId, onDelta, onMetadata, signal, acceptsDocuments: true,
         // Agent mode may ask a question or draft changes; both are shown under the reply in this document.
@@ -2709,6 +2709,16 @@ function WorkspaceAppContent({
       return null;
     }
     if (action === "undo") return "This change can't be undone from here.";
+    if (proposal.kind === "roadmap") {
+      if (!currentStateRef.current.conversations[proposal.roadmapId]) return `Open \u201c${proposal.roadmapTitle || "the roadmap"}\u201d first, then try again.`;
+      const ids = roadmapDraftIds(proposal);
+      const cloudIds = new Set((vault.cloudDocuments ?? []).map((entry) => entry.id));
+      const updatedAt = new Date().toISOString();
+      const preview = applyRoadmapDraft(currentStateRef.current, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) });
+      if (!preview?.added) return "None of the documents this roadmap cites are in your vault any more.";
+      commit((current) => applyRoadmapDraft(current, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) })?.state ?? null, { status: "approved" });
+      return null;
+    }
     if (!currentStateRef.current.conversations[proposal.parentId]) return `Open \u201c${proposal.parentTitle || "the parent document"}\u201d first, then try again.`;
     // IDs are made once, so the state update gives the same document however often it runs.
     const ids: Record<string, string> = { conversation: createId("conversation"), block: createId("block"), anchor: createId("anchor") };
@@ -4622,6 +4632,21 @@ function WorkspaceAppContent({
     return null;
   }
 
+  /** Ask Agent mode to draft this roadmap from the vault; it comes back as a proposal under the reply. */
+  function handleDraftRoadmap(conversationId: string, goal: string): string | null {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation || !goal.trim()) return null;
+    if (isHiddenFromAI(conversation)) return HIDDEN_FROM_AI_MESSAGE;
+    if (!supportsAgentMode(conversation.serviceId)) return "Drafting a roadmap needs Agent mode. Choose a model that supports it in Ask AI, then try again.";
+    if (chatExecutions.has(conversationId)) return "AI is still writing in this document. Try again when it finishes.";
+    const blocks = getEditableDocument(conversation).blocks;
+    const last = blocks.at(-1);
+    if (!last) return "This document can't take an AI reply yet. Type something in it, then try again.";
+    handleDocumentSubmit(conversationId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", agent: true,
+      prompt: `Draft a learning roadmap for: ${goal.trim()}\n\nSearch my vault for documents that teach this, then use propose_roadmap to lay them out in stages with their prerequisites. Add the stages to this roadmap document.` });
+    return null;
+  }
+
   function handleToggleRoadmap(conversationId: string) {
     setState((current) => {
       const conversation = current.conversations[conversationId];
@@ -5059,6 +5084,7 @@ function WorkspaceAppContent({
       marginNotes={getMarginItems(conversation, view)} marginWidth={getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       activeMarginNoteId={activeConversation.id}
       roadmap={conversation.nodeType === "roadmap" ? <RoadmapView conversation={conversation} conversations={state.conversations}
+        drafting={Boolean(pendingConversationIds[conversation.id])} onDraft={(goal) => handleDraftRoadmap(conversation.id, goal)}
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
         onChange={(change) => handleRoadmapChange(conversation.id, change)}
         onOpen={(target) => handleNavigateDocumentConnector({ conversationId: target.docId, blockId: target.blockId })} /> : undefined}
@@ -5094,7 +5120,7 @@ function WorkspaceAppContent({
       onAcceptVersion={(id) => handleAcceptDocumentVersion(conversation.id,id)} onUndoInsertion={(id) => handleUndoDocumentInsertion(conversation.id,id)}
       onCreateChildNodes={(proposals) => handleCreateAIChildNodes(conversation.id, proposals)}
       onAgentProposal={(messageId, proposalId, action) => handleAgentProposal(conversation.id, messageId, proposalId, action)}
-      documentTitle={(id) => state.conversations[id]?.title}
+      documentTitle={(id) => state.conversations[id]?.title ?? vault.cloudDocuments?.find((entry) => entry.id === id)?.title}
       registerPanelRef={(element) => {(view === "graph" ? graphPanelRefs : documentPanelRefs).current[conversation.id]=element;}}
       registerAnchorRef={(id,element) => {if (view === "chat") anchorRefs.current[id]=element;}}
       registerBranchOriginRef={(element) => {if (view === "chat") branchOriginRefs.current[conversation.id]=element;}}
