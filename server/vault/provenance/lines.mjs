@@ -127,7 +127,8 @@ export function documentLines(path, source) {
   if (!conversation) return null;
   const plain = readFrontmatterValue(source, "margin-chat") === undefined;
   const policy = readAgentEditPolicy(source);
-  const base = { documentId: record.id, path, plain, agentEdit: policy };
+  // A document whose text was extracted from an uploaded file or PDF renders that file; it isn't edited as text.
+  const base = { documentId: record.id, path, plain, agentEdit: policy, hasOriginal: (conversation.documents ?? []).length > 0 };
   const document = conversation.document;
   if (document && Array.isArray(document.blocks)) {
     const generations = new Map((document.generations ?? []).map((generation) => [generation.id, generation]));

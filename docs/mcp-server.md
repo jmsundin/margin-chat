@@ -27,23 +27,62 @@ is at [marginchat.com/connect](https://www.marginchat.com/connect)
 
 | Tool | What it does |
 | --- | --- |
-| `search_vault` | Searches by title, words and meaning across documents, notes, chats, uploads and vault PDFs (`server/chat/agent/vaultTools.mjs`). |
-| `read_document` | Reads one item by `document_id`. Long text is cut at 60,000 characters. |
+| `search_vault` | Searches by title, words and meaning across documents, notes, chats, uploads and vault PDFs (`server/chat/agent/vaultTools.mjs`). Each result with recorded authorship carries `authorship: { humanLines, totalLines, lastActor }`. Optional `author` filters by those totals: `mine` (at least one line by the member), `not-mine` (none), `ai`, `agent`, `import` or `any` (the default). The filter applies to the 20 results returned. |
+| `read_document` | Reads one item by `document_id`. Long text is cut at 60,000 characters. With `include_authorship: true` a document or note also returns its `revision_id`, `agent_edit` policy, totals and `blocks`: each block's lines with `text`, `sha256`, `author` and `origin_revision_id`. Authorship stops after about 60,000 characters of lines and says `authorship_truncated: true`; the read itself never fails for it. Without the flag, the answer is unchanged. |
+| `get_document_blame` | Who wrote each line of a document or note (optionally one `block_id`): per line `sha256`, `author: { type, label }`, `origin_revision_id` and `origin_at`, plus totals by author type. `inferred: true` means no sidecar was recorded yet and authors were read from the block wrappers. |
 | `list_related` | Lists the item's parent, children, typed relations and links in both directions. |
 | `search` / `fetch` | The same search and read in the shapes ChatGPT's connectors and deep research expect. |
 
 ## Writing tools (tokens that can add documents)
 
 When a member makes a token, they choose whether it **Can create documents and
-add to them**. That choice is the token's `write` scope. Agents only add: nothing
-is ever replaced or deleted.
+add to them**. That choice is the token's `write` scope. A write token can add,
+and can edit lines the member didn't write. It can never change, move or delete
+the member's own lines (see [line authorship](line-authorship.md)), and no tool
+deletes or renames a document, changes a title or frontmatter, or changes a
+document's agent-edit policy.
 
 | Tool | What it does |
 | --- | --- |
 | `create_document` | Writes a new plain Markdown file at the vault root, named after the title (`Title.md`, then `Title 2.md` and so on). Its frontmatter holds `margin-chat-id: mcp-<uuid>`, `title`, `created`, `updated` and `created-by` (the token's name). Optional `relations` add typed links such as `part-of: ["[[Launch plan]]"]`, which show on the map. |
 | `append_to_document` | Adds Markdown at the end of a document, as a new paragraph block after its last block, or at the end of a note or plain file. Chats are refused. |
+| `update_document` | Line edits to a document or note: `replace_lines`, `insert_lines`, `delete_lines` (each naming a `block_id` and lines numbered as in `base_revision_id`, with `expected_sha256` for every line replaced or deleted) and `append_block`. Up to 50 operations, each `new_text` at most 20,000 characters, applied together or not at all. Optional `reason` (280 characters) is kept with the revision. There is no whole-document replace. |
 
-Both tools save with the vault's normal commit (`server/mcp/writeTools.mjs`)
+### Updating a document
+
+The intended workflow is **read → blame → patch lines that aren't the
+member's → update with preconditions**: `read_document` with
+`include_authorship` (or `get_document_blame`), then `update_document` with the
+`revision_id` and line hashes just read.
+
+The server (`server/mcp/authorshipTools.mjs`, `server/vault/provenance/update.mjs`)
+checks, in order, and refuses the whole update at the first problem, saving nothing:
+
+| Code | When |
+| --- | --- |
+| `UNSUPPORTED_KIND` (400) | A chat transcript, or a document made from an uploaded file or PDF. |
+| `DOCUMENT_LOCKED` (403) | The member set `agent-edit: locked`. Appending still works. |
+| `STALE_REVISION` (409) | `base_revision_id` isn't the current revision (`current_revision_id` says what is). |
+| `LINE_CHANGED` (409) | A line's `expected_sha256` doesn't match. |
+| `OVERLAPPING_OPERATIONS` (400) | Two operations touch the same lines of one block. |
+| `PROTECTED_AUTHORSHIP` (403) | An operation replaces, deletes or moves a line by the member or by Unknown. `protected_lines` lists up to 10 as `{ block_id, line, author_label, snippet }`. |
+
+Inserting lines between the member's lines is allowed: insertion isn't
+modification. A document whose `agent-edit` is `open` lets the update touch the
+member's lines too; only the member sets that, in the app. After applying the
+operations, the server diffs the result once more and checks that every
+protected line came through unchanged and in order. That way a bug in applying
+operations can't slip past the check. The result is written in the app's own file
+format, and block wrappers follow the line authors (`<ai>`, `<user>`, or
+`edited-by="user"` when mixed). It is read back to confirm exactly the
+intended lines changed, then saved like any other write. The answer gives
+`revision_id`, `previous_revision_id`, `changed: { added, modified, deleted }`
+and the document's `authorship: { humanLines, totalLines }`.
+
+A refusal comes back as a tool error whose text is the JSON of
+`{ ok: false, code, status, error, ... }`.
+
+All three tools save with the vault's normal commit (`server/mcp/writeTools.mjs`)
 and answer with the new `revision_id`. They answer only once the write can be
 read back: its [line authorship](line-authorship.md) is recorded (every line
 it adds is credited to the token, by the name the member gave it) and the
@@ -57,7 +96,7 @@ wouldn't read as the same item is refused. Open apps pick up changes on their
 next sync, which runs every 15 seconds.
 
 Documents the user marks "Hide from AI" (frontmatter `hide-from-ai: true`) are
-never searched or returned. Search by meaning embeds
+never searched, returned, blamed or updated. Search by meaning embeds
 the query, and that cost goes to the member's own OpenAI key or their Plus
 credit, the same as searching in the app.
 

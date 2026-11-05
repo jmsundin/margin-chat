@@ -71,7 +71,7 @@ export default function OAuthConsent({ user }: { user: AuthenticatedUser }) {
           {request.scope === "write" ? (
             <label className="agent-token-write">
               <input checked={write} disabled={busy} onChange={(event) => setWrite(event.target.checked)} type="checkbox" />
-              Also let it create documents and add to them (it can never change or delete what's there)
+              Also let it create documents, add to them and edit text you didn't write (never your own lines)
             </label>
           ) : null}
           {canConnect ? null : <p className="auth-copy">Connecting agents comes with the Plus and Cloud plans.</p>}
