@@ -64,7 +64,7 @@
 .live-document-beacon { height: 0; left: 0; pointer-events: none; position: absolute; width: 0; }
 
 /* Live Preview / Source / Reading, like Obsidian's ⌘E. */
-.live-document-modes { display: flex; gap: 2px; justify-content: flex-end; margin: 0 8px 4px; opacity: .55; transition: opacity .12s ease; }
+.live-document-modes { display: flex; align-items: center; gap: 2px; justify-content: flex-end; margin: 0 8px 4px; opacity: .55; transition: opacity .12s ease; }
 .live-document-editor:is(:hover, :focus-within) .live-document-modes { opacity: 1; }
 .live-document-modes button { white-space: nowrap; background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: .74rem; padding: 3px 8px; }
 .live-document-modes button:hover { color: var(--ink); }

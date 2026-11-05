@@ -381,7 +381,9 @@ export function createVaultService({ database, env = process.env, storage = crea
           const entry = files && Object.hasOwn(files, path) ? files[path] : existing[path];
           if (entry) entries[path] = entry;
         }
-        return { root: next, previousRevision: current.revision, entries };
+        // The revision each changed file was last saved at, so its line authorship can continue from that save's.
+        const parents = Object.fromEntries(paths.map((path) => [path, existing[path]?.changedAt ?? null]));
+        return { root: next, previousRevision: current.revision, entries, parents };
       }
       // Re-read and compare with ORIGINAL per-file bases. Never retag stale edits.
     }
@@ -775,7 +777,8 @@ export function createVaultService({ database, env = process.env, storage = crea
       && /\.md$/iu.test(change.path ?? "") && !/^(?:_conflicts|attachments|\.margin-chat)\//iu.test(change.path)
       && result.entries[change.path]?.changedAt === result.root.revision && !result.entries[change.path].deleted)
       .map((change) => ({ path: change.path, content: change.content, baseRevision: change.baseRevision ?? null,
-        revision: result.entries[change.path].revision, vaultRevision: result.root.revision }));
+        revision: result.entries[change.path].revision, vaultRevision: result.root.revision,
+        parentVaultRevision: result.parents?.[change.path] ?? null }));
     if (!files.length) return {};
     const work = provenance.recordCommit(userId, files, context);
     if (!context.wait && backgroundProjection && continueAfterResponse(work, env)) return {};

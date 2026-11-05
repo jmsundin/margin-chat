@@ -1,5 +1,7 @@
 /* One quiet line above the text: the share you wrote, and the authorship view. */
-.document-authorship-bar { display:flex; align-items:center; flex-wrap:wrap; gap:4px 10px; flex:1 1 auto; min-width:0; margin-right:auto; font-size:12px; color:var(--muted); }
+.document-authorship-bar { position:relative; display:flex; align-items:center; flex:1 1 auto; min-width:0; margin-right:auto; font-size:12px; color:var(--muted); }
+.document-authorship-panel { display:flex; align-items:center; gap:10px; min-width:0; }
+.document-authorship-chip { display:none; }
 .document-authorship-summary { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .document-authorship-controls { display:inline-flex; align-items:center; gap:6px; flex:none; }
 .document-authorship-modes { display:inline-flex; padding:1px; border:1px solid var(--line); border-radius:7px; }
@@ -7,6 +9,7 @@
 .document-panel .document-authorship-modes button[aria-checked="true"] { background:var(--accent-soft); color:var(--ink); }
 .document-panel .document-authorship-only-mine { border:1px solid var(--line) !important; }
 .document-panel .document-authorship-only-mine[aria-pressed="true"] { background:var(--sage-soft); border-color:var(--sage) !important; color:var(--ink); }
+.document-panel .document-authorship-bar .document-authorship-chip { display:none; }
 .document-panel .document-authorship-bar button:focus-visible { outline:2px solid var(--focus-ring, var(--accent)); outline-offset:1px; }
 .rich-document-top-tools:has(.document-authorship-bar) { justify-content:space-between; align-items:center; gap:8px; margin-left:40px; }
 
@@ -36,9 +39,24 @@
 .rich-document-content > .authorship-folded { margin-left:0; }
 .authorship-folded::before, .authorship-folded::after { content:"—"; margin:0 6px; }
 
+/* Phones: one short chip ("40% yours") in the row with the view tabs; tapping it opens the full line and switches. */
 @media (max-width: 720px) {
   .rich-document-top-tools:has(.document-authorship-bar) { margin-left:8px; }
+  .document-authorship-bar { flex:none; }
+  .live-document-modes:has(.document-authorship-bar) { gap:0; }
+  .live-document-modes:has(.document-authorship-bar) > button { padding:3px 6px; }
+  .document-panel .document-authorship-bar .document-authorship-chip { display:inline-block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    height:26px; padding:0 8px; border:1px solid var(--line); border-radius:13px; font-size:12px; line-height:24px; }
+  .document-panel .document-authorship-bar .document-authorship-chip[data-view]::after { content:""; display:inline-block; width:6px; height:6px; margin-left:6px; border-radius:50%; background:var(--sage); vertical-align:1px; }
+  .document-panel .document-authorship-bar[data-open] .document-authorship-chip { background:var(--accent-soft); color:var(--ink); }
+  .document-authorship-panel { display:none; }
+  .document-authorship-bar[data-open] .document-authorship-panel {
+    display:flex; flex-direction:column; align-items:flex-start; gap:8px; position:absolute; z-index:30; top:calc(100% + 6px); left:0;
+    width:max-content; max-width:calc(100vw - 32px); padding:10px 12px; border:1px solid var(--line); border-radius:10px;
+    background:var(--panel-strong, var(--bg)); box-shadow:0 8px 24px rgb(0 0 0 / .18);
+  }
   .document-authorship-summary { white-space:normal; }
+  .document-panel .document-authorship-bar .document-authorship-panel button { height:30px; padding:0 10px; font-size:12px; line-height:30px; }
 }
 
 /* The Live Preview editor marks each line of the file on its own, in the gutter left of the text. */
