@@ -11,6 +11,7 @@ const { createRoot } = await import("react-dom/client");
 const { default: DocumentMenu } = await import("../../client/src/components/DocumentMenu");
 const { createMainConversation } = await import("../../client/src/initialState");
 const changes: string[][] = [];
+const policies: Array<[string, string | null]> = [];
 let toggleRename: (enabled: boolean) => void;
 function Host() {
   const [conversation, setConversation] = useState({ ...createMainConversation({ id: "main" }), title: "Research notes" });
@@ -19,6 +20,10 @@ function Host() {
   return createElement(DocumentMenu, {
     conversation,
     onRename: enabled ? (id, title) => { changes.push([id, title]); setConversation((current) => ({ ...current, title })); } : undefined,
+    onSetAgentEdit: (id: string, policy: "locked" | "open" | null) => {
+      policies.push([id, policy]);
+      setConversation((current) => { const { agentEdit: _agentEdit, ...rest } = current as any; return { ...rest, ...(policy ? { agentEdit: policy } : {}) }; });
+    },
   });
 }
 const container = browser.document.createElement("div");
@@ -90,6 +95,24 @@ try {
   assert.deepEqual(changes.at(-1), ["main", "Saved title"]);
   assert.equal(browser.document.activeElement, trigger());
   checks.push("Cancel discards edits and Save submits the new title");
+
+  await click(trigger());
+  const agentRow = () => browser.document.querySelector('[aria-label^="Agent editing:"]') as any;
+  assert.equal(agentRow().getAttribute("aria-label"), "Agent editing: Only what I didn't write");
+  assert.equal(browser.document.querySelector('[role="menuitemradio"]'), null);
+  await click(agentRow());
+  const radios = () => [...browser.document.querySelectorAll('[role="menuitemradio"]')] as any[];
+  assert.deepEqual(radios().map((node) => [node.textContent.replace("✓", "").trim(), node.getAttribute("aria-checked")]),
+    [["Only what I didn't write", "true"], ["Locked", "false"], ["Open", "false"]]);
+  await click(radios()[1]);
+  assert.deepEqual(policies, [["main", "locked"]]);
+  assert.equal(browser.document.querySelector('[role="menu"]'), null);
+  await click(trigger());
+  assert.equal(agentRow().getAttribute("aria-label"), "Agent editing: Locked");
+  await click(agentRow());
+  await click(radios()[0]);
+  assert.deepEqual(policies.at(-1), ["main", null]);
+  checks.push("agent editing is chosen in the menu, and only there");
 
   await act(async () => toggleRename(false));
   await click(trigger());

@@ -46,6 +46,8 @@
 .document-menu [role="menuitemcheckbox"] { display: flex; align-items: flex-start; gap: 8px; }
 .document-menu-check { flex: 0 0 13px; margin-left: auto; color: var(--accent); text-align: right; }
 .document-menu .document-menu-group-setting { display: flex; align-items: center; gap: 8px; }
+.document-menu [role="menuitemradio"] { display: flex; align-items: flex-start; gap: 8px; }
+.document-menu-choices { padding-left: 12px; }
 .document-menu-group-name { margin-left: auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
 .document-rename-backdrop {
   position: fixed;

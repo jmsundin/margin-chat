@@ -37,6 +37,7 @@ import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
 import type { WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import { openableHref, openLinkInNewTab, shouldOpenLink } from "../lib/documentLinkOpening";
+import { describeAge, describeRun, type AuthorshipMode, type AuthorshipRun } from "../lib/documentAuthorship";
 import "./RichDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
@@ -83,6 +84,12 @@ export interface RichDocumentDecoration {
   branchIds?: string[];
   noteIds?: string[];
 }
+export interface RichDocumentAuthorship {
+  mode: AuthorshipMode;
+  /** Fold every run of lines you didn't write to a one-line placeholder; the document is read-only meanwhile. */
+  onlyMine: boolean;
+  runs: Record<string, AuthorshipRun[]>;
+}
 export interface RichDocumentEditorProps {
   conversationId: string;
   blocks: DocumentBlock[];
@@ -108,6 +115,8 @@ export interface RichDocumentEditorProps {
   /** Documents to offer after `[[`, best match first. Without it `[[` is plain text. */
   linkSuggestions?: (query: string) => WikiLinkSuggestion[];
   decorations?: Record<string, RichDocumentDecoration[]>;
+  /** Who wrote which lines, drawn beside the text (Mine, Blame) or folded away (Only mine). Never changes the document. */
+  authorship?: RichDocumentAuthorship | null;
   renderAfterBlock?: (block: DocumentBlock) => ReactNode;
   renderBlockPreview?: (block: DocumentBlock) => ReactNode;
   /** Shown above the text, beside the view switch where the editor has one. */
@@ -170,6 +179,7 @@ const RAW = "documentRawBlock";
 /** Content set from saved blocks: never an edit, never undo history. */
 const EXTERNAL = "documentExternalSync";
 const annotationKey = new PluginKey<DecorationSet>("documentAnnotationRanges");
+const authorshipKey = new PluginKey<DecorationSet>("documentLineAuthorship");
 
 /** The React chrome around one block lives in these slots of its node view. */
 interface BlockSlots {
@@ -356,6 +366,94 @@ function anchorDecorations(editor: Editor, doc: ProseMirrorNode, markdownOf: (id
   return DecorationSet.create(doc, decorations);
 }
 
+/**
+ * Line authorship in the text. Each block, or each paragraph, list or table
+ * inside a block that several authors wrote, is marked by the runs of lines it
+ * holds: Mine marks yours, Blame labels where each author's run starts, and
+ * Only mine folds runs with none of yours into one placeholder line.
+ */
+function authorshipDecorations(editor: Editor, doc: ProseMirrorNode, markdownOf: (id: string) => string | undefined, authorship: RichDocumentAuthorship | null | undefined): DecorationSet {
+  if (!authorship || (authorship.mode === "off" && !authorship.onlyMine)) return DecorationSet.empty;
+  type Unit = { from: number; to: number; runs: AuthorshipRun[] };
+  const units: Unit[] = [];
+  const folded = (unit: Unit) => unit.runs.some((run) => run.lines > 0) && unit.runs.every((run) => !run.mine || !run.lines);
+  doc.forEach((block, start) => {
+    const id = block.attrs.id as string | null;
+    const markdown = id ? markdownOf(id) : undefined;
+    const runs = (id && authorship.runs[id]) || [];
+    if (!id || markdown === undefined || !runs.length || block.type.name === RAW || !block.childCount) {
+      units.push({ from: start, to: start + block.nodeSize, runs });
+      return;
+    }
+    const bounds = runs.length === 1 ? null : runs.map((run) => ({ run,
+      from: positionInBlock(editor, block, start, markdown, run.from, 1), to: positionInBlock(editor, block, start, markdown, Math.max(run.from, run.to), -1) }));
+    const children: Unit[] = [];
+    let offset = start + 1;
+    block.forEach((child) => {
+      const from = offset, to = offset + child.nodeSize;
+      offset = to;
+      children.push({ from, to, runs: bounds ? bounds.filter((bound) => (bound.from < to - 1 && bound.to > from) || (bound.from >= from && bound.from < to)).map((bound) => bound.run) : runs });
+    });
+    // A block whose text is all folded folds whole, so its gutter goes with it.
+    if (authorship.onlyMine && children.every((child) => folded(child) || !child.runs.some((run) => run.lines > 0)) && children.some(folded)) units.push({ from: start, to: start + block.nodeSize, runs });
+    else units.push(...children);
+  });
+
+  const decorations: Decoration[] = [];
+  const labelled = new Set<AuthorshipRun>();
+  const label = (at: number, text: string, title: string, className: string) => decorations.push(Decoration.widget(at, () => {
+    const element = document.createElement("div");
+    element.className = className;
+    element.contentEditable = "false";
+    element.textContent = text;
+    if (title) element.title = title;
+    return element;
+  }, { side: -1, key: `${className}:${at}:${text}`, ignoreSelection: true }));
+  let fold: { from: number; lines: number; labels: string[] } | null = null;
+  const closeFold = () => {
+    if (!fold) return;
+    const names = fold.labels.length > 2 ? `${fold.labels.slice(0, 2).join(", ")} and others` : fold.labels.join(" and ");
+    label(fold.from, `${fold.lines} ${fold.lines === 1 ? "line" : "lines"} by ${names}`, "Only mine is on: lines you didn't write are folded.", "authorship-folded");
+    fold = null;
+  };
+  for (const unit of units) {
+    const written = unit.runs.filter((run) => run.lines > 0);
+    if (!written.length) {
+      if (fold) decorations.push(Decoration.node(unit.from, unit.to, { class: "authorship-is-folded" }));
+      continue;
+    }
+    if (authorship.onlyMine && folded(unit)) {
+      fold ??= { from: unit.from, lines: 0, labels: [] };
+      for (const run of written) {
+        if (labelled.has(run)) continue;
+        labelled.add(run);
+        fold.lines += run.lines;
+        if (!fold.labels.includes(run.author.label)) fold.labels.push(run.author.label);
+      }
+      decorations.push(Decoration.node(unit.from, unit.to, { class: "authorship-is-folded" }));
+      continue;
+    }
+    closeFold();
+    const mine = written.filter((run) => run.mine).length;
+    if (authorship.mode === "mine" && mine) {
+      decorations.push(Decoration.node(unit.from, unit.to, { class: mine === written.length ? "authorship-mine" : "authorship-partly-mine",
+        title: mine === written.length ? "You wrote this" : "Partly yours" }));
+    }
+    if (authorship.mode === "blame") {
+      decorations.push(Decoration.node(unit.from, unit.to, { class: `authorship-blame authorship-by-${written[0].author.type}` }));
+      const starting = written.filter((run) => !labelled.has(run));
+      starting.forEach((run) => labelled.add(run));
+      if (starting.length) {
+        const age = describeAge(starting[0].origin);
+        const names = [...new Set(starting.map((run) => run.author.label))].join(", ");
+        label(unit.from, `${names}${age ? ` · ${age}` : ""}`, starting.map(describeRun).join("\n"), `authorship-label authorship-by-${starting[0].author.type}`);
+      }
+    }
+  }
+  closeFold();
+  return DecorationSet.create(doc, decorations);
+}
+
 /** Outline targets for headings, and blank trailing paragraphs that hide until the block is focused. */
 function structureDecorations(doc: ProseMirrorNode) {
   const decorations: Decoration[] = [];
@@ -429,6 +527,17 @@ function createDocumentExtension(control: EditorControl) {
               return anchors.add(state.doc, structureDecorations(state.doc).find());
             },
           },
+        }),
+        new Plugin<DecorationSet>({
+          key: authorshipKey,
+          state: {
+            init: (_, state) => authorshipDecorations(editor, state.doc, control.markdownOf, control.props().authorship),
+            apply(tr, set, _old, state) {
+              if (tr.getMeta(authorshipKey) || tr.getMeta(EXTERNAL)) return authorshipDecorations(editor, state.doc, control.markdownOf, control.props().authorship);
+              return tr.docChanged ? set.map(tr.mapping, tr.doc) : set;
+            },
+          },
+          props: { decorations: (state) => authorshipKey.getState(state) },
         }),
         new Plugin({
           key: new PluginKey("documentLockedBlocks"),
@@ -902,7 +1011,13 @@ export default function RichDocumentEditor(props: RichDocumentEditorProps) {
   useEffect(() => {
     if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(annotationKey, true).setMeta(EXTERNAL, true).setMeta("addToHistory", false));
   }, [editor, decorationKey]);
-  useEffect(() => { editor?.setEditable(editable, false); }, [editor, editable]);
+  const authorshipKeyValue = JSON.stringify(props.authorship ?? null);
+  useEffect(() => {
+    if (editor && !editor.isDestroyed) editor.view.dispatch(editor.state.tr.setMeta(authorshipKey, true).setMeta("addToHistory", false));
+  }, [editor, authorshipKeyValue]);
+  // Only mine hides text, so nothing can be typed into what can't be seen.
+  const onlyMine = Boolean(props.authorship?.onlyMine);
+  useEffect(() => { editor?.setEditable(editable && !onlyMine, false); }, [editor, editable, onlyMine]);
   useLayoutEffect(() => {
     if (!editor) return;
     const editorProps = editor.options.editorProps;

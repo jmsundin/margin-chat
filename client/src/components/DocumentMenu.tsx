@@ -26,6 +26,12 @@ export interface DocumentMenuProps {
   onMoveToMargin?: (id: string) => void;
   /** Keep this document out of every AI request and connected app, or let AI read it again. */
   onToggleHiddenFromAI?: (id: string) => void;
+  /**
+   * What connected apps may edit here (spec §3): null for only lines you didn't
+   * write, "locked" for nothing (they can still add to the end), "open" for any
+   * line. Only settable here, never by an app.
+   */
+  onSetAgentEdit?: (id: string, policy: "locked" | "open" | null) => void;
   /** Draw this document as a roadmap of stages and steps, or as a plain document again. */
   onToggleRoadmap?: (id: string) => void;
   maximized?: boolean;
@@ -37,12 +43,19 @@ export interface DocumentMenuProps {
   onFocusFallback?: () => void;
 }
 
+const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: string; short: string; title: string }> = [
+  { policy: null, label: "Only what I didn't write", short: "Not my lines", title: "Apps may change lines an AI, an app or an import wrote, never yours." },
+  { policy: "locked", label: "Locked", short: "Locked", title: "Apps may only add to the end of this document." },
+  { policy: "open", label: "Open", short: "Open", title: "Apps may change any line here, including yours." },
+];
+
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
+  const [agentEditOpen, setAgentEditOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
   const renameDialog = useRef<HTMLFormElement>(null);
@@ -79,7 +92,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, []);
 
-  useEffect(() => { if (!open) returnedFocus.current = false; }, [open]);
+  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); } }, [open]);
   useOutsideDismiss(open, () => close(), menu, trigger);
 
   useEffect(() => {
@@ -210,7 +223,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
           onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
       </div> : null}
-      {onToggleHiddenFromAI || onToggleRoadmap ? <div role="group" className="document-menu-section">
+      {onToggleHiddenFromAI || onToggleRoadmap || onSetAgentEdit ? <div role="group" className="document-menu-section">
         {onToggleRoadmap ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.nodeType === "roadmap"}
           title="Lay out steps from your documents in stages, and track what you've learned."
           onClick={() => action(onToggleRoadmap)}>
@@ -223,6 +236,24 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <span>Hide from AI</span>
           <span className="document-menu-check" aria-hidden="true">{conversation.hiddenFromAI ? "✓" : ""}</span>
         </button> : null}
+        {onSetAgentEdit ? <>
+          <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={agentEditOpen}
+            aria-label={`Agent editing: ${AGENT_EDIT_OPTIONS.find((option) => option.policy === (conversation.agentEdit ?? null))!.label}`}
+            title="What connected apps, such as Claude or ChatGPT, may change in this document."
+            onClick={() => setAgentEditOpen((value) => !value)}>
+            <span>Agent editing</span>
+            <span className="document-menu-group-name">{AGENT_EDIT_OPTIONS.find((option) => option.policy === (conversation.agentEdit ?? null))!.short}</span>
+            <span aria-hidden="true">{agentEditOpen ? "⌄" : "›"}</span>
+          </button>
+          {agentEditOpen ? <div role="group" aria-label="Agent editing" className="document-menu-choices">
+            {AGENT_EDIT_OPTIONS.map((option) => <button key={option.short} type="button" role="menuitemradio"
+              aria-checked={(conversation.agentEdit ?? null) === option.policy} title={option.title}
+              onClick={() => { close(true); onSetAgentEdit(conversation.id, option.policy); }}>
+              <span>{option.label}</span>
+              <span className="document-menu-check" aria-hidden="true">{(conversation.agentEdit ?? null) === option.policy ? "✓" : ""}</span>
+            </button>)}
+          </div> : null}
+        </> : null}
       </div> : null}
       {onToggleMaximize || onMinimize || onRestore || onClose ? <div role="group" className="document-menu-section">
         {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>

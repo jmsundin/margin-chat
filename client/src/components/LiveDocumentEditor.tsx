@@ -8,7 +8,8 @@ import { GFM } from "@lezer/markdown";
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { getDocumentBlockAuthorship, type DocumentBlock } from "@margin-chat/workspace-contracts";
-import type { RichDocumentEditorProps, RichDocumentRect, RichDocumentSelection } from "./RichDocumentEditor";
+import type { RichDocumentAuthorship, RichDocumentEditorProps, RichDocumentRect, RichDocumentSelection } from "./RichDocumentEditor";
+import { describeAge, describeRun } from "../lib/documentAuthorship";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { getMarkdownBackspaceEdit, getMarkdownEnterEdit } from "../lib/markdownEditing";
 import { formatDocumentDateTime } from "../lib/documentDateTime";
@@ -290,6 +291,93 @@ function blockDecorationField(host: WidgetHost) {
   });
 }
 
+/** A label above the first line of a run of lines one author wrote (Blame). */
+class AuthorshipLabelWidget extends WidgetType {
+  constructor(readonly text: string, readonly title: string, readonly type: string) { super(); }
+  eq(other: AuthorshipLabelWidget) { return other.text === this.text && other.title === this.title && other.type === this.type; }
+  toDOM() {
+    const element = document.createElement("div");
+    element.className = `authorship-label authorship-by-${this.type}`;
+    element.textContent = this.text;
+    element.title = this.title;
+    return element;
+  }
+  ignoreEvent() { return false; }
+}
+
+/** One line standing for lines folded away by Only mine. */
+class AuthorshipFoldWidget extends WidgetType {
+  constructor(readonly text: string) { super(); }
+  eq(other: AuthorshipFoldWidget) { return other.text === this.text; }
+  toDOM() {
+    const element = document.createElement("div");
+    element.className = "authorship-folded";
+    element.textContent = this.text;
+    element.title = "Only mine is on: lines you didn't write are folded.";
+    return element;
+  }
+}
+
+const setAuthorship = StateEffect.define<RichDocumentAuthorship | null>();
+
+/**
+ * Line authorship in the text. A Markdown line here is a line of the saved
+ * file, so each line is marked on its own: Mine marks yours, Blame labels where
+ * each author's run starts, and Only mine folds runs with none of yours away.
+ */
+function buildAuthorshipDecorations(state: EditorState, authorship: RichDocumentAuthorship | null): DecorationSet {
+  if (!authorship || (authorship.mode === "off" && !authorship.onlyMine)) return Decoration.none;
+  const { doc } = state;
+  const ranges: Range<Decoration>[] = [];
+  let fold: { from: number; to: number; lines: number; labels: string[] } | null = null;
+  const closeFold = () => {
+    if (!fold) return;
+    const names = fold.labels.length > 2 ? `${fold.labels.slice(0, 2).join(", ")} and others` : fold.labels.join(" and ");
+    ranges.push(Decoration.replace({ block: true, widget: new AuthorshipFoldWidget(`${fold.lines} ${fold.lines === 1 ? "line" : "lines"} by ${names}`) }).range(fold.from, fold.to));
+    fold = null;
+  };
+  for (const block of state.field(liveField).layout) {
+    const runs = authorship.runs[block.id];
+    if (!runs?.length || block.to <= block.from) continue;
+    for (const run of runs) {
+      const first = doc.lineAt(Math.min(block.from + run.from, block.to));
+      const last = doc.lineAt(Math.min(block.from + Math.max(run.from, run.to), block.to));
+      if (authorship.onlyMine && !run.mine && run.lines > 0) {
+        fold ??= { from: first.from, to: last.to, lines: 0, labels: [] };
+        fold.to = last.to;
+        fold.lines += run.lines;
+        if (!fold.labels.includes(run.author.label)) fold.labels.push(run.author.label);
+        continue;
+      }
+      if (!run.lines) continue;
+      closeFold();
+      for (let number = first.number; number <= last.number; number += 1) {
+        const line = doc.line(number);
+        if (authorship.mode === "mine" && run.mine) ranges.push(Decoration.line({ class: "authorship-mine" }).range(line.from));
+        if (authorship.mode === "blame") ranges.push(Decoration.line({ class: `authorship-blame authorship-by-${run.author.type}` }).range(line.from));
+      }
+      if (authorship.mode === "blame") {
+        const age = describeAge(run.origin);
+        ranges.push(Decoration.widget({ block: true, side: -1, widget: new AuthorshipLabelWidget(`${run.author.label}${age ? ` · ${age}` : ""}`, describeRun(run), run.author.type) }).range(first.from));
+      }
+    }
+  }
+  closeFold();
+  return Decoration.set(ranges, true);
+}
+
+const authorshipField = StateField.define<{ value: RichDocumentAuthorship | null; decorations: DecorationSet }>({
+  create: () => ({ value: null, decorations: Decoration.none }),
+  update(current, tr) {
+    let value = current.value;
+    let changed = false;
+    for (const effect of tr.effects) if (effect.is(setAuthorship)) { value = effect.value; changed = true; }
+    if (!changed && !tr.docChanged && !tr.effects.some((effect) => effect.is(setLayout))) return current;
+    return { value, decorations: buildAuthorshipDecorations(tr.state, value) };
+  },
+  provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
+});
+
 /** Zero-size stand-ins at the right height for blocks, headings and passages CodeMirror hasn't drawn, so the app can find and scroll to them. */
 class BeaconMarker implements LayerMarker {
   constructor(readonly attributes: Record<string, string>, readonly top: number) {}
@@ -427,7 +515,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const vaultMediaRef = useRef(vaultMedia);
   vaultMediaRef.current = vaultMedia;
   const draftIdentity = useId();
-  const editable = Boolean(props.onChangeBlocks);
+  // Only mine hides text, so nothing can be typed into what can't be seen.
+  const onlyMine = Boolean(props.authorship?.onlyMine);
+  const editable = Boolean(props.onChangeBlocks) && !onlyMine;
   useAppUpdateGuard("document-dialog", {
     check: () => equation || drawing ? "Finish or close the equation or drawing editor in each tab before restarting." : null,
   });
@@ -1014,6 +1104,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       extensions: [
         liveField.init(() => ({ layout, anchors: [], locked: new Set(), mode, focused: false, after: new Set(), meta: new Map(), placeholder: null, conversationId: props.conversationId })),
         blockDecorationField(widgets),
+        authorshipField,
         compartments.history.of(props.onHistory ? [] : history()),
         compartments.editable.of(editableExtensions(mode)),
         compartments.attributes.of(attributeExtensions()),
@@ -1154,6 +1245,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
 
   // Saved blocks (AI output, undo, moves, other tabs) come into the editor without disturbing the caret.
   const decorationKey = JSON.stringify(props.decorations ?? {});
+  const authorshipKey = JSON.stringify(props.authorship ?? null);
   const metaKey = visibleBlocks.map((block) => `${block.id}:${getDocumentBlockAuthorship(block, props.sourceMessages)}:${block.sourceMessageId ?? ""}:${readOnlyIds.has(block.id) ? 1 : 0}`).join("|");
   const placeholderId = props.hidePlaceholder ? undefined
     : (visibleBlocks.find((block) => !block.content && !readOnlyIds.has(block.id) && block.id === focusedBlockId) ?? visibleBlocks.filter((block) => !block.content && !readOnlyIds.has(block.id)).at(-1))?.id;
@@ -1199,7 +1291,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const placeholder = placeholderId ? { id: placeholderId, text: placeholderText } : null;
     if (JSON.stringify(placeholder) !== JSON.stringify(live.placeholder)) viewChanges.placeholder = placeholder;
     if (Object.keys(viewChanges).length) effects.push(setView.of(viewChanges));
-    if (viewChanges.mode !== undefined) effects.push(compartments.editable.reconfigure(editableExtensions(mode)));
+    if (viewChanges.mode !== undefined || view.state.facet(EditorView.editable) !== (editable && mode !== "reading")) effects.push(compartments.editable.reconfigure(editableExtensions(mode)));
+    if (JSON.stringify(view.state.field(authorshipField).value) !== authorshipKey) effects.push(setAuthorship.of(props.authorship ?? null));
     if (!changes && !effects.length) return;
     try {
       view.dispatch({ changes, effects, annotations: [externalSync.of(true), Transaction.addToHistory.of(false)] });
@@ -1209,7 +1302,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     }
   });
   // decorationKey and metaKey are read through the render above.
-  void decorationKey; void metaKey; void syncRetry;
+  void decorationKey; void metaKey; void syncRetry; void authorshipKey;
 
   useLayoutEffect(() => {
     const view = viewRef.current;

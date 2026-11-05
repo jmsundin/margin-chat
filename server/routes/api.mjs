@@ -39,6 +39,7 @@ import {
   protectedResourceMetadata,
   publicOrigin,
 } from "../mcp/oauth.mjs";
+import { documentAuthorshipView } from "../vault/provenance/appView.mjs";
 import { HttpError, hasStatusCode } from "../lib/errors.mjs";
 import { createErrorReporter } from "../lib/errorReporting.mjs";
 import {
@@ -891,6 +892,12 @@ export function createApiHandler({
         if (route?.id === "vaultChanges") {
           const since = url.searchParams.get("since");
           await sendStreamingJson(response, 200, await vaultService.changes(userId, /^\d{1,15}$/u.test(since ?? "") ? Number(since) : -1), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if (route?.id === "vaultAuthorship") {
+          const documentId = url.searchParams.get("id") ?? "";
+          if (!documentId || documentId.length > 512) throw new HttpError(400, "Name the document by its id.");
+          await sendStreamingJson(response, 200, await documentAuthorshipView({ provenance: vaultService.provenance, userId, documentId }), { "Cache-Control": "private, no-store" });
           return;
         }
         if (route?.id === "vaultFileRead") {
