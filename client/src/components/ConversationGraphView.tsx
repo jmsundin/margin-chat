@@ -175,19 +175,32 @@ const PRE_FIT_GRAPH_CARDS = 40;
 /** Most document links drawn at once. */
 const MAX_GRAPH_CONNECTIONS = 1_200;
 
+/** Orders cards by id, so a pan that keeps the same cards never moves them around the page. */
+const byConversationId = (a: ConversationGraphNodePlacement, b: ConversationGraphNodePlacement) =>
+  a.conversationId < b.conversationId ? -1 : a.conversationId > b.conversationId ? 1 : 0;
+
+/** A card already drawn counts as this much nearer the center, so a small pan doesn't swap cards at the budget's edge. */
+const SHOWN_CARD_DISTANCE = 0.8;
+
 /**
  * Keeps the cards nearest the viewport center, plus any that must stay cards
  * (selected, active, docked). The rest come back as `overflow`, for dots.
+ * Cards in `shownIds` (drawn last time) win close calls, so panning doesn't
+ * flicker cards in and out at the edge of the budget.
+ * Cards come back in a stable order: the spatial lookup returns them in an
+ * order that changes as the camera moves, and React would otherwise move
+ * hundreds of cards in the page on every pan.
  */
 export function limitGraphCards(placements: ConversationGraphNodePlacement[], bounds: ConversationGraphBounds, limit: number,
-  keepIds: Array<string | null | undefined> = []) {
-  if (placements.length <= limit) return { cards: placements, overflow: [] as ConversationGraphNodePlacement[] };
+  keepIds: Array<string | null | undefined> = [], shownIds?: ReadonlySet<string>) {
+  if (placements.length <= limit) return { cards: [...placements].sort(byConversationId), overflow: [] as ConversationGraphNodePlacement[] };
   const keep = new Set(keepIds.filter(Boolean));
   const centerX = (bounds.left + bounds.right) / 2, centerY = (bounds.top + bounds.bottom) / 2;
   const ranked = placements.map((placement) => ({ placement, distance: keep.has(placement.conversationId) ? -1
-    : (placement.x + placement.width / 2 - centerX) ** 2 + (placement.y + placement.height / 2 - centerY) ** 2 }));
+    : ((placement.x + placement.width / 2 - centerX) ** 2 + (placement.y + placement.height / 2 - centerY) ** 2)
+      * (shownIds?.has(placement.conversationId) ? SHOWN_CARD_DISTANCE ** 2 : 1) }));
   ranked.sort((a, b) => a.distance - b.distance);
-  return { cards: ranked.slice(0, limit).map((item) => item.placement), overflow: ranked.slice(limit).map((item) => item.placement) };
+  return { cards: ranked.slice(0, limit).map((item) => item.placement).sort(byConversationId), overflow: ranked.slice(limit).map((item) => item.placement) };
 }
 const GRAPH_SPARSE_GROUP_SCALE = 0.35;
 const EMPTY_RELATED_ITEMS: Array<{ id: string; score: number }> = [];
@@ -369,11 +382,27 @@ function readDockSize(): number | null {
 function stageTransform(viewport: GraphViewport) {
   return `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
 }
-function gridPosition(viewport: GraphViewport) {
-  return `${viewport.x}px ${viewport.y}px`;
+/**
+ * The dot grid layer for a camera: one cell larger than the map each way, shifted by the camera
+ * within a cell, so a pan only moves it and never repaints it.
+ */
+function gridStyle(viewport: GraphViewport) {
+  const cell = GRAPH_GRID_SIZE * viewport.scale;
+  const offsetX = (viewport.x % cell + cell) % cell, offsetY = (viewport.y % cell + cell) % cell;
+  return {
+    backgroundSize: `${cell}px ${cell}px`,
+    height: `calc(100% + ${2 * cell}px)`,
+    transform: `translate(${offsetX - cell}px, ${offsetY - cell}px)`,
+    width: `calc(100% + ${2 * cell}px)`,
+  };
 }
-function gridSize(viewport: GraphViewport) {
-  return `${GRAPH_GRID_SIZE * viewport.scale}px ${GRAPH_GRID_SIZE * viewport.scale}px`;
+/** Moves the grid layer; it is resized only when the zoom changes. */
+function placeGrid(element: HTMLElement, viewport: GraphViewport) {
+  const style = gridStyle(viewport);
+  element.style.transform = style.transform;
+  if (element.style.backgroundSize === style.backgroundSize) return;
+  element.style.backgroundSize = style.backgroundSize;
+  element.style.width = style.width; element.style.height = style.height;
 }
 
 function matchedConversationIds(items: Array<{ evidence: { conversationId: string } }>) {
@@ -1276,6 +1305,7 @@ export default function ConversationGraphView({
   const dockResizeRef = useRef<{ pointerId: number; client: number; size: number } | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
   const viewportStateRef = useRef<GraphViewport>(viewport);
   // The camera React knows. A viewport set from elsewhere (Back, a restored
   // location) replaces the live one; one this component committed itself may
@@ -1823,10 +1853,13 @@ export default function ConversationGraphView({
   const cardOverflow = nearbyNodePlacements.length > cardBudget;
   const showClusterDots = clusterDots || (isClustersMode && !panelView && cardOverflow);
   const stageHidden = showTerritories || showClusterDots || canvasGroupsCollapsed;
+  const shownCardIdsRef = useRef<ReadonlySet<string>>(new Set());
   const { cards: baseRenderedNodePlacements, overflow: overflowNodePlacements } = useMemo(() => {
     if (stageHidden) return { cards: [], overflow: [] };
     const shown = nearbyNodePlacements.filter((placement) => !hiddenConversationIds.has(placement.conversationId));
-    return limitGraphCards(shown, viewportBounds, cardBudget, [selectedConversationId, activeConversationId, dockedConversationId]);
+    const limited = limitGraphCards(shown, viewportBounds, cardBudget, [selectedConversationId, activeConversationId, dockedConversationId], shownCardIdsRef.current);
+    shownCardIdsRef.current = new Set(limited.cards.map((placement) => placement.conversationId));
+    return limited;
   }, [hiddenConversationIds, nearbyNodePlacements, stageHidden, viewportBounds, cardBudget, selectedConversationId, activeConversationId, dockedConversationId]);
   const previewPlacementByConversationId = useMemo(
     () =>
@@ -2127,10 +2160,7 @@ export default function ConversationGraphView({
     transform: stageTransform(liveViewport),
     width: `${scene.width}px`,
   } as CSSProperties;
-  const viewportStyle = {
-    backgroundPosition: gridPosition(liveViewport),
-    backgroundSize: gridSize(liveViewport),
-  } as CSSProperties;
+  const gridLayerStyle = gridStyle(liveViewport) as CSSProperties;
 
   /** Layers drawn outside React (the landscape's points) follow the camera through these. */
   const cameraListenersRef = useRef(new Set<(viewport: GraphViewport) => void>());
@@ -2159,9 +2189,10 @@ export default function ConversationGraphView({
   const setCamera = useCallback((nextViewport: GraphViewport, deferred = false) => {
     viewportStateRef.current = nextViewport;
     for (const listener of cameraListenersRef.current) listener(nextViewport);
-    const stage = stageRef.current, element = viewportRef.current;
+    const stage = stageRef.current;
     if (stage) stage.style.transform = stageTransform(nextViewport);
-    if (element) { element.style.backgroundPosition = gridPosition(nextViewport); element.style.backgroundSize = gridSize(nextViewport); }
+    const grid = gridRef.current;
+    if (grid) placeGrid(grid, nextViewport);
     const commit = cameraCommitRef.current;
     commit.pending = true;
     if (!deferred) { flushCamera(); return; }
@@ -4112,8 +4143,8 @@ export default function ConversationGraphView({
           onPointerUp={handleViewportPointerUp}
           onDoubleClick={createNoteAtPointer}
           ref={viewportRef}
-          style={viewportStyle}
         >
+          <div ref={gridRef} className="conversation-graph-grid" style={gridLayerStyle} aria-hidden="true" />
           {panelView ? <div className="graph-mode-panel" data-graph-ui="true">
             {viewMode === "evidence" || navigation.state.contentLens === "concepts" ? <>
               <GraphEvidenceView concepts={concepts} conversations={conversations}
@@ -4174,7 +4205,7 @@ export default function ConversationGraphView({
           {showingLibrary && openWorkId ? <GraphLibraryWorkCard key={openWorkId} workId={openWorkId} expectedUserId={jev?.userId} onClose={() => setOpenWorkId(null)}
             onKeep={onCreateDocument ? (work) => Boolean(onCreateDocument({ title: work.title, content: libraryWorkMarkdown(work) })) : undefined} /> : null}
           {isLandscapeMode && !panelView && landscapeStatus ? <p className="graph-landscape-status" role="status" data-graph-ui="true">{landscapeStatus}</p> : null}
-          {overflowNodePlacements.length && !(landscapeScene && landscapePoints.length) ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={mapMatches} colorOf={colorOf} /> : null}
+          {overflowNodePlacements.length && !(landscapeScene && landscapePoints.length) ? <GraphOverflowDots placements={overflowNodePlacements} viewport={viewport} size={viewportSize} matched={mapMatches} colorOf={colorOf} subscribeCamera={subscribeCamera} liveCamera={readLiveCamera} /> : null}
           {isClustersMode && !panelView && clusterLayout ? <GraphClusterLayer clusters={clusterLayout.clusters} levels={clusterLayout.levels} placements={clusterPlacements}
             connections={documentConnections} labels={clusterLabels.labels} viewport={viewport} size={viewportSize} showDots={showClusterDots}
             selectedId={selectedConversationId} titles={(id) => conversations[id]?.title || "Untitled"}

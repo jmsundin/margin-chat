@@ -65,18 +65,42 @@ export default function CanvasGroupBoxes({ boxes, viewport, collapsed, onOpen, s
   const cameraRef = useRef(viewport);
   const propsRef = useRef({ boxes, collapsed });
   propsRef.current = { boxes, collapsed };
-  /** Moves every box, and sizes or hides the zoomed-out names, for this camera. */
+  /** What the boxes were last laid out for, one by one. */
+  const placedRef = useRef<{ camera: GraphViewport; boxes: CanvasGroupBox[]; collapsed: boolean; width: number; height: number } | null>(null);
+  /**
+   * Moves the boxes, and sizes or hides the zoomed-out names, for this camera. A pan at the same zoom
+   * moves every box by the same amount, so it moves them all at once with one transform on the host;
+   * only a zoom, new boxes, or a pan further than a screen lays them out one by one again. Boxes more
+   * than a screen away are left out of the page until then.
+   */
   const place = useCallback((camera: GraphViewport) => {
     cameraRef.current = camera;
     const host = hostRef.current;
     if (!host) return;
     const { boxes: current, collapsed: isCollapsed } = propsRef.current;
+    const placed = placedRef.current;
+    // The pan uses the screen size measured at the last layout: reading it again would make the
+    // browser lay out the page in the middle of every frame.
+    if (placed && placed.width > 0 && placed.height > 0 && placed.boxes === current && placed.collapsed === isCollapsed && placed.camera.scale === camera.scale) {
+      const dx = camera.x - placed.camera.x, dy = camera.y - placed.camera.y;
+      if (Math.abs(dx) < placed.width && Math.abs(dy) < placed.height) {
+        host.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
+        return;
+      }
+    }
+    const screenWidth = host.clientWidth, screenHeight = host.clientHeight, measured = screenWidth > 0 && screenHeight > 0;
+    host.style.transform = "";
+    placedRef.current = { camera, boxes: current, collapsed: isCollapsed, width: screenWidth, height: screenHeight };
     const labels = isCollapsed ? planCollapsedLabels(current, camera) : null;
     const elements = host.children;
     current.forEach((box, index) => {
       const element = elements[index] as HTMLElement | undefined;
       if (!element) return;
       const frame = boxFrame(box, camera);
+      const offscreen = measured && (frame.left > 2 * screenWidth || frame.left + frame.width < -screenWidth
+        || frame.top > 2 * screenHeight || frame.top + frame.height < -screenHeight);
+      element.style.display = offscreen ? "none" : "";
+      if (offscreen) return;
       element.style.left = `${frame.left}px`; element.style.top = `${frame.top}px`;
       element.style.width = `${frame.width}px`; element.style.height = `${frame.height}px`;
       const name = element.firstElementChild as HTMLElement | null;
@@ -89,7 +113,12 @@ export default function CanvasGroupBoxes({ boxes, viewport, collapsed, onOpen, s
     });
   }, []);
   // Every commit re-places the boxes for the camera as it is now, not as it was when React rendered.
-  useLayoutEffect(() => { place(liveCamera?.() ?? viewport); });
+  useLayoutEffect(() => {
+    // A resized map lays the boxes out afresh for its new size.
+    const host = hostRef.current, placed = placedRef.current;
+    if (host && placed && (host.clientWidth !== placed.width || host.clientHeight !== placed.height)) placedRef.current = null;
+    place(liveCamera?.() ?? viewport);
+  });
   useEffect(() => subscribeCamera?.(place), [subscribeCamera, place]);
   return <div ref={hostRef} className={`canvas-group-boxes${collapsed ? " is-collapsed" : ""}`} aria-label="Map boxes">
     {boxes.map((box) => {

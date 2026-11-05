@@ -9414,11 +9414,6 @@ button {
 
 .conversation-graph-viewport {
   background-color: var(--graph-canvas-bg, var(--bg-deep));
-  background-image: radial-gradient(
-    var(--graph-canvas-grid, var(--line-strong)) 0.7px,
-    transparent 0.7px
-  );
-  background-size: 22px 22px;
   cursor: grab;
   flex: 1 1 auto;
   min-height: 280px;
@@ -9426,6 +9421,20 @@ button {
   position: relative;
   touch-action: none;
   user-select: none;
+}
+
+/* The dot grid is its own layer, moved with a transform, so panning never repaints the map behind the cards. */
+.conversation-graph-grid {
+  background-image: radial-gradient(
+    var(--graph-canvas-grid, var(--line-strong)) 0.7px,
+    transparent 0.7px
+  );
+  background-size: 22px 22px;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  will-change: transform;
 }
 
 .conversation-graph-viewport.is-panning {

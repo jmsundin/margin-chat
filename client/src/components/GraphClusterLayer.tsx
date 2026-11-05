@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { ConversationGraphNodePlacement } from "../lib/conversationGraph";
 import type { GraphViewport } from "../lib/graphInteractions";
 import { rankedHues } from "../lib/graphFamilies";
@@ -443,8 +443,20 @@ export default function GraphClusterLayer({ clusters, levels = [], placements, c
   </div>;
 }
 
-/** Documents beyond the card budget, drawn as dots behind the cards. */
-export function GraphOverflowDots({ placements, viewport, size, matched = null, colorOf = null }: {
+/** The CSS transform that moves a picture drawn for camera `drawn` to where camera `live` would draw it. */
+export function followCameraTransform(drawn: GraphViewport, live: GraphViewport) {
+  const ratio = live.scale / drawn.scale;
+  const x = live.x - drawn.x * ratio, y = live.y - drawn.y * ratio;
+  if (ratio === 1 && x === 0 && y === 0) return "";
+  return ratio === 1 ? `translate(${x}px, ${y}px)` : `translate(${x}px, ${y}px) scale(${ratio})`;
+}
+
+/**
+ * Documents beyond the card budget, drawn as dots behind the cards. While you pan or zoom by hand
+ * React hears where the camera is only now and then, so between redraws the dots follow the camera
+ * through `subscribeCamera` with a transform, in step with the cards.
+ */
+export function GraphOverflowDots({ placements, viewport, size, matched = null, colorOf = null, subscribeCamera, liveCamera }: {
   placements: ConversationGraphNodePlacement[];
   viewport: GraphViewport;
   size: { width: number; height: number };
@@ -452,15 +464,29 @@ export function GraphOverflowDots({ placements, viewport, size, matched = null, 
   matched?: Set<string> | null;
   /** The map's Color by colors; without them, matches use the accent color. */
   colorOf?: Map<string, string | null> | null;
+  subscribeCamera?: (listener: (viewport: GraphViewport) => void) => () => void;
+  /** The camera right now, which a redraw uses instead of the one React last heard. */
+  liveCamera?: () => GraphViewport;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawnRef = useRef(viewport);
   const width = size.width || 1000, height = size.height || 700;
-  useEffect(() => {
+  useEffect(() => subscribeCamera?.((live) => {
+    const canvas = canvasRef.current;
+    if (canvas) canvas.style.transform = followCameraTransform(drawnRef.current, live);
+  }), [subscribeCamera]);
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
+    const camera = liveCamera?.() ?? viewport;
+    drawnRef.current = camera;
+    canvas.style.transform = "";
     const ratio = window.devicePixelRatio || 1;
-    canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
+    // Resizing a canvas reallocates it, so only a new size does.
+    const pixelWidth = Math.round(width * ratio), pixelHeight = Math.round(height * ratio);
+    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.clearRect(0, 0, width, height);
     const draw = (shown: (id: string) => boolean, color: string, alpha: number) => {
@@ -469,7 +495,7 @@ export function GraphOverflowDots({ placements, viewport, size, matched = null, 
       context.beginPath();
       for (const placement of placements) {
         if (!shown(placement.conversationId)) continue;
-        const x = viewport.x + (placement.x + placement.width / 2) * viewport.scale, y = viewport.y + (placement.y + placement.height / 2) * viewport.scale;
+        const x = camera.x + (placement.x + placement.width / 2) * camera.scale, y = camera.y + (placement.y + placement.height / 2) * camera.scale;
         if (x < -3 || y < -3 || x > width + 3 || y > height + 3) continue;
         context.moveTo(x + 3, y);
         context.arc(x, y, 3, 0, Math.PI * 2);
@@ -486,7 +512,7 @@ export function GraphOverflowDots({ placements, viewport, size, matched = null, 
         if (color) draw((id) => shown(id) && colorOf.get(id) === color, color, 0.9);
       }
     }
-  }, [placements, viewport, width, height, matched, colorOf]);
-  return <canvas ref={canvasRef} className="graph-cluster-canvas graph-overflow-dots" style={{ width, height }} aria-hidden="true"
+  }, [placements, viewport, width, height, matched, colorOf, liveCamera]);
+  return <canvas ref={canvasRef} className="graph-cluster-canvas graph-overflow-dots" style={{ width, height, transformOrigin: "0 0" }} aria-hidden="true"
     data-overflow-count={placements.length} />;
 }

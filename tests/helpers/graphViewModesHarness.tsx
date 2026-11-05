@@ -368,7 +368,9 @@ try {
   {
     // Mid-pan, before React hears where the camera went, the boxes must already move with the cards.
     const stageX = () => Number(/translate\(([-\d.]+)px/.exec(element(".conversation-graph-stage").style.transform)![1]);
-    const boxX = () => parseFloat(element(".canvas-group-box").style.left);
+    // A pan moves all the boxes at once by shifting their host.
+    const boxX = () => parseFloat(element(".canvas-group-box").style.left)
+      + Number(/translate\(([-\d.]+)px/.exec(element(".canvas-group-boxes").style.transform)?.[1] ?? 0);
     const [stageBefore, boxBefore] = [stageX(), boxX()];
     const event = new browser.WheelEvent("wheel", { deltaX: 120, bubbles: true, cancelable: true });
     Object.defineProperties(event, { clientX: { value: 350 }, clientY: { value: 220 } });

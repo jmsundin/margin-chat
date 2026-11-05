@@ -659,9 +659,20 @@ describe("card budget", () => {
     }));
     const bounds = { left: 0, top: -100, right: 1000, bottom: 100 };
     const { cards, overflow } = limitGraphCards(placements, bounds, 5, ["n49"]);
-    expect(cards.map((card) => card.conversationId)).toEqual(["n49", "n5", "n4", "n6", "n3"]);
+    expect(cards.map((card) => card.conversationId)).toEqual(["n3", "n4", "n49", "n5", "n6"]);
     expect(overflow).toHaveLength(45);
     expect(limitGraphCards(placements.slice(0, 3), bounds, 5).overflow).toEqual([]);
+  });
+
+  test("returns the same cards in the same order wherever the camera is", async () => {
+    const { limitGraphCards } = await import("../client/src/components/ConversationGraphView");
+    const placements: ConversationGraphNodePlacement[] = ["c", "a", "b"].map((id, index) => ({
+      conversationId: id, depth: 0, x: index * 100, y: 0, width: 80, height: 40,
+    }));
+    const left = limitGraphCards(placements, { left: -400, top: -100, right: 100, bottom: 100 }, 5).cards;
+    const right = limitGraphCards([...placements].reverse(), { left: 200, top: -100, right: 700, bottom: 100 }, 5).cards;
+    expect(left.map((card) => card.conversationId)).toEqual(["a", "b", "c"]);
+    expect(right.map((card) => card.conversationId)).toEqual(["a", "b", "c"]);
   });
 
   test("zoomed out, Canvas cards shrink with the camera instead of growing over their neighbors", async () => {
