@@ -225,6 +225,9 @@ export interface DocumentBlock {
   generationId?: string;
   /** Block-level origin; human edits retain AI origin as mixed authorship. */
   authorship?: DocumentBlockAuthorship;
+  /** Text the user didn't write and no model generated, such as a web import. Line
+   * authorship credits a new block's lines to it; later edits are the user's. */
+  origin?: { type: "import"; source?: string; label?: string };
 }
 
 /** A user-authored passage link; it does not change either document's ancestry. */
@@ -417,6 +420,8 @@ export interface Conversation {
   /** The user keeps this document out of AI context, Agent tools, search by
    * meaning and connected apps. Written as frontmatter `hide-from-ai: true`. */
   hiddenFromAI?: boolean;
+  /** How far connected apps may edit this document; absent = only lines the user didn't write. */
+  agentEdit?: "locked" | "open";
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   documents?: ConversationDocument[];

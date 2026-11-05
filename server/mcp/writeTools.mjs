@@ -105,13 +105,27 @@ export function appendToSource(source, addition) {
   return null;
 }
 
-export function createWriteTools({ userId, vault, agentName, quotaBytes, now = () => new Date() }) {
-  const entries = async () => (await vault.index(userId)).entries;
+/** Who an MCP write is by: the token or signed-in app, as the member named it. Never anything the agent says. */
+export function agentActor({ agentId, agentName }) {
+  return { type: "agent", id: `mcp:${agentId ?? "unknown"}`, label: agentName || "Connected app" };
+}
 
+export function createWriteTools({ userId, vault, agentName, agentId, quotaBytes, now = () => new Date() }) {
+  const entries = async () => (await vault.index(userId)).entries;
+  const actor = agentActor({ agentId, agentName });
+
+  /**
+   * Saves one change and waits until it can be read back: the line authorship
+   * is recorded and the projection read_document serves has caught up. When the
+   * projection is behind, the answer says so instead of implying it is readable.
+   */
   async function commit(change) {
     try {
-      await vault.commit(userId, [change], { quotaBytes });
-      return null;
+      const receipt = await vault.commit(userId, [change], { quotaBytes,
+        authorship: { wait: true, actor, source: "mcp", authorFor: () => actor } });
+      const sidecar = receipt?.authorship?.[change.path];
+      return { revision_id: sidecar?.revisionId ?? receipt?.manifest?.files?.[change.path]?.revision ?? null,
+        ...(receipt?.projection && receipt.projection.status !== "ready" ? { projection: "pending" } : {}) };
     } catch (error) {
       if (error?.statusCode === 409) return fail("That document changed on another device just now. Read it again, then retry.");
       if (error?.statusCode === 413) return fail(error.message);
@@ -154,8 +168,8 @@ export function createWriteTools({ userId, vault, agentName, quotaBytes, now = (
     // The body starts right after the frontmatter and has no final newline, so it reads back exactly as written.
     const source = `---\n${frontmatter.join("\n")}\n---\n${content}`;
     if (!readsAs(path, source, id)) return fail("That content couldn't be saved as a Margin Chat document.");
-    const failed = await commit({ path, content: source, baseRevision: null });
-    return failed ?? { ok: true, document_id: id, title, path };
+    const saved = await commit({ path, content: source, baseRevision: null });
+    return saved.ok === false ? saved : { ok: true, document_id: id, title, path, ...saved };
   }
 
   async function append(args) {
@@ -171,8 +185,8 @@ export function createWriteTools({ userId, vault, agentName, quotaBytes, now = (
     if (appended === null) return fail("This item is a chat, which can't be appended to. Create a new document instead.");
     const next = setFrontmatterEntries(appended, { updated: renderFrontmatterEntry("updated", now().toISOString()) });
     if (!readsAs(entry.path, next, id)) return fail("That content couldn't be added without damaging the document.");
-    const failed = await commit({ path: entry.path, content: next, baseRevision: revision });
-    return failed ?? { ok: true, document_id: id, title: entry.title };
+    const saved = await commit({ path: entry.path, content: next, baseRevision: revision });
+    return saved.ok === false ? saved : { ok: true, document_id: id, title: entry.title, ...saved };
   }
 
   const handlers = { create_document: create, append_to_document: append };

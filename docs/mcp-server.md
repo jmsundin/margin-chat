@@ -43,7 +43,13 @@ is ever replaced or deleted.
 | `create_document` | Writes a new plain Markdown file at the vault root, named after the title (`Title.md`, then `Title 2.md` and so on). Its frontmatter holds `margin-chat-id: mcp-<uuid>`, `title`, `created`, `updated` and `created-by` (the token's name). Optional `relations` add typed links such as `part-of: ["[[Launch plan]]"]`, which show on the map. |
 | `append_to_document` | Adds Markdown at the end of a document, as a new paragraph block after its last block, or at the end of a note or plain file. Chats are refused. |
 
-Both tools save with the vault's normal commit (`server/mcp/writeTools.mjs`).
+Both tools save with the vault's normal commit (`server/mcp/writeTools.mjs`)
+and answer with the new `revision_id`. They answer only once the write can be
+read back: its [line authorship](line-authorship.md) is recorded (every line
+it adds is credited to the token, by the name the member gave it) and the
+projection `read_document` reads has caught up. If that projection is still
+behind, the answer carries `projection: "pending"` instead of implying the
+text is readable.
 An append is based on the file's current revision, so if another device edited
 the file at the same moment, the append is refused and the agent is told to read
 again. Before saving, each new or changed file is parsed back, and anything that

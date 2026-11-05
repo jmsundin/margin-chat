@@ -28,9 +28,15 @@ export function readDocumentGraphProperties(values: Record<string, unknown>): {
   nodeType?: string;
   tags: string[];
   hiddenFromAI?: true;
+  agentEdit?: "locked" | "open";
 };
 export function extractMarkdownWikiLinks(markdown: string): MarkdownWikiLink[];
 export function normalizeConversationGraphFields(input: unknown, conversationId: string, conversations?: Record<string, Conversation>):
-  Pick<Conversation, "relations" | "nodeType" | "tags" | "hiddenFromAI">;
+  Pick<Conversation, "relations" | "nodeType" | "tags" | "hiddenFromAI" | "agentEdit">;
 export const HIDE_FROM_AI_KEY: "hide-from-ai";
+export const AGENT_EDIT_KEY: "agent-edit";
+export type AgentEditPolicy = "non-authored-only" | "locked" | "open";
+export const AGENT_EDIT_POLICIES: AgentEditPolicy[];
+export function normalizeAgentEditPolicy(value: unknown): "locked" | "open" | null;
+export function readAgentEditPolicy(source: string): AgentEditPolicy;
 export function isHiddenFromAI(conversation: Pick<Conversation, "hiddenFromAI"> | null | undefined): boolean;

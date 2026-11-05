@@ -104,7 +104,7 @@ export function createMcpService({ database, vaultService, passageService, creat
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new RpcError(-32602, "Tool arguments must be an object.");
     if (!vaultService?.configured) return { ok: false, error: "This Margin Chat server has no cloud vault storage configured." };
-    if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name, quotaBytes: vaultQuotaFor(user) }).run(name, args);
+    if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name, agentId: user.token?.id, quotaBytes: vaultQuotaFor(user) }).run(name, args);
     // The agent reaches the whole vault: the member chose that by making the token.
     const tools = createVaultTools({
       chatRequest: { ai: { agentScope: "workspace" }, conversation: { id: "", ancestorContext: [] } },

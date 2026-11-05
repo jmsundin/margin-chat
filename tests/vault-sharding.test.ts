@@ -48,7 +48,8 @@ describe("sharded cloud file list", () => {
     const saved = await vault.commit("alice", [{ path: "Notes/7.md", content: "# Edited\n", baseRevision: current }], { acknowledge: true });
     expect(Object.keys(saved.manifest.files)).toEqual(["Notes/7.md"]);
     expect(kinds(storage.reads).filter((kind) => kind === "shards")).toHaveLength(1);
-    expect(kinds(storage.writes).sort()).toEqual(["files", "history", "manifest.json", "shards"]);
+    // Plus the edited note's line authorship: its sidecar and its head pointer.
+    expect(kinds(storage.writes).sort()).toEqual(["files", "history", "manifest.json", "provenance", "provenance", "shards"]);
     expect(storage.objects.get(rootKey("alice"))!.length).toBeLessThan(32 * 1024);
 
     const next = JSON.parse(storage.objects.get(rootKey("alice"))!.toString());

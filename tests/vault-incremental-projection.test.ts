@@ -159,8 +159,10 @@ describe("incremental vault projection", () => {
     (globalThis as any)[requestContext] = { get: () => ({ waitUntil: (work: Promise<unknown>) => kept.push(work) }) };
     const deferred = await vault.commit(userId, [{ path: "Beta.md", content: note("Beta"), baseRevision: null }]);
     expect(deferred.projection).toEqual({ status: "queued", revision: 2 });
-    expect(kept).toHaveLength(1);
-    expect(await kept[0]).toEqual({ status: "ready", revision: 2 });
+    // Line authorship is recorded after the response too, then the projection.
+    expect(kept).toHaveLength(2);
+    expect(Object.keys(await kept[0] as object)).toEqual(["Beta.md"]);
+    expect(await kept[1]).toEqual({ status: "ready", revision: 2 });
     expect((await titles(userId)).Beta).toBeDefined();
   });
 });
