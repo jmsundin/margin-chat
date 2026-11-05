@@ -10,4 +10,5 @@ export * from "./workspaceModel.mjs";
 export * from "./markdown.mjs";
 export * from "./frontmatter.mjs";
 export * from "./relations.mjs";
+export * from "./roadmap.mjs";
 export * from "./vaultFiles.mjs";

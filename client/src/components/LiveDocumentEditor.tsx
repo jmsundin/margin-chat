@@ -1,5 +1,5 @@
 import "../lib/dictationEditors";
-import { Annotation, Compartment, EditorSelection, EditorState, MapMode, StateEffect, StateField, Transaction, type Extension, type Range, type Text } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, MapMode, Prec, StateEffect, StateField, Transaction, type Extension, type Range, type Text } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, drawSelection, keymap, layer, type DecorationSet, type LayerMarker, type ViewUpdate } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
@@ -28,6 +28,8 @@ import MathEquationDialog from "./MathEquationDialog";
 import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource, type TextSpan } from "../lib/liveDocument";
 import { livePreviewInline, type LivePreviewMode } from "../lib/livePreviewMarkdown";
 import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
+import { findWikiLinkQuery, type WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
+import WikiLinkMenu, { type WikiLinkMenuState } from "./WikiLinkMenu";
 import "./LiveDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
@@ -45,6 +47,9 @@ const externalSync = Annotation.define<boolean>();
 /** How long after the last keystroke the Ask AI button comes back under the caret. */
 const ASK_BUTTON_TYPING_PAUSE_MS = 900;
 const askButtonMeasure = {};
+const linkMenuMeasure = {};
+/** Room the link list needs under the caret before it opens above the line instead. */
+const LINK_MENU_ROOM_PX = 280;
 
 interface AnchorRange { from: number; to: number; branchIds: string[]; noteIds: string[] }
 interface BlockMeta { authorship: string; messageId: string; streaming: boolean }
@@ -410,6 +415,12 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   // The Ask AI button under the caret; it steps aside while you type.
   const [askButton, setAskButton] = useState<{ top: number; left: number } | null>(null);
   const typing = useRef(false);
+  // The list of documents that opens after `[[`.
+  const [linkMenu, setLinkMenuState] = useState<WikiLinkMenuState | null>(null);
+  const linkMenuRef = useRef<WikiLinkMenuState | null>(null);
+  const setLinkMenu = (next: WikiLinkMenuState | null) => { linkMenuRef.current = next; setLinkMenuState(next); };
+  /** The `[[` whose list Escape closed; it stays closed until you type another. */
+  const dismissedLink = useRef<number | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mobileRef = useRef(false);
   const vaultMedia = useVaultMedia();
@@ -771,6 +782,67 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     });
   }
 
+  /** Opens, follows or closes the document list for a `[[` just before the caret. */
+  function updateLinkMenu(view: EditorView) {
+    const close = () => { if (linkMenuRef.current) setLinkMenu(null); };
+    const suggest = latest.current.linkSuggestions;
+    const main = view.state.selection.main;
+    if (!suggest || !view.hasFocus || view.state.readOnly || !main.empty || stateOf(view).mode === "reading") { close(); return; }
+    const line = view.state.doc.lineAt(main.head);
+    const found = findWikiLinkQuery(view.state.doc.sliceString(line.from, main.head));
+    if (!found) { dismissedLink.current = null; close(); return; }
+    const from = line.from + found.start;
+    if (dismissedLink.current === from || inCode(view.state, from)) { close(); return; }
+    dismissedLink.current = null;
+    const previous = linkMenuRef.current;
+    const items = suggest(found.query);
+    const index = previous && previous.from === from && previous.query === found.query ? Math.min(previous.index, Math.max(0, items.length - 1)) : 0;
+    const base = { from, to: main.head, query: found.query, items, index };
+    // It shows once measured; a first open waits a frame for its place under the `[[`.
+    setLinkMenu(previous ? { ...previous, ...base } : { ...base, top: 0, left: 0, above: false, placed: false });
+    view.requestMeasure({
+      key: linkMenuMeasure,
+      read(target) {
+        const start = target.coordsAtPos(from);
+        const root = rootRef.current?.getBoundingClientRect();
+        if (!start || !root) return null;
+        const viewportBottom = window.visualViewport ? window.visualViewport.offsetTop + window.visualViewport.height : window.innerHeight;
+        const above = viewportBottom - start.bottom < LINK_MENU_ROOM_PX && start.top - Math.max(0, root.top) > viewportBottom - start.bottom;
+        return { top: Math.round((above ? start.top - 4 : start.bottom + 4) - root.top), left: Math.round(Math.max(4, Math.min(start.left - root.left - 8, root.width - 324))), above };
+      },
+      write(position) {
+        const current = linkMenuRef.current;
+        if (!position || (current && current.from !== from)) return;
+        setLinkMenu({ ...(current ?? base), ...base, index: current?.from === from ? current.index : base.index, ...position, placed: true });
+      },
+    });
+  }
+
+  /** Puts `[[Title]]` in place of what was typed, closing the brackets, with the caret after them. */
+  function pickLink(view: EditorView, item: WikiLinkSuggestion) {
+    const menu = linkMenuRef.current;
+    if (!menu) return false;
+    // Picking inside an existing link replaces its whole name, up to and including its `]]`.
+    const rest = view.state.doc.sliceString(menu.to, view.state.doc.lineAt(menu.to).to);
+    const to = menu.to + (/^[^[\]]*\]\]/.exec(rest)?.[0].length ?? (rest.startsWith("]") ? 1 : 0));
+    const insert = `[[${item.link}]]`;
+    setLinkMenu(null);
+    view.dispatch({ changes: { from: menu.from, to, insert }, selection: EditorSelection.cursor(menu.from + insert.length), userEvent: "input.complete", scrollIntoView: true });
+    view.focus();
+    return true;
+  }
+
+  function linkMenuKey(view: EditorView, key: "up" | "down" | "pick" | "close") {
+    const menu = linkMenuRef.current;
+    if (!menu) return false;
+    if (key === "close") { dismissedLink.current = menu.from; setLinkMenu(null); return true; }
+    if (!menu.items.length) { if (key === "pick") setLinkMenu(null); return false; }
+    if (key === "pick") return pickLink(view, menu.items[menu.index]);
+    const count = menu.items.length;
+    setLinkMenu({ ...menu, index: (menu.index + (key === "down" ? 1 : -1) + count) % count });
+    return true;
+  }
+
   function enter(view: EditorView) {
     const live = stateOf(view);
     if (view.state.readOnly) return false;
@@ -897,8 +969,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu });
-  handlers.current = { commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu };
+  const handlers = useRef({ commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey });
+  handlers.current = { commit, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey };
   useEffect(() => {
     let frame = 0;
     const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
@@ -983,6 +1055,16 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           return tr;
         }),
         EditorView.inputHandler.of((view, from, to, text) => proxy.current.aiInput(view, from, to, text)),
+        // While the `[[` list is open, the arrows move through it, Enter or Tab picks and Escape closes it.
+        Prec.highest(keymap.of([
+          { key: "ArrowDown", run: (view) => proxy.current.linkMenuKey(view, "down") },
+          { key: "ArrowUp", run: (view) => proxy.current.linkMenuKey(view, "up") },
+          { key: "Ctrl-n", run: (view) => proxy.current.linkMenuKey(view, "down") },
+          { key: "Ctrl-p", run: (view) => proxy.current.linkMenuKey(view, "up") },
+          { key: "Enter", run: (view) => proxy.current.linkMenuKey(view, "pick") },
+          { key: "Tab", run: (view) => proxy.current.linkMenuKey(view, "pick") },
+          { key: "Escape", run: (view) => proxy.current.linkMenuKey(view, "close") },
+        ])),
         keymap.of([
           { key: "Enter", run: (view) => proxy.current.enter(view) },
           { key: "Shift-Enter", run: (view) => { if (view.state.readOnly) return false; view.dispatch(view.state.replaceSelection("\n"), { userEvent: "input", scrollIntoView: true }); return true; } },
@@ -1044,6 +1126,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             }, ASK_BUTTON_TYPING_PAUSE_MS);
           }
           if (update.selectionSet || update.focusChanged || update.docChanged || update.geometryChanged) proxy.current.placeAskButton(update.view);
+          if (update.selectionSet || update.focusChanged || update.docChanged || (update.geometryChanged && linkMenuRef.current)) proxy.current.updateLinkMenu(update.view);
           if (update.selectionSet || update.focusChanged) {
             if (update.selectionSet) proxy.current.notifySelection(update.view);
             const live = update.state.field(liveField);
@@ -1375,6 +1458,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           aria-label="Voice typing here" title={`Voice typing here (hold Space or ${dictationShortcutLabel()})`}
           onMouseDown={(event) => event.preventDefault()} onClick={talkHere}><MicIcon size={13} /></button>}
       </div>}
+    {linkMenu && editorFocused && mode !== "reading" && <WikiLinkMenu menu={linkMenu}
+      onHover={(index) => { const current = linkMenuRef.current; if (current) setLinkMenu({ ...current, index }); }}
+      onPick={(item) => { const view = viewRef.current; if (view) pickLink(view, item); }} />}
     {insertMenu && <div className="live-document-insert" style={{ top: insertMenu.top }}>
       <button type="button" className="live-document-insert-toggle" aria-label="Insert media, a drawing, a table or an equation" aria-expanded={insertMenu.open} title="Insert"
         onMouseDown={(event) => event.preventDefault()} onClick={() => setInsertMenu({ ...insertMenu, open: !insertMenu.open })}>+</button>

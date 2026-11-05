@@ -380,6 +380,25 @@ export interface DocumentRelation {
   createdAt?: string;
 }
 
+export type RoadmapStatus = "not-started" | "learning" | "done" | "skipped";
+export interface RoadmapStage { id: string; title: string }
+export interface RoadmapNode {
+  id: string;
+  /** The vault content this node points at; its text is never copied here. */
+  target: { docId: string; blockId?: string };
+  /** Overrides the target's title on the roadmap. */
+  title?: string;
+  stage: string;
+  order: number;
+  /** Omitted while not started. */
+  status?: Exclude<RoadmapStatus, "not-started">;
+  /** One line, or a [[link]], showing it was learned. */
+  proof?: string;
+  /** Prerequisite node ids kept on the roadmap, for block targets. */
+  dependsOn?: string[];
+}
+export interface Roadmap { version: 1; stages: RoadmapStage[]; nodes: RoadmapNode[] }
+
 export interface Conversation {
   id: string;
   grouping?: "manual" | "automatic";
@@ -412,6 +431,8 @@ export interface Conversation {
   document?: EditableDocument;
   /** Saved on the family root, independent of which document is currently focused. */
   documentLayout?: DocumentLayout;
+  /** Stages and nodes of a document with frontmatter `type: "roadmap"`. */
+  roadmap?: Roadmap;
   messages: Message[];
   notes?: ConversationNote[];
   createdAt: string;
