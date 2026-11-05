@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, net, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,6 +6,8 @@ import { createClientBundles } from "./clientBundles.mjs";
 import { DEEP_LINK_SCHEME, findDeepLink, pathForDeepLink, pathForWebsiteLink } from "./deepLinks.mjs";
 import { createPermissionHandlers } from "./permissions.mjs";
 import { createShellUpdater, DEFAULT_FEED } from "./shellUpdater.mjs";
+import { registerVaultBridge } from "./vaultBridge.mjs";
+import { createVaultFolders } from "./vaultFolders.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
 // /api to the hosted backend, so the client keeps its same-origin relative fetches.
@@ -44,6 +46,9 @@ const DOWNLOAD_URL = process.env.MARGIN_DESKTOP_DOWNLOAD_URL?.trim() || "https:/
 const PROXIED_PREFIXES = ["/api/", "/_vercel/"];
 // Request headers that describe the margin:// page rather than the backend request.
 const DROPPED_REQUEST_HEADERS = ["host", "origin", "referer", "cookie"];
+// The vault folder read and written by this process instead of the page (docs/desktop-vault-sync.md).
+// Off until it has been tried on real computers: start the app with MARGIN_DESKTOP_NATIVE_VAULT=1.
+const NATIVE_VAULT = process.env.MARGIN_DESKTOP_NATIVE_VAULT?.trim() === "1";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -195,6 +200,7 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      ...(NATIVE_VAULT ? { preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)) } : {}),
     },
   });
 
@@ -365,6 +371,21 @@ if (!app.requestSingleInstanceLock()) {
     const permissions = createPermissionHandlers(isAppUrl);
     session.defaultSession.setPermissionRequestHandler(permissions.request);
     session.defaultSession.setPermissionCheckHandler(permissions.check);
+
+    if (NATIVE_VAULT) {
+      const folders = createVaultFolders({
+        statePath: path.join(app.getPath("userData"), "vault-folders.json"),
+        async chooseFolder({ title, defaultPath }) {
+          const window = BrowserWindow.getFocusedWindow() ?? mainWindow();
+          const options = { title, defaultPath, buttonLabel: "Choose", properties: ["openDirectory", "createDirectory"] };
+          const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
+          return result.canceled ? null : result.filePaths[0] ?? null;
+        },
+        // A new vault is offered a place in Documents; the person can choose anywhere.
+        defaultLocation: () => app.getPath("documents"),
+      });
+      registerVaultBridge({ ipcMain, folders, isAppUrl });
+    }
 
     registerDeepLinks();
     buildAppMenu();

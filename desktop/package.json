@@ -30,6 +30,10 @@
       "permissions.mjs",
       "shellUpdater.mjs",
       "updates.mjs",
+      "preload.cjs",
+      "vaultBridge.mjs",
+      "vaultFolders.mjs",
+      "vaultFs.mjs",
       "package.json",
       "!node_modules/**/*"
     ],

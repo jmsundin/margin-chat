@@ -107,6 +107,18 @@ A .deb install, a Mac app opened straight from the disk image, or an app in a
 folder it can't write to can't replace itself; it shows a "download the new
 version" prompt once per version instead.
 
+## Native vault folder (testing)
+
+Start the app with `MARGIN_DESKTOP_NATIVE_VAULT=1` and it reads and writes the
+vault folder itself instead of through the page's folder access (see
+docs/desktop-vault-sync.md). On a Mac:
+
+```sh
+MARGIN_DESKTOP_NATIVE_VAULT=1 "/Applications/Margin Chat.app/Contents/MacOS/Margin Chat"
+```
+
+Without the variable the app behaves as before.
+
 ## Vault folder watching (planned)
 
 The native vault (docs/desktop-vault-sync.md) watches the folder with
