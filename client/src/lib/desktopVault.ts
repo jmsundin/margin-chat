@@ -1,5 +1,7 @@
 import type { LocalDirectoryStatus } from "./workspaceStorage";
 import { isSafeMarkdownPath } from "./workspaceMarkdown";
+import type { VaultFs } from "@margin-chat/vault-sync";
+import { toVaultFs } from "./vaultFsAccess";
 
 /**
  * What the desktop app asks for before showing the workspace: a vault folder to
@@ -52,31 +54,33 @@ export interface FolderPreview {
 }
 
 type DirectoryEntries = FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> };
+type Folder = FileSystemDirectoryHandle | VaultFs;
 
 /**
  * Counts what a folder holds before it is connected, skipping what the folder
  * watcher skips (hidden files and Margin Chat's own folders), without reading
  * any file. Stops, incomplete, on finding more than `stopAfter` files.
  */
-export async function previewLocalDirectory(handle: FileSystemDirectoryHandle, stopAfter = LARGE_FOLDER_FILES): Promise<FolderPreview> {
+export async function previewLocalDirectory(handle: Folder, stopAfter = LARGE_FOLDER_FILES): Promise<FolderPreview> {
+  const fs = toVaultFs(handle);
   const preview: FolderPreview = { markdownFiles: 0, otherFiles: 0, totalBytes: 0, complete: true };
-  async function walk(directory: FileSystemDirectoryHandle, prefix: string): Promise<boolean> {
-    for await (const [name, entry] of (directory as DirectoryEntries).entries()) {
+  async function walk(prefix: string): Promise<boolean> {
+    for await (const { name, kind } of fs.list(prefix)) {
       if (name.startsWith(".")) continue;
       const path = prefix ? `${prefix}/${name}` : name;
       if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
-      if (entry.kind === "directory") {
-        if (!await walk(entry as FileSystemDirectoryHandle, path)) return false;
+      if (kind === "directory") {
+        if (!await walk(path)) return false;
         continue;
       }
       if (preview.markdownFiles + preview.otherFiles >= stopAfter) { preview.complete = false; return false; }
       if (isSafeMarkdownPath(path)) preview.markdownFiles += 1; else preview.otherFiles += 1;
-      try { preview.totalBytes += (await (entry as FileSystemFileHandle).getFile()).size; }
+      try { preview.totalBytes += (await fs.stat(path))?.size ?? 0; }
       catch { /* A file removed while counting still counts, without its size. */ }
     }
     return true;
   }
-  await walk(handle, "");
+  await walk("");
   return preview;
 }
 
@@ -118,7 +122,7 @@ export function vaultFolderName(name: string) {
 
 /** A folder with this name already exists where the new vault was to go, and it holds files. */
 export class VaultFolderExistsError extends Error {
-  constructor(readonly handle: FileSystemDirectoryHandle) {
+  constructor(readonly handle: Folder) {
     super(`There’s already a folder named “${handle.name}” there, and it has files in it. Open it instead, or choose another name.`);
     this.name = "VaultFolderExistsError";
   }

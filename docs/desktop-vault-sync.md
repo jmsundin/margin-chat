@@ -59,6 +59,19 @@ Why not chokidar: the desktop app ships without `node_modules` (`desktop/package
 
 None of these needs a change to the manifest, the merge, the frontmatter, the trash or history layout, or `/api/vault/*`.
 
+## Phase 1: the native vault folder (behind a flag)
+
+Started with `MARGIN_DESKTOP_NATIVE_VAULT=1`, the desktop app reads and writes the vault folder itself:
+
+- `desktop/vaultFs.mjs` is the `node:fs` VaultFs. Paths stay inside the folder (no `..`, no absolute paths, and on Windows no drive letters, streams or reserved names), symbolic links are never followed, and every write goes to a hidden `.margin-write-….tmp` file beside the target, is flushed to disk and renamed over it.
+- `desktop/vaultFolders.mjs` remembers each account's folder in the app's data (`vault-folders.json` in `userData`), shows the system's folder dialog, and makes new vaults (offering Documents first). A folder chosen again after it was moved or renamed keeps its ID (same disk identity), so its saved baseline still applies.
+- `desktop/preload.cjs` exposes `window.marginDesktop.vault`; `desktop/vaultBridge.mjs` answers it only for the app's own pages and only for folder IDs it handed out. `contextIsolation`, `sandbox` and `nodeIntegration: false` are unchanged.
+- The page (`client/src/lib/vaultFsDesktop.ts`) uses the bridge when it is there; `workspaceStorage.ts` then keeps no folder handles and asks no permission. A remembered folder opens with no click. Without the bridge (the flag off, older apps, browsers) nothing changes.
+
+With the flag on, a folder chosen earlier through the browser's folder access isn't carried over: the app asks once for the folder. Choosing the same folder is safe: files that match the vault byte for byte are left alone, as on any first connection.
+
+Still to come: the app watching the folder (phase 2; the page still checks it every few seconds while visible), sync in the main process and the device copy outside the browser (phase 3), and removing `desktop/permissions.mjs`'s folder check once the native vault is the default.
+
 ## Phase plan
 
 1. **Native vault in the main process.** `node:fs` `VaultFs` adapter (root containment, symlink checks, temp file + fsync + rename), a preload bridge, native first-run dialogs and a remembered folder with zero clicks. The renderer uses the bridge when it's there. Off by default behind a shell flag.

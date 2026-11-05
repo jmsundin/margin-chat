@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { describeFolderPreview, isLargeFolder, previewLocalDirectory, VaultFolderExistsError, type FolderPreview } from "../lib/desktopVault";
-import { FolderUnavailableError } from "../lib/workspaceStorage";
+import { FolderUnavailableError, type ConnectedFolder } from "../lib/workspaceStorage";
 import "./VaultFolderGate.css";
 
 export type VaultFolderGateVault = Pick<ReturnType<typeof useMarkdownVault>,
@@ -12,7 +12,7 @@ type Phase =
   | { kind: "start" }
   | { kind: "naming" }
   | { kind: "looking"; name: string }
-  | { kind: "confirm"; handle: FileSystemDirectoryHandle; preview: FolderPreview }
+  | { kind: "confirm"; handle: ConnectedFolder; preview: FolderPreview }
   | { kind: "connecting"; name: string; preview?: FolderPreview | null };
 
 const isCancel = (error: unknown) => error instanceof Error && error.name === "AbortError";
@@ -27,7 +27,7 @@ export default function VaultFolderGate({ vault, onBusyChange }: { vault: VaultF
   const [phase, setPhase] = useState<Phase>({ kind: "start" });
   const [name, setName] = useState("Margin Chat");
   const [error, setError] = useState<string | null>(null);
-  const [existing, setExisting] = useState<FileSystemDirectoryHandle | null>(null);
+  const [existing, setExisting] = useState<ConnectedFolder | null>(null);
   const [stillClosed, setStillClosed] = useState(false);
   const [working, setWorking] = useState(false);
   const [allowing, setAllowing] = useState(false);
@@ -56,14 +56,14 @@ export default function VaultFolderGate({ vault, onBusyChange }: { vault: VaultF
     setPhase({ kind: "start" });
   }
 
-  async function connect(handle: FileSystemDirectoryHandle, preview?: FolderPreview | null) {
+  async function connect(handle: ConnectedFolder, preview?: FolderPreview | null) {
     setPhase({ kind: "connecting", name: handle.name, preview });
     await vault.connectFolder(handle);
     finish();
   }
 
   /** Count what the folder holds first, and ask before opening a very large one. */
-  async function look(handle: FileSystemDirectoryHandle) {
+  async function look(handle: ConnectedFolder) {
     setPhase({ kind: "looking", name: handle.name });
     const preview = await previewLocalDirectory(handle).catch(() => null);
     if (preview && isLargeFolder(preview)) { setPhase({ kind: "confirm", handle, preview }); return; }
@@ -78,7 +78,7 @@ export default function VaultFolderGate({ vault, onBusyChange }: { vault: VaultF
   const createVault = () => void run(async () => {
     if (await vault.createVault(name, (handle) => setPhase({ kind: "connecting", name: handle.name }))) finish();
   }, { kind: "naming" });
-  const openExisting = (handle: FileSystemDirectoryHandle) => void run(() => look(handle), { kind: "naming" });
+  const openExisting = (handle: ConnectedFolder) => void run(() => look(handle), { kind: "naming" });
   const switchTo = (id: string, name: string) => void run(async () => {
     const switching = vault.switchDirectory(id);
     setPhase({ kind: "connecting", name });

@@ -28,10 +28,12 @@ import {
   listLocalDirectories, reconnectLocalDirectory, watchLocalDirectory, type RememberedLocalDirectory,
   getLocalWorkspaceFileName, readLocalDirectoryWorkspace, writeLocalDirectory,
   readLocalDirectoryCompanions, listLocalDirectoryFiles, readLocalDirectoryFile, isCompanionPath,
-  localDirectoryAvailability, FolderUnavailableError, LocalDirectoryConflictError, type LocalDirectoryStatus,
+  localDirectoryAvailability, FolderUnavailableError, LocalDirectoryConflictError, type LocalDirectoryStatus, type ConnectedFolder,
 } from "./workspaceStorage";
 import { isDesktopApp } from "./platform";
-import { createVaultFolder, isVaultFolderPromptSnoozed, saveVaultFolderPromptSnooze, vaultFolderPrompt } from "./desktopVault";
+import { createVaultFolder, isVaultFolderPromptSnoozed, saveVaultFolderPromptSnooze, VaultFolderExistsError, vaultFolderName, vaultFolderPrompt } from "./desktopVault";
+import { DesktopVaultError, desktopVaultBridge, desktopVaultFs, unwrap } from "./vaultFsDesktop";
+import { isVaultFs } from "./vaultFsAccess";
 import type { MarkdownWorkspace } from "./workspaceMarkdown";
 import { historyVaultFiles, type HistoryChat, type HistoryImportReceipt } from "./chatHistoryImport";
 
@@ -824,7 +826,7 @@ export function useMarkdownVault(args: {
     : downloadProgress || manualSyncs ? { label: "Syncing documents…" }
     : null;
 
-  async function connectDirectory(handle: FileSystemDirectoryHandle) {
+  async function connectDirectory(handle: ConnectedFolder) {
     await enqueue(async () => {
       await hydrateEverything();
       const status = await connectLocalDirectory(storageUserId, handle);
@@ -980,17 +982,33 @@ export function useMarkdownVault(args: {
     /** Ask for a folder without connecting it yet, so it can be looked at first. Call from a click. */
     pickFolder: () => pickLocalDirectory(),
     /** Connect a folder the person picked: the whole vault is downloaded first, then copied into it. */
-    async connectFolder(handle: FileSystemDirectoryHandle) {
+    async connectFolder(handle: ConnectedFolder) {
       await connectDirectory(handle);
     },
     /**
      * Ask where to put a new vault, make a folder named `name` there and copy the vault into it. Call
      * from a click. A folder with that name that already holds files is refused (VaultFolderExistsError).
      */
-    async createVault(name: string, onCreated?: (handle: FileSystemDirectoryHandle) => void) {
-      const parent = await pickLocalDirectory();
-      if (!parent) return false;
-      const handle = await createVaultFolder(parent, name);
+    async createVault(name: string, onCreated?: (handle: ConnectedFolder) => void) {
+      vaultFolderName(name);
+      // The desktop app asks where to put it in the system's own dialog, offering Documents first.
+      const bridge = desktopVaultBridge();
+      let handle: ConnectedFolder;
+      if (bridge) {
+        const folder = await unwrap(bridge.createVault(name)).catch((error) => {
+          if (error instanceof DesktopVaultError && error.name === "VaultFolderExistsError" && error.folder) {
+            throw new VaultFolderExistsError(desktopVaultFs(bridge, error.folder));
+          }
+          throw error;
+        });
+        if (!folder) return false;
+        handle = desktopVaultFs(bridge, folder);
+      } else {
+        const parent = await pickLocalDirectory();
+        if (!parent) return false;
+        if (isVaultFs(parent)) throw new Error("Choose a location again.");
+        handle = await createVaultFolder(parent, name);
+      }
       onCreated?.(handle);
       await connectDirectory(handle);
       return true;
