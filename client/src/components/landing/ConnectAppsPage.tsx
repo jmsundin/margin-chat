@@ -149,7 +149,7 @@ const PROMPTS = [
 ];
 
 const FAQ: [string, ReactNode][] = [
-  ["Can an AI app change or delete my notes?", "No. It can search and read, and with your permission create new documents and add to the end of existing ones. Nothing is ever replaced or deleted."],
+  ["Can an AI app change or delete my notes?", "Never your own words. It can search and read, and with your permission create documents, add to them and edit text you didn't write, such as AI answers or its own earlier notes. Any line you wrote or edited stays exactly as you left it, and no document is ever deleted."],
   ["Which documents can it see?", <>Everything in your cloud vault except documents you hide from AI. Open a document’s menu and tick <strong>Hide from AI</strong> to keep it out of every AI app, Ask AI and Agent mode.</>],
   ["Where do saved documents go?", "New documents appear at the top of your vault, named after their title and labelled with the token or app that made them. Open apps pick them up within about 15 seconds."],
   ["Which plans can connect?", "Plus and Cloud. The server reads your cloud vault, so it can’t reach a vault that lives only on your computer."],

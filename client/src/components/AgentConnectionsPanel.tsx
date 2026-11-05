@@ -96,8 +96,8 @@ export default function AgentConnectionsPanel() {
 
       <p className="thread-dialog-copy">
         Claude Code, Cursor and other agents that support MCP can search and read your documents, notes, chats
-        and PDFs in your cloud vault. If you allow it, they can also create documents and add to the end of
-        existing ones, but never change or delete what's there. Agents never see documents you hide from AI. Each
+        and PDFs in your cloud vault. If you allow it, they can also create documents, add to them and edit text you
+        didn't write, such as AI answers, but never change, move or delete your own lines. Agents never see documents you hide from AI. Each
         token works until you revoke it, for up to a year.
       </p>
 

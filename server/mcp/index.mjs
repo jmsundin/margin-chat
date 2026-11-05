@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { VAULT_TOOL_DEFINITIONS, createVaultTools } from "../chat/agent/vaultTools.mjs";
 import { HttpError } from "../lib/errors.mjs";
-import { WRITE_TOOL_DEFINITIONS, createWriteTools } from "./writeTools.mjs";
+import { WRITE_TOOL_DEFINITIONS, agentActor, createWriteTools } from "./writeTools.mjs";
+import { BLAME_TOOL_DEFINITION, UPDATE_TOOL_DEFINITION, createAuthorshipTools, matchesAuthorFilter } from "./authorshipTools.mjs";
 import { vaultQuotaFor } from "../vault/index.mjs";
 
 /**
@@ -26,7 +27,12 @@ const INSTRUCTIONS = [
   "Documents the user hid from AI are never included.",
 ].join(" ");
 const READ_ONLY_NOTE = "This connection is read-only.";
-const WRITE_NOTE = "With create_document and append_to_document you can add to the vault; existing text is never changed or deleted. Search before creating, so you don't duplicate a document that already exists.";
+const WRITE_NOTE = [
+  "With create_document and append_to_document you can add to the vault. Search before creating, so you don't duplicate a document that already exists.",
+  "With update_document you can edit lines the user didn't write (text by AI, other apps or imports); the user's own lines can't be changed, moved or deleted.",
+  "Read with include_authorship (or get_document_blame) first, change only lines not by the user, and send the revision and line hashes you read.",
+].join(" ");
+const AUTHOR_FILTERS = ["any", "mine", "not-mine", "ai", "agent", "import"];
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 
@@ -56,18 +62,33 @@ const CHATGPT_TOOLS = [
   },
 ];
 
+/** Connected apps also see who wrote what: an author filter on search and line authors on read. */
+function withAuthorship(name, parameters) {
+  if (name === "search_vault") {
+    return { ...parameters, properties: { ...parameters.properties, author: { type: "string", enum: AUTHOR_FILTERS,
+      description: "Optional: only documents with lines by the user (mine), with none (not-mine), or with lines by Margin Chat's AI, a connected app or an import. Default any." } } };
+  }
+  if (name === "read_document") {
+    return { ...parameters, properties: { ...parameters.properties, include_authorship: { type: "boolean",
+      description: "Also return the revision_id and each block's lines with who wrote them and their sha256, as update_document needs. Default false." } } };
+  }
+  return parameters;
+}
+
 export const MCP_TOOLS = [
   ...VAULT_TOOL_DEFINITIONS.map(({ name, description, parameters }) => ({
-    name, title: TITLES[name], description, inputSchema: parameters, annotations: READ_ONLY,
+    name, title: TITLES[name], description, inputSchema: withAuthorship(name, parameters), annotations: READ_ONLY,
   })),
   ...CHATGPT_TOOLS,
+  BLAME_TOOL_DEFINITION,
 ];
 const TOOL_NAMES = new Set(MCP_TOOLS.map((tool) => tool.name));
-const WRITE_TOOL_NAMES = new Set(WRITE_TOOL_DEFINITIONS.map((tool) => tool.name));
+const ALL_WRITE_TOOLS = [...WRITE_TOOL_DEFINITIONS, UPDATE_TOOL_DEFINITION];
+const WRITE_TOOL_NAMES = new Set(ALL_WRITE_TOOLS.map((tool) => tool.name));
 
-/** The tools a token may use: everyone reads; a write token can also add. */
+/** The tools a token may use: everyone reads; a write token can also add and update. */
 export function mcpToolsFor(scope) {
-  return scope === "write" ? [...MCP_TOOLS, ...WRITE_TOOL_DEFINITIONS] : MCP_TOOLS;
+  return scope === "write" ? [...MCP_TOOLS, ...ALL_WRITE_TOOLS] : MCP_TOOLS;
 }
 
 class RpcError extends Error {
@@ -104,6 +125,16 @@ export function createMcpService({ database, vaultService, passageService, creat
     }
     if (!args || typeof args !== "object" || Array.isArray(args)) throw new RpcError(-32602, "Tool arguments must be an object.");
     if (!vaultService?.configured) return { ok: false, error: "This Margin Chat server has no cloud vault storage configured." };
+    const authorship = () => createAuthorshipTools({ userId: user.id, vault: vaultService, database, quotaBytes: vaultQuotaFor(user),
+      actor: agentActor({ agentId: user.token?.id, agentName: user.token?.name }) });
+    if (name === "update_document" || name === "get_document_blame") {
+      try {
+        return await (name === "update_document" ? authorship().update(args) : authorship().blame(args));
+      } catch (error) {
+        console.error("MCP authorship tool failed", error);
+        return { ok: false, error: name === "update_document" ? "The vault couldn't be saved just now. Nothing was changed." : "The vault couldn't be read just now." };
+      }
+    }
     if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name, agentId: user.token?.id, quotaBytes: vaultQuotaFor(user) }).run(name, args);
     // The agent reaches the whole vault: the member chose that by making the token.
     const tools = createVaultTools({
@@ -122,6 +153,25 @@ export function createMcpService({ database, vaultService, passageService, creat
       return { id: document.document_id, title: document.title ?? "Untitled", text: documentText(document),
         metadata: { kind: document.kind ?? null, parent_id: document.parent_id ?? null, updated_at: document.updated_at ?? null,
           truncated: Boolean(document.truncated) } };
+    }
+    if (name === "search_vault") {
+      const { author, ...rest } = args;
+      if (author !== undefined && !AUTHOR_FILTERS.includes(author)) return { ok: false, error: `author is one of ${AUTHOR_FILTERS.join(", ")}.` };
+      const found = await tools.run(name, rest);
+      if (!Array.isArray(found?.results)) return found;
+      const totals = await authorship().summaries(found.results.map((hit) => hit.document_id));
+      const results = found.results.filter((hit) => matchesAuthorFilter(author, totals[hit.document_id])).map((hit) => {
+        const total = totals[hit.document_id];
+        return total ? { ...hit, authorship: { humanLines: total.humanLines, totalLines: total.totalLines, lastActor: total.lastActor } } : hit;
+      });
+      return { ...found, results, ...(author && author !== "any" ? { total_matches: results.length } : {}) };
+    }
+    if (name === "read_document") {
+      const { include_authorship: include, ...rest } = args;
+      const read = await tools.run(name, rest);
+      if (!include || !read?.found) return read;
+      const extra = await authorship().readAuthorship(String(rest.document_id ?? "")).catch(() => null);
+      return extra ? { ...read, document: { ...read.document, ...extra } } : read;
     }
     return tools.run(name, args);
   }
@@ -154,7 +204,8 @@ export function createMcpService({ database, vaultService, passageService, creat
         const output = await callTool(user, params.name, params.arguments ?? {}, signal);
         const failed = output?.ok === false;
         result = {
-          content: [{ type: "text", text: failed ? output.error : JSON.stringify(output) }],
+          // A refusal with a code (such as PROTECTED_AUTHORSHIP) carries its details, so the agent can revise its patch.
+          content: [{ type: "text", text: failed ? (output.code ? JSON.stringify(output) : output.error) : JSON.stringify(output) }],
           ...(failed ? { isError: true } : { structuredContent: output }),
         };
       } else {

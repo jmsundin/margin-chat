@@ -69,6 +69,7 @@ describe("MCP server", () => {
       searchAgentPassages: (args: any) => searchAgentPassages(fixture.client, args),
       readAgentConversation: (args: any) => readAgentConversation(fixture.client, args),
       recordDocumentProvenance: (args: any) => recordDocumentProvenance(fixture.client, args),
+      readDocumentAuthorship: (args: any) => readDocumentAuthorship(fixture.client, args),
     };
     for (const [id, status] of [["plus", "active"], ["free", "inactive"]]) {
       await database.createUser({ id, role: "member", email: `${id}@example.test`, displayName: id, passwordHash: "unused" });
@@ -123,7 +124,7 @@ describe("MCP server", () => {
       body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
     expect(notified.status).toBe(202);
     const tools = (await (await rpc(token, "tools/list")).json()).result.tools;
-    expect(tools.map((tool: any) => tool.name)).toEqual(["search_vault", "read_document", "list_related", "search", "fetch"]);
+    expect(tools.map((tool: any) => tool.name)).toEqual(["search_vault", "read_document", "list_related", "search", "fetch", "get_document_blame"]);
     expect(tools.every((tool: any) => tool.annotations.readOnlyHint && tool.inputSchema.type === "object")).toBe(true);
 
     const found = await call(token, "search_vault", { query: "pricing" });
@@ -188,11 +189,11 @@ describe("MCP server", () => {
 
     const names = async (token: string) => (await (await rpc(token, "tools/list")).json()).result.tools.map((tool: any) => tool.name);
     expect(await names(reader)).not.toContain("create_document");
-    expect(await names(writer)).toEqual(["search_vault", "read_document", "list_related", "search", "fetch", "create_document", "append_to_document"]);
+    expect(await names(writer)).toEqual(["search_vault", "read_document", "list_related", "search", "fetch", "get_document_blame", "create_document", "append_to_document", "update_document"]);
     const refused = await (await rpc(reader, "tools/call", { name: "create_document", arguments: { title: "x", content: "y" } })).json();
     expect(refused.error).toMatchObject({ code: -32602, message: expect.stringContaining("can add documents") });
     const init = await (await rpc(writer, "initialize", { protocolVersion: "2025-06-18", capabilities: {} })).json();
-    expect(init.result.instructions).toContain("never changed or deleted");
+    expect(init.result.instructions).toContain("the user's own lines can't be changed, moved or deleted");
 
     const created = (await call(writer, "create_document", { title: "Pricing research: notes/plan", content: "Competitors charge per seat.",
       relations: [{ type: "part-of", document_id: "plan" }] })).structuredContent;
@@ -229,6 +230,35 @@ describe("MCP server", () => {
       [created.document_id]: { humanLines: 0, agentLines: 3, totalLines: 3, lastActor: { type: "agent", label: "Claude Code" } },
       plan: { humanLines: 1, agentLines: 1, totalLines: 2 },
     });
+
+    // Through the real handlers: search shows authorship and filters by it; read with
+    // include_authorship gives line hashes; a second token updates the first's line;
+    // touching the member's line is refused with its details.
+    const mine = (await call(writer, "search_vault", { query: "pricing", author: "mine" })).structuredContent;
+    expect(mine.results.map((hit: any) => hit.document_id)).toContain("plan");
+    expect(mine.results.map((hit: any) => hit.document_id)).not.toContain(created.document_id);
+    const notMine = (await call(writer, "search_vault", { query: "Competitors", author: "not-mine" })).structuredContent;
+    expect(notMine.results.find((hit: any) => hit.document_id === created.document_id)?.authorship).toMatchObject({ humanLines: 0, totalLines: 3 });
+    const withLines = (await call(writer, "read_document", { document_id: created.document_id, include_authorship: true })).structuredContent.document;
+    expect(withLines.blocks[0].lines.map((line: any) => [line.text, line.author.label])).toEqual([
+      ["Competitors charge per seat.", "Claude Code"], ["", "Claude Code"], ["Second finding.", "Claude Code"]]);
+    const other = (await (await settings("plus", { method: "POST", body: JSON.stringify({ name: "Muse", scope: "write" }) })).json()).token;
+    const line = withLines.blocks[0].lines[2];
+    const updated = (await call(other, "update_document", { document_id: created.document_id, base_revision_id: withLines.revision_id,
+      operations: [{ op: "replace_lines", block_id: withLines.blocks[0].block_id, start_line: 2, end_line: 2, expected_sha256: [line.sha256], new_text: "Revised finding." }] })).structuredContent;
+    expect(updated).toMatchObject({ ok: true, changed: { modified: 1 } });
+    expect((await call(other, "read_document", { document_id: created.document_id })).structuredContent.document.text)
+      .toBe("Competitors charge per seat.\n\nRevised finding.");
+    const blame = (await call(reader, "get_document_blame", { document_id: created.document_id })).structuredContent;
+    expect(blame.blocks[0].lines.map((item: any) => item.author.label)).toEqual(["Claude Code", "Claude Code", "Muse"]);
+    const planRead = (await call(other, "read_document", { document_id: "plan", include_authorship: true })).structuredContent.document;
+    const pricing = planRead.blocks.find((block: any) => block.block_id === "pricing");
+    const refusedUpdate = await call(other, "update_document", { document_id: "plan", base_revision_id: planRead.revision_id,
+      operations: [{ op: "delete_lines", block_id: "pricing", start_line: 0, end_line: 0, expected_sha256: [pricing.lines[0].sha256] }] });
+    expect(refusedUpdate.isError).toBe(true);
+    expect(JSON.parse(refusedUpdate.content[0].text)).toMatchObject({ code: "PROTECTED_AUTHORSHIP", protected_lines: [{ block_id: "pricing", line: 0, author_label: "You" }] });
+    const readerUpdate = await (await rpc(reader, "tools/call", { name: "update_document", arguments: {} })).json();
+    expect(readerUpdate.error.code).toBe(-32602);
     expect(await call(writer, "append_to_document", { document_id: "chat", content: "x" })).toMatchObject({ isError: true });
     expect(await call(writer, "append_to_document", { document_id: "missing", content: "x" })).toMatchObject({ isError: true });
     expect(await call(writer, "create_document", { title: "Linked", content: "x", relations: [{ type: "part-of", document_id: "missing" }] }))
