@@ -66,11 +66,14 @@ test("every file main.mjs loads is packaged into the app", async () => {
     const file = queue.pop()!;
     if (seen.has(file)) continue;
     seen.add(file);
+    // Built before packaging (bun run desktop:engine) as one self-contained bundle, so it has no imports to follow.
+    if (file === "vaultSyncEngine.mjs") continue;
     const source = await readFile(path.join(desktop, file), "utf8");
     for (const [, specifier] of source.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)["'](\.{1,2}\/[^"']+)["']/g)) {
       queue.push(path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)));
     }
   }
   expect([...seen]).toContain("permissions.mjs");
+  expect([...seen]).toContain("vaultSyncEngine.mjs");
   for (const file of seen) expect(packaged.has(file), `${file} is loaded by main.mjs but missing from build.files`).toBe(true);
 });

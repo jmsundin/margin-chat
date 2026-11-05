@@ -13,6 +13,8 @@ dist/
 client/dist/
 extension/releases/
 desktop/release/
+# Built from desktop/sync by scripts/build-desktop-engine.mjs.
+desktop/vaultSyncEngine.mjs
 
 # Local tooling artifacts
 .codex-artifacts/

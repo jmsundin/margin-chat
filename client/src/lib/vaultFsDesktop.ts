@@ -9,6 +9,27 @@ export interface DesktopVaultFolder {
 type Answer<T> = { ok: true; value: T } | { ok: false; error: { name: string; message: string; folder?: DesktopVaultFolder } };
 type Listed = { name: string; kind: "file" | "directory"; size?: number; modifiedMs?: number };
 
+export type DesktopSyncState = "starting" | "syncing" | "synced" | "offline" | "paused" | "attention";
+
+/** What the desktop app's own vault sync reports (desktop/sync/vaultSyncDaemon.ts). */
+export interface DesktopSyncStatus {
+  folderId: string;
+  folderName: string;
+  folderPath: string;
+  state: DesktopSyncState;
+  /** When the folder and the cloud last matched, in milliseconds. */
+  lastSyncedAt: number | null;
+  /** Files changed on this computer that the cloud doesn't have yet. */
+  pending: number;
+  paused: boolean;
+  /** Why sync needs the person, in the app's own words. */
+  attention?: { reason: "held" | "missing" | "signed-out" | "failing"; message: string; held?: { folderName: string; paths: string[] } };
+  /** Why the last attempt didn't finish, while it will retry by itself. */
+  message?: string;
+}
+
+export type DesktopSyncAction = "syncNow" | "pause" | "resume" | "restore" | "delete" | "openFolder";
+
 /** What desktop/preload.cjs exposes as window.marginDesktop.vault. */
 export interface DesktopVaultBridge {
   version: number;
@@ -28,6 +49,21 @@ export interface DesktopVaultBridge {
   watch?(id: string): Promise<Answer<{ active: boolean }>>;
   unwatch?(id: string): Promise<Answer<void>>;
   onChange?(listener: (change: { id: string; paths: string[] | null }) => void): () => void;
+  /**
+   * Newer apps keep the folder and the cloud in step themselves (phase 3). Status is null for a folder this
+   * account never handed over, and { state: "stopped" } for one handed over before that isn't running now.
+   */
+  syncStatus?(userId: string, folderId: string): Promise<Answer<DesktopSyncStatus | { folderId: string; state: "stopped" } | null>>;
+  syncStart?(userId: string, folderId: string): Promise<Answer<DesktopSyncStatus>>;
+  syncControl?(userId: string, folderId: string, action: DesktopSyncAction): Promise<Answer<DesktopSyncStatus>>;
+  onSyncStatus?(listener: (status: DesktopSyncStatus) => void): () => void;
+}
+
+/** The desktop app's bridge when it syncs the vault itself; null in browsers and older apps. */
+export function desktopSyncBridge(): (DesktopVaultBridge & Required<Pick<DesktopVaultBridge, "syncStatus" | "syncStart" | "syncControl" | "onSyncStatus">>) | null {
+  const bridge = desktopVaultBridge();
+  return bridge && typeof bridge.syncStart === "function" && typeof bridge.syncStatus === "function"
+    && typeof bridge.syncControl === "function" && typeof bridge.onSyncStatus === "function" ? bridge as never : null;
 }
 
 /**

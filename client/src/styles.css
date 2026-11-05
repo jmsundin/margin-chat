@@ -6763,6 +6763,15 @@ button {
   gap: 8px;
 }
 
+.vault-panel-sync-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+}
+
+.vault-panel-sync[data-state="attention"] strong {
+  color: #b4502f;
+}
+
 .vault-panel-unsynced summary {
   cursor: pointer;
   display: flex;

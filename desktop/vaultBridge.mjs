@@ -9,7 +9,10 @@ export const VAULT_CHANNEL = "margin-vault";
 /** Where the page hears which paths changed in a folder it watches: { id, paths } (paths null: look at everything). */
 export const VAULT_CHANGED_CHANNEL = "margin-vault-changed";
 /** What the page can call; preload.cjs exposes the same list. */
-export const VAULT_OPERATIONS = ["selection", "choose", "createVault", "connect", "forget", "list", "stat", "read", "writeAtomic", "move", "delete", "availability", "watch", "unwatch"];
+export const VAULT_OPERATIONS = ["selection", "choose", "createVault", "connect", "forget", "list", "stat", "read", "writeAtomic", "move", "delete", "availability", "watch", "unwatch",
+  "syncStatus", "syncStart", "syncControl"];
+/** Operations that change the folder's files; the app's sync takes them to the cloud. */
+const FOLDER_WRITES = new Set(["writeAtomic", "move", "delete"]);
 
 function serializeError(error) {
   if (!error || typeof error !== "object") return { name: "Error", message: String(error) };
@@ -87,7 +90,7 @@ export function createVaultWatchers({ folders, watcherOptions = {} }) {
         onChange: (paths) => { if (!sender.isDestroyed?.()) sender.send(VAULT_CHANGED_CHANNEL, { id, paths }); },
         ...watcherOptions,
       });
-      watching.set(key(sender, id), { root: fs.root, watcher });
+      watching.set(key(sender, id), { root: fs.root, watcher, sender });
       // A reload or a closed window stops its watchers.
       if (!existing) sender.once?.("destroyed", () => this.unwatchAll(sender));
       await watcher.started;
@@ -96,6 +99,13 @@ export function createVaultWatchers({ folders, watcherOptions = {} }) {
     unwatch(sender, id) {
       watching.get(key(sender, id))?.watcher.close();
       watching.delete(key(sender, id));
+    },
+    /** Tells every page watching `id` which paths changed, such as after the app's sync wrote them. */
+    broadcast(id, paths) {
+      for (const [entry, value] of watching) {
+        if (!entry.endsWith(`\u0000${id}`) || value.sender.isDestroyed?.()) continue;
+        value.sender.send(VAULT_CHANGED_CHANNEL, { id, paths });
+      }
     },
     unwatchAll(sender) {
       for (const [entry, value] of watching) if (entry.startsWith(`${sender.id}\u0000`)) { value.watcher.close(); watching.delete(entry); }
@@ -108,10 +118,22 @@ export function createVaultWatchers({ folders, watcherOptions = {} }) {
 }
 
 /** Registers the bridge's handler; only the app's own pages get answers. */
-export function registerVaultBridge({ ipcMain, folders, isAppUrl, watchers = createVaultWatchers({ folders }) }) {
+export function registerVaultBridge({ ipcMain, folders, isAppUrl, watchers = createVaultWatchers({ folders }), sync = null }) {
   ipcMain.handle(VAULT_CHANNEL, async (event, operation, args) => {
     const url = event.senderFrame?.url ?? "";
     if (!isAppUrl(url)) return { ok: false, error: { name: "NotAllowedError", message: "Only Margin Chat's own pages can use the vault folder." } };
+    if (operation === "syncStatus" || operation === "syncStart" || operation === "syncControl") {
+      try {
+        const [userId, folderId, action] = Array.isArray(args) ? args : [];
+        // An app without its own sync answers like one that never synced, and the page keeps syncing itself.
+        if (!sync) return operation === "syncStatus" ? { ok: true, value: null } : { ok: false, error: { name: "NotSupportedError", message: "This copy of the app can't sync on its own." } };
+        if (operation === "syncStatus") return { ok: true, value: await sync.status(userId, folderId) };
+        if (operation === "syncStart") return { ok: true, value: await sync.start(userId, folderId) };
+        return { ok: true, value: await sync.control(userId, folderId, action) };
+      } catch (error) {
+        return { ok: false, error: serializeError(error) };
+      }
+    }
     if (operation === "watch" || operation === "unwatch") {
       try {
         const id = Array.isArray(args) ? args[0] : undefined;
@@ -121,7 +143,13 @@ export function registerVaultBridge({ ipcMain, folders, isAppUrl, watchers = cre
         return { ok: false, error: serializeError(error) };
       }
     }
-    return answerVaultRequest(folders, operation, args);
+    const answer = await answerVaultRequest(folders, operation, args);
+    if (answer.ok && Array.isArray(args)) {
+      if (FOLDER_WRITES.has(operation)) sync?.folderChanged(args[0]);
+      if (operation === "forget") sync?.stop(args[0]);
+      if (operation === "connect") sync?.connected(args[0], args[1]);
+    }
+    return answer;
   });
   return watchers;
 }

@@ -4,6 +4,7 @@ import { carriesFiles, describeDroppedFolders, droppedFiles } from "../lib/fileD
 import RecentlyDeleted from "./RecentlyDeleted";
 import { formatRelativeTime } from "../lib/conversationSearch";
 import { isDesktopApp } from "../lib/platform";
+import { desktopSyncDetail, desktopSyncLabel } from "../lib/desktopSyncLabel";
 
 export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnType<typeof useMarkdownVault>; cloudSyncEnabled: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -35,6 +36,17 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
         <small>{vault.localDirectoryStatus.directoryName ? "Margin Chat keeps this folder up to date with your vault."
           : "If this browser’s site data is cleared, only a downloaded copy or a connected folder is left. Use Download vault or Choose folder below."}</small></div> : null}
     </div>
+    {vault.desktopSync ? <div className="profile-storage-directory-card vault-panel-sync" data-state={vault.desktopSync.state}>
+      <div><span>Sync</span><strong>{desktopSyncLabel(vault.desktopSync)}</strong>
+        <small>{vault.desktopSync.attention?.message ?? vault.desktopSync.message ?? desktopSyncDetail(vault.desktopSync)}</small>
+        <small className="vault-panel-sync-path" title={vault.desktopSync.folderPath}>{vault.desktopSync.folderPath}</small>
+        <small>The app keeps this folder and your cloud vault in step, also while this window reloads or is in the background.</small></div>
+      <div className="profile-storage-directory-actions">
+        <button className="thread-dialog-button" disabled={busy} onClick={() => void run(() => vault.controlDesktopSync("openFolder"))}>Open vault folder</button>
+        <button className="thread-dialog-button" disabled={busy} onClick={() => void run(() => vault.controlDesktopSync(vault.desktopSync?.paused ? "resume" : "pause"))}>
+          {vault.desktopSync.paused ? "Resume sync" : "Pause sync"}</button>
+      </div>
+    </div> : null}
     {uploaded ? <p className="thread-dialog-copy" role="status">{uploaded}</p> : null}
     {(error || vault.message) ? <p className="profile-dialog-error" role="alert">{error ?? vault.message}</p> : null}
     <div className={`profile-storage-directory-actions vault-panel-drop${dropping ? " is-dropping" : ""}`} data-file-drop

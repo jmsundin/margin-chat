@@ -134,6 +134,16 @@ watcher runs, the page's own folder check drops to once a minute as a backstop.
 chokidar was not used because the app ships without `node_modules` and its
 native recursive backend is a brand-new rewrite (v6, October 2026).
 
+## Vault sync in the app
+
+With the native vault on, the app itself keeps the vault folder and the cloud
+vault in step (`vaultSync.mjs`, `sync/`, docs/desktop-vault-sync.md), also
+with the window in the background and across page reloads. The sync code is
+the page's own, bundled for Node by `bun run desktop:engine` into
+`vaultSyncEngine.mjs`; `npm start` and `npm run dist` build it first. Its copy
+of the vault lives in the app's data folder under `vault-sync/`. Under
+`DEV_URL` the page syncs by itself as on the web.
+
 ## Not done yet
 
 - Signing and notarization: the installers are unsigned. macOS blocks the app
