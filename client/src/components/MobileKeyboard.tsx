@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
+import { runEditorCommand, type EditorCommand } from "../lib/editorCommands";
 import { setMobileDockSlot } from "../lib/mobileDock";
 import { useVisualViewport } from "../lib/useVisualViewport";
 import "./MobileKeyboard.css";
@@ -86,6 +87,15 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     else if (range && native) { native.removeAllRanges(); native.addRange(range); }
   }
 
+  // The writing bar rides on top of the software keyboard while a document is being typed in.
+  const barShown = mobile && enabled && hasTarget && composerCount === 0;
+  function runCommand(command: EditorCommand) {
+    const field = target.current;
+    if (!field?.isConnected) return;
+    if (document.activeElement !== field && !field.contains(document.activeElement)) field.focus({ preventScroll: true });
+    runEditorCommand(field, command);
+  }
+
   // Floating buttons stay out of the way of an open AI composer or on-screen keyboard.
   const overlayOpen = mobile && (composerCount > 0 || keyboardShown);
   const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const, registerComposer, overlayOpen }), [mobile, enabled, registerComposer, overlayOpen]);
@@ -95,7 +105,7 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
         keyboard is up, its own Done/checkmark closes it, so the stack would only cover text. */}
     {mobile && composerCount === 0 && !keyboardShown && createPortal(<div className="mobile-dock" data-mobile-dock
       // Kept clear of the rounded screen corners on curved phones: 24px up and 20px in.
-      style={{ bottom: `calc(${window.innerHeight - viewport.top - viewport.height + 24}px + ${safeBottom})`, right: window.innerWidth - viewport.left - viewport.width + 20 }}>
+      style={{ bottom: `calc(${window.innerHeight - viewport.top - viewport.height + 24 + (barShown ? KEYBOARD_BAR_HEIGHT : 0)}px + ${safeBottom})`, right: window.innerWidth - viewport.left - viewport.width + 20 }}>
       <span className="mobile-dock-slot" ref={createSlot} />
       <span className="mobile-dock-slot" ref={micSlot} />
       <span className="mobile-dock-slot" ref={topSlot} />
@@ -133,7 +143,32 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
       </svg>
     </button> : null}
     </div>, document.body)}
+    {barShown && createPortal(<div className="mobile-keyboard-bar" role="toolbar" aria-label="Writing tools" data-mobile-keyboard-bar
+      style={{ top: viewport.top + viewport.height - KEYBOARD_BAR_HEIGHT, left: viewport.left, width: viewport.width, height: KEYBOARD_BAR_HEIGHT }}>
+      {keyboardBarButtons.map((button) => <KeyboardBarButton key={button.command} {...button} onRun={runCommand} />)}
+    </div>, document.body)}
   </MobileKeyboardContext.Provider>;
+}
+
+const KEYBOARD_BAR_HEIGHT = 44;
+const iconProps = { width: 22, height: 22, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
+const keyboardBarButtons: { command: EditorCommand; label: string; icon: ReactNode }[] = [
+  { command: "wiki-link", label: "Insert [[ link", icon: <span className="mobile-keyboard-bar-text" aria-hidden="true">[[</span> },
+  { command: "date-time", label: "Insert date and time (Ctrl+D)", icon: <svg {...iconProps}><rect x="3" y="5" width="18" height="16" rx="2.5" /><path d="M3 10h18M8 3v4M16 3v4M8 14h2m4 0h2M8 17.5h2" /></svg> },
+  { command: "outdent", label: "Outdent (Shift+Tab)", icon: <svg {...iconProps}><path d="M11 6h10M11 12h10M11 18h10M7 9l-3 3 3 3" /></svg> },
+  { command: "indent", label: "Indent (Tab)", icon: <svg {...iconProps}><path d="M11 6h10M11 12h10M11 18h10M4 9l3 3-3 3" /></svg> },
+];
+
+/** Acts on touch end without taking focus, so the caret and keyboard stay where they are. */
+function KeyboardBarButton({ command, label, icon, onRun }: { command: EditorCommand; label: string; icon: ReactNode; onRun: (command: EditorCommand) => void }) {
+  const lastTouch = useRef(-Infinity);
+  return <button type="button" className="mobile-keyboard-bar-button" aria-label={label} title={label}
+    onPointerDown={(event) => event.preventDefault()}
+    onMouseDown={(event) => event.preventDefault()}
+    onTouchEnd={(event) => { event.preventDefault(); lastTouch.current = event.timeStamp; onRun(command); }}
+    onClick={(event) => { if (event.detail !== 0 && event.timeStamp - lastTouch.current < 800) return; onRun(command); }}>
+    {icon}
+  </button>;
 }
 
 /** Portaling avoids clipping and transformed containing blocks in document panes. */

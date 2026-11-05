@@ -38,3 +38,9 @@
 body:has(.workspace-sidebar-pane:not(.is-collapsed)) .mobile-dock,
 body:has(.document-header-backdrop) .mobile-dock,
 body:has(.mobile-selection-actions[data-placement="bottom"]) .mobile-dock { visibility: hidden; }
+/* Writing tools above the software keyboard: [[ link, date and time, outdent, indent. */
+.mobile-keyboard-bar { position: fixed; z-index: 66; display: flex; align-items: center; gap: 4px; box-sizing: border-box; padding: 0 8px; border-top: 1px solid var(--line); background: var(--panel-strong); }
+.mobile-keyboard-bar-button { display: grid; place-items: center; width: 44px; height: 38px; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--ink); touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+.mobile-keyboard-bar-button:active { background: var(--line); }
+.mobile-keyboard-bar-button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mobile-keyboard-bar-text { font: 600 17px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -1px; }
