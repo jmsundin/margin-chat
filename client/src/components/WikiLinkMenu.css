@@ -1,0 +1,14 @@
+.wiki-link-menu {
+  background: var(--panel-strong); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgba(0, 0, 0, .16);
+  box-sizing: border-box; color: var(--ink); max-height: 264px; max-width: calc(100% - 8px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 4px; position: absolute; width: 320px; z-index: 6;
+}
+.wiki-link-menu.is-above { transform: translateY(-100%); }
+.wiki-link-option { border-radius: 7px; cursor: pointer; display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; }
+.wiki-link-option[aria-selected="true"] { background: color-mix(in srgb, var(--sage) 16%, transparent); }
+.wiki-link-option-title { font-size: .9rem; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-link-option-detail { color: var(--muted); font-size: .74rem; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wiki-link-empty { color: var(--muted); font-size: .82rem; padding: 6px 10px; }
+@media (pointer: coarse) {
+  .wiki-link-option { padding-block: 10px; }
+}

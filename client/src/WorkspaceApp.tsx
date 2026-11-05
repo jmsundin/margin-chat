@@ -46,6 +46,7 @@ import {
 import BranchRail from "./components/BranchRail";
 import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
+import { wikiLinkSuggestions } from "./lib/wikiLinkSuggestions";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SessionChips, SessionsPanel } from "./components/Sessions";
@@ -5030,6 +5031,7 @@ function WorkspaceAppContent({
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={view === "chat" && getMinimizedChildNodes(conversation) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
+      linkSuggestions={(query) => wikiLinkSuggestions({ conversations: state.conversations, cloudDocuments: vault.cloudDocuments, currentId: conversation.id }, query)}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
       agentMode={agentModeControls(conversation)} agentProgress={agentProgress[conversation.id]}
