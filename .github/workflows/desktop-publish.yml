@@ -1,0 +1,36 @@
+name: Desktop publish
+
+# Sends a draft Desktop release to everyone: installed apps update to it within
+# four hours (desktop/shellUpdater.mjs) and marginchat.com/download offers it.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version of the draft to publish, for example 0.2.0
+        required: true
+        type: string
+
+concurrency:
+  group: margin-chat-desktop-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          TAG="desktop-v${VERSION#v}"
+          IS_DRAFT=$(gh release view "$TAG" --json isDraft --jq .isDraft) || { echo "No release $TAG. Run Desktop release first."; exit 1; }
+          if [ "$IS_DRAFT" != "true" ]; then echo "$TAG is already published."; exit 0; fi
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx desktop-update.json || { echo "$TAG has no desktop-update.json; build it again."; exit 1; }
+          gh release edit "$TAG" --draft=false --latest
+          echo "Published $(gh release view "$TAG" --json url --jq .url)" >> "$GITHUB_STEP_SUMMARY"
