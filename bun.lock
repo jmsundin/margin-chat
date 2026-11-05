@@ -96,6 +96,10 @@
       "name": "@margin-chat/capture-contracts",
       "version": "1.0.0",
     },
+    "packages/vault-sync": {
+      "name": "@margin-chat/vault-sync",
+      "version": "0.1.0",
+    },
     "packages/workspace-contracts": {
       "name": "@margin-chat/workspace-contracts",
       "version": "1.0.0",
@@ -309,6 +313,8 @@
     "@mapbox/node-pre-gyp": ["@mapbox/node-pre-gyp@2.0.3", "", { "dependencies": { "consola": "^3.2.3", "detect-libc": "^2.0.0", "https-proxy-agent": "^7.0.5", "node-fetch": "^2.6.7", "nopt": "^8.0.0", "semver": "^7.5.3", "tar": "^7.4.0" }, "bin": { "node-pre-gyp": "bin/node-pre-gyp" } }, "sha512-uwPAhccfFJlsfCxMYTwOdVfOz3xqyj8xYL3zJj8f0pb30tLohnnFPhLuqp4/qoEz8sNxe4SESZedcBojRefIzg=="],
 
     "@margin-chat/capture-contracts": ["@margin-chat/capture-contracts@workspace:packages/capture-contracts"],
+
+    "@margin-chat/vault-sync": ["@margin-chat/vault-sync@workspace:packages/vault-sync"],
 
     "@margin-chat/workspace-contracts": ["@margin-chat/workspace-contracts@workspace:packages/workspace-contracts"],
 
