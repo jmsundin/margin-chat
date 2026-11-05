@@ -53,13 +53,17 @@ compatible with whatever production runs.
 
 ## Publishing a release
 
-Run Actions > Desktop release > Run workflow with a version number (and the
-commit production runs). It builds the client once, packages a universal macOS
-.dmg and .zip, a 64-bit Windows installer and a Linux AppImage and .deb on
-their own runners, and publishes them as the GitHub release
-`desktop-v<version>` together with the client's `version.json` and
-`desktop-update.json` (each installer's size and SHA-512, written by
-`scripts/desktop-update-manifest.mjs`).
+See [docs/desktop-release.md](../docs/desktop-release.md) for the whole flow.
+In short: Actions > Desktop release > Run workflow with a bump (patch, minor
+or major). It picks the next version number from the earlier releases, builds
+the commit www.marginchat.com runs, packages a universal macOS .dmg and .zip
+(ad-hoc signed, or Developer ID signed and notarized when the signing secrets
+exist), a 64-bit Windows installer and a Linux AppImage and .deb on their own
+runners, and saves them as a draft GitHub release `desktop-v<version>`
+together with the client's `version.json` and `desktop-update.json` (each
+installer's size and SHA-512, written by `scripts/desktop-update-manifest.mjs`).
+Actions > Desktop publish then publishes the draft. Web changes need no
+desktop release; see Updates below.
 
 marginchat.com/download reads the latest release from
 `GET /api/downloads/desktop` and offers the visitor's system. Each button goes

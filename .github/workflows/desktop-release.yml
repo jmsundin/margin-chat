@@ -1,17 +1,36 @@
 name: Desktop release
 
-# Builds the Electron app for macOS, Windows and Linux from one commit and
-# publishes the installers as a GitHub release. marginchat.com/download serves
-# the latest release through /api/downloads/desktop, which records each download.
+# Builds the Electron app for macOS, Windows and Linux from the commit
+# production runs and saves the installers as a GitHub release.
+#
+# Web changes don't need this: installed apps download each Production release's
+# client by themselves (desktop/clientBundles.mjs). Run it when desktop/
+# changes (main process, Electron version, packaging, icons).
+#
+# By default the release is a draft: nobody gets it until "Desktop publish"
+# runs (or it's published on the Releases page). Installed apps
+# (desktop/shellUpdater.mjs) and marginchat.com/download only see published
+# releases. See docs/desktop-release.md.
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Version number for this build, for example 0.2.0
+      bump:
+        description: How much to raise the version number (patch for fixes, minor for new features)
         required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+      draft:
+        description: Save as a draft to test before anyone gets it
+        required: true
+        default: true
+        type: boolean
+      version:
+        description: Exact version instead of a bump, for example 1.0.0 (usually leave empty)
+        required: false
         type: string
       commit:
-        description: Full commit SHA to build (leave empty for the head of the selected branch). Use the commit production runs.
+        description: Full commit SHA to build (leave empty for the commit www.marginchat.com runs)
         required: false
         type: string
 
@@ -23,22 +42,64 @@ permissions:
   contents: read
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      previous: ${{ steps.version.outputs.previous }}
+      commit: ${{ steps.commit.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pick the commit
+        id: commit
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          if [ -z "$COMMIT" ]; then
+            # The bundled client must work with the backend production runs.
+            COMMIT=$(curl -fsS --retry 3 https://www.marginchat.com/version.json | jq -r '.commit // empty')
+            if [ -z "$COMMIT" ]; then echo "Couldn't read the commit www.marginchat.com runs; pass one in the commit box."; exit 1; fi
+            echo "Production runs $COMMIT"
+          fi
+          if ! [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]]; then echo "Use a full 40-character commit SHA."; exit 1; fi
+          if ! git merge-base --is-ancestor "$COMMIT" origin/main; then echo "$COMMIT is not on main."; exit 1; fi
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+      - name: Pick the version number
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUMP: ${{ inputs.bump }}
+          OVERRIDE: ${{ inputs.version }}
+        run: |
+          # Drafts count too, so two runs never pick the same number.
+          gh release list --limit 200 --json tagName --jq '.[].tagName' > tags.txt
+          VERSION=$(node scripts/desktop-next-version.mjs "$BUMP" "$OVERRIDE" < tags.txt)
+          # Release notes list the changes since the last published release (a
+          # draft has no git tag yet).
+          gh release list --limit 200 --exclude-drafts --json tagName --jq '.[].tagName' > published.txt
+          PREVIOUS=$(node scripts/desktop-next-version.mjs --highest < published.txt)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "previous=$PREVIOUS" >> "$GITHUB_OUTPUT"
+          echo "### Margin Chat desktop $VERSION" >> "$GITHUB_STEP_SUMMARY"
+          echo "Previous release: ${PREVIOUS:-none}" >> "$GITHUB_STEP_SUMMARY"
+
   client:
+    needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.commit || github.sha }}
+          ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.9
-      - name: Check the version number
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "Use a version like 0.2.0"; exit 1; fi
       - name: Install pinned dependencies
         run: bun --no-env-file install --frozen-lockfile --ignore-scripts
       - name: Build client
@@ -67,7 +128,7 @@ jobs:
           retention-days: 7
 
   package:
-    needs: client
+    needs: [prepare, client]
     strategy:
       fail-fast: true
       matrix:
@@ -79,11 +140,11 @@ jobs:
           - os: ubuntu-latest
             target: --linux
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.commit || github.sha }}
+          ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -103,10 +164,41 @@ jobs:
         shell: bash
         working-directory: desktop
         env:
-          VERSION: ${{ inputs.version }}
-          # Unsigned until Apple and Windows signing certificates are added.
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
-        run: bunx electron-builder ${{ matrix.target }} --publish never -c.extraMetadata.version="$VERSION"
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TARGET: ${{ matrix.target }}
+          # macOS signing and notarization, used when the secrets exist
+          # (docs/desktop-release.md). Without them the Mac app is ad-hoc signed:
+          # it opens after one "Open Anyway" in System Settings.
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          ARGS=(-c.extraMetadata.version="$VERSION")
+          if [ "$TARGET" = "--mac" ] && [ -n "$MAC_CSC_LINK" ]; then
+            echo "Signing with the Developer ID certificate."
+            export CSC_LINK="$MAC_CSC_LINK" CSC_KEY_PASSWORD="$MAC_CSC_KEY_PASSWORD"
+            if [ -z "$APPLE_ID" ]; then
+              echo "::warning::No APPLE_ID secret: the Mac app is signed but not notarized, so Gatekeeper still warns."
+              unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            fi
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+            unset APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            # Ad-hoc signing: a universal Mac build with no signature at all is
+            # reported as "damaged" on Apple silicon. Windows stays unsigned.
+            if [ "$TARGET" = "--mac" ]; then ARGS+=(-c.mac.identity=-); fi
+          fi
+          bunx electron-builder "$TARGET" --publish never "${ARGS[@]}"
+      - name: Check the Mac app's signature
+        if: matrix.os == 'macos-latest'
+        working-directory: desktop/release
+        run: |
+          APP=$(find . -maxdepth 3 -name "Margin Chat.app" -type d | head -n 1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -dv "$APP" 2>&1 | grep -E "Signature|Authority|TeamIdentifier|flags" || true
+          codesign -d --entitlements - "$APP" 2>/dev/null | grep -q audio-input || { echo "Microphone entitlement missing"; exit 1; }
       - uses: actions/upload-artifact@v6
         with:
           name: installers-${{ runner.os }}
@@ -120,7 +212,7 @@ jobs:
           retention-days: 7
 
   publish:
-    needs: package
+    needs: [prepare, package]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -128,7 +220,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.commit || github.sha }}
+          ref: ${{ needs.prepare.outputs.commit }}
           persist-credentials: false
       - uses: actions/download-artifact@v6
         with:
@@ -138,19 +230,31 @@ jobs:
       - name: Write the update manifest
         # Installed apps read this from the latest release to update themselves.
         env:
-          VERSION: ${{ inputs.version }}
-          COMMIT: ${{ inputs.commit || github.sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
         run: node scripts/desktop-update-manifest.mjs assets "$VERSION" "$COMMIT"
-      - name: Publish the GitHub release
+      - name: Save the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          VERSION: ${{ inputs.version }}
-          COMMIT: ${{ inputs.commit || github.sha }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PREVIOUS: ${{ needs.prepare.outputs.previous }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+          DRAFT: ${{ inputs.draft }}
         run: |
           ls -la assets
-          gh release create "desktop-v$VERSION" assets/* \
-            --target "$COMMIT" \
-            --title "Margin Chat desktop $VERSION" \
-            --notes "Desktop app built from $COMMIT. Download it from https://www.marginchat.com/download." \
-            --latest
+          NOTES="Desktop app built from $COMMIT. Download it from https://www.marginchat.com/download."
+          ARGS=(--target "$COMMIT" --title "Margin Chat desktop $VERSION" --notes "$NOTES" --generate-notes)
+          if [ -n "$PREVIOUS" ]; then ARGS+=(--notes-start-tag "desktop-v$PREVIOUS"); fi
+          if [ "$DRAFT" = "true" ]; then ARGS+=(--draft); else ARGS+=(--latest); fi
+          gh release create "desktop-v$VERSION" assets/* "${ARGS[@]}"
+          URL=$(gh release view "desktop-v$VERSION" --json url --jq .url)
+          if [ "$DRAFT" = "true" ]; then
+            {
+              echo "Saved as a **draft**: $URL"
+              echo
+              echo "Test it, then run **Actions → Desktop publish** with version $VERSION to send it to everyone."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Published: $URL" >> "$GITHUB_STEP_SUMMARY"
+          fi

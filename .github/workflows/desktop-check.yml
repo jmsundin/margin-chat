@@ -1,0 +1,58 @@
+name: Desktop check
+
+# Packages the desktop app on macOS (ad-hoc signed, as releases are without a
+# Developer ID) and Linux when a pull request changes it, so a broken build
+# shows up on the pull request instead of in a Desktop release.
+on:
+  pull_request:
+    paths:
+      - desktop/**
+      - scripts/desktop-*.mjs
+      - .github/workflows/desktop-*.yml
+
+concurrency:
+  group: desktop-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: --mac dir -c.mac.identity=-
+          - os: ubuntu-latest
+            target: --linux dir
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - name: Install pinned dependencies
+        run: bun --no-env-file install --frozen-lockfile --ignore-scripts
+      - name: Build client
+        run: bun run build
+      - name: Install desktop dependencies
+        run: bun --no-env-file install --frozen-lockfile
+        working-directory: desktop
+      - name: Package the app
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          TARGET: ${{ matrix.target }}
+        run: bunx electron-builder $TARGET --publish never
+      - name: Check the Mac app's signature
+        if: runner.os == 'macOS'
+        working-directory: desktop/release
+        run: |
+          APP=$(find . -maxdepth 3 -name "Margin Chat.app" -type d | head -n 1)
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --entitlements - "$APP" 2>/dev/null | grep -q audio-input || { echo "Microphone entitlement missing"; exit 1; }
