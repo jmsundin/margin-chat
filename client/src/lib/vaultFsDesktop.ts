@@ -24,6 +24,10 @@ export interface DesktopVaultBridge {
   move(id: string, from: string, to: string): Promise<Answer<void>>;
   delete(id: string, path: string): Promise<Answer<void>>;
   availability(id: string): Promise<Answer<"available" | "missing" | "refused">>;
+  /** Newer apps watch the folder themselves (phase 2). */
+  watch?(id: string): Promise<Answer<{ active: boolean }>>;
+  unwatch?(id: string): Promise<Answer<void>>;
+  onChange?(listener: (change: { id: string; paths: string[] | null }) => void): () => void;
 }
 
 /**
@@ -53,7 +57,11 @@ export async function unwrap<T>(answer: Promise<Answer<T>>): Promise<T> {
 }
 
 /** A desktop folder as a VaultFs; `folderId` tells it apart from a browser folder. */
-export type DesktopVaultFs = VaultFs & { readonly folderId: string };
+export type DesktopVaultFs = VaultFs & {
+  readonly folderId: string;
+  /** True while the app is watching this folder for the page; the page's own checks are then only a backstop. */
+  readonly watchActive: boolean;
+};
 
 export function isDesktopVaultFs(folder: unknown): folder is DesktopVaultFs {
   return !!folder && typeof folder === "object" && typeof (folder as Partial<DesktopVaultFs>).folderId === "string";
@@ -70,8 +78,10 @@ const LISTED_STAT_MS = 1_000;
 export function desktopVaultFs(bridge: DesktopVaultBridge, folder: DesktopVaultFolder): DesktopVaultFs {
   const listed = new Map<string, { stat: VaultFsStat; at: number }>();
   const forget = (...paths: string[]) => { for (const path of paths) listed.delete(path); };
+  let watchActive = false;
   return {
     folderId: folder.id,
+    get watchActive() { return watchActive; },
     name: folder.name,
     async *list(directory) {
       assertVaultFsPath(directory, true);
@@ -119,8 +129,23 @@ export function desktopVaultFs(bridge: DesktopVaultBridge, folder: DesktopVaultF
         throw error;
       }
     },
-    // The app watches the folder itself from phase 2; until then the page checks it.
-    watch: () => null,
+    // Apps that watch the folder themselves say which files settled; older ones leave it to the page.
+    watch(onChange) {
+      if (typeof bridge.watch !== "function" || typeof bridge.onChange !== "function") return null;
+      const stopListening = bridge.onChange((change) => {
+        if (change?.id !== folder.id) return;
+        if (change.paths) forget(...change.paths); else listed.clear();
+        // "Look at everything" also follows a folder coming back, so ask again whether it's watched.
+        if (!change.paths) void bridge.watch!(folder.id).then((answer) => { watchActive = answer.ok && answer.value.active; }, () => undefined);
+        onChange(change.paths);
+      });
+      void bridge.watch(folder.id).then((answer) => { watchActive = answer.ok && answer.value.active; }, () => undefined);
+      return () => {
+        watchActive = false;
+        stopListening();
+        void bridge.unwatch?.(folder.id).catch(() => undefined);
+      };
+    },
   };
 }
 

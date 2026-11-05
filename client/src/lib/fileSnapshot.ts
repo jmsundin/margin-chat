@@ -7,8 +7,8 @@
  * directly through a sync access handle in a worker, which takes no snapshot.
  */
 export function isStaleFileSnapshot(error: unknown) {
-  return typeof DOMException !== "undefined" && error instanceof DOMException
-    && (error.name === "InvalidStateError" || error.name === "NotReadableError");
+  // The desktop app's folder reports a file still being written the same way, as a named Error.
+  return error instanceof Error && (error.name === "InvalidStateError" || error.name === "NotReadableError");
 }
 
 /** A file that could not be read even after fresh snapshots and a direct read. */

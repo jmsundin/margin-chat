@@ -3,9 +3,13 @@
 // among those the person chose, and answers with { ok, value } or { ok: false, error }, so an
 // error keeps its name ("NotFoundError" and so on) across the process boundary.
 
+import { createVaultWatcher } from "./vaultWatcher.mjs";
+
 export const VAULT_CHANNEL = "margin-vault";
+/** Where the page hears which paths changed in a folder it watches: { id, paths } (paths null: look at everything). */
+export const VAULT_CHANGED_CHANNEL = "margin-vault-changed";
 /** What the page can call; preload.cjs exposes the same list. */
-export const VAULT_OPERATIONS = ["selection", "choose", "createVault", "connect", "forget", "list", "stat", "read", "writeAtomic", "move", "delete", "availability"];
+export const VAULT_OPERATIONS = ["selection", "choose", "createVault", "connect", "forget", "list", "stat", "read", "writeAtomic", "move", "delete", "availability", "watch", "unwatch"];
 
 function serializeError(error) {
   if (!error || typeof error !== "object") return { name: "Error", message: String(error) };
@@ -63,11 +67,61 @@ export async function answerVaultRequest(folders, operation, args) {
   }
 }
 
+/**
+ * Keeps the folder watchers each page asked for: one per page and folder, stopped when the page
+ * asks, reloads or closes. Changes the app made itself aren't reported back.
+ */
+export function createVaultWatchers({ folders, watcherOptions = {} }) {
+  const watching = new Map();
+  const key = (sender, id) => `${sender.id}\u0000${id}`;
+  return {
+    async watch(sender, id) {
+      const fs = typeof id === "string" ? await folders.fs(id) : null;
+      if (!fs) throw Object.assign(new Error("Choose the vault folder again."), { name: "NotFoundError" });
+      const existing = watching.get(key(sender, id));
+      if (existing?.root === fs.root) return { active: existing.watcher.active };
+      existing?.watcher.close();
+      const watcher = createVaultWatcher({
+        root: fs.root,
+        isOwnChange: (relativePath, stat) => fs.isOwnChange?.(relativePath, stat) ?? false,
+        onChange: (paths) => { if (!sender.isDestroyed?.()) sender.send(VAULT_CHANGED_CHANNEL, { id, paths }); },
+        ...watcherOptions,
+      });
+      watching.set(key(sender, id), { root: fs.root, watcher });
+      // A reload or a closed window stops its watchers.
+      if (!existing) sender.once?.("destroyed", () => this.unwatchAll(sender));
+      await watcher.started;
+      return { active: watcher.active };
+    },
+    unwatch(sender, id) {
+      watching.get(key(sender, id))?.watcher.close();
+      watching.delete(key(sender, id));
+    },
+    unwatchAll(sender) {
+      for (const [entry, value] of watching) if (entry.startsWith(`${sender.id}\u0000`)) { value.watcher.close(); watching.delete(entry); }
+    },
+    closeAll() {
+      for (const value of watching.values()) value.watcher.close();
+      watching.clear();
+    },
+  };
+}
+
 /** Registers the bridge's handler; only the app's own pages get answers. */
-export function registerVaultBridge({ ipcMain, folders, isAppUrl }) {
-  ipcMain.handle(VAULT_CHANNEL, (event, operation, args) => {
+export function registerVaultBridge({ ipcMain, folders, isAppUrl, watchers = createVaultWatchers({ folders }) }) {
+  ipcMain.handle(VAULT_CHANNEL, async (event, operation, args) => {
     const url = event.senderFrame?.url ?? "";
     if (!isAppUrl(url)) return { ok: false, error: { name: "NotAllowedError", message: "Only Margin Chat's own pages can use the vault folder." } };
+    if (operation === "watch" || operation === "unwatch") {
+      try {
+        const id = Array.isArray(args) ? args[0] : undefined;
+        if (operation === "unwatch") { watchers.unwatch(event.sender, id); return { ok: true, value: undefined }; }
+        return { ok: true, value: await watchers.watch(event.sender, id) };
+      } catch (error) {
+        return { ok: false, error: serializeError(error) };
+      }
+    }
     return answerVaultRequest(folders, operation, args);
   });
+  return watchers;
 }

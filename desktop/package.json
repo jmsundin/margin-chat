@@ -34,6 +34,7 @@
       "vaultBridge.mjs",
       "vaultFolders.mjs",
       "vaultFs.mjs",
+      "vaultWatcher.mjs",
       "package.json",
       "!node_modules/**/*"
     ],

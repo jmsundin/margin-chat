@@ -4,6 +4,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 const CHANNEL = "margin-vault";
+const CHANGED_CHANNEL = "margin-vault-changed";
 const call = (operation) => (...args) => ipcRenderer.invoke(CHANNEL, operation, args);
 
 contextBridge.exposeInMainWorld("marginDesktop", {
@@ -21,5 +22,13 @@ contextBridge.exposeInMainWorld("marginDesktop", {
     move: call("move"),
     delete: call("delete"),
     availability: call("availability"),
+    watch: call("watch"),
+    unwatch: call("unwatch"),
+    /** Calls `listener({ id, paths })` when a watched folder changes; returns a function that stops. */
+    onChange(listener) {
+      const forward = (_event, change) => listener(change);
+      ipcRenderer.on(CHANGED_CHANNEL, forward);
+      return () => ipcRenderer.removeListener(CHANGED_CHANNEL, forward);
+    },
   }),
 });

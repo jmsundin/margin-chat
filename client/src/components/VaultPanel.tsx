@@ -81,6 +81,12 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
         {vault.localDirectoryStatus.directoryName ? <button className="thread-dialog-button" disabled={busy} onClick={() => void run(vault.clearDirectory)}>Disconnect folder</button> : null}
       </div>
     </div>
+    {vault.unsyncedFiles?.length ? <details className="profile-storage-directory-card vault-panel-unsynced">
+      <summary><span>Files Margin Chat doesn’t sync</span> <small>{vault.unsyncedFiles.length.toLocaleString("en-US")}</small></summary>
+      <small>These stay in the folder as they are. Margin Chat reads Markdown notes, PDFs and images.</small>
+      <ul>{vault.unsyncedFiles.slice(0, 200).map((path) => <li key={path}>{path}</li>)}</ul>
+      {vault.unsyncedFiles.length > 200 ? <small>And {(vault.unsyncedFiles.length - 200).toLocaleString("en-US")} more.</small> : null}
+    </details> : null}
     <RecentlyDeleted entries={vault.recentlyDeleted} onRestore={vault.restoreDeleted} />
     <p className="profile-storage-footnote">Clearing Margin Chat’s site data removes the files saved in this browser. Use Download vault to keep an independent copy. Files already synchronized remain in the cloud, and a connected folder’s files stay in that folder.</p>
   </>;

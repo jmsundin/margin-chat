@@ -119,13 +119,18 @@ MARGIN_DESKTOP_NATIVE_VAULT=1 "/Applications/Margin Chat.app/Contents/MacOS/Marg
 
 Without the variable the app behaves as before.
 
-## Vault folder watching (planned)
+## Vault folder watching
 
-The native vault (docs/desktop-vault-sync.md) watches the folder with
-`node:fs.watch`: recursive on macOS and Windows, one watcher per folder on
-Linux, where Node's recursive mode is a JavaScript layer that has crashed on
-unreadable folders. Events only say where to look; the app stats and re-reads
-files before taking them in, and a slow full scan catches anything missed.
+With the native vault on, the app watches the folder (`vaultWatcher.mjs`,
+docs/desktop-vault-sync.md) with `node:fs.watch`: recursive on macOS and
+Windows, one watcher per folder on Linux, where Node's recursive mode is a
+JavaScript layer that has crashed on unreadable folders. Events only say where
+to look. A path is reported to the page once it has been quiet for 0.5 s, held
+the same size and time across two checks 0.5 s apart, and opens for reading,
+so a half-copied file or a download in progress is never taken in. Other apps'
+scratch files (`.DS_Store`, `*.crdownload`, `*.swp`, `~$…`, `.git/`,
+`.obsidian/` and so on) and the app's own writes are skipped. While the
+watcher runs, the page's own folder check drops to once a minute as a backstop.
 chokidar was not used because the app ships without `node_modules` and its
 native recursive backend is a brand-new rewrite (v6, October 2026).
 

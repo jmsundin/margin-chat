@@ -11,9 +11,9 @@ import {
 import { createWorkspaceDocument } from "./workspaceModel";
 import { validVaultPath, type DirectoryFileStat, type DirectoryStats, type VaultFile } from "./vaultTypes";
 import { scanWhileFolderSettles } from "./fileSnapshot";
-import { decodeVaultFsText, joinVaultFsPath, type VaultFs, type VaultFsStat } from "@margin-chat/vault-sync";
+import { decodeVaultFsText, isIgnoredVaultPath, joinVaultFsPath, type VaultFs, type VaultFsStat } from "@margin-chat/vault-sync";
 import { toVaultFs } from "./vaultFsAccess";
-import { desktopVaultBridge, desktopVaultFs, isDesktopVaultFs, unwrap } from "./vaultFsDesktop";
+import { desktopVaultBridge, desktopVaultFs, isDesktopVaultFs, unwrap, type DesktopVaultFs } from "./vaultFsDesktop";
 import { isSyncableVaultFileSize, isVaultFileDocumentPath, vaultFileContentType, type VaultFileListing } from "./vaultFileDocuments";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
@@ -285,6 +285,8 @@ function missingFile(path: string) {
 /** Checks between folder scans; a scan that takes longer spaces the next one out. */
 const FOLDER_WATCH_MIN_MS = 2_500;
 const FOLDER_WATCH_MAX_MS = 60_000;
+/** While the desktop app watches the folder and reports changes, the page's own check is only a backstop. */
+const FOLDER_WATCH_BACKSTOP_MS = 60_000;
 
 /**
  * Calls `onChange` soon after a Markdown file, PDF or image is added, edited, renamed or
@@ -296,6 +298,7 @@ export function watchLocalDirectory(userId: string, directoryId: string, onChang
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopWatching: (() => void) | null = null;
+  let nativeWatch: DesktopVaultFs | null = null;
   let last: string | null = null;
   let scanning = false;
 
@@ -315,7 +318,7 @@ export function watchLocalDirectory(userId: string, directoryId: string, onChang
       // A folder that moved or lost access is reported by the regular sync.
     } finally {
       scanning = false;
-      schedule(Math.min(FOLDER_WATCH_MAX_MS, Math.max(FOLDER_WATCH_MIN_MS, (Date.now() - started) * 20)));
+      schedule(nativeWatch?.watchActive ? FOLDER_WATCH_BACKSTOP_MS : Math.min(FOLDER_WATCH_MAX_MS, Math.max(FOLDER_WATCH_MIN_MS, (Date.now() - started) * 20)));
     }
   }
 
@@ -327,8 +330,11 @@ export function watchLocalDirectory(userId: string, directoryId: string, onChang
 
   void getStoredDirectoryHandle(userId, directoryId).then((handle) => {
     if (!handle || stopped) return;
-    // Changes arrive in bursts while another app saves; one check covers them.
-    stopWatching = toVaultFs(handle).watch?.(() => schedule(300)) ?? null;
+    // Changes arrive in bursts while another app saves; one check covers them. The desktop app reports
+    // a file only once it has finished arriving, so its reports are looked at straight away.
+    const native = isDesktopVaultFs(handle);
+    stopWatching = toVaultFs(handle).watch?.(() => { if (native) onChange(); else schedule(300); }) ?? null;
+    nativeWatch = native && stopWatching !== null ? handle as DesktopVaultFs : null;
   }).catch(() => { stopWatching = null; });
   void scan();
   return () => {
@@ -595,21 +601,33 @@ export async function readLocalDirectoryCompanions(
   return scanWhileFolderSettles(handle.name, () => readConnectedDirectoryCompanions(handle, knownFiles, listing, stats));
 }
 
-/** The PDFs and images in the connected folder, with their sizes and dates. */
-export async function listLocalDirectoryFiles(userId: string, directoryId?: string): Promise<VaultFileListing[] | null> {
+/** The PDFs and images in the connected folder, with their sizes and dates; `unsynced` collects files it doesn't sync. */
+export async function listLocalDirectoryFiles(userId: string, directoryId?: string, unsynced?: string[]): Promise<VaultFileListing[] | null> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
-  return scanWhileFolderSettles(handle.name, () => listConnectedDirectoryFiles(handle));
+  return scanWhileFolderSettles(handle.name, () => { unsynced?.splice(0); return listConnectedDirectoryFiles(handle, "", unsynced); });
 }
 
-export async function listConnectedDirectoryFiles(folder: ConnectedFolder, prefix = ""): Promise<VaultFileListing[]> {
+/**
+ * Files in the folder Margin Chat leaves alone and doesn't sync (not Markdown, a PDF or an image,
+ * and not noise such as editor lock files), for Vault settings to list once.
+ */
+export function isUnsyncedFolderFile(path: string) {
+  if (isSafeMarkdownPath(path) || isVaultFileDocumentPath(path) || isIgnoredVaultPath(path)) return false;
+  if (!path.includes("/") && (path === "workspace.json" || /^margin-chat-workspace-.+\.json$/u.test(path))) return false;
+  return !path.split("/").some((segment) => segment.startsWith("."));
+}
+
+/** `unsynced`, when given, collects the files listed that Margin Chat doesn't sync (isUnsyncedFolderFile). */
+export async function listConnectedDirectoryFiles(folder: ConnectedFolder, prefix = "", unsynced?: string[]): Promise<VaultFileListing[]> {
   const fs = toVaultFs(folder);
   const listings: VaultFileListing[] = [];
   for await (const { name, kind } of fs.list(prefix)) {
     if (name.startsWith(".")) continue;
     const path = joinVaultFsPath(prefix, name);
     if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
-    if (kind === "directory") listings.push(...await listConnectedDirectoryFiles(fs, path));
+    if (kind === "directory") listings.push(...await listConnectedDirectoryFiles(fs, path, unsynced));
+    else if (unsynced && isUnsyncedFolderFile(path)) unsynced.push(path);
     else if (isVaultFileDocumentPath(path) && validVaultPath(path)) {
       try {
         const file = await fs.stat(path);

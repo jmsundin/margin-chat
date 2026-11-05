@@ -17,7 +17,8 @@ async function folderWith(files: Record<string, string | Uint8Array>) {
 describeVaultFs("desktop folder (node:fs)", async (files) => {
   const root = await folderWith(files);
   return {
-    fs: nodeVaultFs(root),
+    // Files the suite writes "from outside" were all just changed; a short wait keeps the read-stability check quick.
+    fs: nodeVaultFs(root, { stableReadMs: 20 }),
     outside: {
       write: (relative, contents) => writeFile(path.join(root, relative), contents),
       remove: (relative) => rm(path.join(root, relative)),
@@ -150,6 +151,58 @@ describe("the page in a desktop app that offers its own folder", () => {
       expect(await readFile(path.join(root, "Plain.md"), "utf8")).toBe("# A plain note dropped in");
     } finally {
       (globalThis as { window?: unknown }).window = previous;
+    }
+  });
+});
+
+describe("the page hearing the desktop app's watcher", () => {
+  test("a file dropped into the folder reaches the page once it settles, with the page's own checks slowed to a backstop", async () => {
+    const storage = await import("../client/src/lib/workspaceStorage");
+    const { createVaultWatchers, VAULT_CHANGED_CHANNEL } = await import("../desktop/vaultBridge.mjs");
+    const root = await folderWith({ "Plain.md": "# Plain" });
+    let next: string | null = root;
+    const folders = createVaultFolders({ statePath: `${root}-state.json`, chooseFolder: async () => { const answer = next; next = null; return answer; } });
+    const listeners = new Set<(change: { id: string; paths: string[] | null }) => void>();
+    const sender = { id: 1, isDestroyed: () => false, send: (channel: string, change: { id: string; paths: string[] | null }) => { if (channel === VAULT_CHANGED_CHANNEL) for (const listener of listeners) listener(structuredClone(change)); }, once() {} };
+    const watchers = createVaultWatchers({ folders, watcherOptions: { debounceMs: 40, stabilityMs: 40, platform: "linux" } });
+    const bridge = Object.fromEntries(VAULT_OPERATIONS.map((operation: string) => [operation,
+      async (...args: unknown[]) => structuredClone(await answerVaultRequest(folders, operation, structuredClone(args)))])) as unknown as DesktopVaultBridge;
+    bridge.version = 1;
+    bridge.watch = async (id) => ({ ok: true, value: await watchers.watch(sender, id) });
+    bridge.unwatch = async (id) => { watchers.unwatch(sender, id); return { ok: true, value: undefined }; };
+    bridge.onChange = (listener) => { listeners.add(listener); return () => listeners.delete(listener); };
+    const previous = (globalThis as { window?: unknown }).window;
+    (globalThis as { window?: unknown }).window = { marginDesktop: { vault: bridge }, top: null };
+    let stop = () => {};
+    try {
+      const status = await storage.connectLocalDirectory("user-1", (await storage.pickLocalDirectory())!);
+      let heard = 0;
+      stop = storage.watchLocalDirectory("user-1", status.directoryId!, () => { heard += 1; });
+      for (let tries = 0; tries < 100 && !listeners.size; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await writeFile(path.join(root, "Dropped.md"), "# Dropped in from Finder");
+      for (let tries = 0; tries < 150 && heard === 0; tries += 1) await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(heard).toBe(1);
+
+      // The scan lists files the app doesn't sync, for Vault settings.
+      await writeFile(path.join(root, "Budget.xlsx"), "x");
+      await writeFile(path.join(root, ".DS_Store"), "x");
+      const unsynced: string[] = [];
+      await storage.listLocalDirectoryFiles("user-1", status.directoryId, unsynced);
+      expect(unsynced).toEqual(["Budget.xlsx"]);
+    } finally {
+      stop();
+      watchers.closeAll();
+      (globalThis as { window?: unknown }).window = previous;
+    }
+  });
+
+  test("only files Margin Chat leaves alone count as unsynced", async () => {
+    const { isUnsyncedFolderFile } = await import("../client/src/lib/workspaceStorage");
+    expect(isUnsyncedFolderFile("Budget.xlsx")).toBe(true);
+    expect(isUnsyncedFolderFile("Projects/notes.txt")).toBe(true);
+    for (const synced of ["Note.md", "Papers/Paper.pdf", "photo.png", "workspace.json", ".DS_Store", "Paper.pdf.crdownload", ".hidden/x.txt"]) {
+      expect(isUnsyncedFolderFile(synced)).toBe(false);
     }
   });
 });

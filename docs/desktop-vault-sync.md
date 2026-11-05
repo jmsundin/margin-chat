@@ -1,4 +1,4 @@
-# Desktop vault sync: phase 0 audit
+# Desktop vault sync
 
 Design note for the spec "Margin Chat — Desktop-First + Seamless Local/Cloud Vault Sync" (2026-11-04). Phase 0 changes no behaviour: it maps the code the later phases move, adds the `VaultFs` folder interface in `packages/vault-sync/`, and runs the existing browser folder code through it. [Markdown vault](markdown-vault.md) stays the contract for formats, merge and sync.
 
@@ -70,7 +70,20 @@ Started with `MARGIN_DESKTOP_NATIVE_VAULT=1`, the desktop app reads and writes t
 
 With the flag on, a folder chosen earlier through the browser's folder access isn't carried over: the app asks once for the folder. Choosing the same folder is safe: files that match the vault byte for byte are left alone, as on any first connection.
 
-Still to come: the app watching the folder (phase 2; the page still checks it every few seconds while visible), sync in the main process and the device copy outside the browser (phase 3), and removing `desktop/permissions.mjs`'s folder check once the native vault is the default.
+## Phase 2: watching the folder, and files dropped in
+
+Still behind `MARGIN_DESKTOP_NATIVE_VAULT=1`:
+
+- `desktop/vaultWatcher.mjs` watches the vault folder as chosen above. A change is only a hint: the path is checked after 0.5 s of quiet and again 0.5 s later, and reported to the page only when its size and time held still and it opens. Paths that settle together arrive in one report. A new folder, a watcher error, or a change the system can't name asks the page to look at everything. If the folder goes missing the watcher says nothing until it is back (missing is never empty), then asks for a full look.
+- Skipped: other apps' scratch and system files (`.DS_Store`, `Thumbs.db`, `desktop.ini`, Vim's `4913`, `.~lock.…#`, `~$…`, `._…`, `*.tmp`, `*.swp`, `*.crdownload`, `*.part`, `*.download`, `*.icloud`), the app's own `.margin-write-….tmp` files, and `.git`, `.obsidian`, `.trash`, `.margin-chat`, `node_modules`, `.Trash`, `$RECYCLE.BIN`. The same list is in `packages/vault-sync` (`isIgnoredVaultPath`) and a test keeps the two equal.
+- The app's own writes, moves and removals are remembered for 30 s by size and time, so they are not reported back. The page's folder baseline already treats a file that matches the vault byte for byte as unchanged, so an echo that slips through changes nothing.
+- Reads re-check a file changed in the last 2 s by another app; if it changes again within 0.5 s the read is refused as "still being written" (`InvalidStateError`), which the page's scan already retries without changing anything.
+- The page (`vaultFsDesktop.ts`) subscribes through the bridge (`watch`, `unwatch`, `onChange`) and syncs as soon as a report arrives. While the app's watcher runs, the page's own folder check runs once a minute as a backstop instead of every few seconds. Older apps without `watch` keep the page's checks as before.
+- Vault settings lists "Files Margin Chat doesn't sync": files in the folder that aren't Markdown, PDFs or images, and aren't on the skip list. They stay in the folder as they are. The list shows only in the desktop app.
+
+Drop-in classification (spec §5.2) needs no new code: a Markdown file with a known `id` in its frontmatter updates that document, one without becomes a new document, as on the web, and PDFs and images become file documents. These go through the same folder scan and merge as before.
+
+Still to come: sync in the main process and the device copy outside the browser (phase 3, which also moves echo detection to content hashes in the main process's journal), and removing `desktop/permissions.mjs`'s folder check once the native vault is the default.
 
 ## Phase plan
 
