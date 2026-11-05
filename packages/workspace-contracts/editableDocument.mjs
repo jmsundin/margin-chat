@@ -8,6 +8,10 @@ const services = new Set(["backend-services", "openai-api", "openai-agent", "ant
 const statuses = new Set(["streaming", "complete", "stopped", "failed"]);
 const authorships = new Set(["ai", "user", "mixed"]);
 const optionalId = (value) => value === undefined || id(value);
+// Where a block's text came from when the user didn't write it, such as a web import.
+const validOrigin = (value) => record(value) && value.type === "import" &&
+  (value.source === undefined || id(value.source) && value.source.length <= 80) &&
+  (value.label === undefined || id(value.label) && value.label.length <= 120);
 const dated = (value) => string(value) && Number.isFinite(Date.parse(value));
 const unique = (values) => new Set(values.map((value) => value.id)).size === values.length;
 const settings = (value) => ({ serviceId: value.serviceId, modelId: value.modelId,
@@ -16,12 +20,15 @@ const validSettings = (value) => services.has(value.serviceId) && id(value.model
 const validBlock = (block) => record(block) && id(block.id) && block.kind === "markdown" &&
   string(block.content) && dated(block.createdAt) && dated(block.updatedAt) &&
   optionalId(block.sourceMessageId) && optionalId(block.generationId) &&
-  (block.authorship === undefined || authorships.has(block.authorship));
+  (block.authorship === undefined || authorships.has(block.authorship)) &&
+  (block.origin === undefined || validOrigin(block.origin));
 const normalizeBlock = (block) => ({ id: block.id, kind: "markdown", content: block.content,
   createdAt: block.createdAt, updatedAt: block.updatedAt,
   ...(block.sourceMessageId ? { sourceMessageId: block.sourceMessageId } : {}),
   ...(block.generationId ? { generationId: block.generationId } : {}),
-  ...(block.authorship ? { authorship: block.authorship } : {}) });
+  ...(block.authorship ? { authorship: block.authorship } : {}),
+  ...(block.origin ? { origin: { type: block.origin.type, ...(block.origin.source ? { source: block.origin.source } : {}),
+    ...(block.origin.label ? { label: block.origin.label } : {}) } } : {}) });
 const validLink = (link) => record(link) && id(link.id) && id(link.sourceMessageId) &&
   optionalId(link.sourceBlockId) && offset(link.startOffset) && offset(link.endOffset) &&
   link.endOffset > link.startOffset && string(link.quote) && link.quote.length > 0 &&

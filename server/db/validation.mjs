@@ -538,6 +538,7 @@ function normalizeConversation(expectedId, input) {
     id: input.id,
     ...(input.grouping === "manual" || input.grouping === "automatic" ? { grouping: input.grouping } : {}),
     ...(input.hiddenFromAI === true ? { hiddenFromAI: true } : {}),
+    ...(input.agentEdit === "locked" || input.agentEdit === "open" ? { agentEdit: input.agentEdit } : {}),
     kind:
       input.kind === undefined || input.kind === null
         ? "chat"

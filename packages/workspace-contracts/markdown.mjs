@@ -7,7 +7,7 @@ import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
 import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown, markedBlockIds } from "./markdownReadable.mjs";
 import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
 import { readFrontmatter, readFrontmatterValues, setFrontmatterEntries } from "./frontmatter.mjs";
-import { DOCUMENT_RELATION_TYPES, EDGE_META_KEY, HIDE_FROM_AI_KEY, RESERVED_DOCUMENT_TAGS, documentRelationKey, documentRelationMetadata, normalizeDocumentNodeType, normalizeDocumentRelations, normalizeDocumentTags, readDocumentGraphProperties, readDocumentRelationMetadata } from "./relations.mjs";
+import { AGENT_EDIT_KEY, DOCUMENT_RELATION_TYPES, EDGE_META_KEY, HIDE_FROM_AI_KEY, RESERVED_DOCUMENT_TAGS, documentRelationKey, documentRelationMetadata, normalizeDocumentNodeType, normalizeDocumentRelations, normalizeDocumentTags, readDocumentGraphProperties, readDocumentRelationMetadata } from "./relations.mjs";
 /**
  * Parsing a file depends only on its text (and, for whole-file parses, its
  * identity and the default model). Remember the last result for each path so an
@@ -253,7 +253,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
             : -1;
         // Graph properties are frontmatter, the one place Obsidian and people read them.
         const { childIds: _childIds, messages: _messages, notes: _notes, parentId: _parentId,
-            relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, ...conversationMetadata } = conversation;
+            relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, agentEdit: _agentEdit, ...conversationMetadata } = conversation;
         const metadata = {
             file: portableFileRecord(plannedRecords.get(conversation.id)),
             conversation: {
@@ -723,7 +723,7 @@ function parseConversationFile(source, record, workspace) {
         }
         : null;
     const { publicTopic: rawPublicTopic, linkedConversationIds, document: rawDocument,
-        relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, ...conversationMetadata } = metadata.conversation;
+        relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, agentEdit: _agentEdit, ...conversationMetadata } = metadata.conversation;
     const graph = readDocumentGraphProperties(readFrontmatterValues(source));
     const documentSection = editableDocumentSection(source);
     const document = rawDocument === undefined ? undefined : documentSection && normalizeEditableDocument({
@@ -1147,6 +1147,7 @@ function renderFrontmatter(conversation, kind, linkTo = () => null) {
         `updated: ${JSON.stringify(conversation.updatedAt)}`,
         `tags: [${[...RESERVED_DOCUMENT_TAGS, ...normalizeDocumentTags(conversation.tags)].map(renderTag).join(", ")}]`,
         ...(conversation.hiddenFromAI === true ? [`${HIDE_FROM_AI_KEY}: true`] : []),
+        ...(conversation.agentEdit === "locked" || conversation.agentEdit === "open" ? [`${AGENT_EDIT_KEY}: ${conversation.agentEdit}`] : []),
         ...renderRelationFrontmatter(conversation, linkTo),
         ...(publicTopic ? [
             `public-topic-id: ${JSON.stringify(publicTopic.id)}`,
@@ -1191,7 +1192,7 @@ function renderRelationFrontmatter(conversation, linkTo) {
 }
 function graphConversationFields(graph) {
     return { ...(graph.nodeType ? { nodeType: graph.nodeType } : {}), ...(graph.tags.length ? { tags: graph.tags } : {}),
-        ...(graph.hiddenFromAI ? { hiddenFromAI: true } : {}) };
+        ...(graph.hiddenFromAI ? { hiddenFromAI: true } : {}), ...(graph.agentEdit ? { agentEdit: graph.agentEdit } : {}) };
 }
 /** Relation links resolve like relationship links: by path, alias or basename,
  * then by a unique document title (how a hand-written `[[Title]]` reads). */

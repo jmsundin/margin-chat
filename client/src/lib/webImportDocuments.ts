@@ -13,10 +13,19 @@ export function importedSourceUrl(conversation: Conversation): string | null {
   return SOURCE_LINE.exec(conversation.document?.blocks[0]?.content ?? "")?.[1] ?? null;
 }
 
-function importedDocument(markdown: string, createdAt: string, idBase: string): EditableDocument {
+/** Who line authorship credits an imported page to: X for posts and threads, otherwise the site. */
+function importOrigin(url: string): NonNullable<DocumentBlock["origin"]> {
+  let host = "";
+  try { host = new URL(url).hostname.replace(/^www\./u, ""); } catch { /* A page without an address is still an import. */ }
+  const x = TWEET.test(host);
+  return { type: "import", source: x ? "x" : "web", ...(host ? { label: (x ? "X" : host).slice(0, 120) } : {}) };
+}
+
+function importedDocument(markdown: string, createdAt: string, idBase: string, url: string): EditableDocument {
   let offset = 0;
+  const origin = importOrigin(url);
   const blocks = splitDocumentMarkdown(markdown).map((part, index): DocumentBlock => {
-    const block: DocumentBlock = { id: index ? `${idBase}:part:${offset}` : idBase, kind: "markdown", content: part, createdAt, updatedAt: createdAt, authorship: "user" };
+    const block: DocumentBlock = { id: index ? `${idBase}:part:${offset}` : idBase, kind: "markdown", content: part, createdAt, updatedAt: createdAt, authorship: "user", origin };
     offset += part.length;
     return block;
   });
@@ -143,7 +152,7 @@ export function addImportedWebDocuments(state: AppState, parentId: string, docum
       id, kind: "chat", title: document.title, parentId: source.id,
       serviceId: source.serviceId, modelId: source.modelId, ...(source.ai ? { ai: structuredClone(source.ai) } : {}),
       branchAnchor, childIds: [], documents: [], messages: [], notes: [], createdAt: now, updatedAt: now,
-      document: importedDocument(document.markdown, now, options.createId("block")),
+      document: importedDocument(document.markdown, now, options.createId("block"), document.url),
     };
     next = addChildConversation(next, conversation);
     if (!next.conversations[id]) continue;

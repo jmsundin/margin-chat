@@ -1,3 +1,5 @@
+import { readFrontmatterValue } from "./frontmatter.mjs";
+
 /**
  * Typed relations between documents.
  *
@@ -142,6 +144,28 @@ export function readDocumentRelationMetadata(value) {
 /** Frontmatter property that keeps a document out of every AI request and connected app. */
 export const HIDE_FROM_AI_KEY = "hide-from-ai";
 
+/**
+ * Frontmatter property for how far connected apps (MCP agents) may edit a
+ * document. Absent means "non-authored-only": they may change lines Jon didn't
+ * write. "locked" allows appends only; "open" lets them edit his lines too.
+ * Only the app sets it; MCP tools can never change it.
+ */
+export const AGENT_EDIT_KEY = "agent-edit";
+export const AGENT_EDIT_POLICIES = ["non-authored-only", "locked", "open"];
+
+/** A stored policy value, or null for the default (absent, unknown or "non-authored-only"). */
+export function normalizeAgentEditPolicy(value) {
+    const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+    return text === "locked" || text === "open" ? text : null;
+}
+
+/** A file's agent-edit policy, read straight from its frontmatter. */
+export function readAgentEditPolicy(source) {
+    let value;
+    try { value = readFrontmatterValue(source, AGENT_EDIT_KEY); } catch { value = undefined; }
+    return normalizeAgentEditPolicy(value) ?? "non-authored-only";
+}
+
 function isHiddenFromAIValue(value) {
     return value === true || (typeof value === "string" && /^(?:true|yes)$/iu.test(value.trim()));
 }
@@ -163,7 +187,9 @@ export function readDocumentGraphProperties(values) {
     const nodeType = normalizeDocumentNodeType(values.type);
     const tags = normalizeDocumentTags(values.tags);
     const hiddenFromAI = isHiddenFromAIValue(values[HIDE_FROM_AI_KEY]);
-    return { relationTargets, edgeMeta, ...(nodeType ? { nodeType } : {}), tags, ...(hiddenFromAI ? { hiddenFromAI } : {}) };
+    const agentEdit = normalizeAgentEditPolicy(values[AGENT_EDIT_KEY]);
+    return { relationTargets, edgeMeta, ...(nodeType ? { nodeType } : {}), tags, ...(hiddenFromAI ? { hiddenFromAI } : {}),
+        ...(agentEdit ? { agentEdit } : {}) };
 }
 
 /**
@@ -193,7 +219,8 @@ export function normalizeConversationGraphFields(input, conversationId, conversa
     const nodeType = normalizeDocumentNodeType(input?.nodeType);
     const tags = normalizeDocumentTags(input?.tags);
     return { ...(relations?.length ? { relations } : {}), ...(nodeType ? { nodeType } : {}), ...(tags.length ? { tags } : {}),
-        ...(input?.hiddenFromAI === true ? { hiddenFromAI: true } : {}) };
+        ...(input?.hiddenFromAI === true ? { hiddenFromAI: true } : {}),
+        ...(normalizeAgentEditPolicy(input?.agentEdit) ? { agentEdit: normalizeAgentEditPolicy(input.agentEdit) } : {}) };
 }
 
 /** Whether the user keeps this document away from AI models and connected apps. */
