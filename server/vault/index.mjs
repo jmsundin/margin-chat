@@ -1,5 +1,6 @@
 import { HttpError } from "../lib/errors.mjs";
 import { createVaultStorage, digest } from "./storage.mjs";
+import { createProvenanceStore } from "./provenance/store.mjs";
 import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearchTerms } from "./search.mjs";
 
 const MAX_FILES = 5_000_000;
@@ -754,10 +755,31 @@ export function createVaultService({ database, env = process.env, storage = crea
     }
   }
 
-  async function saved(userId, { root, previousRevision, entries }, acknowledge) {
+  async function saved(userId, { root, previousRevision, entries }, acknowledge, { waitForProjection = false } = {}) {
     const load = lazyManifest(userId, root);
     const manifest = acknowledge ? { schemaVersion: 1, revision: root.revision, files: entries } : await load();
-    return { manifest, previousRevision, projection: await projectAfterSave(userId, root.revision, load) };
+    const projection = waitForProjection ? await projectLatest(userId, root.revision, load) : await projectAfterSave(userId, root.revision, load);
+    return { manifest, previousRevision, projection };
+  }
+
+  const provenance = storage ? createProvenanceStore({ storage, prefix, database, readFile }) : null;
+
+  /**
+   * Line authorship for the Markdown files a commit actually changed. The
+   * browser's saves record it after responding where the platform allows;
+   * a caller that reads authorship next (an MCP write) waits for it.
+   */
+  async function recordAuthorship(userId, changes, result, context = {}) {
+    if (!provenance || result.root.revision === result.previousRevision) return {};
+    const files = (Array.isArray(changes) ? changes : []).filter((change) => typeof change?.content === "string" && change.encoding !== "base64"
+      && /\.md$/iu.test(change.path ?? "") && !/^(?:_conflicts|attachments|\.margin-chat)\//iu.test(change.path)
+      && result.entries[change.path]?.changedAt === result.root.revision && !result.entries[change.path].deleted)
+      .map((change) => ({ path: change.path, content: change.content, baseRevision: change.baseRevision ?? null,
+        revision: result.entries[change.path].revision, vaultRevision: result.root.revision }));
+    if (!files.length) return {};
+    const work = provenance.recordCommit(userId, files, context);
+    if (!context.wait && backgroundProjection && continueAfterResponse(work, env)) return {};
+    return work;
   }
 
   return {
@@ -806,10 +828,44 @@ export function createVaultService({ database, env = process.env, storage = crea
       return { configured: true, revision: root.revision, files: await changesSince(userId, root, since), projection: await projectLatest(userId, root.revision, lazyManifest(userId, root)) };
     },
     /** With `acknowledge`, the receipt lists only the changed paths instead of the whole vault. */
-    async commit(userId, changes, { acknowledge = false, quotaBytes } = {}) {
+    /** `authorship` says who made this save when it isn't the member in the app (an MCP agent, a system job). */
+    async commit(userId, changes, { acknowledge = false, quotaBytes, authorship } = {}) {
       // Preserve the server's legacy copy before considering a device's first edit.
       await migrateLegacy(userId);
-      return saved(userId, await applyCommit(userId, changes, { quotaBytes }), acknowledge);
+      const result = await applyCommit(userId, changes, { quotaBytes });
+      const authored = await recordAuthorship(userId, changes, result, authorship);
+      const receipt = await saved(userId, result, acknowledge, { waitForProjection: Boolean(authorship?.wait) });
+      return authorship?.wait ? { ...receipt, authorship: authored } : receipt;
+    },
+    /** Line authorship: sidecars, heads and the one-time backfill. Null without cloud storage. */
+    provenance,
+    /**
+     * The one-time backfill (§10) for one account: every document or note with no
+     * authorship yet gets a genesis sidecar inferred from its wrappers. Idempotent;
+     * writes no Markdown and changes no file's revision or dates.
+     */
+    async backfillAuthorship(userId, { onFile } = {}) {
+      if (!provenance) return { documents: 0, created: 0, existing: 0, skipped: 0, lines: {} };
+      const { root } = await readRoot(userId);
+      const manifest = await assemble(userId, root);
+      const totals = { documents: 0, created: 0, existing: 0, skipped: 0, failed: 0, lines: { human: 0, ai: 0, agent: 0, import: 0, system: 0, unknown: 0 } };
+      const paths = Object.entries(manifest.files).filter(([path, entry]) => isIndexed(path, entry));
+      await mapConcurrent(paths, async ([path, entry]) => {
+        try {
+          const content = (await readFile({ userId, path, revision: entry.revision })).bytes.toString("utf8");
+          const outcome = await provenance.backfillFile(userId, { path, content, revision: entry.revision, vaultRevision: entry.changedAt ?? root.revision });
+          if (outcome.status === "skipped") { totals.skipped += 1; return; }
+          totals.documents += 1;
+          if (outcome.status === "exists") { totals.existing += 1; return; }
+          totals.created += 1;
+          for (const type of Object.keys(totals.lines)) totals.lines[type] += outcome.summary[`${type}Lines`] ?? 0;
+          onFile?.(path, outcome);
+        } catch (error) {
+          totals.failed += 1;
+          console.error("Authorship backfill failed", path, error);
+        }
+      }, 6);
+      return totals;
     },
     async commitBinary(userId, { path, baseRevision, bytes, contentType }, { acknowledge = false, quotaBytes } = {}) {
       if (bytes.length > MAX_VAULT_FILE_BYTES) throw new HttpError(413, tooLarge);

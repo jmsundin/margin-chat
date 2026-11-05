@@ -125,6 +125,11 @@
       "id": "0025_literature_library",
       "file": "0025_literature_library.sql",
       "transaction": true
+    },
+    {
+      "id": "0026_line_authorship",
+      "file": "0026_line_authorship.sql",
+      "transaction": true
     }
   ]
 }

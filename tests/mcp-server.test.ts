@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { createCaptureTestDatabase } from "./helpers/captureDatabase.mjs";
 import { readVaultProjectionCheckpoint, writeState } from "../server/db/repository.mjs";
 import { readAgentConversation, searchAgentPassages } from "../server/db/searchRepository.mjs";
+import { readDocumentAuthorship, recordDocumentProvenance } from "../server/db/provenanceRepository.mjs";
 import { normalizeAppState } from "../server/db/validation.mjs";
 import { createVaultService } from "../server/vault/index.mjs";
 import { digest } from "../server/vault/storage.mjs";
@@ -67,6 +68,7 @@ describe("MCP server", () => {
       }),
       searchAgentPassages: (args: any) => searchAgentPassages(fixture.client, args),
       readAgentConversation: (args: any) => readAgentConversation(fixture.client, args),
+      recordDocumentProvenance: (args: any) => recordDocumentProvenance(fixture.client, args),
     };
     for (const [id, status] of [["plus", "active"], ["free", "inactive"]]) {
       await database.createUser({ id, role: "member", email: `${id}@example.test`, displayName: id, passwordHash: "unused" });
@@ -196,6 +198,9 @@ describe("MCP server", () => {
       relations: [{ type: "part-of", document_id: "plan" }] })).structuredContent;
     expect(created).toMatchObject({ ok: true, title: "Pricing research: notes/plan", path: "Pricing research notes plan.md" });
     expect(created.document_id).toMatch(/^mcp-/u);
+    // Readable before ok: the answer names the revision and no pending projection.
+    expect(created.revision_id).toMatch(/^[a-f0-9]{64}$/u);
+    expect(created.projection).toBeUndefined();
     const read = (await call(writer, "read_document", { document_id: created.document_id })).structuredContent;
     expect(read.document).toMatchObject({ title: "Pricing research: notes/plan", text: "Competitors charge per seat." });
     const links = (await call(writer, "list_related", { document_id: created.document_id })).structuredContent;
@@ -212,6 +217,18 @@ describe("MCP server", () => {
     expect((await call(writer, "append_to_document", { document_id: created.document_id, content: "Second finding." })).structuredContent.ok).toBe(true);
     expect((await call(writer, "read_document", { document_id: created.document_id })).structuredContent.document.text)
       .toBe("Competitors charge per seat.\n\nSecond finding.");
+
+    // Line authorship: the agent's lines are its own, by the name the member gave the token; the member's line stays theirs.
+    const tokenId = made.summary.id;
+    const journal = await vault.provenance!.current("plus", created.document_id);
+    expect(journal.blocks.flatMap((block: any) => block.lines.map((line: any) => line.author)))
+      .toEqual(Array(3).fill({ type: "agent", id: `mcp:${tokenId}`, label: "Claude Code" }));
+    const planLines = (await vault.provenance!.current("plus", "plan")).blocks.flatMap((block: any) => block.lines.map((line: any) => line.author.type));
+    expect(planLines).toEqual(["human", "agent"]);
+    expect(await readDocumentAuthorship(fixture.client, { userId: "plus", documentIds: [created.document_id, "plan"] })).toMatchObject({
+      [created.document_id]: { humanLines: 0, agentLines: 3, totalLines: 3, lastActor: { type: "agent", label: "Claude Code" } },
+      plan: { humanLines: 1, agentLines: 1, totalLines: 2 },
+    });
     expect(await call(writer, "append_to_document", { document_id: "chat", content: "x" })).toMatchObject({ isError: true });
     expect(await call(writer, "append_to_document", { document_id: "missing", content: "x" })).toMatchObject({ isError: true });
     expect(await call(writer, "create_document", { title: "Linked", content: "x", relations: [{ type: "part-of", document_id: "missing" }] }))
