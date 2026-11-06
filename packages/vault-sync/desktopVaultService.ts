@@ -91,6 +91,19 @@ export interface DesktopVaultService {
 const DEFAULT_INTERVAL_MS = 15_000;
 const DEFAULT_FAILURE_THRESHOLD = 3;
 
+/** Whether two snapshots show the same vault; unchanged files share their strings, so this is cheap. */
+function sameVault(a: VaultSnapshot, b: VaultSnapshot) {
+  if (a.remoteRevision !== b.remoteRevision || a.conflicts.length !== b.conflicts.length) return false;
+  const aPaths = Object.keys(a.files);
+  if (aPaths.length !== Object.keys(b.files).length) return false;
+  for (const path of aPaths) {
+    const left = a.files[path]; const right = b.files[path];
+    if (!right || (left !== right && (left.content !== right.content || left.encoding !== right.encoding))) return false;
+  }
+  const aDeferred = Object.keys(a.deferred ?? {}); const bDeferred = a.deferred && b.deferred ? Object.keys(b.deferred) : [];
+  return aDeferred.length === bDeferred.length && (!a.deferred || aDeferred.every((path) => b.deferred?.[path]?.revision === a.deferred![path].revision));
+}
+
 const isOffline = (error: unknown) => error instanceof TypeError
   || (error instanceof Error && (/failed to fetch|load failed|networkerror|network request failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/i.test(error.message)
     || ["AbortError", "TimeoutError"].includes(error.name)));
@@ -161,14 +174,14 @@ export async function createDesktopVaultService(options: DesktopVaultServiceOpti
     syncing = true;
     publish();
     let changed = false;
+    const before = await engine.read().catch(() => null);
     try {
       folderDirty = false;
       // Cloud sync still runs when the connected folder could not be read; the folder is retried next time.
-      const folderError = await mirror.read().then(() => { changed = true; return null; }, (error: unknown) => error);
+      const folderError = await mirror.read().then(() => null, (error: unknown) => error);
       if (options.transport) {
         try {
           await engine.sync();
-          changed = true;
           offline = false;
           failures = 0;
           lastError = null;
@@ -186,7 +199,7 @@ export async function createDesktopVaultService(options: DesktopVaultServiceOpti
       if (folderError) throw folderError;
       // Do not write to a folder whose current contents were not read.
       await mirror.write(await engine.read());
-      if (await engine.purgeTrash().catch(() => 0)) changed = true;
+      await engine.purgeTrash().catch(() => 0);
     } catch (error) {
       if (process.env.MARGIN_VAULT_DEBUG) console.error("vault pass failed", error instanceof Error ? error.stack : error);
       // These have their own place in status; anything else counts as a failure of this pass.
@@ -198,6 +211,9 @@ export async function createDesktopVaultService(options: DesktopVaultServiceOpti
       // A folder that changed under a write or mid-scan is read again right away.
       if (error instanceof LocalDirectoryConflictError || error instanceof FolderChangingError) folderDirty = true;
     } finally {
+      // "Changed" means the vault the page shows is different now, not that a pass ran.
+      const after = await engine.read().catch(() => null);
+      changed = !!after && (!before || !sameVault(before, after));
       await countPending();
       syncing = false;
       publish();

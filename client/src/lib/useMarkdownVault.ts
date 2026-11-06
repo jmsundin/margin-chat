@@ -668,9 +668,14 @@ export function useMarkdownVault(args: {
 
   // The main process reports sync status (desktop only); the page shows it and never drives sync itself.
   useEffect(() => native?.onSyncStatus((status) => { if (mounted.current) setDesktopSync(status); }), [native]);
+  // When the main process changed the vault (a folder read, a cloud pull), the page saves its typing on top and shows the result.
+  useEffect(() => {
+    if (!ready || !native) return;
+    return native.onVaultChanged(() => { void enqueue(() => persistAndPublish()).catch(report); });
+  }, [ready, native]);
 
-  // Files another app adds to or changes in the connected folder appear within seconds.
-  const watchedDirectoryId = localDirectoryStatus.permission === "granted" ? localDirectoryStatus.directoryId : undefined;
+  // Files another app adds to or changes in the connected folder appear within seconds (in the browser; on desktop the main process reads them).
+  const watchedDirectoryId = !native && localDirectoryStatus.permission === "granted" ? localDirectoryStatus.directoryId : undefined;
   useEffect(() => {
     if (!ready || !watchedDirectoryId) return;
     return watchLocalDirectory(storageUserId, watchedDirectoryId, () => scheduleAutomaticRefresh(true));

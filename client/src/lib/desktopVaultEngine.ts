@@ -43,16 +43,12 @@ export class BridgeVaultEngine implements VaultEngine {
   evict: VaultEngine["evict"] = (paths, ids) => this.call("evict", [...paths], ids);
 
   async sync() {
-    this.onDownload?.({ done: 0, total: 1 });
-    try {
-      const status = await bridgeRequest(() => this.api.request("syncNow"));
-      if (status.attention?.kind === "auth") throw Object.assign(new Error(status.attention.message), { statusCode: 401 });
-      if (status.state === "offline") throw new TypeError("Failed to fetch");
-      if (status.lastError && status.attention?.kind === "error") throw new Error(status.lastError);
-      this.onUpload?.();
-      return this.read();
-    } finally {
-      this.onDownload?.({ done: 1, total: 0 });
-    }
+    // No download progress is shown: sync has no UI in the happy path on desktop; the indicator says "Syncing…".
+    const status = await bridgeRequest(() => this.api.request("syncNow"));
+    if (status.attention?.kind === "auth") throw Object.assign(new Error(status.attention.message), { statusCode: 401 });
+    if (status.state === "offline") throw new TypeError("Failed to fetch");
+    if (status.lastError && status.attention?.kind === "error") throw new Error(status.lastError);
+    this.onUpload?.();
+    return this.read();
   }
 }
