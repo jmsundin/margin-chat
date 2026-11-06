@@ -50,3 +50,55 @@
   .is-quiet-page .live-document-editor:is(:hover, :focus-within) .live-document-modes { opacity: 0; }
   .is-quiet-page .live-document-editor .live-document-modes:is(:hover, :focus-within) { opacity: 1; }
 }
+
+/* ---- Margin notes as ink in the margin ----
+   A note is a dot and its words, with no card around it. Its buttons (↗, ⋮, ×, resize)
+   show when you point at the note. The passage it's about gets a thin underline
+   instead of a filled highlight. */
+:root { --quiet-ai-ink: #5d4bb0; --quiet-note-dot: var(--sage); }
+:root[data-theme="dark"] { --quiet-ai-ink: #ad9df2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --quiet-ai-ink: #ad9df2; } }
+
+.is-quiet-page .margin-document-frame > .chat-panel.document-panel,
+.is-quiet-page .margin-document-frame > .chat-panel.document-panel.is-active {
+  border-color: transparent; background: transparent; box-shadow: none;
+}
+/* The dot sits at the top left of the note, where a pen would start. */
+.is-quiet-page .margin-document-frame::before {
+  content: ""; position: absolute; z-index: 2; top: 20px; left: 42px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--quiet-note-dot); pointer-events: none;
+}
+.is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]))::before { background: var(--quiet-ai-ink); }
+/* The header floats over the note's top right, so the words start at the top. */
+.is-quiet-page .margin-document-frame .document-header {
+  position: absolute; top: 0; right: 0; left: auto; padding: 4px 4px 0; background: transparent;
+}
+.is-quiet-page .margin-document-frame .document-header .document-origin { display: none; }
+.is-quiet-page .margin-document-frame .document-body { --document-top-padding: 10px; --document-left-padding: 10px; --document-right-padding: 8px; }
+.is-quiet-page .margin-document-frame .live-document-host { font-size: 14.5px; }
+/* Notes keep Live Preview; ⌘E still switches them. */
+.is-quiet-page .margin-document-frame .live-document-modes { display: none; }
+
+@media (hover: hover) {
+  .is-quiet-page .margin-document-frame .document-header :is(.document-header-actions, .document-close-button),
+  .is-quiet-page .margin-document-frame > .margin-document-resize { opacity: 0; transition: opacity .15s ease; }
+  .is-quiet-page .margin-document-frame:is(:hover, :focus-within) .document-header :is(.document-header-actions, .document-close-button),
+  .is-quiet-page .margin-document-frame:is(:hover, :focus-within) > .margin-document-resize,
+  .is-quiet-page .margin-document-frame .document-header:has([aria-expanded="true"]) :is(.document-header-actions, .document-close-button) { opacity: 1; }
+  .is-quiet-page .margin-document-frame:hover > .chat-panel.document-panel { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+}
+
+/* The passage a note is about: a sage underline, not a fill. */
+.is-quiet-page .live-document-host .message-anchor {
+  background: transparent; padding: 0; border-radius: 0;
+  text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--sage) 75%, transparent);
+  text-decoration-thickness: 1.5px; text-underline-offset: 5px;
+}
+.is-quiet-page .live-document-host .message-anchor:is(:hover, :focus-visible) { background: var(--sage-soft); }
+
+/* Two voices: what AI wrote is set in a serif with a faint violet rule, yours stays in the sans. */
+.is-quiet-page .live-document-host .live-document-block[data-authorship="ai"] {
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 1.04em;
+  background: linear-gradient(color-mix(in srgb, var(--quiet-ai-ink) 40%, transparent), color-mix(in srgb, var(--quiet-ai-ink) 40%, transparent)) 26px 50% / 2px 70% no-repeat;
+}
+.is-quiet-page .margin-document-frame .live-document-host .live-document-block[data-authorship="ai"] { background: none; color: var(--ink); }
