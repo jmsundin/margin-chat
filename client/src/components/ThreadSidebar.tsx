@@ -38,9 +38,9 @@ interface ThreadSidebarProps {
   fetchIndicator?: ReactNode;
   /** Documents that just streamed in from the cloud, briefly highlighted. */
   arrivingThreadIds?: ReadonlySet<string>;
-  /** The Sessions view: named workspaces to switch between, rename and delete. */
+  /** The Spaces view: spaces to switch between, rename and delete. */
   sessionsPanel?: ReactNode;
-  /** Changes each time something outside the sidebar asks for the Sessions view. */
+  /** Changes each time something outside the sidebar asks for the Spaces view. */
   sessionsRequest?: number;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
   mapExplorerActive?: boolean;
@@ -631,6 +631,8 @@ export default function ThreadSidebar({
   ) {
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", threadId);
+    // Lets a space's button in the header take the document.
+    event.dataTransfer.setData("application/x-margin-document", threadId);
     setDraggedThreadId(threadId);
     setOpenMenuState(null);
     setWorkspaceActionsOpen(false);
@@ -1107,8 +1109,8 @@ export default function ThreadSidebar({
               aria-controls="sidebar-document-list" onClick={() => showSidebarContent("groups")}>Groups</button>
             <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
               aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button>
-            {sessionsPanel ? <button type="button" aria-label="Show sessions" aria-pressed={sidebarContent === "sessions"}
-              aria-controls="sidebar-sessions" onClick={() => showSidebarContent("sessions")}>Sessions</button> : null}
+            {sessionsPanel ? <button type="button" aria-label="Show spaces" aria-pressed={sidebarContent === "sessions"}
+              aria-controls="sidebar-sessions" onClick={() => showSidebarContent("sessions")}>Spaces</button> : null}
             {renderSortControl()}
           </div>
           {fetchIndicator}

@@ -198,15 +198,16 @@ export function addExampleVault(state: AppState, now = new Date().toISOString())
     next = addExampleChild(next, child, dated(Math.max(0, (parent?.daysAgo ?? 1) - 1)));
   }
   next = welcomeLine(next, now);
-  if (next.sessions) {
-    // A second session, so switching between projects has something to show.
+  {
+    // An example space, so switching between projects has something to show.
     const session: WorkspaceSession = {
       id: SESSION_ID, name: "Aging research", nameSource: "user", color: SESSION_COLORS[1],
       documentIds: [EXAMPLE_ROOT_ID, "example-senescence", "example-interventions"], activeDocumentId: "example-senescence",
       createdAt: dated(12), lastOpenedAt: dated(1),
     };
-    next = { ...next, sessions: { ...next.sessions, items: { ...next.sessions.items, [SESSION_ID]: session },
-      tabIds: next.sessions.tabIds.includes(SESSION_ID) ? next.sessions.tabIds : [...next.sessions.tabIds, SESSION_ID] } };
+    const sessions = next.sessions ?? { items: {}, tabIds: [], activeId: null };
+    next = { ...next, sessions: { ...sessions, items: { ...sessions.items, [SESSION_ID]: session },
+      tabIds: sessions.tabIds.includes(SESSION_ID) ? sessions.tabIds : [...sessions.tabIds, SESSION_ID] } };
   }
   return next;
 }

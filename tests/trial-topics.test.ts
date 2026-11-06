@@ -4,7 +4,6 @@ import { createEmptyState } from "../client/src/initialState";
 import { addExampleVault } from "../client/src/lib/exampleVault";
 import { completedStarterTasks, seedStarterDocument } from "../client/src/lib/starterDocument";
 import { getDocumentGraphEdges } from "../client/src/lib/documentRelations";
-import { ensureSessions } from "../client/src/lib/workspaceSessions";
 import { addTrialTopics, loadTrialTopics, normalizeTrialTopics, TRIAL_TOPICS_PATH } from "../client/src/lib/trialTopics";
 import { createApiHandler } from "../server/routes/api.mjs";
 import { createTrialTopicsService, TRIAL_TOPICS_KEY } from "../server/trial/topics.mjs";
@@ -31,7 +30,7 @@ const sample = () => ({
   ],
 });
 
-const trial = () => addExampleVault(ensureSessions(seedStarterDocument(createEmptyState(), at), [], at), at);
+const trial = () => addExampleVault(seedStarterDocument(createEmptyState(), at), at);
 
 describe("normalizeTrialTopics", () => {
   test("keeps well-formed topics", () => {
@@ -72,7 +71,7 @@ describe("addTrialTopics", () => {
     expect(state.groups["topic-group-food"].conversationIds.slice(0, 4)).toEqual(["topic-food", "topic-food-1", "topic-food-2", "topic-food-3"]);
     const session = state.sessions!.items["topic-session-food"];
     expect(session.documentIds[0]).toBe("topic-food");
-    // Topic sessions wait in the Sessions panel instead of crowding the tab row.
+    // Topic spaces keep their place after the ones listed first.
     expect(state.sessions!.tabIds).toEqual(before.sessions!.tabIds);
     expect(state.conversations["topic-food-1-note"].document?.marginNote).toBeTruthy();
     expect(state.conversations["topic-food-1-answer"]).toBeDefined();

@@ -1,0 +1,115 @@
+.space-icon { flex: none; width: 14px; height: 14px; }
+.space-dot { flex: none; width: 9px; height: 9px; border-radius: 99px; background: var(--accent); }
+/* "No space" is an empty ring. */
+.space-ring { flex: none; width: 9px; height: 9px; border: 1.5px solid var(--muted); border-radius: 99px; box-sizing: border-box; }
+.space-meta { flex: none; margin-left: auto; color: var(--muted); font-size: 11px; font-weight: 400; white-space: nowrap; }
+
+.spaces-panel button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.space-rename-input { flex: 1; min-width: 80px; height: 26px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 6px; background: var(--panel, var(--bg)); color: var(--ink); font: inherit; font-size: 13px; }
+
+/* Spaces panel */
+.spaces-panel { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 6px 4px 12px; }
+.spaces-heading { margin: 6px 8px 2px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.spaces-list { display: flex; flex-direction: column; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.space-row { position: relative; display: flex; align-items: center; gap: 6px; padding: 0 4px 0 8px; border-radius: 8px; }
+.space-row:hover { background: var(--button-surface); }
+.space-row.is-active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.space-row-open { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; min-height: 34px; padding: 4px 2px; border: 0; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.space-row.is-active .space-row-open { font-weight: 600; }
+.space-row-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.space-row-menu-trigger { flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); font: inherit; cursor: pointer; }
+.space-row-menu-trigger:hover, .space-row-menu-trigger[aria-expanded="true"] { background: var(--button-active-surface, var(--button-surface)); color: var(--ink); }
+.space-menu { position: absolute; top: 100%; right: 4px; z-index: 50; display: flex; flex-direction: column; min-width: 190px; padding: 4px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); box-shadow: 0 8px 24px #0003; }
+.space-menu button { padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.space-menu button:hover:not(:disabled) { background: var(--button-surface); }
+.space-menu button:disabled { opacity: .45; cursor: default; }
+.space-menu hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
+.space-menu .is-danger, .spaces-confirm .is-danger { color: #b42318; }
+.spaces-empty, .spaces-hint { margin: 2px 8px 6px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.spaces-new { display: flex; align-items: center; gap: 8px; margin: 2px 4px; padding: 8px; border: 0; border-radius: 8px; background: none; color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.spaces-new:hover { background: var(--button-surface); }
+.spaces-new-form { display: flex; flex-direction: column; gap: 4px; padding: 4px 8px; }
+.spaces-documents { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.space-document { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 8px; border-radius: 6px; }
+.space-document:hover { background: var(--button-surface); }
+.space-document.is-here { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.space-document-open { flex: 1; min-width: 0; min-height: 30px; padding: 0; border: 0; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.space-document.is-here .space-document-open { font-weight: 600; }
+.space-document-remove { flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--muted); font: inherit; cursor: pointer; opacity: 0; }
+.space-document:is(:hover, :focus-within) .space-document-remove { opacity: 1; }
+.spaces-confirm { position: sticky; bottom: 8px; display: flex; flex-direction: column; gap: 8px; margin: 8px 4px 0; padding: 14px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-strong); box-shadow: 0 8px 24px #0003; font-size: 13px; }
+.spaces-confirm p { margin: 0; color: var(--muted); line-height: 1.45; }
+.spaces-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.spaces-confirm-actions button { height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--button-surface); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
+.spaces-confirm-actions .is-danger { border-color: #b42318; background: #b42318; color: #fff; }
+
+@media (max-width: 720px) {
+  .space-popover { grid-template-columns: minmax(220px, 1fr); }
+  .space-popover-preview { display: none; }
+}
+
+@media (pointer: coarse) {
+  .space-document-remove { opacity: 1; }
+  .space-row-open, .space-document-open { min-height: 44px; }
+}
+
+/* The header takes the space's colour, so you can tell where you are at a glance. */
+.document-workspace-toolbar.is-in-space { background: color-mix(in srgb, var(--space-color) 16%, var(--panel)); box-shadow: inset 0 -1px color-mix(in srgb, var(--space-color) 40%, var(--line)); }
+.document-workspace-toolbar.is-in-space > .document-tabs-container { background: transparent; }
+.document-workspace-toolbar.is-in-space .document-tab:not(.is-active):not(.is-visiting) { background: color-mix(in srgb, var(--panel) 55%, transparent); }
+.document-workspace-toolbar.is-in-space .document-tab.is-active { box-shadow: inset 0 2px var(--space-color); }
+
+.space-switcher { position: relative; flex: none; display: flex; align-items: center; }
+.space-pill { display: flex; align-items: center; gap: 7px; max-width: 220px; height: 30px; padding: 0 9px 0 11px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; }
+.space-pill:not(.is-none) { border-color: transparent; background: var(--space-color); color: #fff; font-weight: 600; }
+.space-pill:hover { filter: brightness(1.06); }
+.space-pill.is-none:hover { background: var(--button-surface); color: var(--ink); }
+.space-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.space-pill.is-drop-target { outline: 2px dashed var(--space-color, var(--accent)); outline-offset: 2px; }
+.space-pill-mark { flex: none; width: 9px; height: 9px; border-radius: 3px; background: currentColor; opacity: .9; }
+.space-pill-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.space-pill-chevron { flex: none; width: 13px; height: 13px; opacity: .85; }
+
+.space-popover { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; display: grid; grid-template-columns: minmax(220px, 250px) minmax(200px, 260px); border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-strong); box-shadow: 0 12px 32px #0003; overflow: hidden; }
+.space-popover-list { display: flex; flex-direction: column; padding: 6px; border-right: 1px solid var(--line); }
+.space-popover-preview { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; min-width: 0; }
+.space-popover-preview ul { display: flex; flex-direction: column; gap: 2px; margin: 4px 0 0; padding: 0; list-style: none; }
+.space-popover-preview li { padding: 4px 0; overflow: hidden; color: var(--ink); font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.space-preview-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.space-preview-meta { margin: 0; color: var(--muted); font-size: 12px; }
+.space-switcher hr { width: 100%; margin: 4px 0; border: 0; border-top: 1px solid var(--line); }
+.space-options { display: flex; flex-direction: column; gap: 1px; }
+.space-option, .space-action { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 8px; border: 0; border-radius: 7px; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.space-option:hover, .space-option.is-previewed, .space-action:hover, .space-option:focus-visible, .space-action:focus-visible { background: var(--button-surface); outline: none; }
+.space-option.is-active { background: color-mix(in srgb, var(--accent) 12%, transparent); font-weight: 600; }
+.space-option-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.space-action { color: var(--accent); font-weight: 600; }
+.space-action.is-quiet { color: var(--muted); font-weight: 400; }
+.space-new-form { display: flex; flex-direction: column; gap: 4px; padding: 4px; }
+.space-switcher.is-inline { flex-direction: column; align-items: stretch; }
+.space-switcher.is-inline .space-option, .space-switcher.is-inline .space-action { min-height: 40px; font-size: 14px; }
+
+/* A tab that is only visiting the space: it closes when you leave. */
+.document-tab.is-visiting { border-style: dashed; background: transparent; }
+.document-tab.is-visiting .document-tab-title { font-style: italic; }
+.document-tab.is-visiting:not(.is-active) { color: var(--muted); }
+.document-tab-keep { flex: none; height: 22px; margin-right: 2px; padding: 0 7px; border: 1px solid var(--space-color, var(--accent)); border-radius: 6px; background: transparent; color: var(--space-color, var(--accent)); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+.document-tab-keep:hover { background: color-mix(in srgb, var(--space-color, var(--accent)) 14%, transparent); }
+.document-tabs-divider { flex: none; align-self: center; width: 1px; height: 18px; margin: 0 4px; background: var(--line-strong); }
+
+/* An empty space asks what goes in it. */
+.space-start { display: flex; flex-direction: column; gap: 10px; width: min(440px, calc(100% - 32px)); flex: none; height: max-content; margin: 56px auto; padding: 22px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.space-start h2 { display: flex; align-items: center; gap: 9px; margin: 0; font-size: 18px; }
+.space-start-search { height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; font-size: 14px; }
+.space-start-list { display: flex; flex-direction: column; gap: 1px; max-height: 300px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.space-start-list label { display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 6px; border-radius: 7px; font-size: 14px; cursor: pointer; }
+.space-start-list label:hover { background: var(--button-surface); }
+.space-start-list input { accent-color: var(--space-color); }
+.space-start-actions { display: flex; gap: 8px; }
+.space-start-actions button { height: 34px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--button-surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.space-start-actions .is-primary { border-color: var(--space-color); background: var(--space-color); color: #fff; }
+.space-start-actions .is-primary:disabled { opacity: .5; cursor: default; }
+
+/* Phone: the title row names the space in small type above the document. */
+.document-header-space { display: flex; align-items: center; gap: 5px; color: var(--space-color, var(--muted)); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
+.document-header-title-stack { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }

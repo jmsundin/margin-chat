@@ -18,8 +18,8 @@ export const DESKTOP_TOUR: TourStep[] = [
     body: "Every document is listed here, newest first. Search finds words or meaning, and files you drop here join your vault." },
   { targets: [".workspace-mode-control"], title: "Three ways to look",
     body: "Document, Tiles and Map View. The Map (⌘G) shows each document as a dot, with lines for side docs, notes and links." },
-  { targets: [".session-switcher", ".document-tabs-list"], title: "Sessions and tabs",
-    body: "Tabs are the documents you have open. A session keeps its own tabs, so each project picks up where you left off." },
+  { targets: [".space-pill", ".document-tabs-list"], title: "Spaces and tabs",
+    body: "Tabs are the documents you have open. Make a space for a project from the button on the left; it keeps the documents you add, so you can come back to them." },
   { targets: ['[aria-label="Open settings"]'], title: "Bring your other AI apps",
     body: "Connect Claude, ChatGPT or Gemini so they can search and save to your vault. Settings → Agents has the steps, and so does marginchat.com/connect." },
 ];
@@ -32,8 +32,8 @@ export const PHONE_TOUR: TourStep[] = [
     body: "+ makes a new document, side document or margin note. The mic types what you say. The keyboard button brings the keyboard up." },
   { targets: [".workspace-menu-button"], title: "Your vault and the Map",
     body: "Tap here, or swipe in from the left edge, for every document, search, and Map View." },
-  { targets: [".document-header-title"], title: "Tabs and sessions",
-    body: "Tap the title to switch between your open documents and your sessions." },
+  { targets: [".document-header-title"], title: "Tabs and spaces",
+    body: "Tap the title to switch between your open documents and your spaces." },
   { targets: [".workspace-menu-button"], title: "Bring your other AI apps",
     body: "Connect Claude, ChatGPT or Gemini so they can search and save to your vault. In the sidebar, Settings → Agents has the steps." },
 ];

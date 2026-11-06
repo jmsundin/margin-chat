@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import type { Conversation, ConversationGroup } from "../types";
 import DocumentMenu from "./DocumentMenu";
 import PinnedDocumentPreview from "./PinnedDocumentPreview";
@@ -29,9 +29,12 @@ export interface DocumentTabsProps {
   onRename?: (id: string, title: string) => void;
   /** A list of full-width rows with whole titles, as in the phone header's drop-down. */
   vertical?: boolean;
+  /** Tabs only visiting the space you're in: drawn dashed, after a divider, with a Keep button. */
+  visitingDocumentIds?: string[];
+  onKeep?: (id: string) => void;
 }
 
-export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, closedDocumentIds = [], parentTitles = {}, onSelect, onMinimize, onClose, showCloseButtons = false, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename, vertical = false }: DocumentTabsProps) {
+export default function DocumentTabs({ documents, activeDocumentId, minimizedDocumentIds, closedDocumentIds = [], parentTitles = {}, onSelect, onMinimize, onClose, showCloseButtons = false, onReorder, canReorder = () => true, onNewSideDocument, pinnedDocumentIds = [], onTogglePin, familyPinnedDocumentIds = [], onTogglePinScope, groups = {}, onAssignGroup, onRename, vertical = false, visitingDocumentIds = [], onKeep }: DocumentTabsProps) {
   const instructionsId = useId();
   const previewId = useId();
   const tabs = useRef(new Map<string, HTMLButtonElement>());
@@ -246,15 +249,19 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
       <div className="document-tabs-list" role="tablist" aria-label="Document tabs" aria-orientation={vertical ? "vertical" : "horizontal"} aria-describedby={instructionsId}>
       {documents.map((document, index) => {
         const title = document.title || "Untitled document";
+        const visiting = visitingDocumentIds.includes(document.id);
+        const firstVisitor = visiting && !visitingDocumentIds.includes(documents[index - 1]?.id ?? "") && index > 0;
         const minimized = minimizedDocumentIds.includes(document.id);
         const active = document.id === activeDocumentId;
         const pinned = pinnedDocumentIds.includes(document.id);
         const closed = closedDocumentIds.includes(document.id);
         const parentTitle = parentTitles[document.id];
-        return <div key={document.id} role="presentation" draggable
+        return <Fragment key={document.id}>
+        {firstVisitor && !vertical ? <span className="document-tabs-divider" role="presentation" style={{ order: index * 2 - 1 }} /> : null}
+        <div role="presentation" draggable
           style={{ order: index * 2 }}
           data-document-tab-id={document.id}
-          className={`document-tab${active ? " is-active" : ""}${pinned ? " is-pinned" : ""}${minimized ? " is-minimized" : ""}${closed ? " is-closed" : ""}${parentTitle ? " is-child" : ""}${draggingId === document.id ? " is-dragging" : ""}${dropTargetId === document.id ? " is-drop-target" : ""}${dropTargetId === document.id && documents.findIndex((item) => item.id === draggingId) < documents.indexOf(document) ? " is-drop-after" : ""}`}
+          className={`document-tab${active ? " is-active" : ""}${pinned ? " is-pinned" : ""}${minimized ? " is-minimized" : ""}${closed ? " is-closed" : ""}${parentTitle ? " is-child" : ""}${visiting ? " is-visiting" : ""}${draggingId === document.id ? " is-dragging" : ""}${dropTargetId === document.id ? " is-drop-target" : ""}${dropTargetId === document.id && documents.findIndex((item) => item.id === draggingId) < documents.indexOf(document) ? " is-drop-after" : ""}`}
           onPointerDown={(event) => startPointerDrag(event, document.id)}
           onPointerEnter={(event) => showPreview(document.id, event.currentTarget)}
           onPointerLeave={() => { dismissedPreviewId.current = null; schedulePreviewClose(); }}
@@ -307,9 +314,9 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
           onDragEnd={() => { if (!pointerDrag.current) endDrag(); }}>
           <button type="button" role="tab" className="document-tab-select"
             ref={(element) => { if (element) tabs.current.set(document.id, element); else tabs.current.delete(document.id); }}
-            aria-selected={active} aria-label={`${title}${parentTitle ? `, child of ${parentTitle}` : ""}${pinned ? ", pinned" : ""}${minimized ? ", minimized. Restore document" : ""}${closed ? ", not open. Open document" : ""}`}
+            aria-selected={active} aria-label={`${title}${visiting ? ", visiting" : ""}${parentTitle ? `, child of ${parentTitle}` : ""}${pinned ? ", pinned" : ""}${minimized ? ", minimized. Restore document" : ""}${closed ? ", not open. Open document" : ""}`}
             aria-describedby={`${instructionsId}${previewDocument?.id === document.id ? ` ${previewId}` : ""}`} tabIndex={tabStopId === document.id ? 0 : -1}
-            title={pinned ? undefined : `${title}${parentTitle ? ` — child of ${parentTitle}` : ""}${minimized ? " — minimized; click to restore" : ""}${closed ? " — not open; click to open" : ""}`}
+            title={pinned ? undefined : `${title}${visiting ? " — visiting: not kept in this space" : ""}${parentTitle ? ` — child of ${parentTitle}` : ""}${minimized ? " — minimized; click to restore" : ""}${closed ? " — not open; click to open" : ""}`}
             onFocus={(event) => { dismissedPreviewId.current = null; setFocusedId(document.id); showPreview(document.id, event.currentTarget.parentElement!); }}
             onKeyDown={(event) => handleKeyDown(event, document.id)}
             onClick={() => onSelect(document.id)}>
@@ -323,6 +330,8 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
             {minimized ? <span className="document-tab-minimized-label" aria-hidden="true">Minimized</span> : null}
             {closed ? <span className="document-tab-minimized-label" aria-hidden="true">Not open</span> : null}
           </button>
+          {visiting && onKeep ? <button type="button" className="document-tab-keep" aria-label={`Keep ${title} in this space`}
+            title="Keep in this space (⌘D)" onClick={() => onKeep(document.id)}>Keep</button> : null}
           <DocumentMenu conversation={document} onRename={onRename} pinned={pinned} familyPinned={familyPinnedDocumentIds.includes(document.id)}
             minimized={minimized} closed={closed} onTogglePin={onTogglePin} onTogglePinScope={onTogglePinScope}
             // The tab's × closes it; only pinned tabs, which have no ×, keep Close in the menu.
@@ -338,7 +347,8 @@ export default function DocumentTabs({ documents, activeDocumentId, minimizedDoc
             }}>
             <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="m6 6 8 8M14 6l-8 8"/></svg>
           </button> : null}
-        </div>;
+        </div>
+        </Fragment>;
       })}
       </div>
       <button type="button" className="document-tab-create" onClick={onNewSideDocument}
