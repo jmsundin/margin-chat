@@ -219,7 +219,39 @@ export class LocalVaultUnavailableError extends Error {
  * whole vault. Each tab keeps its decoded vault in memory and reads only the
  * saves other tabs made since; a reopened vault verifies every file it reads.
  */
+/** Where a journal store keeps its files, and how its saves are serialized. */
+export interface JournalStoreHost {
+  /** Opens (creating if needed) the folder that holds this vault copy's journal. `step` names what is being opened, for errors. */
+  openRoot(setStep: (step: string) => void): Promise<FileSystemDirectoryHandle>;
+  /** Runs `operation` while no other save of this vault runs (across tabs in a browser, in-process on desktop). */
+  lock<T>(operation: () => Promise<T>): Promise<T>;
+}
+
+/** The journal store over the browser's private storage, serialized across tabs with Web Locks. */
 export function createBrowserVaultStore(userId: string): VaultStore {
+  return createJournalVaultStore({
+    async openRoot(setStep) {
+      if (!navigator.storage?.getDirectory) throw new Error("This browser cannot save a local Markdown vault. Use a current version of Safari, Chrome, Edge, or Firefox.");
+      const [vaultsName, userName] = vaultCopyFolder(userId);
+      setStep("opening the browser's private storage");
+      const root = await navigator.storage.getDirectory();
+      setStep(`opening ${vaultsName}/${userName}`);
+      const vaults = await root.getDirectoryHandle(vaultsName, { create: true });
+      return vaults.getDirectoryHandle(userName, { create: true });
+    },
+    lock(operation) {
+      if (!navigator.locks) throw new Error("This browser cannot safely coordinate local saves. Update your browser before editing this vault.");
+      return navigator.locks.request(`margin-chat-vault:${userId}`, operation);
+    },
+  });
+}
+
+/**
+ * This device's durable copy of the vault: a checkpoint plus a journal of saves, with every file's bytes
+ * stored once by hash under `history/`. Platform-neutral over a directory handle (OPFS in the browser,
+ * a folder in the desktop app's data directory), so one format serves every device.
+ */
+export function createJournalVaultStore(host: JournalStoreHost): VaultStore {
   let directoryPromise: Promise<FileSystemDirectoryHandle> | null = null;
   let memo: Memo | null = null;
   /** What the last read was doing, so a browser error says which step failed. */
@@ -235,15 +267,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
   }
   function directory() {
     if (directoryPromise) return directoryPromise;
-    const opening = directoryPromise = (async () => {
-      if (!navigator.storage?.getDirectory) throw new Error("This browser cannot save a local Markdown vault. Use a current version of Safari, Chrome, Edge, or Firefox.");
-      const [vaultsName, userName] = vaultCopyFolder(userId);
-      step = "opening the browser's private storage";
-      const root = await navigator.storage.getDirectory();
-      step = `opening ${vaultsName}/${userName}`;
-      const vaults = await root.getDirectoryHandle(vaultsName, { create: true });
-      return vaults.getDirectoryHandle(userName, { create: true });
-    })();
+    const opening = directoryPromise = host.openRoot((next) => { step = next; });
     // A failed open is retried on the next read instead of being remembered.
     opening.catch(() => { if (directoryPromise === opening) directoryPromise = null; });
     return opening;
@@ -467,10 +491,7 @@ export function createBrowserVaultStore(userId: string): VaultStore {
   }
 
   return {
-    async lock<T>(operation: () => Promise<T>) {
-      if (!navigator.locks) throw new Error("This browser cannot safely coordinate local saves. Update your browser before editing this vault.");
-      return navigator.locks.request(`margin-chat-vault:${userId}`, operation);
-    },
+    lock<T>(operation: () => Promise<T>) { return host.lock(operation); },
     async read() {
       try {
         const current = await load();
