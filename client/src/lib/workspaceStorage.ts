@@ -12,6 +12,7 @@ import { createWorkspaceDocument } from "./workspaceModel";
 import { validVaultPath, type DirectoryFileStat, type DirectoryStats, type VaultFile } from "./vaultTypes";
 import { readFreshBytes, readFreshFile, readFreshText, scanWhileFolderSettles } from "./fileSnapshot";
 import { isSyncableVaultFileSize, isVaultFileDocumentPath, vaultFileContentType, type VaultFileListing } from "./vaultFileDocuments";
+import { bridgeFolderHandle, isBridgeHandle, vaultBridge } from "./desktopBridge";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
 const DIRECTORY_DATABASE_VERSION = 1;
@@ -171,6 +172,12 @@ export async function getLocalDirectoryStatus(
 
 /** Invoke directly in the click handler; selecting it is separately serialized with folder I/O. */
 export async function pickLocalDirectory(): Promise<FileSystemDirectoryHandle | null> {
+  const bridge = vaultBridge();
+  if (bridge) {
+    // The desktop app's own folder picker; the folder is known to the app but not connected until connectLocalDirectory.
+    const folder = await bridge.request("pickFolder");
+    return folder ? bridgeFolderHandle(bridge, folder) : null;
+  }
   if (!supportsDirectoryPicker()) return null;
   return (
     window as unknown as DirectoryPickerWindow
@@ -181,6 +188,14 @@ export async function pickLocalDirectory(): Promise<FileSystemDirectoryHandle | 
 }
 
 export async function connectLocalDirectory(userId: string, handle: FileSystemDirectoryHandle): Promise<LocalDirectoryStatus> {
+  const bridge = vaultBridge();
+  if (bridge) {
+    if (!isBridgeHandle(handle)) throw new Error("The desktop app can only connect a folder it opened itself.");
+    const status = await bridge.request("connect", handle.ref);
+    observedDirectoryWorkspaces.delete(userId);
+    if (!status.current) throw new Error("The folder could not be connected.");
+    return buildDirectoryStatus(bridgeFolderHandle(bridge, status.current), getLocalWorkspaceFileName(userId), status.current.id);
+  }
   const previous = await getStoredDirectorySelection(userId);
   const directories = previous?.directories ?? (previous ? [{ id: previous.id, handle: previous.handle }] : []);
   let known: DirectoryIdentity | undefined;
@@ -226,6 +241,12 @@ export async function listLocalDirectories(userId: string): Promise<RememberedLo
  * Call from a click handler. Returns null when the folder is not remembered.
  */
 export async function reconnectLocalDirectory(userId: string, directoryId: string): Promise<FileSystemDirectoryHandle | null> {
+  const bridge = vaultBridge();
+  if (bridge) {
+    // No permission exists on desktop: a remembered folder opens as it is.
+    const folder = await bridge.request("reconnect", directoryId);
+    return folder ? bridgeFolderHandle(bridge, folder) : null;
+  }
   const selection = await getStoredDirectorySelection(userId);
   const entry = selection?.directories.find((candidate) => candidate.id === directoryId);
   if (!entry) return null;
@@ -270,6 +291,9 @@ const FOLDER_WATCH_MAX_MS = 60_000;
  * page is visible. Returns a function that stops watching.
  */
 export function watchLocalDirectory(userId: string, directoryId: string, onChange: () => void): () => void {
+  const bridge = vaultBridge();
+  // On desktop the main process watches the folder itself (recursively, with stability checks) and says when a scan is due.
+  if (bridge) return bridge.onFolderChanged((change) => { if (change.folderId === directoryId) onChange(); });
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let observer: InstanceType<FileSystemObserverConstructor> | null = null;
@@ -326,6 +350,11 @@ export async function chooseLocalDirectory(userId: string): Promise<LocalDirecto
 
 export async function clearLocalDirectory(userId: string) {
   observedDirectoryWorkspaces.delete(userId);
+  const bridge = vaultBridge();
+  if (bridge) {
+    await bridge.request("disconnect");
+    return;
+  }
   if (typeof indexedDB === "undefined") {
     return;
   }
@@ -601,6 +630,9 @@ export async function listConnectedDirectoryFiles(handle: FileSystemDirectoryHan
 export async function localDirectoryAvailability(userId: string, directoryId?: string): Promise<"available" | "missing" | "refused"> {
   const handle = await getStoredDirectoryHandle(userId, directoryId);
   if (!handle) return "missing";
+  const bridge = vaultBridge();
+  // The main process checks the folder on disk, so an unplugged drive is told apart from an empty folder.
+  if (bridge && isBridgeHandle(handle)) return bridge.request("availability", handle.ref.folderId);
   const entries = (handle as FileSystemDirectoryHandle & { entries(): AsyncIterableIterator<[string, FileSystemHandle]> }).entries();
   try {
     await entries.next();
@@ -621,7 +653,8 @@ export async function readLocalDirectoryFile(userId: string, path: string, direc
   if (!handle || (await queryDirectoryPermission(handle)) !== "granted") return null;
   try {
     const file = await (await getNestedFileHandle(handle, path)).getFile();
-    return new Blob([file], { type: vaultFileContentType(path) });
+    // Bytes rather than the File itself: a desktop snapshot is not a Blob.
+    return new Blob([await file.arrayBuffer()], { type: vaultFileContentType(path) });
   } catch (error) {
     if (isDomExceptionNamed(error, "NotFoundError")) return null;
     throw error;
@@ -917,6 +950,7 @@ async function removeDirectoryFile(handle: FileSystemDirectoryHandle, path: stri
 }
 
 function supportsDirectoryPicker() {
+  if (vaultBridge()) return true;
   return (
     typeof window !== "undefined" &&
     // Chrome only permits the directory picker in a top-level browsing context.
@@ -966,6 +1000,14 @@ interface DirectoryIdentity { id: string; handle: FileSystemDirectoryHandle }
 interface DirectorySelection extends DirectoryIdentity { directories: DirectoryIdentity[] }
 
 async function getStoredDirectorySelection(userId: string): Promise<DirectorySelection | null> {
+  const bridge = vaultBridge();
+  if (bridge) {
+    // The desktop app remembers folders itself, for the computer rather than per account: one app, one vault folder.
+    const status = await bridge.request("status");
+    if (!status.current) return null;
+    const handles = new Map(status.folders.map((folder) => [folder.id, bridgeFolderHandle(bridge, folder)] as const));
+    return { id: status.current.id, handle: handles.get(status.current.id)!, directories: status.folders.map((folder) => ({ id: folder.id, handle: handles.get(folder.id)! })) };
+  }
   if (!supportsDirectoryPicker()) {
     return null;
   }
@@ -995,6 +1037,8 @@ async function setStoredDirectorySelection(
   userId: string,
   selection: DirectorySelection,
 ) {
+  // The desktop app's folders are remembered by its main process (connectLocalDirectory).
+  if (vaultBridge()) return;
   const database = await openDirectoryDatabase();
 
   await new Promise<void>((resolve, reject) => {

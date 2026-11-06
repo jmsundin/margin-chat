@@ -7,11 +7,12 @@
   "type": "module",
   "main": "main.mjs",
   "scripts": {
-    "start": "bun run --cwd .. build && electron .",
-    "dev": "MARGIN_DESKTOP_DEV_URL=http://localhost:5173 electron .",
-    "dist:mac": "bun run --cwd .. build && electron-builder --mac",
-    "dist:win": "bun run --cwd .. build && electron-builder --win",
-    "dist:linux": "bun run --cwd .. build && electron-builder --linux"
+    "build:main": "node build.mjs",
+    "start": "bun run --cwd .. build && node build.mjs && electron .",
+    "dev": "node build.mjs && MARGIN_DESKTOP_DEV_URL=http://localhost:5173 electron .",
+    "dist:mac": "bun run --cwd .. build && node build.mjs && electron-builder --mac",
+    "dist:win": "bun run --cwd .. build && node build.mjs && electron-builder --win",
+    "dist:linux": "bun run --cwd .. build && node build.mjs && electron-builder --linux"
   },
   "devDependencies": {
     "electron": "44.7.0",
@@ -30,6 +31,10 @@
       "permissions.mjs",
       "shellUpdater.mjs",
       "updates.mjs",
+      "preload.cjs",
+      "vaultBridge.mjs",
+      "settings.mjs",
+      "vault-sync.bundle.mjs",
       "package.json",
       "!node_modules/**/*"
     ],

@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createClientBundles } from "./clientBundles.mjs";
 import { DEEP_LINK_SCHEME, findDeepLink, pathForDeepLink, pathForWebsiteLink } from "./deepLinks.mjs";
 import { createPermissionHandlers } from "./permissions.mjs";
+import { readDesktopSettings } from "./settings.mjs";
 import { createShellUpdater, DEFAULT_FEED } from "./shellUpdater.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
@@ -42,6 +43,12 @@ const INSTALL_UPDATE_PATH = "/__margin/install-update";
 // Where "Download update" sends people: the download page picks this system's installer.
 const DOWNLOAD_URL = process.env.MARGIN_DESKTOP_DOWNLOAD_URL?.trim() || "https://www.marginchat.com/download";
 const PROXIED_PREFIXES = ["/api/", "/_vercel/"];
+// The native vault keeps the vault folder in this process (desktop/vaultBridge.mjs) instead of the
+// page's File System Access API. Off by default until its acceptance tests pass; MARGIN_DESKTOP_NATIVE_VAULT=1 tries it.
+const settings = readDesktopSettings(app.getPath("userData"));
+const PRELOAD = fileURLToPath(new URL("./preload.cjs", import.meta.url));
+/** The vault bridge, once started (settings.nativeVault). */
+let vaultBridge = null;
 // Request headers that describe the margin:// page rather than the backend request.
 const DROPPED_REQUEST_HEADERS = ["host", "origin", "referer", "cookie"];
 
@@ -195,6 +202,8 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      // With the native vault, the preload exposes window.marginVault and nothing else.
+      ...(settings.nativeVault ? { preload: PRELOAD } : {}),
     },
   });
 
@@ -362,9 +371,19 @@ if (!app.requestSingleInstanceLock()) {
     protocol.handle(SCHEME, handleAppRequest);
 
     // The check handler keeps a vault folder chosen before readable at launch (desktop/permissions.mjs).
+    // It stays while the native vault is optional: a client older than the bridge still uses the page's folder API.
     const permissions = createPermissionHandlers(isAppUrl);
     session.defaultSession.setPermissionRequestHandler(permissions.request);
     session.defaultSession.setPermissionCheckHandler(permissions.check);
+    if (settings.nativeVault) {
+      try {
+        const { startVaultBridge } = await import("./vaultBridge.mjs");
+        vaultBridge = await startVaultBridge({ dataDir: app.getPath("userData"), isAppUrl });
+      } catch (error) {
+        // Without the bridge the page falls back to its own folder access, as before.
+        console.warn("The native vault could not start; using the page's folder access.", error);
+      }
+    }
 
     registerDeepLinks();
     buildAppMenu();

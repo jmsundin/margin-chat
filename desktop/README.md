@@ -17,6 +17,26 @@ unchanged with its same-origin relative fetches.
   check keeps Electron's default answer. Without the check handler (desktop
   builds before it), Chromium forgets folder access when the app closes and the
   page asks for one click, Allow access, at each launch.
+- Native vault (optional for now): with `nativeVault: true` in
+  `desktop-settings.json` in the app's data folder, or
+  `MARGIN_DESKTOP_NATIVE_VAULT=1` for one run, the vault folder is owned by the
+  main process instead of the page. `preload.cjs` exposes `window.marginVault`,
+  a versioned bridge (`packages/vault-sync/bridgeProtocol.ts`); every read and
+  write is a request `vaultBridge.mjs` checks (known folder id, plain relative
+  path, no symbolic links) and answers from `node:fs` through the native
+  adapter, with atomic writes. Remembered folders live in `vault-folders.json`
+  there, keyed by an id that follows the folder (same real path, or the same
+  device and inode chosen again after a move), so a remembered folder opens at
+  launch with no permission step and no click, and the main process watches it
+  recursively (`packages/vault-sync/folderWatcher.ts`) and tells the page when
+  a scan is due. The client takes this path only when the bridge's protocol
+  version matches the one it was built with; otherwise, and whenever the
+  setting is off, the page's own folder access below is used, so the same
+  client bundle serves the website and both app modes. The default flips to
+  on once the spec's acceptance tests pass (`docs/desktop-vault-sync.md`).
+  `build.mjs` bundles the package into `vault-sync.bundle.mjs` (generated, not
+  committed) before `start`, `dev` and `dist:*`; it needs the root
+  `bun install`, which the client build needs anyway.
 - First run: until a vault folder is chosen, the page asks for one before
   showing the workspace (open a folder, create a new vault, a folder used
   before, or Not now until the next launch). See

@@ -2,3 +2,4 @@
 export * from "./index";
 export * from "./nodeVaultFs";
 export * from "./folderWatcher";
+export * from "./bridgeService";
