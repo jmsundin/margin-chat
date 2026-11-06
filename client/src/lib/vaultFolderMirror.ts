@@ -1,4 +1,5 @@
-import type { VaultSync } from "./vaultSync";
+import type { VaultEngine } from "./desktopVaultEngine";
+import { vaultBridge } from "./desktopBridge";
 import type { DirectoryStats, VaultFile, VaultSnapshot } from "./vaultTypes";
 import type { MarkdownWorkspace } from "./workspaceMarkdown";
 import { workspaceFromVault, workspaceVaultFiles } from "./vaultWorkspace";
@@ -25,12 +26,20 @@ export interface FolderAccess {
   write(write: DirectoryWrite, directoryId: string): Promise<{ status: LocalDirectoryStatus; companions: Record<string, VaultFile>; stats: DirectoryStats } | null>;
 }
 
-/** The folder remembered for `userId` on this device, through the browser's folder API or the desktop bridge. */
+/**
+ * The folder remembered for `userId` on this device. In the browser it is read and written from the page; in the
+ * desktop app the main process reads and writes the folder itself (`desktopVaultService.ts`), so the page only
+ * asks about it and never scans or writes.
+ */
 export function createFolderAccess(userId: string): FolderAccess {
+  const native = vaultBridge() !== null;
   return {
     status: () => getLocalDirectoryStatus(userId),
     directories: () => listLocalDirectories(userId).catch(() => []),
     availability: (directoryId) => localDirectoryAvailability(userId, directoryId),
+    ...(native ? {
+      readWorkspace: async () => null, listFiles: async () => null, readCompanions: async () => null, write: async () => null,
+    } : {}),
     readWorkspace: (fallbackManifest, previousFiles, directoryId, stats) => readLocalDirectoryWorkspace(userId, fallbackManifest, previousFiles, directoryId, stats),
     listFiles: (directoryId) => listLocalDirectoryFiles(userId, directoryId),
     readCompanions: (known, directoryId, listing, stats) => readLocalDirectoryCompanions(userId, known, directoryId, listing, stats),
@@ -66,7 +75,7 @@ export class FolderMirror {
   private heldKey: string | null = null;
   private heldChoice: { key: string; choice: "restore" | "delete" } | null = null;
 
-  constructor(private readonly engine: VaultSync, private readonly access: FolderAccess, private readonly events: FolderMirrorEvents = {}) {}
+  constructor(private readonly engine: VaultEngine, private readonly access: FolderAccess, private readonly events: FolderMirrorEvents = {}) {}
 
   /** The connected folder's id once it has been read, for watchers and baselines. */
   get connectedId() { return this.folderId; }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
+import { describeDesktopSync } from "../lib/desktopSyncStatus";
 import "./VaultSwitcher.css";
 
 type Vault = ReturnType<typeof useMarkdownVault>;
@@ -23,16 +24,21 @@ function ChevronIcon() {
 }
 
 /** What the sidebar calls the open vault, and a line about where it is kept. */
-export function describeVault(vault: Pick<Vault, "localDirectoryStatus" | "folderAccessMessage" | "saving" | "localSaveError" | "storageMode">, cloudSync: boolean) {
+export function describeVault(vault: Pick<Vault, "localDirectoryStatus" | "folderAccessMessage" | "saving" | "localSaveError" | "storageMode"> & Partial<Pick<Vault, "desktopSync">>, cloudSync: boolean) {
   const folder = vault.localDirectoryStatus.directoryName;
   const name = folder ?? "App vault";
+  // On desktop the main process syncs and says how it is going; that one line is the sync indicator (spec §6).
+  if (vault.desktopSync) {
+    const sync = describeDesktopSync(vault.desktopSync);
+    return { name, where: vault.localSaveError ? "Save needs attention" : sync.label, folder, tone: vault.localSaveError ? "attention" as const : sync.tone };
+  }
   const cloud = !cloudSync ? "" : vault.storageMode === "server" ? " · synced to the cloud" : " · not synced yet";
   const where = vault.folderAccessMessage ? "Needs access to see new files"
     : vault.localSaveError ? "Save needs attention"
     : vault.saving ? "Saving…"
     : folder ? `Folder on this device${cloud}`
     : cloudSync ? `Saved in the app${cloud}` : "Only in this browser";
-  return { name, where, folder };
+  return { name, where, folder, tone: vault.folderAccessMessage || vault.localSaveError ? "attention" as const : "ok" as const };
 }
 
 /**
@@ -53,7 +59,7 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
   const uploadRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const { name, where, folder } = describeVault(vault, cloudSync);
+  const { name, where, folder, tone } = describeVault(vault, cloudSync);
   const supported = vault.localDirectoryStatus.supported;
   const others = (vault.localDirectories ?? []).filter((directory) => !directory.current);
 
@@ -110,7 +116,7 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
         onClick={() => { setError(null); setUploaded(null); setOpen((value) => !value); }}>
         <FolderIcon />
         <span className="vault-switcher-name">{name}</span>
-        {vault.folderAccessMessage ? <span className="vault-switcher-dot" aria-hidden="true" /> : null}
+        {tone === "attention" ? <span className="vault-switcher-dot" aria-hidden="true" /> : tone === "busy" ? <span className="vault-switcher-dot is-busy" aria-hidden="true" /> : null}
         <ChevronIcon />
       </button>
       {open ? (
@@ -143,6 +149,11 @@ export default function VaultSwitcher({ vault, cloudSync, onOpenSettings }: {
           {!supported ? <p className="vault-switcher-note" role="none">
             This browser can’t open folders. Upload files adds notes, PDFs, photos or a zipped vault folder instead.
           </p> : null}
+          {vault.desktopSync && folder ? (
+            <button type="button" role="menuitem" className="vault-switcher-item" disabled={busy} onClick={() => void run(vault.showVaultFolder)}>
+              Open vault folder
+            </button>
+          ) : null}
           {cloudSync ? (
             <button type="button" role="menuitem" className="vault-switcher-item" disabled={busy} onClick={() => void run(() => vault.syncNow())}>
               {busy ? "Working…" : "Sync now"}

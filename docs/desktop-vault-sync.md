@@ -108,11 +108,38 @@ Everything else in the renderer is independent of where the folder lives.
 - **Phase 2 library**: watcher, stability, ignore list, echo suppression and
   atomic writes landed with Phase 0 as pure library code with tests, because
   the native adapter needs the write discipline from its first use.
-- **Phase 1**: preload bridge exposing `VaultDirectory` over IPC with a protocol
-  version; native folder choice and zero-click reopen; the client takes the
-  native path by runtime detection of the bridge.
-- **Phase 3**: the sync loop moves to the main process with the journal store
-  over the node adapter in `userData`; status over IPC; live-buffer merge.
-- **Phase 4**: surface pass and documentation.
+- **Phase 1 (landed)**: preload bridge exposing `VaultDirectory` over IPC with a
+  protocol version (`bridgeProtocol.ts`, `bridgeService.ts`,
+  `bridgeDirectory.ts`, `desktop/preload.cjs`, `desktop/vaultBridge.mjs`);
+  native folder choice and zero-click reopen; the client takes the native path
+  by runtime detection of the bridge. Behind `nativeVault` in the shell's
+  settings, default off.
+- **Phase 3 (landed)**: `desktopVaultService.ts` runs the engine, the journal
+  store (`createJournalVaultStore` over the node adapter in `userData/vaults`),
+  the folder mirror (`client/src/lib/vaultFolderMirror.ts`, extracted from the
+  hook and shared with the web) and the loop in the main process; the page
+  uses `BridgeVaultEngine` and shows the reported status. The live-buffer rule
+  of §4.4 is met by the existing save-then-publish discipline: the page saves
+  its edits (an engine `edit` with the files it displayed as the expected
+  base, merged three-way in the main process) before it publishes a new
+  snapshot, so a cloud pull never replaces unsaved typing and no reload prompt
+  exists.
+- **Phase 4 (partly landed)**: Open Vault Folder and Reveal in Finder in the
+  File menu; the sync indicator and Vault settings → Sync; this documentation.
+  The dismissible desktop-web notice already existed (`DesktopAppPrompt`).
+  OS drag-and-drop into the workspace already lands through the upload path.
+
+## Known costs and follow-ups
+
+- Engine calls cross IPC with whole snapshots (every file's content). Fine for
+  vaults of a few thousand notes; a delta protocol is the follow-up if large
+  vaults make saves sluggish.
+- The vault id inside `workspace.json` (§4.5) is a manifest change and is left
+  for review; folder identity today is the remembered path or its device and
+  inode.
+- Acceptance tests 2 (partial writes), 5 (kill during write) and 8 (Obsidian
+  interop) are covered at the library level (watcher stability, atomic
+  replacement, three-way merge) and still need their end-to-end Electron runs
+  under Playwright before the default flips.
 
 See the spec for the acceptance tests each phase must pass.

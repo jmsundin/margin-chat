@@ -1706,6 +1706,17 @@ function WorkspaceAppContent({
     };
   }, []);
 
+  // The desktop app's File menu asks to reveal the open document in the file manager.
+  const revealActiveDocument = useEffectEvent(() => {
+    const id = state.activeConversationId;
+    if (id) void vault.revealDocument(id).catch(() => undefined);
+  });
+  useEffect(() => {
+    const handleReveal = () => revealActiveDocument();
+    window.addEventListener("margin:reveal-document", handleReveal);
+    return () => window.removeEventListener("margin:reveal-document", handleReveal);
+  }, []);
+
   const toggleSidebarFromShortcut = useEffectEvent(() => handleToggleLeftSidebar());
   useEffect(() => {
     function handleSidebarShortcut(event: KeyboardEvent) {

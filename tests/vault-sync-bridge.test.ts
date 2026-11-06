@@ -27,7 +27,7 @@ async function bridge(overrides: Partial<BridgeServiceDeps> = {}) {
   const changes: BridgeFolderChange[] = [];
   const shown: string[] = [];
   const service = await createBridgeService({
-    dataDir, pickFolder: async () => picks.shift() ?? null, showInFolder: (p) => shown.push(p),
+    dataDir, pickFolder: async () => picks.shift() ?? null, showInFolder: (p, kind) => shown.push(`${kind}:${p}`),
     sendChange: (change) => changes.push(change), watch: false, ...overrides,
   });
   const listeners = new Set<(change: BridgeFolderChange) => void>();
@@ -36,6 +36,8 @@ async function bridge(overrides: Partial<BridgeServiceDeps> = {}) {
     // Like Electron's ipcRenderer.invoke, a thrown error arrives as a plain Error with the name in its message.
     request: (name, ...args) => service.handle(name, ...args).catch((error: Error) => { throw new Error(`Error invoking remote method 'margin-vault': ${error.name}: ${error.message}`); }),
     onFolderChanged(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    onSyncStatus() { return () => undefined; },
+    onVaultChanged() { return () => undefined; },
   };
   return { service, api, picks, changes, shown, dataDir, deliver: (change: BridgeFolderChange) => listeners.forEach((listener) => listener(change)) };
 }
@@ -143,8 +145,11 @@ describe("vault bridge", () => {
     await expect(service.handle("list", { folderId: picked.id } as never)).rejects.toMatchObject({ name: "TypeMismatchError" });
     await expect(service.handle("nope" as never)).rejects.toMatchObject({ name: "NotAllowedError" });
     await mkdir(path.join(vault, "Sub"));
+    await writeFile(path.join(vault, "Sub", "Note.md"), "note");
     await service.handle("showFolder", { folderId: picked.id, path: "Sub" });
-    expect(shown).toEqual([path.join(vault, "Sub")]);
+    await service.handle("showFolder", { folderId: picked.id, path: "Sub/Note.md" });
+    await service.handle("showFolder", { folderId: picked.id, path: "" });
+    expect(shown).toEqual([`directory:${path.join(vault, "Sub")}`, `file:${path.join(vault, "Sub", "Note.md")}`, `directory:${vault}`]);
     // The renderer turns a bridge failure back into a DOMException by name.
     const error = await bridgeRequest(() => Promise.reject(new Error("Error invoking remote method 'margin-vault': NotFoundError: gone"))).catch((e) => e);
     expect(error).toBeInstanceOf(DOMException);
@@ -165,6 +170,50 @@ describe("vault bridge", () => {
     await sleep(1_400);
     expect(changes.flatMap((change) => change.changes.map((item) => item.path))).toEqual(["Dropped.md"]);
     expect(changes[0].folderId).toBe(picked.id);
+    await service.close();
+  });
+
+  test("the vault runs in the main process once opened: engine operations, sync status, pausing, and following the connected folder", async () => {
+    const vault = await tempFolder();
+    await writeFile(path.join(vault, "Existing.md"), "# Existing\n");
+    const statuses: unknown[] = [];
+    let vaultChanges = 0;
+    const { service, picks } = await bridge({ watch: false, vault: {
+      journalRoot: path.join(await tempFolder("margin-journals-"), "vaults"), transportFor: () => null,
+      sendStatus: (status) => statuses.push(status.state), sendVaultChanged: () => { vaultChanges += 1; }, intervalMs: 60_000,
+    } });
+    await expect(service.handle("vault", "read")).rejects.toMatchObject({ name: "InvalidStateError" });
+    expect(await service.handle("syncStatus")).toBeNull();
+    // Before a folder is connected the vault runs from its journal alone.
+    const opened = await service.handle("openVault", { userId: "jon", cloudSync: false });
+    expect(opened).toMatchObject({ state: "local", folder: null, cloud: false });
+    await expect(service.handle("openVault", { userId: "", cloudSync: false } as never)).rejects.toMatchObject({ name: "TypeMismatchError" });
+    await expect(service.handle("vault", "sync")).rejects.toMatchObject({ name: "NotAllowedError" });
+
+    picks.push(vault);
+    const picked = (await service.handle("pickFolder"))!;
+    await service.handle("connect", { folderId: picked.id, path: "" });
+    // Connecting restarted the vault on the folder; its files are read in.
+    const status = await service.handle("syncNow");
+    expect(status.folder).toMatchObject({ id: picked.id, path: vault });
+    const snapshot = await service.handle("vault", "read") as { files: Record<string, { content: string }> };
+    expect(snapshot.files["Existing.md"].content).toContain("# Existing");
+    expect(vaultChanges).toBeGreaterThan(0);
+
+    // An edit through the engine lands in the folder after the next pass.
+    await service.handle("vault", "edit", { "Existing.md": { content: snapshot.files["Existing.md"].content.replace("# Existing", "# Existing, edited in the app") } }, { "Existing.md": snapshot.files["Existing.md"] });
+    await service.handle("syncNow");
+    expect(await readFile(path.join(vault, "Existing.md"), "utf8")).toContain("edited in the app");
+
+    expect((await service.handle("pauseSync", true)).state).toBe("paused");
+    expect((await service.handle("pauseSync", false)).state).toBe("local");
+    expect(await service.handle("unsupportedFiles")).toEqual([]);
+    await expect(service.handle("resolveHeldDeletion", "maybe" as never)).rejects.toMatchObject({ name: "TypeMismatchError" });
+    // Opening the same account again is a no-op; disconnecting the folder restarts the vault without one.
+    expect((await service.handle("openVault", { userId: "jon", cloudSync: false })).folder?.id).toBe(picked.id);
+    await service.handle("disconnect");
+    expect((await service.handle("syncStatus"))?.folder).toBeNull();
+    expect(statuses).toContain("local");
     await service.close();
   });
 });

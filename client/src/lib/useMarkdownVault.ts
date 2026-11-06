@@ -9,6 +9,10 @@ import { FolderChangingError } from "./fileSnapshot";
 import { listTrash, type TrashEntry } from "./vaultTrash";
 import { FolderDeletionHeldError, type HeldFolderDeletion } from "./folderDeletionGuard";
 import { createFolderAccess, FolderMirror } from "./vaultFolderMirror";
+import { vaultBridge } from "./desktopBridge";
+import { BridgeVaultEngine, type VaultEngine } from "./desktopVaultEngine";
+import { bridgeRequest } from "@margin-chat/vault-sync/bridgeDirectory";
+import type { BridgeSyncStatus } from "@margin-chat/vault-sync/bridgeProtocol";
 import { BACKUP_REMIND_MS, loadVaultBackup, onlyCopyReminder, saveVaultBackup, vaultFingerprint, type OnlyCopyReminder } from "./vaultBackupReminder";
 import { LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, inMemoryVaultNotice, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
@@ -103,14 +107,19 @@ export function useMarkdownVault(args: {
   const [readingFolder, setReadingFolder] = useState<string | null>(null);
   /** Counts syncs that uploaded changes, so search can index them soon. */
   const [uploads, setUploads] = useState(0);
-  const engineRef = useRef<VaultSync | null>(null);
+  const engineRef = useRef<VaultEngine | null>(null);
   const storeRef = useRef<ReturnType<typeof createVaultStoreWithMemoryFallback> | null>(null);
+  /** The desktop app's bridge: the vault lives in the main process, which reads and writes the folder and syncs. */
+  const native = useRef(vaultBridge()).current;
+  /** Sync status from the main process (desktop only). */
+  const [desktopSync, setDesktopSync] = useState<BridgeSyncStatus | null>(null);
   // When Chrome refuses this site's storage even after a fresh copy, open the cloud vault in memory for this session.
-  if (!storeRef.current) storeRef.current = createVaultStoreWithMemoryFallback(createBrowserVaultStore(storageUserId),
+  if (!native && !storeRef.current) storeRef.current = createVaultStoreWithMemoryFallback(createBrowserVaultStore(storageUserId),
     () => !initialized.current && enabledRef.current && !canRecoverWithFreshVaultCopy(storageUserId));
-  if (!engineRef.current) engineRef.current = new VaultSync(storeRef.current, createVaultTransport(user.id, (status) => {
-    projectionPending.current = status === "pending";
-  }));
+  if (!engineRef.current) {
+    const transport = createVaultTransport(user.id, (status) => { projectionPending.current = status === "pending"; });
+    engineRef.current = native ? new BridgeVaultEngine(native, transport) : new VaultSync(storeRef.current!, transport);
+  }
   const engine = engineRef.current;
   engine.onDownload = (progress) => {
     if (mounted.current) setDownloadProgress(progress.total ? progress : null);
@@ -525,6 +534,8 @@ export function useMarkdownVault(args: {
     void enqueue(async () => {
       if (initialized.current) return;
       try {
+        // On desktop the vault runs in the main process; open this account's there first, on the folder connected now.
+        if (native) setDesktopSync(await bridgeRequest(() => native.request("openVault", { userId: storageUserId, cloudSync: enabledRef.current })));
         const existing = await engine.read().catch((error: unknown) => {
           // This device's copy can't be opened and the cloud has the vault: switch to a fresh copy right here
           // instead of reloading the page. If that copy fails too, the vault opens in memory from the cloud.
@@ -655,6 +666,9 @@ export function useMarkdownVault(args: {
     };
   }, [ready, enabled]);
 
+  // The main process reports sync status (desktop only); the page shows it and never drives sync itself.
+  useEffect(() => native?.onSyncStatus((status) => { if (mounted.current) setDesktopSync(status); }), [native]);
+
   // Files another app adds to or changes in the connected folder appear within seconds.
   const watchedDirectoryId = localDirectoryStatus.permission === "granted" ? localDirectoryStatus.directoryId : undefined;
   useEffect(() => {
@@ -765,7 +779,29 @@ export function useMarkdownVault(args: {
       setFolderPromptSnoozed(true);
     },
     /** The remembered folder can't be found or opened; nothing is read from or written to it until it is back. */
-    folderUnavailable,
+    folderUnavailable: folderUnavailable || desktopSync?.attention?.kind === "folder-missing",
+    /** Desktop only: the main process's sync status (synced, syncing, offline, paused, local, needs attention). */
+    desktopSync,
+    /** Desktop only: stop or resume syncing; edits keep saving on this computer. */
+    async pauseSync(paused: boolean) {
+      if (!native) return;
+      setDesktopSync(await bridgeRequest(() => native.request("pauseSync", paused)));
+    },
+    /** Desktop only: open the vault folder in Finder, Explorer or the file manager. */
+    async showVaultFolder() {
+      if (!native || !mirror.connectedId) return;
+      await bridgeRequest(() => native.request("showFolder", { folderId: mirror.connectedId!, path: "" }));
+    },
+    /** Desktop only: reveal a document's file in Finder, Explorer or the file manager. */
+    async revealDocument(conversationId: string) {
+      if (!native || !mirror.connectedId) return false;
+      const path = workspaceFromVault(displayedFiles.current).manifest.files.find((record) => record.id === conversationId)?.path;
+      if (!path) return false;
+      await bridgeRequest(() => native.request("showFolder", { folderId: mirror.connectedId!, path }));
+      return true;
+    },
+    /** Desktop only: files in the vault folder that Margin Chat leaves alone. */
+    listUnsupportedFiles: async () => native ? bridgeRequest(() => native.request("unsupportedFiles")) : [],
     /** Cloud documents downloading right now, such as before a folder receives the whole vault. */
     downloadProgress,
     /** Counts syncs that uploaded changes since the workspace opened; search indexes them soon after. */
@@ -792,9 +828,14 @@ export function useMarkdownVault(args: {
       });
     },
     /** Files missing from the connected folder that are not deleted until the user decides. */
-    heldFolderDeletion,
+    heldFolderDeletion: heldFolderDeletion ?? desktopSync?.held ?? null,
     /** Answer the held folder scan: write the files back into the folder, or delete them everywhere. */
     async resolveHeldFolderDeletion(choice: "restore" | "delete") {
+      if (native) {
+        setDesktopSync(await bridgeRequest(() => native.request("resolveHeldDeletion", choice)));
+        await enqueue(() => persistAndPublish());
+        return;
+      }
       if (!mirror.resolveHeldDeletion(choice)) return;
       await enqueue(() => saveAndRefresh(true));
     }, fetchStatus, openingPath, streamingPaths, arrivingIds,

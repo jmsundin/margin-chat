@@ -17,7 +17,8 @@ export { isBridgeHandle, type BridgeDirectory };
 export function vaultBridge(target: object | undefined = typeof window === "undefined" ? undefined : window): VaultBridgeApi | null {
   const candidate = (target as Record<string, unknown> | undefined)?.[VAULT_BRIDGE_GLOBAL] as Partial<VaultBridgeApi> | undefined;
   if (!candidate || typeof candidate !== "object") return null;
-  if (candidate.protocolVersion !== VAULT_BRIDGE_PROTOCOL_VERSION || typeof candidate.request !== "function" || typeof candidate.onFolderChanged !== "function") return null;
+  if (candidate.protocolVersion !== VAULT_BRIDGE_PROTOCOL_VERSION || typeof candidate.request !== "function" || typeof candidate.onFolderChanged !== "function"
+    || typeof candidate.onSyncStatus !== "function" || typeof candidate.onVaultChanged !== "function") return null;
   return candidate as VaultBridgeApi;
 }
 

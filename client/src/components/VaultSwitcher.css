@@ -54,6 +54,16 @@
   width: 8px;
 }
 
+.vault-switcher-dot.is-busy {
+  animation: vault-switcher-pulse 1.2s ease-in-out infinite;
+  background: var(--muted);
+}
+
+@keyframes vault-switcher-pulse {
+  0%, 100% { opacity: .35; }
+  50% { opacity: 1; }
+}
+
 .vault-switcher-menu {
   background: var(--rail-body-bg);
   border: 1px solid var(--line);

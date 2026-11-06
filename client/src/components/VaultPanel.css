@@ -1,0 +1,5 @@
+
+.desktop-sync-section[data-sync-state="attention"] > div:first-child strong { color: #b45309; }
+.desktop-sync-unsupported { margin-top: 10px; }
+.desktop-sync-unsupported ul { margin: 6px 0 0; padding-left: 18px; }
+.desktop-sync-unsupported li { font-size: .8rem; line-height: 1.5; }

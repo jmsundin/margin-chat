@@ -292,8 +292,9 @@ const FOLDER_WATCH_MAX_MS = 60_000;
  */
 export function watchLocalDirectory(userId: string, directoryId: string, onChange: () => void): () => void {
   const bridge = vaultBridge();
-  // On desktop the main process watches the folder itself (recursively, with stability checks) and says when a scan is due.
-  if (bridge) return bridge.onFolderChanged((change) => { if (change.folderId === directoryId) onChange(); });
+  // On desktop the main process watches the folder itself (recursively, with stability checks), reads it into the
+  // vault, and says when the vault changed; the page then shows the new state.
+  if (bridge) return bridge.onVaultChanged(() => onChange());
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let observer: InstanceType<FileSystemObserverConstructor> | null = null;

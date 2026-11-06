@@ -3,3 +3,5 @@ export * from "./index";
 export * from "./nodeVaultFs";
 export * from "./folderWatcher";
 export * from "./bridgeService";
+export * from "./desktopVaultService";
+export * from "./mainTransport";

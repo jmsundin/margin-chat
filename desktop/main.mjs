@@ -238,11 +238,28 @@ function showWorkspaceView(window, mode) {
   );
 }
 
+/** The page reveals the open document in the file manager (client/src/WorkspaceApp.tsx listens). */
+function revealCurrentDocument(window) {
+  void window?.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent("margin:reveal-document"))`).catch(() => {});
+}
+
+function openVaultFolder() {
+  const folder = vaultBridge?.currentPath();
+  if (folder) void shell.openPath(folder);
+}
+
 function buildAppMenu() {
   const isMac = process.platform === "darwin";
+  const revealLabel = isMac ? "Reveal in Finder" : process.platform === "win32" ? "Show in Explorer" : "Show in File Manager";
+  // The vault folder lives in this process only with the native vault on; the items stay out of the menu otherwise.
+  const vaultItems = vaultBridge ? [
+    { label: "Open Vault Folder", accelerator: "CmdOrCtrl+Shift+O", click: () => openVaultFolder() },
+    { label: revealLabel, accelerator: "CmdOrCtrl+Alt+R", click: (_item, window) => revealCurrentDocument(window) },
+    { type: "separator" },
+  ] : [];
   const template = [
     ...(isMac ? [{ role: "appMenu" }] : []),
-    { role: "fileMenu" },
+    { label: "File", submenu: [...vaultItems, isMac ? { role: "close" } : { role: "quit" }] },
     { role: "editMenu" },
     {
       label: "View",
@@ -378,7 +395,7 @@ if (!app.requestSingleInstanceLock()) {
     if (settings.nativeVault) {
       try {
         const { startVaultBridge } = await import("./vaultBridge.mjs");
-        vaultBridge = await startVaultBridge({ dataDir: app.getPath("userData"), isAppUrl });
+        vaultBridge = await startVaultBridge({ dataDir: app.getPath("userData"), isAppUrl, apiOrigin: API_ORIGIN });
       } catch (error) {
         // Without the bridge the page falls back to its own folder access, as before.
         console.warn("The native vault could not start; using the page's folder access.", error);

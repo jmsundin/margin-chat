@@ -19,6 +19,9 @@ export const VAULT_BRIDGE_GLOBAL = "marginVault";
 /** IPC channel prefix for requests, and the channel folder-change events arrive on. */
 export const VAULT_BRIDGE_CHANNEL = "margin-vault";
 export const VAULT_BRIDGE_CHANGED_CHANNEL = "margin-vault:changed";
+/** Sync status from the main process's vault service, and "the vault changed, read it again". */
+export const VAULT_BRIDGE_STATUS_CHANNEL = "margin-vault:status";
+export const VAULT_BRIDGE_VAULT_CHANGED_CHANNEL = "margin-vault:vault-changed";
 
 /** A folder the main process knows: remembered (connected before) or only picked for a look. */
 export interface BridgeFolder {
@@ -44,8 +47,38 @@ export interface BridgeRef {
 export type BridgeEntry = { name: string; kind: "file" | "directory" };
 export type BridgeStat = { size: number; lastModified: number };
 
+/** What the renderer tells the main process when its workspace opens: whose vault, and whether the plan syncs it. */
+export interface OpenVaultRequest {
+  userId: string;
+  cloudSync: boolean;
+}
+
+/** The sync status the main process reports (desktopVaultService.ts's SyncStatus, kept structural here). */
+export interface BridgeSyncStatus {
+  state: "synced" | "syncing" | "offline" | "paused" | "attention" | "local";
+  lastSyncedAt: number | null;
+  pending: number;
+  attention: { kind: "deletion-hold" | "folder-missing" | "auth" | "error"; message: string } | null;
+  held: { folderName: string; paths: string[] } | null;
+  folder: BridgeFolder | null;
+  cloud: boolean;
+  paused: boolean;
+  lastError: string | null;
+}
+
 /** Requests, with their arguments and answers. */
 export interface BridgeRequests {
+  /** Starts (or restarts) this account's vault in the main process: engine, journal, folder mirror and sync loop. */
+  openVault: { args: [request: OpenVaultRequest]; result: BridgeSyncStatus };
+  /** One engine operation (desktopVaultService.ts's ENGINE_OPERATIONS) for the open vault. */
+  vault: { args: [operation: string, ...parameters: unknown[]]; result: unknown };
+  syncStatus: { args: []; result: BridgeSyncStatus | null };
+  /** Reads the folder, syncs and writes the folder once, now; resolves with the status after. */
+  syncNow: { args: []; result: BridgeSyncStatus };
+  pauseSync: { args: [paused: boolean]; result: BridgeSyncStatus };
+  resolveHeldDeletion: { args: [choice: "restore" | "delete"]; result: BridgeSyncStatus };
+  /** Files in the folder Margin Chat leaves alone. */
+  unsupportedFiles: { args: []; result: string[] };
   status: { args: []; result: BridgeStatus };
   /** Opens the system folder picker; the folder is known (not remembered) until connected. */
   pickFolder: { args: []; result: BridgeFolder | null };
@@ -97,6 +130,10 @@ export interface VaultBridgeApi {
   request<Name extends BridgeRequestName>(name: Name, ...args: BridgeRequests[Name]["args"]): Promise<BridgeRequests[Name]["result"]>;
   /** Folder changes seen by the main process. Returns a function that stops listening. */
   onFolderChanged(listener: (change: BridgeFolderChange) => void): () => void;
+  /** Sync status from the main process's vault service. */
+  onSyncStatus(listener: (status: BridgeSyncStatus) => void): () => void;
+  /** The vault in the main process changed (a sync, a folder read): the renderer should read it again. */
+  onVaultChanged(listener: () => void): () => void;
 }
 
 /** Validates a `/`-separated path inside a folder as the main process must before using it. */

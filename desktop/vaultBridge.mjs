@@ -1,16 +1,28 @@
-// The main-process end of the vault bridge: owns the vault folder with node:fs
-// and answers the renderer's requests (desktop/preload.cjs). The logic lives in
-// packages/vault-sync (bridgeService.ts), bundled into vault-sync.bundle.mjs by
-// desktop/build.mjs; this file adds what only Electron has: the folder dialog,
-// IPC, the file manager, and the windows to tell about folder changes.
-import { BrowserWindow, dialog, ipcMain, shell } from "electron";
-import { createBridgeService, VAULT_BRIDGE_CHANNEL, VAULT_BRIDGE_CHANGED_CHANNEL } from "./vault-sync.bundle.mjs";
+// The main-process end of the vault bridge: owns the vault folder with node:fs,
+// runs the vault itself (engine, journal, folder mirror and sync loop), and
+// answers the renderer's requests (desktop/preload.cjs). The logic lives in
+// packages/vault-sync, bundled into vault-sync.bundle.mjs by desktop/build.mjs;
+// this file adds what only Electron has: the folder dialog, IPC, the file
+// manager, the session's fetch, and the windows to tell about changes.
+import { BrowserWindow, dialog, ipcMain, net, shell } from "electron";
+import path from "node:path";
+import {
+  createBridgeService, createMainTransport, VAULT_BRIDGE_CHANGED_CHANNEL, VAULT_BRIDGE_CHANNEL, VAULT_BRIDGE_STATUS_CHANNEL, VAULT_BRIDGE_VAULT_CHANGED_CHANNEL,
+} from "./vault-sync.bundle.mjs";
+
+function broadcast(channel, payload) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(channel, payload);
+  }
+}
 
 /**
  * Starts the bridge. `isAppUrl` keeps requests to the app's own pages, as the
- * permission handlers do. Returns the service, for menus (current folder path).
+ * permission handlers do; `apiOrigin` is the backend the session cookie belongs
+ * to; `cloudSync` is the renderer's word on the account's plan (it is checked
+ * again by the server on every request). Returns the service, for menus.
  */
-export async function startVaultBridge({ dataDir, isAppUrl }) {
+export async function startVaultBridge({ dataDir, isAppUrl, apiOrigin }) {
   const service = await createBridgeService({
     dataDir,
     async pickFolder() {
@@ -19,11 +31,14 @@ export async function startVaultBridge({ dataDir, isAppUrl }) {
       const { canceled, filePaths } = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
       return canceled || !filePaths.length ? null : filePaths[0];
     },
-    showInFolder(absolutePath) { void shell.openPath(absolutePath); },
-    sendChange(change) {
-      for (const window of BrowserWindow.getAllWindows()) {
-        if (!window.isDestroyed()) window.webContents.send(VAULT_BRIDGE_CHANGED_CHANNEL, change);
-      }
+    showInFolder(absolutePath, kind) { if (kind === "file") shell.showItemInFolder(absolutePath); else void shell.openPath(absolutePath); },
+    sendChange(change) { broadcast(VAULT_BRIDGE_CHANGED_CHANNEL, change); },
+    vault: {
+      journalRoot: path.join(dataDir, "vaults"),
+      // net.fetch uses the default session's cookie jar, so the HttpOnly auth cookie never reaches the renderer.
+      transportFor: (userId) => createMainTransport({ fetchImpl: (url, init) => net.fetch(url, init), serverUrl: apiOrigin, userId }),
+      sendStatus(status) { broadcast(VAULT_BRIDGE_STATUS_CHANNEL, status); },
+      sendVaultChanged() { broadcast(VAULT_BRIDGE_VAULT_CHANGED_CHANNEL, null); },
     },
   });
 

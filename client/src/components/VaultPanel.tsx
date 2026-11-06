@@ -1,9 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
+import { describeDesktopSync } from "../lib/desktopSyncStatus";
 import { carriesFiles, describeDroppedFolders, droppedFiles } from "../lib/fileDrop";
 import RecentlyDeleted from "./RecentlyDeleted";
 import { formatRelativeTime } from "../lib/conversationSearch";
 import { isDesktopApp } from "../lib/platform";
+import "./VaultPanel.css";
 
 export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnType<typeof useMarkdownVault>; cloudSyncEnabled: boolean }) {
   const [busy, setBusy] = useState(false);
@@ -12,6 +14,15 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
   const uploadInput = useRef<HTMLInputElement>(null);
   const [uploaded, setUploaded] = useState<string | null>(null);
   const [dropping, setDropping] = useState(false);
+  /** Desktop only: files in the vault folder Margin Chat leaves alone, listed once. */
+  const [unsupported, setUnsupported] = useState<string[]>([]);
+  const desktopSync = vault.desktopSync;
+  useEffect(() => {
+    if (!desktopSync) return;
+    let active = true;
+    void vault.listUnsupportedFiles().then((files) => { if (active) setUnsupported(files); }).catch(() => undefined);
+    return () => { active = false; };
+  }, [desktopSync?.folder?.id, desktopSync?.lastSyncedAt]);
   async function run(action: () => Promise<unknown>) {
     setBusy(true); setError(null); setUploaded(null);
     try { await action(); } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to complete this action."); }
@@ -35,6 +46,7 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
         <small>{vault.localDirectoryStatus.directoryName ? "Margin Chat keeps this folder up to date with your vault."
           : "If this browser’s site data is cleared, only a downloaded copy or a connected folder is left. Use Download vault or Choose folder below."}</small></div> : null}
     </div>
+    {desktopSync ? <DesktopSyncSection vault={vault} status={desktopSync} unsupported={unsupported} busy={busy} run={run} /> : null}
     {uploaded ? <p className="thread-dialog-copy" role="status">{uploaded}</p> : null}
     {(error || vault.message) ? <p className="profile-dialog-error" role="alert">{error ?? vault.message}</p> : null}
     <div className={`profile-storage-directory-actions vault-panel-drop${dropping ? " is-dropping" : ""}`} data-file-drop
@@ -84,4 +96,24 @@ export default function VaultPanel({ vault, cloudSyncEnabled }: { vault: ReturnT
     <RecentlyDeleted entries={vault.recentlyDeleted} onRestore={vault.restoreDeleted} />
     <p className="profile-storage-footnote">Clearing Margin Chat’s site data removes the files saved in this browser. Use Download vault to keep an independent copy. Files already synchronized remain in the cloud, and a connected folder’s files stay in that folder.</p>
   </>;
+}
+
+/** Vault settings → Sync (desktop): where the folder is, how sync is going, and the few controls that exist. */
+function DesktopSyncSection({ vault, status, unsupported, busy, run }: {
+  vault: ReturnType<typeof useMarkdownVault>; status: NonNullable<ReturnType<typeof useMarkdownVault>["desktopSync"]>; unsupported: string[];
+  busy: boolean; run: (action: () => Promise<unknown>) => Promise<void>;
+}) {
+  const described = describeDesktopSync(status);
+  return <div className="profile-storage-directory-card desktop-sync-section" data-sync-state={status.state}>
+    <div><span>Sync</span><strong>{described.label}</strong>
+      <small>{described.detail}{status.folder ? ` Vault folder: ${status.folder.path}.` : ""}{status.lastError && status.state !== "attention" ? ` Last problem: ${status.lastError}` : ""}</small></div>
+    <div className="profile-storage-directory-actions">
+      {status.folder ? <button className="thread-dialog-button" disabled={busy} onClick={() => void run(vault.showVaultFolder)}>Open vault folder</button> : null}
+      {status.cloud ? <button className="thread-dialog-button" disabled={busy} onClick={() => void run(() => vault.pauseSync(!status.paused))}>{status.paused ? "Resume sync" : "Pause sync"}</button> : null}
+    </div>
+    {unsupported.length ? <div className="desktop-sync-unsupported">
+      <small>Files Margin Chat doesn’t sync ({unsupported.length}). They stay in the folder as they are.</small>
+      <ul>{unsupported.slice(0, 20).map((path) => <li key={path}><code>{path}</code></li>)}{unsupported.length > 20 ? <li>…and {unsupported.length - 20} more</li> : null}</ul>
+    </div> : null}
+  </div>;
 }
