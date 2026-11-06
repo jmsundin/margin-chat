@@ -1,0 +1,52 @@
+/* The quiet page (Settings → Editor & look). The document is the page: one line above it,
+   no frame around a lone document, and the controls that aren't writing show when you
+   point at them. Everything stays reachable; nothing here removes a feature. */
+
+/* One line: sidebar button, path, tabs when there are two or more, then views and ⋮. */
+.is-quiet-page .document-workspace-header.is-quiet { background: transparent; }
+.is-quiet-page .document-workspace-header.is-quiet > .document-workspace-toolbar {
+  min-height: 48px; gap: 8px; padding-inline: 10px 12px; background: transparent; box-shadow: none;
+}
+.is-quiet-page .document-workspace-toolbar > .document-breadcrumbs {
+  flex: 0 1 auto; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent;
+}
+.is-quiet-page .document-workspace-toolbar > .document-breadcrumbs .document-breadcrumbs-back {
+  border-color: transparent; background: transparent; color: var(--muted);
+}
+.is-quiet-page .document-workspace-toolbar > .document-breadcrumbs .document-breadcrumbs-back:disabled { display: none; }
+.is-quiet-page .document-workspace-header.is-quiet .document-tabs-container { flex: 1 1 auto; background: transparent; }
+/* The tabs sit on the same line as the path, so they drop the bottom rule that joined the old path row. */
+.is-quiet-page .document-workspace-header.is-quiet .document-tabs { padding: 0; }
+.is-quiet-page .document-workspace-header.is-quiet .document-tab { flex: 0 1 200px; min-height: 32px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; }
+.is-quiet-page .document-workspace-header.is-quiet .document-tab.is-active { background: var(--button-active-surface); box-shadow: none; }
+.is-quiet-page .document-workspace-header.is-quiet .document-workspace-actions { margin-left: auto; padding-left: 0; border-left: 0; }
+
+@media (hover: hover) {
+  /* Compass, local graph, outline and keep reading: there when you reach for them. */
+  .is-quiet-page .document-workspace-header.is-quiet .document-navigation-switcher { opacity: 0; transition: opacity .15s ease; }
+  .is-quiet-page .document-workspace-header.is-quiet:is(:hover, :focus-within) .document-navigation-switcher,
+  .is-quiet-page .document-workspace-header.is-quiet .document-navigation-switcher:has(:focus-visible) { opacity: 1; }
+}
+
+/* A lone document has no frame: the panel is the page. Side by side, frames come back to show which is which. */
+.is-quiet-page .conversation-canvas.is-single-document .chat-panel.document-panel,
+.is-quiet-page .conversation-canvas.is-single-document .chat-panel.document-panel.is-active {
+  border-color: transparent; box-shadow: none;
+}
+.is-quiet-page .conversation-canvas.is-single-document .document-minimize-button { display: none; }
+@media (hover: hover) {
+  /* The width grips stay, but only show when you point at them. */
+  .is-quiet-page .conversation-canvas.is-single-document .panel-slot:not(.is-resizing) .panel-resize-handle:not(:hover, :focus-visible) { opacity: 0; }
+}
+
+@media (hover: hover) {
+  /* Full screen, Notes, Children and ⋮ wait at the top of the page until you point there. */
+  .is-quiet-page .document-panel > .document-header .document-header-actions { opacity: 0; transition: opacity .15s ease; }
+  .is-quiet-page .document-panel:is(:hover, :focus-within) > .document-header .document-header-actions,
+  .is-quiet-page .document-panel > .document-header .document-header-actions:has([aria-expanded="true"]) { opacity: 1; }
+
+  /* Authorship and Live Preview / Source / Reading show only when you point at their row. ⌘E still switches views. */
+  .is-quiet-page .live-document-modes { opacity: 0; }
+  .is-quiet-page .live-document-editor:is(:hover, :focus-within) .live-document-modes { opacity: 0; }
+  .is-quiet-page .live-document-editor .live-document-modes:is(:hover, :focus-within) { opacity: 1; }
+}

@@ -20,6 +20,7 @@ import { canMoveToMargin, createMarginDocument, isCompactDocument, marginNoteToS
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
 import "./document-workspace.css";
+import "./quiet-page.css";
 import { getChatPanelLayout, resizeChatPanel } from "./lib/chatPanelLayout";
 import { getConversationAnnotationPreview, summarizeAnnotationText } from "./lib/annotationPreview";
 import { getAnchorsByMessageId } from "./lib/documentAnchorLinks";
@@ -40,6 +41,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from "react";
 import BranchRail from "./components/BranchRail";
@@ -53,6 +55,7 @@ import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
+import { QUIET_SIDEBAR_KEY, readQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
 import { createDocumentLinkResolver, getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
@@ -349,6 +352,10 @@ function getIsMobileViewport() {
   ).matches;
 }
 
+function sidebarStorageKey() {
+  return readQuietPage() ? QUIET_SIDEBAR_KEY : LEFT_SIDEBAR_STORAGE_KEY;
+}
+
 function loadInitialLeftSidebarOpen(): boolean {
   if (typeof window === "undefined") {
     return true;
@@ -359,7 +366,9 @@ function loadInitialLeftSidebarOpen(): boolean {
   }
 
   try {
-    const storedValue = window.localStorage.getItem(LEFT_SIDEBAR_STORAGE_KEY);
+    // The quiet page starts with the sidebar closed; once you open it, it stays open.
+    const storedValue = window.localStorage.getItem(sidebarStorageKey());
+    if (storedValue === null && readQuietPage()) return false;
 
     if (storedValue === "true") {
       return true;
@@ -1381,6 +1390,9 @@ function WorkspaceAppContent({
   const [navigationStyle, setNavigationStyle] = useState<DocumentNavigationStyle>(loadDocumentNavigationStyle);
   // A computer keeps the path row open unless it was put away; a phone shows one row and drops the rest down on a tap.
   const [desktopHeaderOpen, setDesktopHeaderOpen] = useState(loadDocumentHeaderOpen);
+  const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
+  /** On a computer the quiet page puts the path, and tabs when there's more than one, on a single line. */
+  const quietHeader = quietPage && !isMobileViewport;
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
   const headerOpen = isMobileViewport ? mobileHeaderOpen : desktopHeaderOpen;
   useEffect(() => { setMobileHeaderOpen(false); }, [state.activeConversationId, isMobileViewport, mainViewMode]);
@@ -1540,7 +1552,7 @@ function WorkspaceAppContent({
   useEffect(() => {
     try {
       window.localStorage.setItem(
-        LEFT_SIDEBAR_STORAGE_KEY,
+        sidebarStorageKey(),
         leftSidebarOpen ? "true" : "false",
       );
     } catch {
@@ -5131,7 +5143,8 @@ function WorkspaceAppContent({
       // On a computer the compass sits beside the path it continues; phones list the views as tabs below it.
       trailing={isMobileViewport ? undefined : <>
         {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
-        <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
+        {/* The quiet page keeps the view switcher at the end of its one line. */}
+        {quietHeader ? null : <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />}
       </>} />;
   }
 
@@ -5149,8 +5162,9 @@ function WorkspaceAppContent({
   }
 
   function renderSessionTabs(vertical = false) {
+    if (quietTabsHidden() && !vertical) return null;
     return <>
-                    {vertical ? null : renderSpaceSwitcher()}
+                    {vertical || (quietHeader && !activeSpace) ? null : renderSpaceSwitcher()}
                     <DocumentTabs vertical={vertical} documents={spaceTabDocuments}
                       visitingDocumentIds={visitingTabIds} onKeep={handleKeepInSpace}
                       groups={state.groups}
@@ -5210,6 +5224,11 @@ function WorkspaceAppContent({
     setDesktopHeaderOpen((open) => { saveDocumentHeaderOpen(!open); return !open; });
   }
 
+  /** The quiet page hides a lone tab, so its document's menu takes over the ×. */
+  function quietTabsHidden() {
+    return quietHeader && !showsQuietTabs(spaceTabDocuments.length, Boolean(activeSpace));
+  }
+
   /** Main and side documents have a tab, and close only from its ×. */
   function hasDocumentTab(id: string) {
     return getPresentedParentId(state.conversations, id) === null;
@@ -5222,7 +5241,8 @@ function WorkspaceAppContent({
         minimized={documentWorkspace.minimizedIds.includes(conversation.id)}
         onTogglePin={handleToggleDocumentPin} onTogglePinScope={handleToggleDocumentPinScope}
         // Documents with a tab close from its ×; notes and branches have no tab, so their menu keeps Close.
-        onMinimize={handleMinimizeDocument} onClose={hasDocumentTab(conversation.id) ? undefined : handleCloseDocument} onRestore={handleSelectConversation} onRename={handleRenameThread}
+        onMinimize={handleMinimizeDocument}
+        onClose={!hasDocumentTab(conversation.id) ? handleCloseDocument : quietTabsHidden() ? handleCloseTab : undefined} onRestore={handleSelectConversation} onRename={handleRenameThread}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
@@ -5585,7 +5605,7 @@ function WorkspaceAppContent({
       onCreateAndAssign: handleCreateAndAssignGroup,
     }}>
     {/* Until the vault is read the workspace can't be edited, so nothing typed is replaced when the documents arrive. */}
-    <div className={`app-shell${maximizedDocument ? " is-document-maximized" : ""}${vault.ready ? "" : " is-vault-opening"}`}
+    <div className={`app-shell${quietPage ? " is-quiet-page" : ""}${maximizedDocument ? " is-document-maximized" : ""}${vault.ready ? "" : " is-vault-opening"}`}
       aria-busy={!vault.ready || undefined} inert={!vault.ready || undefined}>
       <div className="app-chrome">
         <div className="workspace-notifications">
@@ -5886,7 +5906,7 @@ function WorkspaceAppContent({
               </WorkspaceView>
               <WorkspaceView mode="chat" active={!isTileView && !isGraphView}>
                 <div className="chat-tree-workspace document-workspace" data-from-map={mapReturnId ? "true" : undefined}>
-                  <header className={`document-workspace-header${headerOpen ? " is-open" : ""}`}
+                  <header className={`document-workspace-header${headerOpen && !quietHeader ? " is-open" : ""}${quietHeader ? " is-quiet" : ""}`}
                     aria-label="Document navigation" onKeyDown={(event) => {
                       if (event.key === "Escape" && isMobileViewport && mobileHeaderOpen) { event.stopPropagation(); setMobileHeaderOpen(false); }
                     }}>
@@ -5912,7 +5932,10 @@ function WorkspaceAppContent({
                         <span className="document-header-title-label">{showSpaceStart ? "Choose documents" : activeConversation.title || "Untitled document"}</span>
                       </span>
                       <svg className="document-header-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-                    </button> : renderSessionTabs()}
+                    </button> : quietHeader ? <>
+                      {showSpaceStart ? null : renderDocumentBreadcrumbs()}
+                      {renderSessionTabs()}
+                    </> : renderSessionTabs()}
                     <div className="document-workspace-actions">
                       {mapReturnId ? <button type="button" className="document-back-to-map" onClick={() => handleSetMainViewMode("graph")}
                         title="Back to the map (or pinch out)">
@@ -5921,7 +5944,10 @@ function WorkspaceAppContent({
                       </button> : null}
                       {/* On computers each document's own header holds it. */}
                       {isMobileViewport ? renderFullScreenButton() : null}
-                      {isMobileViewport ? renderDocumentMenu(activeConversation) : <>
+                      {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
+                        <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
+                        {renderDocumentViewsMenu()}
+                      </> : <>
                         <button type="button" className="document-header-toggle" aria-expanded={desktopHeaderOpen}
                           aria-label={desktopHeaderOpen ? "Hide path and views" : "Show path and views"}
                           title={desktopHeaderOpen ? "Hide path and views" : "Show path and views"} onClick={toggleDesktopHeader}>
@@ -5947,7 +5973,7 @@ function WorkspaceAppContent({
                     {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
                     {navigationStyle === "outline" && documentNeighbors ? <DocumentTopicOutline neighbors={documentNeighbors}
                       onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
-                  </div> : null) : desktopHeaderOpen && !showSpaceStart ? renderDocumentBreadcrumbs() : null}
+                  </div> : null) : desktopHeaderOpen && !showSpaceStart && !quietHeader ? renderDocumentBreadcrumbs() : null}
                   </header>
                   {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
                   <div className="document-workspace-with-search" ref={documentAreaRef}>
@@ -5975,7 +6001,7 @@ function WorkspaceAppContent({
                     /> : null}>
                   {showSpaceStart && activeSpace ? <SpaceStartPanel space={activeSpace} conversations={state.conversations}
                     onOpen={handleStartSpace} onNewDocument={() => { joinNextFocusRef.current = true; handleCreateMainConversation(); }} /> : null}
-                  <div className={`conversation-canvas is-tree-browser is-document-workspace${isResizingChatPanel ? " is-resizing-panel" : ""}`}
+                  <div className={`conversation-canvas is-tree-browser is-document-workspace${isResizingChatPanel ? " is-resizing-panel" : ""}${scrollingDocuments.length === 1 ? " is-single-document" : ""}`}
                     aria-label="Documents side by side" ref={canvasRef} style={showSpaceStart ? { ...conversationCanvasStyle, display: "none" } : conversationCanvasStyle}>
                     {scrollingDocuments.map((conversation) => <Fragment key={conversation.id}>
                       {renderExpandedTreeConversation(conversation)}
