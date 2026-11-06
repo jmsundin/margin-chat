@@ -78,7 +78,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; description: string;
   { id: "billing", label: "Plan & credit", description: "Your plan, AI balance, payments and receipts.", keywords: "billing balance money payment receipts subscription plus cloud plan budget" },
   { id: "api-keys", label: "AI & privacy", description: "Your own model keys and the AI features that read your vault.", keywords: "api keys openai anthropic claude gemini google hugging face xai meta muse jev search by meaning embeddings" },
   { id: "agents", label: "Connected apps", description: "Let Claude Code, ChatGPT, Gemini, Cursor and other AI apps use your vault.", keywords: "agents mcp tokens claude code cursor chatgpt gemini connect" },
-  { id: "appearance", label: "Editor & look", description: "Theme, the main view and the document editor.", keywords: "theme dark light main view chat tiles graph classic editor live preview" },
+  { id: "appearance", label: "Editor & look", description: "Theme, the main view and the document editor.", keywords: "theme dark light main view chat tiles graph classic editor live preview quiet page simple minimal toolbar focus" },
   { id: "voice", label: "Voice typing", description: "Talk instead of typing in any text field.", keywords: "dictation mic microphone hold space talk speech" },
   { id: "storage", label: "Vault & storage", description: "Where your Markdown files live and how they sync.", keywords: "markdown vault folder cloud sync download upload files storage deleted backup" },
 ];

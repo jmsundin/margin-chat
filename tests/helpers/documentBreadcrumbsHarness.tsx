@@ -8,6 +8,8 @@ import { billingUser } from "./billingFixture";
 const browser = new Window({ url: "http://document-breadcrumbs.test" });
 // These checks cover the classic rich-text document editor.
 browser.localStorage.setItem("margin-chat:document-editor", "classic");
+// These cover the full toolbars; the quiet page (on by default) hides some of them until hovered.
+browser.localStorage.setItem("margin-chat:quiet-page", "false");
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "HTMLDivElement", "HTMLInputElement", "HTMLTextAreaElement", "Element", "Node", "Text", "NodeFilter", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "WheelEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];

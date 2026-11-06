@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, readHoldSpacePreference, saveDictationButtonPreference, saveHoldSpacePreference, subscribeDictationButtonPreference } from "../lib/dictation";
 import { readDocumentEditorKind, saveDocumentEditorKind, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
+import { readQuietPage, saveQuietPage, subscribeQuietPage } from "../lib/quietPage";
 import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
@@ -45,6 +46,7 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
   theme?: ThemeMode;
 }) {
   const documentEditor = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentEditorKind, () => "live" as const);
+  const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
   return (
     <div className="app-settings-body">
       {theme && onSetTheme ? <div className="app-settings-section">
@@ -62,6 +64,17 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
         </div>
         <OptionGroup label="Main view" onChange={onSetMainViewMode} options={[["chat", "Chat"], ["tiles", "Tiles"], ["graph", "Graph"]]} value={mainViewMode} />
       </div> : null}
+
+      <div className="app-settings-section app-settings-switch-section">
+        <div className="app-settings-copy">
+          <label className="app-settings-label" htmlFor="quiet-page">Quiet page</label>
+          <p className="app-settings-description" id="quiet-page-disclosure">
+            One line above the document, no frame around it, and the sidebar closed until you open it (⌘B). View and authorship controls show when you point at them. Turn this off for the full toolbars. Saved on this device.
+          </p>
+        </div>
+        <input id="quiet-page" type="checkbox" role="switch" aria-describedby="quiet-page-disclosure"
+          checked={quietPage} onChange={(event) => saveQuietPage(event.target.checked)} />
+      </div>
 
       <div className="app-settings-section app-settings-switch-section">
         <div className="app-settings-copy">
