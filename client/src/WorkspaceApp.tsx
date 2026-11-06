@@ -45,7 +45,7 @@ import {
 import BranchRail from "./components/BranchRail";
 import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
-import { wikiLinkSuggestions } from "./lib/wikiLinkSuggestions";
+import { resolveWikiLinkDocument, wikiLinkSuggestions, type WikiLinkDocument } from "./lib/wikiLinkSuggestions";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpacesPanel, type SpaceMenuActions } from "./components/Spaces";
@@ -53,7 +53,7 @@ import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
-import { getDocumentGraphEdges } from "./lib/documentRelations";
+import { createDocumentLinkResolver, getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
   addDocumentsToSession, applySessionAutoName, createSession, deleteSession, duplicateSession, getActiveSession, getFamilyRootId,
@@ -740,6 +740,15 @@ function WorkspaceAppContent({
   // Back history per tab for breadcrumb navigation; it lasts for the session only.
   const [documentHistory, setDocumentHistory] = useState<DocumentHistory>({});
   const [besideRequest, setBesideRequest] = useState<{ id: string; sequence: number } | null>(null);
+  /** Built once per change of documents: the connector pass runs on every scroll frame. */
+  const linkResolverRef = useRef<{ conversations: AppState["conversations"]; resolve: (target: string) => string | null } | null>(null);
+  /**
+   * Documents opened from a `[[link]]` that belong to another family: shown right after the document
+   * that links to them, as a side document is, until closed. Kept for this visit only.
+   */
+  const [linkGuests, setLinkGuests] = useState<Array<{ id: string; sourceId: string }>>([]);
+  /** A linked document still downloading from the cloud, to open beside its link's document once it arrives. */
+  const [pendingWikiLinkOpen, setPendingWikiLinkOpen] = useState<{ sourceId: string; id: string } | null>(null);
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
@@ -1000,6 +1009,11 @@ function WorkspaceAppContent({
   const activeConversation =
     state.conversations[state.activeConversationId] ??
     state.conversations[state.rootId];
+  useEffect(() => {
+    if (!pendingWikiLinkOpen || !state.conversations[pendingWikiLinkOpen.id]) return;
+    setPendingWikiLinkOpen(null);
+    openLinkedDocumentBeside(state.conversations[pendingWikiLinkOpen.sourceId] ? pendingWikiLinkOpen.sourceId : activeConversation.id, pendingWikiLinkOpen.id);
+  }, [pendingWikiLinkOpen, state.conversations]);
   const activeMarginNotesVisible = !closedMarginNotes[activeConversation.id]
     && activeConversation.childIds.some((id) => isCompactDocument(state.conversations[id]));
   const documentAnchorLinks = useMemo(() => {
@@ -1009,15 +1023,21 @@ function WorkspaceAppContent({
       return cache.get(conversationId)!;
     };
   }, [state.conversations]);
+  // Focusing a linked document shown as a guest keeps the family it's shown with on screen.
+  const scrollingFamilyRootId = state.conversations[scrollingDocumentId] ? getFamilyRootId(state.conversations, scrollingDocumentId) : null;
+  const isHostedLinkGuest = (id: string) => Boolean(scrollingFamilyRootId) && linkGuests.some((guest) => guest.id === id
+    && state.conversations[guest.sourceId] && getFamilyRootId(state.conversations, guest.sourceId) === scrollingFamilyRootId
+    && state.conversations[id] && getFamilyRootId(state.conversations, id) !== scrollingFamilyRootId);
+  const activeIsLinkGuest = isHostedLinkGuest(activeConversation.id);
   const {
     children: focusedBranches,
     path,
     siblings: siblingBranches,
   } = getBranchNavigation(state.conversations, activeConversation.id);
-  const activeRootConversation = path[0] ?? activeConversation;
+  const activeRootConversation = (activeIsLinkGuest ? state.conversations[scrollingFamilyRootId!] : undefined) ?? path[0] ?? activeConversation;
   const documentDock = normalizeDocumentDock(state.documentDock, state.conversations);
   const pinnedDocumentIds = listPinnedDocumentIds(documentDock?.tree ?? null);
-  const workspaceFocusId = pinnedDocumentIds.includes(activeConversation.id) && state.conversations[scrollingDocumentId]
+  const workspaceFocusId = (pinnedDocumentIds.includes(activeConversation.id) || activeIsLinkGuest) && state.conversations[scrollingDocumentId]
     ? scrollingDocumentId : activeConversation.id;
   const documentWorkspace = getDocumentWorkspace(state.conversations, workspaceFocusId);
   const documentChildrenByParent = useMemo(() => getDocumentChildrenByParent(state.conversations), [state.conversations]);
@@ -1046,13 +1066,20 @@ function WorkspaceAppContent({
   }
   collectFamilyPins(documentDock?.tree ?? null);
   const visiblePinnedDocumentIds = pinnedDocumentIds.filter((id) => !familyPinnedDocumentIds.includes(id) || familyDocumentIds.has(id));
-  const scrollingDocuments = documentWorkspace.visibleDocuments.filter((document) => !pinnedDocumentIds.includes(document.id)
+  const familyScrollingDocuments = documentWorkspace.visibleDocuments.filter((document) => !pinnedDocumentIds.includes(document.id)
     && (!isCompactDocument(document) || !document.parentId));
+  const familyLinkGuests = linkGuests.filter((guest) => familyScrollingDocuments.some((document) => document.id === guest.sourceId)
+    && state.conversations[guest.id] && !familyDocumentIds.has(guest.id) && !pinnedDocumentIds.includes(guest.id));
+  // Each linked guest sits right after the document whose link opened it, newest first, like a side document.
+  const scrollingDocuments = familyScrollingDocuments.flatMap((document) => [document,
+    ...familyLinkGuests.filter((guest) => guest.sourceId === document.id).map((guest) => state.conversations[guest.id]).reverse()])
+    .filter((document, index, list) => list.findIndex((item) => item.id === document.id) === index);
   // When each document was last opened on this device; the path follows the latest child below the focused one.
   const documentOpenedAt = useMemo(() => loadOpenedDocuments(storageUserId), [storageUserId, activeConversation.id]);
   const tabDocuments = [
     ...visiblePinnedDocumentIds.filter((id) => !familyDocumentIds.has(id)).map((id) => state.conversations[id]),
     ...documentWorkspace.openDocuments,
+    ...familyLinkGuests.map((guest) => state.conversations[guest.id]),
   ];
   // Tabs hold main and side documents only; margin notes and branches stay in the breadcrumbs and navigator.
   const peerTabDocuments = tabDocuments.filter((document) => getPresentedParentId(state.conversations, document.id) === null);
@@ -1109,8 +1136,8 @@ function WorkspaceAppContent({
   const visitingTabIds = activeSpace
     ? spaceTabDocuments.filter((document) => !spaceRootIds.includes(getFamilyRootId(state.conversations, document.id))).map((document) => document.id) : [];
   useEffect(() => {
-    if (!pinnedDocumentIds.includes(activeConversation.id)) setScrollingDocumentId(activeConversation.id);
-  }, [activeConversation.id, pinnedDocumentIds.join("|")]);
+    if (!pinnedDocumentIds.includes(activeConversation.id) && !activeIsLinkGuest) setScrollingDocumentId(activeConversation.id);
+  }, [activeConversation.id, pinnedDocumentIds.join("|"), activeIsLinkGuest]);
   useLayoutEffect(() => {
     for (const [id, scrollTop] of Object.entries(panelScrollPositionsRef.current)) {
       const body = panelRefs.current[id]?.querySelector<HTMLElement>(".document-body");
@@ -2233,6 +2260,34 @@ function WorkspaceAppContent({
               active: [conversation.id, linked.conversation.id].includes(state.activeConversationId),
             });
             if (connection) nextConnections.push(connection);
+          }
+        }
+
+        // A [[link]] to a document open beside it curves from the link to that document, like a side document.
+        const openPanelIds = Object.keys(panelRefs.current).filter((id) => panelRefs.current[id]?.isConnected && state.conversations[id]);
+        if (openPanelIds.length > 1) {
+          const resolveLink = linkResolverRef.current?.conversations === state.conversations ? linkResolverRef.current.resolve
+            : (linkResolverRef.current = { conversations: state.conversations, resolve: createDocumentLinkResolver(state.conversations) }).resolve;
+          const drawn = new Set(nextConnections.map((connection) => connection.id));
+          for (const sourceId of openPanelIds) {
+            const sourcePanel = panelRefs.current[sourceId]!;
+            const seen = new Set<string>();
+            for (const element of sourcePanel.querySelectorAll<HTMLElement>(".cm-lp-wikilink[data-note-target], .obsidian-wikilink[data-note-target]")) {
+              const targetId = resolveLink(element.dataset.noteTarget ?? "");
+              if (!targetId || targetId === sourceId || seen.has(targetId) || !openPanelIds.includes(targetId)) continue;
+              // A side document already curves from its passage; one curve per pair.
+              const target = state.conversations[targetId];
+              if (target.parentId === sourceId && target.branchAnchor && drawn.has(`tree-${targetId}`)) continue;
+              seen.add(targetId);
+              const targetPanel = panelRefs.current[targetId];
+              const connection = buildDocumentConnector({
+                id: `wikilink-${sourceId}-${targetId}`,
+                source: endpoint(state.conversations[sourceId], element, { conversationId: sourceId }),
+                target: endpoint(target, targetPanel?.querySelector(".document-header") ?? targetPanel?.querySelector("[data-document-block-id]") ?? targetPanel, { conversationId: targetId }),
+                active: [sourceId, targetId].includes(state.activeConversationId),
+              });
+              if (connection) nextConnections.push(connection);
+            }
           }
         }
 
@@ -4230,7 +4285,18 @@ function WorkspaceAppContent({
     setState((current) => focusDocument(current, conversationId, false));
   }
 
+  /** A linked guest closes from beside its link's document without touching its own family's layout. */
+  function closeLinkGuest(conversationId: string) {
+    const guest = familyLinkGuests.find((item) => item.id === conversationId);
+    if (!guest) return false;
+    if (selectionDraft?.conversationId === conversationId) setSelectionDraft(null);
+    setLinkGuests((current) => current.filter((item) => item.id !== conversationId));
+    if (activeConversation.id === conversationId) handleSelectConversation(guest.sourceId, { restorePath: false });
+    return true;
+  }
+
   function handleMinimizeDocument(conversationId: string) {
+    if (closeLinkGuest(conversationId)) return;
     if (selectionDraft?.conversationId === conversationId) setSelectionDraft(null);
     setState((current) => minimizeDocument(current.documentDock ? {
       ...current, documentDock: { ...current.documentDock, tree: removePinnedDocument(current.documentDock.tree, conversationId) },
@@ -4238,6 +4304,7 @@ function WorkspaceAppContent({
   }
 
   function handleCloseDocument(conversationId: string) {
+    if (closeLinkGuest(conversationId)) return;
     if (selectionDraft?.conversationId === conversationId) setSelectionDraft(null);
     setState((current) => closeDocument(current.documentDock ? {
       ...current, documentDock: { ...current.documentDock, tree: removePinnedDocument(current.documentDock.tree, conversationId) },
@@ -4246,7 +4313,9 @@ function WorkspaceAppContent({
 
   function handleHideAllDocuments(action: "minimize" | "close") {
     // Snapshot the tabs before changing focus or removing pinned panes.
-    const ids = tabDocuments.map((document) => document.id);
+    const guestIds = new Set(familyLinkGuests.map((guest) => guest.id));
+    const ids = tabDocuments.map((document) => document.id).filter((id) => !guestIds.has(id));
+    if (guestIds.size) setLinkGuests((current) => current.filter((guest) => !guestIds.has(guest.id)));
     if (!ids.length) return;
     setSelectionDraft(null);
     setScrollingDocumentId(workspaceFocusId);
@@ -4323,7 +4392,7 @@ function WorkspaceAppContent({
   ) {
     revealMarginAncestors(conversationId);
     suppressNextChatAutoCenterRef.current = false;
-    if (!pinnedDocumentIds.includes(conversationId) || familyPinnedDocumentIds.includes(conversationId)) {
+    if ((!pinnedDocumentIds.includes(conversationId) || familyPinnedDocumentIds.includes(conversationId)) && !isHostedLinkGuest(conversationId)) {
       setScrollingDocumentId(conversationId);
     }
     setDocumentFocusSequence((sequence) => sequence + 1);
@@ -4507,9 +4576,26 @@ function WorkspaceAppContent({
     handleSelectConversation(conversationId, { replaceId: currentId });
   }
 
-  /** Open beside: show a document next to the focused one while focus stays put. */
-  function handleOpenDocumentBeside(conversationId: string) {
-    const anchorId = activeConversation.id;
+  /** A `[[link]]`'s pop-up, or Cmd/Ctrl and click on it: the linked document opens beside the one it's in. */
+  function handleOpenWikiLink(sourceId: string, document: WikiLinkDocument) {
+    if (state.conversations[document.id]) { openLinkedDocumentBeside(sourceId, document.id); return; }
+    if (!document.cloudPath) return;
+    // Still in the cloud: download it, then open it beside.
+    setPendingWikiLinkOpen({ sourceId, id: document.id });
+    void vault.loadCloudDocuments?.([document.id]).catch(() => setPendingWikiLinkOpen(null));
+  }
+
+  /** In the same family it opens as Open beside does; from another family it joins as a guest after its link's document. */
+  function openLinkedDocumentBeside(sourceId: string, targetId: string) {
+    if (!state.conversations[targetId] || targetId === sourceId) return;
+    const sameFamily = getFamilyRootId(state.conversations, targetId) === getFamilyRootId(state.conversations, sourceId);
+    if (sameFamily || isDocumentOnScreen(targetId)) { handleOpenDocumentBeside(targetId, sourceId); return; }
+    setLinkGuests((current) => [...current.filter((guest) => guest.id !== targetId), { id: targetId, sourceId }]);
+    setBesideRequest((current) => ({ id: targetId, sequence: (current?.sequence ?? 0) + 1 }));
+  }
+
+  /** Open beside: show a document next to the focused one (or `anchorId`) while focus stays put. */
+  function handleOpenDocumentBeside(conversationId: string, anchorId = activeConversation.id) {
     if (!state.conversations[conversationId] || conversationId === anchorId) return;
     revealMarginAncestors(conversationId);
     if (!isDocumentOnScreen(conversationId)) {
@@ -5241,6 +5327,8 @@ function WorkspaceAppContent({
       minimizedSideDocuments={view === "chat" && getMinimizedChildNodes(conversation) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       linkSuggestions={(query) => wikiLinkSuggestions({ conversations: state.conversations, cloudDocuments: vault.cloudDocuments, currentId: conversation.id }, query)}
+      resolveWikiLink={(target) => resolveWikiLinkDocument(target, state.conversations, vault.cloudDocuments)}
+      onOpenWikiLink={(document) => handleOpenWikiLink(conversation.id, document)}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
       agentMode={agentModeControls(conversation)} agentProgress={agentProgress[conversation.id]}

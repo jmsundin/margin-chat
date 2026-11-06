@@ -35,7 +35,7 @@ import { useMobileKeyboard } from "./MobileKeyboard";
 import DocumentMedia, { MediaInsertForm } from "./DocumentMedia";
 import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
-import type { WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
+import type { WikiLinkDocument, WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import { listenForEditorCommands } from "../lib/editorCommands";
 import { openableHref, openLinkInNewTab, shouldOpenLink } from "../lib/documentLinkOpening";
 import { describeAge, describeRun, type AuthorshipMode, type AuthorshipRun } from "../lib/documentAuthorship";
@@ -115,6 +115,10 @@ export interface RichDocumentEditorProps {
   readOnlyBlockIds?: string[];
   /** Documents to offer after `[[`, best match first. Without it `[[` is plain text. */
   linkSuggestions?: (query: string) => WikiLinkSuggestion[];
+  /** The document a `[[link]]` names, for the pop-up that opens it. */
+  resolveWikiLink?: (target: string) => WikiLinkDocument | null;
+  /** Opens the document a `[[link]]` names as a side document, beside this one. */
+  onOpenWikiLink?: (document: WikiLinkDocument) => void;
   decorations?: Record<string, RichDocumentDecoration[]>;
   /** Who wrote which lines, drawn beside the text (Mine, Blame) or folded away (Only mine). Never changes the document. */
   authorship?: RichDocumentAuthorship | null;
