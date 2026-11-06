@@ -920,19 +920,26 @@ async function scanMarkdownDirectory(handle: FileSystemDirectoryHandle, known?: 
       const fileHandle = entry as FileSystemFileHandle;
       const saved = known && Object.hasOwn(known.files, path) ? known.files[path] : undefined;
       const stat = known && Object.hasOwn(known.stats, path) ? known.stats[path] : undefined;
-      const current = saved !== undefined && stat ? await fileHandle.getFile() : null;
       let lastModified: number;
-      if (current && unchangedSince(current, stat)) {
-        files[path] = saved!;
-        stats[path] = stat!;
-        lastModified = current.lastModified;
-      } else {
-        const readStartedAt = Date.now();
-        const read = await readFreshFile(async () => fileHandle, async (file) => ({ text: await file.text(), file }));
-        files[path] = read.text;
-        const readStat = statWhenRead(read.file, readStartedAt);
-        if (readStat) stats[path] = readStat;
-        lastModified = read.file.lastModified;
+      try {
+        const current = saved !== undefined && stat ? await fileHandle.getFile() : null;
+        if (current && unchangedSince(current, stat)) {
+          files[path] = saved!;
+          stats[path] = stat!;
+          lastModified = current.lastModified;
+        } else {
+          const readStartedAt = Date.now();
+          const read = await readFreshFile(async () => fileHandle, async (file) => ({ text: await file.text(), file }));
+          files[path] = read.text;
+          const readStat = statWhenRead(read.file, readStartedAt);
+          if (readStat) stats[path] = readStat;
+          lastModified = read.file.lastModified;
+        }
+      } catch (error) {
+        // A file listed a moment ago and gone now means the folder is changing under the scan: read it all again
+        // (scanWhileFolderSettles), rather than take the half-seen folder as the truth.
+        if (isDomExceptionNamed(error, "NotFoundError")) throw new DOMException(`“${name}” disappeared while the folder was being read.`, "InvalidStateError");
+        throw error;
       }
       if (lastModified > 0) modifiedAt[path] = new Date(lastModified).toISOString();
       latestModified = Math.max(latestModified, lastModified);

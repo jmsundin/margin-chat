@@ -81,7 +81,10 @@ export function isValidEntryName(name: string): boolean {
 }
 
 export function domError(name: "NotFoundError" | "TypeMismatchError" | "InvalidStateError" | "NotAllowedError" | "InvalidModificationError" | "NoModificationAllowedError", message: string) {
-  return new DOMException(message, name);
+  const exception = new DOMException(message, name);
+  // A DOMException carries no stack of its own; one helps find which caller met the error.
+  (Error as unknown as { captureStackTrace?: (target: object) => void }).captureStackTrace?.(exception);
+  return exception;
 }
 
 export function isDomErrorNamed(error: unknown, name: string): boolean {
