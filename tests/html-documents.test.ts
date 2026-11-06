@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HTML_FRAME_SANDBOX, htmlFrameDocument, htmlTextForAI, readHtmlFrameMessage } from "../client/src/lib/htmlDocuments";
+import { HTML_FRAME_SANDBOX, MAX_HTML_STORAGE_CHARS, htmlFrameDocument, htmlTextForAI, readHtmlFrameMessage } from "../client/src/lib/htmlDocuments";
 import { isVaultFileDocumentPath, vaultFileContentType, vaultFileKind } from "../client/src/lib/vaultFileDocuments";
 import { planVaultUpload } from "../client/src/lib/vaultUpload";
 import { validateVaultFileContext, vaultFileInstruction } from "../server/chat/fileContext.mjs";
@@ -47,6 +47,18 @@ describe("HTML pages open as documents", () => {
     expect(readHtmlFrameMessage({ marginHtml: 1, type: "marks", marks: [{ id: "a", left: 1, top: 2, width: 3, height: 4 }, { id: 5 }] }))
       .toEqual({ marginHtml: 1, type: "marks", marks: [{ id: "a", left: 1, top: 2, width: 3, height: 4 }] });
     expect(readHtmlFrameMessage({ marginHtml: 1, type: "navigate", url: "https://example.com" })).toBeNull();
+    expect(readHtmlFrameMessage({ marginHtml: 1, type: "storage", data: { visits: "2" } })).toEqual({ marginHtml: 1, type: "storage", data: { visits: "2" } });
+    expect(readHtmlFrameMessage({ marginHtml: 1, type: "storage", data: { visits: 2 } })).toBeNull();
+    expect(readHtmlFrameMessage({ marginHtml: 1, type: "storage", data: { big: "x".repeat(MAX_HTML_STORAGE_CHARS + 1) } })).toBeNull();
+  });
+
+  test("a page's saved localStorage goes back in as data that can't end the bridge script", () => {
+    const page = htmlFrameDocument("<html><head></head><body></body></html>", { note: "</script><script>alert(1)</script>" });
+    expect(page.match(/<\/script>/gu)?.length).toBe(1);
+    expect(page).toContain("\\u003c/script>");
+    // Stand-ins for storage and cookies, which the sandbox would otherwise make throw.
+    expect(page).toContain("localStorage");
+    expect(page).toContain("sessionStorage");
   });
 
   test("AI reads the page's words, not its scripts or styles", () => {

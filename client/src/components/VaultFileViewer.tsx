@@ -669,8 +669,27 @@ const MAX_CREEPING_GROWTHS = 6;
 const MAX_FRAME_HEIGHT = 60_000;
 const FRAME_BORDERS = 2;
 
+/** Where this device keeps what a page saved in its localStorage, per page document. */
+const htmlStorageKey = (documentId: string) => `margin-chat:html-page-storage:${documentId}`;
+
+function loadHtmlStorage(documentId: string): Record<string, string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(htmlStorageKey(documentId)) ?? "{}");
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveHtmlStorage(documentId: string, data: Record<string, string>) {
+  try {
+    if (Object.keys(data).length) localStorage.setItem(htmlStorageKey(documentId), JSON.stringify(data));
+    else localStorage.removeItem(htmlStorageKey(documentId));
+  } catch { /* Without room the page still works; it just starts fresh next time. */ }
+}
+
 function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
-  const [html, setHtml] = useState<string | null>(null);
+  const [html, setHtml] = useState<{ text: string; storage: Record<string, string> } | null>(null);
   const [height, setHeight] = useState<number | null>(null);
   const [marks, setMarks] = useState<Array<HtmlRect & { id: string }>>([]);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -681,11 +700,14 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   useEffect(() => {
     let cancelled = false;
     setHtml(null); setHeight(null); setMarks([]);
-    props.blob.text().then((text) => { if (!cancelled) setHtml(text); }, () => { if (!cancelled) setHtml(""); });
+    const documentId = props.conversation.id;
+    props.blob.text().then((text) => { if (!cancelled) setHtml({ text, storage: loadHtmlStorage(documentId) }); },
+      () => { if (!cancelled) setHtml({ text: "", storage: {} }); });
     return () => { cancelled = true; };
-  }, [props.blob]);
+  }, [props.blob, props.conversation.id]);
 
-  const source = useMemo(() => html === null ? null : htmlFrameDocument(html), [html]);
+  // The page's saved storage is read once as it opens; later saves don't reload the frame.
+  const source = useMemo(() => html === null ? null : htmlFrameDocument(html.text, html.storage), [html]);
   const anchors = useMemo<HtmlAnchor[]>(() => props.anchors.filter((link) => link.anchor.sourceMessageId === HTML_SOURCE_ID)
     .map((link) => ({ id: link.branchConversationId, quote: link.anchor.quote, start: link.anchor.startOffset, end: link.anchor.endOffset })), [props.anchors]);
   const anchorsRef = useRef(anchors);
@@ -716,6 +738,8 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
         setMarks(message.marks.filter((mark) => anchorsRef.current.some((anchor) => anchor.id === mark.id)));
       } else if (message.type === "open") {
         if (anchorsRef.current.some((anchor) => anchor.id === message.id)) current.onOpenBranch(message.id);
+      } else if (message.type === "storage") {
+        saveHtmlStorage(current.conversation.id, message.data);
       } else if (message.type === "clear") {
         current.onClearSelection?.();
       } else if (message.type === "selection") {

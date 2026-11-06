@@ -22,7 +22,24 @@ export type HtmlFrameMessage =
   | { marginHtml: 1; type: "selection"; quote: string; start: number; end: number; context: string; rect: HtmlRect }
   | { marginHtml: 1; type: "clear" }
   | { marginHtml: 1; type: "marks"; marks: Array<HtmlRect & { id: string }> }
-  | { marginHtml: 1; type: "open"; id: string };
+  | { marginHtml: 1; type: "open"; id: string }
+  | { marginHtml: 1; type: "storage"; data: Record<string, string> };
+
+/** What a page keeps in its own `localStorage`, at most this much, so it remembers its state the next time it opens. */
+export const MAX_HTML_STORAGE_CHARS = 1_000_000;
+
+function readStorageData(value: unknown): Record<string, string> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const data: Record<string, string> = {};
+  let size = 0;
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item !== "string") return null;
+    size += key.length + item.length;
+    if (size > MAX_HTML_STORAGE_CHARS) return null;
+    data[key] = item;
+  }
+  return data;
+}
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const isRect = (value: unknown): value is HtmlRect => Boolean(value) && typeof value === "object"
@@ -36,6 +53,10 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
     case "size": return finite(message.height) && message.height >= 0 ? { marginHtml: 1, type: "size", height: message.height } : null;
     case "clear": return { marginHtml: 1, type: "clear" };
     case "open": return typeof message.id === "string" && message.id.length <= 200 ? { marginHtml: 1, type: "open", id: message.id } : null;
+    case "storage": {
+      const data = readStorageData(message.data);
+      return data ? { marginHtml: 1, type: "storage", data } : null;
+    }
     case "selection": {
       const { quote, start, end, context, rect } = message;
       if (typeof quote !== "string" || !quote.trim() || quote.length > 20_000 || typeof context !== "string" || context.length > 40_000) return null;
@@ -55,11 +76,63 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
  * Runs inside the frame, before the page's own scripts. It must stay
  * self-contained: it is sent to the frame as source text.
  */
-function bridge() {
+function bridge(savedStorage: Record<string, string>) {
   const SKIP = /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA|SELECT|OPTION)$/u;
   const parentWindow = window.parent;
   const post = (message: Record<string, unknown>) => parentWindow.postMessage({ marginHtml: 1, ...message }, "*");
   let anchors: Array<{ id: string; quote: string; start: number; end: number }> = [];
+
+  /*
+   * Without same-origin access the browser throws on any use of localStorage,
+   * sessionStorage or cookies, and most pages that save anything stop at that
+   * line. They get stand-ins instead: localStorage is kept by the app for this
+   * page, sessionStorage and cookies last while the page is open.
+   */
+  function storage(initial: Record<string, string>, changed: (data: Record<string, string>) => void) {
+    const data = new Map(Object.entries(initial));
+    const snapshot = () => Object.fromEntries(data);
+    const api = {
+      getItem: (key: string) => data.get(String(key)) ?? null,
+      setItem: (key: string, value: unknown) => { data.set(String(key), String(value)); changed(snapshot()); },
+      removeItem: (key: string) => { if (data.delete(String(key))) changed(snapshot()); },
+      clear: () => { if (data.size) { data.clear(); changed(snapshot()); } },
+      key: (index: number) => [...data.keys()][index] ?? null,
+      get length() { return data.size; },
+    };
+    return new Proxy(api, {
+      get: (target, key) => key in target ? Reflect.get(target, key) : typeof key === "string" ? data.get(key) : undefined,
+      set: (target, key, value) => { if (typeof key === "string" && !(key in target)) api.setItem(key, value); return true; },
+      deleteProperty: (_target, key) => { if (typeof key === "string") api.removeItem(key); return true; },
+      has: (target, key) => key in target || (typeof key === "string" && data.has(key)),
+      ownKeys: () => [...data.keys()],
+      getOwnPropertyDescriptor: (_target, key) => typeof key === "string" && data.has(key)
+        ? { value: data.get(key), writable: true, enumerable: true, configurable: true } : undefined,
+    });
+  }
+  let storageTimer = 0;
+  const saveStorage = (data: Record<string, string>) => {
+    window.clearTimeout(storageTimer);
+    storageTimer = window.setTimeout(() => post({ type: "storage", data }), 250);
+  };
+  const stand = (target: object, name: string, value: unknown) => {
+    try { Object.defineProperty(target, name, { value, configurable: true, enumerable: true }); } catch { /* The browser keeps its own. */ }
+  };
+  stand(window, "localStorage", storage(savedStorage, saveStorage));
+  stand(window, "sessionStorage", storage({}, () => {}));
+  const cookies = new Map<string, string>();
+  try {
+    Object.defineProperty(document, "cookie", {
+      configurable: true,
+      get: () => [...cookies].map(([name, value]) => `${name}=${value}`).join("; "),
+      set: (value: unknown) => {
+        const [pair] = String(value).split(";");
+        const split = pair.indexOf("=");
+        const name = (split < 0 ? "" : pair.slice(0, split)).trim();
+        const item = split < 0 ? pair.trim() : pair.slice(split + 1).trim();
+        if (/;\s*(?:expires=Thu, 01 Jan 1970|max-age=-?0\b)/iu.test(String(value))) cookies.delete(name); else cookies.set(name, item);
+      },
+    });
+  } catch { /* The browser keeps its own. */ }
 
   function textNodes() {
     const nodes: Text[] = [];
@@ -223,9 +296,14 @@ function bridge() {
   });
 }
 
-/** The page as the frame loads it: the bridge goes first in the head, after any doctype so the page keeps its rendering mode. */
-export function htmlFrameDocument(html: string) {
-  const script = `<script>(${bridge.toString()})();</script>`;
+/**
+ * The page as the frame loads it: the bridge goes first in the head, after any doctype so the page keeps its rendering mode.
+ * `storage` is what the page last kept in its localStorage.
+ */
+export function htmlFrameDocument(html: string, storage: Record<string, string> = {}) {
+  // Escaped so the page's saved text can't close the script early.
+  const saved = JSON.stringify(readStorageData(storage) ?? {}).replace(/</gu, "\\u003c").replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
+  const script = `<script>(${bridge.toString()})(${saved});</script>`;
   const head = /<head(?:\s[^>]*)?>/iu.exec(html);
   if (head) return html.slice(0, head.index + head[0].length) + script + html.slice(head.index + head[0].length);
   const root = /<html(?:\s[^>]*)?>/iu.exec(html);
