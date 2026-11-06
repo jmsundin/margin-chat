@@ -258,7 +258,7 @@ function buildDecorations(view: EditorView, mode: LivePreviewMode): DecorationSe
         continue;
       }
       const labelFrom = from + (token.labelFrom ?? token.contentFrom), labelTo = from + (token.labelTo ?? token.contentTo);
-      if (labelTo > labelFrom) ranges.push(mark(token.kind === "embed" ? "obsidian-embed cm-lp-embed" : "obsidian-wikilink cm-lp-wikilink", token.target ? { "data-note-target": token.target } : undefined).range(labelFrom, labelTo));
+      if (labelTo > labelFrom) ranges.push(mark(token.kind === "embed" ? "obsidian-embed cm-lp-embed" : "obsidian-wikilink cm-lp-wikilink", token.target ? { "data-note-target": token.target, title: OPEN_LINK_HINT } : undefined).range(labelFrom, labelTo));
       syntax(start, labelFrom);
       syntax(labelTo, end);
     }
@@ -306,8 +306,15 @@ function linkAt(target: EventTarget | null): string | null {
   return target instanceof Element ? openableHref(target.closest<HTMLElement>("[data-href]")?.dataset.href) : null;
 }
 
-/** Live Preview styling for the visible lines. `mode` reads the current mode from the editor state. */
-export function livePreviewInline(mode: (state: EditorState) => LivePreviewMode) {
+function wikiLinkAt(target: EventTarget | null): string | null {
+  return target instanceof Element ? target.closest<HTMLElement>(".cm-lp-wikilink[data-note-target], .cm-lp-embed[data-note-target]")?.dataset.noteTarget || null : null;
+}
+
+/**
+ * Live Preview styling for the visible lines. `mode` reads the current mode from the editor state.
+ * `openWikiLink` opens the document a `[[link]]` names and says whether it could.
+ */
+export function livePreviewInline(mode: (state: EditorState) => LivePreviewMode, openWikiLink?: (target: string) => boolean) {
   return ViewPlugin.fromClass(class {
     decorations: DecorationSet;
     pointerType = "mouse";
@@ -325,6 +332,8 @@ export function livePreviewInline(mode: (state: EditorState) => LivePreviewMode)
       mousedown(event) {
         // Cmd or Ctrl and click opens a link, as in Obsidian, before the caret moves into it.
         if (!(event.metaKey || event.ctrlKey) || event.button !== 0) return false;
+        const wikiTarget = wikiLinkAt(event.target);
+        if (wikiTarget && openWikiLink?.(wikiTarget)) { event.preventDefault(); return true; }
         const href = linkAt(event.target);
         if (!href) return false;
         event.preventDefault();
@@ -334,6 +343,9 @@ export function livePreviewInline(mode: (state: EditorState) => LivePreviewMode)
       click(event, view) {
         // A tap on a touch screen, or a click in Reading mode, opens the link. Cmd or Ctrl and click opened on mousedown.
         if (event.metaKey || event.ctrlKey) return false;
+        // In Reading mode a click or tap opens a [[link]]; while editing, a tap shows the link's pop-up instead.
+        const wikiTarget = view.state.readOnly && event.button === 0 && view.state.selection.main.empty ? wikiLinkAt(event.target) : null;
+        if (wikiTarget && openWikiLink?.(wikiTarget)) { event.preventDefault(); return true; }
         const href = linkAt(event.target);
         if (!href || !shouldOpenLink({ button: event.button, metaKey: false, ctrlKey: false, shiftKey: event.shiftKey, altKey: event.altKey,
           pointerType: this.pointerType, readOnly: view.state.readOnly, selecting: !view.state.selection.main.empty })) return false;

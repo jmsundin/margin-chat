@@ -42,6 +42,8 @@ export interface DocumentPanelProps {
   moveTargets?: RichDocumentEditorProps["moveTargets"];
   onMoveBlock?: RichDocumentEditorProps["onMoveBlock"];
   linkSuggestions?: RichDocumentEditorProps["linkSuggestions"];
+  resolveWikiLink?: RichDocumentEditorProps["resolveWikiLink"];
+  onOpenWikiLink?: RichDocumentEditorProps["onOpenWikiLink"];
   isActive: boolean;
   isSubmitting: boolean;
   aiControls: ReactNode;
@@ -546,7 +548,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </> : null}
       {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
-        moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions} onAskDiagram={props.onAskDiagram}
+        moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
+        resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
         toolbarStart={historyPrompts.length || authorship?.summary.totalLines ? <>
           {authorship ? <DocumentAuthorshipBar summary={authorship.summary} mode={authorshipView.mode} onlyMine={authorshipView.onlyMine}

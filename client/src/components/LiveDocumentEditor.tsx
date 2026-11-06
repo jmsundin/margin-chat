@@ -30,7 +30,7 @@ import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBloc
 import { livePreviewInline, type LivePreviewMode } from "../lib/livePreviewMarkdown";
 import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import { listenForEditorCommands, type EditorCommand } from "../lib/editorCommands";
-import { findWikiLinkQuery, type WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
+import { findWikiLinkAround, findWikiLinkQuery, type WikiLinkDocument, type WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import WikiLinkMenu, { type WikiLinkMenuState } from "./WikiLinkMenu";
 import "./LiveDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
@@ -510,6 +510,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const setLinkMenu = (next: WikiLinkMenuState | null) => { linkMenuRef.current = next; setLinkMenuState(next); };
   /** The `[[` whose list Escape closed; it stays closed until you type another. */
   const dismissedLink = useRef<number | null>(null);
+  /** Where the finished link being typed in starts: it lists documents to change to, not the one to open. */
+  const editingLink = useRef<number | null>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const mobileRef = useRef(false);
   const vaultMedia = useVaultMedia();
@@ -874,21 +876,29 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   /** Opens, follows or closes the document list for a `[[` just before the caret. */
-  function updateLinkMenu(view: EditorView) {
+  function updateLinkMenu(view: EditorView, typed = false) {
     const close = () => { if (linkMenuRef.current) setLinkMenu(null); };
     const suggest = latest.current.linkSuggestions;
     const main = view.state.selection.main;
-    if (!suggest || !view.hasFocus || view.state.readOnly || !main.empty || stateOf(view).mode === "reading") { close(); return; }
+    if (!view.hasFocus || view.state.readOnly || !main.empty || stateOf(view).mode === "reading") { close(); return; }
     const line = view.state.doc.lineAt(main.head);
-    const found = findWikiLinkQuery(view.state.doc.sliceString(line.from, main.head));
-    if (!found) { dismissedLink.current = null; close(); return; }
-    const from = line.from + found.start;
+    // A tap or click in a finished link offers to open the document it names; typing in it lists others.
+    const around = findWikiLinkAround(line.text, main.head - line.from);
+    const aroundFrom = around ? line.from + around.start : null;
+    if (aroundFrom === null) editingLink.current = null;
+    else if (typed) editingLink.current = aroundFrom;
+    const linked = around && aroundFrom !== editingLink.current && !inCode(view.state, aroundFrom!)
+      ? latest.current.resolveWikiLink?.(around.target) ?? null : null;
+    const found = linked ? null : suggest ? findWikiLinkQuery(view.state.doc.sliceString(line.from, main.head)) : null;
+    if (!found && !linked) { dismissedLink.current = null; close(); return; }
+    const from = linked ? aroundFrom! : line.from + found!.start;
     if (dismissedLink.current === from || inCode(view.state, from)) { close(); return; }
     dismissedLink.current = null;
     const previous = linkMenuRef.current;
-    const items = suggest(found.query);
-    const index = previous && previous.from === from && previous.query === found.query ? Math.min(previous.index, Math.max(0, items.length - 1)) : 0;
-    const base = { from, to: main.head, query: found.query, items, index };
+    const query = found?.query ?? "";
+    const items = found && suggest ? suggest(query) : [];
+    const index = previous && previous.from === from && previous.query === query ? Math.min(previous.index, Math.max(0, items.length - 1)) : 0;
+    const base = { from, to: main.head, query, items, index, linked: linked ?? undefined };
     // It shows once measured; a first open waits a frame for its place under the `[[`.
     setLinkMenu(previous ? { ...previous, ...base } : { ...base, top: 0, left: 0, above: false, placed: false });
     view.requestMeasure({
@@ -932,10 +942,35 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return true;
   }
 
+  /** Opens the document the link at the caret names as a side document, and leaves the link. */
+  function openLinked(view: EditorView, document: WikiLinkDocument) {
+    const menu = linkMenuRef.current;
+    setLinkMenu(null);
+    if (menu) {
+      const line = view.state.doc.lineAt(menu.from);
+      const around = findWikiLinkAround(line.text, menu.to - line.from);
+      if (around) view.dispatch({ selection: EditorSelection.cursor(line.from + around.end) });
+    }
+    // Reading on, not typing: the phone keyboard goes away so the side document has the room.
+    view.contentDOM.blur();
+    latest.current.onOpenWikiLink?.(document);
+  }
+
+  /** Cmd or Ctrl and click on a link, or a click in Reading mode, opens it beside this document. */
+  function openWikiLinkTarget(target: string) {
+    const document = latest.current.onOpenWikiLink ? latest.current.resolveWikiLink?.(target) : null;
+    if (!document) return false;
+    setLinkMenu(null);
+    latest.current.onOpenWikiLink!(document);
+    return true;
+  }
+
   function linkMenuKey(view: EditorView, key: "up" | "down" | "pick" | "close") {
     const menu = linkMenuRef.current;
     if (!menu) return false;
     if (key === "close") { dismissedLink.current = menu.from; setLinkMenu(null); return true; }
+    // Enter and the arrows keep their usual jobs in a finished link.
+    if (menu.linked) return false;
     if (!menu.items.length) { if (key === "pick") setLinkMenu(null); return false; }
     if (key === "pick") return pickLink(view, menu.items[menu.index]);
     const count = menu.items.length;
@@ -1069,8 +1104,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey });
-  handlers.current = { commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey };
+  const handlers = useRef({ commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget });
+  handlers.current = { commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget };
   useEffect(() => {
     let frame = 0;
     const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
@@ -1121,7 +1156,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
         drawSelection(),
         markdown({ extensions: [GFM], addKeymap: false }),
         EditorView.lineWrapping,
-        livePreviewInline((current) => current.field(liveField).mode),
+        livePreviewInline((current) => current.field(liveField).mode, (target) => proxy.current.openWikiLinkTarget(target)),
         beacons,
         EditorView.focusChangeEffect.of((_state, focusing) => setView.of({ focused: focusing })),
         EditorState.transactionFilter.of((tr) => {
@@ -1227,7 +1262,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             }, ASK_BUTTON_TYPING_PAUSE_MS);
           }
           if (update.selectionSet || update.focusChanged || update.docChanged || update.geometryChanged) proxy.current.placeAskButton(update.view);
-          if (update.selectionSet || update.focusChanged || update.docChanged || (update.geometryChanged && linkMenuRef.current)) proxy.current.updateLinkMenu(update.view);
+          if (update.selectionSet || update.focusChanged || update.docChanged || (update.geometryChanged && linkMenuRef.current)) {
+            proxy.current.updateLinkMenu(update.view, update.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete")));
+          }
           if (update.selectionSet || update.focusChanged) {
             if (update.selectionSet) proxy.current.notifySelection(update.view);
             const live = update.state.field(liveField);
@@ -1565,7 +1602,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       </div>}
     {linkMenu && editorFocused && mode !== "reading" && <WikiLinkMenu menu={linkMenu}
       onHover={(index) => { const current = linkMenuRef.current; if (current) setLinkMenu({ ...current, index }); }}
-      onPick={(item) => { const view = viewRef.current; if (view) pickLink(view, item); }} />}
+      onPick={(item) => { const view = viewRef.current; if (view) pickLink(view, item); }}
+      onOpen={(document) => { const view = viewRef.current; if (view) openLinked(view, document); }} />}
     {insertMenu && <div className="live-document-insert" style={{ top: insertMenu.top }}>
       <button type="button" className="live-document-insert-toggle" aria-label="Insert media, a drawing, a table or an equation" aria-expanded={insertMenu.open} title="Insert"
         onMouseDown={(event) => event.preventDefault()} onClick={() => setInsertMenu({ ...insertMenu, open: !insertMenu.open })}>+</button>

@@ -1,4 +1,5 @@
-import { titleMarkdownPath } from "@margin-chat/workspace-contracts";
+import { markdownIdentitySuffix, titleMarkdownPath } from "@margin-chat/workspace-contracts";
+import { createDocumentLinkResolver } from "./documentRelations";
 import type { Conversation } from "../types";
 import type { VaultIndexEntry } from "./vaultTypes";
 
@@ -104,4 +105,50 @@ function fileStem(candidate: Candidate) {
   const fromPath = candidate.path?.split("/").at(-1)?.replace(/\.md$/i, "");
   if (fromPath && / — [0-9a-z]+-[0-9a-z]+(?: \(\d+\))?$/.test(fromPath) && !/[\][|#^]/.test(fromPath)) return fromPath;
   return titleMarkdownPath("Notes", candidate.title, candidate.id).split("/").at(-1)!.replace(/\.md$/i, "");
+}
+
+/**
+ * The complete `[[link]]` the caret is inside on this line, from its `[[` to after its `]]`,
+ * and the document it names (the part before `|`, `#` or `^`).
+ */
+export function findWikiLinkAround(lineText: string, caret: number): { start: number; end: number; target: string } | null {
+  const start = lineText.lastIndexOf("[[", caret - 2);
+  if (start < 0 || caret < start + 2) return null;
+  const close = lineText.indexOf("]]", start + 2);
+  if (close < 0 || caret > close) return null;
+  const inner = lineText.slice(start + 2, close);
+  if (/[[\]]/.test(inner)) return null;
+  const target = inner.split(/[|#^]/)[0].trim();
+  return target ? { start, end: close + 2, target } : null;
+}
+
+export interface WikiLinkDocument {
+  id: string;
+  title: string;
+  /** The parent's title, as in the `[[` list. */
+  detail?: string;
+  /** Still in the cloud; it downloads when opened. */
+  cloudPath?: string;
+}
+
+/** The document a link names: one already here, or one still in the cloud, by filename, id or unique title. */
+export function resolveWikiLinkDocument(target: string, conversations: Record<string, Conversation>,
+  cloudDocuments: readonly VaultIndexEntry[] = []): WikiLinkDocument | null {
+  const id = createDocumentLinkResolver(conversations)(target);
+  if (id) {
+    const conversation = conversations[id];
+    const parentTitle = conversation.parentId ? conversations[conversation.parentId]?.title?.trim() : "";
+    return { id, title: conversation.title.trim() || "Untitled document", ...(parentTitle ? { detail: parentTitle } : {}) };
+  }
+  const name = target.replace(/\\/g, "/").split("/").at(-1)!.replace(/\.md$/i, "").trim();
+  const suffix = / — ([0-9a-z]+-[0-9a-z]+)(?: \(\d+\))?$/.exec(name)?.[1];
+  const folded = name.toLowerCase();
+  const byTitle = cloudDocuments.filter((entry) => entry.title.trim().toLowerCase() === folded);
+  const entry = cloudDocuments.find((item) => item.id === name)
+    ?? (suffix ? cloudDocuments.find((item) => markdownIdentitySuffix(item.id) === suffix) : undefined)
+    ?? cloudDocuments.find((item) => item.path.split("/").at(-1)?.replace(/\.md$/i, "") === name)
+    ?? (byTitle.length === 1 ? byTitle[0] : undefined);
+  if (!entry) return null;
+  const parentTitle = entry.parentPath ? cloudDocuments.find((item) => item.path === entry.parentPath)?.title?.trim() : "";
+  return { id: entry.id, title: entry.title.trim() || "Untitled document", cloudPath: entry.path, ...(parentTitle ? { detail: parentTitle } : {}) };
 }

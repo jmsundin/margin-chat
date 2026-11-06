@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { findWikiLinkQuery, wikiLinkSuggestions } from "../client/src/lib/wikiLinkSuggestions";
+import { findWikiLinkAround, findWikiLinkQuery, resolveWikiLinkDocument, wikiLinkSuggestions } from "../client/src/lib/wikiLinkSuggestions";
 import { createDocumentLinkResolver } from "../client/src/lib/documentRelations";
 import type { Conversation } from "../client/src/types";
 
@@ -57,4 +57,27 @@ test("links that would be ambiguous or broken use the file name, which resolves 
   expect(bracketed.title).toBe("Draft v2 notes");
   expect(bracketed.link).not.toMatch(/[\][]/);
   expect(resolve(bracketed.link.split("|")[0])).toBe("brackets");
+});
+
+test("finds the finished link the caret is in", () => {
+  const line = "See [[Senolytics overview|senolytics]] and [[Plan#Goals]].";
+  expect(findWikiLinkAround(line, 6)).toEqual({ start: 4, end: 38, target: "Senolytics overview" });
+  expect(findWikiLinkAround(line, 30)).toEqual({ start: 4, end: 38, target: "Senolytics overview" });
+  expect(findWikiLinkAround(line, 36)).toEqual({ start: 4, end: 38, target: "Senolytics overview" });
+  expect(findWikiLinkAround(line, 40)).toBeNull();
+  expect(findWikiLinkAround(line, 48)?.target).toBe("Plan");
+  expect(findWikiLinkAround("See [[unfinished", 10)).toBeNull();
+  expect(findWikiLinkAround("See [[]] here", 6)).toBeNull();
+});
+
+test("resolves a link to a document here or still in the cloud", () => {
+  expect(resolveWikiLinkDocument("Sleep and longevity", conversations)).toEqual({ id: "sleep", title: "Sleep and longevity" });
+  expect(resolveWikiLinkDocument("Plan", conversations)).toBeNull();
+  const cloud = [
+    { path: "Notes/Cloud parent — aa-bb.md", id: "cloudparent", type: "note", kind: "note", title: "Cloud parent", revision: "1" },
+    { path: "Notes/Cloud only — cc-dd.md", id: "cloudonly", type: "note", kind: "note", title: "Cloud only", revision: "1", parentPath: "Notes/Cloud parent — aa-bb.md" },
+  ] as const;
+  expect(resolveWikiLinkDocument("cloud only", conversations, cloud as never)).toEqual({ id: "cloudonly", title: "Cloud only", cloudPath: "Notes/Cloud only — cc-dd.md", detail: "Cloud parent" });
+  expect(resolveWikiLinkDocument("Cloud only — cc-dd", conversations, cloud as never)?.id).toBe("cloudonly");
+  expect(resolveWikiLinkDocument("Missing", conversations, cloud as never)).toBeNull();
 });
