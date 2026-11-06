@@ -26,7 +26,7 @@ export const STARTER_TASKS: { id: StarterTask; line: string }[] = [
   { id: "side", line: "Select a phrase and choose **Side doc**: a new idea that grows out of it, in its own pane." },
   { id: "ai", line: "Select some text and choose **✦ Ask AI**, or press Space on an empty line to ask about the page." },
   { id: "map", line: "Open **Map View** (⌘G) to see how your documents connect." },
-  { id: "session", line: "Start a **new session** from the session name at the top: one set of open documents per project." },
+  { id: "session", line: "Make a **space** from the button left of the tabs: a place for one project's documents that you can come back to." },
 ];
 const CONNECT_LINE = "Connect Claude, ChatGPT or Gemini to your vault: [marginchat.com/connect](https://www.marginchat.com/connect)";
 
@@ -118,7 +118,7 @@ export function completedStarterTasks(state: AppState, seen: { map?: boolean } =
     if (conversation.document?.generations.length || conversation.messages.some((message) => message.role === "assistant")) done.add("ai");
   }
   if (seen.map) done.add("map");
-  if (Object.keys(state.sessions?.items ?? {}).filter(madeByPerson).length > 1) done.add("session");
+  if (Object.keys(state.sessions?.items ?? {}).filter(madeByPerson).length > 0) done.add("session");
   return done;
 }
 

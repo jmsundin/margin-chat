@@ -48,7 +48,7 @@ import DocumentPanel from "./components/DocumentPanel";
 import { wikiLinkSuggestions } from "./lib/wikiLinkSuggestions";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
-import { SessionChips, SessionsPanel } from "./components/Sessions";
+import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpacesPanel, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
@@ -56,8 +56,8 @@ import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHe
 import { getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
-  applySessionAutoName, createSession, deleteSession, duplicateSession, ensureSessions, getActiveSession,
-  recordSessionDocument, removeDocumentFromSession, renameSession, sortSessions, switchSession,
+  addDocumentsToSession, applySessionAutoName, createSession, deleteSession, duplicateSession, getActiveSession, getFamilyRootId,
+  getSpaceRootIds, isInSpace, orderSpaces, removeDocumentFromSession, renameSession, switchSession,
 } from "./lib/workspaceSessions";
 import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
 import { DOCUMENT_MARGIN_GUTTER, type DocumentMarginItem } from "./components/DocumentMargin";
@@ -1063,18 +1063,51 @@ function WorkspaceAppContent({
     if (!parentId) break;
     activePeerTabId = parentId;
   }
-  // A workspace without sessions starts with one holding the documents already open.
-  const hasActiveSession = Boolean(getActiveSession(state));
+  // Spaces: documents join only when you add them. Anything else you open in a space is visiting,
+  // shown dashed after its own tabs, and closes when you leave.
+  const activeSpace = getActiveSession(state);
+  const activeRootId = activeRootConversation.id;
+  const spaceRootIds = useMemo(() => getSpaceRootIds(activeSpace, state.conversations), [activeSpace, state.conversations]);
+  const [spaceVisitors, setSpaceVisitors] = useState<{ spaceId: string | null; ids: string[] }>({ spaceId: null, ids: [] });
+  const visitorRootIds = activeSpace && spaceVisitors.spaceId === activeSpace.id
+    ? spaceVisitors.ids.filter((id) => state.conversations[id] && !spaceRootIds.includes(id)) : [];
+  // The next document you focus joins the space, as "New document" in an empty space does.
+  const joinNextFocusRef = useRef(false);
+  const lastFocusedRootRef = useRef(activeRootId);
   useEffect(() => {
-    if (!vault.ready || hasActiveSession) return;
-    const openIds = tabDocuments.map((document) => document.id);
-    setState((current) => ensureSessions(current, openIds));
+    if (lastFocusedRootRef.current === activeRootId) return;
+    lastFocusedRootRef.current = activeRootId;
+    if (!activeSpace) { joinNextFocusRef.current = false; return; }
+    if (joinNextFocusRef.current) {
+      joinNextFocusRef.current = false;
+      setState((current) => current.sessions?.activeId ? addDocumentsToSession(current, current.sessions.activeId, [activeRootId]) : current);
+      return;
+    }
+    if (spaceRootIds.includes(activeRootId)) return;
+    setSpaceVisitors((current) => ({ spaceId: activeSpace.id,
+      ids: [...(current.spaceId === activeSpace.id ? current.ids.filter((id) => id !== activeRootId) : []), activeRootId] }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vault.ready, hasActiveSession]);
-  // A document you focus joins the active session. Switching sessions alone records nothing.
-  useEffect(() => {
-    setState((current) => recordSessionDocument(current, current.activeConversationId));
-  }, [activeConversation.id]);
+  }, [activeRootId]);
+  // An empty space, or one whose documents you've closed, asks what goes in it instead of showing what was on screen.
+  const showSpaceStart = Boolean(activeSpace && !spaceRootIds.includes(activeRootId) && !visitorRootIds.includes(activeRootId));
+  const spaceTabDocuments = (() => {
+    if (!activeSpace) return peerTabDocuments;
+    const list: Conversation[] = [];
+    const seen = new Set<string>();
+    const add = (document: Conversation | undefined) => { if (document && !seen.has(document.id)) { seen.add(document.id); list.push(document); } };
+    for (const rootId of [...spaceRootIds, ...visitorRootIds]) {
+      if (rootId === activeRootId && !showSpaceStart) {
+        // The family you're in shows its open side documents beside its main document, as it always has.
+        if (!peerTabDocuments.some((document) => document.id === rootId)) add(state.conversations[rootId]);
+        for (const document of peerTabDocuments) if (familyDocumentIds.has(document.id)) add(document);
+      } else add(state.conversations[rootId]);
+    }
+    // Pinned panes from other families stay as tabs while they're on screen.
+    for (const document of peerTabDocuments) if (!showSpaceStart || !familyDocumentIds.has(document.id)) add(document);
+    return list;
+  })();
+  const visitingTabIds = activeSpace
+    ? spaceTabDocuments.filter((document) => !spaceRootIds.includes(getFamilyRootId(state.conversations, document.id))).map((document) => document.id) : [];
   useEffect(() => {
     if (!pinnedDocumentIds.includes(activeConversation.id)) setScrollingDocumentId(activeConversation.id);
   }, [activeConversation.id, pinnedDocumentIds.join("|")]);
@@ -1314,9 +1347,7 @@ function WorkspaceAppContent({
     documentSummaries.map((thread) => [thread.id, thread] as const),
   );
   const sessions = state.sessions;
-  const orderedDocumentIds = useMemo(() => documentOrder.threads.map((thread) => thread.id), [documentOrder.threads]);
-  const sortedSessions = useMemo(() => sortSessions(Object.values(sessions?.items ?? {}), documentSort, orderedDocumentIds),
-    [sessions?.items, documentSort, orderedDocumentIds]);
+  const orderedSpaces = useMemo(() => orderSpaces(sessions), [sessions]);
   const [sessionsRequest, setSessionsRequest] = useState(0);
   useSessionAutoNames({ userId: user.id, enabled: jevEnabled, sessions, conversations: state.conversations,
     onName: (sessionId, nameKey, name) => setState((current) => applySessionAutoName(current, sessionId, nameKey, name)) });
@@ -1736,6 +1767,32 @@ function WorkspaceAppContent({
     }
     document.addEventListener("keydown", handleSidebarShortcut, true);
     return () => document.removeEventListener("keydown", handleSidebarShortcut, true);
+  }, []);
+
+  // ⌃1–⌃9 go to a space in its listed order, ⌃0 to No space; ⌘D keeps the visiting document in the space you're in.
+  const handleSpaceShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.altKey || event.shiftKey || event.isComposing) return false;
+    if (event.ctrlKey && !event.metaKey && /^[0-9]$/.test(event.key)) {
+      const digit = Number(event.key);
+      const target = digit === 0 ? null : orderedSpaces[digit - 1]?.id;
+      if (target === undefined) return false;
+      if (!event.repeat) handleSwitchSession(target);
+      return true;
+    }
+    const isKeep = (event.metaKey || event.ctrlKey) && !(event.metaKey && event.ctrlKey) && event.key.toLowerCase() === "d";
+    if (isKeep && activeSpace && visitorRootIds.includes(activeRootId)) {
+      if (!event.repeat) handleKeepInSpace(activeRootId);
+      return true;
+    }
+    return false;
+  });
+  useEffect(() => {
+    function listener(event: KeyboardEvent) {
+      // Capture before editor keymaps; a keep or a switch also stops the browser's bookmark and tab shortcuts.
+      if (handleSpaceShortcut(event)) { event.preventDefault(); event.stopPropagation(); }
+    }
+    document.addEventListener("keydown", listener, true);
+    return () => document.removeEventListener("keydown", listener, true);
   }, []);
 
   useLayoutEffect(() => {
@@ -4303,35 +4360,98 @@ function WorkspaceAppContent({
     }
   }
 
-  /** Leave the active session as it is and pick up another where it was left. */
-  function handleSwitchSession(sessionId: string) {
+  /** Leave where you are as it is and go to a space, or to No space for null, where you left it. */
+  function handleSwitchSession(sessionId: string | null) {
     const current = currentStateRef.current;
-    if (current.sessions?.activeId === sessionId) return;
+    if ((current.sessions?.activeId ?? null) === sessionId) return;
     const { state: next, documentId } = switchSession(current, sessionId);
     if (next === current) return;
     currentStateRef.current = next;
+    setSpaceVisitors({ spaceId: sessionId, ids: [] });
+    joinNextFocusRef.current = false;
     setState(next);
     setMaximizedDocumentId(null);
+    // An empty space shows its start panel instead of a fresh, empty document.
     if (documentId) handleSelectConversation(documentId, { nextViewMode: "chat" });
-    // An empty session starts with a fresh document rather than borrowing the one on screen.
-    else handleCreateMainConversation();
+    else if (sessionId) setMainViewMode("chat");
   }
 
-  function handleCreateSession(name?: string) {
-    const { state: next } = createSession(currentStateRef.current, undefined, { name });
+  /** A new space, empty or holding `documentIds`, and you go into it. */
+  function handleCreateSession(name?: string, documentIds: string[] = []) {
+    const { state: next, sessionId } = createSession(currentStateRef.current, undefined, { name, documentIds });
     currentStateRef.current = next;
+    setSpaceVisitors({ spaceId: sessionId, ids: [] });
+    joinNextFocusRef.current = false;
     setState(next);
     setMaximizedDocumentId(null);
-    handleCreateMainConversation();
+    if (!documentIds.length) setMainViewMode("chat");
   }
 
   function handleDeleteSession(sessionId: string) {
-    const { state: next, switchTo } = deleteSession(currentStateRef.current, sessionId);
+    const { state: next, wasActive, documentId } = deleteSession(currentStateRef.current, sessionId);
     currentStateRef.current = next;
     setState(next);
-    if (switchTo) handleSwitchSession(switchTo);
-    else if (!next.sessions?.activeId) handleCreateSession();
+    if (!wasActive) return;
+    setSpaceVisitors({ spaceId: null, ids: [] });
+    if (documentId) handleSelectConversation(documentId, { nextViewMode: "chat" });
   }
+
+  /** Keep a visiting document, with its family, in the space you're in. */
+  function handleKeepInSpace(documentId: string) {
+    const spaceId = currentStateRef.current.sessions?.activeId;
+    if (spaceId) setState((current) => addDocumentsToSession(current, spaceId, [documentId]));
+  }
+
+  /** Add a document to a space or take it out, from its menu. The document stays in your vault either way. */
+  function handleToggleSpaceDocument(spaceId: string, documentId: string) {
+    const current = currentStateRef.current;
+    const space = current.sessions?.items[spaceId];
+    if (!space) return;
+    if (!isInSpace(space, current.conversations, documentId)) { setState((latest) => addDocumentsToSession(latest, spaceId, [documentId])); return; }
+    const rootId = getFamilyRootId(current.conversations, documentId);
+    // Taken out of the space you're in while it's on screen, it stays open as a visitor.
+    if (spaceId === current.sessions?.activeId && rootId === activeRootId) setSpaceVisitors((visitors) => ({ spaceId,
+      ids: [...(visitors.spaceId === spaceId ? visitors.ids.filter((id) => id !== rootId) : []), rootId] }));
+    setState((latest) => removeDocumentFromSession(latest, spaceId, documentId));
+  }
+
+  /**
+   * In a space, × on a main document's tab takes it out: a visitor closes and a kept document
+   * leaves the space (it stays in your vault). Side documents close as they always have.
+   */
+  function handleCloseTab(documentId: string) {
+    const space = activeSpace;
+    const rootId = getFamilyRootId(state.conversations, documentId);
+    if (!space || rootId !== documentId || pinnedDocumentIds.includes(documentId)) { handleCloseDocument(documentId); return; }
+    const rootTabs = [...spaceRootIds, ...visitorRootIds];
+    const index = rootTabs.indexOf(rootId);
+    if (visitorRootIds.includes(rootId)) setSpaceVisitors((visitors) => ({ ...visitors, ids: visitors.ids.filter((id) => id !== rootId) }));
+    else setState((current) => removeDocumentFromSession(current, space.id, rootId));
+    if (rootId !== activeRootId) return;
+    const remaining = rootTabs.filter((id) => id !== rootId);
+    const next = remaining[Math.min(index, remaining.length - 1)];
+    if (next) handleSelectConversation(next, { restorePath: false });
+  }
+
+  /** The documents picked on an empty space's start panel join it, and the first opens. */
+  function handleStartSpace(documentIds: string[]) {
+    const spaceId = currentStateRef.current.sessions?.activeId;
+    if (!spaceId || !documentIds.length) return;
+    const next = addDocumentsToSession(currentStateRef.current, spaceId, documentIds);
+    currentStateRef.current = next;
+    setState(next);
+    handleSelectConversation(documentIds[0], { nextViewMode: "chat" });
+  }
+
+  const spaceMenuActions: SpaceMenuActions = {
+    spaces: orderedSpaces,
+    isIn: (spaceId, documentId) => isInSpace(state.sessions?.items[spaceId], state.conversations, documentId),
+    onToggle: handleToggleSpaceDocument,
+    onCreateWith: (documentId) => {
+      handleCreateSession(undefined, [documentId]);
+      handleSelectConversation(documentId, { nextViewMode: "chat" });
+    },
+  };
 
   /** Move to a neighbour the way the navigator offers it: siblings take this pane's place, others focus. */
   function handleOpenNeighbor(conversationId: string, relation: NeighborRelation) {
@@ -4930,17 +5050,23 @@ function WorkspaceAppContent({
   }
 
 
-  /** Sessions as chips: at the left of the tabs row on a computer, the top of the drop-down on a phone. */
-  function renderSessionChips() {
-    return sessions ? <SessionChips sessions={sortedSessions} activeId={sessions.activeId} limit={isMobileViewport ? Infinity : 3}
-      onSelect={handleSwitchSession} onNew={() => handleCreateSession()}
-      onManage={() => { setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }} /> : null;
+  /** The space you're in: a pill at the left of the tabs on a computer, a list at the top of the drop-down on a phone. */
+  function renderSpaceSwitcher(inline = false) {
+    const openRootIds = [...new Set(spaceTabDocuments.map((document) => getFamilyRootId(state.conversations, document.id)))];
+    return <SpaceSwitcher inline={inline} spaces={orderedSpaces} activeId={sessions?.activeId ?? null} conversations={state.conversations}
+      openTabCount={showSpaceStart ? 0 : openRootIds.length}
+      onSwitch={(id) => { if (inline) setMobileHeaderOpen(false); handleSwitchSession(id); }}
+      onNew={(name) => { if (inline) setMobileHeaderOpen(false); handleCreateSession(name); }}
+      onNewFromTabs={() => { if (inline) setMobileHeaderOpen(false); handleCreateSession(undefined, openRootIds); }}
+      onManage={() => { setMobileHeaderOpen(false); setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }}
+      onDropDocument={handleKeepInSpace} />;
   }
 
   function renderSessionTabs(vertical = false) {
     return <>
-                    {vertical ? null : renderSessionChips()}
-                    <DocumentTabs vertical={vertical} documents={peerTabDocuments}
+                    {vertical ? null : renderSpaceSwitcher()}
+                    <DocumentTabs vertical={vertical} documents={spaceTabDocuments}
+                      visitingDocumentIds={visitingTabIds} onKeep={handleKeepInSpace}
                       groups={state.groups}
                       onAssignGroup={handleAssignConversationGroup}
                       onRename={handleRenameThread}
@@ -4953,7 +5079,7 @@ function WorkspaceAppContent({
                       canReorder={(draggedId, targetId) => familyDocumentIds.has(draggedId) && familyDocumentIds.has(targetId)}
                       onSelect={(id) => handleSelectConversation(id, { restorePath: false })}
                       onMinimize={handleMinimizeDocument}
-                      onClose={handleCloseDocument}
+                      onClose={handleCloseTab}
                       showCloseButtons
                       onNewSideDocument={() => handleAddSideChat(activeConversation.id)}
                       onReorder={(draggedId, targetId) => setState((current) => reorderDocument(current, draggedId, targetId))}
@@ -5358,6 +5484,7 @@ function WorkspaceAppContent({
   return (
     <VaultMediaContext.Provider value={vault.media}>
     <DocumentTitleSuggestionContext.Provider value={suggestDocumentTitle}>
+    <SpaceMenuContext.Provider value={spaceMenuActions}>
     <ConversationGroupPickerContext.Provider value={{
       getSuggestion: (conversationId) => {
         const match = jev.groupSuggestions[conversationId];
@@ -5465,7 +5592,7 @@ function WorkspaceAppContent({
               vaultSwitcher={<VaultSwitcher vault={vault} cloudSync={cloudSyncEnabled}
                 onOpenSettings={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }} />}
               documentOrder={documentOrder}
-              sessionsPanel={sessions ? <SessionsPanel sessions={sortedSessions} activeId={sessions.activeId}
+              sessionsPanel={<SpacesPanel spaces={orderedSpaces} activeId={sessions?.activeId ?? null}
                 conversations={state.conversations} focusedDocumentId={activeConversation.id}
                 onOpen={handleSwitchSession}
                 onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}
@@ -5473,7 +5600,7 @@ function WorkspaceAppContent({
                 onDelete={handleDeleteSession} onNew={(name) => handleCreateSession(name)}
                 onOpenDocument={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
                 showIntro={newVault}
-                onRemoveDocument={(sessionId, documentId) => setState((current) => removeDocumentFromSession(current, sessionId, documentId))} /> : undefined}
+                onRemoveDocument={handleToggleSpaceDocument} />}
               sessionsRequest={sessionsRequest}
               documentSort={documentSort}
               onDocumentSortChange={(sort) => { setDocumentSort(sort); saveSidebarDocumentSort(storageUserId, sort); }}
@@ -5675,7 +5802,8 @@ function WorkspaceAppContent({
                     aria-label="Document navigation" onKeyDown={(event) => {
                       if (event.key === "Escape" && isMobileViewport && mobileHeaderOpen) { event.stopPropagation(); setMobileHeaderOpen(false); }
                     }}>
-                  <div className="document-workspace-toolbar">
+                  <div className={`document-workspace-toolbar${activeSpace ? " is-in-space" : ""}`}
+                    style={activeSpace ? { "--space-color": activeSpace.color } as CSSProperties : undefined}>
                     {(!leftSidebarOpen || isMobileViewport) && <button
                       aria-label={leftSidebarOpen ? "Close chat sidebar" : "Open chat sidebar"}
                       aria-pressed={leftSidebarOpen}
@@ -5689,7 +5817,12 @@ function WorkspaceAppContent({
                       aria-controls="document-header-details" title={mobileHeaderOpen ? "Hide tabs and path" : "Show tabs, path and views"}
                       onClick={() => setMobileHeaderOpen((open) => !open)}>
                       <span className={`document-navigator-kind is-${getDocumentKind(activeConversation)}`} aria-hidden="true" />
-                      <span className="document-header-title-label">{activeConversation.title || "Untitled document"}</span>
+                      <span className="document-header-title-stack">
+                        {activeSpace ? <span className="document-header-space">
+                          {activeSpace.name}{showSpaceStart ? "" : visitorRootIds.includes(activeRootId) ? " · visiting" : ""}
+                        </span> : null}
+                        <span className="document-header-title-label">{showSpaceStart ? "Choose documents" : activeConversation.title || "Untitled document"}</span>
+                      </span>
                       <svg className="document-header-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
                     </button> : renderSessionTabs()}
                     <div className="document-workspace-actions">
@@ -5711,8 +5844,10 @@ function WorkspaceAppContent({
                     </div>
                   </div>
                   {isMobileViewport ? (mobileHeaderOpen ? <div id="document-header-details" className="document-header-details">
-                    {sessions ? <div className="document-header-section-label">Session</div> : null}
-                    {renderSessionChips()}
+                    <div className="document-header-section-label">Spaces</div>
+                    {renderSpaceSwitcher(true)}
+                    {activeSpace && visitorRootIds.includes(activeRootId) ? <button type="button" className="space-action"
+                      onClick={() => handleKeepInSpace(activeRootId)}>Keep {activeRootConversation.title || "Untitled document"} in {activeSpace.name}</button> : null}
                     <div className="document-header-section-label">Open documents{renderDocumentViewsMenu()}</div>
                     {renderSessionTabs(true)}
                     <div className="document-header-section-label">Path</div>
@@ -5724,7 +5859,7 @@ function WorkspaceAppContent({
                     {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
                     {navigationStyle === "outline" && documentNeighbors ? <DocumentTopicOutline neighbors={documentNeighbors}
                       onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
-                  </div> : null) : desktopHeaderOpen ? renderDocumentBreadcrumbs() : null}
+                  </div> : null) : desktopHeaderOpen && !showSpaceStart ? renderDocumentBreadcrumbs() : null}
                   </header>
                   {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
                   <div className="document-workspace-with-search" ref={documentAreaRef}>
@@ -5750,8 +5885,10 @@ function WorkspaceAppContent({
                       renderDocumentMenu={renderDocumentMenu}
                       renderDocumentControls={renderDocumentControls}
                     /> : null}>
+                  {showSpaceStart && activeSpace ? <SpaceStartPanel space={activeSpace} conversations={state.conversations}
+                    onOpen={handleStartSpace} onNewDocument={() => { joinNextFocusRef.current = true; handleCreateMainConversation(); }} /> : null}
                   <div className={`conversation-canvas is-tree-browser is-document-workspace${isResizingChatPanel ? " is-resizing-panel" : ""}`}
-                    aria-label="Documents side by side" ref={canvasRef} style={conversationCanvasStyle}>
+                    aria-label="Documents side by side" ref={canvasRef} style={showSpaceStart ? { ...conversationCanvasStyle, display: "none" } : conversationCanvasStyle}>
                     {scrollingDocuments.map((conversation) => <Fragment key={conversation.id}>
                       {renderExpandedTreeConversation(conversation)}
                       {renderDocumentMarginNotes(conversation)}
@@ -6092,6 +6229,7 @@ function WorkspaceAppContent({
       </div>
     </div>
     </ConversationGroupPickerContext.Provider>
+    </SpaceMenuContext.Provider>
     </DocumentTitleSuggestionContext.Provider>
     </VaultMediaContext.Provider>
   );

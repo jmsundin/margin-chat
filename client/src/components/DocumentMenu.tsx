@@ -6,6 +6,7 @@ import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { useSuggestedDocumentTitle } from "../lib/documentTitleSuggestion";
 import { ConversationGroupPickerContext } from "./ConversationGroupControls";
 import GroupPickerModal from "./GroupPickerModal";
+import { SpaceMenuContext } from "./Spaces";
 import "./DocumentMenu.css";
 
 export interface DocumentMenuProps {
@@ -60,6 +61,8 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
   const [agentEditOpen, setAgentEditOpen] = useState(false);
+  const [spacesOpen, setSpacesOpen] = useState(false);
+  const spaceActions = useContext(SpaceMenuContext);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
   const renameDialog = useRef<HTMLFormElement>(null);
@@ -96,7 +99,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, []);
 
-  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); } }, [open]);
+  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); setSpacesOpen(false); } }, [open]);
   useOutsideDismiss(open, () => close(), menu, trigger);
 
   useEffect(() => {
@@ -221,6 +224,23 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         </button> : null}
         {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
           onClick={() => action(onRevealInFolder)}>{`Show in ${fileManager}`}</button> : null}
+      </div> : null}
+      {spaceActions ? <div role="group" className="document-menu-section">
+        <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={spacesOpen}
+          title="Keep this document, with its side documents and notes, in a space you can come back to."
+          onClick={() => setSpacesOpen((value) => !value)}>
+          <span>Add to space</span>
+          <span className="document-menu-group-name">{spaceActions.spaces.filter((space) => spaceActions.isIn(space.id, conversation.id)).map((space) => space.name).join(", ")}</span>
+          <span aria-hidden="true">{spacesOpen ? "⌄" : "›"}</span>
+        </button>
+        {spacesOpen ? <div role="group" aria-label="Spaces" className="document-menu-choices">
+          {spaceActions.spaces.map((space) => <button key={space.id} type="button" role="menuitemcheckbox"
+            aria-checked={spaceActions.isIn(space.id, conversation.id)} onClick={() => { close(true); spaceActions.onToggle(space.id, conversation.id); }}>
+            <span className="document-menu-space"><span className="document-menu-space-dot" style={{ background: space.color }} aria-hidden="true" />{space.name}</span>
+            <span className="document-menu-check" aria-hidden="true">{spaceActions.isIn(space.id, conversation.id) ? "✓" : ""}</span>
+          </button>)}
+          <button type="button" role="menuitem" onClick={() => { close(true); spaceActions.onCreateWith(conversation.id); }}>New space with this</button>
+        </div> : null}
       </div> : null}
       {onNewMarginNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
         {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}

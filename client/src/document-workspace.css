@@ -106,12 +106,10 @@
   .document-workspace-header .document-workspace-actions { border-left: 0; }
   /* The drop-down sits over the text, so opening it doesn't move what you're reading. */
   .document-header-details { position: absolute; top: 100%; right: 0; left: 0; display: flex; flex-direction: column; gap: 8px; max-height: calc(100dvh - 120px); padding: 8px 8px 12px; overflow-y: auto; border-bottom: 1px solid var(--line-strong); border-radius: 0 0 14px 14px; background: var(--panel); box-shadow: 0 14px 28px #0002; }
-  /* The session gets the full width; its tabs follow as a list with whole titles, one per row. */
+  /* The spaces get the full width; its tabs follow as a list with whole titles, one per row. */
   .document-header-section-label { display: flex; align-items: center; justify-content: space-between; min-height: 28px; padding: 4px 8px 0; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
   .document-header-section-label > * { color: var(--ink); font-size: 13px; font-weight: 400; letter-spacing: normal; text-transform: none; }
-  .document-header-section-label + .session-chips { padding: 0 4px; }
-  .document-header-details > .session-chips { flex: none; }
-  .document-header-details .session-chip { height: 36px; padding: 0 14px; font-size: 14px; }
+  .document-header-details > .space-switcher { flex: none; }
   .document-header-details > .document-tabs-container.is-vertical { border: 0; background: transparent; }
   /* Many tabs scroll inside their own list, so the path and views below stay in reach. */
   .document-tabs-container.is-vertical .document-tabs { flex-direction: column; align-items: stretch; gap: 2px; max-height: 38dvh; padding: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
@@ -149,7 +147,7 @@
   background: var(--panel);
 }
 .document-workspace-toolbar > .workspace-menu-button { flex: 0 0 36px; }
-.document-workspace-toolbar > .session-chips { flex: 0 1 auto; max-width: 40%; margin: 0 6px 0 4px; }
+.document-workspace-toolbar > .space-switcher { margin: 0 4px; }
 .document-workspace-toolbar > .document-tabs-container { flex: 1; min-width: 0; border-bottom: 0; }
 .document-workspace-toolbar .document-tabs { padding: 4px 4px 0; }
 .document-workspace-actions { display: flex; align-items: center; flex: 0 0 auto; gap: 4px; padding-left: 6px; border-left: 1px solid var(--line); }

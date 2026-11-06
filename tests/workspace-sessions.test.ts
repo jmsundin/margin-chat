@@ -9,8 +9,8 @@ import { hasSameAuthoredState } from "../client/src/lib/vaultWorkspace";
 import { getDocumentNeighbors } from "../client/src/lib/documentNeighbors";
 import { buildSessionNamePrompt } from "../client/src/lib/useSessionAutoNames";
 import {
-  addDocumentsToSession, applySessionAutoName, createSession, deleteSession, describeSession, duplicateSession, ensureSessions,
-  getActiveSession, placeSessionTab, recordSessionDocument, removeDocumentFromSession, removeSessionTab, renameSession, sortSessions, switchSession,
+  addDocumentsToSession, applySessionAutoName, createSession, deleteSession, describeSession, duplicateSession,
+  getActiveSession, getSpaceRootIds, isInSpace, orderSpaces, placeSessionTab, removeDocumentFromSession, renameSession, sortSessions, switchSession,
 } from "../client/src/lib/workspaceSessions";
 import { addChildConversation } from "../client/src/lib/workspaceCommands";
 
@@ -29,79 +29,88 @@ function fixture(): AppState {
   return { ...state, activeConversationId: root.id };
 }
 
-describe("sessions", () => {
-  test("a workspace's open documents become its first session in the tab bar", () => {
+describe("spaces", () => {
+  test("nothing joins a space by being looked at; you start in No space", () => {
     const state = fixture();
-    const next = ensureSessions(state, [state.rootId, "guards"], now);
-    const session = getActiveSession(next)!;
-    expect(next.sessions!.tabIds).toEqual([session.id]);
-    expect(session.documentIds).toEqual([state.rootId, "guards"]);
-    expect(session.name).toBe("Angular");
-    expect(ensureSessions(next, [], later)).toBe(next);
+    expect(getActiveSession(state)).toBeNull();
+    const created = createSession(state, now);
+    expect(getActiveSession(created.state)!.documentIds).toEqual([]);
+    expect(getActiveSession(created.state)!.name).toBe("New space");
+    // Focusing another document changes nothing about the space.
+    const focused = { ...created.state, activeConversationId: "system" };
+    expect(getActiveSession(focused)!.documentIds).toEqual([]);
   });
 
-  test("focused documents join the active session and the automatic name follows its families", () => {
-    let state = ensureSessions(fixture(), [], now);
+  test("documents join on purpose, with their family, and a name is written once", () => {
+    let state = createSession(fixture(), now).state;
+    const id = state.sessions!.activeId!;
     const rootId = state.rootId;
-    state = recordSessionDocument(state, "system");
-    expect(getActiveSession(state)!.name).toBe("Angular & System design interview");
-    expect(recordSessionDocument(state, "system")).toBe(state);
-    // A child joins without changing which families the session holds.
-    const nameKey = getActiveSession(state)!.nameKey!;
-    state = recordSessionDocument(state, "guards");
-    expect(getActiveSession(state)!.nameKey).toBe(nameKey);
-    // Margin notes travel with their document instead of joining on their own.
-    const note = createMarginDocument(state.conversations[rootId], { id: "note", content: "Check", createdAt: now, updatedAt: now }, "note");
-    state = addChildConversation(state, note);
-    expect(recordSessionDocument(state, "note")).toBe(state);
-    // An AI name applies only while the same documents are in the session.
-    const id = getActiveSession(state)!.id;
-    expect(getActiveSession(applySessionAutoName(state, id, nameKey, "“Frontend interview prep.”"))!.name).toBe("Frontend interview prep");
+    // Adding a side document adds its main document, which brings the family along.
+    state = addDocumentsToSession(state, id, ["guards"]);
+    expect(state.sessions!.items[id].documentIds).toEqual([rootId]);
+    expect(isInSpace(state.sessions!.items[id], state.conversations, "guards")).toBe(true);
+    expect(state.sessions!.items[id].name).toBe("Angular");
+    expect(addDocumentsToSession(state, id, [rootId])).toBe(state);
+    const nameKey = state.sessions!.items[id].nameKey!;
+    // Later additions keep the name it already has.
+    state = addDocumentsToSession(state, id, ["system"]);
+    expect(state.sessions!.items[id].name).toBe("Angular");
+    expect(getSpaceRootIds(state.sessions!.items[id], state.conversations)).toEqual([rootId, "system"]);
+    // An AI name applies only for the documents it was written for, and never over a rename.
+    expect(state.sessions!.items[id].nameKey).toBe(nameKey);
+    expect(applySessionAutoName(state, id, nameKey, "“Frontend interview prep.”").sessions!.items[id].name).toBe("Frontend interview prep");
     expect(applySessionAutoName(state, id, "stale", "Old")).toBe(state);
     expect(applySessionAutoName(renameSession(state, id, "Mine"), id, nameKey, "AI")).toEqual(renameSession(state, id, "Mine"));
     expect(describeSession({ documentIds: [rootId, "system", "taxes"] }, state.conversations)).toBe("Angular, System design interview +1");
+    // Removing a side document takes its whole family out; the documents stay.
+    state = removeDocumentFromSession(state, id, "guards");
+    expect(state.sessions!.items[id].documentIds).toEqual(["system"]);
+    expect(state.conversations.guards).toBeDefined();
   });
 
-  test("switching keeps each session's place and layout; new sessions start empty", () => {
-    let state = ensureSessions(fixture(), [], now);
-    const first = state.sessions!.activeId!;
-    state = { ...state, activeConversationId: "guards", documentDock: { width: .4, tree: { type: "pane", documentId: "taxes" } } };
-    const created = createSession(state, later);
+  test("a new space can start from the open tabs", () => {
+    const created = createSession(fixture(), now, { documentIds: ["guards", "taxes", "missing"] });
+    expect(getActiveSession(created.state)!.documentIds).toEqual([created.state.rootId, "taxes"]);
+    expect(getActiveSession(created.state)!.name).toBe("Angular & Taxes 2026");
+  });
+
+  test("switching keeps each place, including No space, and visitors never become a space's place", () => {
+    let state = { ...fixture(), activeConversationId: "taxes", documentDock: { width: .4, tree: { type: "pane" as const, documentId: "system" } } };
+    const created = createSession(state, later, { documentIds: ["guards"] });
     state = created.state;
-    expect(state.sessions!.activeId).toBe(created.sessionId);
-    expect(state.sessions!.tabIds).toEqual([first, created.sessionId]);
+    const space = created.sessionId;
+    expect(state.sessions!.home).toEqual({ activeDocumentId: "taxes", documentDock: { width: .4, tree: { type: "pane", documentId: "system" } } });
     expect(state.documentDock).toBeUndefined();
-    expect(state.sessions!.items[first].activeDocumentId).toBe("guards");
-    state = recordSessionDocument({ ...state, activeConversationId: "taxes" }, "taxes");
-    const back = switchSession(state, first, later);
+    // Focus a visitor, then leave: the space remembers its own document, not the visitor.
+    state = { ...state, activeConversationId: "guards" };
+    state = switchSession(state, null, later).state;
+    state = switchSession({ ...state, activeConversationId: "system" }, space, later).state;
+    const visiting = { ...state, activeConversationId: "taxes" };
+    const home = switchSession(visiting, null, later);
+    expect(home.documentId).toBe("system");
+    expect(home.state.sessions!.items[space].activeDocumentId).toBe("guards");
+    expect(home.state.sessions!.activeId).toBeNull();
+    const back = switchSession(home.state, space, later);
     expect(back.documentId).toBe("guards");
-    expect(back.state.documentDock).toEqual({ width: .4, tree: { type: "pane", documentId: "taxes" } });
-    expect(back.state.sessions!.items[created.sessionId].activeDocumentId).toBe("taxes");
-    expect(switchSession(back.state, first, later).state).toBe(back.state);
+    expect(switchSession(back.state, space, later).state).toBe(back.state);
   });
 
-  test("tabs, rename, duplicate and delete never touch documents", () => {
-    let state = ensureSessions(fixture(), [], now);
-    const first = state.sessions!.activeId!;
-    const second = createSession(state, later, { name: "Taxes" });
-    state = addDocumentsToSession(second.state, second.sessionId, ["taxes", "missing"]);
-    expect(state.sessions!.items[second.sessionId]).toMatchObject({ name: "Taxes", nameSource: "user", documentIds: ["taxes"] });
-    state = placeSessionTab(state, second.sessionId, 0);
-    expect(state.sessions!.tabIds).toEqual([second.sessionId, first]);
-    const removed = removeSessionTab(state, second.sessionId);
-    expect(removed.switchTo).toBe(first);
-    expect(removed.state.sessions!.items[second.sessionId]).toBeDefined();
-    expect(removeSessionTab(removed.state, first).switchTo).toBeNull();
-    state = duplicateSession(removed.state, second.sessionId, later);
+  test("rename, duplicate and delete never touch documents; deleting the space you're in returns to No space", () => {
+    let state = createSession({ ...fixture(), activeConversationId: "taxes" }, now, { name: "Taxes", documentIds: ["taxes"] }).state;
+    const id = state.sessions!.activeId!;
+    expect(state.sessions!.items[id]).toMatchObject({ name: "Taxes", nameSource: "user", documentIds: ["taxes"] });
+    const second = createSession(state, later, { name: "Other" });
+    state = placeSessionTab(second.state, second.sessionId, 0);
+    expect(orderSpaces(state.sessions).map((space) => space.id)).toEqual([second.sessionId, id]);
+    state = duplicateSession(state, id, later);
     expect(Object.values(state.sessions!.items).filter((session) => session.name === "Taxes copy")).toHaveLength(1);
-    state = removeDocumentFromSession(state, second.sessionId, "taxes");
-    expect(state.sessions!.items[second.sessionId].documentIds).toEqual([]);
-    expect(deleteSession(state, first).switchTo).toBeNull();
-    const deleted = deleteSession(state, second.sessionId);
+    const deleted = deleteSession(state, second.sessionId, later);
+    expect(deleted.wasActive).toBe(true);
+    expect(deleted.state.sessions!.activeId).toBeNull();
     expect(deleted.state.sessions!.items[second.sessionId]).toBeUndefined();
-    expect(deleted.switchTo).toBe(first);
+    expect(deleted.documentId).toBe("taxes");
     expect(Object.keys(deleted.state.conversations).sort()).toEqual(Object.keys(state.conversations).sort());
-    expect(renameSession(state, second.sessionId, "  ").sessions!.items[second.sessionId].nameSource).toBe("auto");
+    expect(renameSession(state, id, "  ").sessions!.items[id].nameSource).toBe("auto");
   });
 
   test("sessions sort like the sidebar's documents", () => {
@@ -114,23 +123,27 @@ describe("sessions", () => {
     expect(sortSessions(sessions, "semantic", ["x", "z", "y"]).map((session) => session.id)).toEqual(["a", "b"]);
   });
 
-  test("sessions survive local, workspace and Markdown round trips and drop what no longer exists", () => {
-    const state = recordSessionDocument(ensureSessions(fixture(), [], now), "system");
+  test("spaces survive local, workspace and Markdown round trips and drop what no longer exists", () => {
+    let state = createSession(fixture(), now, { documentIds: ["system"] }).state;
+    state = switchSession(state, null, later).state;
+    state = switchSession(state, Object.keys(state.sessions!.items)[0], later).state;
     const markdown = createMarkdownWorkspace(state);
     for (const restored of [hydratePersistedState(state), createAppStateFromWorkspaceDocument(createWorkspaceDocument(state)),
       parseMarkdownWorkspace(markdown.manifest, markdown.files)]) {
       expect(restored?.sessions).toEqual(state.sessions);
     }
+    expect(state.sessions!.home).toBeDefined();
     expect(hasSameAuthoredState(state, renameSession(state, state.sessions!.activeId!, "Renamed"))).toBe(false);
     const broken = normalizeWorkspaceSessions({ items: { s: { id: "s", name: "", color: "red", documentIds: ["system", "gone", 4] },
       wrong: { id: "other" } }, tabIds: ["s", "missing"], activeId: "missing" }, state.conversations)!;
     expect(broken.items.s).toMatchObject({ name: "Untitled session", color: "#0d7a6f", documentIds: ["system"], nameSource: "auto" });
     expect(broken.items.wrong).toBeUndefined();
     expect(broken).toMatchObject({ tabIds: ["s"], activeId: null });
+    expect(broken.home).toBeUndefined();
     expect(normalizeWorkspaceSessions("nope", state.conversations)).toBeUndefined();
   });
 
-  test("AI names are asked for only when a session mixes document families", () => {
+  test("AI names are asked for only when a space mixes document families", () => {
     const state = fixture();
     expect(buildSessionNamePrompt([state.rootId, "guards"], state.conversations)).toBe("");
     expect(buildSessionNamePrompt([state.rootId, "system"], state.conversations)).toContain("- System design interview");

@@ -33,7 +33,20 @@ export function normalizeWorkspaceSessions(input, conversations) {
   const tabIds = [...new Set(Array.isArray(input.tabIds) ? input.tabIds : [])]
     .filter((id) => typeof id === "string" && Object.hasOwn(items, id));
   const activeId = typeof input.activeId === "string" && Object.hasOwn(items, input.activeId) ? input.activeId : null;
-  return { items, tabIds, activeId };
+  const home = normalizePlace(input.home, conversations);
+  return { items, tabIds, activeId, ...(home ? { home } : {}) };
+}
+
+/** Where "No space" was left: the focused document and its pinned panes. */
+function normalizePlace(input, conversations) {
+  if (!isRecord(input)) return undefined;
+  const documentDock = normalizeDocumentDock(input.documentDock, conversations);
+  const place = {
+    ...(typeof input.activeDocumentId === "string" && Object.hasOwn(conversations, input.activeDocumentId)
+      ? { activeDocumentId: input.activeDocumentId } : {}),
+    ...(documentDock ? { documentDock } : {}),
+  };
+  return Object.keys(place).length ? place : undefined;
 }
 
 function validDate(value) {

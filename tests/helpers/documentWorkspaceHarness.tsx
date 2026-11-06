@@ -179,7 +179,7 @@ try {
   assert.equal(focusedCrumbLabel(), "Main research");
   assert.equal(element('[aria-label="New side document"]').closest(".document-tabs")?.closest(".document-workspace-toolbar"), element(".document-workspace-toolbar"),
     "New side document sits in the toolbar's document tabs.");
-  assert.equal(element(".session-chips").nextElementSibling, element(".document-tabs-container"), "The session chips sit at the top left, before the document tabs.");
+  assert.equal(element(".space-switcher").nextElementSibling, element(".document-tabs-container"), "The space pill sits at the top left, before the document tabs.");
   assert.equal(container.querySelector('.thread-sidebar [aria-label="New side document"]'), null);
   const initialEditor = editor(mainId);
   const contentBeforeSidebarShortcuts = structuredClone(latest.conversations[mainId].document);

@@ -5,11 +5,9 @@ import { completedStarterTasks, seedStarterDocument, STARTER_TITLE } from "../cl
 import { getDocumentGraphEdges } from "../client/src/lib/documentRelations";
 import { onDevicePromptLimit, ON_DEVICE_PROMPT_CHARACTERS } from "../client/src/lib/onDeviceAI";
 import { getEditableDocument } from "../client/src/lib/editableDocument";
-import { ensureSessions } from "../client/src/lib/workspaceSessions";
 
 const at = "2026-10-27T03:00:00.000Z";
-// The workspace has its first session by the time the trial adds the examples.
-const trial = () => addExampleVault(ensureSessions(seedStarterDocument(createEmptyState(), at), [], at), at);
+const trial = () => addExampleVault(seedStarterDocument(createEmptyState(), at), at);
 
 describe("trial example vault", () => {
   test("adds linked documents, groups, margin notes, side documents, AI answers and a second session", () => {

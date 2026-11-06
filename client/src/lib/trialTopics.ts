@@ -108,7 +108,7 @@ const storyId = (topic: TrialTopic, index: number) => `${TOPIC_ID_PREFIX}${topic
 // A minute apart, so lists that sort by recency show the topics in the job's order.
 const stamp = (content: TrialTopics, topicIndex: number) => new Date(Date.parse(content.generatedAt) - topicIndex * 60_000).toISOString();
 
-/** One Group and one Session per topic: an overview document linking to a document per story. */
+/** One Group and one Space per topic: an overview document linking to a document per story. */
 export function addTrialTopics(state: AppState, content: TrialTopics): AppState {
   const day = new Date(content.generatedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
   const conversations = { ...state.conversations };
@@ -157,10 +157,13 @@ export function addTrialTopics(state: AppState, content: TrialTopics): AppState 
     next = addExampleChild(next, { kind: "ai", id: `${parentId}-answer`, parentId, block, quote: question.quote,
       question: question.question, answer: question.answer }, at);
   });
-  // Topic sessions wait in the Sessions panel; only the first two sessions keep their tabs.
-  if (next.sessions && Object.keys(sessions).length) next = { ...next, sessions: { ...next.sessions, items: { ...next.sessions.items, ...sessions } } };
+  // Topic spaces are listed after the ones you made.
+  if (Object.keys(sessions).length) {
+    const existing = next.sessions ?? { items: {}, tabIds: [], activeId: null };
+    next = { ...next, sessions: { ...existing, items: { ...existing.items, ...sessions } } };
+  }
   const added = content.topics.filter((topic) => !state.conversations[`${TOPIC_ID_PREFIX}${topic.id}`]);
   if (added.length) next = addStartHereLine(next, "topics", `Today's news is here too, as short stories with their sources: ${
-    added.map((topic) => `[[${topic.name}]]`).join(", ")}. Each topic is a Group and a Session.`, content.generatedAt);
+    added.map((topic) => `[[${topic.name}]]`).join(", ")}. Each topic is a Group and a Space.`, content.generatedAt);
   return next;
 }

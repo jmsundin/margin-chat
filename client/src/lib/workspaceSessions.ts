@@ -51,14 +51,15 @@ function shortTitle(title: string) {
 export function describeSession(session: Pick<WorkspaceSession, "documentIds">, conversations: Record<string, Conversation>) {
   const titles = getSessionRootDocuments(session, conversations)
     .map((root) => root.title.trim()).filter((title) => title && title !== "Untitled document");
-  if (!titles.length) return "New session";
+  if (!titles.length) return "New space";
   if (titles.length === 1) return shortTitle(titles[0]);
   if (titles.length === 2) return `${shortTitle(titles[0])} & ${shortTitle(titles[1])}`;
   return `${shortTitle(titles[0])}, ${shortTitle(titles[1])} +${titles.length - 2}`;
 }
 
+/** An automatic name is written once, when the first documents arrive, and then holds still. */
 function withAutoName(session: WorkspaceSession, conversations: Record<string, Conversation>): WorkspaceSession {
-  if (session.nameSource !== "auto") return session;
+  if (session.nameSource !== "auto" || session.nameKey) return session;
   const nameKey = getSessionNameKey(session, conversations);
   if (session.nameKey === nameKey) return session;
   return { ...session, name: describeSession(session, conversations), nameKey };
@@ -68,53 +69,48 @@ function sessionDocumentIds(ids: Iterable<string>, conversations: Record<string,
   return [...new Set(ids)].filter((id) => conversations[id] && !isCompactDocument(conversations[id]));
 }
 
-/**
- * Give a workspace its first session: the documents already open become one
- * session in the tab bar, so nothing disappears when sessions arrive.
- */
-export function ensureSessions(state: AppState, openDocumentIds: string[], now = new Date().toISOString()): AppState {
-  const sessions = state.sessions;
-  if (sessions && Object.keys(sessions.items).length) {
-    if (sessions.activeId && sessions.items[sessions.activeId]) return state;
-    const fallback = sessions.tabIds[0] ?? sortSessions(Object.values(sessions.items), "recent", [])[0]?.id;
-    return { ...state, sessions: { ...sessions, activeId: fallback ?? null,
-      tabIds: sessions.tabIds.length || !fallback ? sessions.tabIds : [fallback] } };
-  }
-  const base = sessions ?? emptySessions();
-  const id = `session-${crypto.randomUUID()}`;
-  const documentIds = sessionDocumentIds([...openDocumentIds, state.activeConversationId], state.conversations);
-  const session = withAutoName({
-    id, name: "New session", nameSource: "auto", color: SESSION_COLORS[0], documentIds,
-    ...(state.conversations[state.activeConversationId] ? { activeDocumentId: state.activeConversationId } : {}),
-    createdAt: now, lastOpenedAt: now,
-  }, state.conversations);
-  return { ...state, sessions: { items: { ...base.items, [id]: session }, tabIds: [id], activeId: id } };
+/** The main document a document belongs to; side documents and notes travel with it. */
+export function getFamilyRootId(conversations: Record<string, Conversation>, documentId: string) {
+  return getConversationPath(conversations, documentId)[0]?.id ?? documentId;
 }
 
-/** A document focused while a session is active joins it. Returns the same state when nothing changes. */
-export function recordSessionDocument(state: AppState, documentId: string): AppState {
-  const session = getActiveSession(state);
-  const document = state.conversations[documentId];
-  if (!session || !document || isCompactDocument(document) || session.documentIds.includes(documentId)) return state;
-  const next = withAutoName({ ...session, documentIds: [...session.documentIds, documentId] }, state.conversations);
-  return { ...state, sessions: { ...state.sessions!, items: { ...state.sessions!.items, [session.id]: next } } };
+/** Main documents in a space, in the order they were added. */
+export function getSpaceRootIds(session: Pick<WorkspaceSession, "documentIds"> | null | undefined, conversations: Record<string, Conversation>) {
+  return session ? getSessionRootDocuments(session, conversations).map((root) => root.id) : [];
+}
+
+export function isInSpace(session: Pick<WorkspaceSession, "documentIds"> | null | undefined, conversations: Record<string, Conversation>, documentId: string) {
+  if (!session || !conversations[documentId]) return false;
+  const rootId = getFamilyRootId(conversations, documentId);
+  return session.documentIds.some((id) => getFamilyRootId(conversations, id) === rootId);
+}
+
+/** Spaces in their fixed order: the order you made or arranged them, which ⌃1–⌃9 follow. */
+export function orderSpaces(sessions: WorkspaceSessions | undefined) {
+  if (!sessions) return [];
+  const listed = sessions.tabIds.map((id) => sessions.items[id]).filter(Boolean);
+  const rest = Object.values(sessions.items).filter((session) => !sessions.tabIds.includes(session.id))
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.name.localeCompare(right.name));
+  return [...listed, ...rest];
 }
 
 /** Add documents to a session that is not necessarily active, as dropping documents on its tab does. */
 export function addDocumentsToSession(state: AppState, sessionId: string, documentIds: string[]): AppState {
   const session = state.sessions?.items[sessionId];
   if (!session) return state;
-  const added = sessionDocumentIds(documentIds, state.conversations).filter((id) => !session.documentIds.includes(id));
+  const added = [...new Set(sessionDocumentIds(documentIds, state.conversations).map((id) => getFamilyRootId(state.conversations, id)))]
+    .filter((id) => !isInSpace(session, state.conversations, id));
   if (!added.length) return state;
   const next = withAutoName({ ...session, documentIds: [...session.documentIds, ...added] }, state.conversations);
   return { ...state, sessions: { ...state.sessions!, items: { ...state.sessions!.items, [sessionId]: next } } };
 }
 
-/** Takes a document out of a session; the document itself stays in the vault. */
+/** Takes a document and its family out of a space; the documents themselves stay in the vault. */
 export function removeDocumentFromSession(state: AppState, sessionId: string, documentId: string): AppState {
   const session = state.sessions?.items[sessionId];
-  if (!session?.documentIds.includes(documentId)) return state;
-  const documentIds = session.documentIds.filter((id) => id !== documentId);
+  if (!session || !isInSpace(session, state.conversations, documentId)) return state;
+  const rootId = getFamilyRootId(state.conversations, documentId);
+  const documentIds = session.documentIds.filter((id) => id !== documentId && getFamilyRootId(state.conversations, id) !== rootId);
   const next = withAutoName({ ...session, documentIds,
     ...(session.activeDocumentId === documentId ? { activeDocumentId: documentIds.at(-1) } : {}) }, state.conversations);
   if (!next.activeDocumentId) delete next.activeDocumentId;
@@ -122,41 +118,52 @@ export function removeDocumentFromSession(state: AppState, sessionId: string, do
 }
 
 /**
- * Leave the active session as it is now and make `targetId` active. The caller
- * then focuses the returned document, which restores that session's place.
+ * Leave where you are as it is now and go to `targetId`, or to "No space" for
+ * null. The caller then focuses the returned document, which restores that
+ * place; null means the space is empty and shows its start panel.
  */
-export function switchSession(state: AppState, targetId: string, now = new Date().toISOString()): { state: AppState; documentId: string | null } {
-  const sessions = state.sessions;
-  const target = sessions?.items[targetId];
-  if (!sessions || !target) return { state, documentId: null };
+export function switchSession(state: AppState, targetId: string | null, now = new Date().toISOString()): { state: AppState; documentId: string | null } {
+  const sessions = state.sessions ?? emptySessions();
+  const target = targetId ? sessions.items[targetId] : null;
+  if (targetId && !target) return { state, documentId: null };
+  if (sessions.activeId === targetId) return { state, documentId: (target ? target.activeDocumentId : sessions.home?.activeDocumentId) ?? null };
+  const focused = state.conversations[state.activeConversationId] && !isCompactDocument(state.conversations[state.activeConversationId])
+    ? state.activeConversationId : undefined;
   const items = { ...sessions.items };
+  let home = sessions.home;
   const current = sessions.activeId ? items[sessions.activeId] : undefined;
-  if (current && current.id !== targetId) {
-    const left: WorkspaceSession = { ...current, ...(state.conversations[state.activeConversationId] && !isCompactDocument(state.conversations[state.activeConversationId])
-      ? { activeDocumentId: state.activeConversationId } : {}) };
+  if (current) {
+    // Only a document in the space is its place; a visitor closes when you leave.
+    const left: WorkspaceSession = { ...current };
+    if (focused && isInSpace(current, state.conversations, focused)) left.activeDocumentId = focused;
     if (state.documentDock) left.documentDock = state.documentDock; else delete left.documentDock;
     items[current.id] = left;
+  } else {
+    home = { ...(focused ? { activeDocumentId: focused } : {}), ...(state.documentDock ? { documentDock: state.documentDock } : {}) };
   }
-  if (current?.id === targetId) return { state, documentId: target.activeDocumentId ?? null };
-  items[targetId] = { ...target, lastOpenedAt: now };
-  const documentId = [target.activeDocumentId, ...[...target.documentIds].reverse()]
-    .find((id): id is string => Boolean(id && state.conversations[id])) ?? null;
+  if (target) items[target.id] = { ...target, lastOpenedAt: now };
+  const place = target ?? home;
+  const documentId = target
+    ? [target.activeDocumentId, ...[...target.documentIds].reverse()].find((id): id is string => Boolean(id && state.conversations[id] && isInSpace(target, state.conversations, id))) ?? null
+    : home?.activeDocumentId && state.conversations[home.activeDocumentId] ? home.activeDocumentId : null;
   const { documentDock: _dock, ...rest } = state;
+  const nextSessions: WorkspaceSessions = { ...sessions, items, activeId: targetId,
+    tabIds: !targetId || sessions.tabIds.includes(targetId) ? sessions.tabIds : [...sessions.tabIds, targetId] };
+  if (home) nextSessions.home = home; else delete nextSessions.home;
   return {
-    state: { ...rest, ...(target.documentDock ? { documentDock: target.documentDock } : {}),
-      sessions: { ...sessions, items, activeId: targetId,
-        tabIds: sessions.tabIds.includes(targetId) ? sessions.tabIds : [...sessions.tabIds, targetId] } },
+    state: { ...rest, ...(place?.documentDock ? { documentDock: place.documentDock } : {}), sessions: nextSessions },
     documentId,
   };
 }
 
-/** A new, empty session; it joins the tab bar and becomes active. */
-export function createSession(state: AppState, now = new Date().toISOString(), options: { name?: string; atTabIndex?: number } = {}): { state: AppState; sessionId: string } {
+/** A new space, empty or holding `documentIds`; it joins the end of the list and you go into it. */
+export function createSession(state: AppState, now = new Date().toISOString(), options: { name?: string; atTabIndex?: number; documentIds?: string[] } = {}): { state: AppState; sessionId: string } {
   const sessions = state.sessions ?? emptySessions();
   const id = `session-${crypto.randomUUID()}`;
   const name = options.name?.trim().slice(0, 120);
-  const session: WorkspaceSession = { id, name: name || "New session", nameSource: name ? "user" : "auto",
-    color: nextColor(sessions), documentIds: [], createdAt: now, lastOpenedAt: now };
+  const documentIds = [...new Set(sessionDocumentIds(options.documentIds ?? [], state.conversations).map((documentId) => getFamilyRootId(state.conversations, documentId)))];
+  const session: WorkspaceSession = withAutoName({ id, name: name || "New space", nameSource: name ? "user" : "auto",
+    color: nextColor(sessions), documentIds, createdAt: now, lastOpenedAt: now }, state.conversations);
   const tabIds = [...sessions.tabIds];
   tabIds.splice(options.atTabIndex ?? tabIds.length, 0, id);
   const withSession = { ...state, sessions: { ...sessions, items: { ...sessions.items, [id]: session }, tabIds } };
@@ -219,20 +226,15 @@ export function removeSessionTab(state: AppState, sessionId: string): { state: A
   return { state: { ...state, sessions: { ...sessions, tabIds } }, switchTo };
 }
 
-/** Deleting a session forgets its list and layout; its documents stay in the vault. */
-export function deleteSession(state: AppState, sessionId: string): { state: AppState; switchTo: string | null } {
-  const sessions = state.sessions;
-  if (!sessions?.items[sessionId]) return { state, switchTo: null };
+/** Deleting a space forgets its list and layout; its documents stay in the vault. Deleting the one you're in returns you to No space. */
+export function deleteSession(state: AppState, sessionId: string, now = new Date().toISOString()): { state: AppState; wasActive: boolean; documentId: string | null } {
+  if (!state.sessions?.items[sessionId]) return { state, wasActive: false, documentId: null };
+  const wasActive = state.sessions.activeId === sessionId;
+  const left = wasActive ? switchSession(state, null, now) : { state, documentId: null };
+  const sessions = left.state.sessions!;
   const { [sessionId]: _deleted, ...items } = sessions.items;
-  const index = sessions.tabIds.indexOf(sessionId);
-  let tabIds = sessions.tabIds.filter((id) => id !== sessionId);
-  let switchTo: string | null = null;
-  if (sessions.activeId === sessionId) {
-    switchTo = tabIds[Math.max(0, Math.min(index, tabIds.length - 1))]
-      ?? sortSessions(Object.values(items), "recent", [])[0]?.id ?? null;
-    if (switchTo && !tabIds.includes(switchTo)) tabIds = [switchTo];
-  }
-  return { state: { ...state, sessions: { items, tabIds, activeId: sessions.activeId === sessionId ? null : sessions.activeId } }, switchTo };
+  return { state: { ...left.state, sessions: { ...sessions, items, tabIds: sessions.tabIds.filter((id) => id !== sessionId) } },
+    wasActive, documentId: left.documentId };
 }
 
 /**

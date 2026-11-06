@@ -349,7 +349,7 @@ export interface WorkspaceSession {
   /** The documents an automatic name was written for, so it is only renamed when they change. */
   nameKey?: string;
   color: string;
-  /** Documents that joined the session, oldest first. */
+  /** Documents you added to the space, oldest first. Their side documents and notes come with them. */
   documentIds: string[];
   /** The document that was focused when the session was last left. */
   activeDocumentId?: string;
@@ -361,9 +361,12 @@ export interface WorkspaceSession {
 
 export interface WorkspaceSessions {
   items: Record<string, WorkspaceSession>;
-  /** Sessions shown in the tab bar, left to right. Others live only in the Sessions panel. */
+  /** The order spaces are listed in and numbered by (⌃1–⌃9), left to right. Older spaces may be missing. */
   tabIds: string[];
+  /** The space you're in, or null for "No space". */
   activeId: string | null;
+  /** Where "No space" was left, so returning to it puts you back there. */
+  home?: { activeDocumentId?: string; documentDock?: DocumentDockLayout };
 }
 
 export type DocumentRelationTypeId =
