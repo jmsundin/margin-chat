@@ -65,6 +65,8 @@ import {
 import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
 import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem } from "./components/DocumentMargin";
 import NotebookCustomise from "./components/NotebookCustomise";
+import NoteChatPanel from "./components/NoteChatPanel";
+import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
 import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNode } from "./components/MinimizedChildNodes";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
@@ -1399,6 +1401,9 @@ function WorkspaceAppContent({
   const marginMarks = notebookPrefs.marginMode === "marks" || (isMobileViewport && quietPage);
   const [customiseOpen, setCustomiseOpen] = useState(false);
   const closeCustomise = useCallback(() => setCustomiseOpen(false), []);
+  /** The document whose Ask about this note panel is open. */
+  const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
+  const closeNoteChat = useCallback(() => setNoteChatFor(null), []);
   /** On a computer the quiet page puts the path, and tabs when there's more than one, on a single line. */
   const quietHeader = quietPage && !isMobileViewport;
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
@@ -3645,6 +3650,38 @@ function WorkspaceAppContent({
     });
   }
 
+  /**
+   * Ask about this note: the question goes into the document's note chat (made on the first
+   * question), and the AI answers from the whole current document.
+   */
+  function handleAskAboutNote(documentId: string, question: string) {
+    const current = currentStateRef.current;
+    const source = current.conversations[documentId];
+    if (!source || !question.trim()) return;
+    const existing = findNoteChat(current.conversations, documentId);
+    if (existing && (pendingConversationIds[existing.id] || chatExecutions.has(existing.id))) return;
+    const now = new Date().toISOString();
+    const userMessage: Message = { id: createId("message"), role: "user", content: question.trim(), createdAt: now };
+    const chat: Conversation = existing ?? {
+      id: createId("conversation"), kind: "chat", noteChat: true, title: excerpt(`Questions about ${source.title}`, 60), parentId: source.id,
+      serviceId: source.serviceId, modelId: source.modelId, ai: source.ai, branchAnchor: null,
+      childIds: [], messages: [], notes: [], documents: [], createdAt: now, updatedAt: now,
+    };
+    const updated: Conversation = { ...chat, messages: [...chat.messages, userMessage], updatedAt: now };
+    setState((state) => {
+      const next = existing ? appendMessage(state, chat.id, userMessage) : addChildConversation(state, updated);
+      currentStateRef.current = next;
+      return next;
+    });
+    if (isHiddenFromAI(source)) { appendAssistantMessage(updated.id, HIDDEN_FROM_AI_MESSAGE); return; }
+    const history = chat.messages.filter((message) => message.role === "user" || message.role === "assistant").slice(-10);
+    const request = buildNoteChatMessage(source, userMessage, {
+      instruction: documentAIInstruction(currentStateRef.current.conversations, source),
+      thinks: readNotebookPrefs().aiBehaviour === "thinks",
+    });
+    startAssistantStream(updated, [...history, request]);
+  }
+
   /** Visualize: the AI draws the passage as a diagram you step through, placed under its paragraph. */
   function handleVisualizeSelection() {
     if (!selectionDraft || pendingConversationIds[selectionDraft.conversationId]) return;
@@ -5319,6 +5356,7 @@ function WorkspaceAppContent({
         onMinimize={handleMinimizeDocument}
         onClose={!hasDocumentTab(conversation.id) ? handleCloseDocument : quietTabsHidden() ? handleCloseTab : undefined} onRestore={handleSelectConversation} onRename={handleRenameThread}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
+        onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
@@ -6031,6 +6069,9 @@ function WorkspaceAppContent({
                           title="Customise how the AI thinks with you and where notes appear">
                           {notebookPrefs.aiBehaviour === "asks" ? "When you ask" : "Thinks with you"}<span aria-hidden="true">▾</span>
                         </button>
+                        {activeConversation.document || activeConversation.kind === "note" ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
+                          onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
+                          title="Ask the AI about this whole note">Ask about this note</button> : null}
                         <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
                         {renderDocumentViewsMenu()}
                       </> : <>
@@ -6298,6 +6339,14 @@ function WorkspaceAppContent({
               onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)} />}
           /> : null}
 
+          {noteChatFor && state.conversations[noteChatFor] ? (() => {
+            const chat = findNoteChat(state.conversations, noteChatFor);
+            return <NoteChatPanel open title={state.conversations[noteChatFor].title} messages={chat?.messages ?? []}
+              pending={Boolean(chat && (pendingConversationIds[chat.id] || chatExecutions.has(chat.id)))}
+              onAsk={(question) => handleAskAboutNote(noteChatFor, question)}
+              onStop={chat ? () => chatExecutions.abort([chat.id]) : undefined}
+              onClose={closeNoteChat} />;
+          })() : null}
           <NotebookCustomise open={customiseOpen} prefs={notebookPrefs} theme={theme} quietPage={quietPage}
             onChange={saveNotebookPrefs} onThemeChange={(next) => onSetTheme(() => next)} onQuietPageChange={saveQuietPage}
             onClose={closeCustomise} />

@@ -540,6 +540,7 @@ function normalizeConversation(expectedId, input) {
     ...(input.hiddenFromAI === true ? { hiddenFromAI: true } : {}),
     ...(input.agentEdit === "locked" || input.agentEdit === "open" ? { agentEdit: input.agentEdit } : {}),
     ...(normalizeAIInstruction(input.aiInstruction) ? { aiInstruction: normalizeAIInstruction(input.aiInstruction) } : {}),
+    ...(input.noteChat === true ? { noteChat: true } : {}),
     kind:
       input.kind === undefined || input.kind === null
         ? "chat"

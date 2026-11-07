@@ -22,6 +22,8 @@ export interface DocumentMenuProps {
   onClose?: (id: string) => void;
   onRestore?: (id: string) => void;
   onNewMarginNote?: (id: string) => void;
+  /** Opens the Ask about this note chat beside the document. */
+  onAskAboutNote?: (id: string) => void;
   /** Turns a margin note into a side document of its own. */
   onMoveToSideDocument?: (id: string) => void;
   onMoveToMargin?: (id: string) => void;
@@ -56,7 +58,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, onRevealInFolder, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, onRevealInFolder, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -242,8 +244,9 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <button type="button" role="menuitem" onClick={() => { close(true); spaceActions.onCreateWith(conversation.id); }}>New space with this</button>
         </div> : null}
       </div> : null}
-      {onNewMarginNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
+      {onNewMarginNote || onAskAboutNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
         {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
+        {onAskAboutNote ? <button type="button" role="menuitem" onClick={() => action(onAskAboutNote)}>Ask about this note</button> : null}
         {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
           onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
         {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."

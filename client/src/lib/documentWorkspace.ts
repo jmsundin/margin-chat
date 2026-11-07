@@ -45,8 +45,9 @@ export function getDocumentWorkspace(conversations: Record<string, Conversation>
     if (visited.has(document.id)) continue;
     visited.add(document.id);
     family.push(document);
+    // A note's "Ask about this note" chat lives in its own panel, not as a pane beside the note.
     pending.push(...document.childIds.map((id) => conversations[id])
-      .filter((child) => child && child.parentId === document.id).reverse());
+      .filter((child) => child && child.parentId === document.id && !child.noteChat).reverse());
   }
   const order = [...new Set([...(root?.documentLayout?.order ?? []), ...family.map((document) => document.id)])]
     .filter((id) => visited.has(id));
