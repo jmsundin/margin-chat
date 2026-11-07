@@ -166,6 +166,21 @@ export function readAgentEditPolicy(source) {
     return normalizeAgentEditPolicy(value) ?? "non-authored-only";
 }
 
+/**
+ * Frontmatter property for the document's standing instruction to the AI, shown
+ * as one line under the header ("Tell the AI: …") and sent with every Ask AI
+ * in the document and its margin notes. One line, at most 400 characters.
+ */
+export const AI_INSTRUCTION_KEY = "ai-instruction";
+export const AI_INSTRUCTION_MAX_LENGTH = 400;
+
+/** A stored instruction as one trimmed line, or null when there's none. */
+export function normalizeAIInstruction(value) {
+    if (typeof value !== "string") return null;
+    const text = value.replace(/\s+/gu, " ").trim().slice(0, AI_INSTRUCTION_MAX_LENGTH).trim();
+    return text || null;
+}
+
 function isHiddenFromAIValue(value) {
     return value === true || (typeof value === "string" && /^(?:true|yes)$/iu.test(value.trim()));
 }
@@ -188,8 +203,9 @@ export function readDocumentGraphProperties(values) {
     const tags = normalizeDocumentTags(values.tags);
     const hiddenFromAI = isHiddenFromAIValue(values[HIDE_FROM_AI_KEY]);
     const agentEdit = normalizeAgentEditPolicy(values[AGENT_EDIT_KEY]);
+    const aiInstruction = normalizeAIInstruction(values[AI_INSTRUCTION_KEY]);
     return { relationTargets, edgeMeta, ...(nodeType ? { nodeType } : {}), tags, ...(hiddenFromAI ? { hiddenFromAI } : {}),
-        ...(agentEdit ? { agentEdit } : {}) };
+        ...(agentEdit ? { agentEdit } : {}), ...(aiInstruction ? { aiInstruction } : {}) };
 }
 
 /**
@@ -220,7 +236,8 @@ export function normalizeConversationGraphFields(input, conversationId, conversa
     const tags = normalizeDocumentTags(input?.tags);
     return { ...(relations?.length ? { relations } : {}), ...(nodeType ? { nodeType } : {}), ...(tags.length ? { tags } : {}),
         ...(input?.hiddenFromAI === true ? { hiddenFromAI: true } : {}),
-        ...(normalizeAgentEditPolicy(input?.agentEdit) ? { agentEdit: normalizeAgentEditPolicy(input.agentEdit) } : {}) };
+        ...(normalizeAgentEditPolicy(input?.agentEdit) ? { agentEdit: normalizeAgentEditPolicy(input.agentEdit) } : {}),
+        ...(normalizeAIInstruction(input?.aiInstruction) ? { aiInstruction: normalizeAIInstruction(input.aiInstruction) } : {}) };
 }
 
 /** Whether the user keeps this document away from AI models and connected apps. */

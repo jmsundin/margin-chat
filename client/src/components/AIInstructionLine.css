@@ -1,0 +1,34 @@
+/* "Tell the AI: …" — one quiet line above the document's text, lined up with it.
+   Empty, it's a faint invitation that firms up when you point at it. */
+.ai-instruction-line {
+  margin: 0 8px 10px 40px; min-height: 26px; display: flex; align-items: center;
+  font-family: var(--paper-sans, inherit); font-size: .8rem; line-height: 1.4; color: var(--muted);
+}
+.ai-instruction-button {
+  display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; max-width: 100%;
+  padding: 3px 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: text;
+}
+.ai-instruction-label { flex: 0 0 auto; color: var(--quiet-ai-ink, var(--accent)); font-weight: 560; }
+.ai-instruction-label::after { content: ":"; }
+.ai-instruction-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-style: italic; }
+.ai-instruction-placeholder, .ai-instruction-from { white-space: nowrap; }
+.ai-instruction-from { flex: 0 0 auto; color: var(--muted); font-size: .92em; }
+.ai-instruction-from::before { content: "· "; }
+.ai-instruction-line.is-empty { opacity: .55; transition: opacity .15s ease; }
+.ai-instruction-line.is-empty:is(:hover, :focus-within) { opacity: 1; }
+.ai-instruction-button:hover .ai-instruction-text { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.ai-instruction-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
+
+.ai-instruction-line.is-editing { flex-wrap: wrap; gap: 4px 8px; }
+.ai-instruction-input {
+  flex: 1 1 240px; min-width: 0; padding: 3px 8px; border: 1px solid var(--input-border); border-radius: 8px;
+  background: var(--input-bg); color: var(--ink); font: inherit; font-style: italic;
+}
+.ai-instruction-input:focus { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+.ai-instruction-hint { flex: 1 0 100%; font-size: .9em; }
+
+/* Touch screens drop the editor's 40px gutter; 16px text keeps iPhone from zooming in. */
+@media (pointer: coarse), (max-width: 700px) {
+  .ai-instruction-line { margin-left: 8px; }
+  .ai-instruction-input { font-size: 16px; }
+}
