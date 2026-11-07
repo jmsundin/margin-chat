@@ -1,4 +1,5 @@
 import "./styles.css";
+import "./paper.css";
 import "katex/dist/katex.min.css";
 import "./components/MathEquation.css";
 

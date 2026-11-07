@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "../client/src/lib/quietPage";
+import { readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage, syncPaper } from "../client/src/lib/quietPage";
 
 const store = new Map<string, string>();
 (globalThis as { localStorage?: unknown }).localStorage ??= {
@@ -29,5 +29,21 @@ describe("quiet page", () => {
     expect(showsQuietTabs(1, false)).toBe(false);
     expect(showsQuietTabs(2, false)).toBe(true);
     expect(showsQuietTabs(1, true)).toBe(true);
+  });
+
+  test("puts the page on paper while the quiet page is on", () => {
+    const original = (globalThis as { document?: unknown }).document;
+    const dataset: Record<string, string> = {};
+    (globalThis as { document?: unknown }).document = { documentElement: { dataset } };
+    try {
+      syncPaper();
+      expect("paper" in dataset).toBe(true);
+      saveQuietPage(false);
+      expect("paper" in dataset).toBe(false);
+      saveQuietPage(true);
+      expect("paper" in dataset).toBe(true);
+    } finally {
+      (globalThis as { document?: unknown }).document = original;
+    }
   });
 });

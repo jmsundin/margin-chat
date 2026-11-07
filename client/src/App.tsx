@@ -19,6 +19,7 @@ import { getCheckoutConfirmationNotice, getCheckoutReturn } from "./lib/billing"
 import DictationControl from "./components/DictationControl";
 import DesktopAppPrompt from "./components/DesktopAppPrompt";
 import { isGuestPath } from "./lib/guestMode";
+import { syncPaper } from "./lib/quietPage";
 import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData, BillingPlan } from "./types";
 
 // Documents open in the block editor, so fetch its chunk alongside the workspace rather than after it renders.
@@ -39,6 +40,7 @@ export function preloadWorkspace() { void loadWorkspaceApp(); }
 type AuthStatus = "checking" | "authenticated" | "unauthenticated";
 const INITIAL_THEME = loadInitialTheme();
 syncTheme(INITIAL_THEME);
+syncPaper();
 
 function getErrorText(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;

@@ -65,9 +65,11 @@
 }
 /* The dot sits at the top left of the note, where a pen would start. */
 .is-quiet-page .margin-document-frame::before {
-  content: ""; position: absolute; z-index: 2; top: 20px; left: 42px;
+  content: ""; position: absolute; z-index: 2; top: 19px; left: 38px;
   width: 7px; height: 7px; border-radius: 50%; background: var(--quiet-note-dot); pointer-events: none;
 }
+/* Touch screens drop the editor's 40px gutter, so the dot moves in with the words. */
+@media (pointer: coarse), (max-width: 700px) { .is-quiet-page .margin-document-frame::before { left: 6px; } }
 .is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]))::before { background: var(--quiet-ai-ink); }
 /* The header floats over the note's top right, so the words start at the top. */
 .is-quiet-page .margin-document-frame .document-header {
@@ -96,9 +98,9 @@
 }
 .is-quiet-page .live-document-host .message-anchor:is(:hover, :focus-visible) { background: var(--sage-soft); }
 
-/* Two voices: what AI wrote is set in a serif with a faint violet rule, yours stays in the sans. */
+/* Two voices: what AI wrote carries a faint violet rule beside it (the page is serif either way; see paper.css). */
 .is-quiet-page .live-document-host .live-document-block[data-authorship="ai"] {
-  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; font-size: 1.04em;
+  font-family: var(--paper-serif, "Iowan Old Style", Georgia, serif);
   background: linear-gradient(color-mix(in srgb, var(--quiet-ai-ink) 40%, transparent), color-mix(in srgb, var(--quiet-ai-ink) 40%, transparent)) 26px 50% / 2px 70% no-repeat;
 }
 .is-quiet-page .margin-document-frame .live-document-host .live-document-block[data-authorship="ai"] { background: none; color: var(--ink); }
