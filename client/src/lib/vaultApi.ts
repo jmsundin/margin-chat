@@ -1,6 +1,6 @@
 import { apiFetch, apiServerUrl } from "./apiTransport";
 import { ApiError } from "./apiError";
-import { validVaultPath, type VaultCommitReceipt, type VaultEntry, type VaultFile, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultSearchEvent, type VaultSearchPassage, type VaultTransport } from "./vaultTypes";
+import { validVaultPath, type VaultCommitReceipt, type VaultEntry, type VaultFile, type VaultFoundDocument, type VaultIndex, type VaultIndexEntry, type VaultManifest, type VaultRelatedPassage, type VaultSearchEvent, type VaultSearchPassage, type VaultTransport } from "./vaultTypes";
 import { bytesToBase64, defaultVaultContentType as defaultContentType, vaultFileBytes, vaultFileRevision } from "./vaultLocal";
 
 const revisionPattern = /^[a-f0-9]{64}$/u;
@@ -77,8 +77,48 @@ function readPassage(value: unknown): VaultSearchPassage | null {
   };
 }
 
+const RELATED_KINDS = ["document", "note", "chat", "file"] as const;
+const RELATED_SOURCES = ["conversation", "attachment", "vault-file"] as const;
+const RELATED_MATCHES = ["both", "keyword", "meaning"] as const;
+const FIND_VERDICTS = ["found", "several", "answer", "unclear", "none"] as const;
+const oneOf = <T extends string>(options: readonly T[], value: unknown): value is T => options.includes(value as T);
+const nullableString = (value: unknown) => typeof value === "string" ? value : null;
+
+function readRelatedPassage(value: unknown): VaultRelatedPassage | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string" || typeof value.snippet !== "string"
+    || !oneOf(RELATED_SOURCES, value.sourceKind) || !oneOf(RELATED_KINDS, value.kind) || !oneOf(RELATED_MATCHES, value.matched)) return null;
+  return {
+    id: value.id, sourceKind: value.sourceKind, kind: value.kind, title: value.title.slice(0, 300),
+    heading: nullableString(value.heading)?.slice(0, 300) ?? null, snippet: value.snippet.slice(0, 1000),
+    blockId: nullableString(value.blockId), pageNumber: Number.isSafeInteger(value.pageNumber) ? value.pageNumber as number : null,
+    passageIndex: offset(value.passageIndex) ?? 0, updatedAt: nullableString(value.updatedAt), matched: value.matched,
+    ...(typeof value.attachedTo === "string" ? { attachedTo: value.attachedTo } : {}),
+    ...(typeof value.path === "string" && validVaultPath(value.path) ? { path: value.path } : {}),
+  };
+}
+
+function readFoundDocument(value: unknown): VaultFoundDocument | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.title !== "string") return null;
+  const passage = value.passage === undefined ? null : readRelatedPassage(value.passage);
+  return {
+    id: value.id, title: value.title.slice(0, 300), why: typeof value.why === "string" ? value.why.slice(0, 200) : "",
+    ...(typeof value.path === "string" && validVaultPath(value.path) ? { path: value.path } : {}),
+    ...(optionalString(value.updatedAt) ? { updatedAt: optionalString(value.updatedAt) } : {}),
+    ...(value.hiddenFromAI === true ? { hiddenFromAI: true } : {}),
+    ...(passage ? { passage } : {}),
+  };
+}
+
 function readSearchEvent(value: unknown): VaultSearchEvent | null {
+  if (isRecord(value) && value.type === "found" && oneOf(FIND_VERDICTS, value.verdict) && Array.isArray(value.documents)) {
+    return { type: "found", verdict: value.verdict, question: value.question === true,
+      documents: value.documents.flatMap((found) => readFoundDocument(found) ?? []).slice(0, 5) };
+  }
   if (!isRecord(value) || !Array.isArray(value.results) && value.type !== "done" && value.type !== "error") return null;
+  if (value.type === "related") {
+    return { type: "related", results: (value.results as unknown[]).flatMap((passage) => readRelatedPassage(passage) ?? []),
+      ...(typeof value.warning === "string" ? { warning: value.warning.slice(0, 300) } : {}) };
+  }
   if (value.type === "documents") return { type: "documents", results: (value.results as unknown[]).flatMap((entry) => readIndexEntry(entry) ?? []) };
   if (value.type === "passages" && typeof value.source === "string" && Object.hasOwn(passageSources, value.source)) {
     return { type: "passages", source: value.source as keyof typeof passageSources,
@@ -210,7 +250,7 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
       return { revision, entries };
     },
     async search(query, { limit = 20, signal } = {}, onEvent) {
-      const response = await accountRequest(`/api/vault/search?${new URLSearchParams({ q: query, limit: String(limit) })}`, {
+      const response = await accountRequest(`/api/vault/search?${new URLSearchParams({ q: query, limit: String(limit), found: "1" })}`, {
         headers: { Accept: "application/x-ndjson" },
         signal: signal && typeof AbortSignal.any === "function" ? AbortSignal.any([signal, AbortSignal.timeout(60_000)]) : signal ?? AbortSignal.timeout(60_000),
       });

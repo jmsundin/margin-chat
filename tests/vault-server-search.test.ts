@@ -149,6 +149,20 @@ describe("cloud vault index and search", () => {
     expect(related.results[0]).toMatchObject({ id: "note", path: expect.stringMatching(/\.md$/u), snippet: "usage pricing" });
     expect(related.results[1]).toMatchObject({ id: "file-1", attachedTo: "chat", path: expect.stringMatching(/\.md$/u) });
     expect(JSON.stringify(related)).not.toContain("Long passage text");
+    // Without asking for it, no "Found it" event is sent (older apps would not expect one).
+    expect(events.some((event) => event.type === "found")).toBe(false);
+
+    const withFound: any[] = [];
+    await vault.search(userId, "pricing ideas", { found: true, emit: (event: any) => withFound.push(event), related: async () => ({ meaning: true, results: [
+      { id: "note", sourceKind: "conversation", kind: "note", title: "Pricing ideas", heading: null, text: "Long passage text", snippet: "usage pricing",
+        blockId: null, pageNumber: null, passageIndex: 0, updatedAt: null, matched: "both", similarity: 0.7, score: 0.03 },
+    ] }) });
+    const found = withFound.find((event) => event.type === "found");
+    expect(withFound.indexOf(found)).toBeGreaterThan(withFound.findIndex((event) => event.type === "related"));
+    expect(found).toMatchObject({ type: "found", verdict: "found", question: false, documents: [{ id: "note", title: "Pricing ideas",
+      path: expect.stringMatching(/\.md$/u), passage: { id: "note", snippet: "usage pricing" } }] });
+    expect(found.documents[0].why).toContain("Title has every word");
+    expect(JSON.stringify(found)).not.toContain("Long passage text");
 
     const failed: any[] = [];
     await vault.search(userId, "subscription cost", { emit: (event: any) => failed.push(event), related: async () => { throw new Error("database down"); } });
@@ -207,6 +221,8 @@ describe("cloud vault index and search", () => {
       await transport.search!("pricing", { limit: 5 }, (event) => events.push(event));
       expect(events[0]).toMatchObject({ type: "documents", results: [{ title: "Pricing ideas" }] });
       expect(events.filter((event) => event.type === "passages")).toHaveLength(3);
+      // Without the passage index, "Found it" goes by titles.
+      expect(events.find((event) => event.type === "found")).toMatchObject({ verdict: "found", documents: [{ title: "Pricing ideas", why: "Title has every word" }] });
       expect(events.at(-1)).toMatchObject({ type: "done", revision: 1 });
       expect((await fetch(`${base}/api/vault/search?q=x&limit=500`)).status).toBe(400);
     } finally {

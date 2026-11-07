@@ -22,7 +22,7 @@ const READ_CHARACTERS = 60_000;
 const SERVER_INFO = { name: "margin-chat", title: "Margin Chat", version: "1.0.0" };
 const INSTRUCTIONS = [
   "Margin Chat holds the user's documents, notes, chats, PDFs and the map of how they connect.",
-  "Use search_vault to find material by words or meaning, read_document to read one by its document_id,",
+  "Use search_vault to find material by words or meaning, find_document to see which document a description is about, read_document to read one by its document_id,",
   "and list_related to see its parent, children, typed relations and links.",
   "Documents the user hid from AI are never included.",
 ].join(" ");
@@ -42,7 +42,7 @@ export function canUseMcp(user) {
 }
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
-const TITLES = { search_vault: "Search vault", read_document: "Read document", list_related: "List connections" };
+const TITLES = { search_vault: "Search vault", find_document: "Find document", read_document: "Read document", list_related: "List connections" };
 
 // ChatGPT's connectors and deep research look for tools named exactly search and fetch.
 const CHATGPT_TOOLS = [

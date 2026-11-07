@@ -174,6 +174,10 @@ describe("hide from AI on the server", () => {
     expect(JSON.stringify(found)).not.toContain("salary");
     expect(await run("read_document", { document_id: "diary" })).toMatchObject({ found: false });
     expect(await run("list_related", { document_id: "diary" })).toMatchObject({ found: false });
+    // Not even by its title through find_document.
+    const located: any = await run("find_document", { description: "pricing diary" });
+    expect(located.documents.map((hit: any) => hit.document_id)).not.toContain("diary");
+    expect(JSON.stringify(located)).not.toContain("Pricing diary");
     // Even when the user selected it for the agent.
     const selected = createAgentToolExecutor({ chatRequest: request({ agentScope: "selected", selectedConversationIds: ["diary"] }), workspace: { userId, vault, database } });
     expect(await selected("read_document", { document_id: "diary" })).toMatchObject({ found: false });
