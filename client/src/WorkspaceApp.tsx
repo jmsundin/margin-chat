@@ -55,7 +55,7 @@ import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
-import { QUIET_SIDEBAR_KEY, readQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
+import { QUIET_SIDEBAR_KEY, readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
 import { createDocumentLinkResolver, getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
@@ -63,7 +63,9 @@ import {
   getSpaceRootIds, isInSpace, orderSpaces, removeDocumentFromSession, renameSession, switchSession,
 } from "./lib/workspaceSessions";
 import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
-import { DOCUMENT_MARGIN_GUTTER, type DocumentMarginItem } from "./components/DocumentMargin";
+import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem } from "./components/DocumentMargin";
+import NotebookCustomise from "./components/NotebookCustomise";
+import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
 import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNode } from "./components/MinimizedChildNodes";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
@@ -1392,6 +1394,11 @@ function WorkspaceAppContent({
   // A computer keeps the path row open unless it was put away; a phone shows one row and drops the rest down on a tap.
   const [desktopHeaderOpen, setDesktopHeaderOpen] = useState(loadDocumentHeaderOpen);
   const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
+  const notebookPrefs = useSyncExternalStore(subscribeNotebookPrefs, readNotebookPrefs, () => DEFAULT_NOTEBOOK_PREFS);
+  /** Marks only in the margin: chosen in Customise, and always on phones with the quiet page. */
+  const marginMarks = notebookPrefs.marginMode === "marks" || (isMobileViewport && quietPage);
+  const [customiseOpen, setCustomiseOpen] = useState(false);
+  const closeCustomise = useCallback(() => setCustomiseOpen(false), []);
   /** On a computer the quiet page puts the path, and tabs when there's more than one, on a single line. */
   const quietHeader = quietPage && !isMobileViewport;
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
@@ -2689,8 +2696,9 @@ function WorkspaceAppContent({
     window.getSelection()?.removeAllRanges();
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection,
       instruction: documentAIInstruction(currentStateRef.current.conversations, source),
-      // An answer in a side document hands the thinking back with a question; text written into the page doesn't.
-      followUp: request.destination === "side" });
+      // An answer in a side document hands the thinking back with a question, unless the AI is set to answer only;
+      // text written into the page never gets one.
+      followUp: request.destination === "side" && readNotebookPrefs().aiBehaviour === "thinks" });
     // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
     const diagramReply = request.destination === "inline" && request.replaceSelection && isMermaidDiagramPassage(selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
@@ -5386,7 +5394,8 @@ function WorkspaceAppContent({
         {renderDocumentControls(conversation, view)}
       </>}
       childNavigation={renderChildrenMenu(conversation, view, view === "graph" ? dock : undefined)}
-      marginNotes={getMarginItems(conversation, view)} marginWidth={getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
+      marginNotes={getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
+      marginMarks={marginMarks} marginNoteWidth={Math.min(320, Math.max(220, getMarginColumnWidth(conversation)))}
       activeMarginNoteId={activeConversation.id}
       aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : undefined}
@@ -5500,12 +5509,13 @@ function WorkspaceAppContent({
    * and the frame grows by the margin so the text keeps its width. Phones keep the notes column.
    */
   function showsMarginInPanel(conversation: Conversation, view: "chat" | "graph" = "chat") {
-    return view === "chat" && !isMobileViewport && !isCompactDocument(conversation)
+    return view === "chat" && (!isMobileViewport || marginMarks) && !isCompactDocument(conversation)
       && !closedMarginNotes[conversation.id] && getMarginDocuments(conversation).length > 0;
   }
   /** Extra frame width the margin adds, so the text column keeps its width. */
   function getDocumentMarginSpace(conversation: Conversation, includePreview = true) {
-    return showsMarginInPanel(conversation) ? getMarginColumnWidth(conversation, includePreview) + DOCUMENT_MARGIN_GUTTER + 10 : 0;
+    if (!showsMarginInPanel(conversation)) return 0;
+    return marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation, includePreview) + DOCUMENT_MARGIN_GUTTER + 10;
   }
   function renderMarginFamily(note: Conversation, view: "chat" | "graph", fitContent = false) {
     return <div className="margin-document-family">
@@ -5521,7 +5531,9 @@ function WorkspaceAppContent({
   }
   function getMarginItems(conversation: Conversation, view: "chat" | "graph"): DocumentMarginItem[] | undefined {
     if (!showsMarginInPanel(conversation, view)) return undefined;
-    return getMarginDocuments(conversation).map((note) => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true) }));
+    return getMarginDocuments(conversation).map((note) => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true),
+      label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
+      ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()) }));
   }
 
   /** The column of notes beside a document on phones, and beside a margin note for its own notes. */
@@ -6000,6 +6012,11 @@ function WorkspaceAppContent({
                       {/* On computers each document's own header holds it. */}
                       {isMobileViewport ? renderFullScreenButton() : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
+                        <button type="button" className={`notebook-stance-button${notebookPrefs.aiBehaviour === "asks" ? " is-asks" : ""}`}
+                          aria-haspopup="dialog" aria-expanded={customiseOpen} onClick={() => setCustomiseOpen(true)}
+                          title="Customise how the AI thinks with you and where notes appear">
+                          {notebookPrefs.aiBehaviour === "asks" ? "When you ask" : "Thinks with you"}<span aria-hidden="true">▾</span>
+                        </button>
                         <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
                         {renderDocumentViewsMenu()}
                       </> : <>
@@ -6264,6 +6281,9 @@ function WorkspaceAppContent({
               onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)} />}
           /> : null}
 
+          <NotebookCustomise open={customiseOpen} prefs={notebookPrefs} theme={theme} quietPage={quietPage}
+            onChange={saveNotebookPrefs} onThemeChange={(next) => onSetTheme(() => next)} onQuietPageChange={saveQuietPage}
+            onClose={closeCustomise} />
           <VaultSearchPalette
             conversations={state.conversations}
             currentConversationId={activeConversation?.id}

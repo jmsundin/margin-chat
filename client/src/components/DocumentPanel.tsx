@@ -69,6 +69,10 @@ export interface DocumentPanelProps {
   /** Margin notes shown in the document's right margin, each beside its passage. */
   marginNotes?: DocumentMarginItem[];
   marginWidth?: number;
+  /** Marks only: a dot per note beside its passage; the note opens from the dot. */
+  marginMarks?: boolean;
+  /** How wide a note opens in marks mode. */
+  marginNoteWidth?: number;
   activeMarginNoteId?: string;
   /** Horizontal tabs of this document and its siblings, above its header. */
   /** Shown after the document's text, such as where to keep reading. */
@@ -612,7 +616,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     </div>
     {props.marginNotes?.length ? <DocumentMargin bodyRef={bodyRef} documentId={conversation.id} items={props.marginNotes}
       label={`Notes for ${conversation.title || "Untitled document"}`} width={props.marginWidth ?? 300}
-      activeId={props.activeMarginNoteId} onHeightChange={setMarginHeight}/> : null}
+      activeId={props.activeMarginNoteId} onHeightChange={setMarginHeight}
+      marks={props.marginMarks} noteWidth={props.marginNoteWidth}/> : null}
     <BackToTopButton scrollRef={bodyRef} active={props.isActive}/>
     </div>
     {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}

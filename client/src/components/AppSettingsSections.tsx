@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, readHoldSpacePreference, saveDictationButtonPreference, saveHoldSpacePreference, subscribeDictationButtonPreference } from "../lib/dictation";
 import { readDocumentEditorKind, saveDocumentEditorKind, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import { readQuietPage, saveQuietPage, subscribeQuietPage } from "../lib/quietPage";
+import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "../lib/notebookPrefs";
 import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
@@ -47,6 +48,7 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
 }) {
   const documentEditor = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentEditorKind, () => "live" as const);
   const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
+  const notebook = useSyncExternalStore(subscribeNotebookPrefs, readNotebookPrefs, () => DEFAULT_NOTEBOOK_PREFS);
   return (
     <div className="app-settings-body">
       {theme && onSetTheme ? <div className="app-settings-section">
@@ -74,6 +76,24 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
         </div>
         <input id="quiet-page" type="checkbox" role="switch" aria-describedby="quiet-page-disclosure"
           checked={quietPage} onChange={(event) => saveQuietPage(event.target.checked)} />
+      </div>
+
+      <div className="app-settings-section">
+        <div className="app-settings-copy">
+          <span className="app-settings-label">AI behaviour</span>
+          <p className="app-settings-description">Thinks with you: Ask AI answers end with a question that hands the thinking back. When you ask: the AI only answers what you ask.</p>
+        </div>
+        <OptionGroup label="AI behaviour" onChange={(aiBehaviour) => saveNotebookPrefs({ aiBehaviour })}
+          options={[["thinks", "Thinks with you"], ["asks", "When you ask"]]} value={notebook.aiBehaviour} />
+      </div>
+
+      <div className="app-settings-section">
+        <div className="app-settings-copy">
+          <span className="app-settings-label">Notes and questions appear</span>
+          <p className="app-settings-description">In the right margin beside their passage, or as small marks you click to open. Phones use marks while the quiet page is on.</p>
+        </div>
+        <OptionGroup label="Notes and questions appear" onChange={(marginMode) => saveNotebookPrefs({ marginMode })}
+          options={[["right", "Right margin"], ["marks", "Marks only"]]} value={notebook.marginMode} />
       </div>
 
       <div className="app-settings-section app-settings-switch-section">

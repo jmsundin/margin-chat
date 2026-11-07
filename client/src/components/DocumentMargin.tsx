@@ -6,6 +6,10 @@ export interface DocumentMarginItem {
   /** False for a note about the whole document: it sits at the top of the margin. */
   anchored: boolean;
   node: ReactNode;
+  /** What a mark's button says, in marks mode. */
+  label?: string;
+  /** Written by the AI, so its mark shows in the AI's ink. */
+  ai?: boolean;
 }
 
 interface Props {
@@ -17,12 +21,19 @@ interface Props {
   activeId?: string;
   /** The track's height in the body's scroll coordinates, so the body can scroll to the last note. */
   onHeightChange: (height: number) => void;
+  /** Marks only: a dot beside each passage instead of the note; clicking a dot opens its note over the page's edge. */
+  marks?: boolean;
+  /** The width of an opened note in marks mode. */
+  noteWidth?: number;
 }
 
 type Placement = { top: number; anchorTop: number | null };
 const GAP = 12;
 /** Room on the left of the cards for the line back to each passage. */
 export const DOCUMENT_MARGIN_GUTTER = 22;
+/** The margin's width in marks mode: room for one dot beside the text. */
+export const DOCUMENT_MARKS_WIDTH = 26;
+const MARK_SIZE = 16;
 
 function anchorMarks(body: HTMLElement, id: string) {
   return [...body.querySelectorAll<HTMLElement>("[data-annotation-branches]")].filter((element) => {
@@ -46,13 +57,15 @@ function scrollsInside(target: EventTarget | null, stop: Element, deltaY: number
  * scrolls with the text; notes about the whole document come first, at the top. When notes
  * would overlap, later ones move down and a line keeps them tied to their passage.
  */
-export default function DocumentMargin({ bodyRef, documentId, label, items, width, activeId, onHeightChange }: Props) {
+export default function DocumentMargin({ bodyRef, documentId, label, items, width, activeId, onHeightChange, marks = false, noteWidth = 280 }: Props) {
   const asideRef = useRef<HTMLElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
-  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const itemRefs = useRef<Record<string, HTMLElement | null>>({});
   const [placements, setPlacements] = useState<Record<string, Placement>>({});
   const [height, setHeight] = useState(0);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  /** Marks mode: the note opened from its dot. */
+  const [openId, setOpenId] = useState<string | null>(null);
   const frame = useRef(0);
   const itemKey = items.map((item) => `${item.id}:${item.anchored ? 1 : 0}`).join("|");
   const heightCallback = useRef(onHeightChange);
@@ -70,7 +83,8 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     const start = Number.parseFloat(getComputedStyle(body).paddingTop) || GAP;
     const measured = items.map((item, index) => {
       const mark = item.anchored ? anchorMarks(body, item.id)[0] : undefined;
-      return { id: item.id, index, anchorTop: mark ? mark.getBoundingClientRect().top - bodyTop : null, height: itemRefs.current[item.id]?.offsetHeight ?? 0 };
+      return { id: item.id, index, anchorTop: mark ? mark.getBoundingClientRect().top - bodyTop : null,
+        height: marks ? MARK_SIZE : itemRefs.current[item.id]?.offsetHeight ?? 0 };
     });
     // Whole-document notes (and notes whose passage is gone) first, then notes in passage order.
     measured.sort((a, b) => (a.anchorTop === null ? -1 : 0) - (b.anchorTop === null ? -1 : 0)
@@ -78,14 +92,14 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     let cursor = start;
     const next: Record<string, Placement> = {};
     for (const item of measured) {
-      const top = Math.max(cursor, item.anchorTop === null ? start : item.anchorTop - 4);
+      const top = Math.max(cursor, item.anchorTop === null ? start : item.anchorTop + (marks ? 6 : -4));
       next[item.id] = { top, anchorTop: item.anchorTop };
-      cursor = top + item.height + GAP;
+      cursor = top + item.height + (marks ? 4 : GAP);
     }
     setPlacements((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
     setHeight((current) => current === cursor ? current : cursor);
     syncScroll();
-  }, [bodyRef, itemKey, syncScroll]);
+  }, [bodyRef, itemKey, syncScroll, marks]);
 
   const schedule = useCallback(() => {
     window.cancelAnimationFrame(frame.current);
@@ -116,9 +130,21 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     };
   }, [bodyRef, schedule, syncScroll, itemKey]);
 
+  // Marks mode: a note chosen elsewhere (Children menu, search, a new question) opens from its dot.
+  useEffect(() => { if (marks && activeId && items.some((item) => item.id === activeId)) setOpenId(activeId); }, [marks, activeId, itemKey]);
+  useEffect(() => { if (!marks) setOpenId(null); }, [marks]);
+  useEffect(() => {
+    if (!marks || !openId) return;
+    const close = (event: PointerEvent) => { if (!asideRef.current?.contains(event.target as Node)) setOpenId(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && asideRef.current?.contains(document.activeElement)) setOpenId(null); };
+    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", escape); };
+  }, [marks, openId]);
+
   // The passage of the note being read or pointed at stays lit in the text. The editor owns
   // its DOM and would undo a class added to the passage, so a scoped style rule lights it.
-  const linkedId = hoverId ?? (activeId && items.some((item) => item.id === activeId) ? activeId : null);
+  const linkedId = hoverId ?? (marks ? openId : null) ?? (activeId && items.some((item) => item.id === activeId) ? activeId : null);
   const escape = (value: string) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
   const linkedRule = linkedId ? `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(linkedId)}"'] { background: var(--margin-linked-passage); box-shadow: 0 1.5px 0 var(--margin-linked-line); }` : "";
 
@@ -139,6 +165,35 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     if (top < body.scrollTop || bottom > body.scrollTop + body.clientHeight) body.scrollTop = Math.max(0, top - 24);
     syncScroll();
   }, [activeId, placements]);
+
+  if (marks) return <aside className="document-margin is-marks" ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
+    style={{ width, flexBasis: width }}
+    onPointerDownCapture={() => { pointerInside.current = Date.now(); }}
+    onWheel={(event) => {
+      const body = bodyRef.current;
+      if (!body || scrollsInside(event.target, event.currentTarget, event.deltaY)) return;
+      body.scrollTop += event.deltaY;
+    }}>
+    {linkedRule ? <style>{linkedRule}</style> : null}
+    <div className="document-margin-track" ref={trackRef} style={{ height }}>
+      {items.map((item) => {
+        const placement = placements[item.id];
+        const open = openId === item.id;
+        return <div key={item.id} className="document-margin-mark-slot" style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
+          <button type="button" className={`document-margin-mark${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}`}
+            ref={(element) => { itemRefs.current[item.id] = element; }}
+            aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${item.label || "Margin note"}`} title={item.label}
+            onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
+            onClick={() => setOpenId((current) => current === item.id ? null : item.id)} />
+          {open ? <div className="document-margin-mark-note" data-margin-note-id={item.id} style={{ width: noteWidth }}
+            onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
+            {item.anchored ? null : <span className="document-margin-label">About this document</span>}
+            {item.node}
+          </div> : null}
+        </div>;
+      })}
+    </div>
+  </aside>;
 
   return <aside className="document-margin" ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
     style={{ width, flexBasis: width }}
