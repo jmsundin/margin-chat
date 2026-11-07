@@ -29,10 +29,11 @@ export function readDocumentGraphProperties(values: Record<string, unknown>): {
   tags: string[];
   hiddenFromAI?: true;
   agentEdit?: "locked" | "open";
+  aiInstruction?: string;
 };
 export function extractMarkdownWikiLinks(markdown: string): MarkdownWikiLink[];
 export function normalizeConversationGraphFields(input: unknown, conversationId: string, conversations?: Record<string, Conversation>):
-  Pick<Conversation, "relations" | "nodeType" | "tags" | "hiddenFromAI" | "agentEdit">;
+  Pick<Conversation, "relations" | "nodeType" | "tags" | "hiddenFromAI" | "agentEdit" | "aiInstruction">;
 export const HIDE_FROM_AI_KEY: "hide-from-ai";
 export const AGENT_EDIT_KEY: "agent-edit";
 export type AgentEditPolicy = "non-authored-only" | "locked" | "open";
@@ -40,3 +41,7 @@ export const AGENT_EDIT_POLICIES: AgentEditPolicy[];
 export function normalizeAgentEditPolicy(value: unknown): "locked" | "open" | null;
 export function readAgentEditPolicy(source: string): AgentEditPolicy;
 export function isHiddenFromAI(conversation: Pick<Conversation, "hiddenFromAI"> | null | undefined): boolean;
+export const AI_INSTRUCTION_KEY: "ai-instruction";
+export const AI_INSTRUCTION_MAX_LENGTH: number;
+/** A stored instruction as one trimmed line, or null when there's none. */
+export function normalizeAIInstruction(value: unknown): string | null;

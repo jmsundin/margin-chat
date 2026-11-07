@@ -81,7 +81,7 @@ import { getDocumentBackTarget, getDocumentKind, getPresentedParentId, recordDoc
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
-import { buildDiagramAIMessage, buildDocumentAIMessage, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
+import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
@@ -101,7 +101,7 @@ import { useVaultPassageIndex } from "./lib/useVaultPassageIndex";
 import { applyJevCategories, withJevConsent } from "./lib/jevAssistance";
 import { applyJevGroupSuggestions } from "./lib/jevGrouping";
 import { getThreadCategoryLabel } from "./lib/threadCategories";
-import { getDocumentBlockAuthorship, normalizeAISettings, normalizeDocumentDock, type DocumentDockNode } from "@margin-chat/workspace-contracts";
+import { getDocumentBlockAuthorship, normalizeAIInstruction, normalizeAISettings, normalizeDocumentDock, type DocumentDockNode } from "@margin-chat/workspace-contracts";
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
@@ -116,6 +116,7 @@ import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, res
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
 import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import RoadmapView from "./components/RoadmapView";
+import AIInstructionLine from "./components/AIInstructionLine";
 import type { DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
@@ -2670,7 +2671,8 @@ function WorkspaceAppContent({
     });
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
-    const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection });
+    const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection,
+      instruction: documentAIInstruction(currentStateRef.current.conversations, source) });
     // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
     const diagramReply = request.destination === "inline" && request.replaceSelection && isMermaidDiagramPassage(selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
@@ -2746,7 +2748,7 @@ function WorkspaceAppContent({
     if (!conversation) throw new Error("This document is no longer open.");
     if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
     const prompt: Message = { id: createId("message"), role: "user", content: request.prompt.trim(), createdAt: new Date().toISOString() };
-    const message = buildDiagramAIMessage(conversation, prompt, request);
+    const message = buildDiagramAIMessage(conversation, prompt, request, documentAIInstruction(currentStateRef.current.conversations, conversation));
     try {
       const { reply } = await requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, conversation, [message]),
@@ -4903,6 +4905,27 @@ function WorkspaceAppContent({
     });
   }
 
+  /** The document's standing instruction to the AI ("Tell the AI: …"); null removes it. */
+  function handleSetAIInstruction(conversationId: string, text: string | null) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      const next = normalizeAIInstruction(text);
+      if (!conversation || (conversation.aiInstruction ?? null) === next) return current;
+      const { aiInstruction: _aiInstruction, ...rest } = conversation;
+      const updated = { ...current, conversations: { ...current.conversations,
+        [conversationId]: { ...rest, ...(next ? { aiInstruction: next } : {}), updatedAt: new Date().toISOString() } } };
+      currentStateRef.current = updated;
+      return updated;
+    });
+  }
+
+  /** A side document follows its nearest parent's instruction until it has one of its own. */
+  function inheritedAIInstruction(conversation: Conversation) {
+    const parent = !conversation.aiInstruction && conversation.parentId ? state.conversations[conversation.parentId] : undefined;
+    const source = parent ? documentAIInstructionSource(state.conversations, parent) : null;
+    return source ? { text: source.text, from: source.document.title || "Untitled document" } : null;
+  }
+
   /** What connected apps may edit in a document; the app is the only place this changes. */
   function handleSetAgentEdit(conversationId: string, policy: "locked" | "open" | null) {
     setState((current) => {
@@ -5335,6 +5358,8 @@ function WorkspaceAppContent({
       childNavigation={renderChildrenMenu(conversation, view, view === "graph" ? dock : undefined)}
       marginNotes={getMarginItems(conversation, view)} marginWidth={getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       activeMarginNoteId={activeConversation.id}
+      aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <AIInstructionLine value={conversation.aiInstruction}
+        inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : undefined}
       roadmap={conversation.nodeType === "roadmap" ? <RoadmapView conversation={conversation} conversations={state.conversations}
         drafting={Boolean(pendingConversationIds[conversation.id])} onDraft={(goal) => handleDraftRoadmap(conversation.id, goal)}
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}

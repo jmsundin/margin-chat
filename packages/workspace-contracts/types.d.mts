@@ -433,6 +433,8 @@ export interface Conversation {
   hiddenFromAI?: boolean;
   /** How far connected apps may edit this document; absent = only lines the user didn't write. */
   agentEdit?: "locked" | "open";
+  /** The document's standing instruction to the AI (frontmatter `ai-instruction`), sent with Ask AI here and in its notes. */
+  aiInstruction?: string;
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   documents?: ConversationDocument[];

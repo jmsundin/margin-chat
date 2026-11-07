@@ -104,3 +104,7 @@
   background: linear-gradient(color-mix(in srgb, var(--quiet-ai-ink) 40%, transparent), color-mix(in srgb, var(--quiet-ai-ink) 40%, transparent)) 26px 50% / 2px 70% no-repeat;
 }
 .is-quiet-page .margin-document-frame .live-document-host .live-document-block[data-authorship="ai"] { background: none; color: var(--ink); }
+/* Touch screens drop the 40px gutter, so the rule moves out of the words to the line's edge. */
+@media (pointer: coarse), (max-width: 700px) {
+  .is-quiet-page .live-document-host .live-document-block[data-authorship="ai"] { background-position: 1px 50%; }
+}

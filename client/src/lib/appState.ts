@@ -88,7 +88,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
               const serviceId = isBackendServiceId(conversation.serviceId)
                 ? conversation.serviceId
                 : DEFAULT_BACKEND_SERVICE_ID;
-              const { publicTopic, linkedConversationIds, document, documentLayout, relations, nodeType, tags, hiddenFromAI, roadmap: rawRoadmap, ...base } = conversation;
+              const { publicTopic, linkedConversationIds, document, documentLayout, relations, nodeType, tags, hiddenFromAI, aiInstruction, roadmap: rawRoadmap, ...base } = conversation;
               const roadmap = normalizeRoadmap(rawRoadmap);
               const source = normalizePublicTopicSource(publicTopic);
               const layout = normalizeDocumentLayout(documentLayout, conversationId, parsed.conversations);
@@ -102,7 +102,7 @@ export function hydratePersistedState(input: unknown): AppState | null {
                 ...(roadmap ? { roadmap } : {}),
                 ...(source ? { publicTopic: source } : {}),
                 ...(Array.isArray(linkedConversationIds) ? { linkedConversationIds: normalizeLinkedConversationIds(linkedConversationIds, conversationId, parsed.conversations) } : {}),
-                ...normalizeConversationGraphFields({ relations, nodeType, tags, hiddenFromAI }, conversationId, parsed.conversations),
+                ...normalizeConversationGraphFields({ relations, nodeType, tags, hiddenFromAI, aiInstruction }, conversationId, parsed.conversations),
                 ...(conversation.ai ? { ai: normalizeAISettings(conversation.ai) } : {}),
                 messages: (conversation.messages ?? []).map((message) => ({ ...message,
                   ...(message.execution ? { execution: normalizeAIExecution(message.execution) } : {}),

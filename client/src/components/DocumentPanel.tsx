@@ -75,6 +75,8 @@ export interface DocumentPanelProps {
   bodyFooter?: ReactNode;
   /** A roadmap document's stages and steps, drawn above its notes. */
   roadmap?: ReactNode;
+  /** The "Tell the AI: …" line above the document's text. */
+  aiInstruction?: ReactNode;
   /** The full path of parents in the header, as in Map View's side panel. */
   parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
@@ -546,6 +548,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
+      {props.aiInstruction}
       {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
