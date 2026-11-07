@@ -1,0 +1,136 @@
+/* Paper: the quiet page's colours and type (Settings → Editor & look → Quiet page).
+   The document is a sheet of paper on a desk: warm cream, near-black ink, a muted warm grey
+   for anything secondary, and colour only where it means something (a note's dot, an action).
+   Set on <html data-paper> so menus and dialogs outside the app match. */
+
+:root[data-paper] {
+  --paper-serif: Charter, "Bitstream Charter", "Iowan Old Style", "Palatino Linotype", "Source Serif 4", Georgia, serif;
+  --paper-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+:root[data-paper][data-theme="light"] {
+  color: #1a1815;
+  background: #faf7f2;
+  --bg: #faf7f2;
+  --bg-deep: #f3eee5;
+  --panel: #faf7f2;
+  --panel-strong: #f3eee5;
+  --line: #e8e1d5;
+  --line-strong: #d8cfc0;
+  --ink: #1a1815;
+  --muted: #6e675d;
+  --body-background: #faf7f2;
+  --button-active-surface: #ece5d8;
+  --status-bg: #f3eee5;
+  --status-border: #e3dbcd;
+  --breadcrumb-separator: #a39a8c;
+  --scrollbar-thumb: #d3c9b9;
+  --panel-bg: #faf7f2;
+  --panel-head-bg: #faf7f2;
+  --panel-head-border: #e8e1d5;
+  --badge-bg: #efe9de;
+  --branch-card-bg: #f3eee5;
+  --branch-card-border: #e3dbcd;
+  --message-inline-code-bg: #f0eadf;
+  --message-inline-code-border: #e0d7c8;
+  --message-code-bg: #f3eee5;
+  --message-code-border: #e0d7c8;
+  --message-code-label-bg: #e9e2d5;
+  --message-table-border: #e0d7c8;
+  --message-hr: #e0d7c8;
+  --user-bubble-bg: #f0eadf;
+  --user-bubble-ink: #1a1815;
+  --system-bubble-bg: #f3eee5;
+  --system-bubble-border: #e0d7c8;
+  --composer-bg: #f3eee5;
+  --composer-border: #e0d7c8;
+  --composer-shell-bg: #fffdf9;
+  --composer-shell-border: #e0d7c8;
+  --composer-ink: #1a1815;
+  --composer-placeholder: #8a8276;
+  --input-bg: #fffdf9;
+  --input-border: #d8cfc0;
+  --composer-send-bg: #1a1815;
+  --composer-send-ink: #faf7f2;
+  --rail-toggle-bg: #ece5d8;
+  --rail-toggle-ink: #1a1815;
+  --rail-body-bg: #f5f1ea;
+  --rail-body-border: #e8e1d5;
+  --thread-button-active-bg: #ece5d8;
+  --rail-empty-border: #d8cfc0;
+  --tooltip-bg: #fffdf9;
+  --tooltip-border: #e0d7c8;
+  --tooltip-shadow: 0 12px 34px rgba(60, 48, 30, 0.12);
+  --selection-explain-bg: #f0eadf;
+  --selection-explain-border: #e0d7c8;
+  --toggle-icon-bg: #ece5d8;
+  --graph-canvas-bg: #f5f1ea;
+  --graph-canvas-grid: #ddd4c5;
+  --graph-node-bg: #fffdf9;
+  --graph-node-border: #d3c9b9;
+}
+
+:root[data-paper][data-theme="dark"] {
+  color: #ece6da;
+  background: #191714;
+  --bg: #191714;
+  --bg-deep: #12110f;
+  --panel: #191714;
+  --panel-strong: #221f1b;
+  --line: #312d27;
+  --line-strong: #443e36;
+  --ink: #ece6da;
+  --muted: #a39a8c;
+  --body-background: #191714;
+  --button-active-surface: #2c2823;
+  --status-bg: #221f1b;
+  --status-border: #312d27;
+  --breadcrumb-separator: #7a7266;
+  --scrollbar-thumb: #4a443b;
+  --panel-bg: #191714;
+  --panel-head-bg: #191714;
+  --panel-head-border: #312d27;
+  --badge-bg: #2a2621;
+  --branch-card-bg: #221f1b;
+  --branch-card-border: #312d27;
+  --message-inline-code-bg: #262320;
+  --message-code-bg: #1f1c18;
+  --user-bubble-bg: #2a2621;
+  --user-bubble-ink: #ece6da;
+  --system-bubble-bg: #221f1b;
+  --composer-bg: #221f1b;
+  --composer-shell-bg: #221f1b;
+  --composer-shell-border: #3a352e;
+  --composer-ink: #ece6da;
+  --input-bg: #221f1b;
+  --input-border: #443e36;
+  --composer-send-bg: #ece6da;
+  --composer-send-ink: #191714;
+  --rail-body-bg: #1e1b18;
+  --rail-body-border: #312d27;
+  --thread-button-active-bg: #2c2823;
+  --tooltip-bg: #221f1b;
+  --tooltip-border: #3a352e;
+  --selection-explain-bg: #262320;
+  --toggle-icon-bg: #2c2823;
+  --graph-canvas-bg: #151310;
+  --graph-canvas-grid: #2f2a24;
+  --graph-node-bg: #221f1b;
+  --graph-node-border: #443e36;
+}
+
+/* The page: the document in a serif at reading size, with room between the lines. */
+.is-quiet-page .live-document-host .cm-editor,
+.is-quiet-page .live-document-preview {
+  font-family: var(--paper-serif); font-size: 1.125rem; line-height: 1.65;
+}
+.is-quiet-page .live-document-host .cm-lp-heading { font-weight: 600; letter-spacing: -.005em; }
+.is-quiet-page .live-document-host .cm-lp-h1 { font-size: 1.85em; line-height: 1.2; }
+
+/* Margin notes are secondary on purpose: small, sans, a little lighter than the page. */
+.is-quiet-page .margin-document-frame .live-document-host .cm-editor,
+.is-quiet-page .margin-document-frame .live-document-preview {
+  font-family: var(--paper-sans); font-size: .84rem; line-height: 1.55;
+  color: color-mix(in srgb, var(--ink) 82%, var(--bg));
+}
+.is-quiet-page .margin-document-frame .live-document-host .cm-lp-h1 { font-size: 1.2em; }

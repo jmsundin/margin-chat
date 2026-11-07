@@ -17,7 +17,19 @@ export function readQuietPage(): boolean {
 export function saveQuietPage(quiet: boolean) {
   try { localStorage.setItem(QUIET_KEY, String(quiet)); }
   catch { /* Private windows keep the default. */ }
+  syncPaper(quiet);
   listeners.forEach((listener) => listener());
+}
+
+/**
+ * The quiet page is also paper: warm cream instead of white, near-black ink, the document set
+ * in a serif. It lives on <html data-paper> so menus and dialogs outside the app shell match,
+ * and so it's set before the first paint.
+ */
+export function syncPaper(quiet = readQuietPage()) {
+  if (typeof document === "undefined") return;
+  if (quiet) document.documentElement.dataset.paper = "";
+  else delete document.documentElement.dataset.paper;
 }
 
 export function subscribeQuietPage(listener: () => void): () => void {

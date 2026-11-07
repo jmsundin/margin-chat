@@ -69,7 +69,7 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
         <div className="app-settings-copy">
           <label className="app-settings-label" htmlFor="quiet-page">Quiet page</label>
           <p className="app-settings-description" id="quiet-page-disclosure">
-            One line above the document, no frame around it, and the sidebar closed until you open it (⌘B). View and authorship controls show when you point at them. Turn this off for the full toolbars. Saved on this device.
+            Warm paper and a serif page, one line above the document, no frame around it, and the sidebar closed until you open it (⌘B). View and authorship controls show when you point at them. Turn this off for the full toolbars. Saved on this device.
           </p>
         </div>
         <input id="quiet-page" type="checkbox" role="switch" aria-describedby="quiet-page-disclosure"
