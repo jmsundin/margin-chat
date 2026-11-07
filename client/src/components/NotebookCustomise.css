@@ -1,0 +1,26 @@
+/* Customise: one window, pill toggles only. */
+.notebook-customise-backdrop { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 16px;
+  background: color-mix(in srgb, var(--ink) 22%, transparent); }
+.notebook-customise { width: min(460px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; padding: 18px 20px 20px;
+  border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong, var(--bg)); color: var(--ink);
+  box-shadow: 0 24px 60px rgba(30, 24, 16, .2); }
+.notebook-customise > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.notebook-customise h2 { margin: 0; font-family: var(--paper-serif, inherit); font-size: 1.35rem; font-weight: 600; }
+.notebook-customise-close { width: 32px; height: 32px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 1.3rem; cursor: pointer; }
+.notebook-customise-close:hover { background: var(--button-active-surface); color: var(--ink); }
+.notebook-customise-group { margin: 14px 0 0; padding: 0; border: 0; min-width: 0; }
+.notebook-customise-group legend { padding: 0; margin-bottom: 8px; color: var(--muted); font-size: .72rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.notebook-customise-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.notebook-customise-pills button { min-height: 34px; padding: 6px 14px; border: 1px solid var(--line-strong); border-radius: 999px;
+  background: transparent; color: var(--ink); font: inherit; font-size: .9rem; cursor: pointer; }
+.notebook-customise-pills button:hover { background: var(--button-active-surface); }
+.notebook-customise-pills button[aria-checked="true"] { border-color: var(--ink); background: var(--ink); color: var(--bg); }
+.notebook-customise-pills button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.notebook-customise-group p { margin: 6px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.4; }
+
+/* The header's "Thinks with you ▾": what the AI is set to, and the way into Customise. */
+.notebook-stance-button { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 4px 10px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--muted); font: inherit; font-size: .8rem; white-space: nowrap; cursor: pointer; }
+.notebook-stance-button:hover, .notebook-stance-button[aria-expanded="true"] { background: var(--button-active-surface); color: var(--ink); }
+.notebook-stance-button::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--quiet-ai-ink, var(--accent)); }
+.notebook-stance-button.is-asks::before { background: var(--line-strong); }
