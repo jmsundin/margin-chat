@@ -22,8 +22,7 @@ function store(initial: VaultSnapshot | null = null): VaultStore {
   };
 }
 
-function cloud() {
-  const objects = new Map<string, Buffer>();
+function cloud(objects = new Map<string, Buffer>()) {
   const reads: string[] = [];
   const server = createVaultService({ storage: {
     kind: "memory",
@@ -49,7 +48,7 @@ function cloud() {
     },
     async commit(changes) { return normalize((await server.commit("user", changes)).manifest); },
   };
-  return { server, transport, reads, downloaded, device: () => new VaultSync(store(), transport) };
+  return { server, transport, reads, downloaded, objects, device: () => new VaultSync(store(), transport) };
 }
 
 /** Research (old) has a branch; Design (recent) links to Source; Archive is old, pinned and grouped. */
@@ -99,6 +98,31 @@ describe("opening a cloud vault on a new device", () => {
     remote.reads.length = 0;
     await remote.transport.index!();
     expect(remote.reads.filter((key) => key.includes("/files/"))).toEqual([]);
+  });
+
+  test("a cold server answers the index from its saved copy and rebuilds it after a save", async () => {
+    const remote = cloud();
+    const files = stateToVaultFiles(vaultState(), {});
+    const device = remote.device();
+    await device.edit(files, {});
+    await device.sync();
+    const built = await remote.transport.index!();
+
+    // A new serverless instance has nothing in memory: the root, the index root and one saved file answer it.
+    const cold = cloud(remote.objects);
+    expect(await cold.transport.index!()).toEqual(built);
+    expect(cold.reads.length).toBe(3);
+
+    const renamed = vaultState();
+    renamed.conversations.design.title = "Later";
+    await device.edit(stateToVaultFiles(renamed, files), files);
+    await device.sync();
+    const next = await cloud(remote.objects).transport.index!();
+    expect(next.revision).toBeGreaterThan(built.revision);
+    expect(next.entries.map((entry) => entry.title)).toContain("Later");
+    const again = cloud(remote.objects);
+    expect(await again.transport.index!()).toEqual(next);
+    expect(again.reads.length).toBe(3);
   });
 
   test("recent documents load first, the rest stay in the cloud until opened, and nothing deferred is lost", async () => {

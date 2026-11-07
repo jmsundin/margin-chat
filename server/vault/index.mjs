@@ -78,6 +78,10 @@ export class VaultConflictError extends HttpError {
   }
 }
 
+// Shards are small files and each read waits on cloud storage (~50-150 ms), so
+// many are read at once; at 12 or 4 at a time a cold server spent seconds here.
+const SHARD_READ_WIDTH = 32;
+
 async function mapConcurrent(items, operation, width = 12) {
   let index = 0;
   const results = new Array(items.length);
@@ -263,7 +267,7 @@ export function createVaultService({ database, env = process.env, storage = crea
     if (root.schemaVersion === 1) return root;
     const ids = Object.keys(root.shards).sort();
     const files = {};
-    for (const shard of await mapConcurrent(ids, (id) => loadShard(userId, id, root.shards[id]))) Object.assign(files, shard);
+    for (const shard of await mapConcurrent(ids, (id) => loadShard(userId, id, root.shards[id]), SHARD_READ_WIDTH)) Object.assign(files, shard);
     return { schemaVersion: 1, revision: root.revision, files };
   }
 
@@ -559,7 +563,8 @@ export function createVaultService({ database, env = process.env, storage = crea
       }
       indexShards.set(indexShardKey(userId, hash), Object.freeze(summarized), bytes.length);
       return summarized;
-    }, 4);
+      // Each shard may read up to 6 files itself, so fewer shards at once.
+    }, SHARD_READ_WIDTH / 2);
     if (changed) {
       // Losing a race with another request is harmless.
       await storage.compareAndSwap(indexRootKey(userId), Buffer.from(JSON.stringify({ schemaVersion: 2, revision: root.revision, shards: next })), record?.etag ?? null)
@@ -575,9 +580,46 @@ export function createVaultService({ database, env = process.env, storage = crea
 
   /** Titles, dates and relationships of every Markdown file, newest first, so a
    * new device can open recent documents first and fetch the rest only when asked. */
+  function rememberIndex(userId, built) {
+    builtIndexes.delete(userId);
+    builtIndexes.set(userId, built);
+    if (builtIndexes.size > 8) builtIndexes.delete(builtIndexes.keys().next().value);
+    return built;
+  }
+
+  /** The whole index saved as one file for its revision, so a cold server reads
+   * three files to answer instead of every shard of the file list and the index. */
+  async function readSavedIndex(userId, revision) {
+    try {
+      const record = await storage.read(indexRootKey(userId));
+      const pointer = record ? JSON.parse(record.bytes.toString("utf8"))?.built : null;
+      if (pointer?.revision !== revision || !REVISION.test(pointer.digest ?? "")) return null;
+      const saved = await storage.read(indexShardKey(userId, pointer.digest));
+      if (!saved || digest(saved.bytes) !== pointer.digest) return null;
+      const value = JSON.parse(saved.bytes.toString("utf8"));
+      if (value?.schemaVersion !== 1 || value.kind !== "built" || value.revision !== revision || !Array.isArray(value.entries)) return null;
+      return { revision, entries: value.entries, pathById: new Map(value.entries.map((entry) => [entry.id, entry.path])) };
+    } catch {
+      return null;
+    }
+  }
+
+  async function saveIndex(userId, built) {
+    const bytes = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: "built", revision: built.revision, entries: built.entries }));
+    const hash = digest(bytes);
+    await storage.putImmutable(indexShardKey(userId, hash), bytes, "application/json");
+    const record = await storage.read(indexRootKey(userId));
+    const value = record ? JSON.parse(record.bytes.toString("utf8")) : null;
+    if (value?.schemaVersion !== 2) return;
+    // Losing a race with a newer save is harmless: readers check the revision.
+    await storage.compareAndSwap(indexRootKey(userId), Buffer.from(JSON.stringify({ ...value, built: { revision: built.revision, digest: hash } })), record.etag);
+  }
+
   async function index(userId, root) {
     const cached = builtIndexes.get(userId);
     if (cached?.revision === root.revision) return cached;
+    const saved = await readSavedIndex(userId, root.revision);
+    if (saved) return rememberIndex(userId, saved);
     const records = [];
     for (const shard of await summaries(userId, root)) {
       for (const [path, record] of Object.entries(shard)) records.push([path, record]);
@@ -587,10 +629,10 @@ export function createVaultService({ database, env = process.env, storage = crea
     const entries = buildMarkdownVaultIndex(records.map(([, record]) => record.summary))
       .map((entry, position) => ({ ...entry, revision: records[position][1].revision }))
       .sort((left, right) => compare(recency(right), recency(left)) || compare(left.path, right.path));
-    const built = { revision: root.revision, entries, pathById: new Map(entries.map((entry) => [entry.id, entry.path])) };
-    builtIndexes.delete(userId);
-    builtIndexes.set(userId, built);
-    if (builtIndexes.size > 8) builtIndexes.delete(builtIndexes.keys().next().value);
+    const built = rememberIndex(userId, { revision: root.revision, entries, pathById: new Map(entries.map((entry) => [entry.id, entry.path])) });
+    // The saved copy only saves work later; a failed write just rebuilds next time.
+    const save = saveIndex(userId, built).catch(() => undefined);
+    if (!continueAfterResponse(save, env)) await save;
     return built;
   }
 

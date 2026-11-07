@@ -23,7 +23,8 @@ import { validateWorkspaceAnalysis } from "../server/semantic/index.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
 await stat(join(dist, "index.html"));
-const directory = await mkdtemp(join(tmpdir(), "margin-chat-preview-"));
+// PREVIEW_DIR reuses a vault saved by an earlier run (for timing runs on a large seeded vault).
+const directory = process.env.PREVIEW_DIR || await mkdtemp(join(tmpdir(), "margin-chat-preview-"));
 const controls = { offline: false, delayMs: 0, authDelayMs: 0, signedIn: true, free: false, jev: false, chat: false, userId: "preview-user" };
 let activeApiRequests = 0;
 const requestCounts = { chat: 0, jevWorkspace: 0 };
@@ -76,7 +77,18 @@ const database = {
   deleteDocument: async ({ userId, documentId }) => attachments.delete(key(userId, documentId)),
   getCaptureToken: async () => null,
 };
-const vaultService = createVaultService({ database, storage: createFileVaultStorage(directory), env: {} });
+// PREVIEW_STORAGE_DELAY_MS models cloud storage latency per read (Vercel Blob is ~50-150 ms).
+// PREVIEW_COLD=1 starts each request on a fresh vault service, like a cold serverless instance.
+const storageDelayMs = Number(process.env.PREVIEW_STORAGE_DELAY_MS) || 0;
+const fileStorage = createFileVaultStorage(directory);
+const storageReads = { count: 0 };
+const storage = storageDelayMs ? { ...fileStorage, async read(key) {
+  storageReads.count += 1;
+  await new Promise((done) => setTimeout(done, storageDelayMs));
+  return fileStorage.read(key);
+} } : fileStorage;
+const newVaultService = () => createVaultService({ database, storage, env: {} });
+let vaultService = newVaultService();
 const documentService = createDocumentService({ database, vaultService, env: {} });
 const authService = {
   getAuthContext: async () => ({ user: controls.signedIn ? user() : null, shouldClearSession: false }),
@@ -129,8 +141,10 @@ const semanticService = {
     return { available: true, model: "synthetic-jev-fixture", categories: categoryResults, groupSuggestions, related: relatedResults };
   },
 };
+const coldStart = process.env.PREVIEW_COLD === "1";
+const currentVaultService = new Proxy({}, { get: (_, name) => vaultService[name] });
 const handler = createApiHandler({
-  authService, database, documentService, vaultService, semanticService,
+  authService, database, documentService, vaultService: currentVaultService, semanticService,
   apiKeyService: { getDecryptedKeys: async () => ({}), getSummaries: async () => noKeys },
   captureService: { list: async () => ({ captures: [], nextCursor: null }) },
   billingService: {},
@@ -204,6 +218,9 @@ const server = createServer(async (request, response) => {
           }
           return sendJson(response, 503, { error: "Model calls are intentionally unavailable in this isolated preview." });
         }
+        if (coldStart) vaultService = newVaultService();
+        const started = Date.now(), reads = storageReads.count;
+        if (storageDelayMs) response.once("finish", () => console.log(`${url.pathname} ${Date.now() - started} ms, ${storageReads.count - reads} storage reads`));
         return await handler(request, response);
       } finally { activeApiRequests--; }
     }
