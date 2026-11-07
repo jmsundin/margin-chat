@@ -5289,8 +5289,7 @@ function WorkspaceAppContent({
       // On a computer the compass sits beside the path it continues; phones list the views as tabs below it.
       trailing={isMobileViewport ? undefined : <>
         {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
-        {/* The quiet page keeps the view switcher at the end of its one line. */}
-        {quietHeader ? null : <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />}
+        <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
       </>} />;
   }
 
@@ -5475,7 +5474,10 @@ function WorkspaceAppContent({
       onMinimize={view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
       onClose={view === "chat" && !dockHeader && !maximized && !bareHeader && !hasDocumentTab(conversation.id) ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
-      parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock) : undefined}
+      // On the quiet page the path leaves the header and sits as one line at the top of the page you're on.
+      parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock)
+        : view === "chat" && quietHeader && !showSpaceStart && conversation.id === activeConversation.id && !isCompactDocument(conversation)
+          ? <div className="document-page-path">{renderDocumentBreadcrumbs()}</div> : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
       </>}
@@ -6085,10 +6087,7 @@ function WorkspaceAppContent({
                         <span className="document-header-title-label">{showSpaceStart ? "Choose documents" : activeConversation.title || "Untitled document"}</span>
                       </span>
                       <svg className="document-header-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-                    </button> : quietHeader ? <>
-                      {showSpaceStart ? null : renderDocumentBreadcrumbs()}
-                      {renderSessionTabs()}
-                    </> : renderSessionTabs()}
+                    </button> : renderSessionTabs()}
                     <div className="document-workspace-actions">
                       {mapReturnId ? <button type="button" className="document-back-to-map" onClick={() => handleSetMainViewMode("graph")}
                         title="Back to the map (or pinch out)">
@@ -6106,7 +6105,6 @@ function WorkspaceAppContent({
                         {activeConversation.document || activeConversation.kind === "note" ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
                           onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
                           title="Ask the AI about this whole note">Ask about this note</button> : null}
-                        <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
                         {renderDocumentViewsMenu()}
                       </> : <>
                         <button type="button" className="document-header-toggle" aria-expanded={desktopHeaderOpen}

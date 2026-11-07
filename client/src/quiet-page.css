@@ -109,3 +109,55 @@
 @media (pointer: coarse), (max-width: 700px) {
   .is-quiet-page .live-document-host .live-document-block[data-authorship="ai"] { background-position: 1px 50%; }
 }
+
+/* ---- Simpler tabs and panes (desktop) ----
+   The header is tabs, the AI pill and one menu. Each page carries its own path as a small line
+   above the writing. Panes side by side have no frames: a hairline between them, and the one
+   you are in is the one with the caret; the slots already draw that hairline. */
+@media (min-width: 761px) {
+  .is-quiet-page .conversation-canvas .chat-panel.document-panel:not(.margin-document-frame > *),
+  .is-quiet-page .conversation-canvas .chat-panel.document-panel.is-active:not(.margin-document-frame > *) {
+    border-color: transparent; box-shadow: none;
+  }
+  .is-quiet-page .document-panel > .document-header .document-minimize-button { display: none; }
+
+  /* The path: words, not buttons. Back, the linked chips and the compass show when you point at it. */
+  .is-quiet-page .document-page-path { flex: 1 1 auto; min-width: 0; }
+  .is-quiet-page .document-page-path > .document-breadcrumbs {
+    min-height: 0; padding: 0; border: 0; background: transparent; box-shadow: none; gap: 6px; font-size: .8rem; color: var(--muted);
+  }
+  .is-quiet-page .document-page-path .document-breadcrumbs-back { border-color: transparent; background: transparent; color: var(--muted); }
+  .is-quiet-page .document-page-path .document-breadcrumbs-back:disabled { display: none; }
+  .is-quiet-page .document-page-path .document-breadcrumb-trigger { font-size: .8rem; font-weight: 500; color: var(--muted); background: transparent; border-color: transparent; }
+  .is-quiet-page .document-page-path .document-breadcrumb-trigger:hover { color: var(--ink); }
+  .is-quiet-page .document-page-path .document-compass-heading { font-size: .66rem; }
+  .is-quiet-page .document-page-path .document-navigator-chip { font-size: .8rem; padding-block: 1px; background: transparent; border-color: transparent; color: var(--muted); }
+  .is-quiet-page .document-page-path .document-navigator-chip:hover { color: var(--ink); background: var(--button-active-surface); }
+  .is-quiet-page .document-page-path .document-navigation-switcher { border-color: transparent; background: transparent; }
+
+  /* What AI wrote: the rule is there but faint until you point at the paragraph. */
+  .is-quiet-page .live-document-host .live-document-block[data-authorship="ai"]:not(:hover) {
+    background-image: linear-gradient(color-mix(in srgb, var(--quiet-ai-ink) 22%, transparent), color-mix(in srgb, var(--quiet-ai-ink) 22%, transparent));
+  }
+
+  /* The link curve between panes is a whisper, not a wire. */
+  .is-quiet-page .connector-path { opacity: .16; }
+  .is-quiet-page .connector-path.is-active { opacity: .38; stroke-width: 2; }
+  .is-quiet-page .connector-node { opacity: .3; }
+}
+
+@media (hover: hover) and (min-width: 761px) {
+  .is-quiet-page .document-page-path :is(.document-compass, .document-navigation-switcher, .document-breadcrumbs-back) { opacity: 0; transition: opacity .15s ease; }
+  .is-quiet-page .document-panel:is(:hover, :focus-within) .document-page-path :is(.document-compass, .document-navigation-switcher, .document-breadcrumbs-back),
+  .is-quiet-page .document-page-path :is(.document-compass, .document-navigation-switcher):has(:focus-visible, [aria-expanded="true"]) { opacity: 1; }
+  .is-quiet-page .document-panel > .document-header .document-close-button { opacity: 0; transition: opacity .15s ease; }
+  .is-quiet-page .document-panel:is(:hover, :focus-within) > .document-header .document-close-button { opacity: 1; }
+  .is-quiet-page .panel-slot:not(.is-resizing) .panel-resize-handle:not(:hover, :focus-visible) { opacity: 0; }
+
+  /* Tabs are titles. Their ⋮ and × show on the tab you point at; a right click still opens the menu. */
+  .is-quiet-page .document-workspace-header.is-quiet .document-tab .document-tab-icon { display: none; }
+  .is-quiet-page .document-workspace-header.is-quiet .document-tab :is(.document-tab-menu-trigger, .document-tab-close) { opacity: 0; transition: opacity .12s ease; }
+  .is-quiet-page .document-workspace-header.is-quiet .document-tab:is(:hover, :focus-within) :is(.document-tab-menu-trigger, .document-tab-close),
+  .is-quiet-page .document-workspace-header.is-quiet .document-tab .document-tab-menu-trigger[aria-expanded="true"] { opacity: 1; }
+  .is-quiet-page .document-workspace-header.is-quiet .document-tab:not(.is-active) .document-tab-title { color: var(--muted); }
+}
