@@ -4103,6 +4103,47 @@ button {
   padding: 0.78rem 1rem 0.92rem;
 }
 
+/* A staged diagram (Visualize): a stepper over the picture, and every stage stacked in one grid
+   cell so the panel keeps its tallest stage's height while only the current one shows. */
+.message-content.is-markdown .diagram-stages {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  font-family: var(--paper-sans, inherit);
+  font-size: 0.8rem;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem;
+}
+.message-content.is-markdown .diagram-stage-head { align-items: center; display: flex; gap: 0.35rem; min-width: 0; }
+.message-content.is-markdown .diagram-stage-count {
+  color: #0b8f70; font-size: 0.7rem; font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+}
+.message-content.is-markdown .diagram-stage-caption {
+  color: var(--ink); margin-left: 0.4rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.message-content.is-markdown .diagram-stage-step {
+  align-items: center; background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--ink);
+  cursor: pointer; display: inline-flex; font-size: 0.95rem; height: 1.6rem; justify-content: center; line-height: 1; padding: 0; width: 1.6rem;
+}
+.message-content.is-markdown .diagram-stage-step:disabled { cursor: default; opacity: 0.35; }
+.message-content.is-markdown .diagram-stage-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.message-content.is-markdown .diagram-stage-chip {
+  background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 0.74rem; max-width: 100%; overflow: hidden; padding: 0.15rem 0.6rem; text-overflow: ellipsis; white-space: nowrap;
+}
+.message-content.is-markdown .diagram-stage-chip[aria-pressed="true"] { border-color: #0b8f70; color: #08795f; background: color-mix(in srgb, #0b8f70 8%, transparent); }
+.message-content.is-markdown .diagram-stage-step:hover:not(:disabled),
+.message-content.is-markdown .diagram-stage-chip:hover { border-color: var(--line-strong, var(--line)); color: var(--ink); }
+.message-content.is-markdown .message-mermaid-block.is-staged .message-mermaid-diagram { display: grid; }
+.message-content.is-markdown .diagram-stage-view { grid-area: 1 / 1; visibility: hidden; }
+.message-content.is-markdown .diagram-stage-view.is-current { visibility: visible; }
+.message-content.is-markdown .diagram-stage-view svg { display: block; height: auto; margin: 0 auto; max-width: 100%; }
+:root[data-theme="dark"] .message-content.is-markdown .diagram-stage-count { color: #5fd6b4; }
+:root[data-theme="dark"] .message-content.is-markdown .diagram-stage-chip[aria-pressed="true"] { border-color: #10a37f; color: #5fd6b4; }
+@media (pointer: coarse) {
+  .message-content.is-markdown .diagram-stage-step { height: 2.25rem; width: 2.25rem; }
+  .message-content.is-markdown .diagram-stage-chip { padding: 0.4rem 0.75rem; }
+}
+
 .mermaid-viewer-backdrop {
   align-items: stretch;
   background: rgba(4, 7, 9, 0.82);

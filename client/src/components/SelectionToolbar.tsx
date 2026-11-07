@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./SelectionToolbar.css";
 
-export type SelectionIconName = "highlight" | "note" | "side" | "link" | "copy" | "cut" | "paste" | "select" | "find" | "explain" | "rewrite" | "question" | "ai" | "more";
+export type SelectionIconName = "highlight" | "note" | "side" | "link" | "copy" | "cut" | "paste" | "select" | "find" | "explain" | "rewrite" | "question" | "visualize" | "ai" | "more";
 
 const ICON_PATHS: Record<Exclude<SelectionIconName, "ai" | "more">, React.ReactNode> = {
   highlight: <><path d="M9.5 2.5l4 4-6 6H3.5v-4z" /><path d="M2 14.5h12" /></>,
@@ -16,6 +16,7 @@ const ICON_PATHS: Record<Exclude<SelectionIconName, "ai" | "more">, React.ReactN
   explain: <><circle cx="8" cy="8" r="6" /><path d="M6.3 6.3a1.8 1.8 0 113 1.4c-.8.5-1.3.9-1.3 1.8" /><circle cx="8" cy="11.6" r=".5" fill="currentColor" /></>,
   rewrite: <><path d="M2.5 13.5l1-3.5 7-7 2.5 2.5-7 7z" /><path d="M9 4.5l2.5 2.5" /></>,
   question: <><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" /><path d="M6.6 5.6a1.5 1.5 0 112.3 1.2c-.6.4-.9.7-.9 1.3" /><circle cx="8" cy="9.4" r=".45" fill="currentColor" /></>,
+  visualize: <><rect x="2" y="2.5" width="4.5" height="3.5" rx="1" /><rect x="9.5" y="10" width="4.5" height="3.5" rx="1" /><path d="M4.25 6v2.5a1.5 1.5 0 001.5 1.5H9.5" /><circle cx="11.75" cy="4.25" r="1.75" /></>,
 };
 
 export function SelectionIcon({ name }: { name: SelectionIconName }) {

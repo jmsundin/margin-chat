@@ -18,6 +18,7 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { getObsidianCalloutFamily } from "./obsidianMarkdown";
 import { latexMarkedExtensions } from "./latex";
+import { parseDiagramStages, type DiagramStage } from "./mermaidDiagrams";
 
 function escapeHtml(value: string) {
   return value
@@ -70,11 +71,30 @@ hljs.registerAliases(["md"], { languageName: "markdown" });
 hljs.registerAliases(["html", "svg"], { languageName: "xml" });
 hljs.registerAliases(["yml"], { languageName: "yaml" });
 
+/** The stepper over a staged diagram: ‹ Stage 1/4 › with the stage's title, and a chip per stage. */
+function stagedDiagramControls(stages: DiagramStage[]) {
+  return [
+    '<div class="diagram-stages" role="group" aria-label="Diagram stages">',
+    '<div class="diagram-stage-head">',
+    '<button type="button" class="diagram-stage-step" data-step="-1" aria-label="Previous stage" disabled>‹</button>',
+    `<span class="diagram-stage-count">Stage <span class="diagram-stage-number">1</span>/${stages.length}</span>`,
+    '<button type="button" class="diagram-stage-step" data-step="1" aria-label="Next stage">›</button>',
+    `<span class="diagram-stage-caption">${escapeHtml(stages[0].title)}</span>`,
+    "</div>",
+    '<div class="diagram-stage-chips">',
+    ...stages.map((stage, index) => `<button type="button" class="diagram-stage-chip" data-stage-index="${index}" data-title="${escapeAttribute(stage.title)}" aria-pressed="${index === 0}">${index + 1}. ${escapeHtml(stage.title)}</button>`),
+    "</div>",
+    "</div>",
+  ].join("");
+}
+
 const renderer: RendererObject = {
   code(token: Tokens.Code) {
     if (isMermaidLanguage(token.lang)) {
+      const stages = parseDiagramStages(token.text);
       return [
-        '<div class="message-mermaid-block" data-language="mermaid">',
+        `<div class="message-mermaid-block${stages ? " is-staged" : ""}" data-language="mermaid"${stages ? ' data-stage="0"' : ""}>`,
+        ...(stages ? [stagedDiagramControls(stages)] : []),
         '<pre class="message-code-block is-mermaid-source" data-language="mermaid">',
         `<code class="language-mermaid">${escapeHtml(token.text)}</code>`,
         "</pre>",
