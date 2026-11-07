@@ -83,7 +83,7 @@ import { getDocumentBackTarget, getDocumentKind, getPresentedParentId, recordDoc
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
-import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
+import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, VISUALIZE_PASSAGE_PROMPT, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
@@ -2666,7 +2666,9 @@ function WorkspaceAppContent({
       serviceId: target.serviceId, modelId: target.modelId, ai: target.ai,
       ...(selectedQuote ? { selection: priorPrompt?.selection ?? { blockId: request.blockId, from: request.from, to: request.to, quote: selectedQuote } } : {}) };
     const newDocument = request.destination === "side" || request.destination === "margin";
+    // A diagram from Visualize goes under the passage's paragraph, not into the middle of its sentence.
     const insertion = newDocument ? { blockId: null, offset: 0 }
+      : request.visualize && sourceBlock ? { blockId: request.blockId, offset: sourceBlock.content.length }
       : { blockId: request.blockId, offset: request.replaceSelection ? request.from : request.to,
         ...(request.replaceSelection ? { replaceTo: request.to } : {}) };
     const generation: DocumentGeneration = { id: generationId, promptId, messageId, createdAt: now,
@@ -2700,7 +2702,7 @@ function WorkspaceAppContent({
       // text written into the page never gets one.
       followUp: request.destination === "side" && readNotebookPrefs().aiBehaviour === "thinks" });
     // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
-    const diagramReply = request.destination === "inline" && request.replaceSelection && isMermaidDiagramPassage(selectedQuote);
+    const diagramReply = request.destination === "inline" && (request.visualize || request.replaceSelection && isMermaidDiagramPassage(selectedQuote));
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
       request: async (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
@@ -3640,6 +3642,18 @@ function WorkspaceAppContent({
       blockId: draft.sourceBlockId, from: draft.startOffset, to: draft.endOffset,
       quote: draft.quote, sourceContent: draft.sourceContent, prompt: QUESTION_PASSAGE_PROMPT,
       destination: "margin", replaceSelection: false,
+    });
+  }
+
+  /** Visualize: the AI draws the passage as a diagram you step through, placed under its paragraph. */
+  function handleVisualizeSelection() {
+    if (!selectionDraft || pendingConversationIds[selectionDraft.conversationId]) return;
+    const draft = joinSelectedLines(selectionDraft);
+    if (!draft?.sourceBlockId) return;
+    handleDocumentSubmit(draft.conversationId, {
+      blockId: draft.sourceBlockId, from: draft.startOffset, to: draft.endOffset,
+      quote: draft.quote, sourceContent: draft.sourceContent, prompt: VISUALIZE_PASSAGE_PROMPT,
+      destination: "inline", replaceSelection: false, visualize: true,
     });
   }
 
@@ -6136,6 +6150,7 @@ function WorkspaceAppContent({
               onRewrite={selectionIsDiagram ? undefined : () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
               onAsk={() => openMobileSelectionPrompt()}
               onQuestion={selectionDraft.sourceBlockId && !selectionIsDiagram ? handleQuestionSelection : undefined}
+              onVisualize={selectionDraft.sourceBlockId && !selectionIsDiagram ? handleVisualizeSelection : undefined}
               onSideDocument={() => handleCreateSelectionSideDocument()}
               onMarginNote={() => handleCreateSelectionNote()}
               onLink={() => { setSelectionLinkError(null); setSelectionIntent("link"); setSelectionActionsExpanded(true); }}
@@ -6208,7 +6223,9 @@ function WorkspaceAppContent({
                   ...(selectionIsDiagram ? [] : [{ icon: "rewrite" as const, label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) }]),
                 ]}
                 aiActions={selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "question" as const, label: "Question", ariaLabel: "Question this: the AI asks you one question about the passage, in the margin",
-                  hint: "The AI asks you one question about this passage, in the margin", disabled: selectionPending, onSelect: handleQuestionSelection }] : []}
+                  hint: "The AI asks you one question about this passage, in the margin", disabled: selectionPending, onSelect: handleQuestionSelection },
+                  { icon: "visualize" as const, label: "Visualize", ariaLabel: "Visualize: the AI draws this passage as a diagram you step through",
+                  hint: "A diagram of this passage, in stages, under its paragraph", disabled: selectionPending, onSelect: handleVisualizeSelection }] : []}
                 ask={{ icon: "ai", label: "Ask AI", ariaLabel: selectionIsDiagram ? "Ask AI to change this diagram" : "Ask AI about this passage", pressed: selectionIntent === "branch",
                   onSelect: () => setSelectionIntent((intent) => intent === "branch" ? "actions" : "branch") }}
               />}

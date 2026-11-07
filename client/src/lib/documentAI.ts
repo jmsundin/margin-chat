@@ -20,6 +20,8 @@ export interface DocumentAIRequest extends DocumentInsertion {
   agentAnswer?: { question: string; request: string };
   /** Run this one request in Agent mode, whatever the document's setting (a roadmap's Draft with AI). */
   agent?: true;
+  /** Visualize: the reply is one staged Mermaid diagram, placed after the passage's paragraph. */
+  visualize?: true;
 }
 
 /**
@@ -53,6 +55,12 @@ function instructionLines(instruction?: string | null): string[] {
  * The words are the user's prompt too, so they read well in the note's prompt history.
  */
 export const QUESTION_PASSAGE_PROMPT = "Ask me one short question that tests this passage: challenge a weak claim, ask what the evidence is, or name a factor it leaves out. One sentence, no answer, nothing else.";
+
+/**
+ * Visualize: the passage as a Mermaid diagram the reader steps through, one idea per stage
+ * (mermaidDiagrams.ts parseDiagramStages reads the `%% stage:` lines).
+ */
+export const VISUALIZE_PASSAGE_PROMPT = "Draw this passage as a Mermaid diagram that builds up in 3 to 5 stages, so I can click through the reasoning one step at a time. Start with the diagram type line (for example flowchart TD). Begin each stage with a comment line `%% stage: <title of at most five words>`, followed only by the nodes and links that stage adds; each stage builds on the ones before it. Keep labels short. Return only one ```mermaid fenced code block, with no other text.";
 
 /** An answer the user reads (not text written into their document) ends by handing the thinking back. */
 const FOLLOW_UP_LINE = "End your answer with one short follow-up question for the user to think about, on its own line.";

@@ -11,7 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { renderMarkdownToHtml, renderObsidianMarkdownToHtml } from "../lib/markdown";
-import { MERMAID_BLOCK_SELECTOR, getMermaidConfig, setMermaidStatus } from "../lib/mermaidDiagrams";
+import { MERMAID_BLOCK_SELECTOR, drawMermaidBlock, getMermaidConfig, setMermaidStatus } from "../lib/mermaidDiagrams";
 import { getHeadingOutlineId } from "../lib/chatOutline";
 import {
   buildMessageDecorations,
@@ -600,17 +600,12 @@ export default function MarkdownMessage({
         }
 
         try {
-          const { svg, bindFunctions } = await mermaid.render(
-            buildMermaidRenderId(`${messageId}-${renderScope}`, index),
-            source,
-          );
+          await drawMermaidBlock(mermaid, block, diagram, source, buildMermaidRenderId(`${messageId}-${renderScope}`, index));
 
           if (cancelled) {
             return;
           }
 
-          diagram.innerHTML = svg;
-          bindFunctions?.(diagram);
           diagram.dataset.mermaidInteractive = "true";
           diagram.tabIndex = 0;
           diagram.setAttribute("aria-label", "Open Mermaid diagram fullscreen");

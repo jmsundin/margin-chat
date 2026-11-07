@@ -125,6 +125,112 @@ export function getDocumentMermaidTheme(): MermaidTheme {
     : "light";
 }
 
+/** One step of a staged diagram: its title and the Mermaid text that draws everything up to it. */
+export interface DiagramStage { title: string; source: string }
+
+const STAGE_MARKER = /^[ \t]*%%[ \t]*stage\b[^:\n]*:?[ \t]*(.*)$/i;
+
+/**
+ * A diagram that builds up in stages (Visualize writes these): Mermaid comment lines
+ * `%% stage: Title` start each stage, and stage n draws the lines before the first marker
+ * plus stages 1 to n. Mermaid and Obsidian ignore the comments, so elsewhere the file shows
+ * the finished diagram. Fewer than two markers is an ordinary diagram (null).
+ */
+export function parseDiagramStages(source: string): DiagramStage[] | null {
+  const lines = source.split("\n");
+  const markers = lines.flatMap((line, index) => {
+    const match = STAGE_MARKER.exec(line);
+    return match ? [{ index, title: match[1].trim() }] : [];
+  });
+  if (markers.length < 2) return null;
+  return markers.map((marker, stage) => ({
+    title: marker.title || `Stage ${stage + 1}`,
+    source: lines.slice(0, markers[stage + 1]?.index ?? lines.length).filter((line) => !STAGE_MARKER.test(line)).join("\n"),
+  }));
+}
+
+type MermaidApi = typeof import("mermaid").default;
+
+/**
+ * Draws one Mermaid block's diagram. A staged diagram draws every stage, stacked in one place so the
+ * panel keeps the height of its tallest stage, and shows the one its stepper points at.
+ * Throws Mermaid's error; the caller shows it.
+ */
+export async function drawMermaidBlock(mermaid: MermaidApi, block: HTMLElement, diagram: HTMLElement, source: string, renderId: string) {
+  const stages = block.classList.contains("is-staged") ? parseDiagramStages(source) : null;
+  if (!stages) {
+    const { svg, bindFunctions } = await mermaid.render(renderId, source);
+    diagram.innerHTML = svg;
+    bindFunctions?.(diagram);
+    return;
+  }
+  const views: HTMLElement[] = [];
+  for (const [index, stage] of stages.entries()) {
+    const { svg, bindFunctions } = await mermaid.render(`${renderId}-stage-${index}`, stage.source);
+    const view = document.createElement("div");
+    view.className = "diagram-stage-view";
+    view.innerHTML = svg;
+    bindFunctions?.(view);
+    views.push(view);
+  }
+  diagram.replaceChildren(...views);
+  // Every stage at the scale of the widest one, so nodes keep their size as the diagram grows.
+  const widths = views.map((view) => view.querySelector("svg")?.viewBox.baseVal?.width ?? 0);
+  const widest = Math.max(...widths);
+  if (widest > 0) views.forEach((view, index) => {
+    const svg = view.querySelector<SVGSVGElement>("svg");
+    if (svg && widths[index] > 0) svg.style.maxWidth = `min(${widths[index]}px, ${(widths[index] / widest) * 100}%)`;
+  });
+  showDiagramStage(block, Number(block.dataset.stage ?? 0));
+  installStageControls();
+}
+
+/** Points a staged diagram's stepper and picture at one stage. */
+export function showDiagramStage(block: HTMLElement, stage: number) {
+  const views = [...block.querySelectorAll<HTMLElement>(".diagram-stage-view")];
+  const chips = [...block.querySelectorAll<HTMLElement>(".diagram-stage-chip")];
+  const count = Math.max(views.length, chips.length);
+  if (!count) return;
+  const current = Math.max(0, Math.min(count - 1, Number.isFinite(stage) ? stage : 0));
+  block.dataset.stage = String(current);
+  views.forEach((view, index) => view.classList.toggle("is-current", index === current));
+  chips.forEach((chip, index) => chip.setAttribute("aria-pressed", String(index === current)));
+  const number = block.querySelector(".diagram-stage-number");
+  if (number) number.textContent = String(current + 1);
+  const caption = block.querySelector(".diagram-stage-caption");
+  if (caption) caption.textContent = chips[current]?.dataset.title ?? "";
+  const previous = block.querySelector<HTMLButtonElement>('.diagram-stage-step[data-step="-1"]');
+  const next = block.querySelector<HTMLButtonElement>('.diagram-stage-step[data-step="1"]');
+  if (previous) previous.disabled = current === 0;
+  if (next) next.disabled = current === count - 1;
+}
+
+let stageControlsInstalled = false;
+/**
+ * The stepper lives in rendered Markdown, so one listener on the page works every panel. It runs
+ * before the editor's own handlers, so a click on a stage never opens the diagram's source.
+ */
+function installStageControls() {
+  if (stageControlsInstalled || typeof document === "undefined") return;
+  stageControlsInstalled = true;
+  const target = (event: Event) => event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".diagram-stages button") : null;
+  document.addEventListener("mousedown", (event) => {
+    if (!target(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+  document.addEventListener("click", (event) => {
+    const button = target(event);
+    const block = button?.closest<HTMLElement>(".message-mermaid-block.is-staged");
+    if (!button || !block) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (button.disabled) return;
+    const current = Number(block.dataset.stage ?? 0);
+    showDiagramStage(block, button.dataset.stageIndex != null ? Number(button.dataset.stageIndex) : current + Number(button.dataset.step ?? 0));
+  }, true);
+}
+
 let nextStaticRenderId = 0;
 
 /**
@@ -154,10 +260,8 @@ export async function renderMermaidBlocksIn(
 
     nextStaticRenderId += 1;
     try {
-      const { svg, bindFunctions } = await mermaid.render(`mermaid-static-${nextStaticRenderId}`, source);
+      await drawMermaidBlock(mermaid, block, diagram, source, `mermaid-static-${nextStaticRenderId}`);
       if (isCancelled()) return changed;
-      diagram.innerHTML = svg;
-      bindFunctions?.(diagram);
       block.classList.add("is-rendered");
       block.classList.remove("has-error");
       setMermaidStatus(block, null);

@@ -193,6 +193,8 @@ const server = createServer(async (request, response) => {
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."
               : asked.includes("Ask me one short question that tests this passage")
                 ? "What human evidence shows a weekly dose avoids the immune effects, rather than mouse data?"
+              : asked.includes("builds up in 3 to 5 stages")
+                ? "```mermaid\nflowchart LR\n%% stage: The drug\n  R[Rapamycin] --> M[mTOR blocked]\n%% stage: What it changes\n  M --> G[Less cell growth]\n  M --> A[More autophagy]\n%% stage: The claim\n  A --> L[Longer life in mice]\n%% stage: The open question\n  L -.-> H{Same in humans?}\n```"
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;
             response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
             response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);
