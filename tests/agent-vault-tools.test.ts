@@ -139,7 +139,7 @@ describe("agent vault tools", () => {
     const workspaceAccess = { userId, vault, database };
     // The AI context setting for plain Ask AI doesn't limit the agent.
     expect(agentToolDefinitions(request({ contextScope: "conversation" }), workspaceAccess).map((tool: any) => tool.name).slice(3))
-      .toEqual(["search_vault", "read_document", "list_related"]);
+      .toEqual(["search_vault", "find_document", "read_document", "list_related"]);
     expect(agentToolDefinitions(request({ agentScope: "conversation" }), workspaceAccess).map((tool: any) => tool.name))
       .toEqual(["search_conversations", "list_recent_conversations", "get_conversation"]);
     expect(agentToolDefinitions(request({}), null)).toHaveLength(3);
@@ -175,6 +175,10 @@ describe("agent vault tools", () => {
     expect((await withPdf("read_document", { document_id: "chat" }) as any).document).toMatchObject({
       title: "Supplier call", messages: [{ role: "user" }], file_text: "[Page 2]\nPrices are fixed until March.", file_text_truncated: false });
     expect((await run({})("read_document", { document_id: "chat" }) as any).document).not.toHaveProperty("file_text");
+    // find_document ranks whole documents: the file's passage counts toward the chat it is attached to.
+    const located: any = await run({})("find_document", { description: "pricing ideas" });
+    expect(located.documents[0]).toMatchObject({ document_id: "note", title: "Pricing ideas", why: expect.stringContaining("Title has every word"), snippet: "Try usage pricing for teams." });
+    expect(located.verdict).toBe("found");
     // A limited agent only sees what the user chose, files included.
     const limited = run({ agentScope: "selected", selectedConversationIds: ["note"] });
     expect((await limited("search_vault", { query: "how long are prices held" }) as any).results.map((hit: any) => hit.document_id)).toEqual(["note"]);

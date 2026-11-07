@@ -137,12 +137,30 @@ export interface VaultRelatedPassage {
   path?: string;
 }
 
+/** A document the search seems to be about ("Found it"), with the passage that matched best. */
+export interface VaultFoundDocument {
+  id: string;
+  title: string;
+  /** One line on why it was picked, such as "Same words and meaning in 3 sections". */
+  why: string;
+  path?: string;
+  updatedAt?: string;
+  /** Found by its title only; never read by AI. */
+  hiddenFromAI?: boolean;
+  passage?: VaultRelatedPassage;
+}
+
+/** found: one document covers it; several: a few share it; answer: the search is a question; unclear / none: no card. */
+export type VaultFindVerdict = "found" | "several" | "answer" | "unclear" | "none";
+
 /** One step of a streamed search: titles first, then passages from each source. */
 export type VaultSearchEvent =
   | { type: "documents"; results: VaultIndexEntry[] }
   | { type: "passages"; source: "documents" | "messages" | "notes"; results: VaultSearchPassage[]; error?: string }
   /** The search index's best matches by keyword and meaning, best first. */
   | { type: "related"; results: VaultRelatedPassage[]; warning?: string }
+  /** Which documents the search is about, ranked whole; sent after "related". */
+  | { type: "found"; verdict: VaultFindVerdict; question: boolean; documents: VaultFoundDocument[] }
   | { type: "done"; revision: number; indexedRevision?: number | null }
   | { type: "error"; error: string };
 

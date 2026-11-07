@@ -124,7 +124,7 @@ describe("MCP server", () => {
       body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
     expect(notified.status).toBe(202);
     const tools = (await (await rpc(token, "tools/list")).json()).result.tools;
-    expect(tools.map((tool: any) => tool.name)).toEqual(["search_vault", "read_document", "list_related", "search", "fetch", "get_document_blame"]);
+    expect(tools.map((tool: any) => tool.name)).toEqual(["search_vault", "find_document", "read_document", "list_related", "search", "fetch", "get_document_blame"]);
     expect(tools.every((tool: any) => tool.annotations.readOnlyHint && tool.inputSchema.type === "object")).toBe(true);
 
     const found = await call(token, "search_vault", { query: "pricing" });
@@ -189,7 +189,7 @@ describe("MCP server", () => {
 
     const names = async (token: string) => (await (await rpc(token, "tools/list")).json()).result.tools.map((tool: any) => tool.name);
     expect(await names(reader)).not.toContain("create_document");
-    expect(await names(writer)).toEqual(["search_vault", "read_document", "list_related", "search", "fetch", "get_document_blame", "create_document", "append_to_document", "update_document"]);
+    expect(await names(writer)).toEqual(["search_vault", "find_document", "read_document", "list_related", "search", "fetch", "get_document_blame", "create_document", "append_to_document", "update_document"]);
     const refused = await (await rpc(reader, "tools/call", { name: "create_document", arguments: { title: "x", content: "y" } })).json();
     expect(refused.error).toMatchObject({ code: -32602, message: expect.stringContaining("can add documents") });
     const init = await (await rpc(writer, "initialize", { protocolVersion: "2025-06-18", capabilities: {} })).json();

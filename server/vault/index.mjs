@@ -2,8 +2,11 @@ import { HttpError } from "../lib/errors.mjs";
 import { createVaultStorage, digest } from "./storage.mjs";
 import { createProvenanceStore } from "./provenance/store.mjs";
 import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearchTerms } from "./search.mjs";
+import { findVerdict, rankDocuments } from "./findDocuments.mjs";
 
 const MAX_FILES = 5_000_000;
+/** Best matches listed in search; the rest only help rank whole documents. */
+const RELATED_SHOWN = 10;
 const MAX_COMMIT_BYTES = 3 * 1024 * 1024;
 /** The largest single file (a PDF, image or video) a vault syncs. Files over a
  * few MB travel straight between the browser and the store, never through a function. */
@@ -636,6 +639,25 @@ export function createVaultService({ database, env = process.env, storage = crea
     return built;
   }
 
+  /** Which document the search is about, ranked from the index's passages and the matching titles. */
+  function foundEvent(query, passages, titles, built, shown) {
+    built.idByPath ??= new Map(built.entries.map((entry) => [entry.path, entry.id]));
+    const byId = built.byId ??= new Map(built.entries.map((entry) => [entry.id, entry]));
+    const related = (id) => {
+      const entry = byId.get(id);
+      if (!entry) return [];
+      return [entry.parentPath, ...(entry.linkedPaths ?? [])].map((path) => path && built.idByPath.get(path)).filter(Boolean);
+    };
+    const ranked = rankDocuments({ query, passages, titles, related });
+    const { verdict, question, documents } = findVerdict(query, ranked);
+    return { type: "found", verdict, question, documents: documents.map((found) => ({
+      id: found.id, title: found.title, why: found.why, ...(found.hidden ? { hiddenFromAI: true } : {}),
+      ...(found.updatedAt ? { updatedAt: found.updatedAt } : {}),
+      ...(built.pathById.has(found.id) ? { path: built.pathById.get(found.id) } : {}),
+      ...(found.best ? { passage: shown(found.best) } : {}),
+    })) };
+  }
+
   function passageResults(source, row, terms, pathById) {
     const base = { id: row.conversation_id, ...(pathById.has(row.conversation_id) ? { path: pathById.get(row.conversation_id) } : {}),
       title: row.title, updated: new Date(row.updated_at).toISOString() };
@@ -659,7 +681,7 @@ export function createVaultService({ database, env = process.env, storage = crea
    * once, then passages from each projected source as its query returns, and
    * with `related`, the passage index's best matches by keyword and meaning.
    */
-  async function search(userId, query, { limit = 20, signal, emit, related = null }) {
+  async function search(userId, query, { limit = 20, signal, emit, related = null, found = false }) {
     const terms = vaultSearchTerms(query);
     const root = await migrateLegacy(userId);
     const built = await index(userId, root);
@@ -673,19 +695,24 @@ export function createVaultService({ database, env = process.env, storage = crea
     // Passages by meaning and keyword from the passage index, beside the exact-word sources.
     const relatedWork = terms.length && related ? (async () => {
       try {
-        const found = await related();
+        const matches = await related();
         if (signal?.aborted) return;
         // Snippets only. A passing failure is reported; a setting the user chose is not.
-        emit({ type: "related", results: found.results.map(({ text: _text, similarity: _similarity, score: _score, ...result }) => {
+        const shown = ({ text: _text, similarity: _similarity, score: _score, ...result }) => {
           const openId = result.sourceKind === "attachment" ? result.attachedTo : result.id;
           return { ...result, ...(openId && built.pathById.has(openId) ? { path: built.pathById.get(openId) } : {}) };
-        }), ...(found.warningKind === "failed" ? { warning: found.warning } : {}) });
+        };
+        emit({ type: "related", results: matches.results.slice(0, RELATED_SHOWN).map(shown), ...(matches.warningKind === "failed" ? { warning: matches.warning } : {}) });
+        if (found) emit(foundEvent(query, matches.results, documents, built, shown));
       } catch (error) {
         if (signal?.aborted) return;
         console.error("Vault passage index search failed", error);
         emit({ type: "related", results: [], warning: "Search by meaning is unavailable just now." });
+        if (found) emit(foundEvent(query, [], documents, built, (result) => result));
       }
     })() : null;
+    // Without the passage index, "Found it" can still go by titles.
+    if (found && terms.length && !related) emit(foundEvent(query, [], documents, built, (result) => result));
     if (terms.length && database?.searchVaultPassages) {
       const patterns = likePatterns(terms);
       await Promise.all(PASSAGE_SOURCES.map(async (source) => {
@@ -845,13 +872,13 @@ export function createVaultService({ database, env = process.env, storage = crea
       return { configured: true, revision, entries };
     },
     /** See `search` above. Resolves once every result has been emitted. */
-    async search(userId, query, { limit = 20, signal, emit = () => undefined, related = null } = {}) {
+    async search(userId, query, { limit = 20, signal, emit = () => undefined, related = null, found = false } = {}) {
       if (!configured) {
         emit({ type: "done", revision: 0 });
         return;
       }
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new HttpError(400, "Ask for between 1 and 100 search results.");
-      await search(userId, query, { limit, signal, emit, related });
+      await search(userId, query, { limit, signal, emit, related, found });
     },
     /** The current vault revision, without reading the file list. */
     async revision(userId) {

@@ -125,6 +125,33 @@ test("the search index's best matches by meaning come back ranked, and open wher
   expect(notes.at(-1)!.related!.map((hit) => hit.conversationId)).toEqual(["plants"]);
 });
 
+test("Found it opens the document at its best passage, or by title, and drops what can't open", async () => {
+  const found: VaultSearchEvent = { type: "found", verdict: "several", question: false, documents: [
+    { id: "trees", title: "Trees vs. shade sails", why: "Same words and meaning in 2 sections", path: "trees.md",
+      passage: { id: "trees", sourceKind: "conversation", kind: "chat", title: "Trees vs. shade sails", heading: null, snippet: "Trees cool the air",
+        blockId: null, pageNumber: null, passageIndex: 0, updatedAt: null, matched: "both", path: "trees.md" } },
+    { id: "plants", title: "Shade-tolerant plants", why: "Title has every word", path: "plants.md", hiddenFromAI: true },
+    { id: "nowhere", title: "Unlisted", why: "Title has every word" },
+  ] };
+  const searchCloud: VaultCloudSearch = async (_query, _options, onEvent) => { onEvent(found); onEvent({ type: "done", revision: 7 }); };
+  const emitted: VaultSearchResults[] = [];
+  createVaultSearchProvider(() => input, searchCloud).search({ query: "shade", scope: "all" }, (results) => emitted.push(results));
+  await settle();
+  const last = emitted.at(-1)!;
+  expect(last.found!.verdict).toBe("several");
+  expect(last.found!.hits).toHaveLength(2);
+  expect(last.found!.hits[0]).toMatchObject({ kind: "passage", hit: { key: "found:trees", conversationId: "trees", why: "Same words and meaning in 2 sections" } });
+  expect((last.found!.hits[0].hit as { cloudPath?: string }).cloudPath).toBeUndefined();
+  expect(last.found!.hits[1]).toMatchObject({ kind: "document", hit: { key: "found:plants", hiddenFromAI: true, target: { kind: "cloud", path: "plants.md" } } });
+
+  // No card when the server is unsure.
+  const unsure: VaultCloudSearch = async (_query, _options, onEvent) => { onEvent({ ...found, verdict: "unclear" }); onEvent({ type: "done", revision: 7 }); };
+  const quiet: VaultSearchResults[] = [];
+  createVaultSearchProvider(() => input, unsure).search({ query: "shade", scope: "all" }, (results) => quiet.push(results));
+  await settle();
+  expect(quiet.at(-1)!.found).toBeUndefined();
+});
+
 test("a PDF from the vault opens its own document, naming the page", () => {
   const hit = relatedPassageHit({ id: "file-abc", sourceKind: "vault-file", kind: "file", title: "Canopy study.pdf", heading: "Page 3",
     snippet: "Canopy cover lowers street temperature", blockId: null, pageNumber: 3, passageIndex: 2, updatedAt: null, matched: "both" });

@@ -1,8 +1,12 @@
 import { decodeReadableMarkdown, readDocumentGraphProperties, readFrontmatterValues } from "@margin-chat/workspace-contracts";
 import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearchTerms } from "../../vault/search.mjs";
+import { findVerdict, rankDocuments } from "../../vault/findDocuments.mjs";
 
 const SEARCH_RESULTS = 8;
 const INDEX_RESULTS = 20;
+/** Passages read to rank whole documents for find_document. */
+const FIND_PASSAGES = 30;
+const FIND_RESULTS = 5;
 const TITLE_SCAN_LIMIT = 100;
 const RELATED_RESULTS = 20;
 const MESSAGES_READ = 12;
@@ -16,6 +20,11 @@ export const VAULT_TOOL_DEFINITIONS = [
     name: "search_vault",
     description: "Search the user's saved documents, notes, chats, uploaded files and PDFs in their cloud vault, by keyword and, when available, by meaning: title matches first, then the passages that best match, each with the section it sits under and a snippet. A short phrase describing what you want works as well as keywords. Documents the user hid from AI are never searched.",
     parameters: { type: "object", properties: { query: { type: "string", description: "A few keywords or a short phrase." } }, required: ["query"], additionalProperties: false },
+  },
+  {
+    name: "find_document",
+    description: "Find which of the user's documents a description is about, ranked as whole documents rather than passages: a document covering the topic across several sections beats one with a passing mention. Use it when the user half-remembers a note (\"that drug trial in old mice\") or before writing a new document, to check whether one on the topic already exists. Returns up to 5 documents with why each was picked and its best passage, and a verdict: found (one clearly covers it), several, answer (the request is a question), unclear or none. Documents the user hid from AI are never included.",
+    parameters: { type: "object", properties: { description: { type: "string", description: "What the document is about, in the user's words." } }, required: ["description"], additionalProperties: false },
   },
   {
     name: "read_document",
@@ -160,6 +169,38 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
     };
   }
 
+  async function find(args) {
+    await loadHidden();
+    const query = String(args.description ?? args.query ?? "").trim();
+    if (!vaultSearchTerms(query).length) return { description: query, verdict: "none", documents: [] };
+    const [listed, found] = await Promise.all([
+      entries(),
+      workspace.passages ? workspace.passages.search(query, { limit: FIND_PASSAGES }).catch((error) => {
+        console.error("Agent find_document search failed", error);
+        return null;
+      }) : null,
+    ]);
+    const permitted = listed.filter((entry) => permits(entry.id));
+    const idByPath = new Map(listed.map((entry) => [entry.path, entry.id]));
+    const byId = new Map(listed.map((entry) => [entry.id, entry]));
+    const relatedIds = (id) => {
+      const entry = byId.get(id);
+      return entry ? [entry.parentPath, ...(entry.linkedPaths ?? [])].map((path) => path && idByPath.get(path)).filter(Boolean) : [];
+    };
+    const passages = (found?.results ?? []).filter((hit) => permits(hit.sourceKind === "attachment" ? hit.attachedTo : hit.id));
+    // Hidden documents never reach the agent, not even by title.
+    const ranked = rankDocuments({ query, passages, titles: permitted.map(({ hiddenFromAI: _hidden, ...entry }) => entry), related: relatedIds, limit: FIND_RESULTS });
+    const { verdict } = findVerdict(query, ranked);
+    return {
+      description: query, verdict,
+      documents: ranked.filter((document) => permits(document.id)).map((document) => ({
+        document_id: document.id, title: document.title, why: document.why, updated_at: document.updatedAt ?? null,
+        ...(document.best ? { ...(document.best.heading ? { section: document.best.heading } : {}), snippet: document.best.snippet } : {}),
+      })),
+      ...(found?.warning ? { warning: found.warning } : !found ? { warning: "Only titles were searched; document text could not be searched." } : {}),
+    };
+  }
+
   function outside(id) {
     return { document_id: id, found: false, error: "This document is outside the context the user allowed for AI." };
   }
@@ -250,7 +291,7 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
       total_related: all.length, truncated: all.length > RELATED_RESULTS };
   }
 
-  const handlers = { search_vault: search, read_document: read, list_related: related };
+  const handlers = { search_vault: search, find_document: find, read_document: read, list_related: related };
   return {
     has: (name) => VAULT_TOOL_NAMES.has(name),
     async run(name, args) {

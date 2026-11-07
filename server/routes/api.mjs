@@ -874,11 +874,11 @@ export function createApiHandler({
           };
           // Search by meaning embeds the query, which is metered like any other AI request.
           const related = vaultPassages.available ? async () => vaultPassages.search({
-            userId, query, limit: Math.min(limit, 10),
+            userId, query, limit: 30, // ten are listed; the rest rank whole documents for "Found it"
             context: await executeChatReply.createUsageContext({ user: authContext.user, signal: aborted.signal, operation: "vault-search" }),
           }) : null;
           try {
-            await vaultService.search(userId, query, { limit, signal: aborted.signal, emit, related });
+            await vaultService.search(userId, query, { limit, signal: aborted.signal, emit, related, found: url.searchParams.get("found") === "1" });
             await writing;
           } catch (error) {
             if (!emitted) throw error;

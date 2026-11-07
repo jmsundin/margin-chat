@@ -100,8 +100,11 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   const documents = results?.documents ?? [];
   const passages = results?.passages ?? [];
   const related = searching ? results?.related ?? [] : [];
+  const found = searching ? results?.found ?? null : null;
+  const foundEntries: Entry[] = found?.hits ?? [];
   const shownPassages = passages.slice(0, passageLimit);
   const entries: Entry[] = [
+    ...foundEntries,
     ...documents.map((hit) => ({ kind: "document" as const, hit })),
     ...related.map((hit) => ({ kind: "passage" as const, hit })),
     ...shownPassages.map((hit) => ({ kind: "passage" as const, hit })),
@@ -181,7 +184,8 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
     return <>
       <p className="vault-search-preview-crumb">{hit.familyTitle ? `${hit.familyTitle} › ` : ""}{hit.title}</p>
       <h3>{highlight(hit.title, query)}</h3>
-      <p className="vault-search-meta">{meta(hit)}</p>
+      <p className="vault-search-meta">{[hit.why, meta(hit)].filter(Boolean).join(" · ")}</p>
+      {hit.hiddenFromAI ? <p className="vault-search-meta">Hidden from AI. Found by its title; AI never reads it.</p> : null}
       {cloud ? <p className="vault-search-preview-text">This document is still in your cloud vault. Opening it downloads it to this device.</p>
         : text ? <MarkdownLivePreview className="vault-search-preview-document" highlightTerms={vaultSearchTerms(query)} source={text}/> : null}
     </>;
@@ -189,7 +193,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
 
   const status = !searching ? "Recent documents. Type to search titles and passages in your whole vault."
     : stale ? "Searching…"
-    : `${documents.length} ${documents.length === 1 ? "title" : "titles"}${related.length ? `, ${related.length} best ${related.length === 1 ? "match" : "matches"}` : ""} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
+    : `${foundEntries.length ? `Found ${foundEntries.length === 1 ? `“${foundEntries[0].hit.title}”` : `${foundEntries.length} documents on this`}. ` : ""}${documents.length} ${documents.length === 1 ? "title" : "titles"}${related.length ? `, ${related.length} best ${related.length === 1 ? "match" : "matches"}` : ""} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
 
   const modal = <div className="vault-search-backdrop" role="presentation" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
     onClick={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose(); }}>
@@ -211,6 +215,14 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         <div className="vault-search-list" ref={listRef}>
           <p className="vault-search-hidden" role="status">{status}</p>
           <ul aria-label="Search results" id={`${id}-results`} role="listbox">
+            {foundEntries.length ? <li className="vault-search-section is-found" role="presentation" title="The documents this search seems to be about, ranked whole"><span>{foundEntries.length === 1 ? "Found it" : "Found these"}</span><span>{foundEntries.length}</span></li> : null}
+            {foundEntries.map((entry) => row(entry, <>
+              <span className="vault-search-row-title">{highlight(entry.hit.title, query)}
+                {entry.kind === "document" && entry.hit.hiddenFromAI ? <span className="vault-search-cloud" title="Found by its title. AI never reads it.">Hidden from AI</span> : null}
+                {cloudPathOf(entry) ? <span className="vault-search-cloud">{openingPath === cloudPathOf(entry) ? "Opening…" : "In cloud"}</span> : null}</span>
+              <span className="vault-search-meta vault-search-why">{entry.hit.why}</span>
+              {entry.kind === "passage" ? <span className="vault-search-snippet">{highlight(entry.hit.preview, query)}</span> : null}
+            </>))}
             {documents.length ? <li className="vault-search-section" role="presentation"><span>{searching ? "Titles" : "Recent"}</span><span>{searching ? documents.length : ""}</span></li> : null}
             {documents.map((hit) => row({ kind: "document", hit }, <>
               <span className="vault-search-row-title">{highlight(hit.title, query)}{hit.target.kind === "cloud" ? <span className="vault-search-cloud">{openingPath === hit.target.path ? "Opening…" : "In cloud"}</span> : null}</span>

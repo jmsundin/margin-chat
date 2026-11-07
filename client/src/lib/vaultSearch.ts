@@ -2,7 +2,7 @@ import type { Conversation, ConversationGroup, ThreadCategoryId } from "../types
 import { buildSearchExploration, type SearchEvidenceRef } from "./searchExploration";
 import { getConversationRootId } from "./tree";
 import { searchVaultIndex } from "./vaultHydration";
-import type { VaultIndexEntry, VaultRelatedPassage, VaultSearchEvent, VaultSearchPassage } from "./vaultTypes";
+import type { VaultFindVerdict, VaultFoundDocument, VaultIndexEntry, VaultRelatedPassage, VaultSearchEvent, VaultSearchPassage } from "./vaultTypes";
 
 /** Narrows one search; "family" means the focused document's root and everything under it. */
 export type VaultSearchScope = "all" | "family" | "documents" | "notes" | "recent";
@@ -19,6 +19,10 @@ export interface VaultSearchDocumentHit {
   familyTitle?: string;
   updatedAt?: string;
   target: VaultSearchTarget;
+  /** "Found it" only: why this document was picked. */
+  why?: string;
+  /** Found by its title; never read by AI. */
+  hiddenFromAI?: boolean;
 }
 
 export interface VaultSearchPassageHit {
@@ -36,6 +40,18 @@ export interface VaultSearchPassageHit {
   localOnly: boolean;
   /** Set when the document is still in the cloud; opening downloads it first. */
   cloudPath?: string;
+  /** "Found it" only: why this document was picked. */
+  why?: string;
+}
+
+/** A "Found it" result: the document, opened at its best passage when there is one. */
+export type VaultFoundHit = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit };
+
+export interface VaultSearchFound {
+  verdict: VaultFindVerdict;
+  /** The search reads as a question, so an answer may serve better than a document. */
+  question: boolean;
+  hits: VaultFoundHit[];
 }
 
 export interface VaultSearchRequest {
@@ -53,6 +69,8 @@ export interface VaultSearchResults {
   passages: VaultSearchPassageHit[];
   /** The cloud search index's best matches by keyword and meaning, best first. */
   related?: VaultSearchPassageHit[];
+  /** The documents the search seems to be about, ranked whole by the server. */
+  found?: VaultSearchFound;
   /** False while a provider is still sending passages for this request. */
   complete: boolean;
   /** Why some results may be missing, when the server could not finish. */
@@ -216,6 +234,38 @@ export function relatedPassageHit(passage: VaultRelatedPassage, attachedTitle?: 
 }
 
 /**
+ * A "Found it" document as a result to open: at its best passage when the index
+ * matched one, otherwise as the document itself. Only what can be opened from
+ * this device or downloaded from the cloud is kept.
+ */
+export function foundHit(document: VaultFoundDocument, input: LocalVaultSearchInput, indexById: Map<string, VaultIndexEntry>,
+  scope: VaultSearchScope, now: number, passageInScope: (passage: VaultRelatedPassage) => boolean): VaultFoundHit[] {
+  const known = Object.hasOwn(input.conversations, document.id);
+  const entry = indexById.get(document.id);
+  const path = document.path ?? entry?.path;
+  if (!known && !path) return [];
+  if (document.passage && passageInScope(document.passage)) {
+    const attachedTitle = document.passage.attachedTo ? input.conversations[document.passage.attachedTo]?.title ?? indexById.get(document.passage.attachedTo)?.title : undefined;
+    const hit = relatedPassageHit(document.passage, attachedTitle);
+    if (hit && hit.conversationId === document.id) {
+      const { cloudPath: _cloudPath, ...loaded } = hit;
+      return [{ kind: "passage", hit: { ...(known ? loaded : { ...hit, cloudPath: hit.cloudPath ?? path }), key: `found:${document.id}`, title: document.title, matchLabel: document.why, why: document.why } }];
+    }
+  }
+  const conversation = input.conversations[document.id];
+  if (conversation && !inScope(conversation, { query: "", scope }, null, input.conversations, now)) return [];
+  if (!conversation && entry && !cloudInScope(entry, scope, now)) return [];
+  return [{ kind: "document", hit: {
+    key: `found:${document.id}`, title: conversation?.title ?? document.title,
+    kindLabel: conversation ? kindLabel(conversation) : entry?.kind === "note" ? "Note" : "Document",
+    ...(conversation ? { familyTitle: familyTitle(input.conversations, conversation) } : {}),
+    updatedAt: conversation?.updatedAt ?? document.updatedAt ?? entry?.updated,
+    target: known ? { kind: "loaded", conversationId: document.id } : { kind: "cloud", path: path! },
+    why: document.why, ...(document.hiddenFromAI || conversation?.hiddenFromAI ? { hiddenFromAI: true } : {}),
+  } }];
+}
+
+/**
  * Searches this device at once, then adds what the server finds in the rest of
  * the vault. Documents already on this device are answered locally, so unsynced
  * edits are found and nothing is listed twice. Without `searchCloud`, or for
@@ -244,9 +294,10 @@ export function createVaultSearchProvider(getInput: () => LocalVaultSearchInput,
       const passages = [...local.passages];
       const seenPassages = new Set(passages.map((hit) => hit.key));
       let related: VaultSearchPassageHit[] = [];
+      let found: VaultSearchFound | undefined;
       let notice: string | undefined;
       let finished = false;
-      const send = (complete: boolean) => emit({ ...local, documents, passages: [...passages], ...(related.length ? { related } : {}), complete, ...(notice ? { notice } : {}) });
+      const send = (complete: boolean) => emit({ ...local, documents, passages: [...passages], ...(related.length ? { related } : {}), ...(found ? { found } : {}), complete, ...(notice ? { notice } : {}) });
       const relatedInScope = (passage: VaultRelatedPassage) => {
         if (request.scope === "notes") return passage.kind === "note";
         if (request.scope === "documents") return passage.kind !== "note";
@@ -297,6 +348,11 @@ export function createVaultSearchProvider(getInput: () => LocalVaultSearchInput,
               // Otherwise only what can be downloaded from the cloud can open.
               return hit.cloudPath ? [hit] : [];
             });
+            send(false);
+          } else if (event.type === "found") {
+            const hits = event.documents.flatMap((document) => foundHit(document, input, indexById, request.scope, now, relatedInScope));
+            found = hits.length && event.verdict !== "none" && event.verdict !== "unclear"
+              ? { verdict: event.verdict, question: event.question, hits } : undefined;
             send(false);
           } else if (event.type === "done") {
             finished = true;
