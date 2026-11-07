@@ -169,10 +169,45 @@ describe("graph cluster labels", () => {
     expect(result.categories).toEqual([{ cluster: 1, name: "Angular" }, { cluster: 2, name: "Angular" }, { cluster: 3, name: "React hooks" }]);
   });
 
+  test("sort documents into categories with Muse Wonder", async () => {
+    let requestUrl = "";
+    let requestBody: Record<string, any> | null = null;
+    globalThis.fetch = (async (input, init) => {
+      requestUrl = String(input);
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({ output_text: "D1: Longevity\n- D2: **Kidney repair**\nD3) Angular\nstray line\nD3: Duplicate" });
+    }) as typeof fetch;
+
+    const service = createChatService({
+      database: {},
+      env: { META_API_KEY: "meta-test-key", OPENAI_API_KEY: "openai-test-key" },
+      runtimeConfig: {
+        defaultBackendProvider: "openai-api",
+        geminiModel: "gemini-3.1-pro-preview",
+        huggingFaceModel: "openai/gpt-oss-120b",
+        metaModel: "muse-wonder-1.0",
+        openaiModel: "gpt-5.6",
+        xaiModel: "grok-4.5",
+      },
+    });
+    const result = await service.generateTitle({
+      kind: "document-categories",
+      // The client can't pick another model for this.
+      serviceId: "openai-api", modelId: "gpt-6-luna",
+      prompt: "Categories in use: Longevity\nD1: Rapamycin dosing\nD2: Lab-grown kidneys — organoids\nD3: ViewChild",
+    });
+
+    expect(requestUrl).toBe("https://api.meta.ai/v1/responses");
+    expect(requestBody?.model).toBe("muse-wonder-1.0");
+    expect(JSON.stringify(requestBody)).toContain("Reuse a category already in use");
+    expect(result.assignments).toEqual([{ document: 1, name: "Longevity" }, { document: 2, name: "Kidney repair" }, { document: 3, name: "Angular" }]);
+  });
+
   test("allow a longer prompt for categories than for titles", () => {
     const prompt = "x".repeat(20_000);
     expect(() => validateChatTitleRequest({ kind: "cluster", prompt })).toThrow("characters or fewer");
     expect(validateChatTitleRequest({ kind: "categories", prompt }).prompt).toHaveLength(20_000);
+    expect(validateChatTitleRequest({ kind: "document-categories", prompt }).serviceId).toBe("meta-api");
   });
 
   test("rejects unknown title kinds", () => {

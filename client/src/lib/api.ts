@@ -353,6 +353,30 @@ export async function requestClusterCategories(args: {
     && !!(entry as { name: string }).name.trim()).map((entry) => ({ cluster: entry.cluster, name: entry.name.trim() }));
 }
 
+/** Muse Wonder files each numbered document (D1, D2, ...) under a category. */
+export async function requestDocumentCategories(args: {
+  content: string;
+  expectedUserId?: string;
+  signal?: AbortSignal;
+}): Promise<Array<{ document: number; name: string }>> {
+  const response = await apiFetch("/api/chat/title", {
+    body: JSON.stringify({ kind: "document-categories", prompt: args.content }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}),
+    },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { assignments?: unknown } | ErrorPayload | null;
+  ensureOk(response, payload, "Muse Wonder couldn't sort your documents.");
+  const assignments = payload && typeof payload === "object" && "assignments" in payload && Array.isArray(payload.assignments) ? payload.assignments : [];
+  return assignments.filter((entry): entry is { document: number; name: string } => !!entry && typeof entry === "object"
+    && Number.isInteger((entry as { document?: unknown }).document) && typeof (entry as { name?: unknown }).name === "string"
+    && !!(entry as { name: string }).name.trim()).map((entry) => ({ document: entry.document, name: entry.name.trim() }));
+}
+
 async function requestTitle(args: {
   ai?: AISettings;
   expectedUserId?: string;
