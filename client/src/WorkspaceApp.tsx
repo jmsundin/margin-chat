@@ -67,6 +67,7 @@ import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem }
 import NotebookCustomise from "./components/NotebookCustomise";
 import NoteChatPanel from "./components/NoteChatPanel";
 import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
+import { pickProactivePassage, PROACTIVE_IDLE_MS, stanceQuestionPrompt } from "./lib/proactiveQuestions";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
 import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNode } from "./components/MinimizedChildNodes";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
@@ -1404,6 +1405,37 @@ function WorkspaceAppContent({
   /** The document whose Ask about this note panel is open. */
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
   const closeNoteChat = useCallback(() => setNoteChatFor(null), []);
+  /**
+   * The AI asking on its own: once the user has stopped editing the open document for a while, one
+   * question beside the paragraph they just wrote, at most once per section while the page is open.
+   */
+  const proactiveAsked = useRef(new Set<string>());
+  const proactiveSessionStart = useRef(new Date().toISOString());
+  const proactiveAsk = useRef<(conversationId: string) => void>(() => undefined);
+  proactiveAsk.current = (conversationId: string) => {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation || currentStateRef.current.activeConversationId !== conversationId || !readNotebookPrefs().proactive) return;
+    if (document.visibilityState !== "visible" || selectionDraft || isHiddenFromAI(conversation)) return;
+    if (pendingConversationIds[conversationId] || chatExecutions.has(conversationId)) return;
+    const passage = pickProactivePassage(conversation, proactiveAsked.current);
+    if (!passage) return;
+    const block = getEditableDocument(conversation).blocks.find((item) => item.id === passage.blockId);
+    // Only after the user wrote here since the page opened; opening an old note never starts a question.
+    if (!block || block.updatedAt < proactiveSessionStart.current) return;
+    proactiveAsked.current.add(passage.sectionKey);
+    handleDocumentSubmit(conversationId, {
+      blockId: passage.blockId, from: passage.from, to: passage.to, quote: passage.quote, sourceContent: passage.sourceContent,
+      prompt: stanceQuestionPrompt(QUESTION_PASSAGE_PROMPT, readNotebookPrefs().stance), destination: "margin", replaceSelection: false, background: true,
+    });
+  };
+  const proactiveDocumentId = activeConversation && (activeConversation.document || activeConversation.kind === "note") && !activeConversation.document?.marginNote ? activeConversation.id : null;
+  // Any edit moves the document's updatedAt, whether it is saved as blocks or as a plain note.
+  const proactiveEditedAt = proactiveDocumentId ? activeConversation?.updatedAt : undefined;
+  useEffect(() => {
+    if (!proactiveDocumentId || !notebookPrefs.proactive) return;
+    const timer = window.setTimeout(() => proactiveAsk.current(proactiveDocumentId), PROACTIVE_IDLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [proactiveDocumentId, proactiveEditedAt, notebookPrefs.proactive]);
   /** On a computer the quiet page puts the path, and tabs when there's more than one, on a single line. */
   const quietHeader = quietPage && !isMobileViewport;
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
@@ -2699,8 +2731,10 @@ function WorkspaceAppContent({
       return next;
     });
     if (request.destination === "margin") setClosedMarginNotes((current) => ({ ...current, [source.id]: false }));
-    setSelectionDraft(null);
-    window.getSelection()?.removeAllRanges();
+    if (!request.background) {
+      setSelectionDraft(null);
+      window.getSelection()?.removeAllRanges();
+    }
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection,
       instruction: documentAIInstruction(currentStateRef.current.conversations, source),
       // An answer in a side document hands the thinking back with a question, unless the AI is set to answer only;
@@ -3645,7 +3679,7 @@ function WorkspaceAppContent({
     if (!draft?.sourceBlockId) return;
     handleDocumentSubmit(draft.conversationId, {
       blockId: draft.sourceBlockId, from: draft.startOffset, to: draft.endOffset,
-      quote: draft.quote, sourceContent: draft.sourceContent, prompt: QUESTION_PASSAGE_PROMPT,
+      quote: draft.quote, sourceContent: draft.sourceContent, prompt: stanceQuestionPrompt(QUESTION_PASSAGE_PROMPT, readNotebookPrefs().stance),
       destination: "margin", replaceSelection: false,
     });
   }
