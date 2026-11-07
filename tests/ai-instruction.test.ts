@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createMarkdownWorkspace, discoverMarkdownWorkspace, normalizeAIInstruction, parseMarkdownWorkspace } from "@margin-chat/workspace-contracts";
 import { createEmptyState } from "../client/src/initialState";
-import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource } from "../client/src/lib/documentAI";
+import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT } from "../client/src/lib/documentAI";
 import type { Conversation } from "../client/src/types";
 
 const at = "2026-11-07T10:00:00.000Z";
@@ -60,5 +60,21 @@ describe("the document's standing instruction to the AI", () => {
     expect(buildDocumentAIMessage(conversation as Conversation, prompt).content).not.toContain("standing instruction");
     expect(buildDiagramAIMessage(conversation as Conversation, prompt, { diagram: "flowchart TD\n A-->B" }, "Keep it short").content)
       .toContain("standing instruction for this document: Keep it short");
+  });
+});
+
+describe("thinking with the user", () => {
+  const prompt = { id: "m", role: "user" as const, content: "Why?", createdAt: at };
+  test("an answer in a side document ends with a follow-up question; text written into the page doesn't", () => {
+    const { conversation } = documentFile({});
+    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "safe", { followUp: true }).content).toContain("End your answer with one short follow-up question");
+    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "safe").content).not.toContain("follow-up question");
+    // A diagram reply must stay one Mermaid fence.
+    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "```mermaid\nflowchart TD\n A-->B\n```", { followUp: true, replaceSelection: true }).content).not.toContain("follow-up question");
+  });
+
+  test("Question this asks for one question and no answer", () => {
+    expect(QUESTION_PASSAGE_PROMPT).toMatch(/one short question/);
+    expect(QUESTION_PASSAGE_PROMPT).toMatch(/no answer/);
   });
 });

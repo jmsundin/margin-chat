@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./SelectionToolbar.css";
 
-export type SelectionIconName = "highlight" | "note" | "side" | "link" | "copy" | "cut" | "paste" | "select" | "find" | "explain" | "rewrite" | "ai" | "more";
+export type SelectionIconName = "highlight" | "note" | "side" | "link" | "copy" | "cut" | "paste" | "select" | "find" | "explain" | "rewrite" | "question" | "ai" | "more";
 
 const ICON_PATHS: Record<Exclude<SelectionIconName, "ai" | "more">, React.ReactNode> = {
   highlight: <><path d="M9.5 2.5l4 4-6 6H3.5v-4z" /><path d="M2 14.5h12" /></>,
@@ -15,6 +15,7 @@ const ICON_PATHS: Record<Exclude<SelectionIconName, "ai" | "more">, React.ReactN
   find: <><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5l3.5 3.5" /></>,
   explain: <><circle cx="8" cy="8" r="6" /><path d="M6.3 6.3a1.8 1.8 0 113 1.4c-.8.5-1.3.9-1.3 1.8" /><circle cx="8" cy="11.6" r=".5" fill="currentColor" /></>,
   rewrite: <><path d="M2.5 13.5l1-3.5 7-7 2.5 2.5-7 7z" /><path d="M9 4.5l2.5 2.5" /></>,
+  question: <><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" /><path d="M6.6 5.6a1.5 1.5 0 112.3 1.2c-.6.4-.9.7-.9 1.3" /><circle cx="8" cy="9.4" r=".45" fill="currentColor" /></>,
 };
 
 export function SelectionIcon({ name }: { name: SelectionIconName }) {
@@ -32,11 +33,13 @@ export type SelectionToolbarAction = SelectionMenuItem & { ariaLabel?: string; p
  * The one-row toolbar over selected text, or at the caret: everyday actions first, then a More menu, then Ask AI.
  * Buttons keep the editor's selection and focus, so Copy and Highlight act on what is still selected.
  */
-export function SelectionToolbarRow({ actions, more, ask, label = "Selected text actions" }: {
+export function SelectionToolbarRow({ actions, more, ask, aiActions = [], label = "Selected text actions" }: {
   label?: string;
   actions: SelectionToolbarAction[];
   more: SelectionMenuItem[];
   ask?: SelectionToolbarAction;
+  /** AI actions that act at once (Question this), shown beside Ask AI. */
+  aiActions?: SelectionToolbarAction[];
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -67,8 +70,13 @@ export function SelectionToolbarRow({ actions, more, ask, label = "Selected text
         </button>)}
       </div> : null}
     </div> : null}
+    {ask || aiActions.length ? <span className="selection-toolbar-divider" aria-hidden="true" /> : null}
+    {aiActions.map((action) => <button key={action.label} type="button" className="selection-toolbar-button is-ai"
+      aria-label={action.ariaLabel ?? action.label} disabled={action.disabled} title={action.hint}
+      onClick={() => { setMoreOpen(false); action.onSelect(); }}>
+      <SelectionIcon name={action.icon} /><span>{action.label}</span>
+    </button>)}
     {ask ? <>
-      <span className="selection-toolbar-divider" aria-hidden="true" />
       <button type="button" className="selection-toolbar-button is-ai" aria-label={ask.ariaLabel ?? ask.label}
         aria-pressed={ask.pressed} disabled={ask.disabled} onClick={() => { setMoreOpen(false); ask.onSelect(); }}>
         <SelectionIcon name="ai" /><span>{ask.label}</span>

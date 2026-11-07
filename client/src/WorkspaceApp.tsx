@@ -81,7 +81,7 @@ import { getDocumentBackTarget, getDocumentKind, getPresentedParentId, recordDoc
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
-import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
+import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
@@ -2632,7 +2632,19 @@ function WorkspaceAppContent({
     const promptId = createId("prompt");
     const outputBlockId = createId("block");
     let target = source;
-    if (request.destination === "side") {
+    if (request.destination === "margin") {
+      // Question this: the reply becomes a margin note beside the passage, as if the user had added a note there.
+      if (!sourceBlock || !selectedQuote?.trim() || request.to <= request.from) {
+        setDocumentErrors((current) => ({ ...current, [conversationId]: "Select a passage in this document to question it." }));
+        return;
+      }
+      const noteId = createId("document");
+      const note = createMarginDocument({ ...source, document: originalDocument }, { id: noteId, content: "", kind: "comment",
+        sourceMessageId: null, sourceBlockId: sourceBlock.id, startOffset: request.from, endOffset: request.to, quote: selectedQuote,
+        createdAt: now, updatedAt: now });
+      target = { ...note, title: excerpt(selectedQuote.trim().replace(/\s+/g, " "), 52) || note.title,
+        document: { ...note.document!, blocks: [] } };
+    } else if (request.destination === "side") {
       target = {
         id: createId("conversation"), kind: "chat", title: excerpt(request.prompt.trim(), 52), parentId: source.id,
         serviceId: source.serviceId, modelId: source.modelId, ai: source.ai, documents: [...(source.documents ?? [])],
@@ -2646,7 +2658,8 @@ function WorkspaceAppContent({
     const promptRecord = { id: promptId, content: userMessage.content, sourceMessageId: userMessage.id, createdAt: now,
       serviceId: target.serviceId, modelId: target.modelId, ai: target.ai,
       ...(selectedQuote ? { selection: priorPrompt?.selection ?? { blockId: request.blockId, from: request.from, to: request.to, quote: selectedQuote } } : {}) };
-    const insertion = request.destination === "side" ? { blockId: null, offset: 0 }
+    const newDocument = request.destination === "side" || request.destination === "margin";
+    const insertion = newDocument ? { blockId: null, offset: 0 }
       : { blockId: request.blockId, offset: request.replaceSelection ? request.from : request.to,
         ...(request.replaceSelection ? { replaceTo: request.to } : {}) };
     const generation: DocumentGeneration = { id: generationId, promptId, messageId, createdAt: now,
@@ -2658,21 +2671,26 @@ function WorkspaceAppContent({
       document: { ...getEditableDocument(target), prompts: [...getEditableDocument(target).prompts, promptRecord], generations: [...getEditableDocument(target).generations, generation] } };
     if (!rerun) prepared = insertDocumentBlock(prepared, { id: outputBlockId, kind: "markdown", content: "", authorship: "ai", createdAt: now, updatedAt: now, sourceMessageId: messageId, generationId }, insertion, now);
     const targetId = prepared.id;
-    if (prepared.title !== target.title || request.destination === "side") provisionalDocumentTitles.current.set(targetId, prepared.title);
+    if (request.destination !== "margin" && (prepared.title !== target.title || request.destination === "side")) provisionalDocumentTitles.current.set(targetId, prepared.title);
     setDocumentErrors((current) => ({...current,[conversationId]:"",[targetId]:""}));
     setState((current) => {
       const sourceSnapshot = sourceBlock && !sourceBlock.sourceMessageId && sourceBlock.content.trim() && !source.messages.some((message)=>message.id===`document:${sourceBlock.id}`)
         ? [{id:`document:${sourceBlock.id}`,role:"user" as const,content:sourceBlock.content,createdAt:sourceBlock.createdAt}] : [];
-      const base = request.destination === "side" ? { ...current, conversations: { ...current.conversations, [source.id]: { ...current.conversations[source.id], messages:[...source.messages,...sourceSnapshot], document: originalDocument } } } : current;
-      const next = request.destination === "side" ? addChildConversation(base, prepared, {activate:true})
+      const base = newDocument ? { ...current, conversations: { ...current.conversations, [source.id]: { ...current.conversations[source.id], messages:[...source.messages,...sourceSnapshot], document: originalDocument } } } : current;
+      // A question lands in the margin without taking the reader away from the page.
+      const next = request.destination === "margin" ? addChildConversation(base, prepared)
+        : request.destination === "side" ? addChildConversation(base, prepared, {activate:true})
         : replaceDocumentConversation(current, prepared);
       currentStateRef.current = next;
       return next;
     });
+    if (request.destination === "margin") setClosedMarginNotes((current) => ({ ...current, [source.id]: false }));
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection,
-      instruction: documentAIInstruction(currentStateRef.current.conversations, source) });
+      instruction: documentAIInstruction(currentStateRef.current.conversations, source),
+      // An answer in a side document hands the thinking back with a question; text written into the page doesn't.
+      followUp: request.destination === "side" });
     // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
     const diagramReply = request.destination === "inline" && request.replaceSelection && isMermaidDiagramPassage(selectedQuote);
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
@@ -2733,7 +2751,7 @@ function WorkspaceAppContent({
           }}}};
         });
         // Title the document from its prompt and the AI's answer, not just the prompt excerpt.
-        if (status === "complete") scheduleDocumentTitle(targetId);
+        if (status === "complete" && request.destination !== "margin") scheduleDocumentTitle(targetId);
         void onRefreshBilling();
       },
     });
@@ -3603,6 +3621,18 @@ function WorkspaceAppContent({
         destination: "side", replaceSelection: false,
       });
     } else handleCreateBranch(prompt);
+  }
+
+  /** Question this: the AI posts one question about the passage as a margin note beside it, and no answer. */
+  function handleQuestionSelection() {
+    if (!selectionDraft || pendingConversationIds[selectionDraft.conversationId]) return;
+    const draft = joinSelectedLines(selectionDraft);
+    if (!draft?.sourceBlockId) return;
+    handleDocumentSubmit(draft.conversationId, {
+      blockId: draft.sourceBlockId, from: draft.startOffset, to: draft.endOffset,
+      quote: draft.quote, sourceContent: draft.sourceContent, prompt: QUESTION_PASSAGE_PROMPT,
+      destination: "margin", replaceSelection: false,
+    });
   }
 
   function openMobileSelectionPrompt(showOptions = true) {
@@ -6088,6 +6118,7 @@ function WorkspaceAppContent({
               onExplain={() => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT)}
               onRewrite={selectionIsDiagram ? undefined : () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT)}
               onAsk={() => openMobileSelectionPrompt()}
+              onQuestion={selectionDraft.sourceBlockId && !selectionIsDiagram ? handleQuestionSelection : undefined}
               onSideDocument={() => handleCreateSelectionSideDocument()}
               onMarginNote={() => handleCreateSelectionNote()}
               onLink={() => { setSelectionLinkError(null); setSelectionIntent("link"); setSelectionActionsExpanded(true); }}
@@ -6159,6 +6190,8 @@ function WorkspaceAppContent({
                   { icon: "explain", label: "Explain", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT) },
                   ...(selectionIsDiagram ? [] : [{ icon: "rewrite" as const, label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) }]),
                 ]}
+                aiActions={selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "question" as const, label: "Question", ariaLabel: "Question this: the AI asks you one question about the passage, in the margin",
+                  hint: "The AI asks you one question about this passage, in the margin", disabled: selectionPending, onSelect: handleQuestionSelection }] : []}
                 ask={{ icon: "ai", label: "Ask AI", ariaLabel: selectionIsDiagram ? "Ask AI to change this diagram" : "Ask AI about this passage", pressed: selectionIntent === "branch",
                   onSelect: () => setSelectionIntent((intent) => intent === "branch" ? "actions" : "branch") }}
               />}

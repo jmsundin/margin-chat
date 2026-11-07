@@ -191,6 +191,8 @@ const server = createServer(async (request, response) => {
             const asked = JSON.stringify(body.messages ?? []);
             const reply = asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."
+              : asked.includes("Ask me one short question that tests this passage")
+                ? "What human evidence shows a weekly dose avoids the immune effects, rather than mouse data?"
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;
             response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
             response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);
