@@ -435,6 +435,8 @@ export interface Conversation {
   agentEdit?: "locked" | "open";
   /** The document's standing instruction to the AI (frontmatter `ai-instruction`), sent with Ask AI here and in its notes. */
   aiInstruction?: string;
+  /** This chat is the "Ask about this note" conversation of its parent document. */
+  noteChat?: true;
   branchAnchor: BranchAnchor | null;
   childIds: string[];
   documents?: ConversationDocument[];
