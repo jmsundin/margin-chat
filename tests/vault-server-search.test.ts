@@ -176,8 +176,13 @@ describe("cloud vault index and search", () => {
     const cold = createVaultService({ storage, database });
     expect((await cold.index(userId)).entries).toHaveLength(3);
     expect(storage.reads.filter((key) => key.includes("/files/"))).toEqual([expect.stringContaining(digest(notePath))]);
-    expect(storage.writes.filter((key) => key.includes("/index/"))).toHaveLength(1);
+    // The rebuilt shard, and the whole index saved for this revision.
+    expect(storage.writes.filter((key) => key.includes("/index/"))).toHaveLength(2);
     expect(storage.objects.get(`vaults/v1/${digest(userId)}/index.json`)!.length).toBeLessThan(64 * 1024);
+    // The next cold server reads the saved index instead of any shard or file.
+    storage.reads.length = 0;
+    expect((await createVaultService({ storage, database }).index(userId)).entries).toHaveLength(3);
+    expect(storage.reads).toHaveLength(3);
   });
 
   test("the HTTP routes stream the index and search to the browser transport", async () => {
