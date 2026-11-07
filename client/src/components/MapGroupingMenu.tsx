@@ -1,9 +1,10 @@
 import DismissibleDetails from "./DismissibleDetails";
 
-export type MapGrouping = "topics" | "groups" | "none";
+export type MapGrouping = "topics" | "muse" | "groups" | "none";
 
-export const MAP_GROUPING_OPTIONS: Array<{ value: MapGrouping; label: string; description: string }> = [
+export const MAP_GROUPING_OPTIONS: Array<{ value: MapGrouping; label: string; description: string; shortLabel?: string }> = [
   { value: "topics", label: "Topics", description: "Found from links and meaning, named by AI" },
+  { value: "muse", label: "Muse categories", shortLabel: "Muse", description: "Muse Wonder reads each document and files it under a category" },
   { value: "groups", label: "My groups", description: "The groups in your sidebar" },
   { value: "none", label: "None", description: "One free canvas you arrange yourself" },
 ];
@@ -31,6 +32,6 @@ export function MapGroupingButtons({ value, onChange }: { value: MapGrouping; on
   return <div className="graph-map-grouping-buttons" role="group" aria-label="Group documents by">
     <span>Group</span>
     {MAP_GROUPING_OPTIONS.map((option) => <button key={option.value} type="button" aria-pressed={option.value === value}
-      title={option.description} onClick={() => onChange(option.value)}>{option.label}</button>)}
+      title={option.description} onClick={() => onChange(option.value)}>{option.shortLabel ?? option.label}</button>)}
   </div>;
 }

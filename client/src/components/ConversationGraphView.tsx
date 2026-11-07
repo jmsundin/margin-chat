@@ -56,6 +56,7 @@ import type { DocumentRelationTypeId } from "../types";
 import { layoutNetworkMap } from "../lib/networkMapLayout";
 import { finishSubjectClusters, fitGravityCluster, groupSubjects, layoutGravityClusters, type GravityCluster, type GravityClusterGroup, type GravityClusterLayout, type SubjectCluster } from "../lib/gravityClusters";
 import { useSubjectCategories } from "../lib/useSubjectCategories";
+import { useMuseCategories } from "../lib/useMuseCategories";
 import { useTopicEmbeddings } from "../lib/useTopicEmbeddings";
 import ClusterMoveMenu from "./ClusterMoveMenu";
 import { useClusterLabels } from "../lib/useClusterLabels";
@@ -213,6 +214,7 @@ const EMPTY_PLACEMENTS: ConversationGraphNodePlacement[] = [];
 const EMPTY_TERRITORY_LAYOUT: ReturnType<typeof layoutMapTerritoryOverview> = [];
 const EMPTY_GROUP_BOXES: CanvasGroupBox[] = [];
 const EMPTY_CANVAS_TOPICS: CanvasTopic[] = [];
+const EMPTY_IDS: string[] = [];
 const EMPTY_BOX_GROUPS: Record<string, ConversationGroup> = {};
 
 type CanvasGrouping = MapGrouping;
@@ -224,9 +226,17 @@ function topicHue(id: string) {
   return Math.round((hash % 997) * 137.508) % 360;
 }
 
+/** One line on where Muse Wonder's sorting stands. */
+function museStatus({ loading, error, total, sorted }: { loading: boolean; error: string | null; total: number; sorted: number }) {
+  if (error) return `Muse Wonder couldn't sort your documents: ${error}`;
+  if (!total) return "No documents Muse Wonder can see here. Documents hidden from AI stay in Not sorted.";
+  if (loading) return `Muse Wonder is sorting your documents… ${sorted.toLocaleString()} of ${total.toLocaleString()} done.`;
+  return `Muse Wonder sorted ${sorted.toLocaleString()} of ${total.toLocaleString()} documents. Documents hidden from AI stay in Not sorted.`;
+}
+
 function readCanvasGrouping(workspaceKey?: string): CanvasGrouping {
   const saved = readStoredJson<CanvasGrouping | null>(workspaceKey && `${CANVAS_GROUPING_KEY}:${workspaceKey}`,
-    (value) => value === "topics" || value === "groups" || value === "none" ? value : null, null);
+    (value) => value === "topics" || value === "muse" || value === "groups" || value === "none" ? value : null, null);
   // Before topics, Canvas had one switch for your group boxes; switched off, it was a free canvas.
   return saved ?? readStoredJson<CanvasGrouping>(workspaceKey && `margin-map-canvas-groups:${workspaceKey}`, (value) => value === false ? "none" : "topics", "topics");
 }
@@ -1213,6 +1223,8 @@ export default function ConversationGraphView({
   // Topics on the Map are the clusters found from links and meaning, drawn as boxes.
   const canvasTopics = isCanvasMode && navigation.state.contentLens !== "concepts" && canvasGrouping === "topics";
   const findsTopics = isClustersMode || canvasTopics;
+  // Muse categories: Muse Wonder files each document under a category, drawn as boxes.
+  const canvasMuse = isCanvasMode && navigation.state.contentLens !== "concepts" && canvasGrouping === "muse";
   const isLineageMode = navigation.state.viewMode === "lineage";
   const isLandscapeMode = navigation.state.viewMode === "landscape";
   const panelView = isGraphPanelMode(viewMode) || navigation.state.contentLens === "concepts";
@@ -1719,12 +1731,17 @@ export default function ConversationGraphView({
     { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }) : null,
   [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId, meaningRingIds]);
   const documentFootprint = useMemo(() => getDocumentNodeFootprint(viewport.scale), [viewport.scale]);
-  // The Map puts each topic, or each group you made, in a box that owns its space.
-  const boxGroups = useMemo(() => canvasGrouping === "topics" ? topicCanvasGroups(canvasTopicList) : canvasGrouping === "groups" ? groups : EMPTY_BOX_GROUPS,
-    [canvasGrouping, canvasTopicList, groups]);
+  const mapDocumentIds = useMemo(() => canvasMuse ? unfocusedScene.nodes.map((node) => node.conversationId) : EMPTY_IDS,
+    [canvasMuse, unfocusedScene.nodes]);
+  const museCategories = useMuseCategories({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
+    active: !!jev?.ready && isVisible && canvasMuse, ids: mapDocumentIds, conversations });
+  // The Map puts each topic, each Muse category, or each group you made, in a box that owns its space.
+  const boxGroups = useMemo(() => canvasGrouping === "topics" ? topicCanvasGroups(canvasTopicList)
+    : canvasGrouping === "muse" ? museCategories.groups : canvasGrouping === "groups" ? groups : EMPTY_BOX_GROUPS,
+    [canvasGrouping, canvasTopicList, museCategories.groups, groups]);
   const showCanvasGroupBoxes = isCanvasMode && !panelView && !documentsOnly && Object.keys(boxGroups).length > 0;
   const canvasGroupLayout = useMemo(() => showCanvasGroupBoxes ? layoutCanvasGroupBoxes({ nodes: unfocusedScene.nodes, conversations, groups: boxGroups,
-    noGroupLabel: canvasGrouping === "topics" ? groupBySubject ? "Unfiled" : "Unlinked" : "No group" }) : null,
+    noGroupLabel: canvasGrouping === "topics" ? groupBySubject ? "Unfiled" : "Unlinked" : canvasGrouping === "muse" ? "Not sorted" : "No group" }) : null,
     [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, canvasGrouping, groupBySubject]);
   const canvasGroupBoxes = canvasGroupLayout?.boxes ?? EMPTY_GROUP_BOXES;
   const displayScene = useMemo(() => documentLayout
@@ -3168,7 +3185,8 @@ export default function ConversationGraphView({
       const target = anchor && canvasBoxAt(canvasGroupBoxes, { x: anchor.x + anchor.width / 2 + move.deltaX, y: anchor.y + anchor.height / 2 + move.deltaY });
       if (!target) return;
       // A topic is filed by meaning on the server, so moving into one is remembered there; without Jev, topics come from links alone and can't be changed by hand.
-      if (canvasTopics) { if (jev?.enabled) for (const [id, anchorId] of canvasTopicDropMoves({ ids: move.conversationIds, topics: canvasTopicList, target })) void topicEmbeddings.moveDocument(id, anchorId).catch(() => {}); }
+      if (canvasMuse) { const name = target.kind === "group" ? boxGroups[target.id]?.name : undefined; if (name) museCategories.fileUnder(move.conversationIds, name); }
+      else if (canvasTopics) { if (jev?.enabled) for (const [id, anchorId] of canvasTopicDropMoves({ ids: move.conversationIds, topics: canvasTopicList, target })) void topicEmbeddings.moveDocument(id, anchorId).catch(() => {}); }
       else for (const [id, groupId] of canvasGroupDropChanges({ ids: move.conversationIds, conversations, groups, target })) onAssignGroup(id, groupId);
       return;
     }
@@ -4027,10 +4045,18 @@ export default function ConversationGraphView({
       </>}
     </div> : isCanvasMode ? <div className="graph-mode-context" aria-label="Map status">
       <span>{canvasGrouping === "topics" ? `Documents sit in boxes by topic, found from their links${groupBySubject ? " and meaning" : ""}. Drop a card in another box to file it there.`
+        : canvasGrouping === "muse" ? "Muse Wonder files each document under a category. Drop a card in another box to file it there yourself."
         : canvasGrouping === "groups" ? "Documents sit in the groups you made. Drop a card in another box to move it to that group."
         : "Your own board: documents stay where you put them."} Drag a card to move it{onCreateNoteAt ? ", double-click empty space to add a note" : ""}{onConnectConversation ? ", drag from a card's edge to link it" : ""}.</span>
       {canvasTopics && !jev?.enabled ? <span>Turn on Jev to group topics by meaning and name them; hub titles are shown until then.</span>
         : canvasTopics && clusterStatus ? <span>{clusterStatus}</span> : null}
+      {canvasMuse ? !jev?.enabled ? <span>Turn on Jev to let Muse Wonder sort your documents.</span> : <>
+        <span>{museStatus(museCategories)}</span>
+        {museCategories.error || museCategories.waiting ? <button type="button" onClick={museCategories.sortMore}>
+          {museCategories.error ? "Try again" : `Sort the other ${museCategories.waiting.toLocaleString()}`}</button> : null}
+        {museCategories.sorted && !museCategories.loading ? <button type="button" title="Forget Muse Wonder's categories (not the ones you filed yourself) and sort every document again"
+          onClick={() => { closeViewOptions(); museCategories.sortAgain(); }}>Sort again</button> : null}
+      </> : null}
     </div> : viewMode === "documents" ? <div className="graph-mode-context" aria-label="All documents status">
       <span>Every document, laid out by its connections. Use Layout at the bottom of the map to change the shape.</span>
       {selectedConversation ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selectedConversation.id, 1, documentLayoutMode); }}>Focus on {selectedConversation.title}</button> : null}
