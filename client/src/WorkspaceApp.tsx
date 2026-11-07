@@ -66,6 +66,8 @@ import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
 import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem } from "./components/DocumentMargin";
 import NotebookCustomise from "./components/NotebookCustomise";
 import NoteChatPanel from "./components/NoteChatPanel";
+import VaultAnswerPanel, { type VaultAnswerState } from "./components/VaultAnswerPanel";
+import { createVaultAnswerDocument, markCitedPassages, vaultAnswerMessages, vaultAnswerSettings } from "./lib/vaultAnswer";
 import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
 import { pickProactivePassage, PROACTIVE_IDLE_MS, stanceQuestionPrompt } from "./lib/proactiveQuestions";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
@@ -122,7 +124,7 @@ import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelatio
 import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import RoadmapView from "./components/RoadmapView";
 import AIInstructionLine from "./components/AIInstructionLine";
-import type { DocumentRelationTypeId } from "./types";
+import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
 import { ConversationGroupPickerContext } from "./components/ConversationGroupControls";
@@ -1404,6 +1406,8 @@ function WorkspaceAppContent({
   const closeCustomise = useCallback(() => setCustomiseOpen(false), []);
   /** The document whose Ask about this note panel is open. */
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
+  const [vaultAnswer, setVaultAnswer] = useState<VaultAnswerState | null>(null);
+  const vaultAnswerAbortRef = useRef<AbortController | null>(null);
   const closeNoteChat = useCallback(() => setNoteChatFor(null), []);
   /**
    * The AI asking on its own: once the user has stopped editing the open document for a while, one
@@ -3714,6 +3718,86 @@ function WorkspaceAppContent({
       thinks: readNotebookPrefs().aiBehaviour === "thinks",
     });
     startAssistantStream(updated, [...history, request]);
+  }
+
+  /**
+   * Answer from my vault: the search answered from the vault's own passages, cited,
+   * in a panel. It runs only when the user asks, and nothing is saved until they save it.
+   */
+  function handleAnswerFromVault(question: string) {
+    const asked = question.trim();
+    if (!asked) return;
+    vaultAnswerAbortRef.current?.abort();
+    const controller = new AbortController();
+    vaultAnswerAbortRef.current = controller;
+    handleCloseSearch();
+    setNoteChatFor(null);
+    setVaultAnswer({ question: asked, status: "answering", answer: "", retrieval: null });
+    const current = currentStateRef.current;
+    const from = current.activeConversationId ? current.conversations[current.activeConversationId] : null;
+    const request = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(),
+      serviceId: from?.serviceId ?? current.defaultServiceId, modelId: from?.modelId ?? current.defaultModelId });
+    request.title = "Answer from my vault";
+    request.ai = vaultAnswerSettings(from?.ai);
+    const update = (change: (answer: VaultAnswerState) => VaultAnswerState) => setVaultAnswer((answer) =>
+      answer && vaultAnswerAbortRef.current === controller ? change(answer) : answer);
+    let streamedRetrieval: VaultAnswerState["retrieval"] = null;
+    void requestChatReply({
+      // Only the server's vault passages, which it cites as [Vault N]; hidden documents never reach them.
+      ai: withJevConsent(request.ai, jevEnabled), workspaceContext: [], workspaceContextTruncated: false,
+      expectedUserId: user.id, conversation: getConversationRequestPayload({}, request),
+      messages: vaultAnswerMessages(asked, undefined, createId), modelId: request.modelId, serviceId: request.serviceId, signal: controller.signal,
+      onDelta: (delta) => update((answer) => ({ ...answer, answer: answer.answer + delta })),
+      onMetadata: (metadata) => {
+        streamedRetrieval = metadata?.execution?.retrieval ?? streamedRetrieval;
+        if (streamedRetrieval) update((answer) => ({ ...answer, retrieval: streamedRetrieval }));
+      },
+    }).then((result) => update((answer) => {
+      const text = answer.answer || result.reply || "";
+      return { ...answer, status: "done", answer: text, retrieval: markCitedPassages(result.metadata?.execution?.retrieval ?? streamedRetrieval, text) };
+    }), (error) => {
+      if (isAbortError(error) || controller.signal.aborted) { update((answer) => ({ ...answer, status: answer.status === "answering" ? "stopped" : answer.status })); return; }
+      if (isApiErrorStatus(error, 401)) { onAuthExpired(); return; }
+      if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to your prepaid balance to continue using hosted AI."));
+      update((answer) => ({ ...answer, status: "failed", error: getErrorText(error, "The answer couldn't be written. Try again.") }));
+    });
+  }
+
+  function handleSaveVaultAnswer() {
+    const answer = vaultAnswer;
+    if (!answer || answer.status !== "done" || !answer.answer.trim() || answer.savedId) return;
+    const current = currentStateRef.current;
+    const from = current.activeConversationId ? current.conversations[current.activeConversationId] : null;
+    const saved = createVaultAnswerDocument({ question: answer.question, answer: answer.answer, retrieval: answer.retrieval, createId,
+      serviceId: from?.serviceId ?? current.defaultServiceId, modelId: from?.modelId ?? current.defaultModelId, ai: from?.ai });
+    setState((state) => {
+      const next = addRootConversation(state, saved);
+      currentStateRef.current = next;
+      return next;
+    });
+    setVaultAnswer({ ...answer, savedId: saved.id });
+  }
+
+  function handleOpenVaultAnswerSource(passage: AIRetrievalPassage) {
+    const conversationId = passage.openId ?? passage.id;
+    const evidence: SearchEvidenceRef = passage.blockId && passage.kind === "document"
+      ? { conversationId, sourceKind: "document", sourceBlockId: passage.blockId }
+      : { conversationId, sourceKind: "conversation" };
+    const cloudPath = state.conversations[conversationId] ? undefined : vault.cloudDocuments?.find((entry) => entry.id === conversationId)?.path;
+    if (cloudPath) {
+      void vault.openCloudDocument(cloudPath).then(() => {
+        setMainViewMode("chat");
+        setSearchSourceRequest((current) => ({ source: evidence, sequence: (current?.sequence ?? 0) + 1 }));
+      }).catch(() => undefined);
+      return;
+    }
+    handleOpenSearchSource(evidence);
+  }
+
+  function closeVaultAnswer() {
+    vaultAnswerAbortRef.current?.abort();
+    vaultAnswerAbortRef.current = null;
+    setVaultAnswer(null);
   }
 
   /** Visualize: the AI draws the passage as a diagram you step through, placed under its paragraph. */
@@ -6379,6 +6463,10 @@ function WorkspaceAppContent({
               onStop={chat ? () => chatExecutions.abort([chat.id]) : undefined}
               onClose={closeNoteChat} />;
           })() : null}
+          {vaultAnswer ? <VaultAnswerPanel answer={vaultAnswer} onClose={closeVaultAnswer}
+            onOpenSource={handleOpenVaultAnswerSource} onSave={handleSaveVaultAnswer}
+            onOpenSaved={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
+            onStop={() => vaultAnswerAbortRef.current?.abort()} onRetry={() => handleAnswerFromVault(vaultAnswer.question)} /> : null}
           <NotebookCustomise open={customiseOpen} prefs={notebookPrefs} theme={theme} quietPage={quietPage}
             onChange={saveNotebookPrefs} onThemeChange={(next) => onSetTheme(() => next)} onQuietPageChange={saveQuietPage}
             onClose={closeCustomise} />
@@ -6390,6 +6478,7 @@ function WorkspaceAppContent({
             onClose={handleCloseSearch}
             onExplore={() => { setSearchModalOpen(false); setSearchExploreOpen(true); }}
             onKeepOpen={(query, scope) => { handleCloseSearch(); setMainViewMode("chat"); setSearchPanel({ query, scope }); }}
+            onAnswer={vault.searchCloud ? handleAnswerFromVault : undefined}
             onOpenDocument={handleOpenVaultSearchDocument}
             onOpenPassage={handleOpenVaultSearchPassage}
             onQueryChange={setSearchQuery}

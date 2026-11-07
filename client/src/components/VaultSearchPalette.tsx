@@ -10,7 +10,8 @@ import MarkdownLivePreview from "./MarkdownLivePreview";
 import "./VaultSearchPalette.css";
 
 export type VaultSearchOpenMode = "here" | "beside";
-type Entry = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit };
+type Entry = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit } | { kind: "answer"; hit: { key: string } };
+const ANSWER_ENTRY: Entry = { kind: "answer", hit: { key: "answer:vault" } };
 
 const PASSAGE_PAGE = 30;
 const SCOPES: Array<{ id: VaultSearchScope; label: string }> = [
@@ -49,11 +50,11 @@ const entryKey = (entry: Entry) => entry.hit.key;
 /** Where a result still in the cloud downloads from before it opens. */
 export const cloudPathOf = (entry: Entry) => entry.kind === "document"
   ? entry.hit.target.kind === "cloud" ? entry.hit.target.path : null
-  : entry.hit.cloudPath ?? null;
+  : entry.kind === "passage" ? entry.hit.cloudPath ?? null : null;
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Cmd+K: one box over the whole vault. Titles first, then passages; Enter opens here, Cmd+Enter beside. */
-export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen }: {
+export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen, onAnswer }: {
   isOpen: boolean;
   onClose: () => void;
   query: string;
@@ -69,6 +70,8 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   onExplore?: () => void;
   /** Keeps these results open beside the documents. */
   onKeepOpen?: (query: string, scope: VaultSearchScope) => void;
+  /** Answers the search from passages of the vault, citing them. */
+  onAnswer?: (question: string) => void;
 }) {
   const [scope, setScope] = useState<VaultSearchScope>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -101,10 +104,15 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   const passages = results?.passages ?? [];
   const related = searching ? results?.related ?? [] : [];
   const found = searching ? results?.found ?? null : null;
-  const foundEntries: Entry[] = found?.hits ?? [];
+  const foundEntries = found?.hits ?? [];
+  const canAnswer = !!onAnswer && query.trim().length >= 3;
+  // A question puts the answer first; otherwise it follows what was found.
+  const answerFirst = canAnswer && (found?.question ?? /\?\s*$/u.test(query));
   const shownPassages = passages.slice(0, passageLimit);
   const entries: Entry[] = [
+    ...(answerFirst ? [ANSWER_ENTRY] : []),
     ...foundEntries,
+    ...(canAnswer && !answerFirst ? [ANSWER_ENTRY] : []),
     ...documents.map((hit) => ({ kind: "document" as const, hit })),
     ...related.map((hit) => ({ kind: "passage" as const, hit })),
     ...shownPassages.map((hit) => ({ kind: "passage" as const, hit })),
@@ -123,6 +131,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   if (!isOpen) return null;
 
   function open(entry: Entry, mode: VaultSearchOpenMode) {
+    if (entry.kind === "answer") { onAnswer?.(query.trim()); return; }
     if (entry.kind === "document") onOpenDocument(entry.hit, mode);
     else onOpenPassage(entry.hit, mode);
   }
@@ -167,6 +176,13 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
 
   const preview = (() => {
     if (!selected) return null;
+    if (selected.kind === "answer") {
+      return <>
+        <p className="vault-search-preview-crumb">Answer from my vault</p>
+        <h3>{query.trim()}</h3>
+        <p className="vault-search-preview-text">AI writes a short answer using only passages from your vault, and lists the documents it cites. Nothing is saved unless you save it. Uses your AI allowance, like Ask AI.</p>
+      </>;
+    }
     if (selected.kind === "passage") {
       const hit = selected.hit;
       return <>
@@ -215,6 +231,10 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         <div className="vault-search-list" ref={listRef}>
           <p className="vault-search-hidden" role="status">{status}</p>
           <ul aria-label="Search results" id={`${id}-results`} role="listbox">
+            {answerFirst ? row(ANSWER_ENTRY, <>
+              <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Answer from my vault</span>
+              <span className="vault-search-meta">A short answer that cites your documents</span>
+            </>) : null}
             {foundEntries.length ? <li className="vault-search-section is-found" role="presentation" title="The documents this search seems to be about, ranked whole"><span>{foundEntries.length === 1 ? "Found it" : "Found these"}</span><span>{foundEntries.length}</span></li> : null}
             {foundEntries.map((entry) => row(entry, <>
               <span className="vault-search-row-title">{highlight(entry.hit.title, query)}
@@ -223,6 +243,10 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
               <span className="vault-search-meta vault-search-why">{entry.hit.why}</span>
               {entry.kind === "passage" ? <span className="vault-search-snippet">{highlight(entry.hit.preview, query)}</span> : null}
             </>))}
+            {canAnswer && !answerFirst ? row(ANSWER_ENTRY, <>
+              <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Answer from my vault</span>
+              <span className="vault-search-meta">A short answer that cites your documents</span>
+            </>) : null}
             {documents.length ? <li className="vault-search-section" role="presentation"><span>{searching ? "Titles" : "Recent"}</span><span>{searching ? documents.length : ""}</span></li> : null}
             {documents.map((hit) => row({ kind: "document", hit }, <>
               <span className="vault-search-row-title">{highlight(hit.title, query)}{hit.target.kind === "cloud" ? <span className="vault-search-cloud">{openingPath === hit.target.path ? "Opening…" : "In cloud"}</span> : null}</span>
@@ -245,7 +269,9 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         </div>
         <aside aria-label="Preview" className="vault-search-preview">
           {preview}
-          {selected ? <div className="vault-search-actions">
+          {selected?.kind === "answer" ? <div className="vault-search-actions">
+            <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Answer <kbd>↵</kbd></button>
+          </div> : selected ? <div className="vault-search-actions">
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Open here <kbd>↵</kbd></button>
             <button onClick={() => open(selected, "beside")} type="button">Open beside <kbd>{mod}↵</kbd></button>
           </div> : null}
