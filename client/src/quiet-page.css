@@ -70,7 +70,8 @@
 }
 /* Touch screens drop the editor's 40px gutter, so the dot moves in with the words. */
 @media (pointer: coarse), (max-width: 700px) { .is-quiet-page .margin-document-frame::before { left: 6px; } }
-.is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]))::before { background: var(--quiet-ai-ink); }
+/* The empty "Write here" line after the AI's words doesn't count as the user's. */
+.is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]:not(.cm-lp-placeholder)))::before { background: var(--quiet-ai-ink); }
 /* The header floats over the note's top right, so the words start at the top. */
 .is-quiet-page .margin-document-frame .document-header {
   position: absolute; top: 0; right: 0; left: auto; padding: 4px 4px 0; background: transparent;
