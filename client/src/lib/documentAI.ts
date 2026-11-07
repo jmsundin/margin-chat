@@ -22,6 +22,8 @@ export interface DocumentAIRequest extends DocumentInsertion {
   agent?: true;
   /** Visualize: the reply is one staged Mermaid diagram, placed after the passage's paragraph. */
   visualize?: true;
+  /** Asked by the AI on its own: leave the user's cursor and selection where they are. */
+  background?: true;
 }
 
 /**

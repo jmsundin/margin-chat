@@ -89,6 +89,24 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
 
       <div className="app-settings-section">
         <div className="app-settings-copy">
+          <span className="app-settings-label">AI asks questions</span>
+          <p className="app-settings-description">On its own: after you pause writing, the AI may ask one question beside what you just wrote, at most once per section while the page is open.</p>
+        </div>
+        <OptionGroup label="AI asks questions" onChange={(value) => saveNotebookPrefs({ proactive: value === "on" })}
+          options={[["off", "Only when asked"], ["on", "On its own"]]} value={notebook.proactive ? "on" : "off"} />
+      </div>
+
+      <div className="app-settings-section">
+        <div className="app-settings-copy">
+          <span className="app-settings-label">Its questions lean</span>
+          <p className="app-settings-description">How the AI's margin questions push: helping your idea, plainly, or as a sceptic.</p>
+        </div>
+        <OptionGroup label="Its questions lean" onChange={(stance) => saveNotebookPrefs({ stance })}
+          options={[["supportive", "Supportive"], ["neutral", "Neutral"], ["antagonistic", "Antagonistic"]]} value={notebook.stance} />
+      </div>
+
+      <div className="app-settings-section">
+        <div className="app-settings-copy">
           <span className="app-settings-label">Notes and questions appear</span>
           <p className="app-settings-description">In the right margin beside their passage, or as small marks you click to open. Phones use marks while the quiet page is on.</p>
         </div>
