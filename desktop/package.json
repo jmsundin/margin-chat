@@ -23,6 +23,7 @@
     "directories": {
       "output": "release"
     },
+    "beforeBuild": "./build/beforeBuild.cjs",
     "files": [
       "main.mjs",
       "clientBundles.mjs",
