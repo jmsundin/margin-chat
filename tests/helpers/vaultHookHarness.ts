@@ -249,7 +249,26 @@ async function checkTypingBatch() {
   assert(!Object.keys(browser.localStorage).some((key) => key.startsWith("margin-chat:unsaved-edits:")), "The rescue copy was kept after it was merged.");
   await act(async () => { root.unmount(); });
   root = createRoot(container as unknown as Element);
-  console.log(JSON.stringify({ checks: ["keys typed together share one save", "hiding the app saves at once", "closing the workspace saves at once", "words typed just before a reload come back"] }));
+
+  // Chrome refused this copy once, so a fresh copy started; an edit the old copy never uploaded is merged back.
+  const old = (await local.read())!;
+  await local.write({ ...old, files: { ...old.files, "Notes/stranded.md": { content: "# Stranded\n\nWritten before Chrome refused the copy.\n" } } });
+  browser.localStorage.setItem(`margin-chat-vault-fresh-copy:${user.id}`, "freshcopy1");
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready && !current.vault.saving, "The fresh copy did not open.");
+  await until(() => JSON.stringify(current.state).includes("Written before Chrome refused the copy."), "An edit left in the older copy was not brought back.");
+  assert.match(current.vault.recoveryNotice ?? "", /older copy of your vault/, "The person wasn't told the edit came back.");
+  await act(async () => { await current.vault.syncNow(); });
+  assert((await remote.status(user.id)).manifest.files["Notes/stranded.md"], "The recovered edit did not reach the cloud.");
+  assert((await local.read())!.files["Notes/stranded.md"], "The older copy was changed or removed.");
+  await act(async () => { root.unmount(); });
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready && !current.vault.saving, "The fresh copy did not open again.");
+  assert.equal(current.vault.recoveryNotice, null, "The older copy was merged a second time.");
+  await act(async () => { root.unmount(); });
+  root = createRoot(container as unknown as Element);
+  console.log(JSON.stringify({ checks: ["keys typed together share one save", "hiding the app saves at once", "closing the workspace saves at once", "words typed just before a reload come back", "edits left in an older copy come back"] }));
 }
 async function checkProjectionPending() {
   const { pendingVaultChanges } = await import("../../client/src/lib/vaultSync");

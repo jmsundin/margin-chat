@@ -10,7 +10,7 @@ import { listTrash, type TrashEntry } from "./vaultTrash";
 import { FolderDeletionHeldError, type HeldFolderDeletion } from "./folderDeletionGuard";
 import { folderReadingFromBaseline, folderWrite, rememberFolderWrite, takeInFolderScan } from "./vaultFolderSync";
 import { BACKUP_REMIND_MS, loadVaultBackup, onlyCopyReminder, saveVaultBackup, vaultFingerprint, type OnlyCopyReminder } from "./vaultBackupReminder";
-import { LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, inMemoryVaultNotice, recoverWithFreshVaultCopy,
+import { LocalVaultUnavailableError, bytesToBase64, canRecoverWithFreshVaultCopy, createBrowserVaultStore, createVaultStoreWithMemoryFallback, exportVault, importVault, inMemoryVaultNotice, markStrandedVaultCopyMerged, readStrandedVaultCopies, recoverWithFreshVaultCopy,
   startFreshVaultCopy, takeVaultRecoveryNotice, vaultFileBytes } from "./vaultLocal";
 import { attachmentPath, MAX_VAULT_MEDIA_BYTES, MAX_VAULT_MEDIA_LABEL, mediaContentType, resolveVaultMediaPath, vaultEmbedMarkdown } from "./documentMedia";
 import type { VaultMedia } from "./vaultMedia";
@@ -341,6 +341,32 @@ export function useMarkdownVault(args: {
         continue;
       }
       removeUnsavedEditsKey(key);
+    }
+    return recovered;
+  }
+
+  /**
+   * Edits left in an older copy of the vault on this device (one set aside when the browser couldn't open it)
+   * that never reached the cloud are merged into the vault now. Returns how many files came back.
+   */
+  async function recoverStrandedCopies() {
+    let recovered = 0;
+    for (const { folder, snapshot } of await readStrandedVaultCopies(storageUserId).catch(() => [])) {
+      const next: Record<string, VaultFile> = {};
+      const expected: Record<string, VaultFile> = {};
+      for (const change of pendingVaultChanges(snapshot)) {
+        if (snapshot.files[change.path]) next[change.path] = snapshot.files[change.path];
+        const base = snapshot.base[change.path]?.file;
+        if (base) expected[change.path] = base;
+      }
+      const paths = Object.keys({ ...next, ...expected });
+      try {
+        if (paths.length) await engine.edit(next, expected);
+      } catch {
+        continue; // Tried again on the next start; the older copy is untouched.
+      }
+      markStrandedVaultCopyMerged(storageUserId, folder);
+      recovered += paths.filter((path) => /\.md$/iu.test(path)).length;
     }
     return recovered;
   }
@@ -741,6 +767,7 @@ export function useMarkdownVault(args: {
     mounted.current = true;
     void enqueue(async () => {
       if (initialized.current) return;
+      let strandedNotice: string | null = null;
       try {
         const existing = await engine.read().catch((error: unknown) => {
           // This device's copy can't be opened and the cloud has the vault: switch to a fresh copy right here
@@ -749,7 +776,12 @@ export function useMarkdownVault(args: {
             return engine.read();
           }
           throw error;
-        }).then(async (snapshot) => await recoverUnsavedEdits() ? engine.read() : snapshot);
+        }).then(async (snapshot) => {
+          const rescued = await recoverUnsavedEdits();
+          const stranded = await recoverStrandedCopies();
+          if (stranded) strandedNotice = (`Margin Chat found ${stranded === 1 ? "a document" : `${stranded} documents`} with edits that hadn't reached the cloud in an older copy of your vault on this device, and put ${stranded === 1 ? "it" : "them"} back.`);
+          return rescued || stranded ? engine.read() : snapshot;
+        });
         const exists = Object.keys(existing.files).length > 0 || existing.remoteRevision > 0;
         if (exists) publish(existing);
         else if (args.legacyHasState) {
@@ -770,7 +802,7 @@ export function useMarkdownVault(args: {
         if (mounted.current) {
           setReady(true); setStorageMode(enabledRef.current ? "fallback" : "local");
           const recovered = takeVaultRecoveryNotice(storageUserId);
-          setRecoveryNotice(storeRef.current?.inMemory() ? inMemoryVaultNotice(storeRef.current.refused()) : recovered);
+          setRecoveryNotice(storeRef.current?.inMemory() ? inMemoryVaultNotice(storeRef.current.refused()) : recovered ?? strandedNotice);
         }
         void navigator.storage.persist?.().catch(() => false);
         // The old workspace snapshot is migration input only. Future content comes from Markdown.
