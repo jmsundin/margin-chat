@@ -1,0 +1,21 @@
+/* A reply line under the AI's paragraph: an underline to write on, a send arrow, and Dismiss. */
+.write-back { margin: 6px 0 14px; font-family: var(--paper-sans, inherit); }
+.write-back-row { display: flex; align-items: flex-end; gap: 8px; border-bottom: 1px solid var(--line-strong, var(--line)); }
+.write-back-row:focus-within { border-bottom-color: var(--quiet-ai-ink, var(--accent)); }
+.write-back-input {
+  flex: 1; min-width: 0; resize: none; overflow: hidden; border: 0; background: transparent; color: var(--ink);
+  font: inherit; font-size: .9rem; line-height: 1.45; padding: 4px 0 6px; outline: none;
+}
+.write-back-input::placeholder { color: var(--muted); }
+.write-back-send { flex: none; display: grid; place-items: center; width: 26px; height: 26px; margin-bottom: 3px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--muted); cursor: pointer; }
+.write-back-send svg { width: 15px; height: 15px; }
+.write-back-send:not(:disabled):hover { color: var(--ink); background: var(--button-active-surface); }
+.write-back-send:disabled { opacity: .4; cursor: default; }
+.write-back-actions { display: flex; gap: 12px; padding-top: 5px; }
+.write-back-actions button { border: 0; background: transparent; padding: 0; color: var(--muted); font: inherit; font-size: .74rem; cursor: pointer; }
+.write-back-actions button:hover { color: var(--ink); }
+@media (pointer: coarse) { .write-back-input { font-size: 16px; } .write-back-send { width: 34px; height: 34px; } .write-back-actions button { font-size: .85rem; padding: 4px 0; } }
+
+/* The caret's Ask AI chip, and the phone's Ask AI / More / Talk row, would crowd the reply line. */
+body:has([data-write-back]) :is(.caret-actions, .live-document-touch-actions) { display: none; }
