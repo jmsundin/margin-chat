@@ -10,6 +10,8 @@ export interface DocumentMarginItem {
   label?: string;
   /** Written by the AI, so its mark shows in the AI's ink. */
   ai?: boolean;
+  /** The AI is still writing it: its passage gets a wavy underline that fills like a loading bar. */
+  pending?: boolean;
 }
 
 interface Props {
@@ -142,11 +144,42 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", escape); };
   }, [marks, openId]);
 
+  // Clicking a note opens it a little wider, and only then is its line back to the passage drawn.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  useEffect(() => { if (!marks && activeId && items.some((item) => item.id === activeId)) setExpandedId(activeId); }, [marks, activeId, itemKey]);
+  useEffect(() => { if (expandedId && !items.some((item) => item.id === expandedId)) setExpandedId(null); }, [expandedId, itemKey]);
+  useEffect(() => {
+    if (marks || !expandedId) return;
+    const close = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (asideRef.current?.contains(target) || target?.closest?.("[role=menu], [role=dialog], .selection-toolbar-row")) return;
+      setExpandedId(null);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && asideRef.current?.contains(document.activeElement)) setExpandedId(null); };
+    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", escape); };
+  }, [marks, expandedId]);
+  // It grows into the free room right of the page, up to half again as wide, so the text never moves.
+  const [expandBy, setExpandBy] = useState(0);
+  useLayoutEffect(() => {
+    const aside = asideRef.current;
+    if (!expandedId || !aside) { setExpandBy(0); return; }
+    const measure = () => setExpandBy(Math.max(0, Math.min(Math.round(width * 0.5), Math.floor(window.innerWidth - aside.getBoundingClientRect().right - 16))));
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [expandedId, width]);
+
   // The passage of the note being read or pointed at stays lit in the text. The editor owns
   // its DOM and would undo a class added to the passage, so a scoped style rule lights it.
   const linkedId = hoverId ?? (marks ? openId : null) ?? (activeId && items.some((item) => item.id === activeId) ? activeId : null);
   const escape = (value: string) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
-  const linkedRule = linkedId ? `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(linkedId)}"'] { background: var(--margin-linked-passage); box-shadow: 0 1.5px 0 var(--margin-linked-line); }` : "";
+  const pendingRule = items.filter((item) => item.pending).map((item) =>
+    `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(item.id)}"']`).join(",");
+  const linkedRule = (linkedId ? `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(linkedId)}"'] { background: var(--margin-linked-passage); box-shadow: 0 1.5px 0 var(--margin-linked-line); }` : "")
+    // Placed after the hover rule so a passage being thought about keeps its wave.
+    + (pendingRule ? `${pendingRule} { background: var(--margin-thinking-wave) 0 100% / var(--margin-thinking-at) 5px no-repeat; box-shadow: none; text-decoration: none; padding-bottom: 4px; animation: margin-note-thinking 9s cubic-bezier(.15,.7,.3,1) forwards; }` : "");
 
   // Choosing a note somewhere else (tabs, search, the Children menu) scrolls the text to it once.
   // Clicking into a note in the margin leaves the text where it is.
@@ -208,7 +241,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       <svg className="document-margin-links" width={DOCUMENT_MARGIN_GUTTER} height={height} aria-hidden="true">
         {items.map((item) => {
           const placement = placements[item.id];
-          if (!placement || placement.anchorTop === null) return null;
+          if (!placement || placement.anchorTop === null || item.id !== expandedId) return null;
           const from = placement.anchorTop + 10, to = placement.top + 16, x = DOCUMENT_MARGIN_GUTTER - 4;
           return <path key={item.id} className={item.id === linkedId ? "is-linked" : undefined}
             d={`M0 ${from} H8 V${to} H${x}`} />;
@@ -216,9 +249,11 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       </svg>
       {items.map((item) => {
         const placement = placements[item.id];
-        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}`}
+        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}`}
           data-margin-note-id={item.id} ref={(element) => { itemRefs.current[item.id] = element; }}
-          style={{ top: placement?.top ?? 0, left: DOCUMENT_MARGIN_GUTTER, visibility: placement ? undefined : "hidden" }}
+          onPointerDownCapture={() => setExpandedId(item.id)}
+          style={{ top: placement?.top ?? 0, left: DOCUMENT_MARGIN_GUTTER, visibility: placement ? undefined : "hidden",
+            ...(item.id === expandedId && expandBy ? { right: 10 - expandBy } : {}) }}
           onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
           {item.anchored ? null : <span className="document-margin-label">About this document</span>}
           {item.node}

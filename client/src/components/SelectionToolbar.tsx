@@ -85,3 +85,39 @@ export function SelectionToolbarRow({ actions, more, ask, aiActions = [], label 
     </> : null}
   </div>;
 }
+
+export type SelectionFormatButton = { format: string; label: string; glyph: React.ReactNode; pressed?: boolean };
+
+const FORMAT_GROUPS: { format: string; label: string; glyph: React.ReactNode }[][] = [
+  [
+    { format: "text", label: "Text", glyph: "T" },
+    { format: "h1", label: "Heading 1", glyph: <>H<sub>1</sub></> },
+    { format: "h2", label: "Heading 2", glyph: <>H<sub>2</sub></> },
+    { format: "h3", label: "Heading 3", glyph: <>H<sub>3</sub></> },
+    { format: "quote", label: "Quote", glyph: <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 3v10M6.5 4.5h7M6.5 8h7M6.5 11.5h5" /></svg> },
+    { format: "bullets", label: "Bulleted list", glyph: <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><circle cx="3" cy="4.5" r=".9" fill="currentColor" stroke="none" /><circle cx="3" cy="8" r=".9" fill="currentColor" stroke="none" /><circle cx="3" cy="11.5" r=".9" fill="currentColor" stroke="none" /><path d="M6 4.5h7.5M6 8h7.5M6 11.5h7.5" /></svg> },
+    { format: "numbers", label: "Numbered list", glyph: <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><path d="M2.3 3.2l1-.6v3.2M2.2 9.4a1 1 0 011.7.6c0 .7-1.8 1.6-1.8 1.9h1.9" /><path d="M6.5 4.5h7M6.5 8h7M6.5 11.5h7" /></svg> },
+  ],
+  [
+    { format: "bold", label: "Bold", glyph: <b>B</b> },
+    { format: "italic", label: "Italic", glyph: <i>I</i> },
+    { format: "strike", label: "Strikethrough", glyph: <s>S</s> },
+    { format: "code", label: "Code", glyph: <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" /></svg> },
+  ],
+];
+
+/**
+ * The row of text formats over the selection toolbar: paragraph styles, lists and quote, then bold,
+ * italic, strikethrough and code. Each writes Markdown into the text and toggles off when pressed again.
+ */
+export function SelectionFormatRow({ pressed, onFormat }: { pressed: (format: string) => boolean; onFormat: (format: string) => void }) {
+  return <div className="selection-format-row" role="toolbar" aria-label="Format selected text" onMouseDown={(event) => event.preventDefault()}>
+    {FORMAT_GROUPS.map((group, index) => <div key={index} className="selection-format-group">
+      {group.map((item) => {
+        const on = pressed(item.format);
+        return <button key={item.format} type="button" className="selection-format-button" aria-label={item.label} title={item.label}
+          aria-pressed={on} onClick={() => onFormat(item.format)}>{item.glyph}</button>;
+      })}
+    </div>)}
+  </div>;
+}

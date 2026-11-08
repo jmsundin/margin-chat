@@ -126,6 +126,8 @@ export interface RichDocumentEditorProps {
   renderBlockPreview?: (block: DocumentBlock) => ReactNode;
   /** Shown above the text, beside the view switch where the editor has one. */
   toolbarStart?: ReactNode;
+  /** One "Live Preview ▾" menu instead of three view buttons, for the quiet page's single row above the text. */
+  compactModes?: boolean;
   hidePlaceholder?: boolean;
   ariaLabel?: string;
   className?: string;

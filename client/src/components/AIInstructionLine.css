@@ -32,3 +32,25 @@
   .ai-instruction-line { margin-left: 8px; }
   .ai-instruction-input { font-size: 16px; }
 }
+
+/* Steering suggestions under the box: pick one to fill it, then keep or change it. */
+.ai-instruction-suggestions { flex: 1 0 100%; display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-instruction-suggestion {
+  border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; background: transparent; color: var(--muted);
+  font: inherit; font-size: .92em; cursor: pointer; text-align: left;
+}
+.ai-instruction-suggestion:hover, .ai-instruction-suggestion:focus-visible, .ai-instruction-suggestion[aria-pressed="true"] {
+  color: var(--ink); border-color: var(--line-strong, var(--line)); background: var(--button-active-surface, transparent);
+}
+
+/* On the quiet page's row: a small "✎ Tell the AI" beside the mode pill; set, its words take the line below. */
+.ai-instruction-line.is-compact { margin: 0; min-height: 30px; }
+.ai-instruction-line.is-compact.is-empty { opacity: 1; }
+.ai-instruction-line.is-compact .ai-instruction-button { align-items: center; padding: 4px 8px; border-radius: 999px; cursor: pointer; }
+.ai-instruction-line.is-compact .ai-instruction-button:hover { background: var(--button-active-surface); }
+.ai-instruction-line.is-compact .ai-instruction-label { color: var(--muted); font-weight: 500; }
+.ai-instruction-line.is-compact.is-empty .ai-instruction-label::after { content: none; }
+.ai-instruction-line.is-compact .ai-instruction-button:hover .ai-instruction-label { color: var(--ink); }
+.ai-instruction-pen { width: 13px; height: 13px; flex: 0 0 auto; }
+.ai-instruction-line.is-compact:not(.is-empty), .ai-instruction-line.is-compact.is-editing { order: 10; flex: 1 0 100%; }
+.ai-instruction-line.is-compact:not(.is-empty) .ai-instruction-text { white-space: normal; font-family: var(--paper-serif, Georgia, serif); font-style: normal; font-size: 1.05em; }

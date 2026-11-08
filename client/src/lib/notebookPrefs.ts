@@ -2,12 +2,13 @@
  * How the AI thinks with you, and where its questions and your notes show (the Customise
  * window). Saved per device, like the quiet page.
  *
- * - aiBehaviour "thinks": answers hand the thinking back with a follow-up question.
+ * - aiBehaviour "thinks": pressing Enter after a line or paragraph asks one question about it in the
+ *   margin, and answers hand the thinking back with a follow-up question.
  *   "asks": the AI only answers what you ask.
  * - marginMode "right": notes sit in the right margin beside their passage.
  *   "marks": only a dot beside each passage; click it to open the note. Phones always use marks
  *   while the quiet page is on.
- * - proactive: the AI may post a question in the margin on its own after you pause (off until turned on).
+ * - proactive: no longer used (Thinks with you now asks on Enter); kept so saved settings still read.
  * - stance: how its questions lean: supportive, neutral or antagonistic.
  */
 export type AIBehaviour = "thinks" | "asks";

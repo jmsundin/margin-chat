@@ -176,7 +176,7 @@ const server = createServer(async (request, response) => {
           }]);
         } else if (body.action === "controls") {
           for (const field of ["offline", "signedIn", "free", "jev", "chat"]) if (typeof body[field] === "boolean") controls[field] = body[field];
-          for (const field of ["delayMs", "authDelayMs"]) if (Number.isSafeInteger(body[field]) && body[field] >= 0 && body[field] <= 120000) controls[field] = body[field];
+          for (const field of ["delayMs", "authDelayMs", "chatDelayMs"]) if (Number.isSafeInteger(body[field]) && body[field] >= 0 && body[field] <= 120000) controls[field] = body[field];
           if (typeof body.userId === "string" && /^preview-[a-z0-9_-]+$/u.test(body.userId)) controls.userId = body.userId;
           if (body.seed !== false) await seed(controls.userId);
         } else return sendJson(response, 400, { error: "Use action: controls or remote" });
@@ -214,6 +214,8 @@ const server = createServer(async (request, response) => {
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;
             response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
             response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);
+            // A slow model, to see what the page shows while it thinks.
+            if (controls.chatDelayMs) await new Promise((resolve) => setTimeout(resolve, controls.chatDelayMs));
             for (let offset = 0; offset < reply.length; offset += 48) {
               if (response.destroyed) break;
               response.write(`${JSON.stringify({ type: "delta", delta: reply.slice(offset, offset + 48) })}\n`);
