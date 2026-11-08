@@ -225,6 +225,19 @@ describe("stable document blocks", () => {
     expect(blocks(result.file!.content)).toEqual([["one", "Launch Tuesday."], ["two", "Owner Alex."]]);
   });
 
+  test("new words typed at the same spot on two devices are both kept", () => {
+    const fixture = document([["one", "Launch Friday."], ["two", "Owner Pat."]]);
+    const base = fixture.render();
+    const result = merge(base, base.replace("Launch Friday.", "Launch Friday. Bring the slides"), base.replace("Launch Friday.", "Launch Friday. Book the room"));
+    expect(result.conflicted).toBe(true);
+    const [[, text]] = blocks(result.file!.content);
+    expect(text).toContain("Bring the slides");
+    expect(text).toContain("Book the room");
+    expect(blocks(result.file!.content)[1]).toEqual(["two", "Owner Pat."]);
+    // A second merge of the result with either side changes nothing more.
+    expect(merge(base, result.file!.content, result.file!.content).file!.content).toBe(result.file!.content);
+  });
+
   test("malformed markers, duplicate IDs and changed document identities never synthesize a document", () => {
     const fixture = document([["one", "First."], ["two", "Second."]]);
     const base = fixture.render();

@@ -6513,7 +6513,8 @@ function WorkspaceAppContent({
 
           {noteChatFor && state.conversations[noteChatFor] ? (() => {
             const chat = findNoteChat(state.conversations, noteChatFor);
-            return <NoteChatPanel open title={state.conversations[noteChatFor].title} messages={chat?.messages ?? []}
+            return <NoteChatPanel key={noteChatFor} open title={state.conversations[noteChatFor].title} messages={chat?.messages ?? []}
+              draftKey={`${storageUserId}:ask-note:${noteChatFor}`}
               pending={Boolean(chat && (pendingConversationIds[chat.id] || chatExecutions.has(chat.id)))}
               onAsk={(question) => handleAskAboutNote(noteChatFor, question)}
               onStop={chat ? () => chatExecutions.abort([chat.id]) : undefined}

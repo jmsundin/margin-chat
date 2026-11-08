@@ -47,6 +47,12 @@ import {
   createWorkspaceDocument,
 } from "../db/workspaceDocument.mjs";
 
+/**
+ * When a plan ends, nothing saved in the cloud is locked away: the account can still list and
+ * download its own files (Download vault), it just can't change them until it subscribes again.
+ */
+export const VAULT_READ_ONLY_ROUTES = new Set(["vaultStatus", "vaultFileRead"]);
+
 export function canUseCloudWorkspaceStorage(user) {
   return (
     user?.role === "admin" || user?.billing?.accessKind === "subscription"
@@ -833,7 +839,7 @@ export function createApiHandler({
 
       if (url.pathname === "/api/vault" || url.pathname.startsWith("/api/vault/")) {
         requireExpectedVaultAccount(request, authContext.user);
-        if (!canUseCloudWorkspaceStorage(authContext.user)) {
+        if (!canUseCloudWorkspaceStorage(authContext.user) && !(request.method === "GET" && VAULT_READ_ONLY_ROUTES.has(route?.id))) {
           throw new HttpError(403, "Cloud workspace sync requires a paid plan or an admin account.");
         }
         if (!vaultService) throw new HttpError(503, "Cloud Markdown storage is not configured.");
