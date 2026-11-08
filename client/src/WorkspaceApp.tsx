@@ -6,13 +6,14 @@ import { MobileKeyboardProvider, MobileComposerViewport, useMobileKeyboard } fro
 import MobileAIComposer from "./components/MobileAIComposer";
 import { MobileSelectionActions } from "./components/MobileSelectionActions";
 import { pdfPageFromSourceId } from "./lib/vaultFileDocuments";
-import { SelectionToolbarRow } from "./components/SelectionToolbar";
+import { SelectionFormatRow, SelectionToolbarRow } from "./components/SelectionToolbar";
 import { CaretActions } from "./components/CaretActions";
 import { MobileCreateMenu, type MobileCreateTarget } from "./components/MobileCreateMenu";
 import { caretParagraphIn } from "./components/LiveDocumentEditor";
 import { useMobileDockSlot } from "./lib/mobileDock";
 import type { DocumentCaretMenu } from "./components/DocumentPanel";
 import { isMarkdownHighlighted, toggleMarkdownHighlight } from "./lib/selectionHighlight";
+import { applySelectionFormat, hasSelectionFormat, type SelectionFormat } from "./lib/selectionFormat";
 import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
@@ -67,7 +68,7 @@ import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem }
 import NotebookCustomise from "./components/NotebookCustomise";
 import NoteChatPanel from "./components/NoteChatPanel";
 import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
-import { pickProactivePassage, PROACTIVE_IDLE_MS, stanceQuestionPrompt } from "./lib/proactiveQuestions";
+import { pickProactivePassage, stanceQuestionPrompt } from "./lib/proactiveQuestions";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
 import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNode } from "./components/MinimizedChildNodes";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
@@ -1406,21 +1407,26 @@ function WorkspaceAppContent({
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
   const closeNoteChat = useCallback(() => setNoteChatFor(null), []);
   /**
-   * The AI asking on its own: once the user has stopped editing the open document for a while, one
-   * question beside the paragraph they just wrote, at most once per section while the page is open.
+   * Thinks with you: pressing Enter after a line or paragraph of the user's own sends it, with the
+   * rest of the note, and the AI's question lands in the margin beside it. Once per paragraph.
    */
   const proactiveAsked = useRef(new Set<string>());
   const proactiveSessionStart = useRef(new Date().toISOString());
   const proactiveAsk = useRef<(conversationId: string) => void>(() => undefined);
   proactiveAsk.current = (conversationId: string) => {
-    const conversation = currentStateRef.current.conversations[conversationId];
-    if (!conversation || currentStateRef.current.activeConversationId !== conversationId || !readNotebookPrefs().proactive) return;
-    if (document.visibilityState !== "visible" || selectionDraft || isHiddenFromAI(conversation)) return;
+    const conversations = currentStateRef.current.conversations;
+    const conversation = conversations[conversationId];
+    if (!conversation || readNotebookPrefs().aiBehaviour !== "thinks" || conversation.document?.marginNote) return;
+    if (document.visibilityState !== "visible" || isHiddenFromAI(conversation)) return;
     if (pendingConversationIds[conversationId] || chatExecutions.has(conversationId)) return;
-    const passage = pickProactivePassage(conversation, proactiveAsked.current);
+    const noted = new Set(conversation.childIds.flatMap((id) => {
+      const child = conversations[id];
+      return child?.document?.marginNote && child.branchAnchor?.sourceBlockId ? [child.branchAnchor.sourceBlockId] : [];
+    }));
+    const passage = pickProactivePassage(conversation, proactiveAsked.current, noted);
     if (!passage) return;
     const block = getEditableDocument(conversation).blocks.find((item) => item.id === passage.blockId);
-    // Only after the user wrote here since the page opened; opening an old note never starts a question.
+    // Only text the user wrote since the page opened; Enter in an old note never questions it.
     if (!block || block.updatedAt < proactiveSessionStart.current) return;
     proactiveAsked.current.add(passage.sectionKey);
     handleDocumentSubmit(conversationId, {
@@ -1428,14 +1434,23 @@ function WorkspaceAppContent({
       prompt: stanceQuestionPrompt(QUESTION_PASSAGE_PROMPT, readNotebookPrefs().stance), destination: "margin", replaceSelection: false, background: true,
     });
   };
-  const proactiveDocumentId = activeConversation && (activeConversation.document || activeConversation.kind === "note") && !activeConversation.document?.marginNote ? activeConversation.id : null;
-  // Any edit moves the document's updatedAt, whether it is saved as blocks or as a plain note.
-  const proactiveEditedAt = proactiveDocumentId ? activeConversation?.updatedAt : undefined;
   useEffect(() => {
-    if (!proactiveDocumentId || !notebookPrefs.proactive) return;
-    const timer = window.setTimeout(() => proactiveAsk.current(proactiveDocumentId), PROACTIVE_IDLE_MS);
-    return () => window.clearTimeout(timer);
-  }, [proactiveDocumentId, proactiveEditedAt, notebookPrefs.proactive]);
+    if (notebookPrefs.aiBehaviour !== "thinks") return;
+    let timer = 0;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const host = target?.closest(".live-document-host");
+      if (!host || host.closest(".margin-document-frame, .document-margin")) return;
+      const id = host.closest<HTMLElement>("[data-block-editor-conversation-id]")?.dataset.blockEditorConversationId;
+      if (!id) return;
+      // The editor saves the line a moment after the key, so read the document once it has.
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => proactiveAsk.current(id), 450);
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => { document.removeEventListener("keydown", onKey, true); window.clearTimeout(timer); };
+  }, [notebookPrefs.aiBehaviour]);
   /** On a computer the quiet page puts the path, and tabs when there's more than one, on a single line. */
   const quietHeader = quietPage && !isMobileViewport;
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
@@ -3939,6 +3954,33 @@ function WorkspaceAppContent({
     closeSelectionDraft();
   }
 
+  /** Bold, a heading, a list…: the selection toolbar's format row writes the Markdown into the passage's block. */
+  function handleFormatSelection(format: SelectionFormat) {
+    if (!selectionDraft?.sourceBlockId) return;
+    const draft = selectionDraft;
+    const conversation = currentStateRef.current.conversations[draft.conversationId];
+    const document = conversation ? getEditableDocument(conversation) : null;
+    const block = document?.blocks.find((item) => item.id === draft.sourceBlockId);
+    const content = block && block.content.slice(draft.startOffset, draft.endOffset) === draft.quote
+      ? applySelectionFormat(block.content, draft.startOffset, draft.endOffset, format) : null;
+    if (!conversation || !document || !block || content === null) {
+      if (!block || block.content.slice(draft.startOffset, draft.endOffset) !== draft.quote) {
+        setDocumentErrors((current) => ({ ...current, [draft.conversationId]: "That passage can't be formatted. Select text within one paragraph." }));
+      }
+      closeSelectionDraft();
+      return;
+    }
+    const now = new Date().toISOString();
+    const updated = { ...conversation, updatedAt: now, document: { ...document,
+      blocks: document.blocks.map((item) => item.id === block.id ? { ...item, content, updatedAt: now } : item) } };
+    setState((current) => {
+      const next = replaceDocumentConversation(current, updated);
+      currentStateRef.current = next;
+      return next;
+    });
+    closeSelectionDraft();
+  }
+
   /** Search the vault for the selected passage. */
   function handleFindRelatedToSelection(passage: SelectionDraft | null = selectionDraft) {
     if (!passage) return;
@@ -5487,6 +5529,11 @@ function WorkspaceAppContent({
       activeMarginNoteId={activeConversation.id}
       aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : undefined}
+      pageBar={quietHeader && !conversation.vaultFile && !isCompactDocument(conversation) ? <div className="document-page-bar">
+        <AIInstructionLine compact value={conversation.aiInstruction}
+          inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} />
+        {renderNotebookStanceButton()}
+      </div> : undefined}
       roadmap={conversation.nodeType === "roadmap" ? <RoadmapView conversation={conversation} conversations={state.conversations}
         drafting={Boolean(pendingConversationIds[conversation.id])} onDraft={(goal) => handleDraftRoadmap(conversation.id, goal)}
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
@@ -5617,11 +5664,21 @@ function WorkspaceAppContent({
       {renderDocumentMarginNotes(note, view)}
     </div>;
   }
+  /** "Thinks with you ▾": how the AI joins in, on the page's own row. Opens Customise. */
+  function renderNotebookStanceButton() {
+    return <button type="button" className={`notebook-stance-button${notebookPrefs.aiBehaviour === "asks" ? " is-asks" : ""}`}
+      aria-haspopup="dialog" aria-expanded={customiseOpen} onClick={() => setCustomiseOpen(true)}
+      title={notebookPrefs.aiBehaviour === "asks" ? "The AI answers only when you ask. Click to change." : "Press Enter after a line and the AI asks about it in the margin. Click to change."}>
+      {notebookPrefs.aiBehaviour === "asks" ? "When you ask" : "Thinks with you"}<span aria-hidden="true">▾</span>
+    </button>;
+  }
+
   function getMarginItems(conversation: Conversation, view: "chat" | "graph"): DocumentMarginItem[] | undefined {
     if (!showsMarginInPanel(conversation, view)) return undefined;
     return getMarginDocuments(conversation).map((note) => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true),
       label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
-      ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()) }));
+      ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()),
+      pending: Boolean(note.document?.generations.some((generation) => generation.status === "streaming")) }));
   }
 
   /** The column of notes beside a document on phones, and beside a margin note for its own notes. */
@@ -6097,11 +6154,6 @@ function WorkspaceAppContent({
                       {/* On computers each document's own header holds it. */}
                       {isMobileViewport ? renderFullScreenButton() : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
-                        <button type="button" className={`notebook-stance-button${notebookPrefs.aiBehaviour === "asks" ? " is-asks" : ""}`}
-                          aria-haspopup="dialog" aria-expanded={customiseOpen} onClick={() => setCustomiseOpen(true)}
-                          title="Customise how the AI thinks with you and where notes appear">
-                          {notebookPrefs.aiBehaviour === "asks" ? "When you ask" : "Thinks with you"}<span aria-hidden="true">▾</span>
-                        </button>
                         {activeConversation.document || activeConversation.kind === "note" ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
                           onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
                           title="Ask the AI about this whole note">Ask about this note</button> : null}
@@ -6280,7 +6332,11 @@ function WorkspaceAppContent({
                 <button aria-label="Cancel link" className="selection-close" onClick={closeSelectionDraft} type="button">
                   <CloseIcon />
                 </button>
-              </div> : <SelectionToolbarRow
+              </div> : <>
+              {selectionBlock && !selectionIsDiagram ? <SelectionFormatRow
+                pressed={(format) => hasSelectionFormat(selectionBlock.content, selectionDraft.startOffset, selectionDraft.endOffset, format as SelectionFormat)}
+                onFormat={(format) => handleFormatSelection(format as SelectionFormat)} /> : null}
+              <SelectionToolbarRow
                 actions={[
                   ...(selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "highlight" as const, label: "Highlight", ariaLabel: selectionHighlighted ? "Remove highlight" : "Highlight selected text",
                     pressed: selectionHighlighted, onSelect: handleToggleSelectionHighlight }] : []),
@@ -6301,7 +6357,7 @@ function WorkspaceAppContent({
                   hint: "A diagram of this passage, in stages, under its paragraph", disabled: selectionPending, onSelect: handleVisualizeSelection }] : []}
                 ask={{ icon: "ai", label: "Ask AI", ariaLabel: selectionIsDiagram ? "Ask AI to change this diagram" : "Ask AI about this passage", pressed: selectionIntent === "branch",
                   onSelect: () => setSelectionIntent((intent) => intent === "branch" ? "actions" : "branch") }}
-              />}
+              /></>}
               {selectionIntent === "branch" && !mobileKeyboard.mobile ? <div className="selection-toolbar-panel">
                 <div className="selection-input-row">
                   <input

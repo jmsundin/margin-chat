@@ -81,6 +81,11 @@ export interface DocumentPanelProps {
   roadmap?: ReactNode;
   /** The "Tell the AI: …" line above the document's text. */
   aiInstruction?: ReactNode;
+  /**
+   * Quiet page: one row above the text that holds Tell the AI and how the AI thinks with you, then
+   * the view menu and authorship. With it, the instruction line moves into the row.
+   */
+  pageBar?: ReactNode;
   /** The full path of parents in the header, as in Map View's side panel. */
   parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
@@ -137,6 +142,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   latestDocument.current = document;
   const bodyRef = useRef<HTMLDivElement>(null);
   const [marginHeight, setMarginHeight] = useState(0);
+  const marginWidth = props.marginWidth ?? 300;
   // The PDF or image viewer puts its page count and zoom here, in the header.
   const [fileControls, setFileControls] = useState<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -545,20 +551,22 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </div>
       </header> : null}
     <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
-      style={props.marginNotes?.length ? { "--document-margin-width": `${props.marginWidth ?? 300}px` } as CSSProperties : undefined}>
+      style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
     <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
-      {props.aiInstruction}
+      {props.pageBar && editorMounted ? null : props.aiInstruction}
       {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
         resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
-        toolbarStart={historyPrompts.length || authorship?.summary.totalLines ? <>
+        compactModes={Boolean(props.pageBar)}
+        toolbarStart={props.pageBar || historyPrompts.length || authorship?.summary.totalLines ? <>
+          {props.pageBar}
           {authorship ? <DocumentAuthorshipBar summary={authorship.summary} mode={authorshipView.mode} onlyMine={authorshipView.onlyMine}
             onModeChange={authorshipView.setMode} onOnlyMineChange={authorshipView.setOnlyMine}/> : null}
           {historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
@@ -615,7 +623,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.marginNotes?.length && marginHeight ? <div className="document-margin-spacer" aria-hidden="true" style={{ top: marginHeight }}/> : null}
     </div>
     {props.marginNotes?.length ? <DocumentMargin bodyRef={bodyRef} documentId={conversation.id} items={props.marginNotes}
-      label={`Notes for ${conversation.title || "Untitled document"}`} width={props.marginWidth ?? 300}
+      label={`Notes for ${conversation.title || "Untitled document"}`} width={marginWidth}
       activeId={props.activeMarginNoteId} onHeightChange={setMarginHeight}
       marks={props.marginMarks} noteWidth={props.marginNoteWidth}/> : null}
     <BackToTopButton scrollRef={bodyRef} active={props.isActive}/>

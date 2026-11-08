@@ -81,19 +81,10 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
       <div className="app-settings-section">
         <div className="app-settings-copy">
           <span className="app-settings-label">AI behaviour</span>
-          <p className="app-settings-description">Thinks with you: Ask AI answers end with a question that hands the thinking back. When you ask: the AI only answers what you ask.</p>
+          <p className="app-settings-description">Thinks with you: press Enter after a line or paragraph and the AI asks one question about it in the margin, and Ask AI answers end with a question. When you ask: the AI only answers what you ask.</p>
         </div>
         <OptionGroup label="AI behaviour" onChange={(aiBehaviour) => saveNotebookPrefs({ aiBehaviour })}
           options={[["thinks", "Thinks with you"], ["asks", "When you ask"]]} value={notebook.aiBehaviour} />
-      </div>
-
-      <div className="app-settings-section">
-        <div className="app-settings-copy">
-          <span className="app-settings-label">AI asks questions</span>
-          <p className="app-settings-description">On its own: after you pause writing, the AI may ask one question beside what you just wrote, at most once per section while the page is open.</p>
-        </div>
-        <OptionGroup label="AI asks questions" onChange={(value) => saveNotebookPrefs({ proactive: value === "on" })}
-          options={[["off", "Only when asked"], ["on", "On its own"]]} value={notebook.proactive ? "on" : "off"} />
       </div>
 
       <div className="app-settings-section">

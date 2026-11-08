@@ -464,7 +464,11 @@ export function caretParagraphIn(conversationId: string) {
   return editor.paragraph();
 }
 
+const VIEW_LABELS = { live: "Live Preview", source: "Source", reading: "Reading" } as const;
+const VIEW_HINTS = { live: "Markdown shows on the line you're editing", source: "The Markdown file as saved", reading: "Rendered, not editable (⌘E)" } as const;
+
 export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const latest = useRef(props);
   latest.current = props;
   /**
@@ -1576,12 +1580,24 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       const focus = props.onHistory(event.shiftKey ? "redo" : "undo");
       if (focus) { pendingHistoryFocus.current = focus; setHistoryRevision((revision) => revision + 1); setAnnouncement(event.shiftKey ? "Edit redone." : "Edit undone."); }
     }}>
-    <div className="live-document-modes" role="toolbar" aria-label="Document view">
+    <div className={`live-document-modes${props.compactModes ? " is-compact" : ""}`} role="toolbar" aria-label="Document view">
       {props.toolbarStart}
-      {(["live", "source", "reading"] as const).map((candidate) => <button key={candidate} type="button" aria-pressed={mode === candidate}
+      {props.compactModes ? <div className="live-document-view-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setViewMenuOpen(false); }}>
+        <button type="button" className="live-document-view-trigger" aria-haspopup="menu" aria-expanded={viewMenuOpen}
+          title="How this page shows its Markdown (⌘E switches to Reading)"
+          onMouseDown={(event) => event.preventDefault()} onClick={() => setViewMenuOpen((open) => !open)}>
+          {VIEW_LABELS[mode]}<span aria-hidden="true">▾</span>
+        </button>
+        {viewMenuOpen ? <div className="live-document-view-options" role="menu">
+          {(["live", "source", "reading"] as const).map((candidate) => <button key={candidate} type="button" role="menuitemradio" aria-checked={mode === candidate}
+            onMouseDown={(event) => event.preventDefault()} onClick={() => { setMode(candidate); setViewMenuOpen(false); }}>
+            <span>{VIEW_LABELS[candidate]}</span><small>{VIEW_HINTS[candidate]}</small>
+          </button>)}
+        </div> : null}
+      </div> : (["live", "source", "reading"] as const).map((candidate) => <button key={candidate} type="button" aria-pressed={mode === candidate}
         title={candidate === "live" ? "Live Preview: Markdown shows on the line you're editing" : candidate === "source" ? "Source: the Markdown file as saved" : "Reading: rendered, not editable (⌘E)"}
         onMouseDown={(event) => event.preventDefault()} onClick={() => setMode(candidate)}>
-        {candidate === "live" ? "Live Preview" : candidate === "source" ? "Source" : "Reading"}
+        {VIEW_LABELS[candidate]}
       </button>)}
     </div>
     {/* Its mics are beside Ask AI and in the pane's corner, so voice typing doesn't float one over the text. */}

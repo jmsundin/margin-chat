@@ -42,8 +42,9 @@ try {
   assert.equal(top("early"), 20 + 80 + 12, "A note whose passage sits beside the top note moves just below it.");
   assert.equal(top("late"), 396, "A note with room sits level with its passage.");
   assert.equal(heights.at(-1), 508, "The margin reports its height so the text can scroll to the last note.");
-  assert.equal(container.querySelectorAll(".document-margin-links path").length, 2, "Each anchored note has a line to its passage.");
+  assert.equal(container.querySelectorAll(".document-margin-links path").length, 1, "Only the open note has a line to its passage.");
   assert.equal(container.querySelectorAll(".document-margin-links path.is-linked").length, 1, "The open note's line is drawn solid.");
+  assert(container.querySelector('[data-margin-note-id="late"]')?.classList.contains("is-expanded"), "The open note opens wider.");
   assert(container.querySelector("style")?.textContent?.includes(`'"late"'`), "The open note's passage is lit in the text.");
 
   ids = ["early", "crowded", "late"];

@@ -4,20 +4,17 @@ import { getEditableDocument } from "./editableDocument";
 import type { AIStance } from "./notebookPrefs";
 
 /**
- * The AI asks on its own (Customise → "AI asks questions": On). After the user stops writing for a
- * while, it may post one question in the margin beside the paragraph they just wrote, at most once
- * per section of the document while the page stays open, and never on text it wrote itself.
+ * Thinks with you: when the user presses Enter after a line or paragraph of their own, the AI reads
+ * it with the rest of the note and puts one question in the margin beside it. At most one per
+ * paragraph, never on text the AI wrote, and never on a paragraph that already has a note.
  */
 
-/** How long the user's last edit must sit before the AI asks. */
-export const PROACTIVE_IDLE_MS = 20_000;
-/** At least this much of the user's own writing in a section before a question is worth asking. */
-const MIN_SECTION_CHARS = 100;
-const MIN_PASSAGE_CHARS = 60;
+/** Shorter than this and a line is too thin to question ("Notes", "Todo"). */
+const MIN_PASSAGE_CHARS = 12;
 const MAX_PASSAGE_CHARS = 900;
 
 export interface ProactivePassage {
-  /** Where this passage sits: the document and the heading above it. One question per key per session. */
+  /** The paragraph's place: document, block and where it starts. One question per key per session. */
   sectionKey: string;
   blockId: string;
   from: number;
@@ -26,42 +23,32 @@ export interface ProactivePassage {
   sourceContent: string;
 }
 
-const HEADING = /^#{1,6}[ \t]+(.+)$/m;
-
 /**
- * The paragraph the user most recently wrote, if its section has had no question yet this session
- * and holds enough of their own words. Blocks the AI wrote, or empty ones, never count.
+ * The paragraph the user just finished, if it is theirs, long enough, and hasn't been asked about.
+ * `notedBlockIds` are the blocks that already carry a margin note.
  */
-export function pickProactivePassage(conversation: Conversation, asked: ReadonlySet<string>): ProactivePassage | null {
+export function pickProactivePassage(conversation: Conversation, asked: ReadonlySet<string>, notedBlockIds: ReadonlySet<string> = new Set()): ProactivePassage | null {
   const blocks = getEditableDocument(conversation).blocks;
-  let section = "top";
-  const sections = blocks.map((block) => {
-    const heading = /^\s*#{1,6}[ \t]+(.+)$/.exec(block.content.split("\n")[0] ?? "") ?? HEADING.exec(block.content);
-    if (heading) section = heading[1].trim().toLowerCase();
-    return section;
-  });
   const userWritten = (index: number) => getDocumentBlockAuthorship(blocks[index], conversation.messages) === "user";
   let latest = -1;
   blocks.forEach((block, index) => {
-    if (!userWritten(index) || block.content.trim().length < MIN_PASSAGE_CHARS) return;
+    if (!userWritten(index) || !block.content.trim()) return;
     if (latest < 0 || block.updatedAt > blocks[latest].updatedAt) latest = index;
   });
-  if (latest < 0) return null;
-  const sectionKey = `${conversation.id}:${sections[latest]}`;
-  if (asked.has(sectionKey)) return null;
-  const sectionChars = blocks.reduce((sum, block, index) => sections[index] === sections[latest] && userWritten(index) ? sum + block.content.trim().length : sum, 0);
-  if (sectionChars < MIN_SECTION_CHARS) return null;
+  if (latest < 0 || notedBlockIds.has(blocks[latest].id)) return null;
   const content = blocks[latest].content;
-  // The last paragraph of the block, without a heading line, and not so long the note covers a page.
-  const paragraphStart = content.lastIndexOf("\n\n", content.trimEnd().length - 1);
+  // The last paragraph of the block, without its heading marks, and not so long the note covers a page.
+  const end = content.trimEnd().length;
+  const paragraphStart = content.lastIndexOf("\n\n", end - 1);
   let from = paragraphStart < 0 ? 0 : paragraphStart + 2;
-  const firstLine = content.slice(from).split("\n")[0];
-  if (/^\s*#{1,6}[ \t]/.test(firstLine)) from += firstLine.length + 1;
-  while (from < content.length && /\s/.test(content[from])) from += 1;
-  let to = content.trimEnd().length;
-  if (to - from > MAX_PASSAGE_CHARS) from = to - MAX_PASSAGE_CHARS;
-  if (to - from < MIN_PASSAGE_CHARS) return null;
-  return { sectionKey, blockId: blocks[latest].id, from, to, quote: content.slice(from, to), sourceContent: content };
+  while (from < end && /\s/.test(content[from])) from += 1;
+  const marks = /^(?:#{1,6}[ \t]+|[-*+][ \t]+|\d+[.)][ \t]+|>[ \t]*)/.exec(content.slice(from));
+  if (marks) from += marks[0].length;
+  if (end - from > MAX_PASSAGE_CHARS) from = end - MAX_PASSAGE_CHARS;
+  if (end - from < MIN_PASSAGE_CHARS) return null;
+  const sectionKey = `${conversation.id}:${blocks[latest].id}:${paragraphStart < 0 ? 0 : paragraphStart}`;
+  if (asked.has(sectionKey)) return null;
+  return { sectionKey, blockId: blocks[latest].id, from, to: end, quote: content.slice(from, end), sourceContent: content };
 }
 
 const STANCE_LINES: Record<AIStance, string> = {

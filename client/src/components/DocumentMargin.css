@@ -35,3 +35,31 @@
   padding: 2px 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-strong, var(--bg));
   box-shadow: 0 14px 36px rgba(40, 32, 20, .16); }
 .document-margin-mark-note > .margin-document-family { min-width: 0; }
+
+/* A note the user clicked opens up to half again as wide, into the room right of the page; the
+   margin clips above and below as before but lets that note out on the right. */
+.document-margin:has(.document-margin-item.is-expanded) { overflow: visible; clip-path: inset(0 -100vw 0 0); z-index: 3; }
+.document-margin-item { transition: right .18s ease; }
+@media (prefers-reduced-motion: reduce) { .document-margin-item { transition: none; } }
+
+/* While the AI writes a note, its passage gets a wavy underline that fills left to right like a
+   loading bar (the rule itself is scoped to the passage in DocumentMargin.tsx). */
+@property --margin-thinking-at { syntax: "<length-percentage>"; inherits: false; initial-value: 0%; }
+@keyframes margin-note-thinking { from { --margin-thinking-at: 0%; } to { --margin-thinking-at: 92%; } }
+:root {
+  --margin-thinking-wave: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='5'%3E%3Cdefs%3E%3Cpattern id='w' width='8' height='5' patternUnits='userSpaceOnUse'%3E%3Cpath d='M0 3.2 Q2 0.6 4 3.2 T8 3.2' fill='none' stroke='%236a55c4' stroke-width='1.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='100%25' height='5' fill='url(%23w)'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] {
+  --margin-thinking-wave: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='5'%3E%3Cdefs%3E%3Cpattern id='w' width='8' height='5' patternUnits='userSpaceOnUse'%3E%3Cpath d='M0 3.2 Q2 0.6 4 3.2 T8 3.2' fill='none' stroke='%23ad9df2' stroke-width='1.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='100%25' height='5' fill='url(%23w)'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --margin-thinking-wave: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100%25' height='5'%3E%3Cdefs%3E%3Cpattern id='w' width='8' height='5' patternUnits='userSpaceOnUse'%3E%3Cpath d='M0 3.2 Q2 0.6 4 3.2 T8 3.2' fill='none' stroke='%23ad9df2' stroke-width='1.3'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='100%25' height='5' fill='url(%23w)'/%3E%3C/svg%3E");
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-body .message-anchor { animation-duration: 0s !important; }
+}
+.document-margin-item.is-expanded > .margin-document-family > .margin-document-frame { width: 100% !important; max-height: none !important; }
+/* The page's frame lets that one note out too; nothing else in it reaches past its edge. */
+.chat-panel.document-panel:has(> .document-panel-content > .document-margin .document-margin-item.is-expanded) { overflow: visible; }
