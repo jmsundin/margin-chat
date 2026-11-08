@@ -1,4 +1,4 @@
-import type { AIRetrievalPassage, AIRetrievalRecord, AISettings, Conversation, Message } from "../types";
+import type { AIRetrievalPassage, AIRetrievalRecord, AISettings, Conversation, DocumentRelation, Message } from "../types";
 import type { DocumentBlock } from "./editableDocument";
 import { splitDocumentMarkdown } from "./editableDocument";
 import { normalizeAISettings } from "@margin-chat/workspace-contracts";
@@ -103,18 +103,103 @@ export function createVaultAnswerDocument(args: {
   const markdown = vaultAnswerMarkdown(args.answer, args.retrieval);
   const question: Message = { id: args.createId("message"), role: "user", content: args.question.trim(), createdAt: now };
   const reply: Message = { id: args.createId("message"), role: "assistant", content: markdown, createdAt: now };
-  const blockBase = args.createId("block");
-  let offset = 0;
-  const blocks = splitDocumentMarkdown(markdown).map((content, index): DocumentBlock => {
-    const block: DocumentBlock = { id: index ? `${blockBase}:part:${offset}` : blockBase, kind: "markdown", content, createdAt: now, updatedAt: now,
-      sourceMessageId: reply.id, authorship: "ai" };
-    offset += content.length;
-    return block;
-  });
+  const blocks = answerBlocks(markdown, reply.id, args.createId("block"), now);
   return {
+    nodeType: ANSWER_NODE_TYPE, relations: citesRelations(markCitedPassages(args.retrieval, args.answer), now),
     id: args.createId("conversation"), kind: "chat", title: capitalize(excerpt(args.question.trim().replace(/\?+$/u, ""), 80)) || "Answer",
     parentId: null, serviceId: args.serviceId, modelId: args.modelId, ...(args.ai ? { ai: structuredClone(args.ai) } : {}),
     branchAnchor: null, childIds: [], documents: [], messages: [question, reply], notes: [], createdAt: now, updatedAt: now,
     document: { schemaVersion: 1, blocks, prompts: [], generations: [] },
+  };
+}
+
+/** Saved answers carry `type: answer`, so they can be told apart and refreshed. */
+export const ANSWER_NODE_TYPE = "answer";
+
+export const isVaultAnswer = (conversation: Conversation | undefined | null) => conversation?.nodeType === ANSWER_NODE_TYPE;
+
+function answerBlocks(markdown: string, messageId: string, blockBase: string, now: string): DocumentBlock[] {
+  let offset = 0;
+  return splitDocumentMarkdown(markdown).map((content, index): DocumentBlock => {
+    const block: DocumentBlock = { id: index ? `${blockBase}:part:${offset}` : blockBase, kind: "markdown", content, createdAt: now, updatedAt: now,
+      sourceMessageId: messageId, authorship: "ai" };
+    offset += content.length;
+    return block;
+  });
+}
+
+/**
+ * A "cites" relation to each document the answer cites, dated now: the Map draws
+ * them, and a source edited after that date marks the answer as worth refreshing.
+ */
+export function citesRelations(retrieval: AIRetrievalRecord | null | undefined, now: string): DocumentRelation[] {
+  const seen = new Set<string>();
+  return vaultAnswerSources(retrieval).filter((passage) => passage.cited).flatMap((passage): DocumentRelation[] => {
+    const target = passage.openId ?? passage.id;
+    if (seen.has(target)) return [];
+    seen.add(target);
+    return [{ type: "cites", targetConversationId: target, ...(passage.kind === "document" && passage.blockId ? { targetBlockId: passage.blockId } : {}),
+      origin: "ai", createdAt: now }];
+  });
+}
+
+const words = (text: string) => new Set(text.normalize("NFKD").replace(/\p{M}/gu, "").toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter((word) => word.length > 2));
+
+/** How alike two questions are, by the words they share (0 to 1). */
+export function questionSimilarity(left: string, right: string) {
+  const a = words(left), b = words(right);
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const word of a) if (b.has(word)) shared++;
+  return shared / (a.size + b.size - shared);
+}
+
+const SAME_QUESTION = 0.75;
+
+/** A saved answer to (nearly) the same question, so the user can update it instead of saving a second copy. */
+export function findSavedAnswer(conversations: Record<string, Conversation>, question: string): Conversation | null {
+  let best: Conversation | null = null;
+  let bestScore = SAME_QUESTION;
+  for (const conversation of Object.values(conversations)) {
+    if (!isVaultAnswer(conversation) || !conversation.document) continue;
+    const score = questionSimilarity(conversation.title, question);
+    if (score >= bestScore) { best = conversation; bestScore = score; }
+  }
+  return best;
+}
+
+/** The cited documents edited since the answer cited them. */
+export function changedAnswerSources(conversations: Record<string, Conversation>, answer: Conversation): Conversation[] {
+  if (!isVaultAnswer(answer)) return [];
+  const changed = new Map<string, Conversation>();
+  for (const relation of answer.relations ?? []) {
+    if (relation.type !== "cites" || !relation.targetConversationId || !relation.createdAt) continue;
+    const target = conversations[relation.targetConversationId];
+    if (target && Date.parse(target.updatedAt) > Date.parse(relation.createdAt) + 1000) changed.set(target.id, target);
+  }
+  return [...changed.values()];
+}
+
+/**
+ * A saved answer updated with a new one. When every line is still the AI's, the
+ * new answer replaces it; when the user wrote in it, their lines stay and the new
+ * answer is added under an "Updated" heading. Its "cites" relations are renewed.
+ */
+export function updateVaultAnswerDocument(existing: Conversation, args: {
+  answer: string; retrieval: AIRetrievalRecord | null | undefined; createId: (prefix: string) => string; now?: string;
+}): Conversation {
+  const now = args.now ?? new Date().toISOString();
+  const blocks = existing.document?.blocks ?? [];
+  const untouched = blocks.every((block) => block.authorship === "ai" || !block.content.trim());
+  const day = now.slice(0, 10);
+  const markdown = untouched ? vaultAnswerMarkdown(args.answer, args.retrieval) : `## Updated answer, ${day}\n\n${vaultAnswerMarkdown(args.answer, args.retrieval)}`;
+  const reply: Message = { id: args.createId("message"), role: "assistant", content: markdown, createdAt: now };
+  const added = answerBlocks(markdown, reply.id, args.createId("block"), now);
+  const cites = citesRelations(markCitedPassages(args.retrieval, args.answer), now);
+  const kept = (existing.relations ?? []).filter((relation) => relation.type !== "cites"
+    || (!untouched && !cites.some((cite) => cite.targetConversationId === relation.targetConversationId)));
+  return {
+    ...existing, nodeType: ANSWER_NODE_TYPE, relations: [...kept, ...cites], messages: [...existing.messages, reply], updatedAt: now,
+    document: { schemaVersion: 1, prompts: [], generations: [], ...existing.document, blocks: untouched ? added : [...blocks, ...added] },
   };
 }

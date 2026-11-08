@@ -14,3 +14,8 @@
 .vault-answer-source-meta { color: var(--muted); font-size: .74rem; }
 .vault-answer-actions { align-items: center; flex-wrap: wrap; }
 .vault-answer-hint { color: var(--muted); font-size: .74rem; flex: 1; min-width: 140px; }
+.vault-answer-existing { margin: 0; font-size: .84rem; color: var(--muted); }
+.vault-answer-existing button, .vault-answer-secondary { border: 0; background: transparent; color: var(--accent, #0b8f70); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+.vault-answer-secondary { font-size: .82rem; padding: 6px 4px; }
+.vault-answer-stale { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 10px; color: var(--muted); font-size: .8rem; }
+.vault-answer-stale button { border: 0; background: transparent; color: var(--accent, #0b8f70); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
