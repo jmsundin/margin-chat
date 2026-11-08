@@ -59,10 +59,19 @@ function instructionLines(instruction?: string | null): string[] {
 export const QUESTION_PASSAGE_PROMPT = "Ask me one short question that tests this passage: challenge a weak claim, ask what the evidence is, or name a factor it leaves out. One sentence, no answer, nothing else.";
 
 /**
- * Visualize: the passage as a Mermaid diagram the reader steps through, one idea per stage
- * (mermaidDiagrams.ts parseDiagramStages reads the `%% stage:` lines).
+ * Visualize: the passage as a diagram the reader steps through, one idea per stage. Most passages
+ * become a staged Mermaid diagram (mermaidDiagrams.ts parseDiagramStages reads the `%% stage:` lines);
+ * a passage about a table of values filling in becomes a stepped grid (stepGrid.ts parseStepGrid).
  */
-export const VISUALIZE_PASSAGE_PROMPT = "Draw this passage as a Mermaid diagram that builds up in 3 to 5 stages, so I can click through the reasoning one step at a time. Start with the diagram type line (for example flowchart TD). Begin each stage with a comment line `%% stage: <title of at most five words>`, followed only by the nodes and links that stage adds; each stage builds on the ones before it. Keep labels short. Return only one ```mermaid fenced code block, with no other text.";
+export const VISUALIZE_PASSAGE_PROMPT = [
+  "Draw this passage as a diagram I can click through one step at a time.",
+  "If it is about values in a table, grid, matrix, array or board that get filled in or change step by step (for example dynamic programming, matrix operations, sorting an array, a game board), return only one ```stepgrid fenced code block holding JSON: "
+    + '{"title": "<short question the grid answers>", "subtitle": "<one short rule, optional>", "rows": <1-12>, "cols": <1-12>, "rowLabels": [optional short labels], "colLabels": [optional short labels], '
+    + '"steps": [{"caption": "<one sentence on what this step shows>", "set": [[row, col, "value"], ...], "focus": [[row, col], ...], "arrows": [{"from": [row, col], "to": [row, col]}, ...]}]}. '
+    + "Use 3 to 6 steps. Rows and columns count from 0. Values a step sets stay in later steps, so each step sets only the cells it fills in or changes. Use focus for the cell being worked out and arrows from the cells its value comes from.",
+  "Otherwise return only one ```mermaid fenced code block that builds up in 3 to 5 stages. Start with the diagram type line (for example flowchart TD). Begin each stage with a comment line `%% stage: <title of at most five words>`, followed only by the nodes and links that stage adds; each stage builds on the ones before it. Keep labels short.",
+  "Return no other text.",
+].join(" ");
 
 /** An answer the user reads (not text written into their document) ends by handing the thinking back. */
 const FOLLOW_UP_LINE = "End your answer with one short follow-up question for the user to think about, on its own line.";
