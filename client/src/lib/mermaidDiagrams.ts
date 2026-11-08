@@ -162,6 +162,10 @@ export async function drawMermaidBlock(mermaid: MermaidApi, block: HTMLElement, 
     const { svg, bindFunctions } = await mermaid.render(renderId, source);
     diagram.innerHTML = svg;
     bindFunctions?.(diagram);
+    const drawn = diagram.querySelector<SVGSVGElement>("svg");
+    const width = drawn?.viewBox.baseVal?.width ?? 0;
+    if (drawn && width > 0) sizeDiagramSvg(drawn, width, width);
+    centerWideDiagram(block);
     return;
   }
   const views: HTMLElement[] = [];
@@ -174,15 +178,39 @@ export async function drawMermaidBlock(mermaid: MermaidApi, block: HTMLElement, 
     views.push(view);
   }
   diagram.replaceChildren(...views);
-  // Every stage at the scale of the widest one, so nodes keep their size as the diagram grows.
+  // Every stage at the scale of the widest one, so nodes keep their size as the diagram grows,
+  // but never so small that its words can't be read.
   const widths = views.map((view) => view.querySelector("svg")?.viewBox.baseVal?.width ?? 0);
   const widest = Math.max(...widths);
   if (widest > 0) views.forEach((view, index) => {
     const svg = view.querySelector<SVGSVGElement>("svg");
-    if (svg && widths[index] > 0) svg.style.maxWidth = `min(${widths[index]}px, ${(widths[index] / widest) * 100}%)`;
+    if (svg && widths[index] > 0) sizeDiagramSvg(svg, widths[index], widest);
   });
   showDiagramStage(block, Number(block.dataset.stage ?? 0));
   installStageControls();
+}
+
+/**
+ * The smallest a diagram is drawn, as a share of Mermaid's own size (14px text becomes about 11px).
+ * A diagram wider than its panel at this size scrolls sideways instead of shrinking further.
+ */
+export const MIN_DIAGRAM_SCALE = 0.8;
+
+/**
+ * Sizes one drawn diagram: its own width at most, shrunk with the panel in step with the widest
+ * diagram beside it (`widest`), and never below MIN_DIAGRAM_SCALE. Plain CSS, so it follows the
+ * panel as it resizes.
+ */
+export function sizeDiagramSvg(svg: SVGSVGElement, width: number, widest: number) {
+  svg.style.width = `${width}px`;
+  svg.style.maxWidth = `${(width / widest) * 100}%`;
+  svg.style.minWidth = `${Math.round(width * MIN_DIAGRAM_SCALE)}px`;
+}
+
+/** A diagram wider than its panel opens scrolled to its middle, where a top-down diagram's root sits. */
+function centerWideDiagram(block: HTMLElement) {
+  const diagram = block.querySelector<HTMLElement>(".message-mermaid-diagram");
+  if (diagram && diagram.scrollWidth > diagram.clientWidth) diagram.scrollLeft = (diagram.scrollWidth - diagram.clientWidth) / 2;
 }
 
 /** Points a staged diagram's stepper and picture at one stage. */
@@ -204,7 +232,11 @@ export function showDiagramStage(block: HTMLElement, stage: number) {
   const next = block.querySelector<HTMLButtonElement>('.diagram-stage-step[data-step="1"]');
   if (previous) previous.disabled = current === 0;
   if (next) next.disabled = current === count - 1;
+  centerWideDiagram(block);
 }
+
+/** Fired on a staged diagram when its Enlarge button is pressed; `detail.stage` is the stage shown. */
+export const DIAGRAM_ENLARGE_EVENT = "margin-diagram-enlarge";
 
 const STAGED_BLOCK_SELECTOR = ".message-mermaid-block.is-staged, .stepgrid-block.is-staged";
 const REPLAY_STEP_MS = 1100;
@@ -232,6 +264,60 @@ export function replayDiagramStages(block: HTMLElement) {
   }, REPLAY_STEP_MS));
 }
 
+/**
+ * The plain full-screen view for panels with no viewer of their own: the stage on screen, as large
+ * as the window allows (scrolling when it is larger still). Esc, the close button or a click on the
+ * backdrop closes it.
+ */
+export function openDiagramOverlay(block: HTMLElement) {
+  const svg = block.querySelector<SVGSVGElement>(".diagram-stage-view.is-current svg, .message-mermaid-diagram > svg");
+  if (!svg) return;
+  const width = svg.viewBox.baseVal?.width || svg.getBoundingClientRect().width;
+  const picture = svg.cloneNode(true) as SVGSVGElement;
+  picture.removeAttribute("style");
+  // Fill the window, but no more than twice Mermaid's own size and never below the readable floor.
+  picture.style.cssText = `display:block;height:auto;margin:auto;width:min(${Math.round(width * 2)}px, 100%);min-width:${Math.round(width * MIN_DIAGRAM_SCALE)}px;max-width:none;`;
+  const overlay = document.createElement("div");
+  overlay.className = "diagram-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", "Diagram");
+  const frame = document.createElement("div");
+  frame.className = "diagram-overlay-frame";
+  const title = block.querySelector(".diagram-stage-caption")?.textContent?.trim();
+  const head = document.createElement("div");
+  head.className = "diagram-overlay-head";
+  head.textContent = title ?? "";
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "diagram-overlay-close";
+  close.setAttribute("aria-label", "Close");
+  close.textContent = "×";
+  head.append(close);
+  const body = document.createElement("div");
+  body.className = "diagram-overlay-body";
+  body.append(picture);
+  frame.append(head, body);
+  overlay.append(frame);
+  const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const dismiss = () => {
+    overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
+    previous?.focus({ preventScroll: true });
+  };
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    dismiss();
+  };
+  overlay.addEventListener("click", (event) => { if (event.target === overlay || (event.target as Element).closest(".diagram-overlay-close")) dismiss(); });
+  document.addEventListener("keydown", onKey, true);
+  document.body.append(overlay);
+  if (body.scrollWidth > body.clientWidth) body.scrollLeft = (body.scrollWidth - body.clientWidth) / 2;
+  close.focus({ preventScroll: true });
+}
+
 let stageControlsInstalled = false;
 /**
  * The stepper lives in rendered Markdown, so one listener on the page works every panel. It runs
@@ -254,6 +340,12 @@ export function installStageControls() {
     event.stopPropagation();
     if (button.disabled) return;
     if (button.dataset.replay) { replayDiagramStages(block); return; }
+    if (button.dataset.enlarge) {
+      // Whoever draws this panel opens its full-screen viewer (MarkdownMessage listens).
+      const handled = !block.dispatchEvent(new CustomEvent(DIAGRAM_ENLARGE_EVENT, { bubbles: true, cancelable: true, detail: { stage: Number(block.dataset.stage ?? 0) } }));
+      if (!handled) openDiagramOverlay(block);
+      return;
+    }
     stopReplay(block);
     const current = Number(block.dataset.stage ?? 0);
     showDiagramStage(block, button.dataset.stageIndex != null ? Number(button.dataset.stageIndex) : current + Number(button.dataset.step ?? 0));

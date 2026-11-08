@@ -11,7 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { renderMarkdownToHtml, renderObsidianMarkdownToHtml } from "../lib/markdown";
-import { MERMAID_BLOCK_SELECTOR, drawMermaidBlock, getMermaidConfig, setMermaidStatus } from "../lib/mermaidDiagrams";
+import { DIAGRAM_ENLARGE_EVENT, MERMAID_BLOCK_SELECTOR, drawMermaidBlock, getMermaidConfig, parseDiagramStages, setMermaidStatus } from "../lib/mermaidDiagrams";
 import { getHeadingOutlineId } from "../lib/chatOutline";
 import {
   buildMessageDecorations,
@@ -300,6 +300,7 @@ export default function MarkdownMessage({
     y: 0,
   });
   const viewerViewportRef = useRef<HTMLDivElement>(null);
+  const openViewerRef = useRef<(diagram: HTMLElement) => void>(() => {});
   const [activeViewer, setActiveViewer] = useState<MermaidViewerState | null>(null);
   const [isViewerDragging, setViewerDragging] = useState(false);
   const [viewerError, setViewerError] = useState<string | null>(null);
@@ -367,14 +368,18 @@ export default function MarkdownMessage({
 
   function openViewer(diagram: HTMLElement) {
     const block = diagram.closest<HTMLElement>(MERMAID_BLOCK_SELECTOR);
-    const source = block?.querySelector("code")?.textContent?.trim() ?? "";
+    const fullSource = block?.querySelector("code")?.textContent?.trim() ?? "";
+    // A staged diagram opens at the stage on screen, not the finished diagram.
+    const stages = block?.classList.contains("is-staged") ? parseDiagramStages(fullSource) : null;
+    const stage = Number(block?.dataset.stage ?? 0);
+    const source = stages?.[stage]?.source.trim() ?? fullSource;
 
     if (!source) {
       return;
     }
 
     const nextViewer = {
-      ...getMermaidDiagramSize(diagram),
+      ...getMermaidDiagramSize(diagram.querySelector<HTMLElement>(".diagram-stage-view.is-current") ?? diagram),
       source,
     };
 
@@ -387,6 +392,8 @@ export default function MarkdownMessage({
       y: 0,
     });
   }
+
+  openViewerRef.current = openViewer;
 
   function handleMarkdownClick(event: ReactMouseEvent<HTMLDivElement>) {
     const branchAnchor = findInteractiveBranchAnchor(event.target);
@@ -648,6 +655,20 @@ export default function MarkdownMessage({
     renderScope,
     theme,
   ]);
+
+  // A staged diagram's Enlarge button (its stepper's listener sends this event) opens the viewer.
+  useEffect(() => {
+    const root = contentRef.current;
+    if (!root) return;
+    const enlarge = (event: Event) => {
+      const diagram = (event.target as Element | null)?.querySelector?.<HTMLElement>(".message-mermaid-diagram");
+      if (!diagram?.querySelector("svg")) return;
+      event.preventDefault();
+      openViewerRef.current(diagram);
+    };
+    root.addEventListener(DIAGRAM_ENLARGE_EVENT, enlarge);
+    return () => root.removeEventListener(DIAGRAM_ENLARGE_EVENT, enlarge);
+  }, []);
 
   useLayoutEffect(() => {
     if (!activeViewer) {

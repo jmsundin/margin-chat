@@ -81,6 +81,7 @@ function stagedDiagramControls(stages: DiagramStage[]) {
     `<span class="diagram-stage-count">Stage <span class="diagram-stage-number">1</span>/${stages.length}</span>`,
     '<button type="button" class="diagram-stage-step" data-step="1" aria-label="Next stage">›</button>',
     `<span class="diagram-stage-caption">${escapeHtml(stages[0].title)}</span>`,
+    '<button type="button" class="diagram-stage-step diagram-stage-enlarge" data-enlarge="true" aria-label="Show this stage full screen" title="Enlarge">⤢</button>',
     "</div>",
     '<div class="diagram-stage-chips">',
     ...stages.map((stage, index) => `<button type="button" class="diagram-stage-chip" data-stage-index="${index}" data-title="${escapeAttribute(stage.title)}" aria-pressed="${index === 0}">${index + 1}. ${escapeHtml(stage.title)}</button>`),

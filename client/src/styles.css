@@ -4061,8 +4061,9 @@ button {
   display: none;
 }
 
+/* A diagram too wide to read at the panel's width scrolls sideways (mermaidDiagrams.ts sizeDiagramSvg). */
 .message-content.is-markdown .message-mermaid-diagram {
-  overflow-x: hidden;
+  overflow-x: auto;
   padding: 1rem;
 }
 
@@ -4136,6 +4137,27 @@ button {
 .message-content.is-markdown .message-mermaid-block.is-staged .message-mermaid-diagram { display: grid; }
 .message-content.is-markdown .diagram-stage-view { grid-area: 1 / 1; visibility: hidden; }
 .message-content.is-markdown .diagram-stage-view.is-current { visibility: visible; }
+/* A staged Mermaid diagram's panel fits the stage on screen, so an early, small stage isn't lost in
+   the space its finished diagram needs. Stepped grids keep every step's height (their size never changes). */
+.message-content.is-markdown .message-mermaid-block.is-staged .diagram-stage-view:not(.is-current) { display: none; }
+.message-content.is-markdown .diagram-stage-enlarge { margin-left: auto; flex: none; }
+.diagram-overlay {
+  align-items: center; backdrop-filter: blur(14px); background: rgba(4, 7, 9, 0.72); display: flex; inset: 0;
+  justify-content: center; padding: clamp(0.75rem, 3vw, 2.5rem); position: fixed; z-index: 1000;
+}
+.diagram-overlay-frame {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column;
+  max-height: 100%; max-width: 100%; min-width: min(28rem, 100%); overflow: hidden;
+}
+.diagram-overlay-head {
+  align-items: center; border-bottom: 1px solid var(--line); color: var(--ink); display: flex; font-family: var(--paper-sans, inherit);
+  font-size: 0.9rem; font-weight: 600; gap: 0.75rem; justify-content: space-between; padding: 0.55rem 0.6rem 0.55rem 1rem;
+}
+.diagram-overlay-close {
+  background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); cursor: pointer;
+  font-size: 1.1rem; height: 2rem; line-height: 1; width: 2rem;
+}
+.diagram-overlay-body { overflow: auto; padding: 1.25rem; }
 .message-content.is-markdown .diagram-stage-view svg { display: block; height: auto; margin: 0 auto; max-width: 100%; }
 :root[data-theme="dark"] .message-content.is-markdown .diagram-stage-count { color: #5fd6b4; }
 :root[data-theme="dark"] .message-content.is-markdown .diagram-stage-chip[aria-pressed="true"] { border-color: #10a37f; color: #5fd6b4; }
