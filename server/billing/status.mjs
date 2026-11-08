@@ -26,6 +26,15 @@ export function billingStatusHasAccess(status) {
   return status === "active" || status === "trialing";
 }
 
+/**
+ * Plan features (cloud vault, sync, extension) also stay on while a renewal is past due:
+ * Stripe is still retrying the card, and losing sight of a synced vault over one failed
+ * payment would look like lost data. No credit is granted until an invoice is paid.
+ */
+export function billingStatusKeepsPlanFeatures(status) {
+  return billingStatusHasAccess(status) || status === "past_due";
+}
+
 function normalizeTrialCallsUsed(value) {
   const parsedValue = Number(value);
 
@@ -81,7 +90,7 @@ export function mapBillingRow(row, env = process.env) {
   const accessKind =
     row?.role === "admin"
       ? "admin"
-      : billingStatusHasAccess(status)
+      : billingStatusKeepsPlanFeatures(status)
         ? "subscription"
         : creditBalanceMicros > 0
           ? "credits"
