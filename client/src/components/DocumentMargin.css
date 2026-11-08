@@ -5,8 +5,8 @@
 .document-margin-item { position: absolute; right: 10px; display: flex; flex-direction: column; gap: 8px; }
 .document-margin-item > .margin-document-family { min-width: 0; }
 .document-margin-links { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
-.document-margin-links path { fill: none; stroke: var(--note-accent, #b8913f); stroke-width: 1; stroke-dasharray: 3 3; opacity: .55; }
-.document-margin-links path.is-linked { stroke-dasharray: none; stroke-width: 1.5; opacity: 1; }
+.document-margin-links path { fill: none; stroke: var(--note-accent, #b8913f); stroke-width: 1.25; stroke-linecap: round; opacity: .7; }
+.document-margin-links path.is-linked { stroke-width: 1.5; opacity: 1; }
 :root[data-theme="light"] .document-margin-links path { stroke: #947029; }
 .document-panel-content { --margin-linked-passage: rgb(208 166 78 / .32); --margin-linked-line: #d0a64e; }
 :root[data-theme="light"] .document-panel-content { --margin-linked-passage: rgb(184 137 40 / .22); --margin-linked-line: #947029; }
@@ -41,7 +41,10 @@
 .document-margin:has(.document-margin-item.is-expanded) { overflow: visible; clip-path: inset(0 -100vw); z-index: 3; }
 /* Notes moved to the left of the text when the right margin is crowded: they still scroll with it. */
 .document-margin.has-left-notes { overflow-x: visible; overflow-y: clip; z-index: 2; }
-.document-margin-item { transition: right .18s ease; }
+/* Notes glide to new places when one above them grows or shrinks, instead of jumping. The clicked
+   note widens in one step: easing its width would rewrap its words on every frame. */
+.document-margin-item { transition: top .2s cubic-bezier(.2, .7, .3, 1); }
+.document-margin-item.is-placing { transition: none; }
 @media (prefers-reduced-motion: reduce) { .document-margin-item { transition: none; } }
 
 /* While the AI writes a note, its passage gets a wavy underline that fills left to right like a
@@ -67,3 +70,7 @@
 /* The page's frame lets that one note out too; nothing else in it reaches past its edge. */
 .chat-panel.document-panel:has(> .document-panel-content > .document-margin .document-margin-item.is-expanded),
 .chat-panel.document-panel:has(> .document-panel-content > .document-margin.has-left-notes) { overflow: visible; }
+/* A note keeps its place and its words' left edge when it becomes the one you're in: the active
+   panel's gap above and the wider pane's side padding would push its text down and over. */
+.document-margin-item > .margin-document-family > .margin-document-frame > .chat-panel.document-panel.is-compact-document.is-active { margin-block: 0; }
+.document-margin-item .rich-document-editor { padding-inline: 0; }

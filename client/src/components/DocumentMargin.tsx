@@ -30,7 +30,9 @@ interface Props {
 }
 
 /** `left` is the note's x from the margin's left edge; set only for a note moved to the left of the text. */
-type Placement = { top: number; anchorTop: number | null; left?: number };
+type Placement = { top: number; anchorTop: number | null; left?: number; line?: AnchorLine };
+/** The passage's first line, where its note's curve starts: x from the margin's left edge, y in the track. */
+type AnchorLine = { start: number; end: number; y: number };
 /** The left column: where its notes start and how wide they are, from the margin's left edge; null when there's no room. */
 type LeftColumn = { x: number; width: number; textX: number } | null;
 const GAP = 12;
@@ -43,6 +45,14 @@ const MARK_SIZE = 16;
 const CROWDED = 40;
 const LEFT_MIN_WIDTH = 150;
 const LEFT_PAD = 16;
+/** Where a note's dot sits from its top (see .margin-document-frame::before in quiet-page.css). */
+const NOTE_DOT_Y = 22;
+
+/** How far in from the note's left edge its dot is: past the editor's gutter, or at the edge without a quiet page. */
+function noteDotX(aside: HTMLElement | null) {
+  if (!aside?.closest(".is-quiet-page")) return 4;
+  return typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse), (max-width: 700px)").matches ? 6 : 38;
+}
 
 /** Where the free room left of the text ends: the pane to the left, or the edge of the canvas. */
 function leftBound(aside: HTMLElement) {
@@ -112,9 +122,17 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     if (!body) return;
     const bodyTop = body.getBoundingClientRect().top - body.scrollTop;
     const start = Number.parseFloat(getComputedStyle(body).paddingTop) || GAP;
+    const asideLeft = asideRef.current?.getBoundingClientRect().left ?? 0;
     const measured = items.map((item, index) => {
-      const mark = item.anchored ? anchorMarks(body, item.id)[0] : undefined;
-      return { id: item.id, index, anchorTop: mark ? mark.getBoundingClientRect().top - bodyTop : null,
+      const found = item.anchored ? anchorMarks(body, item.id) : [];
+      const mark = found[0];
+      // The passage's first line: its words run from the first box's left to the last box on that line.
+      const boxes = marks ? [] : found.flatMap((element) => [...element.getClientRects()]).filter((box) => box.width > 0);
+      const first = boxes[0];
+      const onLine = first ? boxes.filter((box) => Math.abs(box.top - first.top) < first.height / 2) : [];
+      const line = first ? { start: Math.round(Math.min(...onLine.map((box) => box.left)) - asideLeft),
+        end: Math.round(Math.max(...onLine.map((box) => box.right)) - asideLeft), y: Math.round(first.top + first.height / 2 - bodyTop) } : undefined;
+      return { id: item.id, index, anchorTop: mark ? mark.getBoundingClientRect().top - bodyTop : null, line,
         height: marks ? MARK_SIZE : itemRefs.current[item.id]?.offsetHeight ?? 0 };
     });
     // Whole-document notes (and notes whose passage is gone) first, then notes in passage order.
@@ -129,11 +147,11 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       const top = Math.max(cursor, wanted);
       const leftTop = Math.max(leftCursor, wanted);
       if (column && item.anchorTop !== null && top - wanted > CROWDED && leftTop < top) {
-        next[item.id] = { top: leftTop, anchorTop: item.anchorTop, left: column.x };
+        next[item.id] = { top: leftTop, anchorTop: item.anchorTop, left: column.x, line: item.line };
         leftCursor = leftTop + item.height + GAP;
         continue;
       }
-      next[item.id] = { top, anchorTop: item.anchorTop };
+      next[item.id] = { top, anchorTop: item.anchorTop, line: item.line };
       cursor = top + item.height + (marks ? 4 : GAP);
     }
     const end = Math.max(cursor, leftCursor);
@@ -186,6 +204,9 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
 
   // Clicking a note opens it a little wider, and only then is its line back to the passage drawn.
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /** Notes already drawn in place: only these glide when they move, so a new note doesn't fly in from the top. */
+  const placedIds = useRef(new Set<string>());
+  useEffect(() => { for (const id of Object.keys(placements)) placedIds.current.add(id); }, [placements]);
   useEffect(() => { if (!marks && activeId && items.some((item) => item.id === activeId)) setExpandedId(activeId); }, [marks, activeId, itemKey]);
   useEffect(() => { if (expandedId && !items.some((item) => item.id === expandedId)) setExpandedId(null); }, [expandedId, itemKey]);
   useEffect(() => {
@@ -283,18 +304,25 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
         {items.map((item) => {
           const placement = placements[item.id];
           if (!placement || placement.anchorTop === null || item.id !== expandedId) return null;
-          const from = placement.anchorTop + 10, to = placement.top + 16, x = DOCUMENT_MARGIN_GUTTER - 4;
+          // One smooth curve from the end of the passage's first line to the note's dot, level at both
+          // ends, so it leaves the words and meets the note head on.
+          const curve = (x1: number, y1: number, x2: number, y2: number) => {
+            const bend = (x2 - x1) * 0.5;
+            return `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`;
+          };
+          const line = placement.line;
+          const from = line?.y ?? placement.anchorTop + 10, to = placement.top + NOTE_DOT_Y;
           // A note on the left: from its right edge across to the start of the passage's line.
           const d = placement.left !== undefined && left
-            ? `M${left.x + left.width + 4} ${to} H${left.textX - 10} V${from} H${left.textX - 2}`
-            : `M0 ${from} H8 V${to} H${x}`;
+            ? curve(left.x + left.width + 4, to, (line?.start ?? left.textX) - 4, from)
+            : curve(Math.min(line ? line.end + 6 : 0, DOCUMENT_MARGIN_GUTTER - 8), from, DOCUMENT_MARGIN_GUTTER + noteDotX(asideRef.current) - 5, to);
           return <path key={item.id} className={item.id === linkedId ? "is-linked" : undefined} d={d} />;
         })}
       </svg>
       {items.map((item) => {
         const placement = placements[item.id];
         const onLeft = placement?.left !== undefined && left;
-        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}${onLeft ? " is-left" : ""}`}
+        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}${onLeft ? " is-left" : ""}${placement && placedIds.current.has(item.id) ? "" : " is-placing"}`}
           data-margin-note-id={item.id} ref={(element) => { itemRefs.current[item.id] = element; }}
           onPointerDownCapture={() => setExpandedId(item.id)}
           style={{ top: placement?.top ?? 0, left: onLeft ? left.x : DOCUMENT_MARGIN_GUTTER, visibility: placement ? undefined : "hidden",

@@ -455,13 +455,21 @@ function toggleWrap(view: EditorView, marker: string) {
 }
 
 /** The editor that last had focus, so a button outside it can act on the paragraph its caret is in. */
-let lastFocusedEditor: { conversationId: string; view: EditorView; paragraph: () => RichDocumentSelection | undefined } | null = null;
+let lastFocusedEditor: { conversationId: string; view: EditorView; paragraph: () => RichDocumentSelection | undefined; caret: () => { blockId: string; offset: number } | undefined } | null = null;
 
 /** The paragraph around the caret of the document's editor, when it was the last one typed or tapped in. */
 export function caretParagraphIn(conversationId: string) {
   const editor = lastFocusedEditor;
   if (!editor || editor.conversationId !== conversationId || !editor.view.dom.isConnected) return undefined;
   return editor.paragraph();
+}
+
+/** Where the caret of the document's editor sits, as a block and an offset in its Markdown, when it has focus. */
+export function caretBlockIn(conversationId: string, element?: Element | null) {
+  const editor = lastFocusedEditor;
+  if (!editor || editor.conversationId !== conversationId || !editor.view.dom.isConnected) return undefined;
+  if (element && !editor.view.dom.contains(element)) return undefined;
+  return editor.caret();
 }
 
 const VIEW_LABELS = { live: "Live Preview", source: "Source", reading: "Reading" } as const;
@@ -755,6 +763,16 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const live = view && stateOf(view);
     if (!view || !live || live.mode === "reading" || !live.layout.length) return undefined;
     return paragraphOf(view, live.layout[blockIndexAt(live.layout, view.state.selection.main.head)]);
+  };
+
+  const caretAt = useRef(() => undefined as { blockId: string; offset: number } | undefined);
+  caretAt.current = () => {
+    const view = viewRef.current;
+    const live = view && stateOf(view);
+    if (!view || !live || live.mode === "reading" || !live.layout.length) return undefined;
+    const head = view.state.selection.main.head;
+    const block = live.layout[blockIndexAt(live.layout, head)];
+    return block ? { blockId: block.id, offset: Math.max(0, Math.min(head, block.to) - block.from) } : undefined;
   };
 
   /**
@@ -1275,7 +1293,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             const id = live.layout.length ? live.layout[blockIndexAt(live.layout, update.state.selection.main.head)].id : null;
             setFocusedBlockId(id);
             setEditorFocused(update.view.hasFocus);
-            if (update.view.hasFocus) lastFocusedEditor = { conversationId: latest.current.conversationId, view: update.view, paragraph: () => paragraphAtCaret.current() };
+            if (update.view.hasFocus) lastFocusedEditor = { conversationId: latest.current.conversationId, view: update.view, paragraph: () => paragraphAtCaret.current(), caret: () => caretAt.current() };
           }
         }),
       ],

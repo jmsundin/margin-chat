@@ -9,7 +9,7 @@ import { pdfPageFromSourceId } from "./lib/vaultFileDocuments";
 import { SelectionFormatRow, SelectionToolbarRow } from "./components/SelectionToolbar";
 import { CaretActions } from "./components/CaretActions";
 import { MobileCreateMenu, type MobileCreateTarget } from "./components/MobileCreateMenu";
-import { caretParagraphIn } from "./components/LiveDocumentEditor";
+import { caretBlockIn, caretParagraphIn } from "./components/LiveDocumentEditor";
 import { useMobileDockSlot } from "./lib/mobileDock";
 import type { DocumentCaretMenu } from "./components/DocumentPanel";
 import { isMarkdownHighlighted, toggleMarkdownHighlight } from "./lib/selectionHighlight";
@@ -70,7 +70,7 @@ import NoteChatPanel from "./components/NoteChatPanel";
 import VaultAnswerPanel, { type VaultAnswerState } from "./components/VaultAnswerPanel";
 import { changedAnswerSources, createVaultAnswerDocument, findSavedAnswer, isVaultAnswer, markCitedPassages, updateVaultAnswerDocument, vaultAnswerMessages, vaultAnswerSettings } from "./lib/vaultAnswer";
 import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
-import { pickProactivePassage, stanceQuestionPrompt } from "./lib/proactiveQuestions";
+import { pickProactivePassage, stanceQuestionPrompt, type EnterCaret } from "./lib/proactiveQuestions";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
 import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNode } from "./components/MinimizedChildNodes";
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
@@ -1417,18 +1417,18 @@ function WorkspaceAppContent({
    */
   const proactiveAsked = useRef(new Set<string>());
   const proactiveSessionStart = useRef(new Date().toISOString());
-  const proactiveAsk = useRef<(conversationId: string) => void>(() => undefined);
-  proactiveAsk.current = (conversationId: string) => {
+  const proactiveAsk = useRef<(conversationId: string, caret?: EnterCaret) => void>(() => undefined);
+  proactiveAsk.current = (conversationId: string, caret?: EnterCaret) => {
     const conversations = currentStateRef.current.conversations;
     const conversation = conversations[conversationId];
     if (!conversation || readNotebookPrefs().aiBehaviour !== "thinks" || conversation.document?.marginNote) return;
     if (document.visibilityState !== "visible" || isHiddenFromAI(conversation)) return;
     if (pendingConversationIds[conversationId] || chatExecutions.has(conversationId)) return;
-    const noted = new Set(conversation.childIds.flatMap((id) => {
-      const child = conversations[id];
-      return child?.document?.marginNote && child.branchAnchor?.sourceBlockId ? [child.branchAnchor.sourceBlockId] : [];
-    }));
-    const passage = pickProactivePassage(conversation, proactiveAsked.current, noted);
+    const noted = conversation.childIds.flatMap((id) => {
+      const child = conversations[id], anchor = child?.branchAnchor;
+      return child?.document?.marginNote && anchor?.sourceBlockId ? [{ blockId: anchor.sourceBlockId, from: anchor.startOffset, to: anchor.endOffset }] : [];
+    });
+    const passage = pickProactivePassage(conversation, proactiveAsked.current, noted, caret);
     if (!passage) return;
     const block = getEditableDocument(conversation).blocks.find((item) => item.id === passage.blockId);
     // Only text the user wrote since the page opened; Enter in an old note never questions it.
@@ -1449,9 +1449,11 @@ function WorkspaceAppContent({
       if (!host || host.closest(".margin-document-frame, .document-margin")) return;
       const id = host.closest<HTMLElement>("[data-block-editor-conversation-id]")?.dataset.blockEditorConversationId;
       if (!id) return;
+      // Only the line or list item where Enter was pressed, read before the key moves the caret.
+      const caret = caretBlockIn(id, target);
       // The editor saves the line a moment after the key, so read the document once it has.
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => proactiveAsk.current(id), 450);
+      timer = window.setTimeout(() => proactiveAsk.current(id, caret), 450);
     };
     document.addEventListener("keydown", onKey, true);
     return () => { document.removeEventListener("keydown", onKey, true); window.clearTimeout(timer); };
@@ -5653,7 +5655,9 @@ function WorkspaceAppContent({
       headerLeading={dock?.leading}
       // On the quiet page the path leaves the header and sits as one line at the top of the page you're on.
       parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock)
-        : view === "chat" && quietHeader && !showSpaceStart && conversation.id === activeConversation.id && !isCompactDocument(conversation)
+        // Clicking into one of its margin notes keeps the line, so the page doesn't jump.
+        : view === "chat" && quietHeader && !showSpaceStart && !isCompactDocument(conversation)
+          && (conversation.id === activeConversation.id || (activeConversation.parentId === conversation.id && Boolean(activeConversation.document?.marginNote)))
           ? <div className="document-page-path">{renderDocumentBreadcrumbs()}</div> : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
