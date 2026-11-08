@@ -327,7 +327,8 @@ export function createBillingService({ database, env, stripeClient = null }) {
     const credited = await database.creditHostedBalance({
       amountMicros: MONTHLY_PLAN_MICROS, ledgerId: randomUUID(), stripeInvoiceId: invoice.id,
       userId: account.id, description: "Monthly subscription balance", receiptUrl: payment.receiptUrl ?? invoice.hosted_invoice_url ?? null,
-      metadata: { subscriptionId, invoiceNumber: invoice.number ?? null, billingReason: invoice.billing_reason },
+      // Kept so a later refund or dispute of this payment can find the credit it paid for.
+      metadata: { subscriptionId, invoiceNumber: invoice.number ?? null, billingReason: invoice.billing_reason, paymentIntentIds: payment.paymentIntentIds },
     });
     return { credited, amountMicros: MONTHLY_PLAN_MICROS, status: normalizeBillingStatus(subscription.status) };
   }
@@ -466,6 +467,37 @@ export function createBillingService({ database, env, stripeClient = null }) {
     return { ...dashboard, plan: BILLING_PLAN, cloudPlan: cloudPriceId ? CLOUD_PLAN : null };
   }
 
+  /**
+   * A refund or dispute takes back the share of credit that payment bought: a $5 refund of a
+   * $20 payment takes $5. A dispute takes all of it, because Stripe has already withdrawn the money.
+   */
+  async function reversePaymentCredit(chargeId, reason) {
+    const stripe = await getClient();
+    const charge = await stripe.charges.retrieve(chargeId);
+    const paymentIntentId = stripeId(charge.payment_intent);
+    const paidCents = charge.amount_captured ?? charge.amount;
+    if (!paymentIntentId || !Number.isSafeInteger(paidCents) || paidCents <= 0) return { reversed: [] };
+    const takenBackCents = reason === "dispute" ? paidCents : Math.min(paidCents, charge.amount_refunded ?? 0);
+    if (takenBackCents <= 0) return { reversed: [] };
+    let credits = await database.findStripeCredits({ paymentIntentId });
+    if (!credits.length) {
+      // Credits granted before payment IDs were recorded: ask Stripe which invoices this payment paid.
+      const payments = await stripe.invoicePayments.list({ payment: { type: "payment_intent", payment_intent: paymentIntentId }, limit: 100 });
+      const invoiceIds = (payments.data ?? []).map((payment) => stripeId(payment.invoice)).filter(Boolean);
+      if (invoiceIds.length) credits = await database.findStripeCredits({ paymentIntentId, invoiceIds });
+    }
+    const customerId = stripeId(charge.customer);
+    const reversed = [];
+    for (const credit of credits) {
+      const account = await database.getUserBillingAccount(credit.userId);
+      if (account?.stripeCustomerId && customerId && account.stripeCustomerId !== customerId) continue;
+      // Round up so a partial refund never leaves a fraction of a cent of unpaid credit.
+      const targetMicros = Math.min(credit.amountMicros, Math.ceil((credit.amountMicros * takenBackCents) / paidCents));
+      reversed.push(await database.reverseStripeCredit({ creditLedgerId: credit.id, targetMicros, chargeId: charge.id, reason, ledgerId: randomUUID() }));
+    }
+    return { reversed };
+  }
+
   async function handleWebhook({ rawBody, signature }) {
     if (!env.STRIPE_WEBHOOK_SECRET) throw new HttpError(503, "Stripe webhooks are not configured. Add STRIPE_WEBHOOK_SECRET first.");
     if (!signature) throw new HttpError(400, "Stripe-Signature header is required.");
@@ -481,6 +513,11 @@ export function createBillingService({ database, env, stripeClient = null }) {
       await retrieveAndSyncSubscription(object.id);
     } else if (["invoice.paid", "invoice.payment_succeeded"].includes(event.type)) {
       await creditPaidInvoice(object.id);
+    } else if (event.type === "charge.refunded") {
+      await reversePaymentCredit(object.id, "refund");
+    } else if (event.type === "charge.dispute.created") {
+      const chargeId = stripeId(object.charge);
+      if (chargeId) await reversePaymentCredit(chargeId, "dispute");
     } else if (event.type === "invoice.payment_failed") {
       const invoice = await stripe.invoices.retrieve(object.id);
       const subscriptionId = invoiceSubscriptionId(invoice);

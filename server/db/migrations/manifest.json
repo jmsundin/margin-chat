@@ -130,6 +130,11 @@
       "id": "0026_line_authorship",
       "file": "0026_line_authorship.sql",
       "transaction": true
+    },
+    {
+      "id": "0027_payment_reversals",
+      "file": "0027_payment_reversals.sql",
+      "transaction": true
     }
   ]
 }

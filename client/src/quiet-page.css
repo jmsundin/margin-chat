@@ -136,7 +136,7 @@
   .is-quiet-page .document-page-path .document-navigation-switcher { border-color: transparent; background: transparent; }
 
   /* What AI wrote: the rule is there but faint until you point at the paragraph. */
-  .is-quiet-page .live-document-host .live-document-block[data-authorship="ai"]:not(:hover) {
+  .is-quiet-page .live-document-host:not(.margin-document-frame *) .live-document-block[data-authorship="ai"]:not(:hover) {
     background-image: linear-gradient(color-mix(in srgb, var(--quiet-ai-ink) 22%, transparent), color-mix(in srgb, var(--quiet-ai-ink) 22%, transparent));
   }
 
@@ -161,3 +161,42 @@
   .is-quiet-page .document-workspace-header.is-quiet .document-tab .document-tab-menu-trigger[aria-expanded="true"] { opacity: 1; }
   .is-quiet-page .document-workspace-header.is-quiet .document-tab:not(.is-active) .document-tab-title { color: var(--muted); }
 }
+
+/* ---- The page's one row, as Riddled has it ----
+   "✎ Tell the AI · Thinks with you ▾ · Live Preview ▾", left above the text, always there. A set
+   instruction takes the line below in the page's serif. Authorship and prompt history follow. */
+.document-page-bar { display: contents; }
+.is-quiet-page .live-document-modes.is-compact {
+  justify-content: flex-start; flex-wrap: wrap; gap: 4px 2px; margin: 0 8px 14px 32px; opacity: 1;
+}
+.is-quiet-page .live-document-editor .live-document-modes.is-compact,
+.is-quiet-page .live-document-editor:is(:hover, :focus-within) .live-document-modes.is-compact { opacity: 1; }
+.is-quiet-page .live-document-modes.is-compact > .document-authorship-bar,
+.is-quiet-page .live-document-modes.is-compact > .prompt-history { margin-left: auto; }
+.is-quiet-page .live-document-modes.is-compact .notebook-stance-button { font-size: .8rem; }
+.live-document-view-menu { position: relative; }
+.live-document-view-trigger { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; }
+.live-document-modes .live-document-view-trigger { font-size: .8rem; padding: 4px 10px; border-radius: 999px; }
+.live-document-view-trigger span { font-size: .7em; }
+.live-document-view-options {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 240px; padding: 4px; display: grid;
+  background: var(--panel, var(--bg)); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 28px rgba(0, 0, 0, .14);
+}
+.live-document-modes .live-document-view-options button { display: grid; gap: 1px; text-align: left; padding: 6px 10px; border-radius: 6px; white-space: normal; font-size: .82rem; color: var(--ink); }
+.live-document-view-options button small { color: var(--muted); font-size: .72rem; }
+.live-document-view-options button[aria-checked="true"] { background: var(--button-active-surface); }
+.live-document-view-options button:hover { background: var(--button-active-surface); }
+@media (pointer: coarse), (max-width: 700px) { .is-quiet-page .live-document-modes.is-compact { margin-left: 4px; } }
+/* In that row authorship folds to its short chip ("100% yours"), as on phones; clicking opens the line and switches. */
+.is-quiet-page .live-document-modes.is-compact .document-authorship-bar { flex: none; margin-left: auto; order: 5; }
+.is-quiet-page .document-panel .live-document-modes.is-compact .document-authorship-bar .document-authorship-chip { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  height: 26px; padding: 0 9px; border: 0; border-radius: 13px; font-size: 12px; line-height: 26px; }
+.is-quiet-page .document-panel .live-document-modes.is-compact .document-authorship-bar .document-authorship-chip[data-view]::after { content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--sage); vertical-align: 1px; }
+.is-quiet-page .document-panel .live-document-modes.is-compact .document-authorship-bar[data-open] .document-authorship-chip { background: var(--button-active-surface); color: var(--ink); }
+.is-quiet-page .live-document-modes.is-compact .document-authorship-panel { display: none; }
+.is-quiet-page .live-document-modes.is-compact .document-authorship-bar[data-open] .document-authorship-panel {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px; position: absolute; z-index: 30; top: calc(100% + 6px); right: 0;
+  width: max-content; max-width: min(420px, calc(100vw - 32px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel-strong, var(--bg)); box-shadow: 0 8px 24px rgb(0 0 0 / .18);
+}
+.is-quiet-page .live-document-modes.is-compact .document-authorship-summary { white-space: normal; }

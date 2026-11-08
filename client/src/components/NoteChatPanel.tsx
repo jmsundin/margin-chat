@@ -4,6 +4,7 @@ import type { Message } from "../types";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { renderMermaidBlocksIn } from "../lib/mermaidDiagrams";
 import { splitTryNext, TRY_NEXT_HEADING } from "../lib/noteChat";
+import { loadTextDraft, saveTextDraft } from "../lib/textDrafts";
 import "./NoteChatPanel.css";
 
 const STARTERS = ["What is the main claim here, in one line?", "Where is the evidence thinnest?", "What should I find out next?"];
@@ -16,6 +17,8 @@ export interface NoteChatPanelProps {
   onAsk: (question: string) => void;
   onStop?: () => void;
   onClose: () => void;
+  /** Where an unsent question is kept on this device, so a reload doesn't lose it. */
+  draftKey?: string;
 }
 
 function Answer({ content }: { content: string }) {
@@ -38,8 +41,12 @@ function TryNext({ items, onPick, label = TRY_NEXT_HEADING }: { items: string[];
  * Ask about this note: a quiet panel at the right of the page. Answers use the whole note, quote
  * the passages they lean on, and end with a short "Try next" list; picking one puts it in the box.
  */
-export default function NoteChatPanel({ open, title, messages, pending, onAsk, onStop, onClose }: NoteChatPanelProps) {
-  const [draft, setDraft] = useState("");
+export default function NoteChatPanel({ open, title, messages, pending, onAsk, onStop, onClose, draftKey }: NoteChatPanelProps) {
+  const [draft, setDraftText] = useState(() => draftKey ? loadTextDraft(draftKey) : "");
+  const setDraft = (text: string) => {
+    setDraftText(text);
+    if (draftKey) saveTextDraft(draftKey, text);
+  };
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const titleId = useId();

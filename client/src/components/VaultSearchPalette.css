@@ -50,3 +50,4 @@
   .vault-search-list { border-right: 0; flex: 1; }
   .vault-search-preview, .vault-search-keys { display: none; }
 }
+.vault-search-answer-title > span { color: var(--accent); }

@@ -185,7 +185,14 @@ function overlaps(a: Patch, b: Patch) {
   return a.start < b.end && b.start < a.end;
 }
 
-function mergeTokens(base: string[], local: string[], remote: string[], budget: DiffBudget, preferred: PreferredSide, refine?: (base: string, local: string, remote: string) => Result<string>): Result<string> {
+/** Both sides of a region two devices changed differently, newer first, with a space between words. */
+function keepBothSides(local: string, remote: string, preferred: PreferredSide): string {
+  const [first, second] = preferred === "local" ? [local, remote] : [remote, local];
+  if (!first || !second) return first + second;
+  return /\s$/u.test(first) || /^\s/u.test(second) ? first + second : `${first} ${second}`;
+}
+
+function mergeTokens(base: string[], local: string[], remote: string[], budget: DiffBudget, preferred: PreferredSide, refine?: (base: string, local: string, remote: string) => Result<string>, keepBoth = false): Result<string> {
   if (local.join("") === remote.join("") || base.join("") === local.join("")) return { value: remote.join(""), conflicted: false };
   if (base.join("") === remote.join("")) return { value: local.join(""), conflicted: false };
   const left = patches(base, local, budget);
@@ -212,7 +219,10 @@ function mergeTokens(base: string[], local: string[], remote: string[], budget: 
     const l = render(group);
     const r = render(remoteGroup);
     const resolution = l === r ? { value: r, conflicted: false }
-      : refine ? refine(base.slice(start, end).join(""), l, r) : { value: preferred === "local" ? l : r, conflicted: true };
+      : refine ? refine(base.slice(start, end).join(""), l, r)
+      // New words typed on two devices at the same spot are all kept, so neither side's writing disappears.
+      // Where both replaced the same words, the newer wording wins and the other stays in history.
+      : { value: keepBoth && start === end ? keepBothSides(l, r, preferred) : preferred === "local" ? l : r, conflicted: true };
     conflicted ||= resolution.conflicted;
     for (const patch of remoteGroup) accepted.splice(accepted.indexOf(patch), 1);
     accepted.push({ start, end, insert: [resolution.value] });
@@ -231,10 +241,10 @@ function applyPatches(base: string[], edits: Patch[]): string {
   return output.join("");
 }
 
-function mergeText(base: string, local: string, remote: string, budget: DiffBudget, preferred: PreferredSide = "remote"): Result<string> {
+function mergeText(base: string, local: string, remote: string, budget: DiffBudget, preferred: PreferredSide = "remote", keepBoth = false): Result<string> {
   const lines = (value: string) => value.match(/[^\n]*\n|[^\n]+$/g) ?? [];
   const words = (value: string) => value.match(/\0[^\0]*\0|[\p{L}\p{N}_]+|[^\S\r\n]+|\r\n|[^\p{L}\p{N}_\s\0]+|[\r\n]/gu) ?? [];
-  return mergeTokens(lines(base), lines(local), lines(remote), budget, preferred, (b, l, r) => mergeTokens(words(b), words(l), words(r), budget, preferred));
+  return mergeTokens(lines(base), lines(local), lines(remote), budget, preferred, (b, l, r) => mergeTokens(words(b), words(l), words(r), budget, preferred, undefined, keepBoth));
 }
 
 type Node = { key: string; kind: string; metadata: Record<string, Json>; content?: string; raw: string; newline: string };
@@ -395,7 +405,9 @@ function mergeNode(base: Node | undefined, local: Node | undefined, remote: Node
   const withoutLength = (node: Node) => Object.fromEntries(Object.entries(node.metadata).filter(([key]) => key !== "contentLength"));
   const metadata = mergeJson(withoutLength(base), withoutLength(local), withoutLength(remote), "", 0, preferred);
   if (!record(metadata.value)) return { value: remote, conflicted: true };
-  const body = base.content === undefined ? { value: undefined, conflicted: false } : mergeText(base.content, local.content!, remote.content!, budget, preferred);
+  // A document block's text is the person's writing: where both devices changed the same words, keep both.
+  const body = base.content === undefined ? { value: undefined, conflicted: false }
+    : mergeText(base.content, local.content!, remote.content!, budget, preferred, local.kind === "document-block");
   const value = { ...remote, metadata: metadata.value, content: body.value };
   if (value.kind === "frontmatter-updated") {
     value.raw = `updated: ${JSON.stringify(value.metadata.updated)}${remote.raw.endsWith("\r") ? "\r" : ""}`;

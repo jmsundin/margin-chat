@@ -3,6 +3,8 @@ import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
+import { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
+import WriteBackLine from "./WriteBackLine";
 import { joinDocumentBlocks } from "../lib/continuousDocument";
 import { getGenerationBlocks, proposeAIChildNodes, type AIChildNodeProposal } from "../lib/aiChildNodes";
 import type { DiagramAIRequest, DocumentAIRequest } from "../lib/documentAI";
@@ -81,6 +83,13 @@ export interface DocumentPanelProps {
   roadmap?: ReactNode;
   /** The "Tell the AI: …" line above the document's text. */
   aiInstruction?: ReactNode;
+  /**
+   * Quiet page: one row above the text that holds Tell the AI and how the AI thinks with you, then
+   * the view menu and authorship. With it, the instruction line moves into the row.
+   */
+  pageBar?: ReactNode;
+  /** "Write back…" under a paragraph the AI wrote: the reply goes in below it and the AI answers after. */
+  onWriteBack?: (blockId: string, text: string) => void;
   /** The full path of parents in the header, as in Map View's side panel. */
   parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
@@ -137,6 +146,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   latestDocument.current = document;
   const bodyRef = useRef<HTMLDivElement>(null);
   const [marginHeight, setMarginHeight] = useState(0);
+  const marginWidth = props.marginWidth ?? 300;
   // The PDF or image viewer puts its page count and zoom here, in the header.
   const [fileControls, setFileControls] = useState<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -343,6 +353,20 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     if (visibleId) props.onVisibleOutlineChange(conversation.id, visibleId);
   }
 
+  /** The AI paragraph whose "Write back…" line is open, from clicking or tapping it. */
+  const [writeBackId, setWriteBackId] = useState<string | null>(null);
+  function pickWriteBack(target: EventTarget | null) {
+    if (!props.onWriteBack || !(target instanceof Element) || target.closest("[data-write-back]")) return;
+    const line = target.closest<HTMLElement>(".live-document-block[data-document-block-id]");
+    // Only this document's own lines: a margin note inside the page has its own.
+    if (!line || line.closest(".document-body") !== bodyRef.current || target.closest("a, button, [data-annotation-branches]")) { setWriteBackId(null); return; }
+    const id = line.dataset.documentBlockId!;
+    const block = latestDocument.current.blocks.find((item) => item.id === id);
+    if (!block || !block.content.trim() || getDocumentBlockAuthorship(block, conversation.messages) !== "ai" || streamingIds.includes(id)) { setWriteBackId(null); return; }
+    // A drag to select text is for the selection toolbar, not a reply.
+    window.requestAnimationFrame(() => { if (window.getSelection()?.isCollapsed !== false) setWriteBackId(id); });
+  }
+
   function openHighlight(target: EventTarget | null) {
     const mark=target instanceof Element ? target.closest<HTMLElement>("[data-annotation-branches]") : null;
     if(!mark || !window.getSelection()?.isCollapsed)return;
@@ -545,20 +569,22 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         </div>
       </header> : null}
     <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
-      style={props.marginNotes?.length ? { "--document-margin-width": `${props.marginWidth ?? 300}px` } as CSSProperties : undefined}>
-    <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>openHighlight(event.target)} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+      style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
+    <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
-      {props.aiInstruction}
+      {props.pageBar && editorMounted ? null : props.aiInstruction}
       {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
         resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
-        toolbarStart={historyPrompts.length || authorship?.summary.totalLines ? <>
+        compactModes={Boolean(props.pageBar)}
+        toolbarStart={props.pageBar || historyPrompts.length || authorship?.summary.totalLines ? <>
+          {props.pageBar}
           {authorship ? <DocumentAuthorshipBar summary={authorship.summary} mode={authorshipView.mode} onlyMine={authorshipView.onlyMine}
             onModeChange={authorshipView.setMode} onOnlyMineChange={authorshipView.setOnlyMine}/> : null}
           {historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
@@ -597,6 +623,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPromptMarker)}
           {agentFollowUps.get(block.id)}
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
+          {writeBackId === block.id && props.onWriteBack ? <WriteBackLine disabled={props.isSubmitting} onClose={() => setWriteBackId(null)}
+            onSend={(text) => { setWriteBackId(null); props.onWriteBack?.(block.id, text); }} /> : null}
         </>}/> : <RichDocumentPlaceholder blocks={document.blocks} />}
       {props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))
         ? <div className="document-writing-status is-agent" role="status">
@@ -615,7 +643,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.marginNotes?.length && marginHeight ? <div className="document-margin-spacer" aria-hidden="true" style={{ top: marginHeight }}/> : null}
     </div>
     {props.marginNotes?.length ? <DocumentMargin bodyRef={bodyRef} documentId={conversation.id} items={props.marginNotes}
-      label={`Notes for ${conversation.title || "Untitled document"}`} width={props.marginWidth ?? 300}
+      label={`Notes for ${conversation.title || "Untitled document"}`} width={marginWidth}
       activeId={props.activeMarginNoteId} onHeightChange={setMarginHeight}
       marks={props.marginMarks} noteWidth={props.marginNoteWidth}/> : null}
     <BackToTopButton scrollRef={bodyRef} active={props.isActive}/>

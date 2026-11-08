@@ -219,6 +219,26 @@ async function lockAccount(client, userId) {
   return Number(result.rows[0].hosted_credit_balance_micros);
 }
 
+/**
+ * Every hosted request settles within minutes (functions stop at 5, dictation holds renew
+ * every 10). A hold older than this belongs to a server that stopped mid-request, so its
+ * money goes back to the person instead of staying reserved forever.
+ */
+export const STALE_HOLD_MINUTES = 30;
+
+/** Call with the account locked. Returns the balance after releasing stale holds. */
+async function releaseStaleHolds(client, userId, balance) {
+  const stale = await client.query(`update marginchat_usage_reservations
+    set charged_micros = 0, settled_at = now(),
+      metadata = metadata || jsonb_build_object('outcome', 'abandoned', 'usageSource', 'not-billed')
+    where user_id = $1 and settled_at is null and created_at < now() - make_interval(mins => $2)
+    returning reserved_micros`, [userId, STALE_HOLD_MINUTES]);
+  const released = stale.rows.reduce((sum, row) => sum + Number(row.reserved_micros), 0);
+  if (!released) return balance;
+  await client.query("update marginchat_users set hosted_credit_balance_micros = hosted_credit_balance_micros + $1, updated_at = now() where id = $2", [released, userId]);
+  return balance + released;
+}
+
 export async function creditHostedBalance(client, {
   amountMicros, ledgerId, stripeCheckoutSessionId = null, stripeInvoiceId = null,
   userId, description = null, receiptUrl = null, metadata = {},
@@ -251,12 +271,50 @@ export async function creditHostedBalance(client, {
   });
 }
 
+/** The Stripe credits a PaymentIntent paid for: top-ups record it directly, invoice credits in a list. */
+export async function findStripeCredits(client, { paymentIntentId, invoiceIds = [] }) {
+  const result = await client.query(`select id, user_id, amount_micros from marginchat_billing_ledger
+    where entry_type in ('stripe_credit_purchase', 'stripe_subscription_credit')
+      and ((metadata ? 'paymentIntentId' and metadata->>'paymentIntentId' = $1)
+        or (metadata ? 'paymentIntentIds' and metadata->'paymentIntentIds' @> jsonb_build_array($1::text))
+        or stripe_invoice_id = any($2::text[]))
+    order by created_at, id`, [paymentIntentId, invoiceIds]);
+  return result.rows.map((row) => ({ id: row.id, userId: row.user_id, amountMicros: Number(row.amount_micros) }));
+}
+
+/**
+ * Take back up to `targetMicros` of one credit after its payment was refunded or disputed.
+ * Repeated or partial notifications only take the difference. The balance can't go below
+ * zero, so money already spent is recorded as `unrecoveredMicros` instead.
+ */
+export async function reverseStripeCredit(client, { creditLedgerId, targetMicros, chargeId, reason, ledgerId }) {
+  requireMicros(targetMicros, { allowZero: true });
+  return transaction(client, async () => {
+    const credit = await client.query("select user_id, amount_micros from marginchat_billing_ledger where id = $1", [creditLedgerId]);
+    if (!credit.rowCount) throw new HttpError(404, "The credited payment was not found.");
+    const userId = credit.rows[0].user_id;
+    const target = Math.min(targetMicros, Number(credit.rows[0].amount_micros));
+    const balance = await lockAccount(client, userId);
+    const prior = await client.query(`select coalesce(sum((metadata->>'reversedMicros')::bigint), 0) as reversed
+      from marginchat_billing_ledger where entry_type = 'stripe_payment_reversal' and metadata->>'creditLedgerId' = $1`, [creditLedgerId]);
+    const delta = target - Number(prior.rows[0].reversed);
+    if (delta <= 0) return { reversedMicros: 0, takenMicros: 0, unrecoveredMicros: 0, userId };
+    const taken = Math.min(delta, balance);
+    await client.query(`insert into marginchat_billing_ledger (id, user_id, amount_micros, entry_type, description, metadata)
+      values ($1, $2, $3, 'stripe_payment_reversal', $4, $5::jsonb)`, [ledgerId, userId, -taken,
+      reason === "dispute" ? "Payment disputed" : "Payment refunded",
+      JSON.stringify({ creditLedgerId, chargeId, reason, reversedMicros: delta, unrecoveredMicros: delta - taken })]);
+    if (taken) await client.query("update marginchat_users set hosted_credit_balance_micros = hosted_credit_balance_micros - $1, updated_at = now() where id = $2", [taken, userId]);
+    return { reversedMicros: delta, takenMicros: taken, unrecoveredMicros: delta - taken, userId };
+  });
+}
+
 /** Place a hold before any provider request; serialize competing requests per account. */
 export async function chargeHostedRequest(client, { amountMicros, requestId, userId, metadata = {} }) {
   requireMicros(amountMicros);
   if (!requestId) throw new HttpError(400, "A usage request ID is required.");
   return transaction(client, async () => {
-    const balance = await lockAccount(client, userId);
+    const balance = await releaseStaleHolds(client, userId, await lockAccount(client, userId));
     const prior = await client.query("select * from marginchat_usage_reservations where request_id = $1", [requestId]);
     if (prior.rowCount) {
       const hold = prior.rows[0];
@@ -319,10 +377,11 @@ export async function refundHostedRequest(client, { amountMicros, ledgerId, requ
 export async function getBillingDashboard(client, userId) {
   // One transaction provides a coherent balance, holds, and history snapshot.
   return transaction(client, async () => {
-    await lockAccount(client, userId);
+    await releaseStaleHolds(client, userId, await lockAccount(client, userId));
     const account = await getUserBillingAccount(client, userId);
     const summary = await client.query(`select
-      coalesce(sum(amount_micros) filter (where entry_type in ('stripe_credit_purchase','stripe_subscription_credit')),0) as purchased,
+      coalesce(sum(amount_micros) filter (where entry_type in ('stripe_credit_purchase','stripe_subscription_credit')),0)
+        - coalesce(sum((metadata->>'reversedMicros')::bigint) filter (where entry_type = 'stripe_payment_reversal'),0) as purchased,
       coalesce(-sum(amount_micros) filter (where entry_type in ('hosted_request','hosted_request_refund') and created_at >= date_trunc('month', now() at time zone 'UTC') at time zone 'UTC'),0) as usage
       from marginchat_billing_ledger where user_id=$1`, [userId]);
     const holds = await client.query("select coalesce(sum(reserved_micros),0) as reserved from marginchat_usage_reservations where user_id=$1 and settled_at is null", [userId]);
@@ -337,7 +396,7 @@ export async function getBillingDashboard(client, userId) {
         currentPeriodEnd: account.billingCurrentPeriodEnd instanceof Date ? account.billingCurrentPeriodEnd.toISOString() : account.billingCurrentPeriodEnd },
       transactions: history.rows.map((row) => ({ id: row.id, amountMicros: Number(row.amount_micros), type: row.entry_type,
         createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
-        description: row.description ?? ({ stripe_credit_purchase: "Credit top-up", stripe_subscription_credit: "Monthly subscription credit", hosted_request: "AI usage", hosted_request_refund: "Usage refund" }[row.entry_type]),
+        description: row.description ?? ({ stripe_credit_purchase: "Credit top-up", stripe_subscription_credit: "Monthly subscription credit", hosted_request: "AI usage", hosted_request_refund: "Usage refund", stripe_payment_reversal: "Payment refunded" }[row.entry_type]),
         receiptUrl: row.receipt_url, metadata: row.metadata,
       })),
     };

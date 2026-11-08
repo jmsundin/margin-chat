@@ -52,7 +52,7 @@ describe("public signup privileges", () => {
     const cookie = result.headers["Set-Cookie"].split(";")[0];
     const session = await request("/api/auth/session", undefined, cookie);
     expect(session.body.user.role).toBe("member");
-    expect((await request("/api/vault", undefined, cookie)).status).toBe(403);
+    expect((await request("/api/vault/commit", { changes: [] }, cookie)).status).toBe(403);
   });
 
   test("a role supplied with an ordinary signup is ignored", async () => {
