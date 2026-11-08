@@ -88,6 +88,7 @@ import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, VISUALIZE_PASSAGE_PROMPT, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
+import { stepGridReply } from "./lib/stepGrid";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
 import { collectExpiredEmptyDocuments, EMPTY_DOCUMENT_CLEANUP_CHECK_MS, noteDocumentFocusChange, readLeftEmptyDocuments,
@@ -2791,7 +2792,9 @@ function WorkspaceAppContent({
           const conversation = current.conversations[targetId];
           if (!conversation?.document) return current;
           const streamed = conversation.document.blocks.find((block)=>block.id===outputBlockId);
-          const output = streamed && diagramReply && status === "complete" && streamed.content.trim() ? {...streamed,content:mermaidDiagramReply(streamed.content)} : streamed;
+          const output = streamed && diagramReply && status === "complete" && streamed.content.trim()
+            // Visualize may answer with a stepped grid; anything else it sends is kept as one Mermaid diagram.
+            ? {...streamed,content:(request.visualize && stepGridReply(streamed.content)) || mermaidDiagramReply(streamed.content)} : streamed;
           const parts = output?.content ? splitDocumentMarkdown(output.content) : [];
           const completedBlocks = output && parts.length > 1 ? parts.map((content,index)=>({...output,id:index ? `${outputBlockId}:part:${index}` : outputBlockId,content})) : output ? [output] : [];
           return {...current,conversations:{...current.conversations,[targetId]:{...conversation,document:{...conversation.document,
