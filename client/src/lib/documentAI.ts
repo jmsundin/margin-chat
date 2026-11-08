@@ -69,7 +69,7 @@ export const VISUALIZE_PASSAGE_PROMPT = [
     + '{"title": "<short question the grid answers>", "subtitle": "<one short rule, optional>", "rows": <1-12>, "cols": <1-12>, "rowLabels": [optional short labels], "colLabels": [optional short labels], '
     + '"steps": [{"caption": "<one sentence on what this step shows>", "set": [[row, col, "value"], ...], "focus": [[row, col], ...], "arrows": [{"from": [row, col], "to": [row, col]}, ...]}]}. '
     + "Use 3 to 6 steps. Rows and columns count from 0. Values a step sets stay in later steps, so each step sets only the cells it fills in or changes. Use focus for the cell being worked out and arrows from the cells its value comes from.",
-  "Otherwise return only one ```mermaid fenced code block that builds up in 3 to 5 stages. Start with the diagram type line (for example flowchart TD). Begin each stage with a comment line `%% stage: <title of at most five words>`, followed only by the nodes and links that stage adds; each stage builds on the ones before it. Keep labels short.",
+  "Otherwise return only one ```mermaid fenced code block that builds up in 3 to 5 stages. Start with the diagram type line, flowchart TD unless another type fits much better. Begin each stage with a comment line `%% stage: <title of at most five words>`, followed only by the 1 to 4 nodes and links that stage adds; each stage builds on the ones before it. Keep the finished diagram narrow enough to read on a page: no more than 4 nodes side by side, and labels of at most 6 words.",
   "Return no other text.",
 ].join(" ");
 
