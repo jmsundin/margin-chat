@@ -37,6 +37,7 @@ import { DesktopVaultError, desktopSyncBridge, desktopVaultBridge, desktopVaultF
 import { isVaultFs } from "./vaultFsAccess";
 import type { MarkdownWorkspace } from "./workspaceMarkdown";
 import { historyVaultFiles, type HistoryChat, type HistoryImportReceipt } from "./chatHistoryImport";
+import { clearUnsavedEdits, createTabId, diffUnsavedEdits, readUnsavedEdits, removeUnsavedEditsKey, writeUnsavedEdits } from "./unsavedEdits";
 
 type StorageMode = "loading" | "fallback" | "local" | "server";
 
@@ -131,6 +132,7 @@ export function useMarkdownVault(args: {
   engine.onUpload = () => {
     if (mounted.current) setUploads((count) => count + 1);
   };
+  const [tabId] = useState(createTabId);
   const displayedFiles = useRef<Record<string, VaultFile>>({});
   const displayedState = useRef(args.state);
   const [initialFocus] = useState(() => loadLastFocusedDocument(storageUserId));
@@ -280,6 +282,8 @@ export function useMarkdownVault(args: {
         let snapshot: VaultSnapshot;
         do { snapshot = await saveLatestAppState(); }
         while (stateRef.current !== displayedState.current);
+        // Everything this tab showed is in the vault now; a rescue copy taken while it was saving isn't needed.
+        clearUnsavedEdits(storageUserId, tabId);
         if (mounted.current) setLocalSaveError(null);
         return snapshot;
       } catch (error) {
@@ -292,12 +296,8 @@ export function useMarkdownVault(args: {
     return work;
   }
 
-  async function saveLatestAppState() {
-    if (stateRef.current === displayedState.current) return engine.read();
-    if (hasSameAuthoredState(stateRef.current, displayedState.current)) {
-      displayedState.current = stateRef.current;
-      return engine.read();
-    }
+  /** The vault files for what the page shows now, rendered on top of what it last saved. */
+  function renderLatestFiles() {
     // Keep settings durable without turning the empty editor into a document,
     // including after the last authored document was deleted on another device.
     const conversations = Object.values(withoutUntouchedVaultFileDocuments(stateRef.current).conversations);
@@ -311,6 +311,47 @@ export function useMarkdownVault(args: {
       const sidecar = preserveDeferredWorkspaceReferences(next["workspace.json"], displayedFiles.current["workspace.json"], deferredIds.current);
       if (sidecar !== next["workspace.json"]) next = { ...next, "workspace.json": sidecar };
     }
+    return { next, editingState, settingsOnly };
+  }
+
+  /**
+   * The page is going away (reload, close, switching apps): copy what isn't saved yet somewhere synchronous,
+   * because the save started at the same moment may not finish. The next start merges it back.
+   */
+  function rescueUnsavedEdits() {
+    if (!initialized.current || stateRef.current === displayedState.current) return;
+    try {
+      if (hasSameAuthoredState(stateRef.current, displayedState.current)) return;
+      const edits = diffUnsavedEdits(renderLatestFiles().next, displayedFiles.current);
+      if (edits) writeUnsavedEdits(storageUserId, tabId, edits);
+    } catch {
+      // Rendering failed; the regular save reports the same problem.
+    }
+  }
+
+  /** Merges edits a tab copied aside as it closed, before anything else reads the vault. */
+  async function recoverUnsavedEdits() {
+    let recovered = false;
+    for (const { key, edits } of readUnsavedEdits(storageUserId)) {
+      try {
+        await engine.edit(edits.next, edits.expected);
+        recovered = true;
+      } catch {
+        // Leave it for the next start rather than drop it; the vault itself is unchanged.
+        continue;
+      }
+      removeUnsavedEditsKey(key);
+    }
+    return recovered;
+  }
+
+  async function saveLatestAppState() {
+    if (stateRef.current === displayedState.current) return engine.read();
+    if (hasSameAuthoredState(stateRef.current, displayedState.current)) {
+      displayedState.current = stateRef.current;
+      return engine.read();
+    }
+    const { next, editingState, settingsOnly } = renderLatestFiles();
     const snapshot = await engine.edit(next, displayedFiles.current);
     showTrash(snapshot);
     displayedFiles.current = next;
@@ -606,6 +647,24 @@ export function useMarkdownVault(args: {
     if (evicted.length) await persistAndPublish();
   }
 
+  /**
+   * The files this device holds plus the ones only the cloud vault has, for an account that can read its cloud
+   * vault but not sync it. This device's copy wins where both have a file. Nothing in the cloud: just this device's.
+   */
+  async function withCloudOnlyFiles(files: Record<string, VaultFile>) {
+    let manifest;
+    try { manifest = await engine.transport.manifest(); } catch { return files; }
+    const missing = Object.entries(manifest.files)
+      .filter(([path, entry]) => !entry.deleted && !files[path] && !path.startsWith(".margin-chat/history/"));
+    const result = { ...files };
+    for (let index = 0; index < missing.length; index += 6) {
+      await Promise.all(missing.slice(index, index + 6).map(async ([path, entry]) => {
+        result[path] = await engine.transport.read(path, entry);
+      }));
+    }
+    return result;
+  }
+
   /** Exports and folder copies must contain the complete vault. */
   async function hydrateEverything() {
     const snapshot = await engine.read();
@@ -690,7 +749,7 @@ export function useMarkdownVault(args: {
             return engine.read();
           }
           throw error;
-        });
+        }).then(async (snapshot) => await recoverUnsavedEdits() ? engine.read() : snapshot);
         const exists = Object.keys(existing.files).length > 0 || existing.remoteRevision > 0;
         if (exists) publish(existing);
         else if (args.legacyHasState) {
@@ -794,12 +853,20 @@ export function useMarkdownVault(args: {
   useEffect(() => {
     if (!ready) return;
     const refresh = () => {
-      if (document.visibilityState === "hidden") { if (localSaveTimer.current !== undefined) saveNow(); return; }
+      if (document.visibilityState === "hidden") {
+        // A phone may close a hidden app without another event, so keep a copy before saving.
+        rescueUnsavedEdits();
+        if (localSaveTimer.current !== undefined || stateRef.current !== displayedState.current) saveNow();
+        return;
+      }
       scheduleAutomaticRefresh();
     };
-    const flush = () => saveNow();
+    const flush = () => { rescueUnsavedEdits(); saveNow(); };
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (localInFlight.current || stateRef.current !== displayedState.current) { event.preventDefault(); event.returnValue = ""; }
+      if (localInFlight.current || stateRef.current !== displayedState.current) {
+        rescueUnsavedEdits();
+        event.preventDefault(); event.returnValue = "";
+      }
     };
     const timer = window.setInterval(refresh, 15_000);
     window.addEventListener("online", refresh);
@@ -807,7 +874,10 @@ export function useMarkdownVault(args: {
     window.addEventListener("pagehide", flush);
     window.addEventListener("beforeunload", beforeUnload);
     document.addEventListener("visibilitychange", refresh);
+    // Chrome can freeze, then discard, a background tab without a pagehide.
+    document.addEventListener("freeze", flush);
     return () => {
+      document.removeEventListener("freeze", flush);
       window.clearInterval(timer);
       window.removeEventListener("online", refresh);
       window.removeEventListener("focus", refresh);
@@ -1127,9 +1197,12 @@ export function useMarkdownVault(args: {
     async download() {
       await enqueue(async () => {
         await saveAndRefresh(false);
-        await hydrateEverything();
+        // Without cloud sync (a plan that ended), the cloud copy can still be read: anything only it holds
+        // goes into the download, so ending a plan never strands documents in the cloud.
+        if (enabledRef.current) await hydrateEverything();
         await cacheAttachments();
-        const snapshot = await engine.read();
+        const local = await engine.read();
+        const snapshot = enabledRef.current ? local : { ...local, files: await withCloudOnlyFiles(local.files) };
         const blob = new Blob([new Uint8Array(exportVault(snapshot)).buffer], { type: "application/zip" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
