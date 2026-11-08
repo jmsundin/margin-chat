@@ -15,12 +15,14 @@ export interface VaultAnswerState {
   error?: string;
   /** The document it was saved as. */
   savedId?: string;
+  /** An earlier saved answer to the same question, offered for updating instead of a second copy. */
+  existing?: { id: string; title: string };
 }
 
 export interface VaultAnswerPanelProps {
   answer: VaultAnswerState;
   onOpenSource: (passage: AIRetrievalPassage) => void;
-  onSave: () => void;
+  onSave: (mode: "new" | "update") => void;
   onOpenSaved: (id: string) => void;
   onStop: () => void;
   onRetry: () => void;
@@ -70,6 +72,7 @@ export default function VaultAnswerPanel({ answer, onOpenSource, onSave, onOpenS
       {answer.status === "failed" ? <p className="vault-answer-error" role="alert">{answer.error ?? "The answer couldn't be written. Try again."}</p> : null}
       {answer.status === "stopped" ? <p className="note-chat-thinking">Stopped.</p> : null}
       {notFound ? <p className="note-chat-intro">{answer.retrieval?.note ?? "Nothing in your vault matched this question well enough to answer from it."}</p> : null}
+      {answer.existing && !answer.savedId ? <p className="vault-answer-existing">You saved an answer to this before: <button type="button" onClick={() => onOpenSaved(answer.existing!.id)}>{answer.existing.title}</button></p> : null}
       {sources.length ? <section className="vault-answer-sources" aria-label="Sources">
         <h3>Sources</h3>
         <ol>{sources.map((passage) => <li key={`${passage.label ?? ""}:${passage.id}`} className={passage.cited ? "is-cited" : undefined}>
@@ -85,7 +88,11 @@ export default function VaultAnswerPanel({ answer, onOpenSource, onSave, onOpenS
     <footer className="note-chat-form vault-answer-actions">
       {answer.status === "answering" ? <button type="button" className="note-chat-send" onClick={onStop}>Stop</button>
         : answer.savedId ? <button type="button" className="note-chat-send" onClick={() => onOpenSaved(answer.savedId!)}>Open saved document</button>
-        : answer.status === "done" && answer.answer.trim() ? <button type="button" className="note-chat-send" onClick={onSave}>Save as document</button>
+        : answer.status === "done" && answer.answer.trim() && answer.existing ? <>
+          <button type="button" className="note-chat-send" onClick={() => onSave("update")}>Update saved answer</button>
+          <button type="button" className="vault-answer-secondary" onClick={() => onSave("new")}>Save as new</button>
+        </>
+        : answer.status === "done" && answer.answer.trim() ? <button type="button" className="note-chat-send" onClick={() => onSave("new")}>Save as document</button>
         : <button type="button" className="note-chat-send" onClick={onRetry}>Try again</button>}
       <span className="vault-answer-hint">{answer.savedId ? "Saved, linked to its sources." : "Written only from your vault. Nothing is saved until you save it."}</span>
     </footer>

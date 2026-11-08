@@ -68,7 +68,7 @@ import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem }
 import NotebookCustomise from "./components/NotebookCustomise";
 import NoteChatPanel from "./components/NoteChatPanel";
 import VaultAnswerPanel, { type VaultAnswerState } from "./components/VaultAnswerPanel";
-import { createVaultAnswerDocument, markCitedPassages, vaultAnswerMessages, vaultAnswerSettings } from "./lib/vaultAnswer";
+import { changedAnswerSources, createVaultAnswerDocument, findSavedAnswer, isVaultAnswer, markCitedPassages, updateVaultAnswerDocument, vaultAnswerMessages, vaultAnswerSettings } from "./lib/vaultAnswer";
 import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
 import { pickProactivePassage, stanceQuestionPrompt } from "./lib/proactiveQuestions";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
@@ -3739,7 +3739,7 @@ function WorkspaceAppContent({
    * Answer from my vault: the search answered from the vault's own passages, cited,
    * in a panel. It runs only when the user asks, and nothing is saved until they save it.
    */
-  function handleAnswerFromVault(question: string) {
+  function handleAnswerFromVault(question: string, options: { existingId?: string } = {}) {
     const asked = question.trim();
     if (!asked) return;
     vaultAnswerAbortRef.current?.abort();
@@ -3747,8 +3747,10 @@ function WorkspaceAppContent({
     vaultAnswerAbortRef.current = controller;
     handleCloseSearch();
     setNoteChatFor(null);
-    setVaultAnswer({ question: asked, status: "answering", answer: "", retrieval: null });
     const current = currentStateRef.current;
+    const earlier = options.existingId ? current.conversations[options.existingId] : findSavedAnswer(current.conversations, asked);
+    setVaultAnswer({ question: asked, status: "answering", answer: "", retrieval: null,
+      ...(earlier ? { existing: { id: earlier.id, title: earlier.title } } : {}) });
     const from = current.activeConversationId ? current.conversations[current.activeConversationId] : null;
     const request = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(),
       serviceId: from?.serviceId ?? current.defaultServiceId, modelId: from?.modelId ?? current.defaultModelId });
@@ -3778,10 +3780,22 @@ function WorkspaceAppContent({
     });
   }
 
-  function handleSaveVaultAnswer() {
+  function handleSaveVaultAnswer(mode: "new" | "update") {
     const answer = vaultAnswer;
     if (!answer || answer.status !== "done" || !answer.answer.trim() || answer.savedId) return;
     const current = currentStateRef.current;
+    const earlier = mode === "update" && answer.existing ? current.conversations[answer.existing.id] : null;
+    if (earlier) {
+      const updated = updateVaultAnswerDocument(earlier, { answer: answer.answer, retrieval: answer.retrieval, createId });
+      setState((state) => {
+        if (!state.conversations[updated.id]) return state;
+        const next = { ...state, conversations: { ...state.conversations, [updated.id]: updated } };
+        currentStateRef.current = next;
+        return next;
+      });
+      setVaultAnswer({ ...answer, savedId: updated.id });
+      return;
+    }
     const from = current.activeConversationId ? current.conversations[current.activeConversationId] : null;
     const saved = createVaultAnswerDocument({ question: answer.question, answer: answer.answer, retrieval: answer.retrieval, createId,
       serviceId: from?.serviceId ?? current.defaultServiceId, modelId: from?.modelId ?? current.defaultModelId, ai: from?.ai });
@@ -3807,6 +3821,17 @@ function WorkspaceAppContent({
       return;
     }
     handleOpenSearchSource(evidence);
+  }
+
+  /** On a saved answer: which of its sources changed since, with a way to answer again. */
+  function renderAnswerSourcesLine(conversation: Conversation) {
+    if (!isVaultAnswer(conversation)) return null;
+    const changed = changedAnswerSources(state.conversations, conversation);
+    if (!changed.length) return null;
+    return <p className="vault-answer-stale" title={changed.map((source) => source.title).join(", ")}>
+      <span>{changed.length === 1 ? `“${changed[0].title}” changed` : `${changed.length} sources changed`} since this answer.</span>
+      <button type="button" onClick={() => handleAnswerFromVault(conversation.title, { existingId: conversation.id })}>Answer again</button>
+    </p>;
   }
 
   function closeVaultAnswer() {
@@ -5611,9 +5636,10 @@ function WorkspaceAppContent({
       marginNotes={getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       marginMarks={marginMarks} marginNoteWidth={Math.min(320, Math.max(220, getMarginColumnWidth(conversation)))}
       activeMarginNoteId={activeConversation.id}
-      aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <AIInstructionLine value={conversation.aiInstruction}
-        inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : undefined}
+      aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
+        inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /></> : undefined}
       pageBar={quietHeader && !conversation.vaultFile && !isCompactDocument(conversation) ? <div className="document-page-bar">
+        {renderAnswerSourcesLine(conversation)}
         <AIInstructionLine compact value={conversation.aiInstruction}
           inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} />
         {renderNotebookStanceButton()}
