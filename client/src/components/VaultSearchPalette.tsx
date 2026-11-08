@@ -5,6 +5,7 @@ import {
   vaultSearchTerms, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchProvider,
   type VaultSearchResults, type VaultSearchScope,
 } from "../lib/vaultSearch";
+import { spotlightFromSearch } from "../lib/mapSpotlight";
 import type { Conversation } from "../types";
 import MarkdownLivePreview from "./MarkdownLivePreview";
 import "./VaultSearchPalette.css";
@@ -54,7 +55,7 @@ export const cloudPathOf = (entry: Entry) => entry.kind === "document"
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Cmd+K: one box over the whole vault. Titles first, then passages; Enter opens here, Cmd+Enter beside. */
-export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen, onAnswer }: {
+export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen, onAnswer, onShowOnMap }: {
   isOpen: boolean;
   onClose: () => void;
   query: string;
@@ -72,6 +73,8 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   onKeepOpen?: (query: string, scope: VaultSearchScope) => void;
   /** Answers the search from passages of the vault, citing them. */
   onAnswer?: (question: string) => void;
+  /** Lights what was found on the Map, brightest the strongest match. */
+  onShowOnMap?: (query: string, scores: Record<string, number>) => void;
 }) {
   const [scope, setScope] = useState<VaultSearchScope>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -280,6 +283,8 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
       <footer className="vault-search-footer">
         <span aria-hidden="true">{status}</span>
         <span className="vault-search-keys"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open here · <kbd>{mod}↵</kbd> open beside{onKeepOpen ? <> · <kbd>⇧↵</kbd> keep open</> : null}</span>
+        {onShowOnMap && searching && !stale && Object.keys(spotlightFromSearch(results)).length
+          ? <button className="vault-search-explore" onClick={() => onShowOnMap(query.trim(), spotlightFromSearch(results))} title="Light what was found on the Map" type="button">Show on Map</button> : null}
         {onKeepOpen && searching ? <button className="vault-search-explore" onClick={() => onKeepOpen(query, scope)} title="Shift+Enter" type="button">Keep results open</button> : null}
         {onExplore ? <button className="vault-search-explore" onClick={onExplore} type="button">Filters and connections</button> : null}
       </footer>

@@ -72,6 +72,7 @@ import { fitNetworkMapViewport } from "../lib/networkMapLayout";
 import MapLensBar from "./MapLensBar";
 import CanvasGroupBoxes from "./CanvasGroupBoxes";
 import { canvasBoxAt, canvasGroupDropChanges, canvasTopicDropMoves, layoutCanvasGroupBoxes, topicCanvasGroups, type CanvasGroupBox, type CanvasTopic } from "../lib/canvasGroupBoxes";
+import { describeSpotlight, spotlightHeat, spotlightNeighbours, type MapSpotlight, type SpotlightHeat } from "../lib/mapSpotlight";
 import { countConnections, EMPTY_MAP_LENS, matchMapLens, newLensFilter, readMapLens, type MapLens, type SavedMapLens } from "../lib/mapLens";
 import { mapColoring, MAP_COLOR_BY_OPTIONS, readMapColorBy, type MapColorBy } from "../lib/mapColorBy";
 import { bundleLinks, edgeSignposts, interpolateViewport, isBigCameraMove, nextInDirection, placeLandmarks, readingOrder, screenGridRegion,
@@ -291,6 +292,9 @@ export interface ConversationGraphViewProps {
   /** Puts text in the map search and opens its results, as when a link is pasted on the map. */
   searchRequest?: { query: string; requestId: number } | null;
   searchPlaceholder?: string;
+  /** Lights these documents, as Show on Map from search or an answer does. */
+  spotlight?: MapSpotlight | null;
+  onClearSpotlight?: () => void;
   /** Draws over the map in screen pixels, such as previews of explored topics. */
   renderMapOverlay?: (context: MapOverlayContext) => ReactNode;
   explorerContainer?: HTMLElement | null;
@@ -738,6 +742,8 @@ function GraphNodeBase({
   color,
   lensDimmed = false,
   searchMatch = false,
+  spotlightHeat,
+  spotlightNear = false,
   lineFocus = false,
   relationFaded = false,
   onHover,
@@ -789,6 +795,10 @@ function GraphNodeBase({
   lensDimmed?: boolean;
   /** Found by the map search: lit so the eye finds it among the rest. */
   searchMatch?: boolean;
+  /** Lit by Show on Map, brighter the stronger the match. */
+  spotlightHeat?: SpotlightHeat;
+  /** Linked to a lit document, so kept faintly in view. */
+  spotlightNear?: boolean;
   /** Its lines are the ones drawn on a busy map. */
   lineFocus?: boolean;
   /** Not linked to the hovered or selected circle, so it fades back. */
@@ -888,6 +898,8 @@ function GraphNodeBase({
         isNote ? "is-note" : "",
         lensDimmed ? "is-lens-dimmed" : "",
         searchMatch ? "is-search-match" : "",
+        spotlightHeat ? `is-spotlight is-spotlight-heat-${spotlightHeat}` : "",
+        spotlightNear ? "is-spotlight-near" : "",
         lineFocus ? "is-line-focus" : "",
         dot && relationFaded ? "is-relation-faded" : "",
         `is-semantic-${semanticLevel}`,
@@ -1162,6 +1174,8 @@ export default function ConversationGraphView({
   onSearchSubmit,
   searchRequest,
   searchPlaceholder = "Search this map…",
+  spotlight = null,
+  onClearSpotlight,
   renderMapOverlay,
   explorerContainer,
   onOpenExplorer,
@@ -1510,7 +1524,7 @@ export default function ConversationGraphView({
     return () => { cancelAnimationFrame(frame); host.removeEventListener("pointermove", move); host.removeEventListener("pointerleave", leave); };
   }, [linkLensActive]);
   const needsCounts = drawsDots || colorBy === "connections" || lens.filters.some((filter) => filter.kind === "connections");
-  const needsEdges = needsCounts || lens.filters.some((filter) => filter.kind === "near");
+  const needsEdges = needsCounts || !!spotlight || lens.filters.some((filter) => filter.kind === "near");
   const analysisEdges = useMemo(() => needsEdges ? getGraphAnalysisEdges(conversations) : EMPTY_EDGES, [needsEdges, conversations]);
   const connectionCounts = useMemo(() => needsCounts ? countConnections(analysisEdges) : EMPTY_COUNTS, [needsCounts, analysisEdges]);
   const lensNeighborhood = useCallback((id: string, depth: number) => getGraphNeighborhoodIds(lensIds, analysisEdges, id, depth), [lensIds, analysisEdges]);
@@ -1524,10 +1538,20 @@ export default function ConversationGraphView({
     if (!deferredQuery.trim()) return null;
     return new Set(matchedConversationIds(searchGraphSources(conversations, deferredQuery)).filter((id) => scopedIds.has(id)));
   }, [conversations, deferredQuery, scopedIds]);
+  // Show on Map: the lit documents and, faintly, the ones linked to them.
+  const spotlightScores = useMemo(() => {
+    if (!spotlight) return null;
+    const entries = Object.entries(spotlight.scores).filter(([id]) => scopedIds.has(id));
+    return entries.length ? new Map(entries) : null;
+  }, [spotlight, scopedIds]);
+  const spotlightLit = useMemo(() => spotlightScores ? new Set(spotlightScores.keys()) : null, [spotlightScores]);
+  const spotlightNear = useMemo(() => spotlightLit ? spotlightNeighbours(spotlightLit, analysisEdges, scopedIds) : null, [spotlightLit, analysisEdges, scopedIds]);
   const mapMatches = useMemo(() => {
-    if (lensMatches && searchMatches) return new Set([...lensMatches].filter((id) => searchMatches.has(id)));
-    return lensMatches ?? searchMatches;
-  }, [lensMatches, searchMatches]);
+    const base = lensMatches && searchMatches ? new Set([...lensMatches].filter((id) => searchMatches.has(id))) : lensMatches ?? searchMatches;
+    if (!spotlightLit) return base;
+    const shown = new Set([...spotlightLit, ...spotlightNear ?? []]);
+    return base ? new Set([...shown].filter((id) => base.has(id))) : shown;
+  }, [lensMatches, searchMatches, spotlightLit, spotlightNear]);
   const lensDimmed = useCallback((id: string) => !!mapMatches && !mapMatches.has(id), [mapMatches]);
   const isSearchMatch = useCallback((id: string) => !!searchMatches?.has(id), [searchMatches]);
   const territories = useMemo(() => buildMapTerritories(unfocusedScene, territoryGroups), [unfocusedScene, territoryGroups]);
@@ -2424,6 +2448,18 @@ export default function ConversationGraphView({
       },
     };
   }, [renderMapOverlay, panelView, viewportSize, viewport, showTerritories, hiddenConversationIds, nodeVisualBounds, placementByConversationId, worldBounds, applyViewport]);
+
+  // A new Show on Map frames what it lit.
+  const framedSpotlightRef = useRef<number | null>(null);
+  useEffect(() => {
+    const viewportElement = viewportRef.current;
+    if (!isVisible || !spotlight || !spotlightLit || framedSpotlightRef.current === spotlight.requestId) return;
+    if (!viewportElement?.clientWidth || !viewportElement.clientHeight) return;
+    const nodes = scene.nodes.filter((node) => spotlightLit.has(node.conversationId));
+    if (!nodes.length) return;
+    framedSpotlightRef.current = spotlight.requestId;
+    applyViewport(calculateFitViewport({ ...scene, nodes, groups: [] }, viewportElement, !isCanvasMode));
+  }, [isVisible, spotlight, spotlightLit, scene, applyViewport, isCanvasMode, viewportSize.width]);
 
   useEffect(() => {
     if (!searchRequest) return;
@@ -4166,6 +4202,11 @@ export default function ConversationGraphView({
         onSave={(name) => setSavedLenses([...savedLenses.filter((item) => item.name !== name), { id: `lens-${Date.now().toString(36)}`, name, filters: lens.filters }])}
         onApplySaved={(item) => setLens({ filters: item.filters })}
         onDeleteSaved={(id) => setSavedLenses(savedLenses.filter((item) => item.id !== id))} /> : null}
+      {spotlight && !panelView ? <div className="graph-map-neighborhood graph-map-spotlight" role="region" aria-label="Shown on the Map">
+        <div><strong>{spotlight.label}</strong>
+          <span>{spotlightScores ? `${describeSpotlight(spotlightScores.values())}${spotlightNear?.size ? ` · ${spotlightNear.size} linked` : ""}` : "None of these documents are on this map"}</span></div>
+        {onClearSpotlight ? <button type="button" onClick={onClearSpotlight}>Clear</button> : null}
+      </div> : null}
       {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
         <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
           <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away{meaningRing.length ? ` · ${meaningRing.length} close in meaning` : ""}</span></div>
@@ -4272,7 +4313,7 @@ export default function ConversationGraphView({
           {linkLens ? <div className="map-link-lens" aria-hidden="true" style={{ left: linkLens.x - LINK_LENS_RADIUS, top: linkLens.y - LINK_LENS_RADIUS,
             width: LINK_LENS_RADIUS * 2, height: LINK_LENS_RADIUS * 2 }} /> : null}
           {hoverCardProps ? <MapHoverCard {...hoverCardProps} onOpen={snippetTapped ? () => openTappedCard(hoverCardProps.conversation.id) : undefined} /> : null}
-          {landscapeScene && landscapePoints.length ? <GraphLandscapeLayer points={landscapePoints} matched={mapMatches} glowing={searchMatches}
+          {landscapeScene && landscapePoints.length ? <GraphLandscapeLayer points={landscapePoints} matched={mapMatches} glowing={spotlightLit ?? searchMatches}
             emphasized={libraryOwnIds} selectedId={openWorkId ?? selectedConversationId} viewport={viewport} size={viewportSize} subscribeCamera={subscribeCamera}
             labels={landscapeLabels} showLabels={viewport.scale < LANDSCAPE_CARD_SCALE * 1.5} hostRef={viewportRef}
             titleOf={(id) => libraryWorkTitles.get(id) ?? (conversations[id]?.title || "Untitled")} onSelect={selectLandscapePoint} onOpenLabel={openLandscapeRegion} /> : null}
@@ -4467,6 +4508,8 @@ export default function ConversationGraphView({
                   color={colorOf ? colorOf.get(conversation.id) ?? null : undefined}
                   lensDimmed={lensDimmed(conversation.id)}
                   searchMatch={isSearchMatch(conversation.id)}
+                  spotlightHeat={spotlightScores?.has(conversation.id) ? spotlightHeat(spotlightScores.get(conversation.id)!) : undefined}
+                  spotlightNear={spotlightNear?.has(conversation.id)}
                   lineFocus={lineFocusNeighbors.has(conversation.id)}
                   relationFaded={relationFaded(conversation.id)}
                   onHover={hoverCard}

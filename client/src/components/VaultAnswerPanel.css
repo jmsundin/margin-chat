@@ -19,3 +19,6 @@
 .vault-answer-secondary { font-size: .82rem; padding: 6px 4px; }
 .vault-answer-stale { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 10px; color: var(--muted); font-size: .8rem; }
 .vault-answer-stale button { border: 0; background: transparent; color: var(--accent, #0b8f70); cursor: pointer; font: inherit; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+.vault-answer-sources-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.vault-answer-sources-head h3 { margin-bottom: 6px; }
+.vault-answer-sources-head .vault-answer-secondary { width: auto; min-height: 0; display: inline; padding: 2px 4px; font-size: .76rem; color: var(--accent, #0b8f70); background: transparent; }

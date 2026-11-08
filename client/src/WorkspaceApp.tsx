@@ -67,6 +67,7 @@ import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
 import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem } from "./components/DocumentMargin";
 import NotebookCustomise from "./components/NotebookCustomise";
 import NoteChatPanel from "./components/NoteChatPanel";
+import type { MapSpotlight } from "./lib/mapSpotlight";
 import VaultAnswerPanel, { type VaultAnswerState } from "./components/VaultAnswerPanel";
 import { changedAnswerSources, createVaultAnswerDocument, findSavedAnswer, isVaultAnswer, markCitedPassages, updateVaultAnswerDocument, vaultAnswerMessages, vaultAnswerSettings } from "./lib/vaultAnswer";
 import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
@@ -1409,6 +1410,13 @@ function WorkspaceAppContent({
   /** The document whose Ask about this note panel is open. */
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
   const [vaultAnswer, setVaultAnswer] = useState<VaultAnswerState | null>(null);
+  const [mapSpotlight, setMapSpotlight] = useState<MapSpotlight | null>(null);
+  /** Show on Map: lights these documents on the Map, brightest the strongest match. */
+  const showOnMap = (label: string, scores: Record<string, number>) => {
+    if (!Object.keys(scores).length) return;
+    setMapSpotlight((current) => ({ label, scores, requestId: (current?.requestId ?? 0) + 1 }));
+    handleSetMainViewMode("graph");
+  };
   const vaultAnswerAbortRef = useRef<AbortController | null>(null);
   const closeNoteChat = useCallback(() => setNoteChatFor(null), []);
   /**
@@ -6207,6 +6215,8 @@ function WorkspaceAppContent({
                     activeConversationId={activeConversation.id}
                     conversations={state.conversations}
                     focusRequest={graphFocusRequest}
+                    spotlight={mapSpotlight}
+                    onClearSpotlight={() => setMapSpotlight(null)}
                     onFocusRequestHandled={(requestId) => setGraphFocusRequest((current) => current?.requestId === requestId ? null : current)}
                     graphLayouts={state.graphLayouts}
                     groups={state.groups}
@@ -6576,7 +6586,8 @@ function WorkspaceAppContent({
           {vaultAnswer ? <VaultAnswerPanel answer={vaultAnswer} onClose={closeVaultAnswer}
             onOpenSource={handleOpenVaultAnswerSource} onSave={handleSaveVaultAnswer}
             onOpenSaved={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
-            onStop={() => vaultAnswerAbortRef.current?.abort()} onRetry={() => handleAnswerFromVault(vaultAnswer.question)} /> : null}
+            onStop={() => vaultAnswerAbortRef.current?.abort()} onRetry={() => handleAnswerFromVault(vaultAnswer.question)}
+            onShowOnMap={(scores) => showOnMap(`Sources for “${vaultAnswer.question}”`, scores)} /> : null}
           <NotebookCustomise open={customiseOpen} prefs={notebookPrefs} theme={theme} quietPage={quietPage}
             onChange={saveNotebookPrefs} onThemeChange={(next) => onSetTheme(() => next)} onQuietPageChange={saveQuietPage}
             onClose={closeCustomise} />
@@ -6589,6 +6600,7 @@ function WorkspaceAppContent({
             onExplore={() => { setSearchModalOpen(false); setSearchExploreOpen(true); }}
             onKeepOpen={(query, scope) => { handleCloseSearch(); setMainViewMode("chat"); setSearchPanel({ query, scope }); }}
             onAnswer={vault.searchCloud ? handleAnswerFromVault : undefined}
+            onShowOnMap={(query, scores) => showOnMap(`Found for “${query}”`, scores)}
             onOpenDocument={handleOpenVaultSearchDocument}
             onOpenPassage={handleOpenVaultSearchPassage}
             onQueryChange={setSearchQuery}
