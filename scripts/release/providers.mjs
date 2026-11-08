@@ -287,19 +287,40 @@ export async function mapLimit(items, limit, task) {
 }
 
 const isRateLimited = (error) => error?.constructor?.name === "BlobServiceRateLimited" || /\b429\b|too many requests/iu.test(error?.message ?? "");
+/** Errors worth retrying a few times: the service briefly unavailable (5xx),
+ * a dropped connection, or a request that hit its timeout. Access, missing
+ * store, suspended store and other 4xx errors fail at once. */
+const isTransient = (error) => {
+  const names = [error?.constructor?.name, error?.name];
+  if (names.some((name) => ["BlobServiceNotAvailable", "BlobUnknownError", "BlobRequestAbortedError", "TimeoutError", "AbortError"].includes(name))) return true;
+  const text = `${error?.message ?? ""} ${error?.cause?.code ?? ""} ${error?.cause?.message ?? ""}`;
+  return /\b5\d\d\b|fetch failed|socket|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN|UND_ERR|other side closed|network|timed? ?out/iu.test(text);
+};
+const BLOB_TRANSIENT_ATTEMPTS = 5;
 
-/** Wraps the SDK so each attempt gets a fresh timeout and rate-limited requests
- * back off (honoring Retry-After) instead of failing the release. */
+/** A short, token-free description of a Blob error for release logs. */
+export function describeBlobError(error) {
+  const name = error?.constructor?.name && error.constructor.name !== "Object" ? error.constructor.name : error?.name ?? "Error";
+  const detail = [error?.message, error?.cause?.code ?? error?.cause?.message].filter(Boolean).join("; ");
+  return `${name}${detail ? `: ${detail}` : ""}`.replace(/(vercel_blob_rw_)[A-Za-z0-9_]+/gu, "$1…").slice(0, 300);
+}
+
+/** Wraps the SDK so each attempt gets a fresh timeout, rate-limited requests
+ * back off (honoring Retry-After), and brief outages or dropped connections
+ * are retried a few times instead of failing the release. */
 function retryingBlobSdk(sdk, sleep) {
   const call = (method) => async (...args) => {
     for (let attempt = 1; ; attempt += 1) {
       const options = { ...args.at(-1), abortSignal: AbortSignal.timeout(BLOB_REQUEST_TIMEOUT_MS) };
       try { return await sdk[method](...args.slice(0, -1), options); }
       catch (error) {
-        if (attempt >= BLOB_RATE_LIMIT_ATTEMPTS || !isRateLimited(error)) throw error;
-        // A long Retry-After (e.g. a used-up monthly quota) fails the release
-        // within minutes instead of stalling it.
-        await sleep(Math.min(30_000, error.retryAfter > 0 ? error.retryAfter * 1000 : 250 * 2 ** attempt + Math.floor(Math.random() * 250)));
+        if (isRateLimited(error) && attempt < BLOB_RATE_LIMIT_ATTEMPTS) {
+          // A long Retry-After (e.g. a used-up monthly quota) fails the release
+          // within minutes instead of stalling it.
+          await sleep(Math.min(30_000, error.retryAfter > 0 ? error.retryAfter * 1000 : 250 * 2 ** attempt + Math.floor(Math.random() * 250)));
+        } else if (!isRateLimited(error) && isTransient(error) && attempt < BLOB_TRANSIENT_ATTEMPTS) {
+          await sleep(Math.min(15_000, 500 * 2 ** attempt + Math.floor(Math.random() * 250)));
+        } else throw error;
       }
     }
   };
@@ -321,7 +342,7 @@ async function readBlob(sdk, token, pathname, { allowMissing = false } = {}) {
     result = await sdk.get(pathname, { token, access: "private", useCache: false, headers: { "accept-encoding": "identity" } });
   } catch (error) {
     if (allowMissing && error.name === "BlobNotFoundError") return null;
-    throw new Error("Private Blob read failed; inspect store access and retry.");
+    throw new Error(`Private Blob read failed (${describeBlobError(error)}); inspect store access and retry.`);
   }
   if (!result && allowMissing) return null;
   if (!result || result.statusCode !== 200 || !result.stream || result.blob?.pathname !== pathname) throw new Error("Blob returned an invalid or missing object.");
@@ -340,7 +361,7 @@ async function listBlobs(sdk, token, prefix) {
   do {
     let result;
     try { result = await sdk.list({ token, prefix, cursor, limit: 1000, mode: "expanded" }); }
-    catch { throw new Error("Blob listing failed; inspect store access and retry."); }
+    catch (error) { throw new Error(`Blob listing failed (${describeBlobError(error)}); inspect store access and retry.`); }
     if (!Array.isArray(result.blobs)) throw new Error("Blob returned an invalid listing.");
     for (const blob of result.blobs) {
       if (!safeBlobPathname(blob.pathname) || !blob.pathname.startsWith(prefix) || objects.has(blob.pathname)) throw new Error("Blob listing contains an invalid or duplicate pathname.");
@@ -361,7 +382,7 @@ async function listFolders(sdk, token, prefix) {
   do {
     let result;
     try { result = await sdk.list({ token, prefix, cursor, limit: 1000, mode: "folded" }); }
-    catch { throw new Error("Blob listing failed; inspect store access and retry."); }
+    catch (error) { throw new Error(`Blob listing failed (${describeBlobError(error)}); inspect store access and retry.`); }
     for (const folder of result.folders ?? []) if (typeof folder === "string" && folder.startsWith(prefix)) folders.add(folder);
     cursor = result.hasMore ? result.cursor : undefined;
     if (result.hasMore && (!cursor || cursors.has(cursor))) throw new Error("Blob listing returned an invalid pagination cursor.");
@@ -371,13 +392,20 @@ async function listFolders(sdk, token, prefix) {
 }
 
 async function putVerified(sdk, token, pathname, bytes, contentType, { overwrite = false } = {}) {
+  let putError;
   try {
     await sdk.put(pathname, bytes, { token, access: "private", addRandomSuffix: false, allowOverwrite: overwrite, contentType, ...(bytes.length > 4 * 1024 * 1024 ? { multipart: true } : {}) });
-  } catch {
+  } catch (error) {
     // A prior attempt may have completed the immutable upload. Only accept
     // replay when reading it back proves its body and content type are exact.
+    putError = error;
   }
-  const stored = await readBlob(sdk, token, pathname);
+  let stored;
+  try { stored = await readBlob(sdk, token, pathname); }
+  catch (error) {
+    if (!putError) throw error;
+    throw new Error(`Blob write failed (${describeBlobError(putError)}); inspect store access and quota, then retry.`);
+  }
   if (sha256(stored.bytes) !== sha256(bytes) || stored.contentType !== contentType) throw new Error("Blob copy verification failed; existing objects were left unchanged.");
   return stored;
 }

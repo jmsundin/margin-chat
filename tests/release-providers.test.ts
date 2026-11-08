@@ -426,6 +426,32 @@ describe("release Blob providers", () => {
     expect(waits).toHaveLength(3);
   });
 
+  test("retries brief Blob outages and dropped connections, and names the error when it persists", async () => {
+    const fake = blobFake();
+    seedVault(fake);
+    class BlobServiceNotAvailable extends Error {}
+    const originalGet = fake.sdk.get;
+    let outages = 2;
+    fake.sdk.get = async (pathname: string, options: any) => {
+      if (options.token === sourceToken && outages > 0) {
+        outages -= 1;
+        if (outages === 1) throw new BlobServiceNotAvailable("Vercel Blob: The blob service is currently not available.");
+        throw new TypeError("fetch failed", { cause: Object.assign(new Error("other side closed"), { code: "UND_ERR_SOCKET" }) });
+      }
+      return originalGet(pathname, options);
+    };
+    const waits: number[] = [];
+    const result = await backupBlobStore({ releaseId: "transient", sourceToken, backupToken, sdk: fake.sdk, sleep: async (ms: number) => { waits.push(ms); } });
+    expect(result.objectCount).toBe(2);
+    expect(waits).toHaveLength(2);
+
+    fake.sdk.get = async () => { throw new Error("Vercel Blob: Failed to fetch blob: 403 Forbidden"); };
+    waits.length = 0;
+    await expect(backupBlobStore({ releaseId: "forbidden", sourceToken, backupToken, sdk: fake.sdk, sleep: async (ms: number) => { waits.push(ms); } }))
+      .rejects.toThrow(/Private Blob read failed \(Error: Vercel Blob: Failed to fetch blob: 403 Forbidden\)/);
+    expect(waits).toHaveLength(0);
+  });
+
   test("stops starting new parallel work after the first failure", async () => {
     const started: number[] = [];
     await expect(mapLimit([0, 1, 2, 3, 4, 5, 6, 7], 2, async (item: number) => {
