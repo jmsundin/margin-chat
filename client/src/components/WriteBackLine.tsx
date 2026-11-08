@@ -5,16 +5,10 @@ import "./WriteBackLine.css";
  * "Write back…": a reply line under a paragraph the AI wrote, opened by clicking or tapping the
  * paragraph, so answering it needs no text selection. Enter sends; Escape or Dismiss closes.
  */
-export default function WriteBackLine({ onSend, onClose, disabled = false, autoFocus = true, dismissible = true }: {
-  onSend: (text: string) => void; onClose: () => void; disabled?: boolean;
-  /** Off in a card that opens on a tap, so the keyboard waits until the line is tapped. */
-  autoFocus?: boolean;
-  /** Off where the surrounding card has its own close button. */
-  dismissible?: boolean;
-}) {
+export default function WriteBackLine({ onSend, onClose, disabled = false }: { onSend: (text: string) => void; onClose: () => void; disabled?: boolean }) {
   const [text, setText] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (autoFocus) inputRef.current?.focus({ preventScroll: true }); }, [autoFocus]);
+  useEffect(() => { inputRef.current?.focus({ preventScroll: true }); }, []);
   function send() {
     const reply = text.trim();
     if (!reply || disabled) return;
@@ -34,6 +28,6 @@ export default function WriteBackLine({ onSend, onClose, disabled = false, autoF
         <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 8 13.5 2.5 10 13.5 7.5 8.5z" /><path d="M7.5 8.5 13.5 2.5" /></svg>
       </button>
     </div>
-    {dismissible ? <div className="write-back-actions"><button type="button" onClick={onClose}>Dismiss</button></div> : null}
+    <div className="write-back-actions"><button type="button" onClick={onClose}>Dismiss</button></div>
   </div>;
 }

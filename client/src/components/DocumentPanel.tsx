@@ -90,8 +90,6 @@ export interface DocumentPanelProps {
   pageBar?: ReactNode;
   /** "Write back…" under a paragraph the AI wrote: the reply goes in below it and the AI answers after. */
   onWriteBack?: (blockId: string, text: string) => void;
-  /** Write back from a note's card on its passage (phones, where notes have no margin). */
-  onWriteBackToNote?: (noteId: string, text: string) => void;
   /** The full path of parents in the header, as in Map View's side panel. */
   parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
@@ -651,7 +649,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     <BackToTopButton scrollRef={bodyRef} active={props.isActive}/>
     </div>
     {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}
-    <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink} onWriteBack={props.onWriteBackToNote}/>
+    <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>
     <ServicePickerModal contextControls={props.aiControls} currentModelId={conversation.modelId} currentServiceId={conversation.serviceId} isOpen={modelOpen} onClose={()=>setModelOpen(false)} onSelectModel={props.onModelChange} recentSelections={props.recentModelSelections}/>
   </article>;
 }

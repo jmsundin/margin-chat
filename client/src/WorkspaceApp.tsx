@@ -4061,14 +4061,6 @@ function WorkspaceAppContent({
           : "Reply to what I wrote back, briefly."].join("\n\n") });
   }
 
-  /** On a phone a margin note shows as a card on its passage: Write back there answers the note's last AI paragraph. */
-  function handleWriteBackToNote(noteId: string, text: string) {
-    const note = currentStateRef.current.conversations[noteId];
-    const document = note ? getEditableDocument(note) : null;
-    const last = document?.blocks.filter((block) => getDocumentBlockAuthorship(block) === "ai" && block.content.trim()).at(-1);
-    if (last) handleWriteBack(noteId, last.id, text);
-  }
-
   /** Bold, a heading, a list…: the selection toolbar's format row writes the Markdown into the passage's block. */
   function handleFormatSelection(format: SelectionFormat) {
     if (!selectionDraft?.sourceBlockId) return;
@@ -5645,7 +5637,6 @@ function WorkspaceAppContent({
       aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : undefined}
       onWriteBack={(blockId, text) => handleWriteBack(conversation.id, blockId, text)}
-      onWriteBackToNote={isMobileViewport ? handleWriteBackToNote : undefined}
       pageBar={quietHeader && !conversation.vaultFile && !isCompactDocument(conversation) ? <div className="document-page-bar">
         <AIInstructionLine compact value={conversation.aiInstruction}
           inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} />

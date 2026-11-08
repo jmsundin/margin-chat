@@ -2,7 +2,6 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } f
 import { createPortal } from "react-dom";
 import { summarizeAnnotationText } from "../lib/annotationPreview";
 import type { ConversationNote, MessageAnchorLink } from "../types";
-import WriteBackLine from "./WriteBackLine";
 import "./AnnotationPreview.css";
 
 const HOVER_DELAY = 320;
@@ -28,8 +27,6 @@ interface AnnotationPreviewProps {
   onOpenBranch: (id: string) => void;
   onOpenNote?: (id: string) => void;
   onRemoveLink?: (id: string) => void;
-  /** Reply to a side note's or chat's latest answer without opening it. */
-  onWriteBack?: (id: string, text: string) => void;
 }
 
 /** One preview per pane; resolve saved IDs against current content, never a copied DOM snippet. */
@@ -243,7 +240,6 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
             <h3>{link.title}</h3>
             {preview?.prompt || link.anchor.prompt ? <p className="annotation-preview-question">{summarizeAnnotationText(preview?.prompt || link.anchor.prompt, 160)}</p> : null}
             {preview?.content ? <><span className="annotation-preview-caption">{isLink ? "Linked content" : isNote ? "Note preview" : "Latest reply"}</span><p>{preview.content}</p></> : <p className="annotation-preview-empty">{isLink ? "This document is empty." : isNote ? "This note is empty." : "No reply yet. Open the chat to continue."}</p>}
-            {!isLink && preview?.content && props.onWriteBack ? <WriteBackLine autoFocus={false} dismissible={false} onClose={close} onSend={(text) => { close(); props.onWriteBack?.(link.branchConversationId, text); }} /> : null}
             <button className="annotation-preview-open" onClick={() => { close(); props.onOpenBranch(link.branchConversationId); }} type="button">Open {isLink ? link.targetBlockId ? "linked block" : "linked document" : isNote ? "side note" : "side chat"}<span aria-hidden="true">↗</span></button>
             {isLink && props.onRemoveLink ? <button className="annotation-preview-open" onClick={() => { close(); props.onRemoveLink?.(link.branchConversationId); }} type="button">Remove link</button> : null}
           </section>;
