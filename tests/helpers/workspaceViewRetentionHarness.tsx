@@ -145,7 +145,8 @@ try {
   assert(isVisible(initialMap));
   const stage = element(".conversation-graph-stage");
   const originalTransform = stage.style.transform;
-  await click([...container.querySelectorAll('[aria-label="Zoom in"]')].find(isVisible));
+  // Zoom out keeps the open document in view; the Map only re-centers on it when it has gone off screen.
+  await click([...container.querySelectorAll('[aria-label="Zoom out"]')].find(isVisible));
   const retainedTransform = stage.style.transform;
   assert.notEqual(retainedTransform, originalTransform, "The map camera changed before testing retention.");
   const warmMounts = editorMounts;
