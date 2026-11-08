@@ -16,7 +16,8 @@ export async function verifyPaymentIntent(stripe, reference, { customerId, amoun
 /** Use amounts allocated to this invoice, not a reusable PaymentIntent's total. */
 export async function verifyInvoicePayments(stripe, invoice, customerId) {
   if (!invoice.payments && invoice.payment_intent) {
-    return verifyPaymentIntent(stripe, invoice.payment_intent, { customerId, amountCents: invoice.amount_paid, exact: true });
+    const verified = await verifyPaymentIntent(stripe, invoice.payment_intent, { customerId, amountCents: invoice.amount_paid, exact: true });
+    return verified ? { receiptUrl: verified.receiptUrl, paymentIntentIds: [verified.intent.id] } : null;
   }
   let payments = invoice.payments;
   if (!payments || payments.has_more) {
@@ -27,6 +28,7 @@ export async function verifyInvoicePayments(stripe, invoice, customerId) {
   if (!paid.length) return null;
   let allocated = 0;
   let receiptUrl = null;
+  const paymentIntentIds = [];
   const ids = new Set();
   for (const payment of paid) {
     if (!payment.id || ids.has(payment.id) || payment.payment?.type !== "payment_intent"
@@ -39,6 +41,7 @@ export async function verifyInvoicePayments(stripe, invoice, customerId) {
     if (!verified) return null;
     allocated += payment.amount_paid;
     receiptUrl ??= verified.receiptUrl;
+    paymentIntentIds.push(verified.intent.id);
   }
-  return allocated === invoice.amount_paid ? { receiptUrl } : null;
+  return allocated === invoice.amount_paid ? { receiptUrl, paymentIntentIds } : null;
 }
