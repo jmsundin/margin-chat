@@ -29,13 +29,41 @@ interface Props {
   noteWidth?: number;
 }
 
-type Placement = { top: number; anchorTop: number | null };
+/** `left` is the note's x from the margin's left edge; set only for a note moved to the left of the text. */
+type Placement = { top: number; anchorTop: number | null; left?: number };
+/** The left column: where its notes start and how wide they are, from the margin's left edge; null when there's no room. */
+type LeftColumn = { x: number; width: number; textX: number } | null;
 const GAP = 12;
 /** Room on the left of the cards for the line back to each passage. */
 export const DOCUMENT_MARGIN_GUTTER = 22;
 /** The margin's width in marks mode: room for one dot beside the text. */
 export const DOCUMENT_MARKS_WIDTH = 26;
 const MARK_SIZE = 16;
+/** A note pushed this far below its passage on the right goes to the left of the text instead, when there's room. */
+const CROWDED = 40;
+const LEFT_MIN_WIDTH = 150;
+const LEFT_PAD = 16;
+
+/** Where the free room left of the text ends: the pane to the left, or the edge of the canvas. */
+function leftBound(aside: HTMLElement) {
+  const slot = aside.closest<HTMLElement>(".panel-slot") ?? aside.closest<HTMLElement>(".chat-panel");
+  const before = slot?.previousElementSibling;
+  if (before instanceof HTMLElement && before.offsetWidth) return before.getBoundingClientRect().right;
+  const canvas = slot?.parentElement ?? aside.parentElement;
+  return canvas ? Math.max(0, canvas.getBoundingClientRect().left) : 0;
+}
+
+/** The free room left of the text, from the margin's left edge, or null when it's too narrow for a note. */
+function leftColumn(body: HTMLElement, aside: HTMLElement | null, width: number): LeftColumn {
+  const text = body.querySelector<HTMLElement>(".live-document-host .cm-content") ?? body.querySelector<HTMLElement>(".live-document-host");
+  if (!aside || !text) return null;
+  const asideLeft = aside.getBoundingClientRect().left;
+  const textLeft = text.getBoundingClientRect().left;
+  const noteWidth = Math.min(width - DOCUMENT_MARGIN_GUTTER - 10, textLeft - leftBound(aside) - LEFT_PAD - DOCUMENT_MARGIN_GUTTER);
+  if (noteWidth < LEFT_MIN_WIDTH) return null;
+  const textX = textLeft - asideLeft;
+  return { x: textX - DOCUMENT_MARGIN_GUTTER - noteWidth, width: noteWidth, textX };
+}
 
 function anchorMarks(body: HTMLElement, id: string) {
   return [...body.querySelectorAll<HTMLElement>("[data-annotation-branches]")].filter((element) => {
@@ -64,6 +92,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const trackRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Record<string, HTMLElement | null>>({});
   const [placements, setPlacements] = useState<Record<string, Placement>>({});
+  const [left, setLeft] = useState<LeftColumn>(null);
   const [height, setHeight] = useState(0);
   const [hoverId, setHoverId] = useState<string | null>(null);
   /** Marks mode: the note opened from its dot. */
@@ -91,17 +120,28 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     // Whole-document notes (and notes whose passage is gone) first, then notes in passage order.
     measured.sort((a, b) => (a.anchorTop === null ? -1 : 0) - (b.anchorTop === null ? -1 : 0)
       || (a.anchorTop ?? 0) - (b.anchorTop ?? 0) || a.index - b.index);
-    let cursor = start;
+    // When the right margin is crowded, a note goes to the left of the text, level with its passage.
+    const column = marks ? null : leftColumn(body, asideRef.current, width);
+    let cursor = start, leftCursor = start;
     const next: Record<string, Placement> = {};
     for (const item of measured) {
-      const top = Math.max(cursor, item.anchorTop === null ? start : item.anchorTop + (marks ? 6 : -4));
+      const wanted = item.anchorTop === null ? start : item.anchorTop + (marks ? 6 : -4);
+      const top = Math.max(cursor, wanted);
+      const leftTop = Math.max(leftCursor, wanted);
+      if (column && item.anchorTop !== null && top - wanted > CROWDED && leftTop < top) {
+        next[item.id] = { top: leftTop, anchorTop: item.anchorTop, left: column.x };
+        leftCursor = leftTop + item.height + GAP;
+        continue;
+      }
       next[item.id] = { top, anchorTop: item.anchorTop };
       cursor = top + item.height + (marks ? 4 : GAP);
     }
+    const end = Math.max(cursor, leftCursor);
     setPlacements((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
-    setHeight((current) => current === cursor ? current : cursor);
+    setLeft((current) => JSON.stringify(current) === JSON.stringify(column) ? current : column);
+    setHeight((current) => current === end ? current : end);
     syncScroll();
-  }, [bodyRef, itemKey, syncScroll, marks]);
+  }, [bodyRef, itemKey, syncScroll, marks, width]);
 
   const schedule = useCallback(() => {
     window.cancelAnimationFrame(frame.current);
@@ -164,12 +204,12 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const [expandBy, setExpandBy] = useState(0);
   useLayoutEffect(() => {
     const aside = asideRef.current;
-    if (!expandedId || !aside) { setExpandBy(0); return; }
+    if (!expandedId || !aside || placements[expandedId]?.left !== undefined) { setExpandBy(0); return; }
     const measure = () => setExpandBy(Math.max(0, Math.min(Math.round(width * 0.5), Math.floor(window.innerWidth - aside.getBoundingClientRect().right - 16))));
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
-  }, [expandedId, width]);
+  }, [expandedId, width, placements[expandedId ?? ""]?.left]);
 
   // The passage of the note being read or pointed at stays lit in the text. The editor owns
   // its DOM and would undo a class added to the passage, so a scoped style rule lights it.
@@ -228,7 +268,8 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     </div>
   </aside>;
 
-  return <aside className="document-margin" ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
+  const usesLeft = Boolean(left && Object.values(placements).some((placement) => placement.left !== undefined));
+  return <aside className={`document-margin${usesLeft ? " has-left-notes" : ""}`} ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
     style={{ width, flexBasis: width }}
     onPointerDownCapture={() => { pointerInside.current = Date.now(); }}
     onWheel={(event) => {
@@ -243,17 +284,21 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
           const placement = placements[item.id];
           if (!placement || placement.anchorTop === null || item.id !== expandedId) return null;
           const from = placement.anchorTop + 10, to = placement.top + 16, x = DOCUMENT_MARGIN_GUTTER - 4;
-          return <path key={item.id} className={item.id === linkedId ? "is-linked" : undefined}
-            d={`M0 ${from} H8 V${to} H${x}`} />;
+          // A note on the left: from its right edge across to the start of the passage's line.
+          const d = placement.left !== undefined && left
+            ? `M${left.x + left.width + 4} ${to} H${left.textX - 10} V${from} H${left.textX - 2}`
+            : `M0 ${from} H8 V${to} H${x}`;
+          return <path key={item.id} className={item.id === linkedId ? "is-linked" : undefined} d={d} />;
         })}
       </svg>
       {items.map((item) => {
         const placement = placements[item.id];
-        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}`}
+        const onLeft = placement?.left !== undefined && left;
+        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}${onLeft ? " is-left" : ""}`}
           data-margin-note-id={item.id} ref={(element) => { itemRefs.current[item.id] = element; }}
           onPointerDownCapture={() => setExpandedId(item.id)}
-          style={{ top: placement?.top ?? 0, left: DOCUMENT_MARGIN_GUTTER, visibility: placement ? undefined : "hidden",
-            ...(item.id === expandedId && expandBy ? { right: 10 - expandBy } : {}) }}
+          style={{ top: placement?.top ?? 0, left: onLeft ? left.x : DOCUMENT_MARGIN_GUTTER, visibility: placement ? undefined : "hidden",
+            ...(onLeft ? { right: "auto", width: left.width } : item.id === expandedId && expandBy ? { right: 10 - expandBy } : {}) }}
           onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
           {item.anchored ? null : <span className="document-margin-label">About this document</span>}
           {item.node}

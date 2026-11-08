@@ -91,6 +91,7 @@ import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
 import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, VISUALIZE_PASSAGE_PROMPT, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
+import { stepGridReply } from "./lib/stepGrid";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
 import { remapDocumentAnchor } from "./lib/documentAnchors";
 import { collectExpiredEmptyDocuments, EMPTY_DOCUMENT_CLEANUP_CHECK_MS, noteDocumentFocusChange, readLeftEmptyDocuments,
@@ -2810,7 +2811,9 @@ function WorkspaceAppContent({
           const conversation = current.conversations[targetId];
           if (!conversation?.document) return current;
           const streamed = conversation.document.blocks.find((block)=>block.id===outputBlockId);
-          const output = streamed && diagramReply && status === "complete" && streamed.content.trim() ? {...streamed,content:mermaidDiagramReply(streamed.content)} : streamed;
+          const output = streamed && diagramReply && status === "complete" && streamed.content.trim()
+            // Visualize may answer with a stepped grid; anything else it sends is kept as one Mermaid diagram.
+            ? {...streamed,content:(request.visualize && stepGridReply(streamed.content)) || mermaidDiagramReply(streamed.content)} : streamed;
           const parts = output?.content ? splitDocumentMarkdown(output.content) : [];
           const completedBlocks = output && parts.length > 1 ? parts.map((content,index)=>({...output,id:index ? `${outputBlockId}:part:${index}` : outputBlockId,content})) : output ? [output] : [];
           return {...current,conversations:{...current.conversations,[targetId]:{...conversation,document:{...conversation.document,
@@ -4061,6 +4064,29 @@ function WorkspaceAppContent({
       return next;
     });
     closeSelectionDraft();
+  }
+
+  /**
+   * Write back: the user's reply to a paragraph the AI wrote goes in as their own line under it, and
+   * the AI answers below that, with the paragraph as what they're replying to.
+   */
+  function handleWriteBack(conversationId: string, aiBlockId: string, text: string) {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    const document = conversation ? getEditableDocument(conversation) : null;
+    const aiBlock = document?.blocks.find((block) => block.id === aiBlockId);
+    if (!conversation || !document || !aiBlock || chatExecutions.has(conversationId)) return;
+    const now = new Date().toISOString();
+    const replyId = createId("block");
+    const updated = insertDocumentBlock(conversation, { id: replyId, kind: "markdown", content: text, authorship: "user", createdAt: now, updatedAt: now },
+      { blockId: aiBlock.id, offset: aiBlock.content.length }, now);
+    const next = replaceDocumentConversation(currentStateRef.current, updated);
+    currentStateRef.current = next;
+    setState(next);
+    const thinks = readNotebookPrefs().aiBehaviour === "thinks";
+    handleDocumentSubmit(conversationId, { blockId: replyId, from: text.length, to: text.length, sourceContent: text, destination: "inline", replaceSelection: false,
+      prompt: [`You wrote: "${aiBlock.content.trim()}"`, `I wrote back: "${text}"`,
+        thinks ? "Reply to what I wrote back in two to four sentences. Build on my reply rather than answering for me, and end with one question that moves my thinking on."
+          : "Reply to what I wrote back, briefly."].join("\n\n") });
   }
 
   /** Bold, a heading, a list…: the selection toolbar's format row writes the Markdown into the passage's block. */
@@ -5638,6 +5664,7 @@ function WorkspaceAppContent({
       activeMarginNoteId={activeConversation.id}
       aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /></> : undefined}
+      onWriteBack={(blockId, text) => handleWriteBack(conversation.id, blockId, text)}
       pageBar={quietHeader && !conversation.vaultFile && !isCompactDocument(conversation) ? <div className="document-page-bar">
         {renderAnswerSourcesLine(conversation)}
         <AIInstructionLine compact value={conversation.aiInstruction}
@@ -6539,7 +6566,8 @@ function WorkspaceAppContent({
 
           {noteChatFor && state.conversations[noteChatFor] ? (() => {
             const chat = findNoteChat(state.conversations, noteChatFor);
-            return <NoteChatPanel open title={state.conversations[noteChatFor].title} messages={chat?.messages ?? []}
+            return <NoteChatPanel key={noteChatFor} open title={state.conversations[noteChatFor].title} messages={chat?.messages ?? []}
+              draftKey={`${storageUserId}:ask-note:${noteChatFor}`}
               pending={Boolean(chat && (pendingConversationIds[chat.id] || chatExecutions.has(chat.id)))}
               onAsk={(question) => handleAskAboutNote(noteChatFor, question)}
               onStop={chat ? () => chatExecutions.abort([chat.id]) : undefined}

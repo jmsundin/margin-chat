@@ -231,7 +231,25 @@ async function checkTypingBatch() {
   await act(async () => { root.unmount(); });
   await until(async () => (await savedText()).includes("Typed just before closing"), "Closing the workspace lost the last words.", 250);
   root = createRoot(container as unknown as Element);
-  console.log(JSON.stringify({ checks: ["keys typed together share one save", "hiding the app saves at once", "closing the workspace saves at once"] }));
+
+  // The tab is torn down before its save lands (a reload right after a key): the rescue copy brings the words back.
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready && !current.vault.saving, "The vault did not open again.");
+  failLocalWrites = true;
+  await act(async () => { type("Typed as the tab was reloaded"); });
+  await act(async () => { browser.window.dispatchEvent(new browser.Event("pagehide")); await new Promise((done) => setTimeout(done, 50)); });
+  await act(async () => { root.unmount(); await new Promise((done) => setTimeout(done, 50)); });
+  assert(!(await savedText()).includes("Typed as the tab was reloaded"), "The fixture's failed save still reached the vault.");
+  failLocalWrites = false;
+  root = createRoot(container as unknown as Element);
+  await act(async () => { root.render(createElement(Host)); });
+  await until(() => current?.vault.ready, "The vault did not open after the reload.");
+  await until(async () => (await savedText()).includes("Typed as the tab was reloaded"), "Words typed just before a reload were lost.");
+  assert(JSON.stringify(current.state).includes("Typed as the tab was reloaded"), "The recovered words are not shown.");
+  assert(!Object.keys(browser.localStorage).some((key) => key.startsWith("margin-chat:unsaved-edits:")), "The rescue copy was kept after it was merged.");
+  await act(async () => { root.unmount(); });
+  root = createRoot(container as unknown as Element);
+  console.log(JSON.stringify({ checks: ["keys typed together share one save", "hiding the app saves at once", "closing the workspace saves at once", "words typed just before a reload come back"] }));
 }
 async function checkProjectionPending() {
   const { pendingVaultChanges } = await import("../../client/src/lib/vaultSync");

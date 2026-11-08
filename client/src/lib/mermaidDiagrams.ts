@@ -197,12 +197,39 @@ export function showDiagramStage(block: HTMLElement, stage: number) {
   chips.forEach((chip, index) => chip.setAttribute("aria-pressed", String(index === current)));
   const number = block.querySelector(".diagram-stage-number");
   if (number) number.textContent = String(current + 1);
+  // A staged Mermaid diagram titles each stage in the head; a stepped grid keeps its own title there.
   const caption = block.querySelector(".diagram-stage-caption");
-  if (caption) caption.textContent = chips[current]?.dataset.title ?? "";
+  if (caption && chips.length) caption.textContent = chips[current]?.dataset.title ?? "";
   const previous = block.querySelector<HTMLButtonElement>('.diagram-stage-step[data-step="-1"]');
   const next = block.querySelector<HTMLButtonElement>('.diagram-stage-step[data-step="1"]');
   if (previous) previous.disabled = current === 0;
   if (next) next.disabled = current === count - 1;
+}
+
+const STAGED_BLOCK_SELECTOR = ".message-mermaid-block.is-staged, .stepgrid-block.is-staged";
+const REPLAY_STEP_MS = 1100;
+const replays = new WeakMap<HTMLElement, number>();
+
+function stopReplay(block: HTMLElement) {
+  const timer = replays.get(block);
+  if (timer != null) window.clearInterval(timer);
+  replays.delete(block);
+  block.classList.remove("is-replaying");
+}
+
+/** Replay: back to the first step, then one step forward every second or so until the last. */
+export function replayDiagramStages(block: HTMLElement) {
+  stopReplay(block);
+  showDiagramStage(block, 0);
+  const count = block.querySelectorAll(".diagram-stage-view").length;
+  if (count < 2) return;
+  block.classList.add("is-replaying");
+  replays.set(block, window.setInterval(() => {
+    const next = Number(block.dataset.stage ?? 0) + 1;
+    if (!block.isConnected || next >= count) { stopReplay(block); return; }
+    showDiagramStage(block, next);
+    if (next === count - 1) stopReplay(block);
+  }, REPLAY_STEP_MS));
 }
 
 let stageControlsInstalled = false;
@@ -210,7 +237,7 @@ let stageControlsInstalled = false;
  * The stepper lives in rendered Markdown, so one listener on the page works every panel. It runs
  * before the editor's own handlers, so a click on a stage never opens the diagram's source.
  */
-function installStageControls() {
+export function installStageControls() {
   if (stageControlsInstalled || typeof document === "undefined") return;
   stageControlsInstalled = true;
   const target = (event: Event) => event.target instanceof Element ? event.target.closest<HTMLButtonElement>(".diagram-stages button") : null;
@@ -221,11 +248,13 @@ function installStageControls() {
   }, true);
   document.addEventListener("click", (event) => {
     const button = target(event);
-    const block = button?.closest<HTMLElement>(".message-mermaid-block.is-staged");
+    const block = button?.closest<HTMLElement>(STAGED_BLOCK_SELECTOR);
     if (!button || !block) return;
     event.preventDefault();
     event.stopPropagation();
     if (button.disabled) return;
+    if (button.dataset.replay) { replayDiagramStages(block); return; }
+    stopReplay(block);
     const current = Number(block.dataset.stage ?? 0);
     showDiagramStage(block, button.dataset.stageIndex != null ? Number(button.dataset.stageIndex) : current + Number(button.dataset.step ?? 0));
   }, true);

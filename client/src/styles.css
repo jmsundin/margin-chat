@@ -4144,6 +4144,47 @@ button {
   .message-content.is-markdown .diagram-stage-chip { padding: 0.4rem 0.75rem; }
 }
 
+/* A stepped grid (Visualize, stepGrid.ts): a table of values that fills in step by step, drawn by the
+   app as SVG. It shares the staged diagram's stepper; each step's picture and caption stack in one place. */
+.message-content.is-markdown .stepgrid-block {
+  --sg-accent: #0b8f70; --sg-accent-ink: #08795f; --sg-fill: color-mix(in srgb, #0b8f70 9%, var(--bg));
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px; margin: 0.9rem 0 0; overflow: hidden;
+}
+:root[data-theme="dark"] .message-content.is-markdown .stepgrid-block { --sg-accent: #10a37f; --sg-accent-ink: #5fd6b4; --sg-fill: color-mix(in srgb, #10a37f 16%, var(--bg)); }
+.message-content.is-markdown > .stepgrid-block:first-child { margin-top: 0; }
+.message-content.is-markdown .stepgrid-block .diagram-stage-head .stepgrid-title { flex: 1; font-weight: 600; white-space: normal; }
+.message-content.is-markdown .stepgrid-block .diagram-stage-replay { margin-left: auto; }
+.message-content.is-markdown .stepgrid-block.is-replaying .diagram-stage-replay { border-color: var(--sg-accent); color: var(--sg-accent-ink); }
+.message-content.is-markdown .stepgrid-subtitle { color: var(--muted); font-family: var(--paper-sans, inherit); font-size: 0.8rem; margin: 0; padding: 0.6rem 0.9rem 0; }
+.message-content.is-markdown .stepgrid-views { display: grid; padding: 0.9rem 0.9rem 0.75rem; }
+.message-content.is-markdown .stepgrid-views .diagram-stage-view { display: grid; gap: 0.6rem; justify-items: center; margin: 0; }
+.message-content.is-markdown .stepgrid-svg { display: block; height: auto; max-width: 100%; overflow: visible; }
+.message-content.is-markdown .stepgrid-svg text {
+  dominant-baseline: central; fill: var(--ink); font-family: var(--paper-sans, inherit); font-size: 17px; font-variant-numeric: tabular-nums; text-anchor: middle;
+}
+.message-content.is-markdown .stepgrid-svg .stepgrid-label { fill: var(--muted); font-size: 12px; }
+.message-content.is-markdown .stepgrid-cell rect { fill: transparent; stroke: var(--line); stroke-width: 1; transition: fill 220ms ease; }
+.message-content.is-markdown .stepgrid-cell.is-changed rect { fill: var(--sg-fill); }
+.message-content.is-markdown .stepgrid-cell.is-focus rect { fill: var(--sg-fill); stroke: var(--sg-accent); stroke-width: 2; }
+.message-content.is-markdown .stepgrid-cell.is-focus text { fill: var(--sg-accent-ink); font-weight: 600; }
+.message-content.is-markdown .stepgrid-frame { fill: none; stroke: var(--line-strong, var(--line)); stroke-width: 1; }
+.message-content.is-markdown .stepgrid-arrow line { stroke: var(--sg-accent); stroke-linecap: round; stroke-width: 1.75; }
+.message-content.is-markdown .stepgrid-arrow polygon { fill: var(--sg-accent); }
+.message-content.is-markdown .stepgrid-svg .stepgrid-arrow-label { fill: var(--sg-accent-ink); font-size: 11px; }
+.message-content.is-markdown .stepgrid-caption {
+  color: var(--ink); font-family: var(--paper-sans, inherit); font-size: 0.86rem; line-height: 1.45; max-width: 34rem; text-align: center;
+}
+.message-content.is-markdown .stepgrid-block.has-error .message-code-block { border: 0; border-radius: 0; margin: 0; }
+/* Moving to a step brings its new values in and draws its arrows from their source cells. */
+.message-content.is-markdown .stepgrid-views .diagram-stage-view.is-current .stepgrid-cell.is-changed text { animation: stepgrid-value 320ms ease both; }
+.message-content.is-markdown .stepgrid-views .diagram-stage-view.is-current .stepgrid-arrow { animation: stepgrid-arrow 360ms ease both; }
+@keyframes stepgrid-value { from { opacity: 0; } to { opacity: 1; } }
+@keyframes stepgrid-arrow { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .message-content.is-markdown .stepgrid-views .diagram-stage-view.is-current .stepgrid-cell.is-changed text,
+  .message-content.is-markdown .stepgrid-views .diagram-stage-view.is-current .stepgrid-arrow { animation: none; }
+}
+
 .mermaid-viewer-backdrop {
   align-items: stretch;
   background: rgba(4, 7, 9, 0.82);

@@ -38,7 +38,9 @@
 
 /* A note the user clicked opens up to half again as wide, into the room right of the page; the
    margin clips above and below as before but lets that note out on the right. */
-.document-margin:has(.document-margin-item.is-expanded) { overflow: visible; clip-path: inset(0 -100vw 0 0); z-index: 3; }
+.document-margin:has(.document-margin-item.is-expanded) { overflow: visible; clip-path: inset(0 -100vw); z-index: 3; }
+/* Notes moved to the left of the text when the right margin is crowded: they still scroll with it. */
+.document-margin.has-left-notes { overflow-x: visible; overflow-y: clip; z-index: 2; }
 .document-margin-item { transition: right .18s ease; }
 @media (prefers-reduced-motion: reduce) { .document-margin-item { transition: none; } }
 
@@ -60,6 +62,8 @@
 @media (prefers-reduced-motion: reduce) {
   .document-body .message-anchor { animation-duration: 0s !important; }
 }
+.document-margin-item.is-left > .margin-document-family > .margin-document-frame { width: 100% !important; }
 .document-margin-item.is-expanded > .margin-document-family > .margin-document-frame { width: 100% !important; max-height: none !important; }
 /* The page's frame lets that one note out too; nothing else in it reaches past its edge. */
-.chat-panel.document-panel:has(> .document-panel-content > .document-margin .document-margin-item.is-expanded) { overflow: visible; }
+.chat-panel.document-panel:has(> .document-panel-content > .document-margin .document-margin-item.is-expanded),
+.chat-panel.document-panel:has(> .document-panel-content > .document-margin.has-left-notes) { overflow: visible; }

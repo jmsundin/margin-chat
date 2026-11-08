@@ -70,7 +70,10 @@ export function getBillingStatusCopy(billing: UserBilling) {
       : `$20 per month adds $20 to your AI budget.${periodEnd ? ` Next renewal: ${periodEnd}.` : ""} Unused credits carry over.`;
     return `${renewal} Available balance: ${balance}.`;
   }
-  if (["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(billing.status)) {
+  if (billing.status === "past_due") {
+    return `Your last monthly payment didn't go through. Stripe will try your card again; until then your plan keeps working, and this month's credit is added once it's paid. Update your card under Manage subscription. Available balance: ${balance}.`;
+  }
+  if (["unpaid", "incomplete", "incomplete_expired", "paused"].includes(billing.status)) {
     return `Your monthly payment needs attention in Stripe. You can still use your ${balance} remaining prepaid balance.`;
   }
   if (billing.status === "canceled") return `Your monthly plan has ended. Your ${balance} unused balance remains available; add money whenever you need it.`;

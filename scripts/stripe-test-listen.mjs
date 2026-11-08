@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { loadStripeTestEnv, STRIPE_TEST_ORIGIN } from "./stripe-test-config.mjs";
 
-const EVENTS = ["checkout.session.completed", "checkout.session.async_payment_succeeded", "invoice.paid", "invoice.payment_succeeded", "invoice.payment_failed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted", "customer.subscription.paused", "customer.subscription.resumed"].join(",");
+const EVENTS = ["checkout.session.completed", "checkout.session.async_payment_succeeded", "invoice.paid", "invoice.payment_succeeded", "invoice.payment_failed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted", "customer.subscription.paused", "customer.subscription.resumed", "charge.refunded", "charge.dispute.created"].join(",");
 
 export function parseListenerArguments(args) {
   const filename = args[0];

@@ -18,7 +18,8 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { getObsidianCalloutFamily } from "./obsidianMarkdown";
 import { latexMarkedExtensions } from "./latex";
-import { parseDiagramStages, type DiagramStage } from "./mermaidDiagrams";
+import { installStageControls, parseDiagramStages, type DiagramStage } from "./mermaidDiagrams";
+import { isStepGridLanguage, renderStepGridFence } from "./stepGrid";
 
 function escapeHtml(value: string) {
   return value
@@ -90,6 +91,12 @@ function stagedDiagramControls(stages: DiagramStage[]) {
 
 const renderer: RendererObject = {
   code(token: Tokens.Code) {
+    if (isStepGridLanguage(token.lang)) {
+      // The stepper's buttons work through one listener on the page, set up the first time a grid shows.
+      if (typeof document !== "undefined") installStageControls();
+      return renderStepGridFence(token.text);
+    }
+
     if (isMermaidLanguage(token.lang)) {
       const stages = parseDiagramStages(token.text);
       return [

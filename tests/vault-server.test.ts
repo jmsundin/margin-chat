@@ -329,7 +329,11 @@ describe("authenticated vault API", () => {
     const headers = { authorization: "alice", "content-type": "application/json" };
     try {
       expect((await fetch(`${base}/api/vault`)).status).toBe(401);
-      expect((await fetch(`${base}/api/vault`, { headers: { authorization: "free" } })).status).toBe(403);
+      // An account without a plan can read what its cloud vault holds (a plan that ended locks nothing away), never change it.
+      expect((await fetch(`${base}/api/vault`, { headers: { authorization: "free" } })).status).toBe(200);
+      expect((await fetch(`${base}/api/vault/changes?since=0`, { headers: { authorization: "free" } })).status).toBe(403);
+      expect((await fetch(`${base}/api/vault/commit`, { method: "POST", headers: { ...headers, authorization: "free" },
+        body: JSON.stringify({ changes: [{ path: "Notes/free.md", content: "Free", baseRevision: null }] }) })).status).toBe(403);
       for (const unsafeHeaders of [
         { ...headers, "sec-fetch-site": "cross-site" },
         { ...headers, "content-type": "text/plain" },
