@@ -80,3 +80,11 @@
 .map-lens-step { display: inline-flex; align-items: center; height: 30px; border: 1px solid var(--line); border-radius: 8px; background: var(--graph-node-bg, var(--panel-bg)); }
 .map-lens-step button { width: 28px; height: 100%; border: 0; background: none; color: var(--ink); font: inherit; font-size: 16px; cursor: pointer; }
 .map-lens-step span { min-width: 44px; padding: 0 2px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+/* Show on Map: lit documents glow by match strength; their linked neighbours stay faintly in view. */
+.conversation-graph-node.is-spotlight { --spotlight-ring: 2px; --spotlight-blur: 18px; --spotlight-mix: 55%; }
+.conversation-graph-node.is-spotlight-heat-3 { --spotlight-ring: 3px; --spotlight-blur: 26px; --spotlight-mix: 70%; }
+.conversation-graph-node.is-spotlight-heat-2 { --spotlight-ring: 2px; --spotlight-blur: 16px; --spotlight-mix: 45%; }
+.conversation-graph-node.is-spotlight-heat-1 { --spotlight-ring: 1px; --spotlight-blur: 8px; --spotlight-mix: 30%; }
+.conversation-graph-node.is-spotlight:not(.is-lens-dimmed, .is-dot) { box-shadow: 0 0 0 var(--spotlight-ring) var(--accent), 0 0 var(--spotlight-blur) color-mix(in srgb, var(--accent) var(--spotlight-mix), transparent); }
+.conversation-graph-node.is-dot.is-spotlight:not(.is-lens-dimmed) .conversation-graph-node-dot { box-shadow: 0 0 0 var(--spotlight-ring) var(--accent), 0 0 var(--spotlight-blur) color-mix(in srgb, var(--accent) var(--spotlight-mix), transparent); }
+.conversation-graph-node.is-spotlight-near:not(:hover, :focus-within, .is-selected) { opacity: .55; }

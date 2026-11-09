@@ -4,6 +4,7 @@ import type { AIRetrievalPassage, AIRetrievalRecord } from "../types";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { renderMermaidBlocksIn } from "../lib/mermaidDiagrams";
 import { vaultAnswerSources } from "../lib/vaultAnswer";
+import { spotlightFromAnswer } from "../lib/mapSpotlight";
 import "./NoteChatPanel.css";
 import "./VaultAnswerPanel.css";
 
@@ -27,6 +28,8 @@ export interface VaultAnswerPanelProps {
   onStop: () => void;
   onRetry: () => void;
   onClose: () => void;
+  /** Lights the sources on the Map: cited ones bright, the rest faint. */
+  onShowOnMap?: (scores: Record<string, number>) => void;
 }
 
 /** [Vault 2] in the streamed answer as [2], matching the numbers in the Sources list. */
@@ -40,7 +43,7 @@ const sourceNumber = (passage: AIRetrievalPassage) => passage.label?.replace(/^V
  * Answer from my vault: the answer to a search, written only from the user's own
  * passages, with the sources it cites. Nothing is saved until the user saves it.
  */
-export default function VaultAnswerPanel({ answer, onOpenSource, onSave, onOpenSaved, onStop, onRetry, onClose }: VaultAnswerPanelProps) {
+export default function VaultAnswerPanel({ answer, onOpenSource, onSave, onOpenSaved, onStop, onRetry, onClose, onShowOnMap }: VaultAnswerPanelProps) {
   const titleId = useId();
   const bodyRef = useRef<HTMLDivElement>(null);
   const html = useMemo(() => renderObsidianMarkdownToHtml(citationsAsMarks(answer.answer)), [answer.answer]);
@@ -74,7 +77,8 @@ export default function VaultAnswerPanel({ answer, onOpenSource, onSave, onOpenS
       {notFound ? <p className="note-chat-intro">{answer.retrieval?.note ?? "Nothing in your vault matched this question well enough to answer from it."}</p> : null}
       {answer.existing && !answer.savedId ? <p className="vault-answer-existing">You saved an answer to this before: <button type="button" onClick={() => onOpenSaved(answer.existing!.id)}>{answer.existing.title}</button></p> : null}
       {sources.length ? <section className="vault-answer-sources" aria-label="Sources">
-        <h3>Sources</h3>
+        <div className="vault-answer-sources-head"><h3>Sources</h3>
+          {onShowOnMap && answer.status !== "answering" ? <button type="button" className="vault-answer-secondary" onClick={() => onShowOnMap(spotlightFromAnswer(answer.retrieval))}>Show on Map</button> : null}</div>
         <ol>{sources.map((passage) => <li key={`${passage.label ?? ""}:${passage.id}`} className={passage.cited ? "is-cited" : undefined}>
           <button type="button" onClick={() => onOpenSource(passage)} title={passage.excerpt ?? passage.title}>
             {sourceNumber(passage) ? <span className="vault-answer-number">{sourceNumber(passage)}</span> : null}
