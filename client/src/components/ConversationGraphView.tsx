@@ -320,6 +320,8 @@ export interface ConversationGraphViewProps {
     openReader?: boolean;
     neighborhoodDepth?: number;
     preserveMapMode?: boolean;
+    /** Coming back from Document view: show this document in whichever Map tab is open (Map or Focus), selected and centered. */
+    keepViewMode?: boolean;
   } | null;
   graphLayouts?: Record<string, GraphNodeLayout>;
   groups: Record<string, ConversationGroup>;
@@ -2683,6 +2685,33 @@ export default function ConversationGraphView({
     handledFocusRequestIdRef.current = focusRequest.requestId;
     preserveSelectionViewRef.current = null;
     const neighborhoodDepth = focusRequest.neighborhoodDepth;
+    if (focusRequest.keepViewMode && !panelView) {
+      const id = focusRequest.conversationId;
+      if (scope.kind === "focus") {
+        // Focus: the ring moves to the document, unless it is already at its centre.
+        if (scope.conversationId !== id) focusConnections(id, scope.depth, documentLayoutMode);
+        else if (selectedConversationId !== id) navigation.update({ selectedConversationId: id });
+      } else {
+        // Map: the document is selected and centered. If it was already selected and its middle is in view, the camera stays put.
+        // The side panel follows only if it was open.
+        const placement = scene.nodes.find((node) => node.conversationId === id);
+        const camera = viewportStateRef.current;
+        const width = viewportRef.current?.clientWidth ?? 0, height = viewportRef.current?.clientHeight ?? 0;
+        const centerX = placement ? (placement.x + placement.width / 2) * camera.scale + camera.x : NaN;
+        const centerY = placement ? (placement.y + placement.height / 2) * camera.scale + camera.y : NaN;
+        const inView = selectedConversationId === id && !browsingGroups && centerX >= 0 && centerX <= width && centerY >= 0 && centerY <= height;
+        revealedSelectionKeyRef.current = inView ? `${id}:${isCanvasMode ? "compact" : "preview"}` : null;
+        const outsideGroup = !!focusedTerritory && !focusedTerritory.nodes.some((node) => node.conversationId === id);
+        navigation.navigate({ selectedConversationId: id, detailLevel: isCanvasMode ? "compact" : "preview", source: null,
+          ...(!scopedIds.has(id) ? { scope: { kind: "all" } as GraphScope, query: "" } : {}),
+          ...(outsideGroup ? { focusedTerritoryId: null, focusedTerritoryScale: null } : {}),
+          ...(dockedConversationId && dockedConversationId !== id ? { dockedConversationId: id, readerScroll: 0 } : {}),
+          expandedGroups: Object.values(groups).filter((group) => group.conversationIds.includes(id)).map((group) => group.id) });
+        setFitAfterArrange(false);
+      }
+      onFocusRequestHandled?.(focusRequest.requestId);
+      return;
+    }
     if (neighborhoodDepth) {
       focusConnections(focusRequest.conversationId, neighborhoodDepth);
       onFocusRequestHandled?.(focusRequest.requestId);
@@ -3581,14 +3610,16 @@ export default function ConversationGraphView({
     const nextScope: GraphScope = nextMode === "focus"
       ? { kind: "focus", conversationId: focusId, depth: scope.kind === "focus" ? scope.depth : 1 } : baseScope;
     const modeCameras = rememberModeCamera();
-    const camera = modeCameras[nextMode];
-    const restoredCamera = camera?.scopeKey === JSON.stringify(nextScope) ? camera : null;
     const nextSelection = selectedConversationId ?? (nextMode === "focus" ? focusId : null);
+    // Back from Focus to the Map: the document at the ring's centre stays in view, centered.
+    const centerSelection = nextMode === "canvas" && scope.kind === "focus" && !!nextSelection;
+    const camera = modeCameras[nextMode];
+    const restoredCamera = !centerSelection && camera?.scopeKey === JSON.stringify(nextScope) ? camera : null;
     const nextDetail = detailLevel === "reader" ? "preview" : detailLevel;
-    revealedSelectionKeyRef.current = nextSelection ? `${nextSelection}:${nextDetail}` : null;
-    restoringHistoryRef.current = true;
+    revealedSelectionKeyRef.current = nextSelection && !centerSelection ? `${nextSelection}:${nextDetail}` : null;
+    restoringHistoryRef.current = !centerSelection;
     fitAsOverviewRef.current = false;
-    setFitAfterArrange(!isGraphPanelMode(nextMode) && !restoredCamera);
+    setFitAfterArrange(!isGraphPanelMode(nextMode) && !restoredCamera && !centerSelection);
     navigation.navigate({ viewMode: nextMode, contentLens: "documents", modeCameras, scope: nextScope,
       documentViewMode: !isGraphPanelMode(nextMode) ? nextMode : !isGraphPanelMode(viewMode) ? viewMode : navigation.state.documentViewMode,
       scopeBeforeFocus: nextMode === "focus" ? baseScope : null,

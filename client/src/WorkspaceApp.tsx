@@ -788,6 +788,7 @@ function WorkspaceAppContent({
     openReader?: boolean;
     neighborhoodDepth?: number;
     preserveMapMode?: boolean;
+    keepViewMode?: boolean;
   } | null>(null);
   const graphFocusRequestCounterRef = useRef(0);
   // The Map view floating over the document ("Around this document"), not a switch to Map view.
@@ -5340,6 +5341,10 @@ function WorkspaceAppContent({
     setSearchQuery("");
     setMapModalOpen(false);
     setMainViewMode(nextViewMode);
+    // The Map opens on the document you were reading, in whichever Map tab (Map or Focus) it was left on.
+    if (nextViewMode === "graph" && mainViewMode !== "graph" && state.conversations[activeConversation.id]) {
+      setGraphFocusRequest({ conversationId: activeConversation.id, requestId: ++graphFocusRequestCounterRef.current, keepViewMode: true });
+    }
 
     if (isMobileViewport) {
       setLeftSidebarOpen(false);
