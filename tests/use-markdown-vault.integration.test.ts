@@ -135,7 +135,7 @@ test("the desktop app asks for a vault folder, opens a remembered one at launch 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(9);
 }, 15000);
 
-test("keys typed together share one save on this device, hiding or closing the app saves at once, and a cut-off save comes back", async () => {
+test("keys typed together share one save on this device, hiding or closing the app saves at once, a cut-off save comes back, and edits left in an older copy come back", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--typing-batch"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
   });
@@ -145,5 +145,5 @@ test("keys typed together share one save on this device, hiding or closing the a
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Typing save integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(4);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(5);
 }, 15000);

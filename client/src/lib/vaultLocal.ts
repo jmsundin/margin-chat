@@ -195,6 +195,53 @@ export function canRecoverWithFreshVaultCopy(userId: string): boolean {
   try { return !sessionStorage.getItem(recoveryKey(userId)); } catch { return false; }
 }
 
+const mergedCopyKey = (userId: string, folder: string) => `margin-chat-vault-merged-copy:${userId}:${folder}`;
+
+/**
+ * Older copies of this account's vault on this device: ones set aside when the browser couldn't open them
+ * and a fresh copy started. Edits they hold that never reached the cloud would otherwise be stranded there.
+ * Each is opened read-only; a copy that still can't be opened is skipped and tried again on a later start.
+ */
+export async function readStrandedVaultCopies(userId: string): Promise<{ folder: string; snapshot: VaultSnapshot }[]> {
+  const found: { folder: string; snapshot: VaultSnapshot }[] = [];
+  const [current, userName] = vaultCopyFolder(userId);
+  let root: FileSystemDirectoryHandle;
+  try {
+    const opened = await navigator.storage?.getDirectory?.();
+    if (!opened) return found;
+    root = opened;
+  } catch { return found; }
+  const folders: string[] = [];
+  try {
+    for await (const [name, handle] of (root as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries()) {
+      if (handle.kind === "directory" && name.startsWith("margin-chat-vaults") && name !== current) folders.push(name);
+    }
+  } catch { return found; }
+  for (const folder of folders.sort()) {
+    try { if (localStorage.getItem(mergedCopyKey(userId, folder))) continue; } catch { continue; }
+    try {
+      const vaults = await root.getDirectoryHandle(folder);
+      const directory = await vaults.getDirectoryHandle(userName);
+      const store = createJournalVaultStore({
+        open: async () => directory,
+        lock: (operation) => navigator.locks ? navigator.locks.request(`margin-chat-vault-copy:${userId}:${folder}`, operation) : operation(),
+      });
+      const snapshot = await store.read();
+      if (snapshot) found.push({ folder, snapshot });
+      else markStrandedVaultCopyMerged(userId, folder);
+    } catch (error) {
+      // No copy of this account in that folder: nothing to take from it.
+      if (error instanceof DOMException && error.name === "NotFoundError") markStrandedVaultCopyMerged(userId, folder);
+    }
+  }
+  return found;
+}
+
+/** The copy's edits are in the current vault now (or it had none), so it isn't read again. It is never deleted. */
+export function markStrandedVaultCopyMerged(userId: string, folder: string): void {
+  try { localStorage.setItem(mergedCopyKey(userId, folder), new Date().toISOString()); } catch { /* read again next time */ }
+}
+
 /** The notice for a vault opened in memory, naming what Chrome refused so a report says which step failed. */
 export function inMemoryVaultNotice(refused: LocalVaultUnavailableError | null): string {
   const cause = refused?.cause instanceof DOMException ? refused.cause.name : null;
