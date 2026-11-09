@@ -93,6 +93,9 @@ export function getMermaidConfig(theme: MermaidTheme): MermaidConfig {
     htmlLabels: false,
     securityLevel: "strict",
     startOnLoad: false,
+    // Without this, a diagram Mermaid can't read leaves its "Syntax error in text" bomb at the
+    // bottom of the page (its scratch element in <body> is never removed); we show our own error.
+    suppressErrorRendering: true,
     theme: "base",
     themeVariables: mermaidThemeVariables(theme),
     themeCSS: mermaidThemeCSS(theme),
@@ -151,6 +154,19 @@ export function parseDiagramStages(source: string): DiagramStage[] | null {
 
 type MermaidApi = typeof import("mermaid").default;
 
+/** Mermaid draws in a scratch element in <body>; when drawing fails, make sure none is left on the page. */
+export async function renderMermaid(mermaid: MermaidApi, renderId: string, source: string) {
+  try {
+    return await mermaid.render(renderId, source);
+  } catch (error) {
+    for (const id of [`d${renderId}`, `i${renderId}`, renderId]) {
+      const element = document.getElementById(id);
+      if (element?.parentElement === document.body) element.remove();
+    }
+    throw error;
+  }
+}
+
 /**
  * Draws one Mermaid block's diagram. A staged diagram draws every stage, stacked in one place so the
  * panel keeps the height of its tallest stage, and shows the one its stepper points at.
@@ -159,7 +175,7 @@ type MermaidApi = typeof import("mermaid").default;
 export async function drawMermaidBlock(mermaid: MermaidApi, block: HTMLElement, diagram: HTMLElement, source: string, renderId: string) {
   const stages = block.classList.contains("is-staged") ? parseDiagramStages(source) : null;
   if (!stages) {
-    const { svg, bindFunctions } = await mermaid.render(renderId, source);
+    const { svg, bindFunctions } = await renderMermaid(mermaid, renderId, source);
     diagram.innerHTML = svg;
     bindFunctions?.(diagram);
     const drawn = diagram.querySelector<SVGSVGElement>("svg");
@@ -170,7 +186,7 @@ export async function drawMermaidBlock(mermaid: MermaidApi, block: HTMLElement, 
   }
   const views: HTMLElement[] = [];
   for (const [index, stage] of stages.entries()) {
-    const { svg, bindFunctions } = await mermaid.render(`${renderId}-stage-${index}`, stage.source);
+    const { svg, bindFunctions } = await renderMermaid(mermaid, `${renderId}-stage-${index}`, stage.source);
     const view = document.createElement("div");
     view.className = "diagram-stage-view";
     view.innerHTML = svg;

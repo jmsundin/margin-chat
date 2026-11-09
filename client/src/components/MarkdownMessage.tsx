@@ -11,7 +11,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { renderMarkdownToHtml, renderObsidianMarkdownToHtml } from "../lib/markdown";
-import { DIAGRAM_ENLARGE_EVENT, MERMAID_BLOCK_SELECTOR, drawMermaidBlock, getMermaidConfig, parseDiagramStages, setMermaidStatus } from "../lib/mermaidDiagrams";
+import { DIAGRAM_ENLARGE_EVENT, MERMAID_BLOCK_SELECTOR, drawMermaidBlock, getMermaidConfig, parseDiagramStages, renderMermaid, setMermaidStatus } from "../lib/mermaidDiagrams";
 import { getHeadingOutlineId } from "../lib/chatOutline";
 import {
   buildMessageDecorations,
@@ -695,7 +695,8 @@ export default function MarkdownMessage({
       mermaid.initialize(getMermaidConfig(theme));
 
       try {
-        const { svg } = await mermaid.render(
+        const { svg } = await renderMermaid(
+          mermaid,
           buildMermaidRenderId(
             `${messageId}-viewer-${viewerRenderCountRef.current}`,
             viewerRenderCountRef.current,
