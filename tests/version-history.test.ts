@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { VaultSync } from "../client/src/lib/vaultSync";
 import { diffWords, listDocumentVersions, versionText } from "../client/src/lib/versionHistory";
+import { SNAPSHOT_INTERVAL_MS, keepEditSnapshots, latestSnapshotTimes } from "../client/src/lib/vaultSnapshots";
+import { emptyVault } from "../client/src/lib/vaultTypes";
 import type { VaultFile, VaultManifest, VaultSnapshot, VaultStore, VaultTransport } from "../client/src/lib/vaultTypes";
 import { createVaultService } from "../server/vault/index.mjs";
 import { digest } from "../server/vault/storage.mjs";
@@ -123,5 +125,74 @@ describe("word differences", () => {
       expect(parts.filter((part) => part.kind !== "added").map((part) => part.text).join("")).toBe(from);
       expect(parts.filter((part) => part.kind !== "removed").map((part) => part.text).join("")).toBe(to);
     }
+  });
+});
+
+describe("automatic versions while editing", () => {
+  const minute = 60_000;
+  const start = Date.parse("2026-11-10T09:00:00.000Z");
+  function edit(snapshot: ReturnType<typeof emptyVault>, body: string, latest: Map<string, number>, at: number) {
+    const before = { ...snapshot.files };
+    const next = { ...snapshot, files: { ...snapshot.files, "Plan.md": doc("plan", body) } };
+    keepEditSnapshots(next, before, latest, at);
+    return next;
+  }
+  const versions = (snapshot: ReturnType<typeof emptyVault>) => listDocumentVersions(snapshot.files, "plan", "Plan.md")
+    .map((record) => [record.reason, versionText("Plan.md", record.versions[0].file)]);
+
+  test("the earlier text is kept at most once every ten minutes while a document changes", () => {
+    let vault = emptyVault();
+    const latest = new Map<string, number>();
+    vault = edit(vault, "# Plan\n", latest, start);
+    vault = edit(vault, "# Plan\n\nFirst draft.\n", latest, start + minute);
+    // An empty new document has nothing worth keeping.
+    expect(versions(vault)).toEqual([]);
+    vault = edit(vault, "# Plan\n\nSecond draft.\n", latest, start + 2 * minute);
+    expect(versions(vault)).toEqual([["snapshot", "# Plan\n\nFirst draft."]]);
+    vault = edit(vault, "# Plan\n\nThird draft.\n", latest, start + 5 * minute);
+    expect(versions(vault)).toHaveLength(1);
+    vault = edit(vault, "# Plan\n\nFourth draft.\n", latest, start + 2 * minute + SNAPSHOT_INTERVAL_MS);
+    expect(versions(vault)).toEqual([["snapshot", "# Plan\n\nThird draft."], ["snapshot", "# Plan\n\nFirst draft."]]);
+    // After a reload the times are read back from the vault, so no extra version is made.
+    const reread = latestSnapshotTimes(vault.files);
+    expect(reread.get("Plan.md")).toBe(start + 2 * minute + SNAPSHOT_INTERVAL_MS);
+    vault = edit(vault, "# Plan\n\nFifth draft.\n", reread, start + 3 * minute + SNAPSHOT_INTERVAL_MS);
+    expect(versions(vault)).toHaveLength(2);
+    // Automatic versions are never shown as clashes.
+    expect(vault.conflicts).toEqual([]);
+  });
+
+  test("old automatic versions thin out to one a day and go after a month; other records stay", async () => {
+    const { snapshot: clashed } = await clash();
+    let vault = { ...clashed, files: { ...clashed.files } };
+    const latest = new Map<string, number>();
+    const day = 24 * 60 * minute;
+    const base = Date.now() - 40 * day;
+    // Two versions a day for 40 days.
+    for (let index = 0; index < 80; index += 1) vault = edit(vault, `# Plan\n\nDraft ${index}.\n`, latest, base + index * (day / 2) + 1);
+    const records = listDocumentVersions(vault.files, "plan", "Plan.md");
+    const snapshots = records.filter((record) => record.reason === "snapshot");
+    const now = base + 79 * (day / 2) + 1;
+    expect(snapshots.every((record) => now - Date.parse(record.at) <= 30 * day)).toBe(true);
+    const older = snapshots.filter((record) => now - Date.parse(record.at) > day).map((record) => record.at.slice(0, 10));
+    expect(new Set(older).size).toBe(older.length);
+    expect(records.filter((record) => record.reason === "clash")).toHaveLength(1);
+    // Removed versions leave no files behind.
+    const ids = new Set(records.map((record) => record.id));
+    expect(Object.keys(vault.files).filter((path) => path.startsWith(".margin-chat/history/")).every((path) => ids.has(path.split("/")[2]))).toBe(true);
+  });
+
+  test("the app's sync engine keeps versions as documents are edited, and they sync", async () => {
+    const remote = cloud(); const computer = remote.device(); const phone = remote.device();
+    computer.keepEditVersions = true;
+    await write(computer, "Plan.md", doc("plan", "# Plan\n\nWe meet on Monday.\n"));
+    await write(computer, "Plan.md", doc("plan", "# Plan\n\nWe meet on Tuesday.\n"));
+    await computer.sync();
+    const synced = await phone.sync();
+    expect(listDocumentVersions(synced.files, "plan", "Plan.md").map((record) => [record.reason, versionText("Plan.md", record.versions[0].file)]))
+      .toEqual([["snapshot", "# Plan\n\nWe meet on Monday."]]);
+    // An engine that doesn't keep versions (the default) adds nothing.
+    await write(phone, "Plan.md", doc("plan", "# Plan\n\nWe meet on Friday.\n"));
+    expect(listDocumentVersions((await phone.read()).files, "plan", "Plan.md")).toHaveLength(1);
   });
 });

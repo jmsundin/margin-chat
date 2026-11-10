@@ -14,6 +14,8 @@
 .version-history-close:hover { color: var(--ink); background: var(--button-active-surface, transparent); }
 .version-history-list { list-style: none; margin: 0; padding: 12px 20px; display: grid; gap: 12px; max-height: 38vh; overflow-y: auto; border-bottom: 1px solid var(--line); }
 .version-history-list ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.version-history-version-note { color: var(--muted); font-size: .8rem; }
+.version-history-list > li > .version-history-version { margin-left: -8px; width: calc(100% + 8px); }
 .version-history-when { margin: 0; color: var(--muted); font-size: .76rem; }
 .version-history-version {
   width: 100%; text-align: left; border: 0; background: transparent; color: var(--ink); cursor: pointer;

@@ -6597,7 +6597,7 @@ function WorkspaceAppContent({
           {versionHistory && state.conversations[versionHistory.id] ? (() => {
             const { path, current, records } = vault.documentVersions(versionHistory.id);
             return <VersionHistoryPanel key={versionHistory.id} title={state.conversations[versionHistory.id].title} path={path} current={current}
-              records={records} onLoad={vault.loadVersionHistory} onClose={() => setVersionHistory(null)}
+              records={records} onLoad={() => vault.loadVersionHistory(versionHistory.id)} onClose={() => setVersionHistory(null)}
               onRestore={(version) => vault.restoreVersion(versionHistory.id, version.file)} />;
           })() : null}
           {noteChatFor && state.conversations[noteChatFor] ? (() => {

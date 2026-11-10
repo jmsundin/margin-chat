@@ -21,6 +21,13 @@ const ROLE_LABELS: Record<DocumentVersion["role"], string> = {
   kept: "The wording that was kept",
   device: "One device's wording",
   "before-restore": "The text before you restored",
+  snapshot: "Saved while editing",
+};
+
+const RECORD_LABELS: Record<VersionRecord["reason"], string> = {
+  clash: "Edited on two devices at the same time",
+  restore: "Restored an earlier version",
+  snapshot: "Saved while editing",
 };
 
 export function formatVersionTime(at: string, now = new Date()): string {
@@ -94,8 +101,13 @@ export default function VersionHistoryPanel({ title, path, current, records, ini
     </header>
     {records.length ? <>
       <ol className="version-history-list" aria-label="Earlier versions">
-        {records.map((record) => <li key={record.id}>
-          <p className="version-history-when">{formatVersionTime(record.at)} · {record.reason === "clash" ? "Edited on two devices at the same time" : "Restored an earlier version"}</p>
+        {records.map((record) => record.reason === "snapshot" ? <li key={record.id}>
+          {/* An automatic version is one line: when it was saved. */}
+          {record.versions.map((version) => <button key={version.key} type="button" className="version-history-version"
+            aria-pressed={version.key === selectedKey} onClick={() => { setSelectedKey(version.key); setStatus(null); }}>
+            {formatVersionTime(record.at)} <span className="version-history-version-note">· {RECORD_LABELS.snapshot}</span></button>)}
+        </li> : <li key={record.id}>
+          <p className="version-history-when">{formatVersionTime(record.at)} · {RECORD_LABELS[record.reason]}</p>
           <ul>{record.versions.map((version) => <li key={version.key}>
             <button type="button" className="version-history-version" aria-pressed={version.key === selectedKey}
               onClick={() => { setSelectedKey(version.key); setStatus(null); }}>{ROLE_LABELS[version.role]}</button>
@@ -114,7 +126,7 @@ export default function VersionHistoryPanel({ title, path, current, records, ini
         </div>
       </section> : null}
     </> : loading ? <p className="version-history-empty" role="status">Looking for earlier versions…</p>
-      : <p className="version-history-empty">No earlier versions yet. When this document is changed on two devices at the same time,
-      or you restore an earlier version, the other text is kept here.</p>}
+      : <p className="version-history-empty">No earlier versions yet. While you edit, the earlier text is saved here every few minutes,
+      and so is the other wording when this document is changed on two devices at the same time.</p>}
   </aside>, document.body);
 }
