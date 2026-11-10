@@ -118,3 +118,67 @@
   .flashcard-review-head { flex-wrap: wrap; }
   .flashcard-transfer { order: 3; width: 100%; }
 }
+
+/* Study / All cards switch, and the layout switch in the card browser. */
+.flashcard-segmented { background: var(--button-surface); border-radius: 9px; display: inline-flex; gap: 2px; padding: 2px; }
+.flashcard-segmented button {
+  background: transparent; border: 0; border-radius: 7px; color: var(--muted); cursor: pointer; font-size: .78rem; padding: 5px 12px;
+}
+.flashcard-segmented button[aria-pressed="true"] { background: var(--bg, #0b1115); box-shadow: 0 0 0 1px var(--line-strong); color: var(--ink); }
+.flashcard-secondary {
+  background: transparent; border: 1px solid var(--line-strong); border-radius: 10px; color: var(--ink); cursor: pointer;
+  font-size: .88rem; margin: 6px 6px 0; min-height: 46px; padding: 10px 18px;
+}
+.flashcard-secondary:hover { border-color: var(--ink); }
+
+/* All cards: decks of questions, each opening to its answer. */
+.flashcard-browser { align-self: flex-start; display: flex; flex-direction: column; gap: 26px; max-width: 980px; width: 100%; }
+.flashcard-browser-tools { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.flashcard-browser-tools input {
+  background: var(--button-surface); border: 1px solid transparent; border-radius: 9px; color: var(--ink); flex: 1;
+  font: inherit; font-size: .86rem; min-width: 160px; padding: 7px 12px;
+}
+.flashcard-browser-tools input:focus { border-color: var(--line-strong); outline: none; }
+.flashcard-browser .flashcard-browser-toggle {
+  background: transparent; border: 0; border-radius: 7px; color: var(--muted); cursor: pointer; font-size: .78rem; padding: 6px 10px;
+}
+.flashcard-browser-toggle:hover { color: var(--ink); }
+.flashcard-deck-head { align-items: baseline; border-bottom: 1px solid var(--line-strong); display: flex; gap: 10px; padding-bottom: 8px; }
+.flashcard-deck-head h3 { font-size: .95rem; font-weight: 600; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flashcard-deck-head span { color: var(--muted); flex: 1; font-size: .76rem; white-space: nowrap; }
+.flashcard-deck-head button { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .76rem; padding: 2px 4px; white-space: nowrap; }
+.flashcard-deck-head button:hover { color: var(--ink); }
+.flashcard-deck-cards { list-style: none; margin: 0; padding: 0; }
+.flashcard-deck-cards.is-list { display: flex; flex-direction: column; }
+.flashcard-deck-cards.is-list .flashcard-browse-card { border-bottom: 1px solid var(--line); }
+.flashcard-deck-cards.is-tiles { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); margin-top: 12px; }
+.flashcard-deck-cards.is-tiles .flashcard-browse-card { border: 1px solid var(--line-strong); border-radius: 12px; display: flex; flex-direction: column; }
+.flashcard-deck-cards.is-tiles .flashcard-browse-card:hover { border-color: var(--muted); }
+.flashcard-browse-card.is-suspended .flashcard-face { opacity: .55; }
+.flashcard-browse-front {
+  align-items: flex-start; background: transparent; border: 0; color: var(--ink); cursor: pointer; display: flex; gap: 12px;
+  font-size: 1rem; line-height: 1.45; padding: 12px 4px; text-align: left; width: 100%;
+}
+.is-tiles .flashcard-browse-front { flex: 1; flex-direction: column; justify-content: space-between; min-height: 96px; padding: 14px; }
+.flashcard-browse-front .flashcard-face { flex: 1; min-width: 0; }
+.flashcard-browse-front .flashcard-image, .flashcard-browse-back .flashcard-image { align-self: flex-start; max-height: 140px; }
+.flashcard-deck-cards.is-list .flashcard-browse-front:hover .flashcard-face { text-decoration: underline; text-decoration-color: var(--line-strong); }
+.flashcard-status {
+  border-radius: 99px; color: var(--muted); flex: none; font-family: var(--paper-sans, system-ui, sans-serif); font-size: .68rem;
+  font-variant-numeric: tabular-nums; margin-top: 3px; padding: 2px 8px; white-space: nowrap;
+}
+.flashcard-status.is-new { background: var(--sage-soft); color: var(--sage); }
+.flashcard-status.is-due { background: var(--accent-soft); color: var(--ink); }
+.flashcard-browse-back {
+  border-left: 2px solid var(--line-strong); color: var(--muted); font-size: .94rem;
+  line-height: 1.45; margin: 0 4px 14px; padding: 2px 0 2px 12px;
+}
+.is-tiles .flashcard-browse-back { border-left: 0; border-top: 1px solid var(--line-strong); margin: 0 14px 12px; padding: 10px 0 0; }
+.flashcard-browse-actions { align-items: center; color: var(--muted); display: flex; flex-wrap: wrap; font-family: var(--paper-sans, system-ui, sans-serif); font-size: .72rem; gap: 12px; margin-top: 10px; }
+.flashcard-browse-actions button { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: inherit; margin-left: auto; padding: 2px 0; text-decoration: underline; }
+.flashcard-browse-actions button:hover { color: var(--ink); }
+@media (max-width: 640px) {
+  .flashcard-view-switch { order: 1; }
+  .flashcard-review-close { order: 2; }
+  .flashcard-deck-cards.is-tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}

@@ -4,10 +4,9 @@ import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { buildStudyQueue, FLASHCARD_RATINGS, formatInterval, previewRatings, type FlashcardRating } from "../lib/flashcardSchedule";
 import { useVaultMedia } from "../lib/vaultMedia";
 import { newStudiedToday, type FlashcardsController, type ScheduledCard } from "../lib/useFlashcards";
+import { answerInSession, refreshSession, removeFromSession, startSession, type StudySession } from "../lib/flashcardSession";
+import FlashcardBrowser from "./FlashcardBrowser";
 import "./FlashcardReview.css";
-
-/** Cards answered within this long come back in the same session (learning steps). */
-const LEARN_AHEAD_MS = 20 * 60_000;
 
 function VaultImage({ target, alt }: { target: string; alt: string }) {
   const media = useVaultMedia();
@@ -98,11 +97,13 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
   const { scheduled, settings, answer, undo, suspend, loaded } = flashcards;
   const pool = useMemo(() => (docIds ? scheduled.filter((entry) => docIds.has(entry.card.docId)) : scheduled), [docIds, scheduled]);
   // The session's order is fixed when it starts, so a card doesn't jump while it is shown.
-  const [session, setSession] = useState<{ order: string[]; later: Array<{ id: string; due: number }> } | null>(null);
+  const [session, setSession] = useState<StudySession | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const [lastAnswer, setLastAnswer] = useState<{ reviewId: string; cardId: string; session: NonNullable<typeof session> } | null>(null);
+  const [view, setView] = useState<"study" | "browse">("study");
+  const [lastAnswer, setLastAnswer] = useState<{ reviewId: string; cardId: string; session: StudySession } | null>(null);
   const [doneCount, setDoneCount] = useState(0);
   const shownAt = useRef(Date.now());
+  const grading = useRef(false);
   const dialog = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -114,46 +115,44 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
       ? buildStudyQueue(pool, now, { newPerDay: settings.newPerDay, newStudiedToday: newStudiedToday(scheduled, now) })
       : flashcards.queue;
     const order = [...learning, ...review, ...fresh].map((entry) => entry.card.id);
-    if (!session || order.length) setSession({ order, later: [] });
+    if (!session || order.length) setSession(startSession(order, now));
   }, [docIds, doneCount, flashcards.queue, loaded, pool, scheduled, session, settings.newPerDay]);
 
   const byId = useMemo(() => new Map(pool.map((entry) => [entry.card.id, entry])), [pool]);
+  const has = useCallback((id: string) => byId.has(id), [byId]);
   // While only cards still being learned are left, look again as they come due.
   const [tick, setTick] = useState(0);
-  const waitingForLater = Boolean(session && session.later.length);
+  const waitingForLater = Boolean(session && !session.current && session.later.length);
   useEffect(() => {
     if (!waitingForLater) return;
     const timer = window.setInterval(() => setTick((value) => value + 1), 15_000);
     return () => window.clearInterval(timer);
   }, [waitingForLater]);
-  const current: ScheduledCard | null = useMemo(() => {
-    if (!session) return null;
-    const now = Date.now();
-    const dueLater = session.later.filter((entry) => entry.due <= now).sort((a, b) => a.due - b.due)[0];
-    const id = dueLater?.id ?? session.order.find((cardId) => byId.has(cardId)) ??
-      [...session.later].sort((a, b) => a.due - b.due).find((entry) => entry.due <= now + LEARN_AHEAD_MS)?.id;
-    return id ? byId.get(id) ?? null : null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [byId, session, tick]);
+  // The card on screen stays put; only an empty screen, or a card that no longer exists, picks another.
+  useEffect(() => {
+    if (!session) return;
+    const next = refreshSession(session, Date.now(), has);
+    if (next !== session) setSession(next);
+  }, [has, session, tick]);
+  const current: ScheduledCard | null = session?.current ? byId.get(session.current) ?? null : null;
 
-  useEffect(() => { shownAt.current = Date.now(); setRevealed(false); }, [current?.card.id]);
+  useEffect(() => { shownAt.current = Date.now(); setRevealed(false); }, [current?.card.id, session?.turn]);
   useEffect(() => { dialog.current?.focus(); }, []);
 
   const preview = useMemo(() => (current ? previewRatings(current.reviews, Date.now(), settings) : null), [current, settings]);
 
   const grade = useCallback(async (rating: FlashcardRating) => {
-    if (!current || !session || !revealed) return;
+    // A second key press while the first answer is being saved would grade the next card unseen.
+    if (!current || !session || !revealed || grading.current) return;
+    grading.current = true;
     const before = session;
-    const review = await answer(current.card.id, rating, Date.now() - shownAt.current);
+    let review;
+    try { review = await answer(current.card.id, rating, Date.now() - shownAt.current); } finally { grading.current = false; }
     const due = preview?.[rating] ?? Date.now();
-    const order = session.order.filter((id) => id !== current.card.id);
-    const later = session.later.filter((entry) => entry.id !== current.card.id);
-    // Short steps come back in this session; longer ones wait for their day.
-    if (due - Date.now() <= 60 * 60_000) later.push({ id: current.card.id, due });
-    setSession({ order, later });
+    setSession(answerInSession(session, current.card.id, due, Date.now(), has));
     setLastAnswer({ reviewId: review.id, cardId: current.card.id, session: before });
     setDoneCount((count) => count + 1);
-  }, [answer, current, preview, revealed, session]);
+  }, [answer, current, has, preview, revealed, session]);
 
   const takeBack = useCallback(() => {
     if (!lastAnswer || !undo(lastAnswer.reviewId)) return;
@@ -165,8 +164,8 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
   const skipSuspend = useCallback(() => {
     if (!current || !session) return;
     suspend(current.card.id, true);
-    setSession({ order: session.order.filter((id) => id !== current.card.id), later: session.later.filter((entry) => entry.id !== current.card.id) });
-  }, [current, session, suspend]);
+    setSession(removeFromSession(session, current.card.id, Date.now(), has));
+  }, [current, has, session, suspend]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -178,7 +177,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
         if (lastAnswer) { event.preventDefault(); takeBack(); }
         return;
       }
-      if (event.metaKey || event.ctrlKey) return;
+      if (event.metaKey || event.ctrlKey || view !== "study") return;
       if (!revealed && (event.key === " " || event.key === "Enter")) { event.preventDefault(); setRevealed(true); return; }
       if (revealed) {
         const choice = FLASHCARD_RATINGS.find((item) => item.key === event.key);
@@ -188,7 +187,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [grade, lastAnswer, onClose, revealed, takeBack]);
+  }, [grade, lastAnswer, onClose, revealed, takeBack, view]);
 
   const remaining = session ? new Set([...session.order.filter((id) => byId.has(id)), ...session.later.map((entry) => entry.id)]).size : 0;
   const nextDue = useMemo(() => {
@@ -204,7 +203,11 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
           <span>Review</span>
           <strong>{title}</strong>
         </div>
-        {session && (current || remaining) ? <span className="flashcard-review-count" aria-live="polite">{doneCount} done · {remaining} left</span> : null}
+        {pool.length || flashcards.totalCards ? <div className="flashcard-segmented flashcard-view-switch" role="tablist" aria-label="View">
+          <button type="button" role="tab" aria-selected={view === "study"} aria-pressed={view === "study"} onClick={() => setView("study")}>Study</button>
+          <button type="button" role="tab" aria-selected={view === "browse"} aria-pressed={view === "browse"} onClick={() => setView("browse")}>Browse</button>
+        </div> : null}
+        {view === "study" && session && (current || remaining) ? <span className="flashcard-review-count" aria-live="polite">{doneCount} done · {remaining} left</span> : null}
         {onImportAnki || onExportAnki ? <div className="flashcard-transfer">
           {onImportAnki ? <>
             <input ref={fileInput} type="file" accept=".apkg,.colpkg" hidden onChange={(event) => {
@@ -225,7 +228,8 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
         {!transfer.busy ? <button type="button" onClick={() => setTransfer(null)} aria-label="Dismiss">×</button> : null}
       </p> : null}
       <main className="flashcard-review-body">
-        {!loaded || !session ? <p className="flashcard-review-note">Loading cards…</p>
+        {view === "browse" ? <FlashcardBrowser flashcards={flashcards} docIds={docIds} onOpenDocument={onOpenDocument}/>
+          : !loaded || !session ? <p className="flashcard-review-note">Loading cards…</p>
           : current ? (
             <article className={`flashcard-card${revealed ? " is-revealed" : ""}`} aria-live="polite">
               <FlashcardFace markdown={current.card.front}/>
@@ -244,7 +248,8 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
                 <h2>{doneCount ? "That's everything for now." : "Nothing due right now."}</h2>
                 {waiting ? <p>{remaining} card{remaining === 1 ? "" : "s"} you're learning come back in {formatInterval(waiting - Date.now())}.</p>
                   : nextDue ? <p>Next card is due in {formatInterval(nextDue - Date.now())}.</p> : null}
-                {waiting ? <button type="button" className="flashcard-primary" onClick={() => setSession({ order: session.later.map((entry) => entry.id), later: [] })}>Study them now</button> : null}
+                <button type="button" className="flashcard-secondary" onClick={() => setView("browse")}>See all cards</button>
+                {waiting ? <button type="button" className="flashcard-primary" onClick={() => setSession(startSession([...session.later].sort((a, b) => a.due - b.due).map((entry) => entry.id), Date.now(), has))}>Study them now</button> : null}
               </> : <>
                 <h2>No cards yet</h2>
                 {syntaxHelp()}
@@ -254,7 +259,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
           )}
       </main>
 
-      {current ? (
+      {current && view === "study" ? (
         <div className="flashcard-review-actions">
           {!revealed ? (
             <button type="button" className="flashcard-primary flashcard-show" onClick={() => setRevealed(true)} autoFocus>
