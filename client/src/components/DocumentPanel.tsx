@@ -79,6 +79,8 @@ export interface DocumentPanelProps {
   /** Horizontal tabs of this document and its siblings, above its header. */
   /** Shown after the document's text, such as where to keep reading. */
   bodyFooter?: ReactNode;
+  /** A one-line notice at the top of the document's text, such as an edit made on two devices at once. */
+  notice?: ReactNode;
   /** A roadmap document's stages and steps, drawn above its notes. */
   roadmap?: ReactNode;
   /** The "Tell the AI: …" line above the document's text. */
@@ -576,6 +578,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
+      {props.notice}
       {props.pageBar && editorMounted ? null : props.aiInstruction}
       {props.roadmap}
       {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}

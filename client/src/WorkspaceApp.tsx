@@ -48,6 +48,7 @@ import {
 import BranchRail from "./components/BranchRail";
 import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
+import VersionHistoryPanel from "./components/VersionHistoryPanel";
 import { resolveWikiLinkDocument, wikiLinkSuggestions, type WikiLinkDocument } from "./lib/wikiLinkSuggestions";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
@@ -820,6 +821,8 @@ function WorkspaceAppContent({
   const [resizingChatPanelConversationId, setResizingChatPanelConversationId] =
     useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  /** The document whose Version history is open. */
+  const [versionHistory, setVersionHistory] = useState<{ id: string } | null>(null);
   const [selectionResponseDestination, setSelectionResponseDestination] = useState<"inline" | "side">("side");
   const [selectionReplaceText, setSelectionReplaceText] = useState(false);
   const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
@@ -5586,7 +5589,8 @@ function WorkspaceAppContent({
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
-        onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined} fileManager={fileManagerName()}
+        onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
+        onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} fileManager={fileManagerName()}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
@@ -5652,7 +5656,8 @@ function WorkspaceAppContent({
       pinned={dock?.pinned} onTogglePin={dock ? () => dock.onTogglePin() : undefined}
       onClose={dock ? () => dock.onClose() : undefined} onRename={handleRenameThread}
       onToggleHiddenFromAI={handleToggleHiddenFromAI}
-      onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined} fileManager={fileManagerName()}
+      onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
+        onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} fileManager={fileManagerName()}
       groups={state.groups} onAssignGroup={handleAssignConversationGroup} />;
   }
 
@@ -5693,6 +5698,12 @@ function WorkspaceAppContent({
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
         onChange={(change) => handleRoadmapChange(conversation.id, change)}
         onOpen={(target) => handleNavigateDocumentConnector({ conversationId: target.docId, blockId: target.blockId })} /> : undefined}
+      notice={view === "chat" && vault.clashedDocuments?.[conversation.id] ? <p className="version-clash-notice" role="status">
+        Also changed on another device at the same time.
+        <button type="button" onClick={() => setVersionHistory({ id: conversation.id })}>See both versions</button>
+        <button type="button" className="version-clash-dismiss" aria-label="Dismiss: keep the document as it is"
+          onClick={() => void vault.resolveConflict(vault.clashedDocuments?.[conversation.id], "current").catch(() => undefined)}>×</button>
+      </p> : undefined}
       bodyFooter={view === "chat" && navigationStyle === "reading" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
       fullScreenToggle={view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}
@@ -6583,6 +6594,12 @@ function WorkspaceAppContent({
               onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)} />}
           /> : null}
 
+          {versionHistory && state.conversations[versionHistory.id] ? (() => {
+            const { path, current, records } = vault.documentVersions(versionHistory.id);
+            return <VersionHistoryPanel key={versionHistory.id} title={state.conversations[versionHistory.id].title} path={path} current={current}
+              records={records} onLoad={vault.loadVersionHistory} onClose={() => setVersionHistory(null)}
+              onRestore={(version) => vault.restoreVersion(versionHistory.id, version.file)} />;
+          })() : null}
           {noteChatFor && state.conversations[noteChatFor] ? (() => {
             const chat = findNoteChat(state.conversations, noteChatFor);
             return <NoteChatPanel key={noteChatFor} open title={state.conversations[noteChatFor].title} messages={chat?.messages ?? []}
