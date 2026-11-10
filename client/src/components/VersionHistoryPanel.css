@@ -1,0 +1,51 @@
+/* Version history: the same paper sheet as Ask about this note, at the right edge. */
+.version-history {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 60;
+  width: min(440px, 100vw); display: flex; flex-direction: column;
+  background: var(--panel, var(--bg)); color: var(--ink);
+  border-left: 1px solid var(--line);
+  box-shadow: -18px 0 40px rgba(40, 32, 20, 0.06);
+  font-family: var(--paper-sans, inherit);
+}
+.version-history-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 20px 12px; border-bottom: 1px solid var(--line); }
+.version-history-head h2 { margin: 0; font-family: var(--paper-serif, inherit); font-size: 1.15rem; font-weight: 600; }
+.version-history-subtitle { margin: 2px 0 0; color: var(--muted); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
+.version-history-close { border: 0; background: transparent; color: var(--muted); font-size: 1.4rem; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.version-history-close:hover { color: var(--ink); background: var(--button-active-surface, transparent); }
+.version-history-list { list-style: none; margin: 0; padding: 12px 20px; display: grid; gap: 12px; max-height: 38vh; overflow-y: auto; border-bottom: 1px solid var(--line); }
+.version-history-list ul { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; }
+.version-history-when { margin: 0; color: var(--muted); font-size: .76rem; }
+.version-history-version {
+  width: 100%; text-align: left; border: 0; background: transparent; color: var(--ink); cursor: pointer;
+  font: inherit; font-size: .88rem; padding: 6px 8px; border-radius: 6px;
+}
+.version-history-version:hover, .version-history-version:focus-visible { background: var(--button-active-surface, rgba(0, 0, 0, .04)); }
+.version-history-version[aria-pressed="true"] { background: var(--button-active-surface, rgba(0, 0, 0, .06)); font-weight: 600; }
+.version-history-preview { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 12px 20px 16px; gap: 10px; }
+.version-history-legend { margin: 0; color: var(--muted); font-size: .8rem; }
+.version-history-text {
+  flex: 1; min-height: 0; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-family: var(--paper-serif, inherit); font-size: .95rem; line-height: 1.6;
+}
+.version-history ins { text-decoration: none; background: color-mix(in srgb, #16a34a 18%, transparent); border-radius: 3px; }
+.version-history del { color: var(--muted); text-decoration: line-through; background: color-mix(in srgb, #dc2626 12%, transparent); border-radius: 3px; }
+.version-history-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.version-history-restore {
+  border: 0; border-radius: 999px; padding: 8px 14px; cursor: pointer; font: inherit; font-size: .85rem; font-weight: 600;
+  background: var(--composer-send-bg, var(--ink)); color: var(--composer-send-ink, var(--bg));
+}
+.version-history-restore:disabled { opacity: .35; cursor: default; }
+.version-history-status { margin: 0; font-size: .8rem; color: var(--muted); }
+.version-history-status.is-error { color: #b42318; }
+.version-history-empty { margin: 0; padding: 16px 20px; color: var(--muted); font-size: .88rem; line-height: 1.5; }
+/* The one-line notice at the top of a document edited on two devices at once. */
+.version-clash-notice {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: .84rem; font-family: var(--paper-sans, inherit);
+}
+.version-clash-notice button { border: 0; background: transparent; padding: 0; font: inherit; cursor: pointer; color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.version-clash-notice .version-clash-dismiss { margin-left: auto; color: var(--muted); text-decoration: none; font-size: 1.1rem; line-height: 1; }
+@media (max-width: 640px) {
+  .version-history { width: 100vw; border-left: 0; padding-bottom: env(safe-area-inset-bottom); }
+  .version-history-version { padding: 10px 8px; }
+}

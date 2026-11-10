@@ -47,6 +47,8 @@ export interface DocumentMenuProps {
   onRename?: (id: string, title: string) => void;
   /** Desktop app with its own vault folder: show this document's file in Finder or Explorer. */
   onRevealInFolder?: (id: string) => void;
+  /** Opens Version history: earlier versions of this document to compare and restore. */
+  onVersionHistory?: (id: string) => void;
   /** What that's called here: Finder, Explorer or Files. */
   fileManager?: string;
   groups?: Record<string, ConversationGroup>;
@@ -63,7 +65,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, maximized = false, onToggleMaximize, onRename, onRevealInFolder, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -211,7 +213,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         if (event.key === "Tab") close(true);
       }}>
       {/* About the document, then making from it, then what AI may read, then its pane on screen. */}
-      {onTogglePin || onRename || onAssignGroup || onRevealInFolder ? <div role="group" className="document-menu-section">
+      {onTogglePin || onRename || onAssignGroup || onRevealInFolder || onVersionHistory ? <div role="group" className="document-menu-section">
         {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
           {pinned ? "Unpin document" : "Pin document"}
         </button> : null}
@@ -231,6 +233,8 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         </button> : null}
         {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
           onClick={() => action(onRevealInFolder)}>{`Show in ${fileManager}`}</button> : null}
+        {onVersionHistory ? <button type="button" role="menuitem" title="See earlier versions of this document and restore one."
+          onClick={() => action(onVersionHistory)}>Version history</button> : null}
       </div> : null}
       {spaceActions ? <div role="group" className="document-menu-section">
         <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={spacesOpen}
