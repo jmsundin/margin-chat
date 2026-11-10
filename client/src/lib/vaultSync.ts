@@ -20,6 +20,8 @@ type MergeRecovery = {
   base?: VaultFile | null;
   result?: VaultFile | null;
   conflicted?: boolean;
+  /** "restore": the record holds the text a restore from Version history replaced. */
+  reason?: "restore";
 };
 
 function preserveConflict(snapshot: VaultSnapshot, path: string, local: VaultFile | null, remote: VaultFile | null, sourcePath?: string, recovery: MergeRecovery = {}) {
@@ -46,7 +48,7 @@ function preserveConflict(snapshot: VaultSnapshot, path: string, local: VaultFil
       remoteCopy: remote ? remotePath : null, localEncoding: local?.encoding ?? "utf8", remoteEncoding: remote?.encoding ?? "utf8",
       automatic: true, conflicted: recovery.conflicted !== false,
       baseKnown: recovery.base !== undefined, baseCopy: recovery.base ? basePath : null,
-      resultCopy: result ? resultPath : null, resultDeleted: !result,
+      resultCopy: result ? resultPath : null, resultDeleted: !result, ...(recovery.reason ? { reason: recovery.reason } : {}),
       baseEncoding: recovery.base?.encoding ?? "utf8", resultEncoding: result?.encoding ?? "utf8",
       ...(sourcePath ? { sourcePath } : {}) }, null, 2),
     contentType: "application/json",
@@ -508,6 +510,24 @@ export class VaultSync {
       }
       snapshot.conflicts = snapshot.conflicts.filter((item) => item.id !== id);
       snapshot.dismissedRecoveryIds = [...new Set([...(snapshot.dismissedRecoveryIds ?? []), id])];
+      await this.write(snapshot);
+      return snapshot;
+    });
+  }
+
+  /**
+   * Puts an earlier version of a Markdown document back, from Version history. The text it replaces is kept
+   * as a version of its own first, so a restore never loses anything and can itself be undone.
+   */
+  restoreVersion(path: string, version: VaultFile) {
+    return this.store.lock(async () => {
+      const snapshot = (await this.store.read()) ?? emptyVault();
+      const current = snapshot.files[path];
+      if (!current || current.encoding || version.encoding || !/\.md$/iu.test(path)) throw new Error("Only a document's text can be restored.");
+      const selected = { ...version, content: preserveMarkdownFileLocation(version.content, current.content, path) };
+      if (sameVaultFile(selected, current)) return snapshot;
+      assignFile(snapshot, path, selected);
+      preserveConflict(snapshot, path, current, selected, undefined, { result: selected, conflicted: false, reason: "restore" });
       await this.write(snapshot);
       return snapshot;
     });

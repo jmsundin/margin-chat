@@ -37,6 +37,7 @@ import { DesktopVaultError, desktopSyncBridge, desktopVaultBridge, desktopVaultF
 import { isVaultFs } from "./vaultFsAccess";
 import type { MarkdownWorkspace } from "./workspaceMarkdown";
 import { historyVaultFiles, type HistoryChat, type HistoryImportReceipt } from "./chatHistoryImport";
+import { listDocumentVersions } from "./versionHistory";
 import { clearUnsavedEdits, createTabId, diffUnsavedEdits, readUnsavedEdits, removeUnsavedEditsKey, writeUnsavedEdits } from "./unsavedEdits";
 
 type StorageMode = "loading" | "fallback" | "local" | "server";
@@ -957,6 +958,18 @@ export function useMarkdownVault(args: {
     return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", check); };
   }, [ready, enabled, folderChosen, storageUserId, backupChecks]);
 
+  function documentPath(id: string) {
+    return workspaceFromVault(displayedFiles.current).manifest.files.find((record) => record.id === id)?.path;
+  }
+  const clashedDocuments = useMemo(() => {
+    const byPath = new Map(workspaceFromVault(displayedFiles.current).manifest.files.map((record) => [record.path, record.id]));
+    const result: Record<string, string> = {};
+    for (const conflict of conflicts) {
+      const id = byPath.get(conflict.path);
+      if (id && /\.md$/iu.test(conflict.path)) result[id] = conflict.id;
+    }
+    return result;
+  }, [conflicts]);
   const cloudDocuments = useMemo(() => !vaultIndex || !deferredPaths.size ? []
     : recentVaultEntries(vaultIndex.entries.filter((entry) => deferredPaths.has(entry.path))), [vaultIndex, deferredPaths]);
   const openingTitle = openingPath ? vaultIndex?.entries.find((entry) => entry.path === openingPath)?.title : null;
@@ -1313,6 +1326,35 @@ export function useMarkdownVault(args: {
     },
     async resolveConflict(id: string, choice: "local" | "remote" | "current") {
       await enqueue(async () => { await saveAppState(); await engine.resolve(id, choice); await persistAndPublish(); await saveAndRefresh(true); });
+    },
+    /** Documents edited on two devices at the same time whose notice hasn't been dismissed, by document id. */
+    clashedDocuments,
+    /** Earlier versions of a document, newest first, with where it lives now. */
+    documentVersions(id: string) {
+      const path = documentPath(id);
+      return { path, current: path ? displayedFiles.current[path] ?? null : null, records: listDocumentVersions(displayedFiles.current, id, path) };
+    },
+    /** A new device keeps saved versions in the cloud until they're asked for; this downloads them. */
+    async loadVersionHistory() {
+      await enqueue(async () => {
+        if (!mounted.current) return;
+        const snapshot = await engine.read();
+        const paths = Object.keys(snapshot.deferred ?? {}).filter((path) => path.startsWith(".margin-chat/history/"));
+        if (!paths.length) return;
+        await engine.hydrate(paths);
+        await saveAndRefresh(true);
+      });
+    },
+    /** Puts an earlier version back; the text it replaces becomes a version too. */
+    async restoreVersion(id: string, version: VaultFile) {
+      await enqueue(async () => {
+        await saveAppState();
+        const path = documentPath(id);
+        if (!path) throw new Error("This document isn't saved in the vault yet.");
+        await engine.restoreVersion(path, version);
+        await persistAndPublish();
+      });
+      scheduleAutomaticRefresh();
     },
   };
 }
