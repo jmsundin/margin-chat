@@ -229,6 +229,8 @@ const server = createServer(async (request, response) => {
                 ? "What human evidence shows a weekly dose avoids the immune effects, rather than mouse data?"
               : asked.includes("Answer the user's question about this note")
                 ? "The note's main claim is that rapamycin \"extends lifespan in mice\" by blocking mTOR. The weak link is the step to people: \"a weekly dose should be safe\" rests on the mouse data alone.\n\n### Try next\n\n- What human trials have tested weekly dosing?\n- Which immune side effects matter most at that dose?\n- Add a line on what result would change your mind."
+              : asked.includes("Write up to") && asked.includes("flashcards")
+                ? "1. What does rapamycin block? :: mTOR\n\n2. Autophagy ::: The cell's recycling of its own parts\n\n3. Rapamycin {{c1::extends lifespan}} in {{c2::mice}}.\n\nThese cards cover the main claim."
               : asked.includes("builds up in 3 to 5 stages")
                 ? "```mermaid\nflowchart LR\n%% stage: The drug\n  R[Rapamycin] --> M[mTOR blocked]\n%% stage: What it changes\n  M --> G[Less cell growth]\n  M --> A[More autophagy]\n%% stage: The claim\n  A --> L[Longer life in mice]\n%% stage: The open question\n  L -.-> H{Same in humans?}\n```"
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;

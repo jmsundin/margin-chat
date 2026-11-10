@@ -1,0 +1,35 @@
+.make-cards-backdrop { align-items: flex-start; background: rgba(0, 0, 0, .35); display: flex; inset: 0; justify-content: center; padding: 8vh 16px 16px; position: fixed; z-index: 85; }
+.make-cards {
+  background: var(--panel-strong, var(--bg)); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow);
+  color: var(--ink); display: flex; flex-direction: column; gap: 12px; max-height: 84vh; max-width: 640px; padding: 16px 18px; width: 100%;
+}
+.make-cards button, .make-cards input { font: inherit; }
+.make-cards-head { align-items: baseline; display: flex; gap: 8px; }
+.make-cards-head h2 { font-size: 1rem; font-weight: 600; margin: 0; }
+.make-cards-source { color: var(--muted); flex: 1; font-size: .8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.make-cards-close { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: 1.3rem; line-height: 1; padding: 2px 6px; }
+.make-cards-ask { display: flex; gap: 8px; }
+.make-cards-ask input {
+  background: var(--button-surface); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink);
+  flex: 1; font-size: 16px; min-width: 0; padding: 8px 10px;
+}
+.make-cards-primary { background: var(--ink); border: 0; border-radius: 8px; color: var(--bg, #0b1115); cursor: pointer; font-size: .84rem; font-weight: 600; padding: 8px 14px; white-space: nowrap; }
+.make-cards-primary:disabled { cursor: default; opacity: .5; }
+.make-cards-error { background: var(--accent-soft); border-radius: 8px; font-size: .8rem; margin: 0; padding: 8px 10px; }
+.make-cards-hint { color: var(--muted); font-size: .76rem; margin: 0; }
+.make-cards-list { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: 0; min-height: 0; overflow-y: auto; padding: 0; }
+.make-cards-list li { border: 1px solid var(--line); border-radius: 10px; opacity: .55; }
+.make-cards-list li.is-chosen { border-color: var(--line-strong); opacity: 1; }
+.make-cards-list label { align-items: flex-start; cursor: pointer; display: flex; gap: 10px; padding: 10px 12px; }
+.make-cards-list input { margin-top: 4px; }
+.make-cards-card { display: flex; flex: 1; flex-direction: column; font-family: var(--paper-serif, Georgia, serif); font-size: .95rem; gap: 4px; line-height: 1.45; min-width: 0; }
+.make-cards-card .flashcard-face { gap: 6px; }
+.make-cards-card .flashcard-text > :first-child { margin-top: 0; }
+.make-cards-card .flashcard-text > :last-child { margin-bottom: 0; }
+.make-cards-card .flashcard-text strong { color: var(--accent-strong, var(--accent)); }
+.make-cards-card .flashcard-image { max-height: 120px; }
+.make-cards-back { border-top: 1px dashed var(--line); color: var(--muted); padding-top: 4px; }
+.make-cards-more { color: var(--muted); font-family: var(--paper-sans, system-ui, sans-serif); font-size: .7rem; }
+.make-cards-foot { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
+.make-cards-foot > button:first-child { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .8rem; }
+@media (max-width: 640px) { .make-cards-backdrop { padding-top: 16px; } .make-cards-ask { flex-direction: column; } }

@@ -210,3 +210,16 @@ describe("flashcard sync on the server", () => {
     await expect(service.sync({ userId: "u1", body: { reviews: [{ ...review, id: "r2", rating: 7 }] } })).rejects.toThrow("not readable");
   });
 });
+
+describe("cards the AI suggests", () => {
+  test("keeps only cards, strips numbering, drops repeats of existing cards", async () => {
+    const { parseFlashcardReply } = await import("../client/src/lib/flashcardAI");
+    const existing = parseFlashcards("doc", "What does rapamycin block? :: mTOR");
+    const drafts = parseFlashcardReply([
+      "```", "1. What does rapamycin block? :: mTOR", "", "2. Autophagy ::: Recycling of cell parts", "",
+      "- Rapamycin {{c1::extends lifespan}} in {{c2::mice}}.", "", "These cards cover the main claim.", "```",
+    ].join("\n"), "doc", new Set(existing.map((card) => card.id)));
+    expect(drafts.map((draft) => draft.markdown)).toEqual(["Autophagy ::: Recycling of cell parts", "Rapamycin {{c1::extends lifespan}} in {{c2::mice}}."]);
+    expect(drafts.map((draft) => draft.cards.length)).toEqual([2, 2]);
+  });
+});

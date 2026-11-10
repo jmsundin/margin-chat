@@ -129,6 +129,8 @@ import RoadmapView from "./components/RoadmapView";
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
 import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
+import MakeCardsDialog from "./components/MakeCardsDialog";
+import { buildFlashcardAIMessage, parseFlashcardReply, type FlashcardDraft } from "./lib/flashcardAI";
 import AIInstructionLine from "./components/AIInstructionLine";
 import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
@@ -1421,6 +1423,50 @@ function WorkspaceAppContent({
     for (const { card } of flashcards.scheduled) counts.set(card.docId, (counts.get(card.docId) ?? 0) + 1);
     return counts;
   }, [flashcards.scheduled]);
+  const [makeCardsFor, setMakeCardsFor] = useState<string | null>(null);
+
+  /** The AI suggests cards from a document; they come back for the person to choose from. */
+  async function handleSuggestFlashcards(conversationId: string, focus: string, signal: AbortSignal): Promise<FlashcardDraft[]> {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) throw new Error("This document is no longer open.");
+    if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
+    const existing = [...flashcards.snapshot.cards.values()].filter((card) => card.docId === conversationId && !card.removed);
+    const prompt: Message = { id: createId("message"), role: "user", content: focus.trim() ? `Make flashcards about: ${focus.trim()}` : "Make flashcards from this document", createdAt: new Date().toISOString() };
+    const message = buildFlashcardAIMessage(conversation, prompt, {
+      focus, existingFronts: existing.map((card) => card.front), instruction: documentAIInstruction(currentStateRef.current.conversations, conversation),
+    });
+    try {
+      const { reply } = await requestChatReply({
+        ...prepareAIContext(currentStateRef.current.conversations, conversation, [message]),
+        ai: withJevConsent(conversation.ai, jevEnabled), expectedUserId: user.id,
+        conversation: await conversationRequestPayload(currentStateRef.current.conversations, conversation), messages: [message],
+        modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
+      });
+      return parseFlashcardReply(reply, conversationId, new Set(existing.map((card) => card.id)));
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) onAuthExpired();
+      else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
+      throw error;
+    } finally {
+      void onRefreshBilling();
+    }
+  }
+
+  /** Chosen cards go to the end of the document as AI-written lines the person can edit. */
+  function handleAddFlashcards(conversationId: string, drafts: FlashcardDraft[]) {
+    if (!drafts.length) return;
+    const now = new Date().toISOString();
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      const blockBase = createId("block");
+      const next = drafts.reduce((document, draft, index) => insertDocumentBlock(document, {
+        id: `${blockBase}:${index}`, kind: "markdown", content: draft.markdown, createdAt: now, updatedAt: now, authorship: "ai",
+      }, undefined, now), conversation);
+      return { ...current, conversations: { ...current.conversations, [conversationId]: next } };
+    });
+  }
+
   /** Each Anki deck becomes a document of cards; its review history comes with it. */
   async function handleImportAnki(file: File, onProgress: (message: string) => void) {
     const result = await importAnkiFile(file, { media: vault.media, createId: () => createId("conversation"), onProgress });
@@ -5645,6 +5691,7 @@ function WorkspaceAppContent({
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
+        onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCardsFor(id) : undefined}
         onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id) })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined} fileManager={fileManagerName()}
@@ -6801,6 +6848,10 @@ function WorkspaceAppContent({
         </div>
       </div>
     </div>
+    {makeCardsFor && state.conversations[makeCardsFor] ? <MakeCardsDialog title={state.conversations[makeCardsFor].title}
+      onGenerate={(focus, signal) => handleSuggestFlashcards(makeCardsFor, focus, signal)}
+      onAdd={(drafts) => handleAddFlashcards(makeCardsFor, drafts)}
+      onClose={() => setMakeCardsFor(null)}/> : null}
     {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
       onClose={() => setFlashcardReview(null)}
       onImportAnki={handleImportAnki}
