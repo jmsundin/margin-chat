@@ -55,6 +55,7 @@ import * as chatRuns from "./chatRunRepository.mjs";
 import * as publicMap from "./publicMapRepository.mjs";
 import * as topics from "./topicRepository.mjs";
 import * as library from "./libraryRepository.mjs";
+import * as flashcards from "./flashcardRepository.mjs";
 import * as passages from "./passageRepository.mjs";
 import { recordDesktopDownload } from "./downloadRepository.mjs";
 
@@ -441,6 +442,13 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     readTopicNeighbours: (args) => withClient((client) => topics.readTopicNeighbours(client, args)),
     readLandscape: (args) => withClient((client) => topics.readLandscape(client, args)),
     writeLandscape: (args) => withClient((client) => topics.writeLandscape(client, args)),
+    saveFlashcardChanges: (args) => withClient(async (client) => {
+      // All of a sync's rows land together or not at all, so the device can safely send them again.
+      await client.query("begin");
+      try { await flashcards.saveFlashcardChanges(client, args); await client.query("commit"); }
+      catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+    }),
+    readFlashcardChanges: (args) => withClient((client) => flashcards.readFlashcardChanges(client, args)),
     listLibraryFields: (args) => withClient((client) => library.listLibraryFields(client, args)),
     readLibraryField: (args) => withClient((client) => library.readLibraryField(client, args)),
     createLibraryField: (args) => withClient((client) => library.createLibraryField(client, args)),

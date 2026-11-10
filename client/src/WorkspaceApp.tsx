@@ -126,6 +126,8 @@ import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, res
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
 import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import RoadmapView from "./components/RoadmapView";
+import FlashcardReview from "./components/FlashcardReview";
+import { useFlashcards } from "./lib/useFlashcards";
 import AIInstructionLine from "./components/AIInstructionLine";
 import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
@@ -1410,6 +1412,25 @@ function WorkspaceAppContent({
   const closeCustomise = useCallback(() => setCustomiseOpen(false), []);
   /** The document whose Ask about this note panel is open. */
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
+  const flashcards = useFlashcards({ userId: user.id, conversations: state.conversations, enabled: vault.ready });
+  /** The open review: every card, or one document with its notes and side documents. */
+  const [flashcardReview, setFlashcardReview] = useState<{ title: string; docIds?: ReadonlySet<string> } | null>(null);
+  const flashcardCountByDoc = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const { card } of flashcards.scheduled) counts.set(card.docId, (counts.get(card.docId) ?? 0) + 1);
+    return counts;
+  }, [flashcards.scheduled]);
+  const documentFamilyIds = useCallback((rootId: string) => {
+    const ids = new Set<string>();
+    const queue = [rootId];
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (ids.has(id)) continue;
+      ids.add(id);
+      queue.push(...(currentStateRef.current.conversations[id]?.childIds ?? []));
+    }
+    return ids;
+  }, []);
   const [vaultAnswer, setVaultAnswer] = useState<VaultAnswerState | null>(null);
   const [mapSpotlight, setMapSpotlight] = useState<MapSpotlight | null>(null);
   /** Show on Map: lights these documents on the Map, brightest the strongest match. */
@@ -5585,6 +5606,8 @@ function WorkspaceAppContent({
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
+        flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
+        onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id) })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined} fileManager={fileManagerName()}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
@@ -6107,6 +6130,8 @@ function WorkspaceAppContent({
                 setProfileModalOpen(true);
               }}
               onOpenSearch={handleOpenSearch}
+              flashcardsDue={flashcards.totalCards ? flashcards.dueCount : null}
+              onOpenFlashcards={() => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
               onSelectOutlineItem={handleSelectOutlineItem}
@@ -6738,6 +6763,13 @@ function WorkspaceAppContent({
         </div>
       </div>
     </div>
+    {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
+      onClose={() => setFlashcardReview(null)}
+      onOpenDocument={(docId) => {
+        if (!currentStateRef.current.conversations[docId]) return;
+        setFlashcardReview(null);
+        handleRevealConversation(docId);
+      }}/> : null}
     </ConversationGroupPickerContext.Provider>
     </SpaceMenuContext.Provider>
     </DocumentTitleSuggestionContext.Provider>

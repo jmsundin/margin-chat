@@ -12,6 +12,7 @@ import { validateAIOptions } from "../chat/validation.mjs";
 import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createLandscapeService } from "../documents/landscape.mjs";
 import { createLibraryService } from "../library/index.mjs";
+import { FLASHCARD_SYNC_BODY_LIMIT, createFlashcardService } from "../flashcards/index.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
 import { MAX_VAULT_FILE_BYTES, vaultQuotaFor } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
@@ -156,6 +157,7 @@ export function createApiHandler({
   const topicEmbeddings = topicEmbeddingService ?? createTopicEmbeddingService({ database, env });
   const landscape = createLandscapeService({ database });
   const library = createLibraryService({ database, env });
+  const flashcards = createFlashcardService({ database });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
@@ -764,6 +766,18 @@ export function createApiHandler({
           await mcp.revoke(userId, route.params.id);
           sendJson(response, 200, { revoked: true });
         }
+        return;
+      }
+
+      if (route?.id === "flashcardsSync") {
+        // Any signed-in account keeps its review history; it isn't part of the paid cloud vault.
+        requireExpectedVaultAccount(request, authContext.user);
+        if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+            !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          throw new HttpError(403, "Sync flashcards from Margin Chat.");
+        }
+        const body = await readJsonBody(request, FLASHCARD_SYNC_BODY_LIMIT);
+        sendJson(response, 200, await flashcards.sync({ userId: authContext.user.id, body }), { "Cache-Control": "private, no-store" });
         return;
       }
 

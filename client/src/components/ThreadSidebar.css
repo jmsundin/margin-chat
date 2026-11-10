@@ -129,6 +129,16 @@
 }
 
 .sidebar-new-button:hover { background: var(--button-active-surface); }
+
+/* Review flashcards: an icon, with how many cards are waiting. Only shown once cards exist. */
+.sidebar-review-button {
+  align-items: center; background: var(--button-surface); border: 1px solid var(--button-border); border-radius: 8px;
+  color: var(--ink); cursor: pointer; display: inline-flex; flex: 0 0 auto; gap: 4px; height: 34px; justify-content: center;
+  min-width: 34px; padding: 0 8px;
+}
+.sidebar-review-button:hover { background: var(--button-active-surface); }
+.sidebar-review-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sidebar-review-count { color: var(--sage); font-size: .72rem; font-variant-numeric: tabular-nums; font-weight: 600; }
 .sidebar-new-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 .thread-sidebar.is-simplified.is-collapsed .sidebar-create-row,
@@ -138,6 +148,7 @@
 
 .thread-sidebar.is-simplified.is-collapsed .sidebar-create-row .sidebar-action,
 .thread-sidebar.is-simplified.is-collapsed .sidebar-new-button,
+.thread-sidebar.is-simplified.is-collapsed .sidebar-review-button,
 .thread-sidebar.is-simplified.is-collapsed .sidebar-search-button,
 .thread-sidebar.is-simplified.is-collapsed .sidebar-more-button {
   flex: 0 0 auto;
@@ -376,7 +387,8 @@
 .thread-sidebar:not(.is-collapsed) .thread-sidebar-footer .sidebar-utility-button:hover { background: var(--button-active-surface); transform: none; }
 @media (pointer: coarse) {
   .sidebar-new-button,
-  .sidebar-more-button { flex-basis: 44px; height: 44px; min-height: 44px; }
+  .sidebar-review-button,
+  .sidebar-more-button { flex-basis: 44px; min-width: 44px; height: 44px; min-height: 44px; }
   .sidebar-secondary-row .sidebar-search-button { min-height: 44px; }
 }
 

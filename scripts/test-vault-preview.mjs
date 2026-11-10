@@ -46,6 +46,7 @@ function user() {
   };
 }
 const key = (userId, documentId) => `${userId}/${documentId}`;
+const flashcardRows = { cards: new Map(), reviews: new Map(), seq: 0 };
 const database = {
   ready: async () => undefined,
   getHealth: () => ({ configured: true, ready: true, host: "isolated fixture" }),
@@ -76,6 +77,25 @@ const database = {
   },
   deleteDocument: async ({ userId, documentId }) => attachments.delete(key(userId, documentId)),
   getCaptureToken: async () => null,
+  // Flashcards, in memory, with the same rules as Postgres: newer cards win, reviews are added once.
+  async saveFlashcardChanges({ userId, cards, reviews }) {
+    for (const card of cards) {
+      const stored = flashcardRows.cards.get(key(userId, card.id));
+      if (!stored || stored.card.updatedAt < card.updatedAt) flashcardRows.cards.set(key(userId, card.id), { userId, card, seq: ++flashcardRows.seq });
+    }
+    for (const review of reviews) {
+      if (!flashcardRows.reviews.has(key(userId, review.id))) flashcardRows.reviews.set(key(userId, review.id), { userId, review, seq: ++flashcardRows.seq });
+    }
+  },
+  async readFlashcardChanges({ userId, cardSince = 0, reviewSince = 0, limit = 2000 }) {
+    const cards = [...flashcardRows.cards.values()].filter((row) => row.userId === userId && row.seq > cardSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
+    const reviews = [...flashcardRows.reviews.values()].filter((row) => row.userId === userId && row.seq > reviewSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
+    return {
+      cards: cards.map((row) => row.card), reviews: reviews.map((row) => row.review),
+      cardCursor: cards.at(-1)?.seq ?? cardSince, reviewCursor: reviews.at(-1)?.seq ?? reviewSince,
+      more: cards.length === limit || reviews.length === limit,
+    };
+  },
 };
 // PREVIEW_STORAGE_DELAY_MS models cloud storage latency per read (Vercel Blob is ~50-150 ms).
 // PREVIEW_COLD=1 starts each request on a fresh vault service, like a cold serverless instance.

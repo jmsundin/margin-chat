@@ -1,0 +1,104 @@
+.flashcard-review {
+  background: var(--bg, #0b1115);
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  inset: 0;
+  outline: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  position: fixed;
+  z-index: 90;
+}
+.flashcard-review button { font: inherit; }
+.flashcard-review button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.flashcard-review kbd {
+  border: 1px solid var(--line-strong); border-radius: 4px; color: var(--muted); font-family: inherit;
+  font-size: .68rem; line-height: 1; margin-left: 6px; padding: 2px 5px;
+}
+
+.flashcard-review-head { align-items: center; display: flex; gap: 12px; min-height: 52px; padding: 8px 16px; }
+.flashcard-review-title { align-items: baseline; display: flex; flex: 1; gap: 8px; min-width: 0; }
+.flashcard-review-title span { color: var(--muted); font-size: .78rem; }
+.flashcard-review-title strong { font-size: .9rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flashcard-review-count { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.flashcard-review-close {
+  background: transparent; border: 0; border-radius: 8px; color: var(--muted); cursor: pointer;
+  font-size: 1.5rem; height: 36px; line-height: 1; width: 36px;
+}
+.flashcard-review-close:hover { background: var(--button-surface); color: var(--ink); }
+
+.flashcard-review-body { display: flex; flex: 1; justify-content: center; min-height: 0; overflow-y: auto; padding: 4vh 16px 24px; }
+.flashcard-card {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--paper-serif, Georgia, "Iowan Old Style", serif);
+  font-size: 1.3rem;
+  gap: 4px;
+  line-height: 1.55;
+  max-width: 680px;
+  width: 100%;
+}
+.flashcard-face { display: flex; flex-direction: column; gap: 12px; }
+.flashcard-text > :first-child { margin-top: 0; }
+.flashcard-text > :last-child { margin-bottom: 0; }
+.flashcard-text strong { color: var(--accent-strong, var(--accent)); }
+.flashcard-image { align-self: center; border-radius: 10px; display: block; max-height: 46vh; max-width: 100%; object-fit: contain; }
+.flashcard-image.is-loading { background: var(--button-surface); height: 160px; width: min(320px, 100%); }
+.flashcard-image-missing { color: var(--muted); font-family: var(--paper-sans, system-ui, sans-serif); font-size: .8rem; }
+.flashcard-divider { border: 0; border-top: 1px solid var(--line-strong); margin: 22px 0 18px; width: 100%; }
+.flashcard-card.is-revealed .flashcard-face:last-of-type { animation: flashcard-reveal .18s ease-out; }
+@keyframes flashcard-reveal { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .flashcard-card.is-revealed .flashcard-face:last-of-type { animation: none; } }
+
+.flashcard-card-source { align-items: center; display: flex; font-family: var(--paper-sans, system-ui, sans-serif); gap: 8px; margin-top: 28px; }
+.flashcard-card-source button {
+  background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .76rem; max-width: 70%;
+  overflow: hidden; padding: 0; text-decoration: underline; text-decoration-color: var(--line-strong); text-overflow: ellipsis; white-space: nowrap;
+}
+.flashcard-card-source button:hover { color: var(--ink); }
+.flashcard-badge { background: var(--sage-soft); border-radius: 99px; color: var(--sage); font-size: .68rem; padding: 2px 8px; }
+
+.flashcard-review-actions { align-items: center; display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 18px; }
+.flashcard-primary {
+  background: var(--ink); border: 0; border-radius: 10px; color: var(--bg, #0b1115); cursor: pointer;
+  font-size: .92rem; font-weight: 600; min-height: 46px; padding: 10px 22px;
+}
+.flashcard-primary kbd { border-color: currentColor; color: inherit; opacity: .6; }
+.flashcard-show { max-width: 680px; width: 100%; }
+.flashcard-ratings { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 680px; width: 100%; }
+.flashcard-rating {
+  align-items: center; background: var(--button-surface); border: 1px solid var(--line-strong); border-radius: 10px;
+  color: var(--ink); cursor: pointer; display: flex; flex-direction: column; gap: 2px; min-height: 58px; padding: 8px 4px;
+}
+.flashcard-rating:hover { border-color: var(--ink); }
+.flashcard-rating-label { font-size: .88rem; font-weight: 600; }
+.flashcard-rating-interval { color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; }
+.flashcard-rating kbd { margin: 2px 0 0; }
+.flashcard-rating.is-again .flashcard-rating-label { color: var(--accent); }
+.flashcard-rating.is-good .flashcard-rating-label { color: var(--sage); }
+.flashcard-minor { display: flex; gap: 18px; }
+.flashcard-minor button { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .74rem; padding: 4px; }
+.flashcard-minor button:hover:not(:disabled) { color: var(--ink); }
+.flashcard-minor button:disabled { cursor: default; opacity: .4; }
+
+.flashcard-done { align-self: center; max-width: 520px; text-align: center; }
+.flashcard-done h2 { font-family: var(--paper-serif, Georgia, serif); font-size: 1.5rem; font-weight: 500; margin: 0 0 10px; }
+.flashcard-done p { color: var(--muted); }
+.flashcard-review-note { align-self: center; color: var(--muted); }
+.flashcard-help { color: var(--ink); font-size: .86rem; text-align: left; }
+.flashcard-help dl { display: grid; gap: 10px 16px; grid-template-columns: auto 1fr; margin: 12px 0 0; }
+.flashcard-help dt { font-size: .8rem; }
+.flashcard-help dd { color: var(--muted); margin: 0; }
+.flashcard-help code { background: var(--message-inline-code-bg, var(--button-surface)); border-radius: 4px; padding: 1px 5px; }
+.flashcard-review-warning { background: var(--accent-soft); color: var(--ink); font-size: .78rem; margin: 0; padding: 8px 16px; text-align: center; }
+
+/* Phones: thumb-sized buttons at the bottom, smaller type, no keyboard hints. */
+@media (max-width: 640px), (pointer: coarse) {
+  .flashcard-review kbd { display: none; }
+  .flashcard-card { font-size: 1.12rem; }
+  .flashcard-review-body { padding-top: 2vh; }
+  .flashcard-rating { min-height: 64px; }
+  .flashcard-help dl { grid-template-columns: 1fr; }
+  .flashcard-help dd { margin-bottom: 6px; }
+}
