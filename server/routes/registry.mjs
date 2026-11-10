@@ -38,6 +38,7 @@ export const API_ROUTES = Object.freeze([
   { id: "accountDelete", methods: ["POST"], path: "/api/auth/account/delete" },
   { id: "apiKeysRead", methods: ["GET"], path: "/api/settings/api-keys" },
   { id: "apiKeysWrite", methods: ["PUT"], path: "/api/settings/api-keys" },
+  { id: "flashcardsSync", methods: ["POST"], path: "/api/flashcards/sync" },
   { id: "vaultStatus", methods: ["GET"], path: "/api/vault" },
   { id: "vaultIndex", methods: ["GET"], path: "/api/vault/index" },
   { id: "vaultSearch", methods: ["GET"], path: "/api/vault/search" },

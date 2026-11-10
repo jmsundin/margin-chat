@@ -135,6 +135,11 @@
       "id": "0027_payment_reversals",
       "file": "0027_payment_reversals.sql",
       "transaction": true
+    },
+    {
+      "id": "0028_flashcards",
+      "file": "0028_flashcards.sql",
+      "transaction": true
     }
   ]
 }

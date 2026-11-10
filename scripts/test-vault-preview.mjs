@@ -46,6 +46,7 @@ function user() {
   };
 }
 const key = (userId, documentId) => `${userId}/${documentId}`;
+const flashcardRows = { cards: new Map(), reviews: new Map(), seq: 0 };
 const database = {
   ready: async () => undefined,
   getHealth: () => ({ configured: true, ready: true, host: "isolated fixture" }),
@@ -76,6 +77,25 @@ const database = {
   },
   deleteDocument: async ({ userId, documentId }) => attachments.delete(key(userId, documentId)),
   getCaptureToken: async () => null,
+  // Flashcards, in memory, with the same rules as Postgres: newer cards win, reviews are added once.
+  async saveFlashcardChanges({ userId, cards, reviews }) {
+    for (const card of cards) {
+      const stored = flashcardRows.cards.get(key(userId, card.id));
+      if (!stored || stored.card.updatedAt < card.updatedAt) flashcardRows.cards.set(key(userId, card.id), { userId, card, seq: ++flashcardRows.seq });
+    }
+    for (const review of reviews) {
+      if (!flashcardRows.reviews.has(key(userId, review.id))) flashcardRows.reviews.set(key(userId, review.id), { userId, review, seq: ++flashcardRows.seq });
+    }
+  },
+  async readFlashcardChanges({ userId, cardSince = 0, reviewSince = 0, limit = 2000 }) {
+    const cards = [...flashcardRows.cards.values()].filter((row) => row.userId === userId && row.seq > cardSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
+    const reviews = [...flashcardRows.reviews.values()].filter((row) => row.userId === userId && row.seq > reviewSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
+    return {
+      cards: cards.map((row) => row.card), reviews: reviews.map((row) => row.review),
+      cardCursor: cards.at(-1)?.seq ?? cardSince, reviewCursor: reviews.at(-1)?.seq ?? reviewSince,
+      more: cards.length === limit || reviews.length === limit,
+    };
+  },
 };
 // PREVIEW_STORAGE_DELAY_MS models cloud storage latency per read (Vercel Blob is ~50-150 ms).
 // PREVIEW_COLD=1 starts each request on a fresh vault service, like a cold serverless instance.
@@ -209,6 +229,8 @@ const server = createServer(async (request, response) => {
                 ? "What human evidence shows a weekly dose avoids the immune effects, rather than mouse data?"
               : asked.includes("Answer the user's question about this note")
                 ? "The note's main claim is that rapamycin \"extends lifespan in mice\" by blocking mTOR. The weak link is the step to people: \"a weekly dose should be safe\" rests on the mouse data alone.\n\n### Try next\n\n- What human trials have tested weekly dosing?\n- Which immune side effects matter most at that dose?\n- Add a line on what result would change your mind."
+              : asked.includes("Write up to") && asked.includes("flashcards")
+                ? "1. What does rapamycin block? :: mTOR\n\n2. Autophagy ::: The cell's recycling of its own parts\n\n3. Rapamycin {{c1::extends lifespan}} in {{c2::mice}}.\n\nThese cards cover the main claim."
               : asked.includes("builds up in 3 to 5 stages")
                 ? "```mermaid\nflowchart LR\n%% stage: The drug\n  R[Rapamycin] --> M[mTOR blocked]\n%% stage: What it changes\n  M --> G[Less cell growth]\n  M --> A[More autophagy]\n%% stage: The claim\n  A --> L[Longer life in mice]\n%% stage: The open question\n  L -.-> H{Same in humans?}\n```"
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;

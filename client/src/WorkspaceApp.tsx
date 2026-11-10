@@ -127,6 +127,11 @@ import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, res
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
 import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import RoadmapView from "./components/RoadmapView";
+import FlashcardReview from "./components/FlashcardReview";
+import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
+import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
+import MakeCardsDialog from "./components/MakeCardsDialog";
+import { buildFlashcardAIMessage, parseFlashcardReply, type FlashcardDraft } from "./lib/flashcardAI";
 import AIInstructionLine from "./components/AIInstructionLine";
 import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
@@ -1413,6 +1418,106 @@ function WorkspaceAppContent({
   const closeCustomise = useCallback(() => setCustomiseOpen(false), []);
   /** The document whose Ask about this note panel is open. */
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
+  const flashcards = useFlashcards({ userId: user.id, conversations: state.conversations, enabled: vault.ready });
+  /** The open review: every card, or one document with its notes and side documents. */
+  const [flashcardReview, setFlashcardReview] = useState<{ title: string; docIds?: ReadonlySet<string> } | null>(null);
+  const flashcardCountByDoc = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const { card } of flashcards.scheduled) counts.set(card.docId, (counts.get(card.docId) ?? 0) + 1);
+    return counts;
+  }, [flashcards.scheduled]);
+  const [makeCardsFor, setMakeCardsFor] = useState<string | null>(null);
+
+  /** The AI suggests cards from a document; they come back for the person to choose from. */
+  async function handleSuggestFlashcards(conversationId: string, focus: string, signal: AbortSignal): Promise<FlashcardDraft[]> {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) throw new Error("This document is no longer open.");
+    if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
+    const existing = [...flashcards.snapshot.cards.values()].filter((card) => card.docId === conversationId && !card.removed);
+    const prompt: Message = { id: createId("message"), role: "user", content: focus.trim() ? `Make flashcards about: ${focus.trim()}` : "Make flashcards from this document", createdAt: new Date().toISOString() };
+    const message = buildFlashcardAIMessage(conversation, prompt, {
+      focus, existingFronts: existing.map((card) => card.front), instruction: documentAIInstruction(currentStateRef.current.conversations, conversation),
+    });
+    try {
+      const { reply } = await requestChatReply({
+        ...prepareAIContext(currentStateRef.current.conversations, conversation, [message]),
+        ai: withJevConsent(conversation.ai, jevEnabled), expectedUserId: user.id,
+        conversation: await conversationRequestPayload(currentStateRef.current.conversations, conversation), messages: [message],
+        modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
+      });
+      return parseFlashcardReply(reply, conversationId, new Set(existing.map((card) => card.id)));
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) onAuthExpired();
+      else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
+      throw error;
+    } finally {
+      void onRefreshBilling();
+    }
+  }
+
+  /** Chosen cards go to the end of the document as AI-written lines the person can edit. */
+  function handleAddFlashcards(conversationId: string, drafts: FlashcardDraft[]) {
+    if (!drafts.length) return;
+    const now = new Date().toISOString();
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      const blockBase = createId("block");
+      const next = drafts.reduce((document, draft, index) => insertDocumentBlock(document, {
+        id: `${blockBase}:${index}`, kind: "markdown", content: draft.markdown, createdAt: now, updatedAt: now, authorship: "ai",
+      }, undefined, now), conversation);
+      return { ...current, conversations: { ...current.conversations, [conversationId]: next } };
+    });
+  }
+
+  /** Each Anki deck becomes a document of cards; its review history comes with it. */
+  async function handleImportAnki(file: File, onProgress: (message: string) => void) {
+    const result = await importAnkiFile(file, { media: vault.media, createId: () => createId("conversation"), onProgress });
+    if (!result.documents.length) return "That deck has no cards Margin Chat can read.";
+    const now = new Date().toISOString();
+    const documents = result.documents.map((imported) => {
+      const conversation = createMainConversation({ createdAt: now, id: imported.id, modelId: state.defaultModelId, serviceId: state.defaultServiceId });
+      conversation.title = imported.title;
+      const blockBase = createId("block");
+      conversation.document = { schemaVersion: 1, prompts: [], generations: [], blocks: splitDocumentMarkdown(imported.markdown).map((content, index) => ({
+        id: `${blockBase}:${index}`, kind: "markdown" as const, content, createdAt: now, updatedAt: now, authorship: "user" as const,
+        origin: { type: "import" as const, source: "anki", label: "Anki" },
+      })) };
+      return conversation;
+    });
+    setState((current) => documents.reduce((next, conversation) => addRootConversation(next, conversation), current));
+    // Cards first, then their history, so every answer lands on a card this device knows.
+    for (const imported of result.documents) flashcards.store.syncDocument(imported.id, imported.title, imported.cards, now);
+    await flashcards.store.importHistory(result.reviews, result.suspended, now);
+    void flashcards.sync();
+    const cardCount = result.documents.reduce((total, imported) => total + imported.cards.length, 0);
+    return [
+      `Imported ${cardCount} card${cardCount === 1 ? "" : "s"} into ${documents.length} document${documents.length === 1 ? "" : "s"}, with ${result.reviews.length} past review${result.reviews.length === 1 ? "" : "s"}.`,
+      result.skippedNotes ? `${result.skippedNotes} note${result.skippedNotes === 1 ? " had" : "s had"} no front or back and ${result.skippedNotes === 1 ? "was" : "were"} left out.` : "",
+      result.mediaFailed ? `${result.mediaFailed} image${result.mediaFailed === 1 ? "" : "s"} couldn't be saved to your vault.` : "",
+    ].filter(Boolean).join(" ");
+  }
+
+  async function handleExportAnki(docIds?: ReadonlySet<string>, title = "Margin Chat cards") {
+    const cards = scheduleCards(flashcards.snapshot, flashcards.settings, docIds, { includeSuspended: true });
+    if (!cards.length) return "There are no cards to export.";
+    const { blob, missingMedia } = await exportAnkiFile(cards, vault.media);
+    downloadBlob(blob, `${title.replace(/[\\/:*?"<>|]+/gu, " ").trim() || "Margin Chat cards"}.apkg`);
+    const reviews = cards.reduce((total, entry) => total + entry.reviews.length, 0);
+    return `Saved ${cards.length} card${cards.length === 1 ? "" : "s"} and ${reviews} review${reviews === 1 ? "" : "s"} as an Anki deck. Open it in Anki to import.${missingMedia ? ` ${missingMedia} image${missingMedia === 1 ? " wasn't" : "s weren't"} on this device and ${missingMedia === 1 ? "was" : "were"} left out.` : ""}`;
+  }
+
+  const documentFamilyIds = useCallback((rootId: string) => {
+    const ids = new Set<string>();
+    const queue = [rootId];
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (ids.has(id)) continue;
+      ids.add(id);
+      queue.push(...(currentStateRef.current.conversations[id]?.childIds ?? []));
+    }
+    return ids;
+  }, []);
   const [vaultAnswer, setVaultAnswer] = useState<VaultAnswerState | null>(null);
   const [mapSpotlight, setMapSpotlight] = useState<MapSpotlight | null>(null);
   /** Show on Map: lights these documents on the Map, brightest the strongest match. */
@@ -5588,6 +5693,9 @@ function WorkspaceAppContent({
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
+        flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
+        onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCardsFor(id) : undefined}
+        onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id) })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
         onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} fileManager={fileManagerName()}
@@ -6118,6 +6226,8 @@ function WorkspaceAppContent({
                 setProfileModalOpen(true);
               }}
               onOpenSearch={handleOpenSearch}
+              flashcardsDue={flashcards.totalCards ? flashcards.dueCount : null}
+              onOpenFlashcards={() => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
               onSelectOutlineItem={handleSelectOutlineItem}
@@ -6755,6 +6865,19 @@ function WorkspaceAppContent({
         </div>
       </div>
     </div>
+    {makeCardsFor && state.conversations[makeCardsFor] ? <MakeCardsDialog title={state.conversations[makeCardsFor].title}
+      onGenerate={(focus, signal) => handleSuggestFlashcards(makeCardsFor, focus, signal)}
+      onAdd={(drafts) => handleAddFlashcards(makeCardsFor, drafts)}
+      onClose={() => setMakeCardsFor(null)}/> : null}
+    {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
+      onClose={() => setFlashcardReview(null)}
+      onImportAnki={handleImportAnki}
+      onExportAnki={() => handleExportAnki(flashcardReview.docIds, flashcardReview.docIds ? flashcardReview.title : "Margin Chat cards")}
+      onOpenDocument={(docId) => {
+        if (!currentStateRef.current.conversations[docId]) return;
+        setFlashcardReview(null);
+        handleRevealConversation(docId);
+      }}/> : null}
     </ConversationGroupPickerContext.Provider>
     </SpaceMenuContext.Provider>
     </DocumentTitleSuggestionContext.Provider>

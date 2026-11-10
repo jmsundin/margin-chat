@@ -64,6 +64,9 @@ interface ThreadSidebarProps {
   onOpenProfile: () => void;
   onOpenSettings: () => void;
   onOpenSearch: () => void;
+  /** Cards to study now; null hides Review (no cards written yet). */
+  flashcardsDue?: number | null;
+  onOpenFlashcards?: () => void;
   onPinThread: (conversationId: string) => void;
   onRenameThread: (conversationId: string, title: string) => void;
   onSelectOutlineItem: (outlineItemId: string) => void;
@@ -127,6 +130,15 @@ function PlusIcon() {
     >
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function CardsIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      <rect x="3" y="7" width="14" height="13" rx="2" />
+      <path d="M7 4h12a2 2 0 0 1 2 2v11" />
     </svg>
   );
 }
@@ -349,6 +361,8 @@ export default function ThreadSidebar({
   onOpenProfile,
   onOpenSettings,
   onOpenSearch,
+  flashcardsDue = null,
+  onOpenFlashcards,
   onPinThread,
   onRenameThread,
   onSelectOutlineItem,
@@ -942,6 +956,18 @@ export default function ThreadSidebar({
             <SearchIcon />
             <span>Search</span>
           </button>
+          {flashcardsDue !== null && onOpenFlashcards ? (
+            <button
+              aria-label={flashcardsDue ? `Review flashcards, ${flashcardsDue} to study` : "Review flashcards"}
+              className="sidebar-review-button"
+              onClick={onOpenFlashcards}
+              title={flashcardsDue ? `${flashcardsDue} card${flashcardsDue === 1 ? "" : "s"} to study` : "Review flashcards: nothing due"}
+              type="button"
+            >
+              <CardsIcon />
+              {flashcardsDue ? <span className="sidebar-review-count">{flashcardsDue > 999 ? "999+" : flashcardsDue}</span> : null}
+            </button>
+          ) : null}
           <button
             aria-label="New document"
             className="sidebar-new-button"
@@ -976,6 +1002,17 @@ export default function ThreadSidebar({
               ref={workspaceActionsRef}
               role="dialog"
             >
+              {onOpenFlashcards ? (
+                <button
+                  className="sidebar-workspace-action"
+                  onClick={() => { closeWorkspaceActions(); onOpenFlashcards(); }}
+                  title="Study flashcards, or bring in an Anki deck"
+                  type="button"
+                >
+                  <CardsIcon />
+                  <span>Flashcards</span>
+                </button>
+              ) : null}
               {newGroupName === null ? (
                 <button
                   className="sidebar-workspace-action"

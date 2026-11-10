@@ -37,6 +37,11 @@ export interface DocumentMenuProps {
   onSetAgentEdit?: (id: string, policy: "locked" | "open" | null) => void;
   /** Draw this document as a roadmap of stages and steps, or as a plain document again. */
   onToggleRoadmap?: (id: string) => void;
+  /** Cards written in this document and its notes; the menu offers a review when there are any. */
+  flashcardCount?: number;
+  onReviewFlashcards?: (id: string) => void;
+  /** Have the AI suggest flashcards from this document. */
+  onMakeFlashcards?: (id: string) => void;
   maximized?: boolean;
   onToggleMaximize?: (id: string) => void;
   onRename?: (id: string, title: string) => void;
@@ -60,7 +65,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -256,7 +261,15 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
           onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
       </div> : null}
-      {onToggleHiddenFromAI || onToggleRoadmap || onSetAgentEdit ? <div role="group" className="document-menu-section">
+      {onToggleHiddenFromAI || onToggleRoadmap || onSetAgentEdit || onMakeFlashcards ? <div role="group" className="document-menu-section">
+        {onMakeFlashcards ? <button type="button" role="menuitem" title="The AI suggests flashcards from this document; you choose which to add."
+          onClick={() => action(onMakeFlashcards)}>Make flashcards…</button> : null}
+        {onReviewFlashcards && flashcardCount > 0 ? <button type="button" role="menuitem"
+          title="Study the flashcards written in this document and its notes."
+          onClick={() => action(onReviewFlashcards)}>
+          <span>Review cards</span>
+          <span className="document-menu-group-name">{flashcardCount}</span>
+        </button> : null}
         {onToggleRoadmap ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.nodeType === "roadmap"}
           title="Lay out steps from your documents in stages, and track what you've learned."
           onClick={() => action(onToggleRoadmap)}>
