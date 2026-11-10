@@ -127,6 +127,7 @@ export function useMarkdownVault(args: {
     projectionPending.current = status === "pending";
   }));
   const engine = engineRef.current;
+  engine.keepEditVersions = true;
   engine.onDownload = (progress) => {
     if (mounted.current) setDownloadProgress(progress.total ? progress : null);
   };
@@ -1335,13 +1336,27 @@ export function useMarkdownVault(args: {
       return { path, current: path ? displayedFiles.current[path] ?? null : null, records: listDocumentVersions(displayedFiles.current, id, path) };
     },
     /** A new device keeps saved versions in the cloud until they're asked for; this downloads them. */
-    async loadVersionHistory() {
+    async loadVersionHistory(id: string) {
+      const history = (path: string) => path.startsWith(".margin-chat/history/");
       await enqueue(async () => {
         if (!mounted.current) return;
-        const snapshot = await engine.read();
-        const paths = Object.keys(snapshot.deferred ?? {}).filter((path) => path.startsWith(".margin-chat/history/"));
-        if (!paths.length) return;
-        await engine.hydrate(paths);
+        // First the small descriptors, which say which document each version belongs to.
+        let snapshot = await engine.read();
+        const descriptors = Object.keys(snapshot.deferred ?? {}).filter((path) => history(path) && path.endsWith("/conflict.json"));
+        if (descriptors.length) { await engine.hydrate(descriptors); await saveAndRefresh(true); snapshot = await engine.read(); }
+        // Then the saved text of this document's versions only, and of any whose document has since moved.
+        const path = documentPath(id);
+        const wanted = new Set<string>();
+        for (const [descriptorPath, file] of Object.entries(snapshot.files)) {
+          const match = /^(\.margin-chat\/history\/[^/]+\/)conflict\.json$/.exec(descriptorPath);
+          if (!match || file.encoding) continue;
+          let recordPath: unknown;
+          try { recordPath = (JSON.parse(file.content) as Record<string, unknown>).path; } catch { continue; }
+          if (recordPath === path || (typeof recordPath === "string" && !snapshot.files[recordPath] && !snapshot.deferred?.[recordPath])) wanted.add(match[1]);
+        }
+        const copies = Object.keys(snapshot.deferred ?? {}).filter((file) => history(file) && [...wanted].some((prefix) => file.startsWith(prefix)));
+        if (!copies.length) return;
+        await engine.hydrate(copies);
         await saveAndRefresh(true);
       });
     },

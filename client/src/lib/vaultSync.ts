@@ -9,6 +9,7 @@ import { mergeVaultFile } from "./vaultMerge";
 import { recoverVaultAlternatives } from "./vaultRecovery";
 import { defaultVaultContentType, vaultFileBytes, vaultFileRevision } from "./vaultLocal";
 import { remapVaultMergeAnchors } from "./vaultMergeAnchors";
+import { keepEditSnapshots, latestSnapshotTimes } from "./vaultSnapshots";
 import { hasExpiredTrash, moveDeletionsToTrash, purgeExpiredTrash, restoreFromTrash } from "./vaultTrash";
 
 function assignFile(snapshot: VaultSnapshot, path: string, file: VaultFile | null | undefined) {
@@ -20,7 +21,7 @@ type MergeRecovery = {
   base?: VaultFile | null;
   result?: VaultFile | null;
   conflicted?: boolean;
-  /** "restore": the record holds the text a restore from Version history replaced. */
+  /** "restore": the record holds the text a restore from Version history replaced. ("snapshot" records come from vaultSnapshots.) */
   reason?: "restore";
 };
 
@@ -418,6 +419,11 @@ export class VaultSync {
     return this.store.lock(async () => {
       const current = await reclaimEvicted((await this.store.read()) ?? emptyVault(), next, expected);
       const snapshot = applyVaultEdits(current, next, expected);
+      // While a document is being edited, its earlier text is kept every few minutes for Version history.
+      if (this.keepEditVersions) {
+        this.snapshotTimes ??= latestSnapshotTimes(current.files);
+        keepEditSnapshots(snapshot, current.files, this.snapshotTimes);
+      }
       // Every document deleted here, in the app or in a connected folder, can be restored for a while.
       moveDeletionsToTrash(snapshot, current.files, next, expected);
       if (directory) snapshot.directoryBaselines = { ...snapshot.directoryBaselines, [directory.id]: structuredClone(directory.baseline) };
@@ -587,6 +593,10 @@ export class VaultSync {
   }
 
   private inFlight: Promise<VaultSnapshot> | null = null;
+  /** Keep a document's earlier text in Version history every few minutes while it's edited (the app turns this on). */
+  keepEditVersions = false;
+  /** When each document last got an automatic version, read from the vault on the first edit. */
+  private snapshotTimes?: Map<string, number>;
 
   sync(): Promise<VaultSnapshot> {
     // A network request may take arbitrarily long. Only local read/modify/write

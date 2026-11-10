@@ -5,10 +5,11 @@ import { vaultToState } from "./vaultWorkspace";
 
 /**
  * Earlier versions of a document, read from the recovery records the vault already keeps in
- * `.margin-chat/history/<id>/`: one for every time two devices changed the same words, and one for
- * every restore (holding the text the restore replaced). Nothing here changes the vault.
+ * `.margin-chat/history/<id>/`: one for every time two devices changed the same words, one for
+ * every restore (holding the text the restore replaced), and automatic versions kept while editing
+ * (vaultSnapshots.ts). Nothing here changes the vault.
  */
-export type VersionRole = "kept" | "device" | "before-restore";
+export type VersionRole = "kept" | "device" | "before-restore" | "snapshot";
 
 export interface DocumentVersion {
   /** `<record id>:<role file>`, stable across reloads and devices. */
@@ -23,7 +24,7 @@ export interface DocumentVersion {
 export interface VersionRecord {
   id: string;
   at: string;
-  reason: "clash" | "restore";
+  reason: "clash" | "restore" | "snapshot";
   path: string;
   versions: DocumentVersion[];
 }
@@ -48,7 +49,8 @@ export function listDocumentVersions(files: Record<string, VaultFile>, documentI
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
       descriptor = parsed as Record<string, unknown>;
     } catch { continue; }
-    const reason = descriptor.reason === "restore" ? "restore" : descriptor.conflicted === true ? "clash" : null;
+    const reason = descriptor.reason === "restore" || descriptor.reason === "snapshot" ? descriptor.reason
+      : descriptor.conflicted === true ? "clash" : null;
     if (!reason || typeof descriptor.path !== "string" || typeof descriptor.createdAt !== "string" || !/\.md$/iu.test(descriptor.path)) continue;
     const [prefix, id] = [match[1], match[2]];
     const local = readFile(files, `${prefix}local/`, descriptor.copy);
@@ -63,6 +65,7 @@ export function listDocumentVersions(files: Record<string, VaultFile>, documentI
       versions.push({ key: `${id}:${name}`, recordId: id, role, at: descriptor.createdAt as string, file });
     };
     if (reason === "restore") add("before-restore", "local", local);
+    else if (reason === "snapshot") add("snapshot", "local", local);
     else {
       add("kept", "result", result);
       add("device", "local", local);
