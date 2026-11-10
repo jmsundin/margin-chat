@@ -26,6 +26,8 @@ export interface Flashcard {
   back: string;
   /** The cloze number, for cloze cards. */
   cloze?: number;
+  /** A cloze card's paragraph as written, with every {{c…}} in it (for export). */
+  source?: string;
   /** The card's position among the document's cards of its kind, used to keep history across edits. */
   ordinal: number;
 }
@@ -101,12 +103,12 @@ export function parseFlashcards(docId: string, markdown: string): Flashcard[] {
   const cards: Flashcard[] = [];
   const ordinals: Record<FlashcardKind, number> = { basic: 0, reverse: 0, cloze: 0 };
   const seen = new Set<string>();
-  const add = (kind: FlashcardKind, key: string, front: string, back: string, cloze?: number) => {
+  const add = (kind: FlashcardKind, key: string, front: string, back: string, cloze?: number, source?: string) => {
     if (!front.trim() || !back.trim()) return;
     const id = cardId(docId, kind, key, cloze);
     if (seen.has(id)) return; // the same card written twice is one card
     seen.add(id);
-    cards.push({ id, docId, kind, front, back, ...(cloze ? { cloze } : {}), ordinal: ordinals[kind]++ });
+    cards.push({ id, docId, kind, front, back, ...(cloze ? { cloze } : {}), ...(source ? { source } : {}), ordinal: ordinals[kind]++ });
   };
   const addPair = (front: string, back: string, both: boolean) => {
     add("basic", front, front, back);
@@ -127,7 +129,7 @@ export function parseFlashcards(docId: string, markdown: string): Flashcard[] {
       const body = paragraph.map((line) => line.replace(LIST_PREFIX, "")).join("\n").trim();
       for (const number of numbers) {
         const sides = clozeSides(body, number);
-        add("cloze", body, sides.front, sides.back, number);
+        add("cloze", body, sides.front, sides.back, number, body);
       }
       continue;
     }

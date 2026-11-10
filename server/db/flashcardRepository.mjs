@@ -10,6 +10,7 @@ const cardRow = (row) => ({
   front: row.front,
   back: row.back,
   ...(row.cloze === null || row.cloze === undefined ? {} : { cloze: Number(row.cloze) }),
+  ...(row.source ? { source: row.source } : {}),
   ordinal: Number(row.ordinal),
   ...(Array.isArray(row.history_from) && row.history_from.length ? { historyFrom: row.history_from } : {}),
   ...(row.removed ? { removed: true } : {}),
@@ -35,15 +36,15 @@ export async function saveFlashcardChanges(client, { userId, cards, reviews }) {
   if (cards.length) {
     await client.query(
       `insert into marginchat_flashcards
-         (user_id, card_id, doc_id, doc_title, kind, front, back, cloze, ordinal, history_from, removed, suspended, created_at, updated_at)
-       select distinct on (c.id) $1, c.id, c."docId", c."docTitle", c.kind, c.front, c.back, c.cloze, c.ordinal,
+         (user_id, card_id, doc_id, doc_title, kind, front, back, cloze, source, ordinal, history_from, removed, suspended, created_at, updated_at)
+       select distinct on (c.id) $1, c.id, c."docId", c."docTitle", c.kind, c.front, c.back, c.cloze, c.source, c.ordinal,
          coalesce(c."historyFrom", '[]'::jsonb), coalesce(c.removed, false), coalesce(c.suspended, false), c."createdAt", c."updatedAt"
        from jsonb_to_recordset($2::jsonb) as c(id text, "docId" text, "docTitle" text, kind text, front text, back text,
-         cloze integer, ordinal integer, "historyFrom" jsonb, removed boolean, suspended boolean, "createdAt" timestamptz, "updatedAt" timestamptz)
+         cloze integer, source text, ordinal integer, "historyFrom" jsonb, removed boolean, suspended boolean, "createdAt" timestamptz, "updatedAt" timestamptz)
        order by c.id, c."updatedAt" desc
        on conflict (user_id, card_id) do update set
          doc_id = excluded.doc_id, doc_title = excluded.doc_title, kind = excluded.kind,
-         front = excluded.front, back = excluded.back, cloze = excluded.cloze, ordinal = excluded.ordinal,
+         front = excluded.front, back = excluded.back, cloze = excluded.cloze, source = excluded.source, ordinal = excluded.ordinal,
          history_from = excluded.history_from, removed = excluded.removed, suspended = excluded.suspended,
          updated_at = excluded.updated_at,
          seq = nextval(pg_get_serial_sequence('marginchat_flashcards', 'seq'))

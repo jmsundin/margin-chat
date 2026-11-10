@@ -12,6 +12,7 @@ create table if not exists marginchat_flashcards (
   front text not null,
   back text not null,
   cloze integer,
+  source text,
   ordinal integer not null default 0,
   history_from jsonb not null default '[]'::jsonb,
   removed boolean not null default false,

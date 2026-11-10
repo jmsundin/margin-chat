@@ -21,12 +21,13 @@ function readCard(input) {
     id: id(input.id), docId: id(input.docId), docTitle: text(input.docTitle ?? "", 1000),
     kind: KINDS.has(input.kind) ? input.kind : null, front: text(input.front), back: text(input.back),
     cloze: Number.isInteger(input.cloze) && input.cloze > 0 && input.cloze < 1000 ? input.cloze : null,
+    source: input.source === undefined || input.source === null ? null : text(input.source),
     ordinal: Number.isInteger(input.ordinal) && input.ordinal >= 0 ? Math.min(input.ordinal, 1_000_000) : 0,
     historyFrom: Array.isArray(input.historyFrom) ? input.historyFrom.map(id).filter(Boolean).slice(0, 50) : [],
     removed: input.removed === true, suspended: input.suspended === true,
     createdAt: time(input.createdAt), updatedAt: time(input.updatedAt),
   };
-  return card.id && card.docId && card.docTitle !== null && card.kind && card.front !== null && card.back !== null && card.createdAt && card.updatedAt ? card : null;
+  return card.id && card.docId && card.docTitle !== null && card.kind && card.front !== null && card.back !== null && card.source !== undefined && card.createdAt && card.updatedAt ? card : null;
 }
 
 function readReview(input) {

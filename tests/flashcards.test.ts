@@ -183,7 +183,7 @@ describe("flashcard sync on the server", () => {
       readFlashcardChanges: (args: any) => flashcardRepository.readFlashcardChanges(client, args),
     };
     const service = createFlashcardService({ database });
-    const card = { id: "c1", docId: "d1", docTitle: "Bio", kind: "cloze", front: "The **[...]**", back: "The **heart**", cloze: 1, ordinal: 0,
+    const card = { id: "c1", docId: "d1", docTitle: "Bio", kind: "cloze", front: "The **[...]**", back: "The **heart**", cloze: 1, source: "The {{c1::heart}}", ordinal: 0,
       createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" };
     const review = { id: "r1", cardId: "c1", rating: 3, reviewedAt: "2026-01-01T01:00:00.000Z", durationMs: 4200 };
 

@@ -169,7 +169,7 @@ export class FlashcardStore {
         createdAt: before?.createdAt ?? inherited?.createdAt ?? now,
         updatedAt: before?.updatedAt ?? now,
       };
-      if (!before || before.removed || before.front !== next.front || before.back !== next.back || before.ordinal !== next.ordinal ||
+      if (!before || before.removed || before.front !== next.front || before.back !== next.back || before.ordinal !== next.ordinal || before.source !== next.source ||
           before.docTitle !== docTitle || (previous && !before.historyFrom?.includes(previous))) {
         changed.push({ ...next, updatedAt: now });
       }
