@@ -1002,6 +1002,17 @@ export default function ThreadSidebar({
               ref={workspaceActionsRef}
               role="dialog"
             >
+              {onOpenFlashcards ? (
+                <button
+                  className="sidebar-workspace-action"
+                  onClick={() => { closeWorkspaceActions(); onOpenFlashcards(); }}
+                  title="Study flashcards, or bring in an Anki deck"
+                  type="button"
+                >
+                  <CardsIcon />
+                  <span>Flashcards</span>
+                </button>
+              ) : null}
               {newGroupName === null ? (
                 <button
                   className="sidebar-workspace-action"

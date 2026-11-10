@@ -28,7 +28,7 @@ export interface ScheduledCard { card: StoredFlashcard; schedule: FlashcardSched
 const scheduleCache = new Map<string, { key: string; value: FlashcardSchedule }>();
 
 /** Each studyable card with its schedule, from the store's snapshot. */
-export function scheduleCards(snapshot: FlashcardSnapshot, options?: ScheduleOptions, docIds?: ReadonlySet<string>): ScheduledCard[] {
+export function scheduleCards(snapshot: FlashcardSnapshot, options?: ScheduleOptions, docIds?: ReadonlySet<string>, { includeSuspended = false } = {}): ScheduledCard[] {
   const byCard = new Map<string, FlashcardReview[]>();
   for (const review of snapshot.reviews.values()) {
     const list = byCard.get(review.cardId);
@@ -36,7 +36,7 @@ export function scheduleCards(snapshot: FlashcardSnapshot, options?: ScheduleOpt
   }
   const result: ScheduledCard[] = [];
   for (const card of snapshot.cards.values()) {
-    if (card.removed || card.suspended || (docIds && !docIds.has(card.docId))) continue;
+    if (card.removed || (card.suspended && !includeSuspended) || (docIds && !docIds.has(card.docId))) continue;
     const reviews = [card.id, ...(card.historyFrom ?? [])].flatMap((id) => byCard.get(id) ?? []);
     // Replaying every card after each answer adds up in a big collection; reuse unchanged results.
     const key = `${card.id}|${card.createdAt}|${options?.retention ?? ""}|${options?.maximumIntervalDays ?? ""}|${reviews.length}|${reviews.map((review) => review.id).sort().join(",")}`;

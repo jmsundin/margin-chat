@@ -61,6 +61,10 @@ interface Props {
   title: string;
   onClose: () => void;
   onOpenDocument: (docId: string) => void;
+  /** Bring in an Anki deck; resolves to a sentence saying what came in. */
+  onImportAnki?: (file: File, onProgress: (message: string) => void) => Promise<string>;
+  /** Save these cards as an Anki deck; resolves to a sentence saying what was saved. */
+  onExportAnki?: () => Promise<string>;
 }
 
 function syntaxHelp() {
@@ -78,7 +82,19 @@ function syntaxHelp() {
   );
 }
 
-export default function FlashcardReview({ flashcards, docIds, title, onClose, onOpenDocument }: Props) {
+export default function FlashcardReview({ flashcards, docIds, title, onClose, onOpenDocument, onImportAnki, onExportAnki }: Props) {
+  const [transfer, setTransfer] = useState<{ busy: boolean; message: string; error?: boolean } | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const runTransfer = useCallback(async (work: (progress: (message: string) => void) => Promise<string>) => {
+    setTransfer({ busy: true, message: "Working…" });
+    try {
+      const message = await work((progress) => setTransfer({ busy: true, message: progress }));
+      setTransfer({ busy: false, message });
+    } catch (error) {
+      setTransfer({ busy: false, message: error instanceof Error ? error.message : "That didn't work. Try again.", error: true });
+    }
+  }, []);
+  const chooseAnkiFile = useCallback(() => fileInput.current?.click(), []);
   const { scheduled, settings, answer, undo, suspend, loaded } = flashcards;
   const pool = useMemo(() => (docIds ? scheduled.filter((entry) => docIds.has(entry.card.docId)) : scheduled), [docIds, scheduled]);
   // The session's order is fixed when it starts, so a card doesn't jump while it is shown.
@@ -189,9 +205,25 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
           <strong>{title}</strong>
         </div>
         {session && (current || remaining) ? <span className="flashcard-review-count" aria-live="polite">{doneCount} done · {remaining} left</span> : null}
+        {onImportAnki || onExportAnki ? <div className="flashcard-transfer">
+          {onImportAnki ? <>
+            <input ref={fileInput} type="file" accept=".apkg,.colpkg" hidden onChange={(event) => {
+              const file = event.target.files?.[0];
+              event.target.value = "";
+              if (file) void runTransfer((progress) => onImportAnki(file, progress));
+            }}/>
+            <button type="button" disabled={transfer?.busy} onClick={chooseAnkiFile} title="Bring in an Anki deck (.apkg) with its review history">Import from Anki</button>
+          </> : null}
+          {onExportAnki && pool.length ? <button type="button" disabled={transfer?.busy} onClick={() => void runTransfer(() => onExportAnki())}
+            title="Save these cards and their review history as an Anki deck (.apkg)">Export to Anki</button> : null}
+        </div> : null}
         <button type="button" className="flashcard-review-close" onClick={onClose} aria-label="Close review" title="Close (Esc)">×</button>
       </header>
 
+      {transfer ? <p className={`flashcard-transfer-status${transfer.error ? " is-error" : ""}`} role="status">
+        {transfer.message}
+        {!transfer.busy ? <button type="button" onClick={() => setTransfer(null)} aria-label="Dismiss">×</button> : null}
+      </p> : null}
       <main className="flashcard-review-body">
         {!loaded || !session ? <p className="flashcard-review-note">Loading cards…</p>
           : current ? (
@@ -216,6 +248,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
               </> : <>
                 <h2>No cards yet</h2>
                 {syntaxHelp()}
+                {onImportAnki ? <p className="flashcard-import-hint">Have Anki decks? <button type="button" onClick={chooseAnkiFile} disabled={transfer?.busy}>Import an .apkg file</button> with its review history.</p> : null}
               </>}
             </div>
           )}

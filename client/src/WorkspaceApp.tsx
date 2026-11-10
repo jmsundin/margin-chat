@@ -127,7 +127,8 @@ import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelatio
 import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import RoadmapView from "./components/RoadmapView";
 import FlashcardReview from "./components/FlashcardReview";
-import { useFlashcards } from "./lib/useFlashcards";
+import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
+import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
 import AIInstructionLine from "./components/AIInstructionLine";
 import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
@@ -1420,6 +1421,43 @@ function WorkspaceAppContent({
     for (const { card } of flashcards.scheduled) counts.set(card.docId, (counts.get(card.docId) ?? 0) + 1);
     return counts;
   }, [flashcards.scheduled]);
+  /** Each Anki deck becomes a document of cards; its review history comes with it. */
+  async function handleImportAnki(file: File, onProgress: (message: string) => void) {
+    const result = await importAnkiFile(file, { media: vault.media, createId: () => createId("conversation"), onProgress });
+    if (!result.documents.length) return "That deck has no cards Margin Chat can read.";
+    const now = new Date().toISOString();
+    const documents = result.documents.map((imported) => {
+      const conversation = createMainConversation({ createdAt: now, id: imported.id, modelId: state.defaultModelId, serviceId: state.defaultServiceId });
+      conversation.title = imported.title;
+      const blockBase = createId("block");
+      conversation.document = { schemaVersion: 1, prompts: [], generations: [], blocks: splitDocumentMarkdown(imported.markdown).map((content, index) => ({
+        id: `${blockBase}:${index}`, kind: "markdown" as const, content, createdAt: now, updatedAt: now, authorship: "user" as const,
+        origin: { type: "import" as const, source: "anki", label: "Anki" },
+      })) };
+      return conversation;
+    });
+    setState((current) => documents.reduce((next, conversation) => addRootConversation(next, conversation), current));
+    // Cards first, then their history, so every answer lands on a card this device knows.
+    for (const imported of result.documents) flashcards.store.syncDocument(imported.id, imported.title, imported.cards, now);
+    await flashcards.store.importHistory(result.reviews, result.suspended, now);
+    void flashcards.sync();
+    const cardCount = result.documents.reduce((total, imported) => total + imported.cards.length, 0);
+    return [
+      `Imported ${cardCount} card${cardCount === 1 ? "" : "s"} into ${documents.length} document${documents.length === 1 ? "" : "s"}, with ${result.reviews.length} past review${result.reviews.length === 1 ? "" : "s"}.`,
+      result.skippedNotes ? `${result.skippedNotes} note${result.skippedNotes === 1 ? " had" : "s had"} no front or back and ${result.skippedNotes === 1 ? "was" : "were"} left out.` : "",
+      result.mediaFailed ? `${result.mediaFailed} image${result.mediaFailed === 1 ? "" : "s"} couldn't be saved to your vault.` : "",
+    ].filter(Boolean).join(" ");
+  }
+
+  async function handleExportAnki(docIds?: ReadonlySet<string>, title = "Margin Chat cards") {
+    const cards = scheduleCards(flashcards.snapshot, flashcards.settings, docIds, { includeSuspended: true });
+    if (!cards.length) return "There are no cards to export.";
+    const { blob, missingMedia } = await exportAnkiFile(cards, vault.media);
+    downloadBlob(blob, `${title.replace(/[\\/:*?"<>|]+/gu, " ").trim() || "Margin Chat cards"}.apkg`);
+    const reviews = cards.reduce((total, entry) => total + entry.reviews.length, 0);
+    return `Saved ${cards.length} card${cards.length === 1 ? "" : "s"} and ${reviews} review${reviews === 1 ? "" : "s"} as an Anki deck. Open it in Anki to import.${missingMedia ? ` ${missingMedia} image${missingMedia === 1 ? " wasn't" : "s weren't"} on this device and ${missingMedia === 1 ? "was" : "were"} left out.` : ""}`;
+  }
+
   const documentFamilyIds = useCallback((rootId: string) => {
     const ids = new Set<string>();
     const queue = [rootId];
@@ -6765,6 +6803,8 @@ function WorkspaceAppContent({
     </div>
     {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
       onClose={() => setFlashcardReview(null)}
+      onImportAnki={handleImportAnki}
+      onExportAnki={() => handleExportAnki(flashcardReview.docIds, flashcardReview.docIds ? flashcardReview.title : "Margin Chat cards")}
       onOpenDocument={(docId) => {
         if (!currentStateRef.current.conversations[docId]) return;
         setFlashcardReview(null);

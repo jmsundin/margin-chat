@@ -183,6 +183,24 @@ export class FlashcardStore {
     return changed.length;
   }
 
+  /** Bring in cards from another app with their history, as one change. */
+  importHistory(reviews: ReadonlyArray<FlashcardReview>, suspendedIds: ReadonlyArray<string>, now = new Date().toISOString()) {
+    const added = reviews.filter((review) => !this.reviews.has(review.id));
+    for (const review of added) { this.reviews.set(review.id, review); this.pending.reviews.add(review.id); }
+    const suspended: StoredFlashcard[] = [];
+    for (const id of suspendedIds) {
+      const card = this.cards.get(id);
+      if (!card || card.suspended) continue;
+      const next = { ...card, suspended: true, updatedAt: now };
+      this.cards.set(id, next);
+      this.pending.cards.add(id);
+      suspended.push(next);
+    }
+    if (!added.length && !suspended.length) return this.writes;
+    this.emit();
+    return this.persist(suspended, added);
+  }
+
   /** Record one answer. It is on disk before this resolves (when the device can store it). */
   addReview(review: FlashcardReview) {
     if (this.reviews.has(review.id)) return this.writes;
