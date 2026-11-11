@@ -56,6 +56,7 @@ import * as publicMap from "./publicMapRepository.mjs";
 import * as topics from "./topicRepository.mjs";
 import * as library from "./libraryRepository.mjs";
 import * as flashcards from "./flashcardRepository.mjs";
+import * as ratchet from "./ratchetRepository.mjs";
 import * as passages from "./passageRepository.mjs";
 import { recordDesktopDownload } from "./downloadRepository.mjs";
 
@@ -449,6 +450,13 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
       catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
     }),
     readFlashcardChanges: (args) => withClient((client) => flashcards.readFlashcardChanges(client, args)),
+    saveRatchetCheck: (args) => withClient(async (client) => {
+      // A check's claims replace the document's old ones only together with its receipt.
+      await client.query("begin");
+      try { await ratchet.saveRatchetCheck(client, args); await client.query("commit"); }
+      catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+    }),
+    readRatchetCheck: (args) => withClient((client) => ratchet.readRatchetCheck(client, args)),
     listLibraryFields: (args) => withClient((client) => library.listLibraryFields(client, args)),
     readLibraryField: (args) => withClient((client) => library.readLibraryField(client, args)),
     createLibraryField: (args) => withClient((client) => library.createLibraryField(client, args)),

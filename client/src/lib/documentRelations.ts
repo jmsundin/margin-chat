@@ -31,7 +31,7 @@ export interface DocumentGraphEdge {
   targetBlockId?: string;
 }
 
-type TextLink = MarkdownWikiLink & { sourceBlockId?: string; sourceMessageId?: string };
+export type TextLink = MarkdownWikiLink & { sourceBlockId?: string; sourceMessageId?: string };
 const linkCache = new WeakMap<Conversation, TextLink[]>();
 
 // Typing changes one block; the document's other blocks reuse their links.
@@ -46,7 +46,7 @@ function blockWikiLinks(content: string): MarkdownWikiLink[] {
 }
 
 /** Wiki links in every authored part of a document, remembered per immutable conversation. */
-function conversationTextLinks(conversation: Conversation): TextLink[] {
+export function conversationTextLinks(conversation: Conversation): TextLink[] {
   const cached = linkCache.get(conversation);
   if (cached) return cached;
   const links: TextLink[] = [];

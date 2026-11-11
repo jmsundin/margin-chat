@@ -84,6 +84,8 @@ export interface RichDocumentDecoration {
   to: number;
   branchIds?: string[];
   noteIds?: string[];
+  /** A checked claim's words (Ratchet): underlined by verdict, and opens the claims view. */
+  claim?: { id: string; verdict: string; label: string };
 }
 export interface RichDocumentAuthorship {
   mode: AuthorshipMode;
@@ -353,7 +355,16 @@ function anchorDecorations(editor: Editor, doc: ProseMirrorNode, markdownOf: (id
     const id = block.attrs.id as string | null;
     const markdown = id ? markdownOf(id) : undefined;
     if (!id || markdown === undefined || block.type.name === RAW) return;
-    const valid = (ranges[id] ?? []).filter((range) => range.to > range.from && range.from >= 0 && range.to <= markdown.length);
+    const inBlock = (ranges[id] ?? []).filter((range) => range.to > range.from && range.from >= 0 && range.to <= markdown.length);
+    for (const range of inBlock) {
+      if (!range.claim) continue;
+      const from = positionInBlock(editor, block, start, markdown, range.from, 1);
+      const to = positionInBlock(editor, block, start, markdown, range.to, -1);
+      if (to > from) decorations.push(Decoration.inline(from, to, {
+        class: `ratchet-claim is-${range.claim.verdict}`, "data-ratchet-claim": range.claim.id, title: `${range.claim.label}: open the claims view`,
+      }));
+    }
+    const valid = inBlock.filter((range) => !range.claim);
     const boundaries = [...new Set(valid.flatMap((range) => [range.from, range.to]))].sort((a, b) => a - b);
     for (let index = 0; index < boundaries.length - 1; index += 1) {
       const active = valid.filter((range) => range.from <= boundaries[index] && range.to >= boundaries[index + 1]);
