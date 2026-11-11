@@ -137,8 +137,10 @@ function PlusIcon() {
 function CardsIcon() {
   return (
     <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
-      <rect x="3" y="7" width="14" height="13" rx="2" />
-      <path d="M7 4h12a2 2 0 0 1 2 2v11" />
+      {/* A study card, wider than tall, with a question on it: reads as a flashcard, not as "copy". */}
+      <rect x="2.5" y="5.5" width="19" height="13" rx="2" />
+      <path d="M10 10.2a2 2 0 1 1 2.8 1.8c-.5.3-.8.7-.8 1.2v.3" />
+      <path d="M12 15.9h.01" />
     </svg>
   );
 }
@@ -956,18 +958,6 @@ export default function ThreadSidebar({
             <SearchIcon />
             <span>Search</span>
           </button>
-          {flashcardsDue !== null && onOpenFlashcards ? (
-            <button
-              aria-label={flashcardsDue ? `Review flashcards, ${flashcardsDue} to study` : "Review flashcards"}
-              className="sidebar-review-button"
-              onClick={onOpenFlashcards}
-              title={flashcardsDue ? `${flashcardsDue} card${flashcardsDue === 1 ? "" : "s"} to study` : "Review flashcards: nothing due"}
-              type="button"
-            >
-              <CardsIcon />
-              {flashcardsDue ? <span className="sidebar-review-count">{flashcardsDue > 999 ? "999+" : flashcardsDue}</span> : null}
-            </button>
-          ) : null}
           <button
             aria-label="New document"
             className="sidebar-new-button"
@@ -1304,6 +1294,18 @@ export default function ThreadSidebar({
 
       <div className={`thread-sidebar-footer${vaultSwitcher ? " has-vault-switcher" : ""}`}>
         {vaultSwitcher}
+        {flashcardsDue !== null && onOpenFlashcards ? (
+          <button
+            aria-label={flashcardsDue ? `Review flashcards, ${flashcardsDue} to study` : "Review flashcards"}
+            className="sidebar-utility-button sidebar-review-button"
+            onClick={onOpenFlashcards}
+            title={flashcardsDue ? `${flashcardsDue} card${flashcardsDue === 1 ? "" : "s"} to study` : "Review flashcards: nothing due"}
+            type="button"
+          >
+            <CardsIcon />
+            {flashcardsDue ? <span className="sidebar-review-count">{flashcardsDue > 99 ? "99+" : flashcardsDue}</span> : null}
+          </button>
+        ) : null}
         <button
           aria-label="Open profile"
           className="sidebar-utility-button"
