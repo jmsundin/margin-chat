@@ -335,6 +335,8 @@ export interface ConversationGraphViewProps {
   /** Double-clicking empty Canvas space makes a new note there, at this map position. */
   onCreateNoteAt?: (position: { x: number; y: number }) => void;
   onOpenConversation: (conversationId: string) => void;
+  /** Split beside the document: a tapped dot opens in the document instead of the map's own side panel. */
+  onSelectBesideDocument?: (conversationId: string) => void;
   /** Zooming in past a full-screen card opens its document; the map keeps its place. */
   onZoomIntoConversation?: (conversationId: string) => void;
   onToggleGroup: (groupId: string) => void;
@@ -1206,6 +1208,7 @@ export default function ConversationGraphView({
   onCreateChildConversation,
   onCreateNoteAt,
   onOpenConversation,
+  onSelectBesideDocument,
   onZoomIntoConversation,
   onToggleGroup,
   onUpdateGraphNodeLayouts,
@@ -3506,7 +3509,8 @@ export default function ConversationGraphView({
   /** A tap on a dot shows its card first; the card's own tap opens the document. */
   function selectFromMap(conversationId: string) {
     const isDot = dotNodes.has(conversationId) || (showClusterDots && !panelView && clusterPlacements.has(conversationId));
-    if (lastPointerTypeRef.current !== "touch" || !isDot || isMultiSelectActive || connectingConversationId) {
+    // Split beside the document, the document below is the card: a tap opens it there straight away.
+    if (lastPointerTypeRef.current !== "touch" || !isDot || isMultiSelectActive || connectingConversationId || onSelectBesideDocument) {
       selectConversation(conversationId);
       return;
     }
@@ -3539,6 +3543,14 @@ export default function ConversationGraphView({
 
         return nextIds;
       });
+      return;
+    }
+
+    if (onSelectBesideDocument) {
+      setSnippetTapped(false);
+      setSnippetId(null);
+      navigation.navigate({ selectedConversationId: conversationId, detailLevel: "compact", source: null, dockedConversationId: null });
+      onSelectBesideDocument(conversationId);
       return;
     }
 

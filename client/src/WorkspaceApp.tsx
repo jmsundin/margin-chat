@@ -54,7 +54,8 @@ import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } f
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpacesPanel, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
-import { DocumentCompass, DocumentKeepReading, DocumentMapHeader, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
+import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentMapHeader, DocumentMapPill, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
+import { clampSplitSize, getDocumentMapSplitBox, getDocumentMapSplitEdge, loadDocumentMapLayout, loadDocumentMapSplitSize, nextDocumentMapPanel, saveDocumentMapLayout, saveDocumentMapSplitSize, type DocumentMapLayout, type DocumentMapPanel, type DocumentMapSplitEdge } from "./lib/documentMapPanel";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
 import { QUIET_SIDEBAR_KEY, readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
@@ -798,9 +799,15 @@ function WorkspaceAppContent({
     keepViewMode?: boolean;
   } | null>(null);
   const graphFocusRequestCounterRef = useRef(0);
-  // The Map view floating over the document ("Around this document"), not a switch to Map view.
-  const [mapModalOpen, setMapModalOpen] = useState(false);
+  // The Map view around the document ("Around this document"), not a switch to Map view: a popup over the
+  // document or split beside it, and minimized to a pill that brings it back with its place kept.
+  const [mapPanel, setMapPanel] = useState<DocumentMapPanel>("closed");
+  const [mapLayout, setMapLayout] = useState<DocumentMapLayout>(loadDocumentMapLayout);
+  const [mapSplitSize, setMapSplitSize] = useState(loadDocumentMapSplitSize);
+  const [mapSplitEdge, setMapSplitEdge] = useState<DocumentMapSplitEdge>("left");
+  const mapModalOpen = mapPanel === "open";
   const [mapModalBounds, setMapModalBounds] = useState<CSSProperties | null>(null);
+  const [mapSplitReserve, setMapSplitReserve] = useState<CSSProperties | null>(null);
   const canvasSectionRef = useRef<HTMLElement | null>(null);
   const documentAreaRef = useRef<HTMLDivElement | null>(null);
   const mapUndoRef = useRef<((current: AppState) => AppState) | null>(null);
@@ -1856,14 +1863,25 @@ function WorkspaceAppContent({
     }
   }, [mainViewMode, mapModalOpen]);
 
-  const showMapModal = mapModalOpen && mainViewMode === "chat" && navigationStyle === "graph";
-  // The modal covers the document area (below its header), measured because the header's height varies.
+  const showMapModal = mapModalOpen && mainViewMode === "chat";
+  const mapSplit = showMapModal && mapLayout === "split";
+  // The popup covers the document area (below its header), measured because the header's height varies.
+  // Split, the map takes the top or left part of that area and the documents move over to make room.
   useLayoutEffect(() => {
-    if (!showMapModal) return;
+    if (!showMapModal) { setMapSplitReserve(null); return; }
     function measure() {
       const section = canvasSectionRef.current?.getBoundingClientRect();
       const area = documentAreaRef.current?.getBoundingClientRect();
       if (!section || !area) return;
+      if (mapLayout === "split") {
+        const edge = getDocumentMapSplitEdge(isMobileViewport, window.innerWidth, window.innerHeight);
+        const box = getDocumentMapSplitBox(edge, mapSplitSize, area.width, area.height);
+        setMapSplitEdge(edge);
+        setMapModalBounds({ top: area.top - section.top + box.top, left: area.left - section.left + box.left, width: box.width, height: box.height });
+        setMapSplitReserve(edge === "top" ? { paddingTop: box.height + 12 } : { paddingLeft: box.width + 12 });
+        return;
+      }
+      setMapSplitReserve(null);
       const gap = area.width < 600 ? 4 : 12;
       setMapModalBounds({ top: area.top - section.top + gap, left: area.left - section.left + gap,
         width: Math.max(0, area.width - gap * 2), height: Math.max(0, area.height - gap * 2) });
@@ -1874,7 +1892,17 @@ function WorkspaceAppContent({
     if (documentAreaRef.current) observer?.observe(documentAreaRef.current);
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
-  }, [showMapModal]);
+  }, [showMapModal, mapLayout, mapSplitSize, isMobileViewport]);
+
+  // Split, the map follows the document you're reading, wherever you went from.
+  const mapFollowIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!mapSplit) { mapFollowIdRef.current = null; return; }
+    if (mapFollowIdRef.current === activeConversation.id) return;
+    const first = mapFollowIdRef.current === null;
+    mapFollowIdRef.current = activeConversation.id;
+    if (!first) setGraphFocusRequest({ conversationId: activeConversation.id, requestId: ++graphFocusRequestCounterRef.current, keepViewMode: true });
+  }, [mapSplit, activeConversation.id]);
 
   useEffect(() => {
     if (!showMapModal) return;
@@ -1883,11 +1911,13 @@ function WorkspaceAppContent({
       const target = event.target instanceof Element ? event.target : null;
       // Escape inside the map's own menus and fields belongs to them.
       if (target?.closest("input, textarea, select, [contenteditable='true'], details[open], [role='menu']")) return;
-      setMapModalOpen(false);
+      // Split, the map is part of the page: Escape there belongs to the document.
+      if (mapLayout === "split") return;
+      setMapPanel("minimized");
     }
     window.addEventListener("keydown", closeWithEscape);
     return () => window.removeEventListener("keydown", closeWithEscape);
-  }, [showMapModal]);
+  }, [showMapModal, mapLayout]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -4967,13 +4997,44 @@ function WorkspaceAppContent({
   function handleChangeNavigationStyle(style: DocumentNavigationStyle) {
     setNavigationStyle(style);
     saveDocumentNavigationStyle(style);
-    if (style === "graph") openMapModal();
-    else setMapModalOpen(false);
   }
 
-  function openMapModal() {
-    setMapModalOpen(true);
-    setGraphFocusRequest({ conversationId: activeConversation.id, requestId: ++graphFocusRequestCounterRef.current, neighborhoodDepth: 2, preserveMapMode: true });
+  function openMapModal(layout: DocumentMapLayout = mapLayout) {
+    if (layout !== mapLayout) { setMapLayout(layout); saveDocumentMapLayout(layout); }
+    // Back from its pill the map keeps its place and zoom; opened fresh it centers on this document.
+    if (mapPanel === "closed") setGraphFocusRequest({ conversationId: activeConversation.id, requestId: ++graphFocusRequestCounterRef.current, neighborhoodDepth: 2, preserveMapMode: true });
+    setMapPanel("open");
+  }
+
+  function handleToggleDocumentMap() {
+    if (nextDocumentMapPanel(mapPanel) === "open") openMapModal();
+    else setMapPanel("minimized");
+  }
+
+  function handleToggleDocumentMapSplit() {
+    openMapModal(mapModalOpen && mapLayout === "split" ? "popup" : "split");
+  }
+
+  function handleResizeMapSplit(event: ReactPointerEvent<HTMLDivElement>) {
+    const area = documentAreaRef.current?.getBoundingClientRect();
+    if (!area) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    let size = mapSplitSize;
+    const move = (moveEvent: PointerEvent) => {
+      size = clampSplitSize(mapSplitEdge === "top" ? (moveEvent.clientY - area.top) / area.height : (moveEvent.clientX - area.left) / area.width);
+      setMapSplitSize(size);
+    };
+    const end = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      saveDocumentMapSplitSize(size);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
   }
 
   /** Scrolling panes, pinned panes and the margin notes shown beside them. */
@@ -5457,7 +5518,8 @@ function WorkspaceAppContent({
     setSearchModalOpen(false);
     setSearchExploreOpen(false);
     setSearchQuery("");
-    setMapModalOpen(false);
+    // A popup goes back to its pill on the way to Map view; a split is still there on the way back.
+    if (mapPanel === "open" && mapLayout === "popup") setMapPanel("minimized");
     setMainViewMode(nextViewMode);
     // The Map opens on the document you were reading, in whichever Map tab (Map or Focus) it was left on.
     if (nextViewMode === "graph" && mainViewMode !== "graph" && state.conversations[activeConversation.id]) {
@@ -5812,7 +5874,7 @@ function WorkspaceAppContent({
         <button type="button" className="version-clash-dismiss" aria-label="Dismiss: keep the document as it is"
           onClick={() => void vault.resolveConflict(vault.clashedDocuments?.[conversation.id], "current").catch(() => undefined)}>×</button>
       </p> : undefined}
-      bodyFooter={view === "chat" && navigationStyle === "reading" && conversation.id === activeConversation.id && documentNeighbors
+      bodyFooter={view === "chat" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
       fullScreenToggle={view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
@@ -6300,11 +6362,17 @@ function WorkspaceAppContent({
                   threads={threadSummaries}
                 />
               </WorkspaceView>
-              {showMapModal ? <div className="document-map-modal-backdrop" aria-hidden="true" onClick={() => setMapModalOpen(false)} /> : null}
+              {showMapModal && !mapSplit ? <div className="document-map-modal-backdrop" aria-hidden="true" onClick={() => setMapPanel("minimized")} /> : null}
+              {mapSplit && mapModalBounds ? <div className={`document-map-split-handle is-${mapSplitEdge}`} role="separator"
+                aria-orientation={mapSplitEdge === "top" ? "horizontal" : "vertical"} aria-label="Resize the map"
+                style={mapSplitEdge === "top"
+                  ? { top: Number(mapModalBounds.top) + Number(mapModalBounds.height), left: mapModalBounds.left, width: mapModalBounds.width }
+                  : { left: Number(mapModalBounds.left) + Number(mapModalBounds.width), top: mapModalBounds.top, height: mapModalBounds.height }}
+                onPointerDown={handleResizeMapSplit} /> : null}
               <WorkspaceView mode="graph" active={isGraphView || showMapModal}
-                modal={showMapModal ? { labelledBy: "document-map-modal-title", style: mapModalBounds ?? undefined } : undefined}>
-                {showMapModal ? <DocumentMapHeader open onToggle={() => setMapModalOpen(false)}
-                  onOpenMap={() => handleSetMainViewMode("graph")} /> : null}
+                modal={showMapModal ? { labelledBy: "document-map-modal-title", style: mapModalBounds ?? undefined, docked: mapSplit } : undefined}>
+                {showMapModal ? <DocumentMapHeader split={mapSplit} splitEdge={mapSplit ? mapSplitEdge : getDocumentMapSplitEdge(isMobileViewport, window.innerWidth, window.innerHeight)} onToggleSplit={handleToggleDocumentMapSplit}
+                  onMinimize={() => setMapPanel("minimized")} onOpenMap={() => handleSetMainViewMode("graph")} /> : null}
                 {isGraphView && newVault ? <ViewIntro id="map" className="is-map" title="What Map View shows">
                   Every document is a dot. Side documents, margin notes and links you add become lines, so you can see how your ideas connect. Click a dot to open it.
                 </ViewIntro> : null}
@@ -6356,14 +6424,15 @@ function WorkspaceAppContent({
                     onActivateConversation={handleSelectConversation}
                     onAssignGroup={handleAssignConversationGroup}
                     onCreateChildConversation={handleAddGraphChildChat}
+                    onSelectBesideDocument={mapSplit ? (conversationId) => handleSelectConversation(conversationId, { nextViewMode: "chat" }) : undefined}
                     onOpenConversation={(conversationId) => {
-                      setMapModalOpen(false);
+                      if (!mapSplit) setMapPanel((panel) => panel === "open" ? "minimized" : panel);
                       handleSelectConversation(conversationId, {
                         nextViewMode: "chat",
                       });
                     }}
                     onZoomIntoConversation={(conversationId) => {
-                      setMapModalOpen(false);
+                      if (!mapSplit) setMapPanel((panel) => panel === "open" ? "minimized" : panel);
                       if (!showMapModal) setMapReturnId(conversationId);
                       handleSelectConversation(conversationId, { nextViewMode: "chat" });
                     }}
@@ -6429,6 +6498,9 @@ function WorkspaceAppContent({
                         Map
                       </button> : null}
                       {/* On computers each document's own header holds it. */}
+                      {showSpaceStart ? null : <DocumentMapButton open={mapModalOpen} onToggle={handleToggleDocumentMap}
+                        split={mapLayout === "split"} splitEdge={isMobileViewport ? "top" : "left"}
+                        onToggleSplit={isMobileViewport ? undefined : handleToggleDocumentMapSplit} />}
                       {isMobileViewport ? renderFullScreenButton() : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
                         {activeConversation.document || activeConversation.kind === "note" ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
@@ -6446,7 +6518,6 @@ function WorkspaceAppContent({
                     </div>
                   </div>
                   {isMobileViewport ? (mobileHeaderOpen ? <div id="document-header-details" className="document-header-details">
-                    <div className="document-header-section-label">Spaces</div>
                     {renderSpaceSwitcher(true)}
                     {activeSpace && visitorRootIds.includes(activeRootId) ? <button type="button" className="space-action"
                       onClick={() => handleKeepInSpace(activeRootId)}>Keep {activeRootConversation.title || "Untitled document"} in {activeSpace.name}</button> : null}
@@ -6454,19 +6525,15 @@ function WorkspaceAppContent({
                     {renderSessionTabs(true)}
                     <div className="document-header-section-label">Path</div>
                     {renderDocumentBreadcrumbs(true)}
-                    <DocumentNavigationSwitcher labelled value={navigationStyle} onChange={(style) => {
-                      handleChangeNavigationStyle(style);
-                      if (style === "graph") setMobileHeaderOpen(false);
-                    }} />
-                    {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
-                    {navigationStyle === "outline" && documentNeighbors ? <DocumentTopicOutline neighbors={documentNeighbors}
-                      onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
+                    {documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
                   </div> : null) : desktopHeaderOpen && !showSpaceStart && !quietHeader ? renderDocumentBreadcrumbs() : null}
                   </header>
                   {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
-                  <div className="document-workspace-with-search" ref={documentAreaRef}>
-                  {navigationStyle === "graph" && !showMapModal ? <DocumentMapHeader open={false} onToggle={openMapModal}
-                    onOpenMap={() => handleSetMainViewMode("graph")} /> : null}
+                  <div className={`document-workspace-with-search${mapSplit ? ` has-map-split is-split-${mapSplitEdge}` : ""}`} ref={documentAreaRef}
+                    style={mapSplit ? mapSplitReserve ?? undefined : undefined}>
+                  {mapPanel === "minimized" && mainViewMode === "chat" ? <DocumentMapPill onRestore={() => openMapModal()} onClose={() => setMapPanel("closed")}
+                    nearby={documentNeighbors ? new Set([...documentNeighbors.siblings, ...documentNeighbors.children, ...documentNeighbors.linked, ...(documentNeighbors.parent ? [documentNeighbors.parent] : [])]
+                      .map((document) => document.id).filter((id) => id !== activeConversation.id)).size : 0} /> : null}
                   {navigationStyle === "outline" && documentNeighbors && !isMobileViewport ? <DocumentTopicOutline neighbors={documentNeighbors}
                     onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
                   {searchPanel ? <SearchResultsPanel initialQuery={searchPanel.query} initialScope={searchPanel.scope} provider={vaultSearchProvider}
