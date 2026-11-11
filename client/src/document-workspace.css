@@ -208,6 +208,7 @@
 @media (max-width: 900px) {
   .app-shell.is-document-maximized .conversation-canvas.is-tree-browser.is-document-workspace { padding: 0 0 10px; }
   .document-full-screen-button { flex-basis: 40px; width: 40px; height: 40px; padding: 11px; }
+  .document-map-button { width: 40px; height: 40px; }
   .document-panel .document-header-actions > :is(.document-full-screen-button, .document-exit-full-screen) { flex-basis: 34px; width: 34px; height: 34px; padding: 8px; }
   /* A phone has no room beside the document, so full screen leaves its margin notes out; they open on their own. */
   .app-shell.is-document-maximized .document-margin-notes.is-maximized-document { display: none; }

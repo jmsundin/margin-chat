@@ -99,7 +99,7 @@ export function SpaceSwitcher({ spaces, activeId, conversations, openTabCount, o
         onPointerEnter={() => setPreviewId(null)} onFocus={() => setPreviewId(null)}>
         <span className="space-ring" aria-hidden="true" />
         <span className="space-option-name">No space</span>
-        <span className="space-meta">⌃0</span>
+        {inline ? null : <span className="space-meta">⌃0</span>}
       </button>
       {spaces.length ? <hr /> : null}
       {spaces.map((space, index) => <button key={space.id} type="button"
@@ -126,7 +126,18 @@ export function SpaceSwitcher({ spaces, activeId, conversations, openTabCount, o
     </>}
   </>;
 
-  if (inline) return <div className="space-switcher is-inline">{list}</div>;
+  // In the phone drop-down the spaces fold to one row, however many there are, so the documents show first.
+  if (inline) return <div className={`space-switcher is-inline${open ? " is-open" : ""}`}>
+    <button type="button" className="space-inline-row" aria-expanded={open}
+      style={active ? { "--space-color": active.color } as CSSProperties : undefined}
+      onClick={() => { setOpen((value) => !value); setCreating(false); }}>
+      {active ? <span className="space-dot" style={{ background: active.color }} aria-hidden="true" /> : <span className="space-ring" aria-hidden="true" />}
+      <span className="space-option-name">{active ? active.name : "No space"}</span>
+      <span className="space-meta">{open ? "Spaces" : spaces.length ? `${spaces.length} ${spaces.length === 1 ? "space" : "spaces"}` : "Space"}</span>
+      <svg className="space-pill-chevron" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={open ? "m4 10 4-4 4 4" : "m4 6 4 4 4-4"} /></svg>
+    </button>
+    {open ? <div className="space-inline-list">{list}</div> : null}
+  </div>;
 
   function acceptsDrop(event: DragEvent) {
     return Boolean(active && onDropDocument && event.dataTransfer.types.includes(DOCUMENT_DRAG_TYPE));
