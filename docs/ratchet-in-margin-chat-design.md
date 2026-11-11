@@ -195,5 +195,97 @@ spending or silently skipping.
 
 ## 5. Build order
 
-Slices are independently shippable; each
-...[truncated 1223 chars]
+Slices are independently shippable; each slice merges only when its eval
+gate (§3.3) passes. Order:
+
+1. **Slice 1 — Ratchet core, vault-only.** Claim extraction, vault-tier
+   verification, margin verdicts, per-document claims view (§6 has the
+   detailed spec).
+2. **Slice 2 — Scholarly pack.** Tier-1 sources (Semantic Scholar,
+   Europe PMC / PubMed, OpenAlex) with cache-back into the vault.
+3. **Slice 3 — Tool-set registry.** Core becomes the explicit default set;
+   catalog + install flow; per-set caps and receipts; MCP token scopes
+   become tool-set lists (existing tokens unaffected).
+4. **Slice 4 — Scholar+ (opt-in).** SerpApi escalation set, BYOK, capped.
+5. **Slice 5 — Margin Chat as MCP client.** User-registered MCP servers
+   become tool sets.
+
+## 6. Slice 1 — detailed spec (Ratchet core, vault-only)
+
+**Goal.** A user opens a science document in Margin Chat, runs "Check
+claims," and gets trustworthy verdicts in the margin — verified entirely
+against the vault. This is the slice the eval gate exists for.
+
+**Scope in**
+- Claim extraction for documents and notes (not chats in v1).
+- Verification against tier 0 only (the vault: passage index + full-text
+  search + the document's own linked sources).
+- Verdicts rendered as margin annotations anchored to passages, plus a
+  per-document claims view.
+- Claim objects persisted so Slice 2 can re-verify the same claims
+  against external tiers without re-extraction.
+
+**Scope out** — external sources (Slice 2), tool-set registry changes
+(Slice 3), MCP surface changes of any kind, chat documents, automatic
+background checking (Slice 1 is user-invoked per document; background
+surfacing of open loops is a later slice).
+
+**Data model — claim object**
+- `id`, `document_id`, `passage_anchor` (`block_id`, line range, and the
+  lines' SHA-256 values, reusing the authorship machinery so anchors
+  survive edits or fail loudly).
+- `claim_text` (the extracted claim, verbatim span plus a normalised
+  restatement), `extracted_by` (model + run id), `created_at`.
+- `verdict`: one of `supported` / `unsupported` / `contradicted` /
+  `stale` / `insufficient-evidence`; `verdict_at`; `verdict_by` (model +
+  run id, matching the execution-receipt pattern).
+- `evidence`: array of `{ document_id, block_id, line_range, sha256,
+  quote }` — every entry must resolve against the current vault at read
+  time; an entry that no longer resolves renders as "source changed,"
+  never silently.
+- Stale anchors: if the anchored lines' hashes no longer match, the
+  claim is marked `anchor-stale` and excluded from verdict display until
+  re-extracted. Never guess a new anchor.
+
+**Behaviour**
+- Extraction runs on user invocation for one document. It proposes claims;
+  nothing is verified or displayed until extraction completes.
+- Verification searches the vault for passages bearing on each claim
+  (passage index first, then keyword search), including the document's
+  own outbound links and relations — a claim citing a vault document is
+  checked against that document first.
+- A verdict other than `insufficient-evidence` requires at least one
+  evidence entry whose quoted passage actually entails (or contradicts)
+  the claim; the verifying prompt receives claim + passages and must
+  point at the passage it used. "Sounds plausible" is not evidence.
+- Verdicts are written through the authorship-safe path (annotations are
+  agent-authored content; user lines are never touched — principle 4).
+- Each run produces an execution receipt (models, passages consulted,
+  omissions) consistent with the existing receipt format.
+
+**Acceptance criteria**
+- The MCR golden set (MCR-001…030), filled from real claims in the
+  curated 8–15 science documents, runs end-to-end in CI or a scripted
+  harness against a fixture vault.
+- **Citation grounding = 100%** for non-`insufficient-evidence`
+  verdicts: every such verdict's evidence resolves and a spot-checkable
+  quote matches the cited lines' hashes.
+- Verdict accuracy threshold on the MCR set is stated in the
+  implementation PR *before* the first full run, and the run's results
+  are posted to the PR either way.
+- No regression to §1: existing agent tools and MCP tools behave as
+  before (names, semantics, authorship invariants).
+- A document with no checkable claims completes cleanly with an empty
+  claims view — no errors, no invented claims.
+
+## 7. Open questions for Jon
+
+1. **Verdict visibility** — are verdicts private annotations by default,
+   or first-class documents (shareable, linkable) from the start?
+2. **Extraction trigger (post-Slice 1)** — per-document manual runs only,
+   or also a background pass over newly saved science documents
+   (cost-capped)?
+3. **Scholar+ default cap** — the SerpApi free tier's 250 searches/month
+   is the suggested default; confirm or set another.
+4. **Naming** — is "Ratchet" the user-facing name for the Verify aspect,
+   or an internal codename with a plainer label in the UI?
