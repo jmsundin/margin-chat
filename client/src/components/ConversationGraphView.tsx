@@ -2027,8 +2027,8 @@ export default function ConversationGraphView({
     // Titles also stop at the map's left and right edges.
     const left = -viewport.x, right = left + viewportSize.width;
     const obstacles: MapBox[] = viewportSize.width ? [{ x0: left - 1e6, y0: -1e9, x1: left, y1: 1e9 }, { x0: right, y0: -1e9, x1: right + 1e6, y1: 1e9 }] : [];
-    // On a narrow screen the zoom bar covers the bottom edge; titles stop above it rather than run under it.
-    const below = canvasFitBelow(viewportSize.width);
+    // On a narrow screen the zoom bar covers the bottom edge; titles in boxes, which Fit keeps above it, stop there too.
+    const below = canvasGroupBoxes.length ? canvasFitBelow(viewportSize.width) : 0;
     if (below && viewportSize.height) obstacles.push({ x0: left - 1e6, y0: -viewport.y + viewportSize.height - below - 24, x1: right + 1e6, y1: 1e9 });
     for (const { placement, screenFootprint, nodeDetail, visualBounds } of renderedNodeDetails) {
       const conversation = conversations[placement.conversationId];
@@ -2059,7 +2059,7 @@ export default function ConversationGraphView({
       dot.titleLines = fit.lines;
     }
     return dots;
-  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width, viewportSize.height,
+  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width, viewportSize.height, canvasGroupBoxes.length,
     selectedConversationId, hoveredId, isSearchMatch]);
   // Only a circle shows a card; one that opened as a preview, is moving or left the map closes it.
   const hoverCardProps = useMemo(() => {
