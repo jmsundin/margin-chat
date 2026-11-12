@@ -28,7 +28,7 @@ import { getDocumentNodeFootprint, layoutDocumentMap, type DocumentLayoutMode } 
 import { getGraphNeighborhoodIds } from "../lib/graphNeighborhood";
 import { documentConnectionGeometry } from "../lib/documentMapConnections";
 import { curvedGraphConnection } from "../lib/graphConnectionCurve";
-import { fitMapDotTitles, mapDotDiameter, mapDotTitleIsBold, measureMapDotTitle, type MapBox, type MapDotTitle } from "../lib/mapDotNodes";
+import { fitMapDotTitles, mapDotDiameter, mapDotTitleIsBold, measureMapDotTitle, measureMapDotTitleWords, MAP_DOT_TITLE_GAP, MAP_DOT_TITLE_LINES, MAP_DOT_TITLE_WIDTH, type MapBox, type MapDotTitle } from "../lib/mapDotNodes";
 import { createMapHoverIntent, mapHoverSnippet, placeMapHoverCard, type MapHoverIntent } from "../lib/mapHoverCard";
 import { clampPhoneDockSize, PHONE_DOCK_MIN, PHONE_DOCK_SHARE, usePhoneDockLayout } from "../lib/phoneDock";
 import { buildMapTerritories, centerNodeInCanvas, fitMapTerritories, fitMapTerritory, fitMapTerritoryOverview, getMapScale, layoutMapTerritoryOverview, layoutFocusedMapTerritory, mapLabelsOverlap, OVERVIEW_NODE_FOOTPRINT as GROUP_NODE_FOOTPRINT, readableNodeSize, type MapTerritory } from "../lib/graphPresentation";
@@ -71,6 +71,7 @@ import { GraphLandscapeLayer, type LandscapeLabel } from "./GraphLandscapeLayer"
 import { fitNetworkMapViewport } from "../lib/networkMapLayout";
 import MapLensBar from "./MapLensBar";
 import CanvasGroupBoxes from "./CanvasGroupBoxes";
+import { documentSimilarity } from "../lib/similarityBlocks";
 import { canvasBoxAt, canvasGroupDropChanges, canvasTopicDropMoves, layoutCanvasGroupBoxes, topicCanvasGroups, type CanvasGroupBox, type CanvasTopic } from "../lib/canvasGroupBoxes";
 import { describeSpotlight, spotlightHeat, spotlightNeighbours, type MapSpotlight, type SpotlightHeat } from "../lib/mapSpotlight";
 import { countConnections, EMPTY_MAP_LENS, matchMapLens, newLensFilter, readMapLens, type MapLens, type SavedMapLens } from "../lib/mapLens";
@@ -255,6 +256,11 @@ function getNodeZoomDetail(footprint?: { width: number; height: number }): Conve
   if (footprint.width >= 360 && footprint.height >= 190) return "reader";
   if (footprint.width >= 210 && footprint.height >= 110) return "preview";
   return "compact";
+}
+
+/** On a narrow screen the zoom bar spans most of the bottom edge; Fit keeps group boxes above it. */
+function canvasFitBelow(width: number) {
+  return width < 640 ? 40 : 0;
 }
 
 /** Canvas shows group labels only when zoomed out further than this. */
@@ -876,6 +882,7 @@ function GraphNodeBase({
     transform: `scale(${(screenFootprint ? 1 / zoomScale : readableNodeSize(zoomScale, isPreview || isReader)) * (isPreview || isReader || dot ? 1 : family?.size ?? 1)})`,
     "--map-dot-size": dot ? `${dot.diameter}px` : undefined,
     "--map-dot-title-max": dot?.titleMax !== undefined ? `${dot.titleMax}px` : undefined,
+    "--map-dot-title-lines": dot?.titleLines,
     "--map-family-color": familyColor ?? undefined,
     "--map-card-title-size": screenFootprint?.titleFontSize ? `${screenFootprint.titleFontSize}px` : undefined,
     "--map-card-title-lines": screenFootprint?.titleLines,
@@ -1059,7 +1066,7 @@ function GraphNodeBase({
   );
 }
 
-export interface MapDotStyle { diameter: number; bold: boolean; titleMax?: number }
+export interface MapDotStyle { diameter: number; bold: boolean; titleMax?: number; titleLines?: number }
 
 type GraphNodeProps = Parameters<typeof GraphNodeBase>[0];
 
@@ -1097,7 +1104,7 @@ function areGraphNodePropsEqual(previous: GraphNodeProps, next: GraphNodeProps) 
   for (const key of keys) {
     if (key === "dot") {
       const a = previous.dot, b = next.dot;
-      if (a !== b && !(a && b && a.diameter === b.diameter && a.bold === b.bold && a.titleMax === b.titleMax)) return false;
+      if (a !== b && !(a && b && a.diameter === b.diameter && a.bold === b.bold && a.titleMax === b.titleMax && a.titleLines === b.titleLines)) return false;
     } else if (GRAPH_NODE_VALUE_PROPS.has(key)) {
       if (!sameFields(previous[key] as Record<string, unknown> | undefined, next[key] as Record<string, unknown> | undefined)) return false;
     } else if (previous[key] !== next[key]) return false;
@@ -1472,7 +1479,7 @@ export default function ConversationGraphView({
       linkedConversationIds: showLinks ? conversation.linkedConversationIds : [],
       relations: showLinks ? conversation.relations : undefined,
     }])), [conversations, showBranches, showLinks]);
-  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && (findsTopics || isLandscapeMode || scope.kind === "focus") });
+  const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && (findsTopics || isLandscapeMode || isCanvasMode || scope.kind === "focus") });
   const [showMeaningRing, setShowMeaningRing] = useState(true);
   const linkScopedIds = useMemo(() => {
     const ids = scope.kind === "focus"
@@ -1769,9 +1776,18 @@ export default function ConversationGraphView({
     : canvasGrouping === "muse" ? museCategories.groups : canvasGrouping === "groups" ? groups : EMPTY_BOX_GROUPS,
     [canvasGrouping, canvasTopicList, museCategories.groups, groups]);
   const showCanvasGroupBoxes = isCanvasMode && !panelView && !documentsOnly && Object.keys(boxGroups).length > 0;
+  // Boxes take the screen's shape: tall on a phone held upright, wide on a desktop, so Fit leaves room for titles.
+  // The space Fit fills (see fitGraph), rounded so small resizes don't rearrange the boxes.
+  const boxScreenAspect = viewportSize.width && viewportSize.height
+    ? Math.round(10 * Math.max(240, viewportSize.width - 56) / Math.max(220, viewportSize.height - 48 - 40 - canvasFitBelow(viewportSize.width))) / 10 : undefined;
+  const boxSimilarity = useMemo(() => showCanvasGroupBoxes ? documentSimilarity({ conversations, connections: documentConnections,
+    vectors: topicEmbeddings.vectors, neighbours: topicEmbeddings.neighbours }) : undefined,
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- revision says when vectors or neighbours changed in place
+  [showCanvasGroupBoxes, conversations, documentConnections, topicEmbeddings.vectors, topicEmbeddings.neighbours, topicEmbeddings.revision]);
   const canvasGroupLayout = useMemo(() => showCanvasGroupBoxes ? layoutCanvasGroupBoxes({ nodes: unfocusedScene.nodes, conversations, groups: boxGroups,
-    noGroupLabel: canvasGrouping === "topics" ? groupBySubject ? "Unfiled" : "Unlinked" : canvasGrouping === "muse" ? "Not sorted" : "No group" }) : null,
-    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, canvasGrouping, groupBySubject]);
+    noGroupLabel: canvasGrouping === "topics" ? groupBySubject ? "Unfiled" : "Unlinked" : canvasGrouping === "muse" ? "Not sorted" : "No group",
+    similarity: boxSimilarity, screenAspect: boxScreenAspect }) : null,
+    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, canvasGrouping, groupBySubject, boxSimilarity, boxScreenAspect]);
   const canvasGroupBoxes = canvasGroupLayout?.boxes ?? EMPTY_GROUP_BOXES;
   const displayScene = useMemo(() => documentLayout
     ? replaceConversationGraphNodes(unfocusedScene, documentLayout.nodes)
@@ -2011,6 +2027,9 @@ export default function ConversationGraphView({
     // Titles also stop at the map's left and right edges.
     const left = -viewport.x, right = left + viewportSize.width;
     const obstacles: MapBox[] = viewportSize.width ? [{ x0: left - 1e6, y0: -1e9, x1: left, y1: 1e9 }, { x0: right, y0: -1e9, x1: right + 1e6, y1: 1e9 }] : [];
+    // On a narrow screen the zoom bar covers the bottom edge; titles stop above it rather than run under it.
+    const below = canvasFitBelow(viewportSize.width);
+    if (below && viewportSize.height) obstacles.push({ x0: left - 1e6, y0: -viewport.y + viewportSize.height - below - 24, x1: right + 1e6, y1: 1e9 });
     for (const { placement, screenFootprint, nodeDetail, visualBounds } of renderedNodeDetails) {
       const conversation = conversations[placement.conversationId];
       if (!conversation || hiddenConversationIds.has(placement.conversationId)) continue;
@@ -2028,13 +2047,19 @@ export default function ConversationGraphView({
       const x = placement.x + placement.width / 2, y = placement.y + placement.height / 2, radius = diameter / 2 * k / scale;
       dots.set(placement.conversationId, { diameter, bold, bounds: { x: x - radius, y: y - radius, width: radius * 2, height: radius * 2 } });
       cardScale.set(placement.conversationId, k);
-      titles.push({ id: placement.conversationId, x: x * scale, y: y * scale, radius: diameter / 2 * k, gap: 5 * k,
-        titleWidth: shrunk?.titleLines === 0 ? 0 : measureMapDotTitle(conversation.title, bold) * k, titleHeight: 17 * k, priority: connections,
+      const measured = measureMapDotTitleWords(conversation.title, bold);
+      titles.push({ id: placement.conversationId, x: x * scale, y: y * scale, radius: diameter / 2 * k, gap: MAP_DOT_TITLE_GAP * k,
+        titleWidth: shrunk?.titleLines === 0 ? 0 : measureMapDotTitle(conversation.title, bold) * k, titleHeight: 16 * k, priority: connections,
+        words: measured.words.map((width) => width * k), space: measured.space * k, maxWidth: MAP_DOT_TITLE_WIDTH * k, maxLines: MAP_DOT_TITLE_LINES,
         keep: placement.conversationId === selectedConversationId || placement.conversationId === hoveredId || isSearchMatch(placement.conversationId) });
     }
-    for (const [id, width] of fitMapDotTitles(titles, obstacles)) dots.get(id)!.titleMax = Math.floor(width / cardScale.get(id)!);
+    for (const [id, fit] of fitMapDotTitles(titles, obstacles)) {
+      const dot = dots.get(id)!;
+      dot.titleMax = Math.floor(fit.width / cardScale.get(id)!);
+      dot.titleLines = fit.lines;
+    }
     return dots;
-  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width,
+  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width, viewportSize.height,
     selectedConversationId, hoveredId, isSearchMatch]);
   // Only a circle shows a card; one that opened as a preview, is moving or left the map closes it.
   const hoverCardProps = useMemo(() => {
@@ -2067,7 +2092,8 @@ export default function ConversationGraphView({
       const circle = toScreen(other.bounds), k = (circle.x1 - circle.x0) / other.diameter, center = (circle.x0 + circle.x1) / 2;
       obstacles.push(circle);
       const width = other.titleMax ?? measureMapDotTitle(conversations[id]?.title ?? "", other.bold);
-      if (width) obstacles.push({ x0: center - width * k / 2, y0: circle.y1 + 5 * k, x1: center + width * k / 2, y1: circle.y1 + 22 * k });
+      const top = circle.y1 + MAP_DOT_TITLE_GAP * k;
+      if (width) obstacles.push({ x0: center - width * k / 2, y0: top, x1: center + width * k / 2, y1: top + 16 * (other.titleLines ?? 1) * k });
     }
     let notes = 0;
     for (const child of Object.values(conversations)) if (child.parentId === snippetId && child.document?.marginNote) notes += 1;
@@ -2503,9 +2529,10 @@ export default function ConversationGraphView({
     const canvas = { width: viewportElement.clientWidth, height: viewportElement.clientHeight };
     if (isCanvasMode) {
       // Group boxes put their names on their top edge; leave room for them, and fit the boxes, not just their cards.
-      const room = canvasGroupBoxes.length ? 40 : 0;
+      // The zoom bar sits over the bottom edge; keep the last row of titles above it.
+      const room = canvasGroupBoxes.length ? 40 : 0, below = canvasGroupBoxes.length ? canvasFitBelow(viewportElement.clientWidth) : 0;
       const fit = calculateFitViewport(canvasGroupBoxes.length ? { ...scene, nodes: canvasGroupBoxes.map(groupBoxPlacement) } : scene,
-        { clientWidth: viewportElement.clientWidth, clientHeight: viewportElement.clientHeight - room }, false);
+        { clientWidth: viewportElement.clientWidth, clientHeight: viewportElement.clientHeight - room - below }, false);
       applyViewport({ ...fit, y: fit.y + room });
       fitAsOverviewRef.current = false;
       return;

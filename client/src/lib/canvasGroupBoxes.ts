@@ -1,4 +1,5 @@
 import type { ConversationGraphNodePlacement } from "./conversationGraph";
+import { similarityBlocks, type DocumentSimilarity } from "./similarityBlocks";
 import { getConversationRootId } from "./tree";
 import type { Conversation, ConversationGroup } from "../types";
 
@@ -9,8 +10,13 @@ const BOX_PADDING_TOP = 44;
 const BOX_GAP = 72;
 const CELL_GAP_X = 24;
 const CELL_GAP_Y = 16;
+/** Cells of space around a block of alike documents, so blocks read as subjects. */
+const BLOCK_GAP_X = 0.45;
+const BLOCK_GAP_Y = 0.4;
 /** Boxes come out a little wider than tall, like the screen they sit on. */
 const BOX_ASPECT = 1.4;
+/** Shapes (width over height) tried for the boxes when fitting them to a screen. */
+const SHAPE_CANDIDATES = [0.4, 0.55, 0.75, 1, 1.4, 1.9, 2.6];
 
 export interface CanvasGroupBox {
   id: string;
@@ -46,12 +52,22 @@ export function canvasGroupOf(conversations: Record<string, Conversation>, group
  * a main document with its children to its right, so a box's size follows what it holds. Boxes
  * are packed in rows in sidebar order, with documents in no group last, so they never overlap.
  */
-export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLabel = "No group" }: {
+export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLabel = "No group", similarity, aspect = BOX_ASPECT, screenAspect }: {
   nodes: ConversationGraphNodePlacement[];
   conversations: Record<string, Conversation>;
   groups: Record<string, ConversationGroup>;
   /** What the box of documents in no group is called: "No group", or "Unfiled" when boxes are topics. */
   noGroupLabel?: string;
+  /** How alike two documents are; with it, alike documents in a box sit together in blocks. */
+  similarity?: DocumentSimilarity;
+  /** Width over height for boxes and the whole arrangement. */
+  aspect?: number;
+  /**
+   * Width over height of the screen the map is fitted to. With it, the boxes take whichever shape
+   * lets Fit draw them largest there (tall on a phone held upright, wide on a desktop), so titles,
+   * which keep their size at any zoom, get the most room. Overrides `aspect`.
+   */
+  screenAspect?: number;
 }): { boxes: CanvasGroupBox[]; nodes: ConversationGraphNodePlacement[] } {
   const index = groupIndex(groups);
   const byId = new Map(nodes.map((node) => [node.conversationId, node]));
@@ -77,31 +93,50 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLa
   const order = [...Object.values(groups)
     .map((group) => ({ id: group.id, label: group.name, color: group.color, kind: "group" as const })),
   ...(members.has(NO_GROUP_BOX_ID) ? [{ id: NO_GROUP_BOX_ID, label: noGroupLabel, color: "var(--muted)", kind: "none" as const }] : [])];
-  const sized = order.map((box) => {
-    const ids = members.get(box.id) ?? [];
-    const { cells, columns, rows } = layoutFamilyTrees(ids, conversations, cellHeight / cellWidth);
-    return { ...box, ids, cells,
-      width: columns * cellWidth - CELL_GAP_X + BOX_PADDING * 2,
-      height: rows * cellHeight - CELL_GAP_Y + BOX_PADDING_TOP + BOX_PADDING };
-  });
-
-  // Rows about as wide as the whole arrangement is tall, so Fit fills a screen.
-  const area = sized.reduce((sum, box) => sum + (box.width + BOX_GAP) * (box.height + BOX_GAP), 0);
-  const rowWidth = Math.max(...sized.map((box) => box.width), Math.sqrt(area * BOX_ASPECT));
-  const boxes: CanvasGroupBox[] = [];
-  const placed: ConversationGraphNodePlacement[] = [];
-  let x = 0, y = 0, rowHeight = 0;
-  for (const box of sized) {
-    if (x > 0 && x + box.width > rowWidth) { x = 0; y += rowHeight + BOX_GAP; rowHeight = 0; }
-    boxes.push({ id: box.id, label: box.label, color: box.color, kind: box.kind, x, y, width: box.width, height: box.height, conversationIds: box.ids });
-    for (const id of box.ids) {
-      const node = byId.get(id)!, cell = box.cells.get(id)!;
-      placed.push({ ...node, x: x + BOX_PADDING + cell.column * cellWidth, y: y + BOX_PADDING_TOP + cell.row * cellHeight });
+  // Each box's blocks of alike documents don't depend on its shape; find them once.
+  const alikeCache = new Map<string, ReturnType<typeof similarityBlocks>>();
+  const arrange = (shape: number) => {
+    const sized = order.map((box) => {
+      const ids = members.get(box.id) ?? [];
+      const blocksOf = similarity && ((singles: string[]) => {
+        const key = `${box.id}\n${singles.join("\n")}`;
+        let found = alikeCache.get(key);
+        if (!found) alikeCache.set(key, found = similarityBlocks(singles, similarity));
+        return found;
+      });
+      const { cells, columns, rows } = layoutFamilyTrees(ids, conversations, cellHeight / cellWidth, { similarity, aspect: shape, blocksOf: blocksOf || undefined });
+      return { ...box, ids, cells,
+        width: columns * cellWidth - CELL_GAP_X + BOX_PADDING * 2,
+        height: rows * cellHeight - CELL_GAP_Y + BOX_PADDING_TOP + BOX_PADDING };
+    });
+    // Rows about as wide as the whole arrangement is tall, so Fit fills a screen.
+    const area = sized.reduce((sum, box) => sum + (box.width + BOX_GAP) * (box.height + BOX_GAP), 0);
+    const rowWidth = Math.max(...sized.map((box) => box.width), Math.sqrt(area * shape));
+    const boxes: CanvasGroupBox[] = [];
+    const placed: ConversationGraphNodePlacement[] = [];
+    let x = 0, y = 0, rowHeight = 0, width = 0;
+    for (const box of sized) {
+      if (x > 0 && x + box.width > rowWidth) { x = 0; y += rowHeight + BOX_GAP; rowHeight = 0; }
+      boxes.push({ id: box.id, label: box.label, color: box.color, kind: box.kind, x, y, width: box.width, height: box.height, conversationIds: box.ids });
+      for (const id of box.ids) {
+        const node = byId.get(id)!, cell = box.cells.get(id)!;
+        placed.push({ ...node, x: x + BOX_PADDING + cell.column * cellWidth, y: y + BOX_PADDING_TOP + cell.row * cellHeight });
+      }
+      width = Math.max(width, x + box.width);
+      x += box.width + BOX_GAP;
+      rowHeight = Math.max(rowHeight, box.height);
     }
-    x += box.width + BOX_GAP;
-    rowHeight = Math.max(rowHeight, box.height);
+    return { boxes, nodes: placed, width, height: y + rowHeight };
+  };
+  if (!screenAspect || !(screenAspect > 0)) { const { boxes, nodes: placed } = arrange(aspect); return { boxes, nodes: placed }; }
+  // Fit scales an arrangement by its tighter side; keep the shape it draws largest.
+  let best: ReturnType<typeof arrange> | null = null, bestScale = -1;
+  for (const shape of SHAPE_CANDIDATES) {
+    const candidate = arrange(shape);
+    const scale = Math.min(screenAspect / Math.max(1, candidate.width), 1 / Math.max(1, candidate.height));
+    if (scale > bestScale * 1.001) { best = candidate; bestScale = scale; }
   }
-  return { boxes, nodes: placed };
+  return { boxes: best!.boxes, nodes: best!.nodes };
 }
 
 /**
@@ -109,12 +144,21 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLa
  * the next column, a parent level with the middle of its children. A child kept in another group
  * starts its own tree there. Trees come first, then single documents, packed in shelves about as
  * wide as the box is tall, each in reading order. Positions are in grid cells; rows may be fractional.
+ * With `similarity`, single documents alike in meaning form blocks of their own, most alike next to
+ * each other, with space around each block; documents alike to none share the last block.
  */
-export function layoutFamilyTrees(ids: string[], conversations: Record<string, Conversation>, cellAspect = 1) {
+export function layoutFamilyTrees(ids: string[], conversations: Record<string, Conversation>, cellAspect = 1,
+  { similarity, aspect = BOX_ASPECT, blocksOf }: {
+    similarity?: DocumentSimilarity;
+    aspect?: number;
+    /** Finds the blocks of alike documents among singles, when the caller keeps them between calls. */
+    blocksOf?: (singles: string[]) => ReturnType<typeof similarityBlocks>;
+  } = {}) {
   const inBox = new Set(ids);
   const childrenOf = (id: string) => (conversations[id]?.childIds ?? []).filter((childId) => inBox.has(childId));
   const roots = ids.filter((id) => { const parentId = conversations[id]?.parentId; return !parentId || !inBox.has(parentId); });
-  const blocks = roots.map((rootId) => {
+  type Block = { cells: Map<string, { column: number; row: number }>; columns: number; rows: number };
+  let blocks: Block[] = roots.map((rootId) => {
     const local = new Map<string, { column: number; row: number }>();
     let leaves = 0, depth = 0;
     const place = (id: string, column: number, trail: Set<string>): number => {
@@ -133,14 +177,30 @@ export function layoutFamilyTrees(ids: string[], conversations: Record<string, C
   blocks.sort((a, b) => Number(a.cells.size === 1) - Number(b.cells.size === 1));
   const area = blocks.reduce((sum, block) => sum + block.columns * block.rows, 0);
   // At least two columns wide, so even a one-document box has room for its name.
-  const width = Math.max(2, ...blocks.map((block) => block.columns), Math.round(Math.sqrt(BOX_ASPECT * area * cellAspect)));
+  const width = Math.max(2, ...blocks.map((block) => block.columns), Math.round(Math.sqrt(aspect * area * cellAspect)));
+  let gapX = 0, gapY = 0;
+  if (similarity) {
+    const singles = blocks.filter((block) => block.cells.size === 1).map((block) => [...block.cells.keys()][0]);
+    const { blocks: alike, loners } = blocksOf ? blocksOf(singles) : similarityBlocks(singles, similarity);
+    if (alike.length) {
+      gapX = BLOCK_GAP_X; gapY = BLOCK_GAP_Y;
+      // A block of alike documents is about square on screen; documents alike to none fill whole rows.
+      const shape = (members: string[], columns: number): Block => ({
+        cells: new Map(members.map((id, at) => [id, { column: at % columns, row: Math.floor(at / columns) }])),
+        columns, rows: Math.ceil(members.length / columns),
+      });
+      blocks = [...blocks.filter((block) => block.cells.size > 1),
+        ...alike.map((members) => shape(members, Math.max(1, Math.min(width, members.length, Math.ceil(Math.sqrt(members.length * cellAspect)))))),
+        ...loners.length ? [shape(loners, Math.min(width, loners.length))] : []];
+    }
+  }
   const cells = new Map<string, { column: number; row: number }>();
   let column = 0, row = 0, shelf = 0, used = 0;
   for (const block of blocks) {
-    if (column > 0 && column + block.columns > width) { column = 0; row += shelf; shelf = 0; }
+    if (column > 0 && column + block.columns > width + gapX + 1e-9) { column = 0; row += shelf + gapY; shelf = 0; }
     for (const [id, cell] of block.cells) cells.set(id, { column: column + cell.column, row: row + cell.row });
-    column += block.columns;
-    used = Math.max(used, column);
+    used = Math.max(used, column + block.columns);
+    column += block.columns + gapX;
     shelf = Math.max(shelf, block.rows);
   }
   // Documents whose place a cycle hid still get a cell of their own.
