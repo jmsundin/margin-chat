@@ -604,6 +604,7 @@ export async function writeState(
       }
     }
 
+    const skippedDocumentLinks = [];
     for (const conversation of orderedConversations) {
       if (unchanged.has(conversation.id)) continue;
       for (const document of conversation.documents ?? []) {
@@ -624,6 +625,13 @@ export async function writeState(
         );
 
         if (!result.rowCount) {
+          // The vault index mirrors Markdown that may name an original whose
+          // upload never finished. Leaving that link out keeps the rest of the
+          // account indexed; the Markdown and any later upload are untouched.
+          if (vaultRevision !== null) {
+            skippedDocumentLinks.push({ conversationId: conversation.id, documentId: document.id });
+            continue;
+          }
           throw createStateError(
             `Document "${document.id}" is unavailable for this workspace.`,
           );
@@ -814,7 +822,7 @@ export async function writeState(
     await client.query("commit");
     return vaultRevision === null
       ? nextRevision
-      : { projected: true, vaultRevision };
+      : { projected: true, vaultRevision, ...(skippedDocumentLinks.length ? { skippedDocumentLinks } : {}) };
   } catch (error) {
     await client.query("rollback");
     throw error;

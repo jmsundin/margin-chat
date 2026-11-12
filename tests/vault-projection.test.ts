@@ -45,18 +45,30 @@ describe("vault-derived Postgres projections", () => {
   test("a failed projection rolls back its rows and checkpoint together", async () => {
     const userId = await user();
     await writeState(fixture.client, userId, state("Committed source"), { vaultRevision: 3 });
-    const invalid = state("Partial rebuild");
-    invalid.conversations[0].documents = [{
-      id: "missing-original",
-      createdAt: new Date().toISOString(),
-    }];
-    await expect(writeState(fixture.client, userId, invalid, { vaultRevision: 4 })).rejects.toThrow("unavailable");
+    // Fail part-way through the rebuild, after its conversation rows are written.
+    const failing = { query: (sql: string, values?: unknown[]) => /delete from marginchat_messages/u.test(sql)
+      ? Promise.reject(new Error("connection lost")) : fixture.client.query(sql, values) };
+    await expect(writeState(failing as typeof fixture.client, userId, state("Partial rebuild"), { vaultRevision: 4 })).rejects.toThrow("connection lost");
     const checkpoint = await fixture.client.query(
       "select vault_revision from marginchat_vault_projections where user_id = $1", [userId],
     );
     expect(Number(checkpoint.rows[0].vault_revision)).toBe(3);
     const restored = await readState(fixture.client, userId);
     expect(Object.values(restored.conversations)[0].title).toBe("Committed source");
+  });
+
+  test("a link to an original that was never uploaded leaves only that link out of the index", async () => {
+    const userId = await user();
+    const linked = state("Notes on a missing PDF");
+    linked.conversations[0].documents = [{ id: "missing-original", createdAt: new Date().toISOString() }];
+    expect(await writeState(fixture.client, userId, linked, { vaultRevision: 2 })).toEqual({
+      projected: true, vaultRevision: 2,
+      skippedDocumentLinks: [{ conversationId: linked.conversations[0].id, documentId: "missing-original" }],
+    });
+    const restored = await readState(fixture.client, userId);
+    expect(Object.values(restored.conversations)[0].title).toBe("Notes on a missing PDF");
+    // An ordinary app save still refuses the dangling link.
+    await expect(writeState(fixture.client, userId, linked)).rejects.toThrow("unavailable");
   });
 
   test("an explicit rebuild can restore the same revision but cannot force an older one", async () => {

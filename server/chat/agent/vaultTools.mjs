@@ -1,4 +1,4 @@
-import { decodeReadableMarkdown, readDocumentGraphProperties, readFrontmatterValues } from "@margin-chat/workspace-contracts";
+import { decodeReadableMarkdown, discoverMarkdownWorkspace, parseMarkdownWorkspace, readDocumentGraphProperties, readFrontmatterValues } from "@margin-chat/workspace-contracts";
 import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearchTerms } from "../../vault/search.mjs";
 import { findVerdict, rankDocuments } from "../../vault/findDocuments.mjs";
 
@@ -210,11 +210,18 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
     const id = String(args.document_id ?? "");
     if (!permits(id)) return outside(id);
     const local = snapshots.get(id);
-    const stored = local ? null : await database?.readAgentConversation?.({ userId, conversationId: id, messageLimit: MESSAGES_READ });
+    // The saved Markdown is the source of truth; the search index's copy can
+    // trail it (and did, by weeks, when its projection stalled), so it is only
+    // the fallback for a document the vault can't read just now.
+    const saved = local ? null : await readSaved(id).catch((error) => {
+      console.error("Agent vault read from Markdown failed", error);
+      return null;
+    });
+    const stored = local || saved ? null : await database?.readAgentConversation?.({ userId, conversationId: id, messageLimit: MESSAGES_READ });
     const item = local
       ? { id, title: local.title, kind: local.kind, parentId: local.parentId, updatedAt: local.updatedAt,
         ...(local.kind === "note" ? { text: local.messages[0]?.content ?? "" } : { messages: local.messages.slice(-MESSAGES_READ), messageCount: local.messages.length }) }
-      : stored;
+      : saved ?? stored;
     if (!item) return workspace.passages ? readFile(id) : { document_id: id, found: false };
     const base = { document_id: id, title: item.title, kind: item.kind, parent_id: item.parentId ?? null, updated_at: item.updatedAt ?? null };
     if (typeof item.text === "string") {
@@ -227,6 +234,30 @@ export function createVaultTools({ chatRequest, workspace, snapshots, readCharac
     const file = workspace.passages ? await fileText(id).catch(() => null) : null;
     return { found: true, document: { ...base, messages, message_count: item.messageCount, truncated,
       ...(file?.text ? { file_text: file.text, file_text_truncated: file.truncated } : {}) } };
+  }
+
+  /** One document, note or chat as its Markdown file holds it now; null when the vault has no such document. */
+  async function readSaved(id) {
+    const listed = await entries();
+    const entry = listed.find((candidate) => candidate.id === id);
+    if (!entry) return null;
+    const { bytes } = await vault.readFile({ userId, path: entry.path, revision: entry.revision });
+    const { manifest, files } = discoverMarkdownWorkspace({ [entry.path]: bytes.toString("utf8") });
+    const conversation = parseMarkdownWorkspace(manifest, files)?.conversations?.[id];
+    if (!conversation) return null;
+    const parentId = entry.parentPath ? listed.find((candidate) => candidate.path === entry.parentPath)?.id ?? null : null;
+    const base = { id, title: conversation.title || entry.title, parentId, updatedAt: isoDate(entry.updated ?? conversation.updatedAt ?? entry.created) };
+    if (conversation.document) {
+      const blocks = Array.isArray(conversation.document.blocks) ? conversation.document.blocks : [];
+      return { ...base, kind: "document", text: blocks.map((block) => typeof block?.content === "string" ? block.content : "").filter(Boolean).join("\n\n") };
+    }
+    if (conversation.kind === "note") {
+      const note = (conversation.notes ?? []).find((candidate) => candidate.kind === "standalone");
+      return { ...base, kind: "note", text: note?.content ?? "" };
+    }
+    const messages = (conversation.messages ?? []).filter((message) => message.role !== "system");
+    return { ...base, kind: "chat", messages: messages.slice(-MESSAGES_READ).map(({ role, content }) => ({ role, content: String(content ?? "") })),
+      messageCount: messages.length };
   }
 
   /** A file's text as the vault index extracted it, page by page; null when it isn't indexed. */

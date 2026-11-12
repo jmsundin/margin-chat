@@ -146,13 +146,15 @@ describe("portable attachment database identities", () => {
     });
     expect((await checkpoint()).attachment_revisions).toEqual(firstMap);
     expect((await getVaultAttachment(fixture.client, { userId: owner, documentId: "shared" })).bytes.toString()).toBe("first");
-    await expect(writeState(fixture.client, owner, workspace("missing"), {
+    // Markdown naming an original that never reached the vault no longer stalls
+    // the index: only that link is left out, and the checkpoint moves on.
+    expect(await writeState(fixture.client, owner, workspace("missing"), {
       vaultRevision: 4, expectedVaultProjectionRevision: 3, attachmentRevisions: laterMap,
-    })).rejects.toThrow("unavailable");
-    expect(Number((await checkpoint()).vault_revision)).toBe(3);
-    expect((await checkpoint()).attachment_revisions).toEqual(firstMap);
+    })).toMatchObject({ projected: true, vaultRevision: 4, skippedDocumentLinks: [{ documentId: "missing" }] });
+    expect(Number((await checkpoint()).vault_revision)).toBe(4);
+    expect((await checkpoint()).attachment_revisions).toEqual(laterMap);
     await writeState(fixture.client, owner, null, {
-      vaultRevision: 4, expectedVaultProjectionRevision: 3, attachmentRevisions: {}, deletedVaultAttachmentIds: ["shared"],
+      vaultRevision: 5, expectedVaultProjectionRevision: 4, attachmentRevisions: {}, deletedVaultAttachmentIds: ["shared"],
     });
     expect((await checkpoint()).attachment_revisions).toEqual({});
     expect(await readState(fixture.client, owner)).toBeNull();
