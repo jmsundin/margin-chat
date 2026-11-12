@@ -12,6 +12,8 @@ type MobileCreateMenuProps = {
   /** Called as the menu opens, so the items can say what they will attach to. */
   prepare: () => MobileCreateTarget;
   onNewDocument: () => void;
+  /** A new board: one full-page canvas to draw and think on. */
+  onNewBoard?: () => void;
   onSideDocument: () => void;
   onMarginNote: () => void;
   /** Files picked from the phone, added to the vault the way Upload files does. */
@@ -22,7 +24,7 @@ const SIDE_HINT: Record<MobileCreateTarget, string> = { selection: "From the sel
 const NOTE_HINT: Record<MobileCreateTarget, string> = { selection: "On the selected text", paragraph: "On this paragraph", document: "On this document" };
 
 /** The phone's + button: a new document in a new tab, a side document, a margin note or files from the phone. */
-export function MobileCreateMenu({ slot, prepare, onNewDocument, onSideDocument, onMarginNote, onUpload }: MobileCreateMenuProps) {
+export function MobileCreateMenu({ slot, prepare, onNewDocument, onNewBoard, onSideDocument, onMarginNote, onUpload }: MobileCreateMenuProps) {
   const [target, setTarget] = useState<MobileCreateTarget | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -73,6 +75,11 @@ export function MobileCreateMenu({ slot, prepare, onNewDocument, onSideDocument,
           <path d="M3 2.5h6l3 3v8H3z" /><path d="M9 2.5v3h3" />
         </svg><span><strong>New document</strong><small>Opens in a new tab</small></span>
       </button>
+      {onNewBoard ? <button type="button" role="menuitem" onClick={run(onNewBoard)}>
+        <svg className="selection-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2.5" y="3" width="11" height="8.5" rx="1" /><path d="M5 8.5l2-2 1.5 1.5L11 5.5M6 14l2-2.5 2 2.5" />
+        </svg><span><strong>New board</strong><small>A canvas to draw and think on</small></span>
+      </button> : null}
       <button type="button" role="menuitem" onClick={run(onSideDocument)}>
         <SelectionIcon name="side" /><span><strong>Side document</strong><small>{SIDE_HINT[target]}</small></span>
       </button>

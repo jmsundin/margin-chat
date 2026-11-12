@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
+import { findBoardBlock, isBoardDocument, withBoardBlock } from "../lib/boardDocument";
 import { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
 import WriteBackLine from "./WriteBackLine";
 import { joinDocumentBlocks } from "../lib/continuousDocument";
@@ -134,6 +135,8 @@ export interface DocumentPanelProps {
   registerBranchOriginRef: (element: HTMLElement | null) => void;
 }
 
+const BoardCanvas = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.BoardCanvas })));
+
 function freshBlock(content = ""): Block {
   const now = new Date().toISOString();
   return { id: `block-${crypto.randomUUID()}`, kind: "markdown", content, createdAt: now, updatedAt: now, authorship: "user" };
@@ -150,6 +153,10 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   editHistory.sync(document.blocks);
   const latestDocument = useRef(document);
   latestDocument.current = document;
+  // A board shows its drawing as the page; the editor below gets only the document's other text.
+  const board = isBoardDocument(conversation) ? findBoardBlock(document.blocks) : undefined;
+  const editorBlocks = board ? document.blocks.filter((block) => block.id !== board.id) : document.blocks;
+  const showEditor = !board || editorBlocks.some((block) => block.content.trim());
   const bodyRef = useRef<HTMLDivElement>(null);
   const [marginHeight, setMarginHeight] = useState(0);
   const marginWidth = props.marginWidth ?? 300;
@@ -237,15 +244,29 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   /** The editor sends complete block lists; AI output still being written always keeps its latest text. */
   function changeBlocks(next: Block[], edit?: DocumentEditOptions) {
     const current = latestDocument.current;
+    const boardBlock = board && current.blocks.find((block) => block.id === board.id);
+    if (boardBlock) next = withBoardBlock(next, current.blocks, boardBlock);
     const streaming = new Set(streamingIds);
     const blocks = next.map((block) => streaming.has(block.id) ? current.blocks.find((item) => item.id === block.id) ?? block : block);
     change({ ...current, blocks: blocks.length ? blocks : [freshBlock()] }, edit);
+  }
+  /** The canvas saves its whole scene; it isn't part of the text's undo history. */
+  function changeBoard(blockId: string, content: string) {
+    const current = latestDocument.current;
+    if (!current.blocks.some((block) => block.id === blockId && block.content !== content)) return;
+    const updatedAt = new Date().toISOString();
+    const next = { ...current, blocks: current.blocks.map((block) => block.id === blockId ? { ...block, content, updatedAt } : block) };
+    latestDocument.current = next;
+    props.onChange(next);
   }
   function historyAction(action: "undo" | "redo") {
     const current = latestDocument.current;
     const result = editHistory[action](current.blocks);
     if (!result) return null;
-    const next = { ...current, blocks: result.blocks };
+    // Text undo never rolls the board back: the canvas keeps its own undo.
+    const boardBlock = board && current.blocks.find((block) => block.id === board.id);
+    const blocks = boardBlock ? withBoardBlock(result.blocks, current.blocks, boardBlock) : result.blocks;
+    const next = { ...current, blocks };
     latestDocument.current = next;
     props.onChange(next);
     props.onClearSelection?.();
@@ -580,7 +601,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </header> : null}
     <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
       style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
-    <div className="panel-body document-body" ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+    <div className={`panel-body document-body${board ? " is-board" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
@@ -589,7 +610,11 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.notice}
       {props.pageBar && editorMounted ? null : props.aiInstruction}
       {props.roadmap}
-      {editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={document.blocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
+      {board ? <Suspense fallback={<p className="document-board" role="status">Loading board…</p>}>
+        <BoardCanvas key={`${conversation.id}:${board.id}`} markdown={board.content} theme={props.theme}
+          readOnly={streamingIds.includes(board.id)} onChange={(content) => changeBoard(board.id, content)} />
+      </Suspense> : null}
+      {!showEditor ? null : editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={editorBlocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
         resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
@@ -636,7 +661,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
           {writeBackId === block.id && props.onWriteBack ? <WriteBackLine disabled={props.isSubmitting} onClose={() => setWriteBackId(null)}
             onSend={(text) => { setWriteBackId(null); props.onWriteBack?.(block.id, text); }} /> : null}
-        </>}/> : <RichDocumentPlaceholder blocks={document.blocks} />}
+        </>}/> : <RichDocumentPlaceholder blocks={editorBlocks} />}
       {props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))
         ? <div className="document-writing-status is-agent" role="status">
           <div className="document-agent-status-head"><strong>Agent is working</strong><button type="button" onClick={props.onStop}>Stop</button></div>
