@@ -1,0 +1,24 @@
+{
+  "name": "Ratchet example set (synthetic)",
+  "note": "Synthetic cases that exercise the harness end to end. They are NOT the MCR golden set: MCR-001…030 must come from real claims in Jon's curated science documents (spec §6). Copy this file's shape for that set.",
+  "vault": "vault",
+  "thresholds": { "extractionRecall": 0.8, "verdictAccuracy": 0.8, "citationGrounding": 1 },
+  "checks": [
+    {
+      "document": "rapamycin-notes",
+      "cases": [
+        { "id": "EX-001", "span": "Rapamycin extended median lifespan in male mice by 23%", "expected": "supported",
+          "evidence": { "document": "itp-results", "quote": "rapamycin increased median lifespan by 23% in males" } },
+        { "id": "EX-002", "span": "Metformin doubled lifespan in mice.", "expected": "contradicted",
+          "evidence": { "document": "metformin-review", "quote": "Metformin did not extend lifespan in the ITP mouse cohorts." } },
+        { "id": "EX-003", "span": "NAD+ precursors such as nicotinamide riboside reverse ageing in humans.", "expected": "unsupported",
+          "evidence": { "document": "nad-trials", "quote": "The trials did not measure, and did not show, any reversal of ageing." }, "stance": "related" },
+        { "id": "EX-004", "span": "Caloric restriction extends lifespan in rhesus monkeys.", "expected": "stale",
+          "evidence": { "document": "cr-primates-2017", "quote": "superseded the 2009 result" }, "stance": "supersedes" },
+        { "id": "EX-005", "span": "Senolytics remove about 90% of senescent cells in human skin within a week.", "expected": "insufficient-evidence",
+          "comment": "Only a document hidden from AI says this, so it must never count." }
+      ]
+    },
+    { "document": "shopping", "cases": [] }
+  ]
+}

@@ -53,7 +53,7 @@ const linkMenuMeasure = {};
 /** Room the link list needs under the caret before it opens above the line instead. */
 const LINK_MENU_ROOM_PX = 280;
 
-interface AnchorRange { from: number; to: number; branchIds: string[]; noteIds: string[] }
+interface AnchorRange { from: number; to: number; branchIds: string[]; noteIds: string[]; claim?: { id: string; verdict: string; label: string } }
 interface BlockMeta { authorship: string; messageId: string; streaming: boolean }
 interface LiveState {
   layout: LiveBlock[];
@@ -200,7 +200,16 @@ function blockAttributes(state: LiveState, block: LiveBlock): Record<string, str
 }
 
 /** Highlight, note and branch passages, split where they overlap so each piece names all of them. */
-function anchorDecorations(anchors: AnchorRange[], ranges: Range<Decoration>[]) {
+function anchorDecorations(all: AnchorRange[], ranges: Range<Decoration>[]) {
+  // A checked claim's words get their own verdict underline, apart from chat and note anchors.
+  for (const anchor of all) {
+    if (!anchor.claim) continue;
+    ranges.push(Decoration.mark({
+      class: `ratchet-claim is-${anchor.claim.verdict}`,
+      attributes: { "data-ratchet-claim": anchor.claim.id, title: anchor.claim.label },
+    }).range(anchor.from, anchor.to));
+  }
+  const anchors = all.filter((anchor) => !anchor.claim);
   const boundaries = [...new Set(anchors.flatMap((anchor) => [anchor.from, anchor.to]))].sort((a, b) => a - b);
   for (let index = 0; index < boundaries.length - 1; index += 1) {
     const from = boundaries[index], to = boundaries[index + 1];
@@ -1667,7 +1676,7 @@ function anchorRanges(layout: LiveBlock[], blocks: DocumentBlock[], decorations:
     const length = blocks[index]?.content.length ?? block.to - block.from;
     for (const range of decorations[block.id] ?? []) {
       if (!(range.to > range.from && range.from >= 0 && range.to <= length)) continue;
-      ranges.push({ from: block.from + range.from, to: block.from + range.to, branchIds: range.branchIds ?? [], noteIds: range.noteIds ?? [] });
+      ranges.push({ from: block.from + range.from, to: block.from + range.to, branchIds: range.branchIds ?? [], noteIds: range.noteIds ?? [], ...(range.claim ? { claim: range.claim } : {}) });
     }
   });
   return ranges;

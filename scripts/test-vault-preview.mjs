@@ -47,6 +47,33 @@ function user() {
 }
 const key = (userId, documentId) => `${userId}/${documentId}`;
 const flashcardRows = { cards: new Map(), reviews: new Map(), seq: 0 };
+const ratchetRows = new Map();
+
+/**
+ * Synthetic Ratchet replies: claims are the document's lines with a number or
+ * "lifespan" in them; each claim with passages is judged in turn supported,
+ * contradicted, unsupported, citing its first passage's longest line word for word.
+ */
+function syntheticRatchetReply(asked) {
+  const prompt = (() => { try { return JSON.parse(asked).at(-1)?.content ?? ""; } catch { return ""; } })();
+  const data = (() => { try { return JSON.parse(prompt.slice(prompt.lastIndexOf("\n\n") + 2)); } catch { return null; } })();
+  if (!data) return null;
+  if (prompt.startsWith("Find the checkable claims")) {
+    const claims = String(data.lines ?? "").split("\n").map((line) => /^\[(\d+):(\d+)\] (.*)$/.exec(line)).filter(Boolean)
+      .filter((match) => /\d|lifespan/i.test(match[3]) && !/^#/.test(match[3])).slice(0, 4)
+      .map((match) => ({ from: `${match[1]}:${match[2]}`, to: `${match[1]}:${match[2]}`, span: match[3].replace(/^[-*]\s+/, ""), claim: match[3].replace(/^[-*]\s+/, "") }));
+    return JSON.stringify({ claims });
+  }
+  const verdicts = [["supported", "supports"], ["contradicted", "contradicts"], ["unsupported", "related"]];
+  let turn = 0;
+  return JSON.stringify({ results: (data.claims ?? []).map((claim) => {
+    const passage = claim.passages?.[0];
+    if (!passage) return { claim: claim.id, verdict: "insufficient-evidence", evidence: [], reason: "Nothing to go on." };
+    const [verdict, stance] = verdicts[turn++ % verdicts.length];
+    const quote = passage.text.split("\n").sort((a, b) => b.length - a.length)[0].replace(/^[-*#>\s]+/, "");
+    return { claim: claim.id, verdict, evidence: [{ passage: passage.id, quote, stance }], reason: `Synthetic: ${passage.document} says so.` };
+  }) });
+}
 const database = {
   ready: async () => undefined,
   getHealth: () => ({ configured: true, ready: true, host: "isolated fixture" }),
@@ -87,6 +114,8 @@ const database = {
       if (!flashcardRows.reviews.has(key(userId, review.id))) flashcardRows.reviews.set(key(userId, review.id), { userId, review, seq: ++flashcardRows.seq });
     }
   },
+  async saveRatchetCheck({ userId, documentId, claims, run }) { ratchetRows.set(key(userId, documentId), { claims, run }); },
+  async readRatchetCheck({ userId, documentId }) { return ratchetRows.get(key(userId, documentId)) ?? { claims: [], run: null }; },
   async readFlashcardChanges({ userId, cardSince = 0, reviewSince = 0, limit = 2000 }) {
     const cards = [...flashcardRows.cards.values()].filter((row) => row.userId === userId && row.seq > cardSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
     const reviews = [...flashcardRows.reviews.values()].filter((row) => row.userId === userId && row.seq > reviewSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
@@ -223,7 +252,8 @@ const server = createServer(async (request, response) => {
               requestedServiceId: body.serviceId, resolvedServiceId: body.serviceId, credentialSource: "personal" };
             // A diagram edit gets a changed diagram, wrapped in the kind of words the app must drop.
             const asked = JSON.stringify(body.messages ?? []);
-            const reply = asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
+            const ratchetReply = asked.includes("Find the checkable claims") || asked.includes("Check each claim against the passages") ? syntheticRatchetReply(JSON.stringify(body.messages ?? [])) : null;
+            const reply = ratchetReply ? ratchetReply : asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."
               : asked.includes("Ask me one short question that tests this passage")
                 ? "What human evidence shows a weekly dose avoids the immune effects, rather than mouse data?"
