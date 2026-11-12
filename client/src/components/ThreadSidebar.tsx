@@ -67,6 +67,8 @@ interface ThreadSidebarProps {
   /** Cards to study now; null hides Review (no cards written yet). */
   flashcardsDue?: number | null;
   onOpenFlashcards?: () => void;
+  /** A new board document: one full-page canvas. */
+  onNewBoard?: () => void;
   onPinThread: (conversationId: string) => void;
   onRenameThread: (conversationId: string, title: string) => void;
   onSelectOutlineItem: (outlineItemId: string) => void;
@@ -130,6 +132,17 @@ function PlusIcon() {
     >
       <path d="M12 5v14" />
       <path d="M5 12h14" />
+    </svg>
+  );
+}
+
+function BoardIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      {/* A whiteboard on its stand, with a line drawn on it. */}
+      <rect x="3" y="4" width="18" height="12.5" rx="1.5" />
+      <path d="M7 12.5l3-3 2.5 2.5L17 7.5" />
+      <path d="M9 20.5l3-4 3 4" />
     </svg>
   );
 }
@@ -365,6 +378,7 @@ export default function ThreadSidebar({
   onOpenSearch,
   flashcardsDue = null,
   onOpenFlashcards,
+  onNewBoard,
   onPinThread,
   onRenameThread,
   onSelectOutlineItem,
@@ -992,6 +1006,17 @@ export default function ThreadSidebar({
               ref={workspaceActionsRef}
               role="dialog"
             >
+              {onNewBoard ? (
+                <button
+                  className="sidebar-workspace-action"
+                  onClick={() => { closeWorkspaceActions(); onNewBoard(); }}
+                  title="A new board: one full-page canvas to draw and think on"
+                  type="button"
+                >
+                  <BoardIcon />
+                  <span>New board</span>
+                </button>
+              ) : null}
               {onOpenFlashcards ? (
                 <button
                   className="sidebar-workspace-action"

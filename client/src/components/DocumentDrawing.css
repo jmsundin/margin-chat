@@ -10,3 +10,7 @@
 .document-drawing-dialog > header .document-drawing-save { background: var(--accent); color: var(--bg); }
 .document-drawing-canvas { flex: 1; min-height: 0; }
 @media (max-width: 640px) { .document-drawing-backdrop { padding: 4px; } .document-drawing-dialog { height: 98dvh; } }
+/* A board document: the canvas fills the page; any text in the document scrolls below it. */
+.document-body.is-board { display: flex; flex-direction: column; padding-bottom: 16px; }
+.document-body.is-board > .document-board { flex: 0 0 auto; height: 100%; min-height: 420px; margin: 0 -1px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.document-board.is-broken { display: grid; place-content: center; gap: 4px; padding: 24px; color: var(--muted); text-align: center; }

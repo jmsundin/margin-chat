@@ -127,6 +127,7 @@ import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
 import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
+import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
 import RoadmapView from "./components/RoadmapView";
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
@@ -1308,6 +1309,8 @@ function WorkspaceAppContent({
     if (isMobileViewport) return chatPanelLayout.width;
     const chosen = resizedPanelWidths[conversationId] ?? getDocumentWidth(state.conversations, conversationId);
     if (chosen !== undefined) return Math.min(chosen, panelMaximumWidth);
+    // A board is a canvas, not a column of text: alone on screen it takes the room there is.
+    if (scrollingDocuments.length === 1 && isBoardDocument(state.conversations[conversationId])) return Math.max(panelMaximumWidth, canvasWidth - 48);
     // A document and its side document share the canvas frame by frame: margin notes and
     // minimized side documents beside either one come out of both text columns, so the
     // source isn't pushed off screen when a side document opens.
@@ -4386,16 +4389,17 @@ function WorkspaceAppContent({
     });
   }
 
-  function handleCreateMainConversation() {
+  function handleCreateMainConversation(kind: "document" | "board" = "document") {
     const now = new Date().toISOString();
     const conversationId = createId("conversation");
-    const mainConversation = createMainConversation({
+    const created = createMainConversation({
       createdAt: now,
       id: conversationId,
       modelId: state.defaultModelId,
       serviceId: state.defaultServiceId,
     });
-    mainConversation.title = "Untitled document";
+    const mainConversation = kind === "board" ? makeBoardDocument(created, now) : created;
+    mainConversation.title = kind === "board" ? "Untitled board" : "Untitled document";
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
@@ -5375,6 +5379,16 @@ function WorkspaceAppContent({
     });
   }
 
+  function handleToggleBoard(conversationId: string) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      const now = new Date().toISOString();
+      return { ...current, conversations: { ...current.conversations,
+        [conversationId]: isBoardDocument(conversation) ? unmakeBoardDocument(conversation, now) : makeBoardDocument(conversation, now) } };
+    });
+  }
+
   function handleToggleHiddenFromAI(conversationId: string) {
     setState((current) => {
       const conversation = current.conversations[conversationId];
@@ -5754,7 +5768,7 @@ function WorkspaceAppContent({
         onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
         onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
-        onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap}
+        onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap} onToggleBoard={handleToggleBoard}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
         onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCardsFor(id) : undefined}
         onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id) })}
@@ -6272,7 +6286,7 @@ function WorkspaceAppContent({
               onAssignGroup={handleAssignConversationGroup}
               onCreateGroup={handleCreateConversationGroup}
               onDeleteThread={handleDeleteThread}
-              onNewChat={handleCreateMainConversation}
+              onNewChat={() => handleCreateMainConversation()} onNewBoard={() => handleCreateMainConversation("board")}
               onNewNote={handleCreateStandaloneNote}
               onOpenInbox={guest ? undefined : () => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
@@ -6599,7 +6613,7 @@ function WorkspaceAppContent({
           ) : null}
 
           {createSlot && mainViewMode === "chat" && !leftSidebarOpen ? <MobileCreateMenu slot={createSlot} prepare={prepareCreateMenu}
-            onNewDocument={handleCreateMainConversation} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote}
+            onNewDocument={() => handleCreateMainConversation()} onNewBoard={() => handleCreateMainConversation("board")} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote}
             onUpload={handleCreateMenuUpload} /> : null}
           {!isTileView && caretMenu && !selectionDraft ? <CaretActions menu={caretMenu} mobile={mobileKeyboard.mobile} onClose={closeCaretMenu}
             onNote={() => handleCreateSelectionNote(caretMenu.paragraph)}

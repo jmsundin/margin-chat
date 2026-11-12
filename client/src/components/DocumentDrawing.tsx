@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Excalidraw, exportToSvg, serializeAsJSON } from "@excalidraw/excalidraw";
-import type { ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
+import { Excalidraw, exportToSvg, hashElementsVersion, serializeAsJSON } from "@excalidraw/excalidraw";
+import type { ExcalidrawImperativeAPI, ExcalidrawInitialDataState } from "@excalidraw/excalidraw/types";
 import { drawingMarkdown, readDrawing } from "../lib/documentDrawing";
 import "@excalidraw/excalidraw/index.css";
 import "./DocumentDrawing.css";
@@ -36,6 +36,83 @@ export function DrawingDialog({ markdown, error, onSave, onClose }: {
       /></div>
     </div>
   </div>, document.body);
+}
+
+type BoardScene = Parameters<typeof serializeAsJSON>;
+const BOARD_SAVE_DELAY_MS = 400;
+
+/** What a save would change: the shapes, the images and the background. Panning and selecting don't count. */
+function boardSceneKey(elements: BoardScene[0], appState: Pick<BoardScene[1], "viewBackgroundColor">, files: BoardScene[2]) {
+  return `${hashElementsVersion(elements)}:${appState.viewBackgroundColor ?? ""}:${Object.keys(files ?? {}).length}`;
+}
+
+/**
+ * A board document's canvas, full page. Changes are saved into the document's
+ * drawing block a moment after they stop, and at once when the board closes or
+ * the page is hidden. A newer copy from another device replaces the scene shown.
+ */
+export function BoardCanvas({ markdown, theme, readOnly = false, onChange }: {
+  markdown: string; theme: "light" | "dark"; readOnly?: boolean; onChange: (markdown: string) => void;
+}) {
+  // Read once per board; later outside changes reach the canvas through updateScene below.
+  const [parsed] = useState(() => {
+    try { return { scene: readDrawing(markdown) }; }
+    catch (error) { return { error: error instanceof Error ? error.message : "The board could not be opened." }; }
+  });
+  const api = useRef<ExcalidrawImperativeAPI | null>(null);
+  const saved = useRef(markdown);
+  const savedKey = useRef<string | null>(null);
+  const pending = useRef<BoardScene | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const save = useRef(onChange);
+  save.current = onChange;
+  const flush = useRef(() => {
+    window.clearTimeout(timer.current);
+    const scene = pending.current;
+    pending.current = null;
+    if (!scene) return;
+    const next = drawingMarkdown(serializeAsJSON(...scene));
+    if (next === saved.current) return;
+    saved.current = next;
+    save.current(next);
+  });
+  useEffect(() => {
+    const hide = () => { if (document.visibilityState === "hidden") flush.current(); };
+    const leave = () => flush.current();
+    document.addEventListener("visibilitychange", hide);
+    window.addEventListener("pagehide", leave);
+    return () => { document.removeEventListener("visibilitychange", hide); window.removeEventListener("pagehide", leave); flush.current(); };
+  }, []);
+  useEffect(() => {
+    if (markdown === saved.current) return;
+    // Another device, or an undo in the document's text, changed the scene: show that one.
+    saved.current = markdown;
+    savedKey.current = null;
+    pending.current = null;
+    window.clearTimeout(timer.current);
+    let scene: ExcalidrawInitialDataState;
+    try { scene = readDrawing(markdown); } catch { return; }
+    if (scene.files) api.current?.addFiles(Object.values(scene.files));
+    api.current?.updateScene({ elements: scene.elements ?? [] });
+  }, [markdown]);
+  if ("error" in parsed) return <div className="document-board is-broken" role="alert"><p>{parsed.error}</p>
+    <p>Turn off Board in the document menu to see and fix the drawing's source.</p></div>;
+  return <div className="document-board" aria-label="Board">
+    <Excalidraw initialData={{ ...parsed.scene, scrollToContent: true }} theme={theme} viewModeEnabled={readOnly}
+      excalidrawAPI={(value) => { api.current = value; }} handleKeyboardGlobally={false}
+      onChange={(elements, appState, files) => {
+        const key = boardSceneKey(elements, appState, files);
+        // The first call reports the scene as opened (or as replaced from outside): nothing to save.
+        if (savedKey.current === null) { savedKey.current = key; return; }
+        if (readOnly || key === savedKey.current) return;
+        savedKey.current = key;
+        pending.current = [elements, appState, files, "local"];
+        window.clearTimeout(timer.current);
+        timer.current = window.setTimeout(() => flush.current(), BOARD_SAVE_DELAY_MS);
+      }}
+      UIOptions={{ canvasActions: { loadScene: true, saveToActiveFile: false, export: false, toggleTheme: false } }}
+    />
+  </div>;
 }
 
 export default function DocumentDrawing({ markdown, readOnly, onEdit }: { markdown: string; readOnly: boolean; onEdit: () => void }) {
