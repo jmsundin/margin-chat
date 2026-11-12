@@ -68,3 +68,15 @@ export function refreshSession(session: StudySession, now: number, has: Has = al
   if (current === session.current) return session;
   return { ...session, current, turn: current ? session.turn + 1 : session.turn };
 }
+
+/** Cards whose ids changed because their text was edited keep their place, including the one on screen. */
+export function renameInSession(session: StudySession, renamed: ReadonlyMap<string, string>): StudySession {
+  if (![session.current, ...session.order, ...session.later.map((entry) => entry.id)].some((id) => id && renamed.has(id))) return session;
+  const rename = (id: string) => renamed.get(id) ?? id;
+  return {
+    ...session,
+    order: session.order.map(rename),
+    later: session.later.map((entry) => ({ ...entry, id: rename(entry.id) })),
+    current: session.current ? rename(session.current) : null,
+  };
+}

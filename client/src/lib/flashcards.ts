@@ -8,6 +8,12 @@
  *   Back lines                         the back, up to the next blank line
  *   The {{c1::mitochondria}} makes ATP  a cloze card for each c-number
  *
+ *   :::card                            a card whose sides may hold blank lines, lists,
+ *   Front                              code or images, with `?` (or `??`) between them;
+ *   ?                                  without one, a block holding {{c1::…}} is a cloze
+ *   Back
+ *   :::
+ *
  * Images are ordinary embeds (`![[x.png]]`, `![](Attachments/x.png)`) on either side.
  * A card's id comes from its document and its text, so the same card on another
  * device has the same id; editing the front makes a new id, and
@@ -78,67 +84,157 @@ function splitInline(line: string): { front: string; back: string; both: boolean
   return { front: match[1].trim(), back: match[3].trim(), both: match[2].length === 3 };
 }
 
-/** The lines of a document's Markdown that are outside fenced code. */
-function proseParagraphs(markdown: string): string[][] {
-  const paragraphs: string[][] = [];
-  let current: string[] = [];
-  let fence: string | null = null;
-  const flush = () => { if (current.length) paragraphs.push(current); current = []; };
-  for (const line of markdown.split(/\r?\n/u)) {
-    const opener = FENCE.exec(line)?.[1];
-    if (fence) {
-      if (opener && opener[0] === fence[0] && opener.length >= fence.length && !line.trim().slice(opener.length)) fence = null;
+interface SourceLine { text: string; from: number; to: number }
+type Paragraph = { kind: "prose"; lines: SourceLine[] } | { kind: "card"; lines: SourceLine[]; from: number; to: number };
+
+const CARD_OPEN = /^\s{0,3}:::\s*card\s*$/iu;
+const CARD_CLOSE = /^\s{0,3}:::\s*$/u;
+const SEPARATOR = /^\s*\?{1,2}\s*$/u;
+
+function sourceLines(markdown: string): SourceLine[] {
+  const lines: SourceLine[] = [];
+  let from = 0;
+  for (const raw of markdown.split("\n")) {
+    const text = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+    lines.push({ text, from, to: from + text.length });
+    from += raw.length + 1;
+  }
+  return lines;
+}
+
+/** The index of the line closing a code fence opened by `opener`, or -1. */
+function fenceEnd(lines: SourceLine[], start: number, opener: string) {
+  for (let index = start; index < lines.length; index++) {
+    const close = FENCE.exec(lines[index].text)?.[1];
+    if (close && close[0] === opener[0] && close.length >= opener.length && !lines[index].text.trim().slice(close.length)) return index;
+  }
+  return -1;
+}
+
+/** Lines between `:::card` and `:::` (skipping fenced code inside), or null when the block isn't closed. */
+function cardBlockEnd(lines: SourceLine[], start: number) {
+  for (let index = start; index < lines.length; index++) {
+    const opener = FENCE.exec(lines[index].text)?.[1];
+    if (opener) { const end = fenceEnd(lines, index + 1, opener); if (end < 0) return -1; index = end; continue; }
+    if (CARD_CLOSE.test(lines[index].text)) return index;
+  }
+  return -1;
+}
+
+/** The document's paragraphs outside fenced code, and its `:::card` blocks. */
+function proseParagraphs(markdown: string): Paragraph[] {
+  const lines = sourceLines(markdown);
+  const paragraphs: Paragraph[] = [];
+  let current: SourceLine[] = [];
+  const flush = () => { if (current.length) paragraphs.push({ kind: "prose", lines: current }); current = []; };
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (CARD_OPEN.test(line.text)) {
+      const end = cardBlockEnd(lines, index + 1);
+      if (end >= 0) {
+        flush();
+        paragraphs.push({ kind: "card", lines: lines.slice(index + 1, end), from: line.from, to: lines[end].to });
+        index = end;
+        continue;
+      }
+    }
+    const opener = FENCE.exec(line.text)?.[1];
+    if (opener) {
+      flush();
+      const end = fenceEnd(lines, index + 1, opener);
+      index = end < 0 ? lines.length : end;
       continue;
     }
-    if (opener) { flush(); fence = opener; continue; }
-    if (!line.trim()) { flush(); continue; }
+    if (!line.text.trim()) { flush(); continue; }
     current.push(line);
   }
   flush();
   return paragraphs;
 }
 
-/** Every card written in this Markdown. */
-export function parseFlashcards(docId: string, markdown: string): Flashcard[] {
+/**
+ * Where a card is written, as offsets in the Markdown it was read from, and what it says
+ * in the direction it was written: a two-way card's source is its first direction.
+ */
+export type FlashcardSource =
+  | { format: "inline" | "lines" | "block"; from: number; to: number; front: string; back: string; both: boolean; cardIds: string[] }
+  | { format: "cloze" | "cloze-block"; from: number; to: number; text: string; cardIds: string[] };
+
+/** Every card written in this Markdown, with where each is written. */
+export function parseFlashcardSources(docId: string, markdown: string): { cards: Flashcard[]; sources: FlashcardSource[] } {
   const cards: Flashcard[] = [];
+  const sources: FlashcardSource[] = [];
   const ordinals: Record<FlashcardKind, number> = { basic: 0, reverse: 0, cloze: 0 };
   const seen = new Set<string>();
-  const add = (kind: FlashcardKind, key: string, front: string, back: string, cloze?: number, source?: string) => {
+  const add = (ids: string[], kind: FlashcardKind, key: string, front: string, back: string, cloze?: number, source?: string) => {
     if (!front.trim() || !back.trim()) return;
     const id = cardId(docId, kind, key, cloze);
     if (seen.has(id)) return; // the same card written twice is one card
     seen.add(id);
+    ids.push(id);
     cards.push({ id, docId, kind, front, back, ...(cloze ? { cloze } : {}), ...(source ? { source } : {}), ordinal: ordinals[kind]++ });
   };
-  const addPair = (front: string, back: string, both: boolean) => {
-    add("basic", front, front, back);
-    if (both) add("reverse", back, back, front);
+  const addPair = (format: "inline" | "lines" | "block", from: number, to: number, front: string, back: string, both: boolean) => {
+    const ids: string[] = [];
+    add(ids, "basic", front, front, back);
+    if (both) add(ids, "reverse", back, back, front);
+    if (ids.length) sources.push({ format, from, to, front, back, both, cardIds: ids });
+  };
+  const addCloze = (format: "cloze" | "cloze-block", from: number, to: number, body: string) => {
+    const ids: string[] = [];
+    for (const number of clozeNumbers(body)) {
+      const sides = clozeSides(body, number);
+      add(ids, "cloze", body, sides.front, sides.back, number, body);
+    }
+    if (ids.length) sources.push({ format, from, to, text: body, cardIds: ids });
   };
 
   for (const paragraph of proseParagraphs(markdown)) {
-    const separator = paragraph.findIndex((line) => /^\s*\?{1,2}\s*$/u.test(line));
-    if (separator > 0 && separator < paragraph.length - 1) {
-      const front = paragraph.slice(0, separator).join("\n").trim();
-      const back = paragraph.slice(separator + 1).join("\n").trim();
-      addPair(front, back, paragraph[separator].trim() === "??");
-      continue;
-    }
-    const text = paragraph.join("\n");
-    const numbers = clozeNumbers(text);
-    if (numbers.length) {
-      const body = paragraph.map((line) => line.replace(LIST_PREFIX, "")).join("\n").trim();
-      for (const number of numbers) {
-        const sides = clozeSides(body, number);
-        add("cloze", body, sides.front, sides.back, number, body);
+    const { lines } = paragraph;
+    if (paragraph.kind === "card") {
+      // Inside a card block the first `?` line outside code splits the sides; blank lines and code are allowed.
+      let separator = -1;
+      for (let index = 0; index < lines.length; index++) {
+        const opener = FENCE.exec(lines[index].text)?.[1];
+        if (opener) { const end = fenceEnd(lines, index + 1, opener); index = end < 0 ? lines.length : end; continue; }
+        if (SEPARATOR.test(lines[index].text)) { separator = index; break; }
       }
+      const text = (part: SourceLine[]) => part.map((line) => line.text).join("\n").trim();
+      if (separator >= 0) addPair("block", paragraph.from, paragraph.to, text(lines.slice(0, separator)), text(lines.slice(separator + 1)), lines[separator].text.trim() === "??");
+      else if (clozeNumbers(text(lines)).length) addCloze("cloze-block", paragraph.from, paragraph.to, text(lines));
       continue;
     }
-    for (const line of paragraph) {
-      const inline = splitInline(line.replace(LIST_PREFIX, "").replace(/^\s*>\s?/u, ""));
-      if (inline) addPair(inline.front, inline.back, inline.both);
+    const from = lines[0].from, to = lines[lines.length - 1].to;
+    const separator = lines.findIndex((line) => SEPARATOR.test(line.text));
+    if (separator > 0 && separator < lines.length - 1) {
+      const front = lines.slice(0, separator).map((line) => line.text).join("\n").trim();
+      const back = lines.slice(separator + 1).map((line) => line.text).join("\n").trim();
+      addPair("lines", from, to, front, back, lines[separator].text.trim() === "??");
+      continue;
+    }
+    const text = lines.map((line) => line.text).join("\n");
+    if (clozeNumbers(text).length) {
+      const body = lines.map((line) => line.text.replace(LIST_PREFIX, "")).join("\n").trim();
+      // A one-line cloze keeps its list bullet when rewritten.
+      const prefix = lines.length === 1 ? (LIST_PREFIX.exec(lines[0].text)?.[0].length ?? 0) : 0;
+      addCloze("cloze", from + prefix, to, body);
+      continue;
+    }
+    for (const line of lines) {
+      const stripped = line.text.replace(LIST_PREFIX, "").replace(/^\s*>\s?/u, "");
+      const inline = splitInline(stripped);
+      if (!inline) continue;
+      // The card's own text, after any bullet or quote mark.
+      const start = line.text.length - stripped.length;
+      addPair("inline", line.from + start, line.to, inline.front, inline.back, inline.both);
     }
   }
-  return cards;
+  return { cards, sources };
+}
+
+/** Every card written in this Markdown. */
+export function parseFlashcards(docId: string, markdown: string): Flashcard[] {
+  return parseFlashcardSources(docId, markdown).cards;
 }
 
 /** Cards in a document made of several Markdown blocks. */

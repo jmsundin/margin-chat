@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Conversation } from "../types";
 import { apiFetch, apiStorageNamespace } from "./apiTransport";
+import { getEditableDocument } from "./editableDocument";
 import { parseDocumentFlashcards } from "./flashcards";
+import { getStandaloneNote } from "./standaloneNotes";
 import { buildStudyQueue, scheduleFromReviews, studyDayStart, type FlashcardRating, type FlashcardReview, type FlashcardSchedule, type ScheduleOptions } from "./flashcardSchedule";
 import { FlashcardStore, type FlashcardSnapshot, type StoredFlashcard } from "./flashcardStore";
 
@@ -166,7 +168,8 @@ export function useFlashcards({ userId, conversations, enabled = true }: { userI
     const timer = window.setTimeout(() => {
       let changed = 0;
       for (const conversation of Object.values(conversations)) {
-        const blocks = conversation.document?.blocks;
+        // A note from the vault that hasn't been edited here yet has no document blocks of its own.
+        const blocks = conversation.document?.blocks ?? (getStandaloneNote(conversation) ? getEditableDocument(conversation).blocks : undefined);
         if (!blocks || parsedAt.current.get(conversation.id) === conversation.updatedAt) continue;
         parsedAt.current.set(conversation.id, conversation.updatedAt);
         const cards = parseDocumentFlashcards(conversation.id, blocks);

@@ -137,6 +137,7 @@ import ClaimsPanel, { VerdictChip } from "./components/ClaimsPanel";
 import { useRatchet } from "./lib/useRatchet";
 import { VERDICT_LABELS, type RatchetAsk } from "./lib/ratchet";
 import { buildFlashcardAIMessage, parseFlashcardReply, type FlashcardDraft } from "./lib/flashcardAI";
+import { applyFlashcardEdit, flashcardDraftFor, type FlashcardDraft as FlashcardEditDraft } from "./lib/flashcardEdit";
 import AIInstructionLine from "./components/AIInstructionLine";
 import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
@@ -1484,6 +1485,35 @@ function WorkspaceAppContent({
       return { ...current, conversations: { ...current.conversations, [conversationId]: next } };
     });
   }
+
+  /**
+   * A card edited in Review rewrites its text in its document, as the person's own edit,
+   * and its review history moves to the card's new id.
+   */
+  const flashcardEditing = {
+    read(cardId: string) {
+      const card = flashcards.snapshot.cards.get(cardId);
+      const conversation = card && currentStateRef.current.conversations[card.docId];
+      return card && conversation ? flashcardDraftFor(card.docId, getEditableDocument(conversation).blocks, cardId) : null;
+    },
+    save(cardId: string, draft: FlashcardEditDraft) {
+      const card = flashcards.snapshot.cards.get(cardId);
+      const conversation = card && currentStateRef.current.conversations[card.docId];
+      const document = conversation && getEditableDocument(conversation);
+      if (!card || !conversation || !document) return { error: "This card's document isn't on this device." };
+      const now = new Date().toISOString();
+      const result = applyFlashcardEdit(card.docId, document.blocks, cardId, draft, {
+        now,
+        touch: (block, content) => ({ ...block, content, updatedAt: now,
+          authorship: getDocumentBlockAuthorship(block, conversation.messages) === "user" ? "user" as const : "mixed" as const }),
+      });
+      if ("error" in result) return result;
+      handleDocumentChange(card.docId, { ...document, blocks: result.blocks });
+      flashcards.store.syncDocument(card.docId, conversation.title || "Untitled", result.cards, now, result.links);
+      void flashcards.sync();
+      return { renamed: result.renamed };
+    },
+  };
 
   /** Each Anki deck becomes a document of cards; its review history comes with it. */
   async function handleImportAnki(file: File, onProgress: (message: string) => void) {
@@ -7043,6 +7073,7 @@ function WorkspaceAppContent({
     {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
       onClose={() => setFlashcardReview(null)}
       onImportAnki={handleImportAnki}
+      cardEditing={flashcardEditing}
       onExportAnki={() => handleExportAnki(flashcardReview.docIds, flashcardReview.docIds ? flashcardReview.title : "Margin Chat cards")}
       onOpenDocument={(docId) => {
         if (!currentStateRef.current.conversations[docId]) return;

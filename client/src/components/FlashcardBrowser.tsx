@@ -37,10 +37,11 @@ interface Props {
   flashcards: FlashcardsController;
   docIds?: ReadonlySet<string>;
   onOpenDocument: (docId: string) => void;
+  onEditCard?: (cardId: string) => void;
 }
 
 /** Every card at a glance: questions first, each opening to its answer. */
-export default function FlashcardBrowser({ flashcards, docIds, onOpenDocument }: Props) {
+export default function FlashcardBrowser({ flashcards, docIds, onOpenDocument, onEditCard }: Props) {
   const { snapshot, settings, suspend } = flashcards;
   const cards = useMemo(() => scheduleCards(snapshot, settings, docIds, { includeSuspended: true }), [docIds, settings, snapshot]);
   const [query, setQuery] = useState("");
@@ -98,6 +99,7 @@ export default function FlashcardBrowser({ flashcards, docIds, onOpenDocument }:
                     <div className="flashcard-browse-actions">
                       {entry.card.kind === "reverse" ? <span>Reversed card</span> : entry.card.kind === "cloze" ? <span>Fill in the blank</span> : null}
                       <span>{entry.reviews.length ? `Reviewed ${entry.reviews.length}×` : "Not studied yet"}</span>
+                      {onEditCard && !entry.card.removed ? <button type="button" onClick={() => onEditCard(entry.card.id)}>Edit</button> : null}
                       <button type="button" onClick={() => suspend(entry.card.id, !entry.card.suspended)}>
                         {entry.card.suspended ? "Turn back on" : "Suspend"}
                       </button>

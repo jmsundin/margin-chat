@@ -4,8 +4,10 @@ import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { buildStudyQueue, FLASHCARD_RATINGS, formatInterval, previewRatings, type FlashcardRating } from "../lib/flashcardSchedule";
 import { useVaultMedia } from "../lib/vaultMedia";
 import { newStudiedToday, type FlashcardsController, type ScheduledCard } from "../lib/useFlashcards";
-import { answerInSession, refreshSession, removeFromSession, startSession, type StudySession } from "../lib/flashcardSession";
+import { answerInSession, refreshSession, removeFromSession, renameInSession, startSession, type StudySession } from "../lib/flashcardSession";
+import type { FlashcardDraft } from "../lib/flashcardEdit";
 import FlashcardBrowser from "./FlashcardBrowser";
+import FlashcardEditor from "./FlashcardEditor";
 import "./FlashcardReview.css";
 
 function VaultImage({ target, alt }: { target: string; alt: string }) {
@@ -64,6 +66,11 @@ interface Props {
   onImportAnki?: (file: File, onProgress: (message: string) => void) => Promise<string>;
   /** Save these cards as an Anki deck; resolves to a sentence saying what was saved. */
   onExportAnki?: () => Promise<string>;
+  /** Read and rewrite a card's text in its document. Without it, cards can't be edited here. */
+  cardEditing?: {
+    read: (cardId: string) => FlashcardDraft | null;
+    save: (cardId: string, draft: FlashcardDraft) => { error: string } | { renamed: ReadonlyMap<string, string> };
+  };
 }
 
 function syntaxHelp() {
@@ -74,6 +81,7 @@ function syntaxHelp() {
         <dt><code>Question :: Answer</code></dt><dd>one card</dd>
         <dt><code>Question ::: Answer</code></dt><dd>two cards, one each way</dd>
         <dt><code>Front</code><br/><code>?</code><br/><code>Back</code></dt><dd>a longer card; the back runs to the next blank line (<code>??</code> for both ways)</dd>
+        <dt><code>:::card</code><br/><code>Front</code><br/><code>?</code><br/><code>Back</code><br/><code>:::</code></dt><dd>a card with paragraphs, code or images; Edit on any card writes this for you</dd>
         <dt><code>{"The {{c1::heart}} pumps blood"}</code></dt><dd>fill in the blank</dd>
         <dt><code>![[diagram.png]]</code></dt><dd>an image on either side</dd>
       </dl>
@@ -81,7 +89,7 @@ function syntaxHelp() {
   );
 }
 
-export default function FlashcardReview({ flashcards, docIds, title, onClose, onOpenDocument, onImportAnki, onExportAnki }: Props) {
+export default function FlashcardReview({ flashcards, docIds, title, onClose, onOpenDocument, onImportAnki, onExportAnki, cardEditing }: Props) {
   const [transfer, setTransfer] = useState<{ busy: boolean; message: string; error?: boolean } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const runTransfer = useCallback(async (work: (progress: (message: string) => void) => Promise<string>) => {
@@ -105,6 +113,10 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
   const shownAt = useRef(Date.now());
   const grading = useRef(false);
   const dialog = useRef<HTMLDivElement>(null);
+  const [editing, setEditing] = useState<{ cardId: string; docTitle: string; draft: FlashcardDraft } | null>(null);
+  const [editMissing, setEditMissing] = useState(false);
+  /** The card just saved stays face up when it comes back with its new id. */
+  const keepRevealed = useRef<string | null>(null);
 
   useEffect(() => {
     // Cards written a moment ago are read shortly after; an empty session that hasn't started picks them up.
@@ -136,7 +148,29 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
   }, [has, session, tick]);
   const current: ScheduledCard | null = session?.current ? byId.get(session.current) ?? null : null;
 
-  useEffect(() => { shownAt.current = Date.now(); setRevealed(false); }, [current?.card.id, session?.turn]);
+  useEffect(() => {
+    if (keepRevealed.current && keepRevealed.current === current?.card.id) { keepRevealed.current = null; return; }
+    shownAt.current = Date.now(); setRevealed(false); setEditMissing(false);
+  }, [current?.card.id, session?.turn]);
+
+  const startEditing = useCallback((cardId: string) => {
+    const draft = cardEditing?.read(cardId);
+    const card = flashcards.snapshot.cards.get(cardId);
+    if (!draft || !card) { setEditMissing(true); return; }
+    setEditMissing(false);
+    setEditing({ cardId, docTitle: card.docTitle, draft });
+  }, [cardEditing, flashcards.snapshot.cards]);
+  const saveEdit = useCallback((draft: FlashcardDraft) => {
+    if (!editing || !cardEditing) return null;
+    const result = cardEditing.save(editing.cardId, draft);
+    if ("error" in result) return result.error;
+    const renamed = result.renamed;
+    if (current && renamed.has(current.card.id) && revealed) keepRevealed.current = renamed.get(current.card.id)!;
+    setSession((before) => (before ? renameInSession(before, renamed) : before));
+    setLastAnswer((before) => (before && renamed.has(before.cardId) ? { ...before, session: renameInSession(before.session, renamed) } : before));
+    setEditing(null);
+    return null;
+  }, [cardEditing, current, editing, revealed]);
   useEffect(() => { dialog.current?.focus(); }, []);
 
   const preview = useMemo(() => (current ? previewRatings(current.reviews, Date.now(), settings) : null), [current, settings]);
@@ -169,7 +203,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.altKey) return;
+      if (event.defaultPrevented || event.altKey || editing) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable='true']")) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
@@ -178,6 +212,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
         return;
       }
       if (event.metaKey || event.ctrlKey || view !== "study") return;
+      if ((event.key === "e" || event.key === "E") && current && cardEditing) { event.preventDefault(); startEditing(current.card.id); return; }
       if (!revealed && (event.key === " " || event.key === "Enter")) { event.preventDefault(); setRevealed(true); return; }
       if (revealed) {
         const choice = FLASHCARD_RATINGS.find((item) => item.key === event.key);
@@ -187,7 +222,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [grade, lastAnswer, onClose, revealed, takeBack, view]);
+  }, [cardEditing, current, editing, grade, lastAnswer, onClose, revealed, startEditing, takeBack, view]);
 
   const remaining = session ? new Set([...session.order.filter((id) => byId.has(id)), ...session.later.map((entry) => entry.id)]).size : 0;
   const nextDue = useMemo(() => {
@@ -228,7 +263,12 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
         {!transfer.busy ? <button type="button" onClick={() => setTransfer(null)} aria-label="Dismiss">×</button> : null}
       </p> : null}
       <main className="flashcard-review-body">
-        {view === "browse" ? <FlashcardBrowser flashcards={flashcards} docIds={docIds} onOpenDocument={onOpenDocument}/>
+        {editing ? <FlashcardEditor key={editing.cardId} cardId={editing.cardId} draft={editing.draft} docTitle={editing.docTitle}
+          onSave={saveEdit} onCancel={() => setEditing(null)}/> : null}
+        {view === "browse" ? <div className="flashcard-browser-wrap" hidden={Boolean(editing)}>
+            <FlashcardBrowser flashcards={flashcards} docIds={docIds} onOpenDocument={onOpenDocument} onEditCard={cardEditing ? startEditing : undefined}/>
+          </div>
+          : editing ? null
           : !loaded || !session ? <p className="flashcard-review-note">Loading cards…</p>
           : current ? (
             <article className={`flashcard-card${revealed ? " is-revealed" : ""}`} aria-live="polite">
@@ -240,6 +280,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
               <footer className="flashcard-card-source">
                 <button type="button" onClick={() => onOpenDocument(current.card.docId)} title="Open the document this card is written in">{current.card.docTitle || "Untitled"}</button>
                 {current.schedule.state === "new" ? <span className="flashcard-badge">New</span> : null}
+                {cardEditing ? <button type="button" className="flashcard-edit-button" onClick={() => startEditing(current.card.id)} title="Edit this card (E)">Edit</button> : null}
               </footer>
             </article>
           ) : (
@@ -259,7 +300,8 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
           )}
       </main>
 
-      {current && view === "study" ? (
+      {editMissing ? <p className="flashcard-review-warning" role="alert">This card can't be edited here: its document isn't open on this device. Open the document to change it.</p> : null}
+      {current && view === "study" && !editing ? (
         <div className="flashcard-review-actions">
           {!revealed ? (
             <button type="button" className="flashcard-primary flashcard-show" onClick={() => setRevealed(true)} autoFocus>
