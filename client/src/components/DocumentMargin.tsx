@@ -76,6 +76,9 @@ function leftColumn(body: HTMLElement, aside: HTMLElement | null, width: number)
 }
 
 function anchorMarks(body: HTMLElement, id: string) {
+  // A checked claim's card sits beside the claim's own words.
+  const claims = [...body.querySelectorAll<HTMLElement>("[data-ratchet-claim]")].filter((element) => element.dataset.ratchetClaim === id);
+  if (claims.length) return claims;
   return [...body.querySelectorAll<HTMLElement>("[data-annotation-branches]")].filter((element) => {
     try { return (JSON.parse(element.dataset.annotationBranches ?? "[]") as unknown[]).includes(id); } catch { return false; }
   });
@@ -176,7 +179,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     body.addEventListener("scroll", syncScroll, { passive: true });
     // Typing, decorations and lazy editors move passages; resizing a note moves the notes below it.
     const mutations = typeof MutationObserver === "undefined" ? null : new MutationObserver(schedule);
-    mutations?.observe(body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-annotation-branches", "class", "style"] });
+    mutations?.observe(body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["data-annotation-branches", "data-ratchet-claim", "class", "style"] });
     const sizes = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
     sizes?.observe(body);
     for (const child of body.children) sizes?.observe(child);

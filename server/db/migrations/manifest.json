@@ -140,6 +140,11 @@
       "id": "0028_flashcards",
       "file": "0028_flashcards.sql",
       "transaction": true
+    },
+    {
+      "id": "0029_ratchet_claims",
+      "file": "0029_ratchet_claims.sql",
+      "transaction": true
     }
   ]
 }
