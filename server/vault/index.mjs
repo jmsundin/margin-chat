@@ -1,6 +1,7 @@
 import { HttpError } from "../lib/errors.mjs";
 import { createVaultStorage, digest } from "./storage.mjs";
 import { createProvenanceStore } from "./provenance/store.mjs";
+import { prepareProjectionState } from "./projectionState.mjs";
 import { PASSAGE_SOURCES, likePatterns, passageSnippet, titleMatcher, vaultSearchTerms } from "./search.mjs";
 import { findVerdict, rankDocuments } from "./findDocuments.mjs";
 
@@ -769,7 +770,9 @@ export function createVaultService({ database, env = process.env, storage = crea
         : { revision: await database.getVaultProjectionRevision?.(userId), attachments: {} };
       if (!force && (checkpoint?.revision ?? -1) >= revision) return { status: "ready", revision };
       const manifest = await load();
-      const state = await readWorkspace(userId, manifest, { tolerant: true });
+      const { state, repairs } = prepareProjectionState(await readWorkspace(userId, manifest, { tolerant: true }));
+      // Ids and reasons only: never titles or text.
+      if (repairs.length) console.warn("Vault projection left out or repaired documents", JSON.stringify({ userId, revision: manifest.revision, repairs: repairs.slice(0, 50) }));
       const attachments = Object.entries(manifest.files).filter(([path, entry]) => !entry.deleted && /^Attachments\/[^/]+\/metadata\.json$/u.test(path));
       const attachmentRevisions = {};
       const originals = (await mapConcurrent(attachments, async ([path, entry]) => {
@@ -813,6 +816,9 @@ export function createVaultService({ database, env = process.env, storage = crea
         ...(database.getVaultProjectionCheckpoint ? { expectedProjectionRevision: checkpoint?.revision ?? -1 } : {}),
         ...(unchangedConversationIds ? { unchangedConversationIds } : {}),
       });
+      if (result?.skippedDocumentLinks?.length) {
+        console.warn("Vault projection left out links to missing originals", JSON.stringify({ userId, revision: manifest.revision, links: result.skippedDocumentLinks.slice(0, 50) }));
+      }
       if (result?.projected === true && database.getVaultProjectionCheckpoint) {
         // Only saves work: a lost race leaves an older revision, which is ignored.
         await storage.compareAndSwap(`${prefix(userId)}/projection.json`,
@@ -821,7 +827,7 @@ export function createVaultService({ database, env = process.env, storage = crea
       }
       return { status: "ready", revision };
     } catch (error) {
-      console.error("Vault projection pending", error);
+      console.error("Vault projection pending", JSON.stringify({ userId, revision, error: error instanceof Error ? error.message : String(error) }), error);
       return { status: "pending", revision, error: "Your Markdown is saved. Feature indexes will retry when you next sync." };
     }
   }

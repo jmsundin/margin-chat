@@ -52,9 +52,27 @@ const lineAuthorshipBackfillV1 = definePersistenceJob({
   },
 });
 
+/**
+ * Re-index every account once the projection can repair documents it used to
+ * stall on (server/vault/projectionState.mjs). Until then one such document
+ * froze an account's search index and read_document copy at an old revision.
+ * It never fails the release: an account that is still pending is logged with
+ * ids only and retries on its next save, as before.
+ */
+const vaultProjectionRepairV1 = definePersistenceJob({
+  id: "vault-projection-repair-v1",
+  version: 1,
+  requiresVault: true,
+  async execute({ userId, vaultService }) {
+    const { manifest, projection } = await vaultService.rebuild(userId);
+    console.log(JSON.stringify({ type: "vault_projection_repair", userId, revision: manifest?.revision ?? null, status: projection?.status ?? null }));
+  },
+});
+
 export const PERSISTENCE_JOB_REGISTRY = Object.freeze({
   [vaultProjectionV1.id]: vaultProjectionV1,
   [lineAuthorshipBackfillV1.id]: lineAuthorshipBackfillV1,
+  [vaultProjectionRepairV1.id]: vaultProjectionRepairV1,
 });
 
 // Normal deployments never trigger a content rebuild implicitly.

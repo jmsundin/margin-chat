@@ -18,7 +18,7 @@
     "backupStoreId": "0mglzehtokdbvne3",
     "rehearsalStoreId": "xaaujts0exxeqjxy"
   },
-  "jobs": ["line-authorship-backfill-v1"],
+  "jobs": ["line-authorship-backfill-v1", "vault-projection-repair-v1"],
   "checkpoint": "when-data-changes",
   "compatibility": {
     "oldApplication": true,
