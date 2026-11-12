@@ -71,6 +71,10 @@ export interface DocumentPanelProps {
   childNavigation?: ReactNode;
   /** Margin notes shown in the document's right margin, each beside its passage. */
   marginNotes?: DocumentMarginItem[];
+  /** Checked claims' words by block (Ratchet), underlined by verdict. */
+  claimHighlights?: Record<string, Array<{ claimId: string; verdict: string; label: string; from: number; to: number }>>;
+  /** Open the claims view at a claim, from its underlined words. */
+  onOpenClaim?: (claimId: string) => void;
   marginWidth?: number;
   /** Marks only: a dot per note beside its passage; the note opens from the dot. */
   marginMarks?: boolean;
@@ -339,8 +343,12 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       props.anchors.forEach((anchor) => addRange(anchor.anchor,{branchIds:[anchor.branchConversationId]}));
       conversation.notes?.forEach((note) => addRange(note,{noteIds:[note.id]}));
     }
+    // Claims are anchored to the editor's blocks, as the document reads them.
+    for (const [blockId, claims] of Object.entries(props.claimHighlights ?? {})) {
+      for (const claim of claims) (ranges[blockId] ??= []).push({ from: claim.from, to: claim.to, claim: { id: claim.claimId, verdict: claim.verdict, label: claim.label } });
+    }
     return ranges;
-  }, [document, props.anchors, conversation.notes]);
+  }, [document, props.anchors, conversation.notes, props.claimHighlights]);
   useEffect(() => {
     let ids: string[] = [];
     let frame = 0;
@@ -593,7 +601,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </header> : null}
     <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
       style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
-    <div className={`panel-body document-body${board ? " is-board" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+    <div className={`panel-body document-body${board ? " is-board" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>

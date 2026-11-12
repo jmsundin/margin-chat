@@ -13,6 +13,7 @@ import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createLandscapeService } from "../documents/landscape.mjs";
 import { createLibraryService } from "../library/index.mjs";
 import { FLASHCARD_SYNC_BODY_LIMIT, createFlashcardService } from "../flashcards/index.mjs";
+import { RATCHET_BODY_LIMIT, createRatchetService } from "../ratchet/index.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
 import { MAX_VAULT_FILE_BYTES, vaultQuotaFor } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
@@ -158,6 +159,7 @@ export function createApiHandler({
   const landscape = createLandscapeService({ database });
   const library = createLibraryService({ database, env });
   const flashcards = createFlashcardService({ database });
+  const ratchet = createRatchetService({ database });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
   const publicMap = publicMapService ?? createPublicMapService({ database, executeChatReply });
   const webSearch = webSearchService ?? createWebSearchService({ env, billingService });
@@ -778,6 +780,21 @@ export function createApiHandler({
         }
         const body = await readJsonBody(request, FLASHCARD_SYNC_BODY_LIMIT);
         sendJson(response, 200, await flashcards.sync({ userId: authContext.user.id, body }), { "Cache-Control": "private, no-store" });
+        return;
+      }
+
+      if (route?.id === "ratchetClaims") {
+        requireExpectedVaultAccount(request, authContext.user);
+        if (request.method === "GET") {
+          sendJson(response, 200, await ratchet.read({ userId: authContext.user.id, documentId: url.searchParams.get("documentId") }), { "Cache-Control": "private, no-store" });
+          return;
+        }
+        if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+            !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          throw new HttpError(403, "Save claim checks from Margin Chat.");
+        }
+        const body = await readJsonBody(request, RATCHET_BODY_LIMIT);
+        sendJson(response, 200, await ratchet.save({ userId: authContext.user.id, body }), { "Cache-Control": "private, no-store" });
         return;
       }
 

@@ -133,6 +133,9 @@ import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
 import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
 import MakeCardsDialog from "./components/MakeCardsDialog";
+import ClaimsPanel, { VerdictChip } from "./components/ClaimsPanel";
+import { useRatchet } from "./lib/useRatchet";
+import { VERDICT_LABELS, type RatchetAsk } from "./lib/ratchet";
 import { buildFlashcardAIMessage, parseFlashcardReply, type FlashcardDraft } from "./lib/flashcardAI";
 import AIInstructionLine from "./components/AIInstructionLine";
 import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
@@ -271,6 +274,8 @@ import type {
 const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWorkspace"));
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
+/** Width of the margin when it holds only claim cards. */
+const CLAIM_MARGIN_WIDTH = 220;
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const HIDDEN_FROM_AI_MESSAGE = "This document is hidden from AI, so nothing in it was sent. To ask AI about it, turn off “Hide from AI” in its menu.";
@@ -1636,6 +1641,43 @@ function WorkspaceAppContent({
   const vaultSearchProvider = useMemo(() => createVaultSearchProvider(() => ({
     conversations: state.conversations, cloudDocuments: vault.cloudDocuments ?? [], groups: state.groups, categories: jev.categories,
   }), cachedSearchCloud), [state.conversations, vault.cloudDocuments, state.groups, jev.categories, cachedSearchCloud]);
+
+  /**
+   * Ratchet's model calls go through Ask AI, so they use the document's model
+   * choice and are billed like any other request. They read only what the
+   * prompt holds: no workspace context and no agent tools.
+   */
+  const ratchetAsk = useCallback((conversationId: string): RatchetAsk => async (prompt, { signal }) => {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) throw new Error("This document is no longer open.");
+    const message: Message = { id: createId("message"), role: "user", content: prompt, createdAt: new Date().toISOString() };
+    const ai = { ...withJevConsent(conversation.ai, jevEnabled), contextScope: "conversation" as const, selectedConversationIds: [], agent: false, agentAuto: false as const };
+    try {
+      const { reply, metadata } = await requestChatReply({
+        ai, workspaceContext: [], workspaceContextTruncated: false, expectedUserId: user.id,
+        conversation: await conversationRequestPayload(currentStateRef.current.conversations, conversation), messages: [message],
+        modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
+      });
+      return { text: reply, model: metadata?.model ?? conversation.modelId };
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) onAuthExpired();
+      else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
+      throw error;
+    } finally {
+      void onRefreshBilling();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jevEnabled, user.id]);
+  const ratchet = useRatchet({ userId: user.id, conversations: state.conversations, searchCloud: cachedSearchCloud, ask: ratchetAsk });
+  const [claimsView, setClaimsView] = useState<{ id: string; focus: string | null } | null>(null);
+  const [hiddenClaims, setHiddenClaims] = useState<Record<string, boolean>>({});
+  const ratchetLoad = ratchet.load;
+  // A document's checked claims load the first time it is the one being read.
+  useEffect(() => {
+    const conversation = state.conversations[activeConversation.id];
+    if (conversation && (conversation.document || conversation.kind === "note")) ratchetLoad(activeConversation.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeConversation.id, ratchetLoad]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(
@@ -5771,6 +5813,8 @@ function WorkspaceAppContent({
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap} onToggleBoard={handleToggleBoard}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
         onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCardsFor(id) : undefined}
+        onCheckClaims={(conversation.document || conversation.kind === "note") && !conversation.vaultFile && !isHiddenFromAI(conversation)
+          ? (id) => { ratchet.load(id); setClaimsView({ id, focus: null }); } : undefined}
         onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id) })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
@@ -5788,8 +5832,15 @@ function WorkspaceAppContent({
   function renderDocumentControls(conversation: Conversation, view: "chat" | "graph" = "chat") {
     // On phones the breadcrumb bar lists notes and children (and reopens closed notes), so the header skips them.
     const noteCount = isMobileViewport ? 0 : getMarginDocuments(conversation).length;
-    if (!(view === "chat" && noteCount) && !conversation.document?.marginNote) return null;
+    const claimCount = view === "chat" ? ratchet.documents[conversation.id]?.claims.length ?? 0 : 0;
+    if (!(view === "chat" && noteCount) && !conversation.document?.marginNote && !claimCount) return null;
     return <>
+      {claimCount ? <button type="button" className="document-claims-toggle" aria-pressed={!hiddenClaims[conversation.id]}
+        aria-label={`${hiddenClaims[conversation.id] ? "Show" : "Hide"} checked claims for ${conversation.title}`}
+        title={hiddenClaims[conversation.id] ? "Show checked claims" : "Hide checked claims"}
+        onClick={() => setHiddenClaims((current) => ({ ...current, [conversation.id]: !current[conversation.id] }))}>
+        Claims <span>{claimCount}</span>
+      </button> : null}
       {view === "chat" && noteCount ? <button type="button" className="document-margin-notes-toggle"
         aria-label={`${closedMarginNotes[conversation.id] ? "Show" : "Hide"} margin notes for ${conversation.title}`}
         aria-expanded={!closedMarginNotes[conversation.id]}
@@ -5865,6 +5916,8 @@ function WorkspaceAppContent({
         {renderDocumentControls(conversation, view)}
       </>}
       childNavigation={renderChildrenMenu(conversation, view, view === "graph" ? dock : undefined)}
+      claimHighlights={view === "chat" ? getClaimHighlights(conversation) : undefined}
+      onOpenClaim={(claimId) => setClaimsView({ id: conversation.id, focus: claimId })}
       marginNotes={getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       marginMarks={marginMarks} marginNoteWidth={Math.min(320, Math.max(220, getMarginColumnWidth(conversation)))}
       activeMarginNoteId={activeConversation.id}
@@ -5982,7 +6035,9 @@ function WorkspaceAppContent({
 
   function getMarginColumnWidth(conversation: Conversation, includePreview = true): number {
     const notes = getMarginDocuments(conversation);
-    return 8 + Math.max(0, ...notes.map((note) => Math.max(
+    // Claim cards need room for a verdict and a source title even when there are no notes.
+    const claims = getClaimMarginItems(conversation).length ? CLAIM_MARGIN_WIDTH : 0;
+    return 8 + Math.max(claims, ...notes.map((note) => Math.max(
       getMarginDocumentSize(includePreview ? marginResizePreviews[note.id] ?? note.document?.marginNote?.size : note.document?.marginNote?.size).width,
       !closedMarginNotes[note.id] && getMarginDocuments(note).length ? getMarginColumnWidth(note, includePreview) + 21 : 0,
     )));
@@ -5994,7 +6049,7 @@ function WorkspaceAppContent({
    */
   function showsMarginInPanel(conversation: Conversation, view: "chat" | "graph" = "chat") {
     return view === "chat" && (!isMobileViewport || marginMarks) && !isCompactDocument(conversation)
-      && !closedMarginNotes[conversation.id] && getMarginDocuments(conversation).length > 0;
+      && !closedMarginNotes[conversation.id] && (getMarginDocuments(conversation).length > 0 || getClaimMarginItems(conversation).length > 0);
   }
   /** Extra frame width the margin adds, so the text column keeps its width. */
   function getDocumentMarginSpace(conversation: Conversation, includePreview = true) {
@@ -6022,12 +6077,36 @@ function WorkspaceAppContent({
     </button>;
   }
 
+  /** A document's checked claims, as cards beside their words, unless the person put them away. */
+  function getClaimMarginItems(conversation: Conversation): DocumentMarginItem[] {
+    const checked = ratchet.documents[conversation.id];
+    if (!checked?.claims.length || hiddenClaims[conversation.id]) return [];
+    return checked.claims.filter((claim) => checked.anchors[claim.id]?.state === "ok" && claim.verdict !== "insufficient-evidence").map((claim) => ({
+      id: claim.id, anchored: true, label: VERDICT_LABELS[claim.verdict], ai: true,
+      node: <button type="button" className="claim-margin-card" onClick={() => setClaimsView({ id: conversation.id, focus: claim.id })}
+        aria-label={`${VERDICT_LABELS[claim.verdict]}: ${claim.claim}. Open the claims view.`}>
+        <VerdictChip verdict={claim.verdict}/>
+        <span>{claim.evidence[0] ? `${claim.evidence[0].title}${claim.evidence.length > 1 ? ` and ${claim.evidence.length - 1} more` : ""}` : claim.reason}</span>
+      </button>,
+    }));
+  }
+
+  function getClaimHighlights(conversation: Conversation) {
+    if (hiddenClaims[conversation.id]) return undefined;
+    const highlights = ratchet.highlights(conversation.id);
+    const out: Record<string, Array<{ claimId: string; verdict: string; label: string; from: number; to: number }>> = {};
+    for (const [blockId, list] of Object.entries(highlights)) out[blockId] = list.map((item) => ({ ...item, label: VERDICT_LABELS[item.verdict] }));
+    return Object.keys(out).length ? out : undefined;
+  }
+
   function getMarginItems(conversation: Conversation, view: "chat" | "graph"): DocumentMarginItem[] | undefined {
     if (!showsMarginInPanel(conversation, view)) return undefined;
-    return getMarginDocuments(conversation).map((note) => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true),
+    const claims = view === "chat" ? getClaimMarginItems(conversation) : [];
+    const items = getMarginDocuments(conversation).map((note): DocumentMarginItem => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true),
       label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
       ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()),
       pending: Boolean(note.document?.generations.some((generation) => generation.status === "streaming")) }));
+    return items.length || claims.length ? [...items, ...claims] : undefined;
   }
 
   /** The column of notes beside a document on phones, and beside a margin note for its own notes. */
@@ -6946,6 +7025,17 @@ function WorkspaceAppContent({
         </div>
       </div>
     </div>
+    {claimsView && state.conversations[claimsView.id] ? <ClaimsPanel title={state.conversations[claimsView.id].title}
+      state={ratchet.documents[claimsView.id]} focusClaimId={claimsView.focus}
+      onCheck={() => { setHiddenClaims((current) => ({ ...current, [claimsView.id]: false })); void ratchet.check(claimsView.id); }}
+      onStop={() => ratchet.stop(claimsView.id)}
+      onOpenEvidence={(evidence) => { setClaimsView(null); handleNavigateDocumentConnector({ conversationId: evidence.documentId, blockId: evidence.blockId }); }}
+      onShowClaim={(claim) => {
+        const anchor = ratchet.documents[claim.documentId]?.anchors[claim.id];
+        setClaimsView(null);
+        handleNavigateDocumentConnector({ conversationId: claim.documentId, blockId: anchor?.state === "ok" ? anchor.blockId : claim.anchor.blockId });
+      }}
+      onClose={() => setClaimsView(null)}/> : null}
     {makeCardsFor && state.conversations[makeCardsFor] ? <MakeCardsDialog title={state.conversations[makeCardsFor].title}
       onGenerate={(focus, signal) => handleSuggestFlashcards(makeCardsFor, focus, signal)}
       onAdd={(drafts) => handleAddFlashcards(makeCardsFor, drafts)}
