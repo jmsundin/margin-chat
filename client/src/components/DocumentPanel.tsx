@@ -4,6 +4,7 @@ import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
 import { findBoardBlock, isBoardDocument, withBoardBlock } from "../lib/boardDocument";
+import type { BoardNoteRequest } from "../lib/boardAI";
 import { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
 import WriteBackLine from "./WriteBackLine";
 import { joinDocumentBlocks } from "../lib/continuousDocument";
@@ -86,6 +87,8 @@ export interface DocumentPanelProps {
   bodyFooter?: ReactNode;
   /** A one-line notice at the top of the document's text, such as an edit made on two devices at once. */
   notice?: ReactNode;
+  /** A note written on a board: resolves to the Mermaid flowchart the AI draws beside it. */
+  onAskBoardNote?: (request: BoardNoteRequest) => Promise<string>;
   /** A roadmap document's stages and steps, drawn above its notes. */
   roadmap?: ReactNode;
   /** The "Tell the AI: …" line above the document's text. */
@@ -612,7 +615,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.roadmap}
       {board ? <Suspense fallback={<p className="document-board" role="status">Loading board…</p>}>
         <BoardCanvas key={`${conversation.id}:${board.id}`} markdown={board.content} theme={props.theme}
-          readOnly={streamingIds.includes(board.id)} onChange={(content) => changeBoard(board.id, content)} />
+          readOnly={streamingIds.includes(board.id)} onChange={(content) => changeBoard(board.id, content)}
+          onAskNote={props.onAskBoardNote} />
       </Suspense> : null}
       {!showEditor ? null : editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={editorBlocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}

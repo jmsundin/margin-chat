@@ -307,7 +307,9 @@ const server = createServer(async (request, response) => {
             // A diagram edit gets a changed diagram, wrapped in the kind of words the app must drop.
             const asked = JSON.stringify(body.messages ?? []);
             const ratchetReply = asked.includes("Find the checkable claims") || asked.includes("Check each claim against the passages") ? syntheticRatchetReply(JSON.stringify(body.messages ?? [])) : null;
-            const reply = ratchetReply ? ratchetReply : asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
+            const reply = ratchetReply ? ratchetReply : asked.includes("The user wrote a note on a whiteboard")
+              ? "```mermaid\nflowchart TD\n  N[Sleep under 6 hours] --> C[Higher cortisol]\n  N --> I[Worse insulin response]\n  C --> R[More belly fat]\n  I --> R\n  R --> Q{Fix sleep first?}\n```"
+              : asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."
               : asked.includes("Ask me one short question that tests this passage")
                 ? "What human evidence shows a weekly dose avoids the immune effects, rather than mouse data?"
