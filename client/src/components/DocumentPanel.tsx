@@ -55,6 +55,8 @@ export interface DocumentPanelProps {
   agentMode?: AgentModeControls;
   /** Live steps of a running agent request. */
   agentProgress?: AgentProgress;
+  /** The agent's live status is shown elsewhere (a roadmap shows it where the roadmap is being built). */
+  hideAgentStatus?: boolean;
   documentMenu?: ReactNode;
   /** Full screen, or the way back out of it, beside the document menu. */
   fullScreenToggle?: ReactNode;
@@ -666,7 +668,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {writeBackId === block.id && props.onWriteBack ? <WriteBackLine disabled={props.isSubmitting} onClose={() => setWriteBackId(null)}
             onSend={(text) => { setWriteBackId(null); props.onWriteBack?.(block.id, text); }} /> : null}
         </>}/> : <RichDocumentPlaceholder blocks={editorBlocks} />}
-      {props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))
+      {props.isSubmitting && props.hideAgentStatus ? null : props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))
         ? <div className="document-writing-status is-agent" role="status">
           <div className="document-agent-status-head"><strong>Agent is working</strong><button type="button" onClick={props.onStop}>Stop</button></div>
           <AgentRunLog live steps={props.agentProgress?.steps ?? []} spentMicros={props.agentProgress?.spentMicros}

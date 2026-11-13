@@ -5,6 +5,8 @@ import {
   buildRoadmapGraph, getRoadmap, plainPreview, roadmapDraftLink, roadmapNodeTitle, roadmapStatus, ROADMAP_STATUS_LABELS, type RoadmapChange,
 } from "../lib/roadmap";
 import DocumentLinkPicker from "./DocumentLinkPicker";
+import AgentRunLog from "./AgentRunLog";
+import type { AgentProgress } from "../lib/useChatStreams";
 import "./RoadmapView.css";
 
 export interface RoadmapViewProps {
@@ -27,6 +29,12 @@ export interface RoadmapViewProps {
   onDiveDeeper?: (docId: string) => string | null;
   /** Documents AI is writing in now. */
   writingIds?: Record<string, unknown>;
+  /** The agent's live progress while it drafts this roadmap: its steps, thinking, and the roadmap so far. */
+  progress?: AgentProgress;
+  budgetMicros?: number;
+  onStop?: () => void;
+  /** Approve or dismiss a roadmap the agent drafted for this document; returns why it couldn't, or null. */
+  onDraftDecision?: (messageId: string, proposalId: string, action: "approve" | "dismiss") => string | null;
 }
 
 const STATUSES: RoadmapStatus[] = ["not-started", "learning", "done", "skipped"];
@@ -49,7 +57,7 @@ function StatusMark({ status }: { status: RoadmapStatus }) {
   </svg>;
 }
 
-export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets, onDraft, drafting = false, onExplain, onDiveDeeper, writingIds }: RoadmapViewProps) {
+export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets, onDraft, drafting = false, onExplain, onDiveDeeper, writingIds, progress, budgetMicros, onStop, onDraftDecision }: RoadmapViewProps) {
   const roadmap = useMemo(() => getRoadmap(conversation), [conversation]);
   const graph = useMemo(() => buildRoadmapGraph(roadmap, conversations), [roadmap, conversations]);
   const [editing, setEditing] = useState(false);
@@ -68,6 +76,21 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
   const [edges, setEdges] = useState<EdgePath[]>([]);
   const spineRef = useRef<HTMLDivElement>(null);
   const selected = selectedId ? graph.nodesById.get(selectedId) ?? null : null;
+  // A finished draft waits here, in the roadmap it is for, until it is added or discarded.
+  const waitingDraft = useMemo(() => {
+    for (const message of [...conversation.messages].reverse()) {
+      const proposal = message.execution?.agent?.proposals?.find((item) => item.kind === "roadmap" && item.roadmapId === conversation.id && !item.status);
+      if (proposal?.kind === "roadmap") return { messageId: message.id, proposal };
+    }
+    return null;
+  }, [conversation.messages, conversation.id]);
+  const working = drafting && Boolean(progress);
+  const building = working ? progress?.roadmapDraft ?? null : null;
+  const draftStages = building?.stages ?? (working ? null : waitingDraft?.proposal.stages) ?? null;
+  const draftSteps = draftStages?.reduce((sum, stage) => sum + stage.steps.length, 0) ?? 0;
+  const draftEnd = useRef<HTMLDivElement>(null);
+  // While it is being written, the newest step stays in view.
+  useEffect(() => { if (building) draftEnd.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }); }, [building, draftSteps]);
   const empty = !roadmap.nodes.length;
   const showEditing = editing || empty;
   // A new roadmap opens ready to edit and stays that way after its first step.
@@ -203,6 +226,28 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
       Some prerequisites loop back on each other, so {graph.cycleEdges.length === 1 ? "one is" : `${graph.cycleEdges.length} are`} ignored:{" "}
       {graph.cycleEdges.map((edge) => `${titleOf(edge.from)} needs ${titleOf(edge.to)}`).join("; ")}.
     </p> : null}
+    {working || draftStages ? <section className={`roadmap-build${working ? " is-live" : ""}`} aria-label="Roadmap draft" aria-busy={working}>
+      <header className="roadmap-build-head">
+        <strong>{working ? draftStages ? "Building the roadmap…" : "Agent is working…" : `Draft ready: ${draftStages!.length} ${draftStages!.length === 1 ? "stage" : "stages"}, ${draftSteps} ${draftSteps === 1 ? "step" : "steps"}`}</strong>
+        {working && draftStages ? <span className="roadmap-build-count">{draftSteps} {draftSteps === 1 ? "step" : "steps"} so far</span> : null}
+        {working && onStop ? <button type="button" onClick={onStop}>Stop</button> : null}
+        {!working && waitingDraft && onDraftDecision ? <>
+          <button type="button" className="is-primary" onClick={() => setMessage(onDraftDecision(waitingDraft.messageId, waitingDraft.proposal.id, "approve"))}>Add to roadmap</button>
+          <button type="button" onClick={() => setMessage(onDraftDecision(waitingDraft.messageId, waitingDraft.proposal.id, "dismiss"))}>Discard</button>
+        </> : null}
+      </header>
+      {working ? <AgentRunLog live steps={progress?.steps ?? []} spentMicros={progress?.spentMicros} thinking={progress?.thinking}
+        activity={progress?.activity} label={progress?.label} since={progress?.since} budgetMicros={budgetMicros} /> : null}
+      {draftStages ? <div className="roadmap-build-stages">
+        {draftStages.map((stage, index) => <div key={index} className="roadmap-build-stage">
+          <h3>{stage.title}</h3>
+          <div className="roadmap-build-steps">{stage.steps.map((step, stepIndex) => <span key={stepIndex} className="roadmap-build-step">
+            {step.title || (step.documentId ? conversations[step.documentId]?.title ?? cloudTitles.get(step.documentId) : "") || "Document from your vault"}
+          </span>)}{working && index === draftStages.length - 1 ? <span className="roadmap-build-step is-writing" aria-hidden="true">…</span> : null}</div>
+        </div>)}
+        <div ref={draftEnd} />
+      </div> : null}
+    </section> : null}
     <div className="roadmap-layout">
       <div className="roadmap-spine" ref={spineRef}>
         <svg className="roadmap-edges" aria-hidden="true">

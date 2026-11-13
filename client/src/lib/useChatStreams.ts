@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChatExecutions } from "./chatExecution";
-import type { AgentActivity, AgentEvent } from "./chatStream";
+import type { AgentActivity, AgentEvent, RoadmapDraftPreview } from "./chatStream";
 import type { AgentRunStep } from "../types";
 
 /** Live agent progress for a running request; cleared when the request ends. */
@@ -14,6 +14,8 @@ export interface AgentProgress {
   label?: string;
   /** When the current activity began, for how long it has been going. */
   since?: number;
+  /** The roadmap the agent is writing, as far as it has got; kept until the run ends. */
+  roadmapDraft?: RoadmapDraftPreview;
 }
 
 const LIVE_STEPS = 60;
@@ -69,12 +71,14 @@ export function useChatStreams(onDelta: ExecutionEvents["onDelta"], onExecution?
         flushThinking();
         setAgentProgress((current) => {
           const previous = current[id] ?? { steps: [] };
+          if (event.type === "roadmap") return { ...current, [id]: { ...previous, roadmapDraft: event.draft } };
           if (event.type === "activity") {
             const same = previous.activity === event.activity && previous.label === event.label;
             return { ...current, [id]: { ...previous, activity: event.activity, label: event.label, since: same ? previous.since : Date.now() } };
           }
           // A step means its model call or tool has ended; that call's thinking is now in the steps.
-          return { ...current, [id]: { steps: [...previous.steps, event.step].slice(-LIVE_STEPS), spentMicros: event.spentMicros ?? previous.spentMicros, since: Date.now() } };
+          return { ...current, [id]: { steps: [...previous.steps, event.step].slice(-LIVE_STEPS), spentMicros: event.spentMicros ?? previous.spentMicros, since: Date.now(),
+            ...(previous.roadmapDraft ? { roadmapDraft: previous.roadmapDraft } : {}) } };
         });
       },
       onPending(id, pending) {

@@ -6035,6 +6035,9 @@ function WorkspaceAppContent({
       </div> : undefined}
       roadmap={conversation.nodeType === "roadmap" ? <RoadmapView conversation={conversation} conversations={state.conversations}
         drafting={Boolean(pendingConversationIds[conversation.id])} onDraft={(goal) => handleDraftRoadmap(conversation.id, goal)}
+        progress={agentProgress[conversation.id]} budgetMicros={agentModeControls(conversation)?.showBudget ? agentModeControls(conversation)?.budgetMicros : undefined}
+        onStop={() => stopChatStream(conversation.id)}
+        onDraftDecision={(messageId, proposalId, action) => handleAgentProposal(conversation.id, messageId, proposalId, action)}
         writingIds={pendingConversationIds} onExplain={(docId, context) => handleRoadmapStepAI(conversation.id, docId, "explain", context)} onDiveDeeper={(docId) => handleRoadmapStepAI(conversation.id, docId, "deeper")}
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
         onChange={(change) => handleRoadmapChange(conversation.id, change)}
@@ -6057,6 +6060,7 @@ function WorkspaceAppContent({
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
       agentMode={agentModeControls(conversation)} agentProgress={agentProgress[conversation.id]}
+      hideAgentStatus={view === "chat" && conversation.nodeType === "roadmap" && Boolean(agentProgress[conversation.id])}
       recentModelSelections={recentModelSelections} theme={theme} anchors={documentAnchorLinks(conversation.id)}
       error={documentErrors[conversation.id] ?? documentUploadByConversationId[conversation.id]?.error ?? undefined}
       onChange={(document) => handleDocumentChange(conversation.id, document)}

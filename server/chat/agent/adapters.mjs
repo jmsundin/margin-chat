@@ -1,17 +1,26 @@
 import { HttpError } from "../../lib/errors.mjs";
 import { RESPONSES_URLS, anthropicBody, extractOpenAIReply, requestAnthropicMessage, requestResponsesApiStream } from "../providers.mjs";
 import { extractConversationMessages } from "../systemPrompt.mjs";
+import { parsePartialJson } from "./partialJson.mjs";
 
 /** Providers whose APIs can call tools. Gemini and Hugging Face answer without them. */
 export const AGENT_PROVIDERS = Object.freeze(["openai", "xai", "anthropic", "meta"]);
 
-function parseArguments(text, provider) {
-  if (typeof text !== "string" || !text.trim()) return {};
+const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+/**
+ * A tool call's arguments. A call cut off at the output limit arrives as unfinished JSON: it keeps
+ * what it finished and is marked `cutOff`, so the run can use that or tell the model to send less.
+ */
+function parseArguments(text, provider, { incomplete = false } = {}) {
+  if (typeof text !== "string" || !text.trim()) return { arguments: {} };
   try {
     const value = JSON.parse(text);
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return { arguments: isRecord(value) ? value : {} };
   } catch {
-    throw new HttpError(502, `${provider} returned invalid JSON tool arguments.`);
+    if (!incomplete) throw new HttpError(502, `${provider} returned invalid JSON tool arguments.`);
+    const partial = parsePartialJson(text);
+    return { arguments: isRecord(partial) ? partial : {}, cutOff: true };
   }
 }
 
@@ -91,8 +100,14 @@ function createResponsesAdapter(provider, args, tools) {
       };
       let thinking = false;
       let writing = false;
+      // Tool calls being written, by output item: their arguments stream in as text.
+      const drafting = new Map();
       const onEvent = async (event) => {
-        if (["response.reasoning_summary_text.delta", "response.reasoning_text.delta"].includes(event.type) && typeof event.delta === "string") {
+        if (event.type === "response.function_call_arguments.delta" && typeof event.delta === "string" && drafting.has(event.item_id)) {
+          const call = drafting.get(event.item_id);
+          call.text += event.delta;
+          await live.toolArguments?.(call.name, call.text);
+        } else if (["response.reasoning_summary_text.delta", "response.reasoning_text.delta"].includes(event.type) && typeof event.delta === "string") {
           await live.thinking?.(event.delta);
           thinking = true;
         } else if (event.type === "response.reasoning_summary_part.added" && thinking) {
@@ -102,6 +117,7 @@ function createResponsesAdapter(provider, args, tools) {
           writing = true;
           await live.text?.(event.delta);
         } else if (event.type === "response.output_item.added" && event.item?.type === "function_call" && typeof event.item.name === "string") {
+          if (typeof event.item.id === "string") drafting.set(event.item.id, { name: event.item.name, text: "" });
           await live.tool?.(event.item.name);
         } else if (event.type === "response.output_item.done" && event.item?.type === "web_search_call") {
           // The finished search names its query, which the in-progress events don't.
@@ -127,7 +143,13 @@ function createResponsesAdapter(provider, args, tools) {
       }
       const payload = result.completedPayload;
       const output = Array.isArray(payload?.output) ? payload.output : [];
-      input.push(...output);
+      // A response that ran out of output tokens can end inside a tool call's arguments.
+      const incomplete = payload?.status === "incomplete";
+      input.push(...output.map((item) => {
+        if (item?.type !== "function_call" || !incomplete) return item;
+        // The history must hold valid JSON for the provider to accept the next call.
+        try { JSON.parse(item.arguments); return item; } catch { return { ...item, arguments: JSON.stringify(parseArguments(item.arguments, provider, { incomplete }).arguments) }; }
+      }));
       return {
         model: typeof payload?.model === "string" && payload.model.trim() ? payload.model : args.model,
         text: extractOpenAIReply(payload),
@@ -135,7 +157,7 @@ function createResponsesAdapter(provider, args, tools) {
         searches: webSearches(output),
         sources: citedPages(output),
         toolCalls: output.filter((item) => item?.type === "function_call")
-          .map((item) => ({ id: item.call_id, name: item.name, arguments: parseArguments(item.arguments, provider) })),
+          .map((item) => ({ id: item.call_id, name: item.name, ...parseArguments(item.arguments, provider, { incomplete }) })),
       };
     },
     addToolResults(results) {
@@ -159,8 +181,13 @@ function createAnthropicAdapter(args, tools) {
         tools: definitions, tool_choice: { type: allowTools ? "auto" : "none" } };
       let thinking = false;
       let writing = false;
+      const drafting = new Map();
       const onEvent = async (event) => {
-        if (event.type === "content_block_start" && event.content_block?.type === "thinking" && thinking) {
+        if (event.type === "content_block_delta" && event.delta?.type === "input_json_delta" && typeof event.delta.partial_json === "string" && drafting.has(event.index)) {
+          const call = drafting.get(event.index);
+          call.text += event.delta.partial_json;
+          await live.toolArguments?.(call.name, call.text);
+        } else if (event.type === "content_block_start" && event.content_block?.type === "thinking" && thinking) {
           await live.thinking?.("\n\n");
         } else if (event.type === "content_block_delta" && event.delta?.type === "thinking_delta" && event.delta.thinking) {
           await live.thinking?.(event.delta.thinking);
@@ -169,6 +196,7 @@ function createAnthropicAdapter(args, tools) {
           writing = true;
           await live.writing?.();
         } else if (event.type === "content_block_start" && event.content_block?.type === "tool_use" && typeof event.content_block.name === "string") {
+          drafting.set(event.index, { name: event.content_block.name, text: "" });
           await live.tool?.(event.content_block.name);
         } else if (event.type === "content_block_delta" && event.delta?.type === "text_delta" && event.delta.text) {
           await live.text?.(event.delta.text);
