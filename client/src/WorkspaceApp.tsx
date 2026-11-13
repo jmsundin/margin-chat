@@ -128,6 +128,7 @@ import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, res
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
 import { applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
+import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
@@ -3053,17 +3054,30 @@ function WorkspaceAppContent({
    * The dialog shows the result; nothing reaches the document until the user saves the diagram.
    */
   async function handleAskDiagram(conversationId: string, request: DiagramAIRequest): Promise<string> {
+    return requestMermaidDiagram(conversationId, request.prompt.trim(), request.signal,
+      (conversation, prompt) => buildDiagramAIMessage(conversation, prompt, request, documentAIInstruction(currentStateRef.current.conversations, conversation)));
+  }
+
+  /** A note written on a board: the AI answers with a flow diagram drawn beside it. */
+  async function handleAskBoardNote(conversationId: string, request: BoardNoteRequest): Promise<string> {
+    return requestMermaidDiagram(conversationId, request.note, request.signal,
+      (conversation, prompt) => buildBoardNoteMessage(conversation, prompt, request, documentAIInstruction(currentStateRef.current.conversations, conversation)));
+  }
+
+  /** One model call that must come back as a Mermaid diagram, billed and checked like any Ask AI. */
+  async function requestMermaidDiagram(conversationId: string, text: string, signal: AbortSignal | undefined,
+    build: (conversation: Conversation, prompt: Message) => Message): Promise<string> {
     const conversation = currentStateRef.current.conversations[conversationId];
     if (!conversation) throw new Error("This document is no longer open.");
     if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
-    const prompt: Message = { id: createId("message"), role: "user", content: request.prompt.trim(), createdAt: new Date().toISOString() };
-    const message = buildDiagramAIMessage(conversation, prompt, request, documentAIInstruction(currentStateRef.current.conversations, conversation));
+    const prompt: Message = { id: createId("message"), role: "user", content: text, createdAt: new Date().toISOString() };
+    const message = build(conversation, prompt);
     try {
       const { reply } = await requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, conversation, [message]),
         ai: withJevConsent(conversation.ai, jevEnabled), expectedUserId: user.id,
         conversation: await conversationRequestPayload(currentStateRef.current.conversations, conversation), messages: [message],
-        modelId: conversation.modelId, serviceId: conversation.serviceId, signal: request.signal,
+        modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
       });
       const source = findMermaidFences(mermaidDiagramReply(reply))[0]?.source.trim();
       if (!source) throw new Error("The AI didn't send back a diagram. Try asking another way.");
@@ -6049,6 +6063,7 @@ function WorkspaceAppContent({
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
       onAskDiagram={(request) => handleAskDiagram(conversation.id, request)}
+      onAskBoardNote={(request) => handleAskBoardNote(conversation.id, request)}
       onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); const diagram = isMermaidDiagramPassage(selection.quote); setSelectionResponseDestination(diagram ? "inline" : defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(diagram); }}
       onCaretMenu={(menu) => { setSelectionDraft(null); setCaretMenu(menu); }}
       onVisibleOutlineChange={handleVisibleOutlineChange}

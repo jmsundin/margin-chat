@@ -14,3 +14,10 @@
 .document-body.is-board { display: flex; flex-direction: column; padding-bottom: 16px; }
 .document-body.is-board > .document-board { flex: 0 0 auto; height: 100%; min-height: 420px; margin: 0 -1px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .document-board.is-broken { display: grid; place-content: center; gap: 4px; padding: 24px; color: var(--muted); text-align: center; }
+.board-ai-toggle { white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-strong); color: var(--ink); font-size: 13px; cursor: pointer; }
+.board-ai-toggle .board-ai-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.board-ai-toggle[aria-pressed="true"] .board-ai-dot { background: #2f9e44; }
+.document-board { position: relative; }
+.board-ai-status { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 10px; max-width: min(560px, calc(100% - 32px)); padding: 8px 14px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-strong); color: var(--ink); font-size: 13px; box-shadow: 0 4px 16px #0002; }
+.board-ai-status.is-error { border-radius: 10px; border-color: var(--danger, #c92a2a); }
+.board-ai-status button { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 2px 4px; font: inherit; }
