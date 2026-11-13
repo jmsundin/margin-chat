@@ -85,6 +85,9 @@ export function agentToolDefinitions(chatRequest, workspace = null, { documents 
   ];
 }
 
+const LOW_ROOM = 2_500;
+const OUT_OF_ROOM = Object.freeze({ ok: false, truncated: true, error: "Room for workspace tool results is used up for this run. Don't search, read or look up anything else in the workspace: finish with what you already have, and say briefly what you couldn't check. Proposal tools still work." });
+
 /**
  * `workspace` is `{ userId, vault, database }` for a signed-in request, or null.
  * `room()` is how many more characters the request can take; webpages, which have
@@ -93,7 +96,9 @@ export function agentToolDefinitions(chatRequest, workspace = null, { documents 
  */
 export function createAgentToolExecutor({ chatRequest, workspace = null, signal, room, readPage, importSection, onDocuments = null, proposals = false }) {
   const snapshots = permittedSnapshots(chatRequest);
-  let remainingCharacters = chatRequest.ai?.mode === "fast" ? 6_000 : chatRequest.ai?.mode === "thorough" ? 24_000 : 12_000;
+  // Room for what workspace tools return over a whole run. A roadmap build looks up a dozen topics, which 12,000 didn't cover.
+  let remainingCharacters = chatRequest.ai?.mode === "fast" ? 6_000 : chatRequest.ai?.mode === "thorough" ? 40_000 : 20_000;
+  let exhausted = false;
   const vaultTools = createVaultTools({ chatRequest, workspace, snapshots, readCharacters: Math.floor(remainingCharacters / 3) });
   const webTools = createWebTools({ chatRequest, signal, room, onDocuments, ...(readPage ? { readPage } : {}), ...(importSection ? { importSection } : {}) });
   const proposalTools = proposals ? createProposalTools({ chatRequest, snapshots, reachable: vaultToolAccess(chatRequest, workspace) ?? undefined }) : null;
@@ -101,6 +106,7 @@ export function createAgentToolExecutor({ chatRequest, workspace = null, signal,
   async function executeTool(name, args = {}) {
     if (webTools?.has(name)) return webTools.run(name, args);
     if (proposalTools?.has(name)) return proposalTools.run(name, args);
+    if (exhausted) return OUT_OF_ROOM;
     let result;
     if (name === "search_conversations") {
       const query = String(args.query ?? "").trim().toLowerCase();
@@ -138,8 +144,12 @@ export function createAgentToolExecutor({ chatRequest, workspace = null, signal,
       result = { ...result, [list]: result[list].slice(0, -1), truncated: true };
     }
     const size = JSON.stringify(result).length;
-    if (size > remainingCharacters) return { ok: false, truncated: true, error: "The context budget for workspace tools is exhausted. Answer from the supplied context and disclose any missing information." };
+    if (size > remainingCharacters) { exhausted = true; return OUT_OF_ROOM; }
     remainingCharacters -= size;
+    // Said before the room runs out, so the model stops looking things up instead of finding out by failing.
+    if (remainingCharacters < LOW_ROOM && result && typeof result === "object") {
+      return { ...result, room_note: "Room for workspace tool results is nearly used up. Make no more searches or lookups in this run; go on with what you have." };
+    }
     return result;
   }
   executeTool.proposals = () => proposalTools?.list() ?? [];
