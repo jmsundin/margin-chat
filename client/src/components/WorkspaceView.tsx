@@ -7,7 +7,7 @@ interface WorkspaceViewProps {
   active: boolean;
   children: ReactNode;
   /** Float over the document as a modal instead of filling the workspace. */
-  modal?: { labelledBy: string; style?: CSSProperties; /** Split beside the document: a region you work alongside, not a dialog. */ docked?: boolean };
+  modal?: { label: string; style?: CSSProperties; /** Beside or under the document: a region you work alongside, not a dialog. */ docked?: boolean; /** Too narrow for its toolbars. */ narrow?: boolean };
 }
 
 /** Mount on first use, then preserve editors and canvas state between visits. */
@@ -16,9 +16,9 @@ export default memo(function WorkspaceView({ mode, active, children, modal }: Wo
   if (active && !visited) setVisited(true);
   if (!active && !visited) return null;
 
-  return <div className={`workspace-view${modal ? " is-modal" : ""}${modal?.docked ? " is-docked" : ""}`} data-workspace-view={mode} hidden={!active} inert={!active}
+  return <div className={`workspace-view${modal ? " is-modal" : ""}${modal?.docked ? " is-docked" : ""}${modal?.narrow ? " is-narrow" : ""}`} data-workspace-view={mode} hidden={!active} inert={!active}
     role={modal ? modal.docked ? "region" : "dialog" : undefined} aria-modal={modal && !modal.docked ? true : undefined}
-    aria-labelledby={modal?.labelledBy} style={modal?.style}>
+    aria-label={modal?.label} style={modal?.style}>
     {children}
   </div>;
 // Render the first hidden frame so visibility-dependent work can stop. Later
