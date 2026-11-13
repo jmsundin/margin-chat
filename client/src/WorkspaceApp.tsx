@@ -126,7 +126,7 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
-import { applyRoadmapChange, applyRoadmapDraft, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
+import { applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
 import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
 import RoadmapView from "./components/RoadmapView";
 import FlashcardReview from "./components/FlashcardReview";
@@ -3164,7 +3164,7 @@ function WorkspaceAppContent({
     if (action === "undo") return "This change can't be undone from here.";
     if (proposal.kind === "roadmap") {
       if (!currentStateRef.current.conversations[proposal.roadmapId]) return `Open \u201c${proposal.roadmapTitle || "the roadmap"}\u201d first, then try again.`;
-      const ids = roadmapDraftIds(proposal);
+      const ids = roadmapDraftIds(proposal, createId);
       const cloudIds = new Set((vault.cloudDocuments ?? []).map((entry) => entry.id));
       const updatedAt = new Date().toISOString();
       const preview = applyRoadmapDraft(currentStateRef.current, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) });
@@ -5479,7 +5479,26 @@ function WorkspaceAppContent({
     const last = blocks.at(-1);
     if (!last) return "This document can't take an AI reply yet. Type something in it, then try again.";
     handleDocumentSubmit(conversationId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", agent: true,
-      prompt: `Draft a learning roadmap for: ${goal.trim()}\n\nSearch my vault for documents that teach this, then use propose_roadmap to lay them out in stages with their prerequisites. Add the stages to this roadmap document.` });
+      prompt: roadmapDraftPrompt(goal) });
+    return null;
+  }
+
+  /** A roadmap step's Explain with AI (an answer written into the step's document) or Dive deeper (its topic as a roadmap of its own). */
+  function handleRoadmapStepAI(roadmapId: string, docId: string, action: "explain" | "deeper", context = ""): string | null {
+    const roadmapDocument = currentStateRef.current.conversations[roadmapId];
+    const conversation = currentStateRef.current.conversations[docId];
+    if (!conversation) return "Open this step's document first, then try again.";
+    if (isHiddenFromAI(conversation)) return HIDDEN_FROM_AI_MESSAGE;
+    if (action === "deeper" && !supportsAgentMode(conversation.serviceId)) return "Diving deeper needs Agent mode. Open the step's document, choose a model that supports it in Ask AI, then try again.";
+    if (chatExecutions.has(docId)) return "AI is still writing in that document. Try again when it finishes.";
+    const last = getEditableDocument(conversation).blocks.at(-1);
+    if (!last) return "That document can't take an AI reply yet. Open it and type something, then try again.";
+    const topic = conversation.title || "this topic";
+    handleDocumentSubmit(docId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", background: true,
+      ...(action === "deeper" ? { agent: true as const } : {}),
+      prompt: action === "deeper" ? roadmapDiveDeeperPrompt(topic, roadmapDocument?.title ?? "") : roadmapExplainPrompt(topic, roadmapDocument?.title ?? "", context) });
+    // The sub-roadmap is proposed under the answer in the step's document, so that is where to look.
+    if (action === "deeper") handleNavigateDocumentConnector({ conversationId: docId });
     return null;
   }
 
@@ -6002,6 +6021,7 @@ function WorkspaceAppContent({
       </div> : undefined}
       roadmap={conversation.nodeType === "roadmap" ? <RoadmapView conversation={conversation} conversations={state.conversations}
         drafting={Boolean(pendingConversationIds[conversation.id])} onDraft={(goal) => handleDraftRoadmap(conversation.id, goal)}
+        writingIds={pendingConversationIds} onExplain={(docId, context) => handleRoadmapStepAI(conversation.id, docId, "explain", context)} onDiveDeeper={(docId) => handleRoadmapStepAI(conversation.id, docId, "deeper")}
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
         onChange={(change) => handleRoadmapChange(conversation.id, change)}
         onOpen={(target) => handleNavigateDocumentConnector({ conversationId: target.docId, blockId: target.blockId })} /> : undefined}

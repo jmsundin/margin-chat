@@ -168,8 +168,10 @@ function proposalsOf(input) {
         steps: (Array.isArray(stage.steps) ? stage.steps : []).filter(record).slice(0, 60).flatMap((step) => {
           const key = text(step.key, 60).trim();
           const documentId = idText(step.documentId);
-          if (!key || !documentId) return [];
-          return [{ key, documentId, ...(text(step.title, 200).trim() ? { title: text(step.title, 200) } : {}),
+          // A step without a document carries notes for a new one.
+          const notes = !documentId && typeof step.notes === "string" && step.notes.length <= 2_000 ? step.notes : null;
+          if (!key || (!documentId && (notes === null || !text(step.title, 200).trim()))) return [];
+          return [{ key, ...(documentId ? { documentId } : { notes }), ...(text(step.title, 200).trim() ? { title: text(step.title, 200) } : {}),
             ...(text(step.why, 300).trim() ? { why: text(step.why, 300) } : {}),
             needs: (Array.isArray(step.needs) ? step.needs : []).map((value) => text(value, 60).trim()).filter(Boolean).slice(0, 60) }];
         }) })).filter((stage) => stage.title.trim() && stage.steps.length);

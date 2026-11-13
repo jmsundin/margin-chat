@@ -1,6 +1,7 @@
 import { HttpError } from "../../lib/errors.mjs";
 import { fetchPublicPage, normalizePublicPageUrl, readPublicPage } from "../../urlMap/page.mjs";
 import { readTweetThread, tweetLocation } from "./tweetThread.mjs";
+import { readRoadmapSh, roadmapShLocation } from "./roadmapSh.mjs";
 
 /** Longest page saved as one document; longer pages are cut with a note. */
 export const IMPORT_DOCUMENT_CHARACTERS = 150_000;
@@ -120,6 +121,7 @@ async function readGitHub(location, fetchPage) {
  * are read from their raw README or file, which the GitHub page itself only shows
  * with JavaScript. An X (Twitter) post is read with the rest of its author's
  * thread; if that fails, the post's own page gives at least its first post.
+ * A roadmap.sh roadmap is read from the site's data as an outline.
  */
 export async function readImportPage(url, { signal, userAgent, fetchPage, readPage = readPublicPage } = {}) {
   const fetchRaw = fetchPage ?? ((address, options) => fetchPublicPage(address, { signal, userAgent, ...options }));
@@ -130,6 +132,11 @@ export async function readImportPage(url, { signal, userAgent, fetchPage, readPa
     } catch (error) {
       if (signal?.aborted) throw error;
     }
+  }
+  const roadmap = roadmapShLocation(url);
+  if (roadmap) {
+    const page = await readRoadmapSh(roadmap, (address) => fetchRaw(address, { json: true }), url);
+    if (page) return page;
   }
   const location = gitHubLocation(url);
   if (location) {
