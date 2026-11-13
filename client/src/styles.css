@@ -13046,7 +13046,49 @@ body .live-markdown-editor {
 }
 
 .settings-page-logout {
-  margin-top: auto;
+  align-items: center;
+  align-self: flex-start;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.8rem;
+  height: 30px;
+  justify-content: center;
+  margin: -4px -4px 0 auto;
+  min-width: 30px;
+  padding: 0 6px;
+}
+
+.settings-page-logout:hover:not(:disabled),
+.settings-page-logout:focus-visible {
+  background: var(--bg);
+  color: var(--danger);
+}
+
+.settings-page-logout.is-guest {
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.settings-page-logout:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.settings-page-visually-hidden {
+  clip: rect(0 0 0 0);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
 }
 
 .settings-page-main {
@@ -13216,14 +13258,8 @@ body .live-markdown-editor {
 }
 
 .settings-page.is-phone .settings-page-logout {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  color: var(--danger);
-  margin-top: 16px;
-}
-
-.settings-page.is-phone .settings-page-logout .settings-page-icon {
-  color: var(--danger);
+  height: 40px;
+  min-width: 40px;
 }
 
 .settings-page.is-phone .settings-page-main {
